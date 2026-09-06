@@ -2,7 +2,7 @@ const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
 
-pub const SemanticGraph = struct {
+pub const GlobalSemanticGraph = struct {
     allocator: *const std.mem.Allocator,
     main_scope: *const Scope,
 };

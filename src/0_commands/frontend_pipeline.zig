@@ -26,7 +26,7 @@ pub const FrontendPipeline = struct {
     diagnostics: *diag.Diagnostics,
     options: Options,
     source_db: *const source_db.SourceDb,
-    syntax_files: std.array_list.Managed(st.SyntaxFile),
+    syntax_files: std.array_list.Managed(st.FileSyntaxTree),
     syntax_root_list: std.array_list.Managed(st.SyntaxRef),
     syntax_ctx: ?syntaxer.Syntaxer = null,
     sem_ctx: ?semantizer.Semantizer = null,
@@ -50,7 +50,7 @@ pub const FrontendPipeline = struct {
             .diagnostics = diagnostics,
             .options = options,
             .source_db = &diagnostics.source_db,
-            .syntax_files = std.array_list.Managed(st.SyntaxFile).init(allocator),
+            .syntax_files = std.array_list.Managed(st.FileSyntaxTree).init(allocator),
             .syntax_root_list = std.array_list.Managed(st.SyntaxRef).init(allocator),
         };
     }
@@ -75,7 +75,7 @@ pub const FrontendPipeline = struct {
             );
             defer tokenizer_ctx.deinit();
             _ = try tokenizer_ctx.tokenize();
-            var file = st.SyntaxFile.initOwnedTokens(self.source_db.fileId(index), tokenizer_ctx.takeTokens());
+            var file = st.FileSyntaxTree.initOwnedTokens(self.source_db.fileId(index), tokenizer_ctx.takeTokens());
             errdefer file.deinit(self.allocator);
             try self.syntax_files.append(file);
         }
@@ -101,8 +101,8 @@ pub const FrontendPipeline = struct {
         return self.syntax_roots;
     }
 
-    pub fn syntaxStorageMetrics(self: *const FrontendPipeline) st.SyntaxFile.StorageMetrics {
-        var result = st.SyntaxFile.StorageMetrics{ .token_bytes = 0, .node_base_bytes = 0, .extra_data_bytes = 0, .root_bytes = 0 };
+    pub fn syntaxStorageMetrics(self: *const FrontendPipeline) st.FileSyntaxTree.StorageMetrics {
+        var result = st.FileSyntaxTree.StorageMetrics{ .token_bytes = 0, .node_base_bytes = 0, .extra_data_bytes = 0, .root_bytes = 0 };
         for (self.syntax_files.items) |*file| {
             const metrics = file.storageMetrics();
             result.token_bytes += metrics.token_bytes;

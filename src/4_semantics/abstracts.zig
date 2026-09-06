@@ -13,7 +13,7 @@ const SemErr = @import("errors.zig").SemErr;
 
 // Abstract typing support
 pub const AbstractFunctionReqSem = struct {
-    syntax_files: []const syn.SyntaxFile,
+    syntax_files: []const syn.FileSyntaxTree,
     source_db: *const source_db.SourceDb,
     name: []const u8,
     input: sg.StructType,
@@ -47,7 +47,7 @@ pub const AbstractImplEntry = struct {
     location: tok.Location,
 };
 pub const AbstractImplTemplate = struct {
-    syntax_files: []const syn.SyntaxFile,
+    syntax_files: []const syn.FileSyntaxTree,
     source_db: *const source_db.SourceDb,
     params: []const gen.GenericParam,
     param_abstract_constraints: []const ?gen.AbstractConstraint,
@@ -117,7 +117,7 @@ fn parseIntLiteral(lit: tok.Literal) ?i64 {
     };
 }
 
-fn evalComptimeIntPattern(db: *const source_db.SourceDb, file: *const syn.SyntaxFile, node: syn.NodeIndex, params: []const gen.GenericParam, bindings: *TemplateBindings) ?i64 {
+fn evalComptimeIntPattern(db: *const source_db.SourceDb, file: *const syn.FileSyntaxTree, node: syn.NodeIndex, params: []const gen.GenericParam, bindings: *TemplateBindings) ?i64 {
     return switch (file.tag(node)) {
         .literal => parseIntLiteralToken(db, file, node),
         .identifier => blk: {
@@ -146,13 +146,13 @@ fn evalComptimeIntPattern(db: *const source_db.SourceDb, file: *const syn.Syntax
     };
 }
 
-fn parseIntLiteralToken(db: *const source_db.SourceDb, file: *const syn.SyntaxFile, node: syn.NodeIndex) ?i64 {
+fn parseIntLiteralToken(db: *const source_db.SourceDb, file: *const syn.FileSyntaxTree, node: syn.NodeIndex) ?i64 {
     return std.fmt.parseInt(i64, file.tokenText(db, file.mainToken(node)), 0) catch null;
 }
 
 fn matchComptimeIntPattern(
     db: *const source_db.SourceDb,
-    file: *const syn.SyntaxFile,
+    file: *const syn.FileSyntaxTree,
     node: syn.NodeIndex,
     actual: i64,
     params: []const gen.GenericParam,
@@ -173,7 +173,7 @@ fn matchComptimeIntPattern(
     return expected == actual;
 }
 
-fn matchTemplateType(db: *const source_db.SourceDb, files: []const syn.SyntaxFile, pattern: syn.SyntaxRef, actual: sg.Type, params: []const gen.GenericParam, bindings: *TemplateBindings) bool {
+fn matchTemplateType(db: *const source_db.SourceDb, files: []const syn.FileSyntaxTree, pattern: syn.SyntaxRef, actual: sg.Type, params: []const gen.GenericParam, bindings: *TemplateBindings) bool {
     const file = syn.fileForRef(files, pattern);
     return switch (file.syntaxType(pattern.node) orelse return false) {
         .name => |type_name| blk: {
@@ -237,8 +237,8 @@ fn matchTemplateType(db: *const source_db.SourceDb, files: []const syn.SyntaxFil
 
 fn matchCanonicalGenericInstantiation(
     db: *const source_db.SourceDb,
-    files: []const syn.SyntaxFile,
-    file: *const syn.SyntaxFile,
+    files: []const syn.FileSyntaxTree,
+    file: *const syn.FileSyntaxTree,
     g: syn.GenericType,
     actual: sg.Type,
     params: []const gen.GenericParam,
@@ -274,8 +274,8 @@ fn matchCanonicalGenericInstantiation(
 
 fn matchGenericInstantiationType(
     db: *const source_db.SourceDb,
-    files: []const syn.SyntaxFile,
-    file: *const syn.SyntaxFile,
+    files: []const syn.FileSyntaxTree,
+    file: *const syn.FileSyntaxTree,
     g: syn.GenericType,
     actual: sg.Type,
     params: []const gen.GenericParam,
@@ -780,8 +780,8 @@ fn buildExpectedOutputWithConcrete(rq: *const AbstractFunctionReqSem, concrete: 
 
 fn genericTemplateFieldsMatchExpected(
     db: *const source_db.SourceDb,
-    files: []const syn.SyntaxFile,
-    file: *const syn.SyntaxFile,
+    files: []const syn.FileSyntaxTree,
+    file: *const syn.FileSyntaxTree,
     expected: *const sg.StructType,
     template_fields: []const syn.NodeIndex,
     params: []const gen.GenericParam,
@@ -804,7 +804,7 @@ fn genericTemplateFieldsMatchExpected(
 
 fn abstractPatternMatchesTemplate(
     db: *const source_db.SourceDb,
-    files: []const syn.SyntaxFile,
+    files: []const syn.FileSyntaxTree,
     requirement: syn.SyntaxRef,
     candidate: syn.SyntaxRef,
     concrete: sg.Type,
@@ -887,7 +887,7 @@ fn abstractPatternMatchesTemplate(
 }
 
 fn genericTemplateFieldsMatchRequirement(
-    file: *const syn.SyntaxFile,
+    file: *const syn.FileSyntaxTree,
     rq: *const AbstractFunctionReqSem,
     input: bool,
     template_fields: []const syn.NodeIndex,

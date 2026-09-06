@@ -46,7 +46,7 @@ pub const SyntaxRef = struct {
     node: NodeIndex,
 };
 
-pub fn fileForRef(files: []const SyntaxFile, reference: SyntaxRef) *const SyntaxFile {
+pub fn fileForRef(files: []const FileSyntaxTree, reference: SyntaxRef) *const FileSyntaxTree {
     const index: usize = @intFromEnum(reference.file_id);
     std.debug.assert(index < files.len);
     std.debug.assert(files[index].file_id == reference.file_id);
@@ -306,16 +306,16 @@ pub const IndexAssignment = struct { target: NodeIndex, value: NodeIndex };
 pub const Literal = struct { token: TokenIndex, negative: bool };
 pub const BinaryOperation = struct { lhs: NodeIndex, rhs: NodeIndex };
 
-pub const TokenList = token.List;
+pub const FileTokenList = token.List;
 pub const NodeList = std.MultiArrayList(Node);
 
-pub const SyntaxFile = struct {
+pub const FileSyntaxTree = struct {
     file_id: source_db.FileId,
     // Retain column pointers, not just the allocation base: MultiArrayList.items
     // reconstructs every column on each access in unoptimized builds. Syntaxing
     // and semantizing repeatedly read these columns through small typed views.
     // Slice owns the same compact allocation; only file metadata grows.
-    tokens: TokenList.Slice = .empty,
+    tokens: FileTokenList.Slice = .empty,
     nodes: NodeList.Slice = .empty,
     extra_data: std.ArrayList(u32) = .empty,
     roots: []NodeIndex = &.{},
@@ -339,8 +339,8 @@ pub const SyntaxFile = struct {
     // Compact counts include type syntax, which the legacy parallel Type tree
     // omitted from its STNode count.
 
-    pub fn init(allocator: std.mem.Allocator, file_id: source_db.FileId, tokens: token.View) !SyntaxFile {
-        var owned: TokenList = .empty;
+    pub fn init(allocator: std.mem.Allocator, file_id: source_db.FileId, tokens: token.View) !FileSyntaxTree {
+        var owned: FileTokenList = .empty;
         errdefer owned.deinit(allocator);
         try owned.ensureTotalCapacity(allocator, tokens.len);
         for (tokens.contents, tokens.locations) |content, token_location| {
@@ -350,11 +350,11 @@ pub const SyntaxFile = struct {
     }
 
     /// Takes ownership of token columns built during tokenizing.
-    pub fn initOwnedTokens(file_id: source_db.FileId, tokens: TokenList) SyntaxFile {
+    pub fn initOwnedTokens(file_id: source_db.FileId, tokens: FileTokenList) FileSyntaxTree {
         return .{ .file_id = file_id, .tokens = tokens.slice() };
     }
 
-    pub fn deinit(tree: *SyntaxFile, allocator: std.mem.Allocator) void {
+    pub fn deinit(tree: *FileSyntaxTree, allocator: std.mem.Allocator) void {
         tree.tokens.deinit(allocator);
         tree.nodes.deinit(allocator);
         tree.extra_data.deinit(allocator);
@@ -362,7 +362,7 @@ pub const SyntaxFile = struct {
         tree.* = undefined;
     }
 
-    pub fn storageMetrics(tree: *const SyntaxFile) StorageMetrics {
+    pub fn storageMetrics(tree: *const FileSyntaxTree) StorageMetrics {
         return .{
             .token_bytes = tree.tokens.len * (@sizeOf(token.Content) + @sizeOf(token.Location)),
             .node_base_bytes = tree.nodes.len * (@sizeOf(Node.Tag) + @sizeOf(TokenIndex) + @sizeOf(Node.Data)),
@@ -371,7 +371,7 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn addNode(tree: *SyntaxFile, allocator: std.mem.Allocator, node: Node) !NodeIndex {
+    pub fn addNode(tree: *FileSyntaxTree, allocator: std.mem.Allocator, node: Node) !NodeIndex {
         if (tree.nodes.len >= std.math.maxInt(u32)) return error.SyntaxTreeTooLarge;
         const index: NodeIndex = @enumFromInt(@as(u32, @intCast(tree.nodes.len)));
         if (tree.nodes.len == tree.nodes.capacity) try tree.ensureNodeCapacity(allocator, tree.nodes.len + 1);
@@ -380,7 +380,7 @@ pub const SyntaxFile = struct {
         return index;
     }
 
-    pub fn ensureNodeCapacity(tree: *SyntaxFile, allocator: std.mem.Allocator, capacity: usize) !void {
+    pub fn ensureNodeCapacity(tree: *FileSyntaxTree, allocator: std.mem.Allocator, capacity: usize) !void {
         // Growth can relocate every column. Publish the replacement pointers
         // together, and preserve the existing owner if allocation fails.
         var nodes = tree.nodes.toMultiArrayList();
@@ -388,7 +388,7 @@ pub const SyntaxFile = struct {
         tree.nodes = nodes.slice();
     }
 
-    pub fn addExtra(tree: *SyntaxFile, allocator: std.mem.Allocator, value: anytype) !ExtraIndex {
+    pub fn addExtra(tree: *FileSyntaxTree, allocator: std.mem.Allocator, value: anytype) !ExtraIndex {
         const fields = std.meta.fields(@TypeOf(value));
         if (tree.extra_data.items.len + fields.len > std.math.maxInt(u32)) return error.SyntaxTreeTooLarge;
         try tree.extra_data.ensureUnusedCapacity(allocator, fields.len);
@@ -399,7 +399,7 @@ pub const SyntaxFile = struct {
         return index;
     }
 
-    pub fn extraData(tree: *const SyntaxFile, comptime T: type, index: ExtraIndex) T {
+    pub fn extraData(tree: *const FileSyntaxTree, comptime T: type, index: ExtraIndex) T {
         var result: T = undefined;
         inline for (std.meta.fields(T), 0..) |field, offset| {
             const word = tree.extra_data.items[@intFromEnum(index) + offset];
@@ -408,7 +408,7 @@ pub const SyntaxFile = struct {
         return result;
     }
 
-    pub fn addNodeRange(tree: *SyntaxFile, allocator: std.mem.Allocator, values: []const NodeIndex) !NodeRange {
+    pub fn addNodeRange(tree: *FileSyntaxTree, allocator: std.mem.Allocator, values: []const NodeIndex) !NodeRange {
         if (tree.extra_data.items.len + values.len > std.math.maxInt(u32)) return error.SyntaxTreeTooLarge;
         try tree.extra_data.ensureUnusedCapacity(allocator, values.len);
         const start: ExtraIndex = @enumFromInt(@as(u32, @intCast(tree.extra_data.items.len)));
@@ -419,35 +419,35 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn nodeRange(tree: *const SyntaxFile, range: NodeRange) []const NodeIndex {
+    pub fn nodeRange(tree: *const FileSyntaxTree, range: NodeRange) []const NodeIndex {
         return @ptrCast(tree.extra_data.items[@intFromEnum(range.start)..@intFromEnum(range.end)]);
     }
 
-    pub fn tag(tree: *const SyntaxFile, index: NodeIndex) Node.Tag {
+    pub fn tag(tree: *const FileSyntaxTree, index: NodeIndex) Node.Tag {
         return tree.nodes.items(.tag)[@intFromEnum(index)];
     }
 
-    pub fn mainToken(tree: *const SyntaxFile, index: NodeIndex) TokenIndex {
+    pub fn mainToken(tree: *const FileSyntaxTree, index: NodeIndex) TokenIndex {
         return tree.nodes.items(.main_token)[@intFromEnum(index)];
     }
 
-    pub fn data(tree: *const SyntaxFile, index: NodeIndex) Node.Data {
+    pub fn data(tree: *const FileSyntaxTree, index: NodeIndex) Node.Data {
         return tree.nodes.items(.data)[@intFromEnum(index)];
     }
 
-    pub fn location(tree: *const SyntaxFile, index: NodeIndex) token.Location {
+    pub fn location(tree: *const FileSyntaxTree, index: NodeIndex) token.Location {
         return tree.tokens.items(.location)[@intFromEnum(tree.mainToken(index))];
     }
 
-    pub fn tokenLocation(tree: *const SyntaxFile, index: TokenIndex) token.Location {
+    pub fn tokenLocation(tree: *const FileSyntaxTree, index: TokenIndex) token.Location {
         return tree.tokens.items(.location)[@intFromEnum(index)];
     }
 
-    pub fn ref(tree: *const SyntaxFile, node: NodeIndex) SyntaxRef {
+    pub fn ref(tree: *const FileSyntaxTree, node: NodeIndex) SyntaxRef {
         return .{ .file_id = tree.file_id, .node = node };
     }
 
-    pub fn tokenText(tree: *const SyntaxFile, db: *const source_db.SourceDb, index: TokenIndex) []const u8 {
+    pub fn tokenText(tree: *const FileSyntaxTree, db: *const source_db.SourceDb, index: TokenIndex) []const u8 {
         const token_index: usize = @intFromEnum(index);
         const contents = tree.tokens.items(.content)[token_index];
         const source = db.get(tree.file_id).source;
@@ -469,7 +469,7 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn functionDeclaration(tree: *const SyntaxFile, node: NodeIndex) ?FunctionDeclaration {
+    pub fn functionDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?FunctionDeclaration {
         const node_tag = tree.tag(node);
         if (node_tag != .function_declaration and node_tag != .function_declaration_once) return null;
         const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
@@ -484,7 +484,7 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn testDeclaration(tree: *const SyntaxFile, node: NodeIndex) ?TestDeclaration {
+    pub fn testDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?TestDeclaration {
         if (tree.tag(node) != .test_declaration) return null;
         const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
         return .{ .function = .{
@@ -498,7 +498,7 @@ pub const SyntaxFile = struct {
         } };
     }
 
-    pub fn functionName(tree: *const SyntaxFile, db: *const source_db.SourceDb, node: NodeIndex) ?FunctionName {
+    pub fn functionName(tree: *const FileSyntaxTree, db: *const source_db.SourceDb, node: NodeIndex) ?FunctionName {
         const declaration = tree.functionDeclaration(node) orelse (tree.testDeclaration(node) orelse return null).function;
         if (!std.mem.eql(u8, tree.tokenText(db, declaration.name_token), "operator")) {
             return .{ .identifier = declaration.name_token };
@@ -525,14 +525,14 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn ifStatement(tree: *const SyntaxFile, node: NodeIndex) ?IfStatement {
+    pub fn ifStatement(tree: *const FileSyntaxTree, node: NodeIndex) ?IfStatement {
         if (tree.tag(node) != .if_statement) return null;
         const node_data = tree.data(node).node_and_extra;
         const extra = tree.extraData(IfExtra, node_data.extra);
         return .{ .condition = node_data.node, .then_block = extra.then_block, .else_block = extra.else_block.unwrap() };
     }
 
-    pub fn functionCall(tree: *const SyntaxFile, node: NodeIndex) ?FunctionCall {
+    pub fn functionCall(tree: *const FileSyntaxTree, node: NodeIndex) ?FunctionCall {
         if (tree.tag(node) != .function_call) return null;
         const extra = tree.extraData(CallExtra, tree.data(node).extra);
         return .{
@@ -544,17 +544,17 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn structTypeLiteral(tree: *const SyntaxFile, node: NodeIndex) ?StructTypeLiteral {
+    pub fn structTypeLiteral(tree: *const FileSyntaxTree, node: NodeIndex) ?StructTypeLiteral {
         if (tree.tag(node) != .struct_type_literal) return null;
         return .{ .fields = tree.nodeRange(tree.data(node).extra_range) };
     }
 
-    pub fn choiceTypeLiteral(tree: *const SyntaxFile, node: NodeIndex) ?ChoiceTypeLiteral {
+    pub fn choiceTypeLiteral(tree: *const FileSyntaxTree, node: NodeIndex) ?ChoiceTypeLiteral {
         if (tree.tag(node) != .choice_type_literal) return null;
         return .{ .variants = tree.nodeRange(tree.data(node).extra_range) };
     }
 
-    pub fn choiceTypeVariant(tree: *const SyntaxFile, node: NodeIndex) ?ChoiceTypeVariant {
+    pub fn choiceTypeVariant(tree: *const FileSyntaxTree, node: NodeIndex) ?ChoiceTypeVariant {
         const node_tag = tree.tag(node);
         if (node_tag != .choice_type_variant and node_tag != .choice_type_variant_default) return null;
         const payload = tree.data(node).optional_token_and_optional_node;
@@ -566,7 +566,7 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn structValueLiteral(tree: *const SyntaxFile, node: NodeIndex) ?StructValueLiteral {
+    pub fn structValueLiteral(tree: *const FileSyntaxTree, node: NodeIndex) ?StructValueLiteral {
         if (tree.tag(node) != .struct_value_literal) return null;
         const node_data = tree.data(node).u32_and_extra;
         return .{
@@ -575,17 +575,17 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn codeBlock(tree: *const SyntaxFile, node: NodeIndex) ?CodeBlock {
+    pub fn codeBlock(tree: *const FileSyntaxTree, node: NodeIndex) ?CodeBlock {
         if (tree.tag(node) != .code_block) return null;
         return .{ .statements = tree.nodeRange(tree.data(node).extra_range) };
     }
 
-    pub fn listLiteral(tree: *const SyntaxFile, node: NodeIndex) ?ListLiteral {
+    pub fn listLiteral(tree: *const FileSyntaxTree, node: NodeIndex) ?ListLiteral {
         if (tree.tag(node) != .list_literal) return null;
         return .{ .elements = tree.nodeRange(tree.data(node).extra_range) };
     }
 
-    pub fn structTypeField(tree: *const SyntaxFile, node: NodeIndex) ?StructTypeField {
+    pub fn structTypeField(tree: *const FileSyntaxTree, node: NodeIndex) ?StructTypeField {
         const node_tag = tree.tag(node);
         if (node_tag != .struct_type_field and node_tag != .inferred_result_field) return null;
         const extra = tree.extraData(FieldExtra, tree.data(node).extra);
@@ -597,7 +597,7 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn symbolDeclaration(tree: *const SyntaxFile, node: NodeIndex) ?SymbolDeclaration {
+    pub fn symbolDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?SymbolDeclaration {
         const node_tag = tree.tag(node);
         if (node_tag != .symbol_declaration_constant and node_tag != .symbol_declaration_variable) return null;
         const extra = tree.extraData(FieldExtra, tree.data(node).extra);
@@ -609,17 +609,17 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn choiceOptionDeclaration(tree: *const SyntaxFile, node: NodeIndex) ?ChoiceOptionDeclaration {
+    pub fn choiceOptionDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?ChoiceOptionDeclaration {
         if (tree.tag(node) != .choice_option_declaration) return null;
         return .{ .name_token = tree.data(node).token };
     }
 
-    pub fn assignment(tree: *const SyntaxFile, node: NodeIndex) ?Assignment {
+    pub fn assignment(tree: *const FileSyntaxTree, node: NodeIndex) ?Assignment {
         if (tree.tag(node) != .assignment) return null;
         return .{ .name_token = tree.mainToken(node), .value = tree.data(node).node };
     }
 
-    pub fn importStatement(tree: *const SyntaxFile, node: NodeIndex) ?ImportStatement {
+    pub fn importStatement(tree: *const FileSyntaxTree, node: NodeIndex) ?ImportStatement {
         if (tree.tag(node) != .import_statement) return null;
         return .{ .path_token = tree.data(node).token };
     }
@@ -631,7 +631,7 @@ pub const SyntaxFile = struct {
         value: NodeIndex,
     };
 
-    fn genericValuePayload(tree: *const SyntaxFile, node: NodeIndex) GenericValuePayload {
+    fn genericValuePayload(tree: *const FileSyntaxTree, node: NodeIndex) GenericValuePayload {
         const extra = tree.extraData(GenericValueExtra, tree.data(node).extra);
         return .{
             .name_token = tree.mainToken(node),
@@ -641,37 +641,37 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn typeDeclaration(tree: *const SyntaxFile, node: NodeIndex) ?TypeDeclaration {
+    pub fn typeDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?TypeDeclaration {
         if (tree.tag(node) != .type_declaration) return null;
         const payload = tree.genericValuePayload(node);
         return .{ .name_token = payload.name_token, .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .value = payload.value };
     }
 
-    pub fn cEnumDeclaration(tree: *const SyntaxFile, node: NodeIndex) ?CEnumDeclaration {
+    pub fn cEnumDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?CEnumDeclaration {
         if (tree.tag(node) != .c_enum_declaration) return null;
         const payload = tree.genericValuePayload(node);
         return .{ .name_token = payload.name_token, .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .value = payload.value };
     }
 
-    pub fn cUnionDeclaration(tree: *const SyntaxFile, node: NodeIndex) ?CUnionDeclaration {
+    pub fn cUnionDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?CUnionDeclaration {
         if (tree.tag(node) != .c_union_declaration) return null;
         const payload = tree.genericValuePayload(node);
         return .{ .name_token = payload.name_token, .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .value = payload.value };
     }
 
-    pub fn abstractImplements(tree: *const SyntaxFile, node: NodeIndex) ?AbstractImplements {
+    pub fn abstractImplements(tree: *const FileSyntaxTree, node: NodeIndex) ?AbstractImplements {
         if (tree.tag(node) != .abstract_implements) return null;
         const payload = tree.genericValuePayload(node);
         return .{ .concrete_name_token = payload.name_token, .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .abstract_type = payload.value };
     }
 
-    pub fn abstractDefaultsTo(tree: *const SyntaxFile, node: NodeIndex) ?AbstractDefaultsTo {
+    pub fn abstractDefaultsTo(tree: *const FileSyntaxTree, node: NodeIndex) ?AbstractDefaultsTo {
         if (tree.tag(node) != .abstract_defaultsto) return null;
         const payload = tree.genericValuePayload(node);
         return .{ .name_token = payload.name_token, .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .type_node = payload.value };
     }
 
-    pub fn abstractDeclaration(tree: *const SyntaxFile, node: NodeIndex) ?AbstractDeclaration {
+    pub fn abstractDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?AbstractDeclaration {
         if (tree.tag(node) != .abstract_declaration) return null;
         const extra = tree.extraData(AbstractExtra, tree.data(node).extra);
         return .{
@@ -683,13 +683,13 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn abstractFunctionRequirement(tree: *const SyntaxFile, node: NodeIndex) ?AbstractFunctionRequirement {
+    pub fn abstractFunctionRequirement(tree: *const FileSyntaxTree, node: NodeIndex) ?AbstractFunctionRequirement {
         if (tree.tag(node) != .abstract_function_requirement) return null;
         const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
         return .{ .name_token = extra.name_token, .input = extra.input, .output = extra.output };
     }
 
-    pub fn syntaxType(tree: *const SyntaxFile, node: NodeIndex) ?Type {
+    pub fn syntaxType(tree: *const FileSyntaxTree, node: NodeIndex) ?Type {
         return switch (tree.tag(node)) {
             .type_name => .{ .name = .{
                 .name_token = tree.mainToken(node),
@@ -707,13 +707,13 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn matchStatement(tree: *const SyntaxFile, node: NodeIndex) ?MatchStatement {
+    pub fn matchStatement(tree: *const FileSyntaxTree, node: NodeIndex) ?MatchStatement {
         if (tree.tag(node) != .match_statement) return null;
         const node_data = tree.data(node).node_and_extra;
         return .{ .value = node_data.node, .cases = tree.nodeRange(tree.extraData(NodeRange, node_data.extra)) };
     }
 
-    pub fn matchCase(tree: *const SyntaxFile, node: NodeIndex) ?MatchCase {
+    pub fn matchCase(tree: *const FileSyntaxTree, node: NodeIndex) ?MatchCase {
         const mode: MatchCaseMode = switch (tree.tag(node)) {
             .match_case_value => .value,
             .match_case_borrow => .borrow,
@@ -725,7 +725,7 @@ pub const SyntaxFile = struct {
         return .{ .variant_token = tree.mainToken(node), .payload_name = extra.payload_name.unwrap(), .body = extra.body, .mode = mode };
     }
 
-    pub fn forStatement(tree: *const SyntaxFile, node: NodeIndex) ?ForStatement {
+    pub fn forStatement(tree: *const FileSyntaxTree, node: NodeIndex) ?ForStatement {
         const mode: ForMode = switch (tree.tag(node)) {
             .for_value => .value,
             .for_borrow => .borrow,
@@ -736,35 +736,35 @@ pub const SyntaxFile = struct {
         return .{ .name_token = extra.name_token, .iterable = extra.iterable, .body = extra.body, .mode = mode };
     }
 
-    pub fn whileStatement(tree: *const SyntaxFile, node: NodeIndex) ?WhileStatement {
+    pub fn whileStatement(tree: *const FileSyntaxTree, node: NodeIndex) ?WhileStatement {
         if (tree.tag(node) != .while_statement) return null;
         const node_data = tree.data(node).node_and_node;
         return .{ .condition = node_data.first, .body = node_data.second };
     }
 
-    fn namedAccessPayload(tree: *const SyntaxFile, node: NodeIndex) Node.Data {
+    fn namedAccessPayload(tree: *const FileSyntaxTree, node: NodeIndex) Node.Data {
         return tree.data(node);
     }
 
-    pub fn structFieldAccess(tree: *const SyntaxFile, node: NodeIndex) ?StructFieldAccess {
+    pub fn structFieldAccess(tree: *const FileSyntaxTree, node: NodeIndex) ?StructFieldAccess {
         if (tree.tag(node) != .struct_field_access) return null;
         const payload = tree.namedAccessPayload(node).token_and_node;
         return .{ .value = payload.node, .field_token = payload.token };
     }
 
-    pub fn choicePayloadAccess(tree: *const SyntaxFile, node: NodeIndex) ?ChoicePayloadAccess {
+    pub fn choicePayloadAccess(tree: *const FileSyntaxTree, node: NodeIndex) ?ChoicePayloadAccess {
         if (tree.tag(node) != .choice_payload_access) return null;
         const payload = tree.namedAccessPayload(node).token_and_node;
         return .{ .value = payload.node, .variant_token = payload.token };
     }
 
-    pub fn choiceLiteral(tree: *const SyntaxFile, node: NodeIndex) ?ChoiceLiteral {
+    pub fn choiceLiteral(tree: *const FileSyntaxTree, node: NodeIndex) ?ChoiceLiteral {
         if (tree.tag(node) != .choice_literal and tree.tag(node) != .choice_some_literal) return null;
         const node_data = tree.data(node).token_and_optional;
         return .{ .name_token = node_data.token, .payload = node_data.optional.unwrap() };
     }
 
-    pub fn valueField(tree: *const SyntaxFile, node: NodeIndex) ?ValueField {
+    pub fn valueField(tree: *const FileSyntaxTree, node: NodeIndex) ?ValueField {
         return switch (tree.tag(node)) {
             .struct_value_field => .{ .name_token = tree.mainToken(node), .value = tree.data(node).node, .position = null },
             .positional_value_field => .{ .name_token = null, .value = tree.data(node).u32_and_node.node, .position = tree.data(node).u32_and_node.value },
@@ -772,27 +772,27 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn reachDirective(tree: *const SyntaxFile, node: NodeIndex) ?ReachDirective {
+    pub fn reachDirective(tree: *const FileSyntaxTree, node: NodeIndex) ?ReachDirective {
         if (tree.tag(node) != .reach_directive) return null;
         return .{ .alternatives = tree.nodeRange(tree.data(node).extra_range) };
     }
 
-    pub fn reachAlternative(tree: *const SyntaxFile, node: NodeIndex) ?ReachAlternative {
+    pub fn reachAlternative(tree: *const FileSyntaxTree, node: NodeIndex) ?ReachAlternative {
         if (tree.tag(node) != .reach_alternative) return null;
         return .{ .segments = tree.nodeRange(tree.data(node).extra_range) };
     }
 
-    pub fn returnStatement(tree: *const SyntaxFile, node: NodeIndex) ?ReturnStatement {
+    pub fn returnStatement(tree: *const FileSyntaxTree, node: NodeIndex) ?ReturnStatement {
         if (tree.tag(node) != .return_statement) return null;
         return .{ .value = tree.data(node).optional_node.unwrap() };
     }
 
-    pub fn keepStatement(tree: *const SyntaxFile, node: NodeIndex) ?KeepStatement {
+    pub fn keepStatement(tree: *const FileSyntaxTree, node: NodeIndex) ?KeepStatement {
         if (tree.tag(node) != .keep_statement) return null;
         return .{ .name_token = tree.data(node).token };
     }
 
-    pub fn literal(tree: *const SyntaxFile, node: NodeIndex) ?Literal {
+    pub fn literal(tree: *const FileSyntaxTree, node: NodeIndex) ?Literal {
         if (tree.tag(node) != .literal) return null;
         const main_token = tree.mainToken(node);
         const negative = switch (tree.tokenContent(main_token)) {
@@ -802,11 +802,11 @@ pub const SyntaxFile = struct {
         return .{ .token = if (negative) tree.data(node).token else main_token, .negative = negative };
     }
 
-    pub fn tokenContent(tree: *const SyntaxFile, index: TokenIndex) token.Content {
+    pub fn tokenContent(tree: *const FileSyntaxTree, index: TokenIndex) token.Content {
         return tree.tokens.items(.content)[@intFromEnum(index)];
     }
 
-    pub fn binaryOperation(tree: *const SyntaxFile, node: NodeIndex) ?BinaryOperation {
+    pub fn binaryOperation(tree: *const FileSyntaxTree, node: NodeIndex) ?BinaryOperation {
         return switch (tree.tag(node)) {
             .pipe_expression, .unwrap_or, .unwrap_or_do, .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo, .compare_equal, .compare_not_equal, .compare_less, .compare_greater, .compare_less_equal, .compare_greater_equal, .logical_and, .logical_or, .error_context, .index_access, .index_assignment, .pointer_assignment => .{
                 .lhs = tree.data(node).node_and_node.first,
@@ -816,20 +816,20 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn unaryOperand(tree: *const SyntaxFile, node: NodeIndex) ?NodeIndex {
+    pub fn unaryOperand(tree: *const FileSyntaxTree, node: NodeIndex) ?NodeIndex {
         return switch (tree.tag(node)) {
             .expression_statement, .move_expression, .error_propagation, .nullable_test, .defer_statement, .address_of, .address_of_mut, .dereference => tree.data(node).node,
             else => null,
         };
     }
 
-    pub fn indexAccess(tree: *const SyntaxFile, node: NodeIndex) ?IndexAccess {
+    pub fn indexAccess(tree: *const FileSyntaxTree, node: NodeIndex) ?IndexAccess {
         if (tree.tag(node) != .index_access) return null;
         const pair = tree.data(node).node_and_node;
         return .{ .value = pair.first, .index = pair.second };
     }
 
-    pub fn addressOf(tree: *const SyntaxFile, node: NodeIndex) ?AddressOf {
+    pub fn addressOf(tree: *const FileSyntaxTree, node: NodeIndex) ?AddressOf {
         const mutability: PointerMutability = switch (tree.tag(node)) {
             .address_of => .read_only,
             .address_of_mut => .read_write,
@@ -838,13 +838,13 @@ pub const SyntaxFile = struct {
         return .{ .value = tree.data(node).node, .mutability = mutability };
     }
 
-    pub fn pointerAssignment(tree: *const SyntaxFile, node: NodeIndex) ?PointerAssignment {
+    pub fn pointerAssignment(tree: *const FileSyntaxTree, node: NodeIndex) ?PointerAssignment {
         if (tree.tag(node) != .pointer_assignment) return null;
         const pair = tree.data(node).node_and_node;
         return .{ .target = pair.first, .value = pair.second };
     }
 
-    pub fn indexAssignment(tree: *const SyntaxFile, node: NodeIndex) ?IndexAssignment {
+    pub fn indexAssignment(tree: *const FileSyntaxTree, node: NodeIndex) ?IndexAssignment {
         if (tree.tag(node) != .index_assignment) return null;
         const pair = tree.data(node).node_and_node;
         return .{ .target = pair.first, .value = pair.second };
@@ -951,7 +951,7 @@ test "compact syntax indices reserve the optional sentinel" {
 
 test "compact syntax stores typed extras and node ranges" {
     const Extra = struct { first: NodeIndex, second: OptionalNodeIndex, token_index: TokenIndex };
-    var tree: SyntaxFile = .{ .file_id = @enumFromInt(0) };
+    var tree: FileSyntaxTree = .{ .file_id = @enumFromInt(0) };
     defer tree.deinit(std.testing.allocator);
 
     const first: NodeIndex = @enumFromInt(2);
@@ -972,7 +972,7 @@ test "syntax column ownership survives growth and allocation failure" {
 }
 
 fn testColumnGrowth(allocator: std.mem.Allocator) !void {
-    var tree: SyntaxFile = .{ .file_id = @enumFromInt(0) };
+    var tree: FileSyntaxTree = .{ .file_id = @enumFromInt(0) };
     defer tree.deinit(allocator);
     for (0..100) |i| {
         const index = try tree.addNode(allocator, .{
