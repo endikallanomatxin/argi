@@ -482,6 +482,25 @@ into transient source buffers.
 
 ## Implementation plan
 
+### Migration progress
+
+- [x] Define `FileTokenList` in tokenizing and retain `FileSyntaxTree` terminology.
+- [x] Discover top-level declarations once per file with dense declaration IDs,
+  source offsets and owned names; feed that discovery into global predeclaration.
+- [x] Measure file semantizing time and logical FileSG storage with `--stats`.
+- [ ] Lower lexical scopes, local bindings and explicit external references.
+- [ ] Lower complete expressions, types and pending global operations without
+  requiring the syntax tree during globalization.
+- [ ] Flatten and relocate file tables into global storage.
+- [ ] Canonicalize global types and migrate resolution, Safety and Codegen to IDs.
+- [ ] Implement the persistent FileSG format and cache.
+
+The initial `FileSemanticGraph` owns declaration metadata but still has a local
+syntax-node bridge for declaration structure and bodies. It must not be cached
+as a standalone semantic artifact until that dependency is removed. The global
+representation still contains pointers. This checklist records migration work,
+not completion of the architectural boundary below.
+
 ### Phase 1 — establish names and file-local semantic representation
 
 1. Introduce the `FileTokenList` / `FileSyntaxTree` terminology and types where
