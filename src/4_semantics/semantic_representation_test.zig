@@ -1,5 +1,6 @@
 const std = @import("std");
 const module_sg = @import("module_semantic_graph.zig");
+const module_entities = @import("module_semantic_entities.zig");
 const module_verify = @import("module_semantic_complete_verify.zig");
 const global_verify = @import("global_semantic_verify.zig");
 const globalizer = @import("semantic_globalizer.zig");
@@ -54,7 +55,10 @@ fn makeScalarModule(allocator: std.mem.Allocator, dir: []const u8, type_name_tex
         .ty = @enumFromInt(0),
         .content = .{ .binding_use = @enumFromInt(0) },
     } });
-    try module.semantic.node_refs.appendSlice(allocator, &.{ @as(module_sg.ModuleNodeId, @enumFromInt(0)), @as(module_sg.ModuleNodeId, @enumFromInt(1)) });
+    try module.semantic.node_refs.appendSlice(allocator, &.{
+        @as(module_entities.ModuleNodeId, @enumFromInt(0)),
+        @as(module_entities.ModuleNodeId, @enumFromInt(1)),
+    });
     try module.semantic.blocks.append(allocator, .{
         .nodes = .{ .start = 0, .len = 2 },
         .ret_val = @enumFromInt(1),
