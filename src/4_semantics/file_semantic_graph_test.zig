@@ -124,6 +124,26 @@ fn lowerWithAllocator(allocator: std.mem.Allocator, tree: *const syn.FileSyntaxT
     defer graph.deinit(allocator);
 }
 
+test "file semantic graph shares one string store across lexical and declaration tables" {
+    const allocator = std.testing.allocator;
+    const source = try allocator.dupe(u8, "read(.x: Int32) -> (.result: Int32) := {\n return x\n}\n");
+    var tree = try parseSource(allocator, source, @enumFromInt(1));
+    var graph = try graph_mod.semantizeFile(allocator, &tree, source);
+    defer graph.deinit(allocator);
+    tree.deinit(allocator);
+    allocator.free(source);
+    const reference_name = graph.lexical.references.items[0].name;
+    const binding_name = graph.lexical.bindings.items[0].name;
+    // Growing the owner must leave all stored offsets valid.
+    try graph.strings.ensureTotalCapacity(allocator, graph.strings.capacity + 1024);
+    try std.testing.expectEqualStrings("x", graph.text(reference_name));
+    try std.testing.expectEqualStrings("x", graph.text(binding_name));
+    graph.lexical.deinit(allocator);
+    try std.testing.expectEqualStrings("read", graph.text(graph.declarations.items[0].name));
+    try std.testing.expectEqualStrings("Int32", graph.text(graph.type_references.items[0].name));
+    try std.testing.expectEqualStrings("x", graph.text(reference_name));
+}
+
 test "file semantic graph preserves normalized operator names" {
     const allocator = std.testing.allocator;
     const source =
@@ -153,10 +173,10 @@ test "file semantic graph resolves lexical values but defers module-shaped acces
     defer graph.deinit(allocator);
     const lexical = &graph.lexical;
     try std.testing.expectEqual(@as(usize, 2), lexical.references.items.len);
-    try std.testing.expectEqualStrings("x", lexical.text(lexical.references.items[0].name));
-    try std.testing.expectEqualStrings("y", lexical.text(lexical.references.items[1].name));
-    try std.testing.expectEqualStrings("x", lexical.text(lexical.bindings.items[@intFromEnum(lexical.references.items[0].binding)].name));
-    try std.testing.expectEqualStrings("y", lexical.text(lexical.bindings.items[@intFromEnum(lexical.references.items[1].binding)].name));
+    try std.testing.expectEqualStrings("x", graph.text(lexical.references.items[0].name));
+    try std.testing.expectEqualStrings("y", graph.text(lexical.references.items[1].name));
+    try std.testing.expectEqualStrings("x", graph.text(lexical.bindings.items[@intFromEnum(lexical.references.items[0].binding)].name));
+    try std.testing.expectEqualStrings("y", graph.text(lexical.bindings.items[@intFromEnum(lexical.references.items[1].binding)].name));
     var pending_field = false;
     for (lexical.deferred_nodes.items) |node| {
         if (tree.tag(node) == .struct_field_access) pending_field = true;
