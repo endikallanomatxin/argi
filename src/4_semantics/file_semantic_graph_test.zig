@@ -83,7 +83,7 @@ test "file semantic graph owns declaration names after source and syntax release
 
 test "file semantic graph does not depend on SourceDb file identity" {
     const allocator = std.testing.allocator;
-    const source_text = "value := 1\nrun() -> () := {}\n";
+    const source_text = "value := 1\nrun(.value: Int32) -> () := {}\n";
     const first_source = try allocator.dupe(u8, source_text);
     const second_source = try allocator.dupe(u8, source_text);
     var first_tree = try parseSource(allocator, first_source, @enumFromInt(0));
@@ -100,6 +100,9 @@ test "file semantic graph does not depend on SourceDb file identity" {
 
     try std.testing.expectEqual(first.declarations.items.len, second.declarations.items.len);
     try std.testing.expectEqualSlices(u8, first.strings.items, second.strings.items);
+    try std.testing.expectEqualDeep(first.type_references.items, second.type_references.items);
+    try std.testing.expectEqualDeep(first.lexical.bindings.items, second.lexical.bindings.items);
+    try std.testing.expectEqualDeep(first.lexical.references.items, second.lexical.references.items);
     for (first.declarations.items, second.declarations.items) |left, right| {
         try std.testing.expectEqual(left.kind, right.kind);
         try std.testing.expectEqual(left.name, right.name);
@@ -159,4 +162,21 @@ test "file semantic graph resolves lexical values but defers module-shaped acces
         if (tree.tag(node) == .struct_field_access) pending_field = true;
     }
     try std.testing.expect(pending_field);
+}
+
+test "file semantic graph owns unresolved qualified type references" {
+    const allocator = std.testing.allocator;
+    const source = try allocator.dupe(u8, "read(.point: geometry.Point) -> (.result: Int32) := {}\n");
+    var tree = try parseSource(allocator, source, @enumFromInt(1));
+    var graph = try graph_mod.semantizeFile(allocator, &tree, source);
+    defer graph.deinit(allocator);
+    tree.deinit(allocator);
+    allocator.free(source);
+    try std.testing.expectEqual(@as(usize, 2), graph.type_references.items.len);
+    const point = graph.type_references.items[0];
+    try std.testing.expectEqualStrings("Point", graph.text(point.name));
+    try std.testing.expectEqualStrings("geometry", graph.text(point.qualifier.?));
+    const result = graph.type_references.items[1];
+    try std.testing.expectEqualStrings("Int32", graph.text(result.name));
+    try std.testing.expectEqual(null, result.qualifier);
 }

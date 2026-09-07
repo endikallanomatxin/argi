@@ -3,11 +3,14 @@ const file_sema = @import("file_semantic_graph.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
 
 pub const GlobalDeclId = enum(u32) { _ };
+pub const GlobalExternalTypeRefId = enum(u32) { _ };
 
 pub const FileOffsets = struct {
     declaration_base: u32,
     declaration_count: u32,
     string_base: u32,
+    type_reference_base: u32,
+    type_reference_count: u32,
 };
 
 pub const Declaration = struct {
@@ -26,11 +29,13 @@ pub const MergedDeclarations = struct {
     declarations: std.ArrayList(Declaration) = .empty,
     strings: std.ArrayList(u8) = .empty,
     file_offsets: std.ArrayList(FileOffsets) = .empty,
+    type_references: std.ArrayList(file_sema.TypeReference) = .empty,
 
     pub fn deinit(self: *MergedDeclarations, allocator: std.mem.Allocator) void {
         self.declarations.deinit(allocator);
         self.strings.deinit(allocator);
         self.file_offsets.deinit(allocator);
+        self.type_references.deinit(allocator);
         self.* = .{};
     }
 
@@ -51,7 +56,30 @@ pub const MergedDeclarations = struct {
 
     pub fn storageBytes(self: *const MergedDeclarations) usize {
         return self.declarations.items.len * @sizeOf(Declaration) +
-            self.strings.items.len + self.file_offsets.items.len * @sizeOf(FileOffsets);
+            self.strings.items.len + self.file_offsets.items.len * @sizeOf(FileOffsets) +
+            self.type_references.items.len * @sizeOf(file_sema.TypeReference);
+    }
+
+    pub fn globalTypeRefId(self: *const MergedDeclarations, file_index: usize, local_id: file_sema.ExternalTypeRefId) GlobalExternalTypeRefId {
+        const offsets = self.file_offsets.items[file_index];
+        std.debug.assert(@intFromEnum(local_id) < offsets.type_reference_count);
+        return @enumFromInt(offsets.type_reference_base + @intFromEnum(local_id));
+    }
+
+    pub fn findTypeReference(self: *const MergedDeclarations, file_index: usize, node: syn.NodeIndex) ?file_sema.TypeReference {
+        const offsets = self.file_offsets.items[file_index];
+        var start: usize = offsets.type_reference_base;
+        var end = start + offsets.type_reference_count;
+        while (start < end) {
+            const middle = start + (end - start) / 2;
+            const reference = self.type_references.items[middle];
+            if (@intFromEnum(reference.syntax_node) < @intFromEnum(node)) {
+                start = middle + 1;
+            } else if (@intFromEnum(reference.syntax_node) > @intFromEnum(node)) {
+                end = middle;
+            } else return reference;
+        }
+        return null;
     }
 };
 
@@ -60,12 +88,15 @@ pub fn mergeFileGraphs(allocator: std.mem.Allocator, files: []const file_sema.Fi
     if (files.len > max_count) return error.MergedDeclarationsTooLarge;
     var declaration_count: usize = 0;
     var string_count: usize = 0;
+    var type_reference_count: usize = 0;
     for (files) |file| {
         if (file.declarations.items.len > max_count - declaration_count or
-            file.strings.items.len > max_count - string_count)
+            file.strings.items.len > max_count - string_count or
+            file.type_references.items.len > max_count - type_reference_count)
             return error.MergedDeclarationsTooLarge;
         declaration_count += file.declarations.items.len;
         string_count += file.strings.items.len;
+        type_reference_count += file.type_references.items.len;
     }
 
     var merged: MergedDeclarations = .{};
@@ -73,11 +104,14 @@ pub fn mergeFileGraphs(allocator: std.mem.Allocator, files: []const file_sema.Fi
     try merged.declarations.ensureTotalCapacity(allocator, declaration_count);
     try merged.strings.ensureTotalCapacity(allocator, string_count);
     try merged.file_offsets.ensureTotalCapacity(allocator, files.len);
+    try merged.type_references.ensureTotalCapacity(allocator, type_reference_count);
     for (files, 0..) |file, file_index| {
         const offsets: FileOffsets = .{
             .declaration_base = @intCast(merged.declarations.items.len),
             .declaration_count = @intCast(file.declarations.items.len),
             .string_base = @intCast(merged.strings.items.len),
+            .type_reference_base = @intCast(merged.type_references.items.len),
+            .type_reference_count = @intCast(file.type_references.items.len),
         };
         merged.file_offsets.appendAssumeCapacity(offsets);
         merged.strings.appendSliceAssumeCapacity(file.strings.items);
@@ -95,8 +129,27 @@ pub fn mergeFileGraphs(allocator: std.mem.Allocator, files: []const file_sema.Fi
                 .syntax_node = decl.syntax_node,
             });
         }
+        var previous_node: ?syn.NodeIndex = null;
+        for (file.type_references.items) |reference| {
+            if (previous_node) |previous| {
+                if (@intFromEnum(previous) >= @intFromEnum(reference.syntax_node)) return error.InvalidTypeReferenceOrder;
+            }
+            previous_node = reference.syntax_node;
+            merged.type_references.appendAssumeCapacity(.{
+                .name = try relocateTypeName(&file, reference.name, offsets.string_base),
+                .qualifier = if (reference.qualifier) |qualifier| try relocateTypeName(&file, qualifier, offsets.string_base) else null,
+                .source_offset = reference.source_offset,
+                .syntax_node = reference.syntax_node,
+            });
+        }
     }
     return merged;
+}
+
+fn relocateTypeName(file: *const file_sema.FileSemanticGraph, name: file_sema.StringRange, base: u32) !file_sema.StringRange {
+    if (name.start > file.strings.items.len or name.len > file.strings.items.len - name.start)
+        return error.InvalidTypeReferenceName;
+    return .{ .start = base + name.start, .len = name.len };
 }
 
 fn testFile(allocator: std.mem.Allocator, name: []const u8) !file_sema.FileSemanticGraph {
@@ -168,4 +221,50 @@ test "merge rejects invalid local string ranges" {
     defer file.deinit(allocator);
     file.declarations.items[0].name = .{ .start = std.math.maxInt(u32), .len = 1 };
     try std.testing.expectError(error.InvalidFileDeclarationName, mergeFileGraphs(allocator, &.{file}));
+}
+
+test "merge relocates external type references without selecting types" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, testMergeTypeReferences, .{});
+}
+
+fn testMergeTypeReferences(allocator: std.mem.Allocator) !void {
+    var file: file_sema.FileSemanticGraph = .{};
+    defer file.deinit(allocator);
+    try file.strings.appendSlice(allocator, "geometryPoint");
+    try file.type_references.append(allocator, .{
+        .name = .{ .start = 8, .len = 5 },
+        .qualifier = .{ .start = 0, .len = 8 },
+        .syntax_node = @enumFromInt(7),
+        .source_offset = 42,
+    });
+    var merged = try mergeFileGraphs(allocator, &.{ file, .{}, file });
+    defer merged.deinit(allocator);
+    file.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(merged.globalTypeRefId(0, @enumFromInt(0))));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(merged.globalTypeRefId(2, @enumFromInt(0))));
+    try std.testing.expectEqual(null, merged.findTypeReference(1, @enumFromInt(7)));
+    try std.testing.expectEqual(null, merged.findTypeReference(2, @enumFromInt(8)));
+    const reference = merged.findTypeReference(2, @enumFromInt(7)).?;
+    try std.testing.expectEqualStrings("Point", merged.text(reference.name));
+    try std.testing.expectEqualStrings("geometry", merged.text(reference.qualifier.?));
+    try std.testing.expectEqual(@as(u32, 21), reference.name.start);
+    try std.testing.expectEqual(@as(u32, 42), reference.source_offset);
+}
+
+test "merge rejects invalid type reference qualifiers and ordering" {
+    const allocator = std.testing.allocator;
+    var file: file_sema.FileSemanticGraph = .{};
+    defer file.deinit(allocator);
+    try file.strings.appendSlice(allocator, "Type");
+    const reference: file_sema.TypeReference = .{
+        .name = .{ .start = 0, .len = 4 },
+        .qualifier = .{ .start = 4, .len = 1 },
+        .source_offset = 0,
+        .syntax_node = @enumFromInt(0),
+    };
+    try file.type_references.append(allocator, reference);
+    try std.testing.expectError(error.InvalidTypeReferenceName, mergeFileGraphs(allocator, &.{file}));
+    file.type_references.items[0].qualifier = null;
+    try file.type_references.append(allocator, file.type_references.items[0]);
+    try std.testing.expectError(error.InvalidTypeReferenceOrder, mergeFileGraphs(allocator, &.{file}));
 }

@@ -10976,10 +10976,21 @@ pub const Semantizer = struct {
         s: *Scope,
         preserve_abstract: bool,
     ) SemErr!sg.Type {
-        const name = self.tokenText(owner, name_token);
+        if (self.declarations.findTypeReference(@intFromEnum(owner.file_id), owner.node)) |reference| {
+            return self.resolveTypeName(
+                self.declarations.text(reference.name),
+                if (reference.qualifier) |qualifier| self.declarations.text(qualifier) else null,
+                .{ .file = owner.file_id, .offset = reference.source_offset },
+                s,
+                preserve_abstract,
+            );
+        }
         const location = self.tokenLocation(owner, qualifier_token orelse name_token);
-        if (qualifier_token) |qualifier| {
-            const module_name = self.tokenText(owner, qualifier);
+        return self.resolveTypeName(self.tokenText(owner, name_token), if (qualifier_token) |qualifier| self.tokenText(owner, qualifier) else null, location, s, preserve_abstract);
+    }
+
+    fn resolveTypeName(self: *Semantizer, name: []const u8, qualifier: ?[]const u8, location: tok.Location, s: *Scope, preserve_abstract: bool) SemErr!sg.Type {
+        if (qualifier) |module_name| {
             const module_dir = s.lookupModuleAlias(module_name) orelse return error.UnknownType;
             const declaration = s.lookupTypeInModule(module_dir, name) orelse return error.UnknownType;
             if (!(try self.typeIsVisible(declaration, self.locationPath(location)))) {

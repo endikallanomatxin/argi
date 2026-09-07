@@ -221,7 +221,7 @@ fn printCompilerStats(
     printPhaseTimings(timings);
     printSemantizingTimings(pipeline.semantize_timings);
     std.debug.print("  file semantizing:      {d:.3} ms\n", .{@as(f64, @floatFromInt(pipeline.file_semantizing_ns)) / 1_000_000.0});
-    std.debug.print("  global declaration merge: {d:.3} ms\n", .{@as(f64, @floatFromInt(pipeline.global_merge_ns)) / 1_000_000.0});
+    std.debug.print("  global artifact merge: {d:.3} ms\n", .{@as(f64, @floatFromInt(pipeline.global_merge_ns)) / 1_000_000.0});
     std.debug.print("  safety checker:        {d:.3} ms\n", .{@as(f64, @floatFromInt(pipeline.safety_ns)) / 1_000_000.0});
 
     std.debug.print("Frontend\n", .{});
@@ -234,7 +234,7 @@ fn printCompilerStats(
     std.debug.print("  extra_data bytes: {d}\n", .{syntax_storage.extra_data_bytes});
     std.debug.print("  FileSyntaxTree total: {d}\n", .{syntax_storage.total()});
     std.debug.print("  FileSemanticGraph total: {d}\n", .{pipeline.fileSemanticStorageBytes()});
-    std.debug.print("  merged declaration bytes: {d}\n", .{pipeline.merged_declarations.storageBytes()});
+    std.debug.print("  merged declaration/reference bytes: {d}\n", .{pipeline.merged_declarations.storageBytes()});
     std.debug.print("  SG nodes:     {d}\n", .{pipeline.sg_node_count});
 
     std.debug.print("Types\n", .{});
