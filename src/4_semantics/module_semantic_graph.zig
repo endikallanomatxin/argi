@@ -3,13 +3,15 @@ const syn = @import("../3_syntax/syntax_tree.zig");
 const file_bindings = @import("file_bindings.zig");
 const lexical_tables = @import("global_lexical.zig");
 const semantic_strings = @import("semantic_strings.zig");
+const primitives = @import("semantic_primitives.zig");
+const module_entities = @import("module_semantic_entities.zig");
 const module_storage = @import("module_semantic_storage.zig");
 
-pub const ModuleDeclId = enum(u32) { _ };
+pub const ModuleDeclId = module_entities.ModuleDeclId;
 /// Module-local identity of an unresolved lookup.
 pub const ModuleTypeRefId = enum(u32) { _ };
-pub const ModuleTypeId = enum(u32) { _ };
-pub const ModuleFunctionId = enum(u32) { _ };
+pub const ModuleTypeId = module_entities.ModuleTypeId;
+pub const ModuleFunctionId = module_entities.ModuleFunctionId;
 pub const StringRange = semantic_strings.StringRange;
 pub const DeclarationRange = struct { start: u32, len: u32 };
 
@@ -37,7 +39,7 @@ pub const TypeReferenceResolution = union(enum) {
     external,
 };
 
-pub const BuiltinType = enum { Int8, Int16, Int32, Int64, UIntNative, UInt8, UInt16, UInt32, UInt64, Float16, Float32, Float64, Char, Bool, Void, Type, Any };
+pub const BuiltinType = primitives.BuiltinType;
 pub const ModuleType = union(enum) {
     builtin: BuiltinType,
     declared: ModuleDeclId,
@@ -64,15 +66,7 @@ pub const FunctionInterface = struct { declaration: ModuleDeclId, input: FieldRa
 pub const ChoiceVariant = struct { name: StringRange, qualifier: ?StringRange, payload_type: ?ModuleTypeId, source_offset: u32, module_file_index: u32 };
 pub const GenericTypeArgument = struct { name: StringRange, ty: ModuleTypeId };
 
-pub const DeclarationKind = enum {
-    binding,
-    import_alias,
-    abstract_type,
-    type,
-    choice_option,
-    function,
-    test_function,
-};
+pub const DeclarationKind = primitives.DeclarationKind;
 
 pub const Declaration = struct {
     kind: DeclarationKind,
