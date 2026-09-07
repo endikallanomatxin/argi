@@ -117,12 +117,16 @@ file around.
 - If you think some important information is missing from this guide, please
 add it. If you learn something non-obvious, document it here so future work is
 faster.
-- Compiler architecture and performance findings should not live only in commit
-  messages or temporary notes. When a round of compiler work changes the shape
-  of `tokenizing` / `syntaxing` / `semantizing` / `codegen`, or produces a
-  useful measured conclusion, document it close to the implementation with
-  comments in the relevant compiler source files. Use `description/*.md` for
-  language design, not compiler-internal architecture notes.
+- Compiler architecture findings should not live only in commit messages or
+  temporary notes. When compiler work changes the shape of `tokenizing` /
+  `syntaxing` / `semantizing` / `codegen`, document the design close to the
+  implementation with comments in the relevant compiler source files. Keep
+  measured performance results out of source comments; summarize them in the
+  relevant commit body as before/after deltas measured in the same environment,
+  including enough context to interpret the comparison. Avoid standalone
+  absolute timings that primarily describe the measurement device.
+  Use `description/*.md` for language design, not compiler-internal architecture
+  notes.
 
 - Treat `plan/*.md` as active planning documents. If you notice they are
   outdated while doing relevant work, update them so they remain useful as
