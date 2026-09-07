@@ -15,6 +15,7 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.symbol_declarations.items) |id| try require(verify.idFits(id, graph.declarations.items.len));
 
     for (graph.types.items) |value| try payload.semanticType(graph_mod.Ids, value, bounds);
+    try verifyGenericInstances(graph);
     for (graph.fields.items) |value| try payload.field(graph_mod.Ids, value, bounds);
     for (graph.variants.items) |value| try payload.variant(graph_mod.Ids, value, bounds);
     for (graph.generic_arguments.items) |value| try payload.genericArgument(graph_mod.Ids, value, bounds);
@@ -44,6 +45,28 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.function_refs.items) |id| try require(verify.idFits(id, graph.functions.items.len));
     for (graph.virtual_registry_refs.items) |id| try require(verify.idFits(id, graph.virtual_registries.items.len));
     for (graph.roots.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
+}
+
+fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
+    var generic_count: usize = 0;
+    for (graph.types.items) |ty| switch (ty) {
+        .generic => generic_count += 1,
+        else => {},
+    };
+    try require(generic_count == graph.generic_instances.items.len);
+
+    for (graph.generic_instances.items, 0..) |instance, index| {
+        try require(verify.idFits(instance.type_id, graph.types.items.len));
+        try require(graph.types.items[@intFromEnum(instance.type_id)] == .generic);
+        for (graph.generic_instances.items[0..index]) |previous|
+            try require(previous.type_id != instance.type_id);
+        switch (instance.shape) {
+            .structure => |shape| try require(verify.rangeFits(shape.fields, graph.fields.items.len)),
+            .choice => |shape| try require(verify.rangeFits(shape.variants, graph.variants.items.len)),
+            .array => |shape| try require(verify.idFits(shape.element, graph.types.items.len)),
+            .alias => |target| try require(verify.idFits(target, graph.types.items.len)),
+        }
+    }
 }
 
 fn verifyModulePartitions(graph: *const graph_mod.GlobalSemanticGraph) !void {
