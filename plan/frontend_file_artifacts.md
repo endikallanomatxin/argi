@@ -491,6 +491,8 @@ into transient source buffers.
 - [x] Discover lexical scopes and binding identities in ordinary functions,
   with owned spellings, external name references and explicit deferred syntax.
 - [ ] Lower generic template bindings and complete contextual reference handling.
+- [x] Own symbolic named-type references (including module qualifiers), relocate
+  them during merge and use them in global named-type resolution.
 - [ ] Lower complete expressions, types and pending global operations without
   requiring the syntax tree during globalization.
 - [x] Flatten declaration tables and relocate declaration IDs and owned names

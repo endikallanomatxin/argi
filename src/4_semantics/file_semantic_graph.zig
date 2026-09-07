@@ -3,7 +3,17 @@ const syn = @import("../3_syntax/syntax_tree.zig");
 const file_bindings = @import("file_bindings.zig");
 
 pub const FileDeclId = enum(u32) { _ };
+pub const ExternalTypeRefId = enum(u32) { _ };
 pub const StringRange = struct { start: u32, len: u32 };
+
+/// A type lookup requirement, not a selected declaration or canonical type.
+/// Even a name declared in this file may participate in global resolution.
+pub const TypeReference = struct {
+    name: StringRange,
+    qualifier: ?StringRange,
+    source_offset: u32,
+    syntax_node: syn.NodeIndex,
+};
 
 pub const DeclarationKind = enum {
     binding,
@@ -34,11 +44,13 @@ pub const FileSemanticGraph = struct {
     declarations: std.ArrayList(Declaration) = .empty,
     strings: std.ArrayList(u8) = .empty,
     lexical: file_bindings.FileBindings = .{},
+    type_references: std.ArrayList(TypeReference) = .empty,
 
     pub fn deinit(self: *FileSemanticGraph, allocator: std.mem.Allocator) void {
         self.declarations.deinit(allocator);
         self.strings.deinit(allocator);
         self.lexical.deinit(allocator);
+        self.type_references.deinit(allocator);
         self.* = .{};
     }
 
@@ -51,7 +63,16 @@ pub const FileSemanticGraph = struct {
     }
 
     pub fn storageBytes(self: *const FileSemanticGraph) usize {
-        return self.declarations.items.len * @sizeOf(Declaration) + self.strings.items.len + self.lexical.storageBytes();
+        return self.declarations.items.len * @sizeOf(Declaration) + self.strings.items.len + self.lexical.storageBytes() +
+            self.type_references.items.len * @sizeOf(TypeReference);
+    }
+
+    fn addString(self: *FileSemanticGraph, allocator: std.mem.Allocator, value: []const u8) !StringRange {
+        if (value.len > std.math.maxInt(u32) or self.strings.items.len > std.math.maxInt(u32) - value.len)
+            return error.FileSemanticGraphTooLarge;
+        const range: StringRange = .{ .start = @intCast(self.strings.items.len), .len = @intCast(value.len) };
+        try self.strings.appendSlice(allocator, value);
+        return range;
     }
 };
 
@@ -94,14 +115,31 @@ pub fn semantizeFile(allocator: std.mem.Allocator, tree: *const syn.FileSyntaxTr
             }
         else
             tree.tokenTextFromSource(source, name_token);
-        if (name.len > std.math.maxInt(u32) or graph.strings.items.len > std.math.maxInt(u32) - name.len or graph.declarations.items.len >= std.math.maxInt(u32))
+        if (graph.declarations.items.len >= std.math.maxInt(u32))
             return error.FileSemanticGraphTooLarge;
-        const range: StringRange = .{ .start = @intCast(graph.strings.items.len), .len = @intCast(name.len) };
-        try graph.strings.appendSlice(allocator, name);
+        const range = try graph.addString(allocator, name);
         try graph.declarations.append(allocator, .{
             .kind = kind,
             .name = range,
             .source_offset = tree.location(node).offset,
+            .syntax_node = node,
+        });
+    }
+    // Syntax-node order permits binary lookup during the global consumer
+    // migration without retaining a dense map for every expression node.
+    for (tree.nodes.items(.tag), 0..) |tag, index| {
+        if (tag != .type_name) continue;
+        const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(index)));
+        const name = tree.syntaxType(node).?.name;
+        const spelling = try graph.addString(allocator, tree.tokenTextFromSource(source, name.name_token));
+        const qualifier = if (name.qualifier_token) |token|
+            try graph.addString(allocator, tree.tokenTextFromSource(source, token))
+        else
+            null;
+        try graph.type_references.append(allocator, .{
+            .name = spelling,
+            .qualifier = qualifier,
+            .source_offset = tree.tokenLocation(name.qualifier_token orelse name.name_token).offset,
             .syntax_node = node,
         });
     }
