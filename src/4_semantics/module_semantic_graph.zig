@@ -444,8 +444,9 @@ fn lowerGenericType(
     const base = tree.syntaxType(generic.base) orelse return null;
     if (base != .name or base.name.qualifier_token != null) return null;
     const base_name = tree.tokenTextFromSource(source, base.name.name_token);
-    if (std.mem.eql(u8, base_name, "choice_union") or std.mem.eql(u8, base_name, "Array") or std.mem.eql(u8, base_name, "Virtual")) return null;
     const literal = tree.structTypeLiteral(generic.arguments) orelse return null;
+    if (std.mem.eql(u8, base_name, "Array")) return lowerArrayGeneric(allocator, graph, tree, source, module_file_index, literal);
+    if (std.mem.eql(u8, base_name, "choice_union") or std.mem.eql(u8, base_name, "Virtual")) return null;
     const reference = findTypeReference(graph, module_file_index, generic.base) orelse return null;
     const declaration_id = switch (reference.resolution) {
         .module => |id| id,
@@ -483,6 +484,33 @@ fn lowerGenericType(
     graph.generic_type_arguments.shrinkRetainingCapacity(argument_start);
     graph.types.shrinkRetainingCapacity(type_start);
     return null;
+}
+
+fn lowerArrayGeneric(
+    allocator: std.mem.Allocator,
+    graph: *ModuleSemanticGraph,
+    tree: *const syn.FileSyntaxTree,
+    source: []const u8,
+    module_file_index: u32,
+    literal: syn.StructTypeLiteral,
+) semantic_strings.Error!?ModuleTypeId {
+    if (literal.fields.len != 2) return null;
+    var length: ?u64 = null;
+    var element_node: ?syn.NodeIndex = null;
+    for (literal.fields) |field_node| {
+        const field = tree.structTypeField(field_node) orelse return null;
+        const name = tree.tokenTextFromSource(source, field.name_token);
+        if (std.mem.eql(u8, name, "n")) {
+            if (length != null or field.type_node != null) return null;
+            const value = field.default_value orelse return null;
+            length = std.fmt.parseInt(u64, tree.tokenTextFromSource(source, tree.mainToken(value)), 0) catch return null;
+        } else if (std.mem.eql(u8, name, "t")) {
+            if (element_node != null or field.default_value != null) return null;
+            element_node = field.type_node orelse return null;
+        } else return null;
+    }
+    const element = try lowerType(allocator, graph, tree, source, module_file_index, element_node orelse return null) orelse return null;
+    return try appendType(allocator, graph, .{ .array = .{ .length = length orelse return null, .element = element } });
 }
 
 fn lowerStructuralChoiceType(

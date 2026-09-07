@@ -139,6 +139,20 @@ test "module callable interfaces intern pointer and array types" {
     try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(pointer.child)].builtin);
 }
 
+test "module callable interfaces lower literal Array generic types" {
+    const allocator = std.testing.allocator;
+    const source = "consume(.values: Array#(.n = 3, .t: Int32)) -> () := {}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var graph = try module_graph.build(allocator, "generic_arrays", &.{.{ .path = "generic_arrays/main.rg", .tree = &tree, .source = source }});
+    defer graph.deinit(allocator);
+
+    const interface = graph.functions.items[0];
+    const array = graph.types.items[@intFromEnum(graph.fields.items[interface.input.start].ty)].array;
+    try std.testing.expectEqual(@as(u64, 3), array.length);
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(array.element)].builtin);
+}
+
 test "module callable interfaces preserve nullable types" {
     const allocator = std.testing.allocator;
     const source = "find(.fallback: ?Int32) -> (.result: ?Int32) := { result = fallback }\n";
