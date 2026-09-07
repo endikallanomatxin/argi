@@ -5,24 +5,9 @@ const verify = @import("semantic_verify.zig");
 
 pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     const bounds = makeBounds(graph);
+    try verifyModulePartitions(graph);
 
-    for (graph.modules.items) |module| {
-        try require(verify.stringFits(module.dir, graph.strings.items));
-        try require(verify.rangeFits(module.files, graph.files.items.len));
-        try require(verify.rangeFits(module.declarations, graph.declarations.items.len));
-    }
-    for (graph.files.items) |file| {
-        try require(verify.idFits(file.module, graph.modules.items.len));
-        try require(verify.stringFits(file.path, graph.strings.items));
-    }
-    for (graph.declarations.items) |decl| {
-        try require(verify.stringFits(decl.name, graph.strings.items));
-        try require(verify.sourceFits(decl.source, graph.files.items.len));
-        try require(verify.optionalIdFits(decl.type_id, graph.types.items.len));
-        try require(verify.optionalIdFits(decl.function_id, graph.functions.items.len));
-        if (decl.struct_fields) |range| try require(verify.rangeFits(range, graph.fields.items.len));
-        if (decl.choice_variants) |range| try require(verify.rangeFits(range, graph.variants.items.len));
-    }
+    for (graph.declarations.items) |declaration| try payload.declaration(graph_mod.Ids, declaration, bounds);
     for (graph.symbols.items) |symbol| {
         try require(verify.stringFits(symbol.name, graph.strings.items));
         try require(verify.rangeFits(symbol.declarations, graph.symbol_declarations.items.len));
@@ -59,6 +44,30 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.function_refs.items) |id| try require(verify.idFits(id, graph.functions.items.len));
     for (graph.virtual_registry_refs.items) |id| try require(verify.idFits(id, graph.virtual_registries.items.len));
     for (graph.roots.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
+}
+
+fn verifyModulePartitions(graph: *const graph_mod.GlobalSemanticGraph) !void {
+    var file_cursor: usize = 0;
+    var declaration_cursor: usize = 0;
+
+    for (graph.modules.items, 0..) |module, module_index| {
+        try require(verify.stringFits(module.dir, graph.strings.items));
+        try require(module.files.start == file_cursor);
+        try require(module.declarations.start == declaration_cursor);
+        try require(verify.rangeFits(module.files, graph.files.items.len));
+        try require(verify.rangeFits(module.declarations, graph.declarations.items.len));
+
+        for (graph.files.items[module.files.start..][0..module.files.len]) |file| {
+            try require(@intFromEnum(file.module) == module_index);
+            try require(verify.stringFits(file.path, graph.strings.items));
+        }
+
+        file_cursor += module.files.len;
+        declaration_cursor += module.declarations.len;
+    }
+
+    try require(file_cursor == graph.files.items.len);
+    try require(declaration_cursor == graph.declarations.items.len);
 }
 
 fn makeBounds(graph: *const graph_mod.GlobalSemanticGraph) payload.Bounds {
