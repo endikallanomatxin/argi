@@ -507,6 +507,8 @@ representation until their indexed migration is complete.
 - [ ] Lower generic template bindings and complete contextual reference handling.
 - [x] Own symbolic named-type references (including module qualifiers), relocate
   them during merge and use them in global named-type resolution.
+- [x] Own import paths at all lexical depths and relocate them during merge;
+  resolve module directories globally using those owned paths.
 - [ ] Lower complete expressions, types and pending global operations without
   requiring the syntax tree during globalization.
 - [x] Flatten declaration tables and relocate declaration IDs and owned names

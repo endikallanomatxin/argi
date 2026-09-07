@@ -113,7 +113,7 @@ test "file semantic graph does not depend on SourceDb file identity" {
 
 test "file semantic graph cleans up when declaration storage allocation fails" {
     const allocator = std.testing.allocator;
-    const source = "value := 1\nread(.x: Int32) -> (.result: Int32) := {\n y := x\n return y\n}\n";
+    const source = "dep := #import(\"./dep\")\nvalue := 1\nread(.x: Int32) -> (.result: Int32) := {\n y := x\n return y\n}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(1));
     defer tree.deinit(allocator);
     try std.testing.checkAllAllocationFailures(allocator, lowerWithAllocator, .{ &tree, source });
@@ -199,4 +199,17 @@ test "file semantic graph owns unresolved qualified type references" {
     const result = graph.type_references.items[1];
     try std.testing.expectEqualStrings("Int32", graph.text(result.name));
     try std.testing.expectEqual(null, result.qualifier);
+}
+
+test "file semantic graph owns import paths at module and function scope" {
+    const allocator = std.testing.allocator;
+    const source = try allocator.dupe(u8, "outer := #import(\"../outer\")\nrun() -> () := {\n inner := #import(\"./inner\")\n}\n");
+    var tree = try parseSource(allocator, source, @enumFromInt(1));
+    var graph = try graph_mod.semantizeFile(allocator, &tree, source);
+    defer graph.deinit(allocator);
+    tree.deinit(allocator);
+    allocator.free(source);
+    try std.testing.expectEqual(@as(usize, 2), graph.import_references.items.len);
+    try std.testing.expectEqualStrings("../outer", graph.text(graph.import_references.items[0].path));
+    try std.testing.expectEqualStrings("./inner", graph.text(graph.import_references.items[1].path));
 }
