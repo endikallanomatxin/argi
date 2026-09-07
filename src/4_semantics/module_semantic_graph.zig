@@ -446,7 +446,8 @@ fn lowerGenericType(
     const base_name = tree.tokenTextFromSource(source, base.name.name_token);
     const literal = tree.structTypeLiteral(generic.arguments) orelse return null;
     if (std.mem.eql(u8, base_name, "Array")) return lowerArrayGeneric(allocator, graph, tree, source, module_file_index, literal);
-    if (std.mem.eql(u8, base_name, "choice_union") or std.mem.eql(u8, base_name, "Virtual")) return null;
+    if (std.mem.eql(u8, base_name, "choice_union")) return lowerChoiceUnion(allocator, graph, tree, source, module_file_index, literal);
+    if (std.mem.eql(u8, base_name, "Virtual")) return null;
     const reference = findTypeReference(graph, module_file_index, generic.base) orelse return null;
     const declaration_id = switch (reference.resolution) {
         .module => |id| id,
@@ -484,6 +485,71 @@ fn lowerGenericType(
     graph.generic_type_arguments.shrinkRetainingCapacity(argument_start);
     graph.types.shrinkRetainingCapacity(type_start);
     return null;
+}
+
+fn lowerChoiceUnion(
+    allocator: std.mem.Allocator,
+    graph: *ModuleSemanticGraph,
+    tree: *const syn.FileSyntaxTree,
+    source: []const u8,
+    module_file_index: u32,
+    literal: syn.StructTypeLiteral,
+) semantic_strings.Error!?ModuleTypeId {
+    if (literal.fields.len != 2) return null;
+    var left_node: ?syn.NodeIndex = null;
+    var right_node: ?syn.NodeIndex = null;
+    for (literal.fields) |field_node| {
+        const field = tree.structTypeField(field_node) orelse return null;
+        if (field.default_value != null) return null;
+        const type_node = field.type_node orelse return null;
+        const name = tree.tokenTextFromSource(source, field.name_token);
+        if (std.mem.eql(u8, name, "a")) {
+            if (left_node != null) return null;
+            left_node = type_node;
+        } else if (std.mem.eql(u8, name, "b")) {
+            if (right_node != null) return null;
+            right_node = type_node;
+        } else return null;
+    }
+    const left = try lowerType(allocator, graph, tree, source, module_file_index, left_node orelse return null) orelse return null;
+    const right = try lowerType(allocator, graph, tree, source, module_file_index, right_node orelse return null) orelse return null;
+    var variants: std.ArrayList(ChoiceVariant) = .empty;
+    defer variants.deinit(allocator);
+    if (!try appendChoiceUnionVariants(allocator, graph, &variants, left)) return null;
+    if (!try appendChoiceUnionVariants(allocator, graph, &variants, right)) return null;
+    std.mem.sort(ChoiceVariant, variants.items, graph, struct {
+        fn lessThan(context: *ModuleSemanticGraph, lhs: ChoiceVariant, rhs: ChoiceVariant) bool {
+            return std.mem.order(u8, context.text(lhs.name), context.text(rhs.name)) == .lt;
+        }
+    }.lessThan);
+    const start = graph.structural_choice_variants.items.len;
+    try graph.structural_choice_variants.appendSlice(allocator, variants.items);
+    const id: ModuleTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+    try graph.types.append(allocator, .{ .structural_choice = .{ .start = @intCast(start), .len = @intCast(variants.items.len) } });
+    return id;
+}
+
+fn appendChoiceUnionVariants(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, result: *std.ArrayList(ChoiceVariant), type_id: ModuleTypeId) semantic_strings.Error!bool {
+    const source_variants = switch (graph.types.items[@intFromEnum(type_id)]) {
+        .declared => |declaration_id| blk: {
+            const range = graph.declaration(declaration_id).choice_variants orelse return false;
+            break :blk graph.choice_variant_entries.items[range.start..][0..range.len];
+        },
+        .structural_choice => |range| graph.structural_choice_variants.items[range.start..][0..range.len],
+        else => return false,
+    };
+    for (source_variants) |variant| {
+        if (variant.qualifier != null) return false;
+        var duplicate = false;
+        for (result.items) |existing| {
+            if (!std.mem.eql(u8, graph.text(existing.name), graph.text(variant.name))) continue;
+            if (existing.payload_type != variant.payload_type) return false;
+            duplicate = true;
+            break;
+        }
+        if (!duplicate) try result.append(allocator, variant);
+    }
+    return true;
 }
 
 fn lowerArrayGeneric(

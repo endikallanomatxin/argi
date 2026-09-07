@@ -570,7 +570,8 @@ the current `SourceDb` only when constructing the compatibility graph.
    interfaces made from names, builtins, pointers, arrays, nullable types and
    inferred errable types, anonymous structures without defaults and anonymous
    choices, type-only generic instantiations and literal-length `Array`
-   instantiations are now produced and consumed; richer type forms remain.
+   instantiations and resolvable `choice_union` combinations are now produced
+   and consumed; richer type forms remain.
 5. [ ] Lower lexical scopes, bindings, expressions and control flow directly to
    module IDs.
 6. [ ] Resolve cross-file references inside the same module. Unqualified named
