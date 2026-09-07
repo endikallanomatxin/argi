@@ -2,6 +2,7 @@ const std = @import("std");
 const entities = @import("module_semantic_entities.zig");
 const templates = @import("module_semantic_templates.zig");
 const primitives = @import("semantic_primitives.zig");
+const type_shapes = @import("semantic_type_shapes.zig");
 
 pub const Storage = struct {
     /// Set only after ModuleSema has emitted every semantic fact that depends
@@ -22,6 +23,10 @@ pub const Storage = struct {
     fields: std.ArrayList(entities.Field) = .empty,
     variants: std.ArrayList(entities.ChoiceVariant) = .empty,
     generic_arguments: std.ArrayList(entities.GenericArgument) = .empty,
+
+    /// Materialized layouts for resolved generic identities. A complete ModuleSG
+    /// has exactly one entry for every resolved SemanticType.generic.
+    generic_instances: std.ArrayList(type_shapes.GenericInstance(entities.Ids)) = .empty,
 
     /// External type slots form the final tail of the logical ModuleTypeId
     /// space, after compatibility types and canonical resolved types.
@@ -70,6 +75,7 @@ pub const Storage = struct {
         self.fields.deinit(allocator);
         self.variants.deinit(allocator);
         self.generic_arguments.deinit(allocator);
+        self.generic_instances.deinit(allocator);
         self.external_types.deinit(allocator);
         self.bindings.deinit(allocator);
         self.nodes.deinit(allocator);
@@ -112,6 +118,7 @@ pub const Storage = struct {
             self.fields.items.len * @sizeOf(entities.Field) +
             self.variants.items.len * @sizeOf(entities.ChoiceVariant) +
             self.generic_arguments.items.len * @sizeOf(entities.GenericArgument) +
+            self.generic_instances.items.len * @sizeOf(type_shapes.GenericInstance(entities.Ids)) +
             self.external_types.items.len * @sizeOf(entities.ExternalRefId) +
             self.bindings.items.len * @sizeOf(entities.Binding) +
             self.nodes.items.len * @sizeOf(entities.ModuleNode) +
