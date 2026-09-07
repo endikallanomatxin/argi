@@ -71,7 +71,7 @@ pub const Declaration = struct {
 };
 
 pub const FileOffsets = struct {
-    source_file_index: u32,
+    path: StringRange,
     declaration_base: u32,
     declaration_count: u32,
     type_reference_base: u32,
@@ -160,7 +160,7 @@ pub const ModuleSemanticGraph = struct {
 };
 
 pub const FileInput = struct {
-    file_index: u32,
+    path: []const u8,
     tree: *const syn.FileSyntaxTree,
     source: []const u8,
 };
@@ -185,7 +185,7 @@ pub const ModuleSemanticGraphBuilder = struct {
             const import_reference_base: u32 = @intCast(self.graph.import_references.items.len);
             try discoverFile(self.allocator, &self.graph, file, @intCast(module_file_index));
             self.graph.file_offsets.appendAssumeCapacity(.{
-                .source_file_index = file.file_index,
+                .path = try self.graph.addString(self.allocator, std.fs.path.basename(file.path)),
                 .declaration_base = declaration_base,
                 .declaration_count = @intCast(self.graph.declarations.items.len - declaration_base),
                 .type_reference_base = type_reference_base,
@@ -277,8 +277,8 @@ fn buildFunctionInterfaces(allocator: std.mem.Allocator, graph: *ModuleSemanticG
             file_input.tree.functionDeclaration(declaration.syntax_node).?;
         if (function.generic_params.len != 0 or function.generic_params_struct != null) continue;
         const field_start = graph.fields.items.len;
-        if (!try appendFields(allocator, graph, file_input, function.input) or
-            !try appendFields(allocator, graph, file_input, function.output))
+        if (!try appendFields(allocator, graph, file_input, @intCast(declaration.module_file_index), function.input) or
+            !try appendFields(allocator, graph, file_input, @intCast(declaration.module_file_index), function.output))
         {
             graph.fields.shrinkRetainingCapacity(field_start);
             continue;
@@ -309,7 +309,7 @@ fn buildStructDefinitions(allocator: std.mem.Allocator, graph: *ModuleSemanticGr
         };
         if (type_declaration.generic_params.len != 0 or type_declaration.generic_params_struct != null or input.tree.tag(type_declaration.value) != .struct_type_literal) continue;
         const start = graph.fields.items.len;
-        if (!try appendFields(allocator, graph, input, type_declaration.value)) {
+        if (!try appendFields(allocator, graph, input, declaration.module_file_index, type_declaration.value)) {
             graph.fields.shrinkRetainingCapacity(start);
             continue;
         }
@@ -317,26 +317,26 @@ fn buildStructDefinitions(allocator: std.mem.Allocator, graph: *ModuleSemanticGr
     }
 }
 
-fn appendFields(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input: FileInput, struct_node: syn.NodeIndex) !bool {
+fn appendFields(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input: FileInput, module_file_index: u32, struct_node: syn.NodeIndex) !bool {
     const literal = input.tree.structTypeLiteral(struct_node) orelse return false;
     for (literal.fields) |field_node| {
         const field = input.tree.structTypeField(field_node) orelse return false;
         const type_node = field.type_node orelse return false;
-        const ty = try lowerType(allocator, graph, input.tree, input.source, input.file_index, type_node) orelse return false;
+        const ty = try lowerType(allocator, graph, input.tree, input.source, module_file_index, type_node) orelse return false;
         const name = if (field.inferred_result) "result" else input.tree.tokenTextFromSource(input.source, field.name_token);
         try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, name), .ty = ty, .source_offset = input.tree.tokenLocation(field.name_token).offset, .has_default = field.default_value != null });
     }
     return true;
 }
 
-fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *const syn.FileSyntaxTree, source: []const u8, source_file_index: u32, node: syn.NodeIndex) !?ModuleTypeId {
+fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *const syn.FileSyntaxTree, source: []const u8, module_file_index: u32, node: syn.NodeIndex) !?ModuleTypeId {
     const syntax_type = tree.syntaxType(node) orelse return null;
     return switch (syntax_type) {
         .name => |name| blk: {
             if (name.qualifier_token != null) break :blk null;
             const spelling = tree.tokenTextFromSource(source, name.name_token);
             if (builtinFromName(spelling)) |builtin| break :blk try appendType(allocator, graph, .{ .builtin = builtin });
-            const reference = findTypeReferenceForSourceFile(graph, source_file_index, node) orelse break :blk null;
+            const reference = findTypeReference(graph, module_file_index, node) orelse break :blk null;
             break :blk switch (reference.resolution) {
                 .builtin => |builtin| try appendType(allocator, graph, .{ .builtin = builtin }),
                 .module => reference.resolved_type,
@@ -344,12 +344,12 @@ fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *c
             };
         },
         .pointer => |pointer| blk: {
-            const child = try lowerType(allocator, graph, tree, source, source_file_index, pointer.child) orelse break :blk null;
+            const child = try lowerType(allocator, graph, tree, source, module_file_index, pointer.child) orelse break :blk null;
             break :blk try appendType(allocator, graph, .{ .pointer = .{ .child = child, .mutability = pointer.mutability } });
         },
         .array => |array| blk: {
             const length = std.fmt.parseInt(u64, tree.tokenTextFromSource(source, array.length_token), 0) catch break :blk null;
-            const element = try lowerType(allocator, graph, tree, source, source_file_index, array.element) orelse break :blk null;
+            const element = try lowerType(allocator, graph, tree, source, module_file_index, array.element) orelse break :blk null;
             break :blk try appendType(allocator, graph, .{ .array = .{ .length = length, .element = element } });
         },
         else => null,
@@ -376,11 +376,9 @@ fn moduleTypesEqual(lhs: ModuleType, rhs: ModuleType) bool {
     };
 }
 
-fn findTypeReferenceForSourceFile(graph: *const ModuleSemanticGraph, source_file_index: u32, node: syn.NodeIndex) ?TypeReference {
-    for (graph.file_offsets.items) |file| {
-        if (file.source_file_index != source_file_index) continue;
-        for (graph.type_references.items[file.type_reference_base..][0..file.type_reference_count]) |reference| if (reference.syntax_node == node) return reference;
-    }
+fn findTypeReference(graph: *const ModuleSemanticGraph, module_file_index: u32, node: syn.NodeIndex) ?TypeReference {
+    const file = graph.file_offsets.items[module_file_index];
+    for (graph.type_references.items[file.type_reference_base..][0..file.type_reference_count]) |reference| if (reference.syntax_node == node) return reference;
     return null;
 }
 

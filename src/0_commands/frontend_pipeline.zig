@@ -163,7 +163,7 @@ pub const FrontendPipeline = struct {
             for (groups.items) |*group| group.files.deinit(self.allocator);
             groups.deinit(self.allocator);
         }
-        for (self.syntax_files.items, 0..) |*file, file_index| {
+        for (self.syntax_files.items) |*file| {
             const source = self.source_db.get(file.file_id);
             const dir = std.fs.path.dirname(source.path) orelse ".";
             var group_index: ?usize = null;
@@ -176,7 +176,7 @@ pub const FrontendPipeline = struct {
                 group_index = groups.items.len - 1;
             }
             try groups.items[group_index.?].files.append(self.allocator, .{
-                .file_index = @intCast(file_index),
+                .path = source.path,
                 .tree = file,
                 .source = source.source,
             });
@@ -188,7 +188,7 @@ pub const FrontendPipeline = struct {
         }
         self.module_semantizing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - module_start);
         const merge_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-        self.global_builder = try global_semantic_graph_builder.mergeModuleGraphs(self.allocator, self.module_graphs.items, self.syntax_files.items.len);
+        self.global_builder = try global_semantic_graph_builder.mergeModuleGraphs(self.allocator, self.module_graphs.items, self.source_db);
         self.global_merge_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - merge_start);
         self.sg_node_count = 0;
         if (self.options.collect_stats) sg.beginNodeCounting(&self.sg_node_count);

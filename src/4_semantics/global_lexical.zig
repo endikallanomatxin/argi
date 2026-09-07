@@ -67,22 +67,22 @@ pub const LexicalTables = struct {
         self.file_offsets.appendAssumeCapacity(offsetsFor(local, scope_base, binding_base, @intCast(self.references.items.len - local.references.items.len), @intCast(self.deferred_nodes.items.len - local.deferred_nodes.items.len)));
     }
 
-    pub fn appendModule(self: *LexicalTables, allocator: std.mem.Allocator, strings: []const u8, module: *const LexicalTables, module_file_offsets: anytype, string_base: u32) !void {
+    pub fn appendModule(self: *LexicalTables, allocator: std.mem.Allocator, strings: []const u8, module: *const LexicalTables, source_file_indices: []const u32, string_base: u32) !void {
         const scope_base: u32 = @intCast(self.scopes.items.len);
         const binding_base: u32 = @intCast(self.bindings.items.len);
         const reference_base: u32 = @intCast(self.references.items.len);
         const deferred_base: u32 = @intCast(self.deferred_nodes.items.len);
         try self.ensureCapacity(allocator, module.scopes.items.len, module.bindings.items.len, module.references.items.len, module.deferred_nodes.items.len, module.file_offsets.items.len);
-        for (module.scopes.items) |scope| self.scopes.appendAssumeCapacity(.{ .parent = relocateSemanticScope(scope.parent, scope_base), .syntax = globalSyntax(scope.syntax, module_file_offsets) });
+        for (module.scopes.items) |scope| self.scopes.appendAssumeCapacity(.{ .parent = relocateSemanticScope(scope.parent, scope_base), .syntax = globalSyntax(scope.syntax, source_file_indices) });
         for (module.bindings.items) |binding| {
             try validateName(strings, binding.name);
-            self.bindings.appendAssumeCapacity(.{ .name = relocateName(binding.name, string_base), .scope = relocateSemanticScope(binding.scope, scope_base), .syntax = globalSyntax(binding.syntax, module_file_offsets), .source_offset = binding.source_offset, .kind = binding.kind });
+            self.bindings.appendAssumeCapacity(.{ .name = relocateName(binding.name, string_base), .scope = relocateSemanticScope(binding.scope, scope_base), .syntax = globalSyntax(binding.syntax, source_file_indices), .source_offset = binding.source_offset, .kind = binding.kind });
         }
         for (module.references.items) |reference| {
             try validateName(strings, reference.name);
-            self.references.appendAssumeCapacity(.{ .name = relocateName(reference.name, string_base), .scope = relocateSemanticScope(reference.scope, scope_base), .binding = relocateSemanticBinding(reference.binding, binding_base), .syntax = globalSyntax(reference.syntax, module_file_offsets), .source_offset = reference.source_offset, .kind = reference.kind });
+            self.references.appendAssumeCapacity(.{ .name = relocateName(reference.name, string_base), .scope = relocateSemanticScope(reference.scope, scope_base), .binding = relocateSemanticBinding(reference.binding, binding_base), .syntax = globalSyntax(reference.syntax, source_file_indices), .source_offset = reference.source_offset, .kind = reference.kind });
         }
-        for (module.deferred_nodes.items) |node| self.deferred_nodes.appendAssumeCapacity(globalSyntax(node, module_file_offsets));
+        for (module.deferred_nodes.items) |node| self.deferred_nodes.appendAssumeCapacity(globalSyntax(node, source_file_indices));
         for (module.file_offsets.items) |offsets| self.file_offsets.appendAssumeCapacity(.{
             .scope_base = scope_base + offsets.scope_base,
             .scope_count = offsets.scope_count,
@@ -126,6 +126,6 @@ fn relocateName(name: StringRange, base: u32) StringRange {
     return .{ .start = base + name.start, .len = name.len };
 }
 
-fn globalSyntax(syntax: SyntaxBridge, module_file_offsets: anytype) SyntaxBridge {
-    return .{ .file_index = module_file_offsets[syntax.file_index].source_file_index, .syntax_node = syntax.syntax_node };
+fn globalSyntax(syntax: SyntaxBridge, source_file_indices: []const u32) SyntaxBridge {
+    return .{ .file_index = source_file_indices[syntax.file_index], .syntax_node = syntax.syntax_node };
 }

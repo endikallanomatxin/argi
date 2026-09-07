@@ -539,6 +539,10 @@ are module-local provenance and are translated to invocation `FileId`s only by
 the temporary global compatibility bridge. No `FileSemanticGraph` artifact or
 file-to-global semantic merge remains.
 
+Module file provenance is now stored as module-owned direct-file paths rather
+than invocation `FileId`s. Globalization matches those stable identities against
+the current `SourceDb` only when constructing the compatibility graph.
+
 ## Implementation plan
 
 ### Phase 0 — pivot the current scaffolding (complete)

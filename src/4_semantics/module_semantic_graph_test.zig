@@ -29,8 +29,8 @@ test "module semantic graph owns declarations from all direct files" {
     var second = try parseSource(allocator, second_source, @enumFromInt(1));
     defer second.deinit(allocator);
     var graph = try module_graph.build(allocator, "geometry", &.{
-        .{ .file_index = 0, .tree = &first, .source = first_source },
-        .{ .file_index = 1, .tree = &second, .source = second_source },
+        .{ .path = "geometry/a.rg", .tree = &first, .source = first_source },
+        .{ .path = "geometry/b.rg", .tree = &second, .source = second_source },
     });
     defer graph.deinit(allocator);
 
@@ -64,7 +64,10 @@ test "module semantic graph owns declarations from all direct files" {
     try std.testing.expectEqual(@as(u32, 1), point_fields.len);
     try std.testing.expectEqualStrings("x", graph.text(graph.fields.items[point_fields.start].name));
 
-    var merged = try global_builder.mergeModuleGraphs(allocator, &.{graph}, 2);
+    const sources = [_]source_files.SourceFile{ .{ .path = "geometry/a.rg", .code = first_source }, .{ .path = "geometry/b.rg", .code = second_source } };
+    var db = try source_db.SourceDb.init(allocator, &sources);
+    defer db.deinit(allocator);
+    var merged = try global_builder.mergeModuleGraphs(allocator, &.{graph}, &db);
     defer merged.deinit(allocator);
     for (merged.type_references.items) |reference| {
         if (std.mem.eql(u8, merged.text(reference.name), "Point")) {
@@ -81,11 +84,14 @@ test "global builder consumes module graphs and preserves file provenance" {
     var second = try parseSource(allocator, source, @enumFromInt(1));
     defer second.deinit(allocator);
     var modules = [_]module_graph.ModuleSemanticGraph{
-        try module_graph.build(allocator, "one", &.{.{ .file_index = 0, .tree = &first, .source = source }}),
-        try module_graph.build(allocator, "two", &.{.{ .file_index = 1, .tree = &second, .source = source }}),
+        try module_graph.build(allocator, "one", &.{.{ .path = "one/main.rg", .tree = &first, .source = source }}),
+        try module_graph.build(allocator, "two", &.{.{ .path = "two/main.rg", .tree = &second, .source = source }}),
     };
     defer for (&modules) |*module| module.deinit(allocator);
-    var merged = try global_builder.mergeModuleGraphs(allocator, &modules, 2);
+    const sources = [_]source_files.SourceFile{ .{ .path = "one/main.rg", .code = source }, .{ .path = "two/main.rg", .code = source } };
+    var db = try source_db.SourceDb.init(allocator, &sources);
+    defer db.deinit(allocator);
+    var merged = try global_builder.mergeModuleGraphs(allocator, &modules, &db);
     defer merged.deinit(allocator);
 
     const second_id = merged.globalDeclId(1, @enumFromInt(0));
@@ -103,8 +109,8 @@ test "module symbol index retains overload candidates" {
     var second = try parseSource(allocator, second_source, @enumFromInt(1));
     defer second.deinit(allocator);
     var graph = try module_graph.build(allocator, "conversion", &.{
-        .{ .file_index = 0, .tree = &first, .source = first_source },
-        .{ .file_index = 1, .tree = &second, .source = second_source },
+        .{ .path = "conversion/a.rg", .tree = &first, .source = first_source },
+        .{ .path = "conversion/b.rg", .tree = &second, .source = second_source },
     });
     defer graph.deinit(allocator);
 
@@ -119,7 +125,7 @@ test "module callable interfaces intern pointer and array types" {
     const source = "consume(.first: [2]&Int32, .second: [2]&Int32) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var graph = try module_graph.build(allocator, "arrays", &.{.{ .file_index = 0, .tree = &tree, .source = source }});
+    var graph = try module_graph.build(allocator, "arrays", &.{.{ .path = "arrays/main.rg", .tree = &tree, .source = source }});
     defer graph.deinit(allocator);
 
     const interface = graph.functions.items[0];
@@ -138,7 +144,7 @@ test "module type references distinguish builtin and external requirements" {
     const source = "inspect(.local: Int32, .remote: dep.Value) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var graph = try module_graph.build(allocator, "consumer", &.{.{ .file_index = 0, .tree = &tree, .source = source }});
+    var graph = try module_graph.build(allocator, "consumer", &.{.{ .path = "consumer/main.rg", .tree = &tree, .source = source }});
     defer graph.deinit(allocator);
 
     var found_builtin = false;
@@ -156,4 +162,18 @@ test "module type references distinguish builtin and external requirements" {
     }
     try std.testing.expect(found_builtin and found_external);
     try std.testing.expectEqual(@as(usize, 0), graph.functions.items.len);
+}
+
+test "module semantic graph owns stable file provenance" {
+    const allocator = std.testing.allocator;
+    const source = "value := 1\n";
+    const path = try allocator.dupe(u8, "owned/main.rg");
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var graph = try module_graph.build(allocator, "owned", &.{.{ .path = path, .tree = &tree, .source = source }});
+    allocator.free(path);
+    defer graph.deinit(allocator);
+
+    try std.testing.expectEqualStrings("owned", graph.module_dir);
+    try std.testing.expectEqualStrings("main.rg", graph.text(graph.file_offsets.items[0].path));
 }
