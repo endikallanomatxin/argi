@@ -57,7 +57,10 @@ fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
 
     for (graph.generic_instances.items, 0..) |instance, index| {
         try require(verify.idFits(instance.type_id, graph.types.items.len));
-        try require(graph.types.items[@intFromEnum(instance.type_id)] == .generic);
+        switch (graph.types.items[@intFromEnum(instance.type_id)]) {
+            .generic => {},
+            else => return error.InvalidGlobalSemanticGraph,
+        }
         for (graph.generic_instances.items[0..index]) |previous|
             try require(previous.type_id != instance.type_id);
         switch (instance.shape) {
