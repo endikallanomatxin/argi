@@ -29,7 +29,7 @@ pub const GlobalType = union(enum) {
     inferred_errable: GlobalTypeId,
     structural: module_sema.FieldRange,
     structural_choice: module_sema.FieldRange,
-    generic: struct { base: module_sema.StringRange, arguments: module_sema.FieldRange },
+    generic: struct { base: GlobalDeclId, arguments: module_sema.FieldRange },
 };
 pub const Field = struct { name: module_sema.StringRange, ty: GlobalTypeId, source_offset: u32, has_default: bool };
 pub const FunctionInterface = struct { declaration: GlobalDeclId, input: module_sema.FieldRange, output: module_sema.FieldRange };
@@ -215,7 +215,7 @@ pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_s
             .structural => |range| .{ .structural = .{ .start = structural_field_base + range.start, .len = range.len } },
             .structural_choice => |range| .{ .structural_choice = .{ .start = structural_choice_variant_base + range.start, .len = range.len } },
             .generic => |generic| .{ .generic = .{
-                .base = try relocateName(module.strings.items, generic.base, string_base),
+                .base = @enumFromInt(declaration_base + @intFromEnum(generic.base)),
                 .arguments = .{ .start = generic_argument_base + generic.arguments.start, .len = generic.arguments.len },
             } },
         });
