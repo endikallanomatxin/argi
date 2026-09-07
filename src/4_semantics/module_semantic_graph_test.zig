@@ -52,6 +52,14 @@ test "module semantic graph owns declarations from all direct files" {
         }
     }
     try std.testing.expect(resolved_point);
+    try std.testing.expectEqual(@as(usize, 1), graph.functions.items.len);
+    const distance_interface = graph.functions.items[0];
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(distance_interface.declaration));
+    try std.testing.expectEqual(@as(u32, 1), distance_interface.input.len);
+    try std.testing.expectEqual(@as(u32, 0), distance_interface.output.len);
+    const point_field = graph.function_fields.items[distance_interface.input.start];
+    try std.testing.expectEqualStrings("point", graph.text(point_field.name));
+    try std.testing.expectEqual(module_graph.ModuleType{ .declared = @enumFromInt(0) }, graph.types.items[@intFromEnum(point_field.ty)]);
 
     var merged = try global_builder.mergeModuleGraphs(allocator, &.{graph}, 2);
     defer merged.deinit(allocator);
