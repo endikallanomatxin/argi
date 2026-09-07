@@ -77,6 +77,7 @@ pub const FunctionFlags = packed struct(u16) {
 
 pub const StructLayout = enum(u8) { regular, c_union };
 pub const ChoiceLayout = enum(u8) { regular, c_enum };
+pub const InferredChoiceKind = enum(u8) { errable, reasons };
 pub const LogicalOperator = enum(u8) { and_, or_ };
 
 pub const SourceRef = struct {
@@ -84,8 +85,28 @@ pub const SourceRef = struct {
     offset: u32,
 };
 
+/// Canonical declaration payload shared by ModuleSG and GlobalSG. Source
+/// provenance is graph-local; semantic references use the corresponding Ids
+/// namespace. Layout lives here for nominal types because `.declared` type IDs
+/// intentionally carry only nominal identity.
+pub fn Declaration(comptime Ids: type) type {
+    return struct {
+        kind: DeclarationKind,
+        name: StringRange,
+        source: SourceRef,
+        type_id: ?Ids.TypeId = null,
+        function_id: ?Ids.FunctionId = null,
+        struct_fields: ?Range(Ids.FieldId) = null,
+        choice_variants: ?Range(Ids.VariantId) = null,
+        generic_parameter_count: ?u32 = null,
+        struct_layout: StructLayout = .regular,
+        choice_layout: ChoiceLayout = .regular,
+    };
+}
+
 /// `Ids` is a namespace containing the graph-specific identity types. ModuleSG
-/// and GlobalSG instantiate the same semantic shapes with different enum IDs.
+/// and GlobalSG instantiate the same resolved semantic shapes with different
+/// enum IDs.
 pub fn SemanticType(comptime Ids: type) type {
     return union(enum) {
         builtin: BuiltinType,
@@ -94,6 +115,13 @@ pub fn SemanticType(comptime Ids: type) type {
         array: struct { length: u64, element: Ids.TypeId },
         nullable: Ids.TypeId,
         inferred_errable: Ids.TypeId,
+        /// Identity-bearing inferred choices are distinct from ordinary
+        /// structural choices even when their current variant sets match.
+        inferred_choice: struct {
+            identity: u32,
+            kind: InferredChoiceKind,
+            variants: Range(Ids.VariantId),
+        },
         structural: struct {
             fields: Range(Ids.FieldId),
             layout: StructLayout = .regular,
@@ -480,6 +508,15 @@ test "semantic primitives instantiate with isolated id namespaces" {
     const Ty = SemanticType(Ids);
     const pointer = Ty{ .pointer = .{ .child = @enumFromInt(3), .mutability = .constant } };
     try std.testing.expectEqual(@as(u32, 3), @intFromEnum(pointer.pointer.child));
+
+    const Decl = Declaration(Ids);
+    const decl = Decl{
+        .kind = .type,
+        .name = .{ .start = 0, .len = 1 },
+        .source = .{ .file_index = 0, .offset = 0 },
+        .struct_layout = .c_union,
+    };
+    try std.testing.expectEqual(StructLayout.c_union, decl.struct_layout);
 
     const SemanticNode = Node(Ids);
     const node = SemanticNode{
