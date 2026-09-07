@@ -3,6 +3,7 @@ const syn = @import("../3_syntax/syntax_tree.zig");
 const file_bindings = @import("file_bindings.zig");
 const lexical_tables = @import("global_lexical.zig");
 const semantic_strings = @import("semantic_strings.zig");
+const module_storage = @import("module_semantic_storage.zig");
 
 pub const ModuleDeclId = enum(u32) { _ };
 /// Module-local identity of an unresolved lookup.
@@ -103,8 +104,8 @@ pub const Symbol = struct {
 };
 
 /// Compact semantic storage owned by one module directory. Source-file indices
-/// and syntax nodes are provenance only; all semantic table identities are
-/// allocated in this module-wide storage.
+/// and syntax nodes in the compatibility tables are provenance only. Durable
+/// bodies and semantic identities live in `semantic` using Module* IDs.
 pub const ModuleSemanticGraph = struct {
     module_dir: []const u8 = "",
     declarations: std.ArrayList(Declaration) = .empty,
@@ -122,6 +123,7 @@ pub const ModuleSemanticGraph = struct {
     type_references: std.ArrayList(TypeReference) = .empty,
     import_references: std.ArrayList(ImportReference) = .empty,
     file_offsets: std.ArrayList(FileOffsets) = .empty,
+    semantic: module_storage.Storage = .{},
 
     pub fn deinit(self: *ModuleSemanticGraph, allocator: std.mem.Allocator) void {
         allocator.free(self.module_dir);
@@ -140,6 +142,7 @@ pub const ModuleSemanticGraph = struct {
         self.type_references.deinit(allocator);
         self.import_references.deinit(allocator);
         self.file_offsets.deinit(allocator);
+        self.semantic.deinit(allocator);
         self.* = .{};
     }
 
@@ -167,8 +170,7 @@ pub const ModuleSemanticGraph = struct {
     }
 
     pub fn storageBytes(self: *const ModuleSemanticGraph) usize {
-        var lexical_bytes: usize = 0;
-        lexical_bytes = self.lexical.storageBytes();
+        const lexical_bytes = self.lexical.storageBytes();
         return self.module_dir.len + self.declarations.items.len * @sizeOf(Declaration) +
             self.symbols.items.len * @sizeOf(Symbol) + self.symbol_declarations.items.len * @sizeOf(ModuleDeclId) +
             self.types.items.len * @sizeOf(ModuleType) + self.functions.items.len * @sizeOf(FunctionInterface) +
@@ -178,7 +180,8 @@ pub const ModuleSemanticGraph = struct {
             self.strings.items.len + lexical_bytes +
             self.type_references.items.len * @sizeOf(TypeReference) +
             self.import_references.items.len * @sizeOf(ImportReference) +
-            self.file_offsets.items.len * @sizeOf(FileOffsets);
+            self.file_offsets.items.len * @sizeOf(FileOffsets) +
+            self.semantic.storageBytes();
     }
 
     fn addString(self: *ModuleSemanticGraph, allocator: std.mem.Allocator, value: []const u8) !StringRange {
