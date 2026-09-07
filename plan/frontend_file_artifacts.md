@@ -492,6 +492,12 @@ store during construction; retained lexical tables own no separate strings.
 counterpart is `GlobalTypeRefId`; neither denotes a canonical resolved type or
 implies that the target declaration belongs to a different file.
 
+`GlobalSemanticGraphBuilder` owns provisional merged tables for globalization.
+It replaces the declaration-only scaffolding as more tables are introduced;
+it is internal build state, not another persistent artifact or a finalized
+`GlobalSemanticGraph`. Safety and Codegen still consume the legacy global
+representation until their indexed migration is complete.
+
 - [x] Define `FileTokenList` in tokenizing and retain `FileSyntaxTree` terminology.
 - [x] Discover top-level declarations once per file with dense declaration IDs,
   source offsets and owned names; feed that discovery into global predeclaration.
