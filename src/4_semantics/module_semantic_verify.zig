@@ -6,6 +6,7 @@ const payload = @import("semantic_payload_verify.zig");
 const verify = @import("semantic_verify.zig");
 
 pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
+    try requireLogicalDomainsFit(graph);
     const bounds = makeBounds(graph);
     try verifyFilePartitions(graph);
 
@@ -45,7 +46,7 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try payload.field(entities.Ids, try views.fieldView(graph, @enumFromInt(@as(u32, @intCast(index)))), bounds);
     for (0..views.variantCount(graph)) |index|
         try payload.variant(entities.Ids, try views.variantView(graph, @enumFromInt(@as(u32, @intCast(index)))), bounds);
-    for (graph.generic_type_arguments.items, 0..) |_, index|
+    for (0..views.genericArgumentCount(graph)) |index|
         try payload.genericArgument(entities.Ids, try views.genericArgumentView(graph, @enumFromInt(@as(u32, @intCast(index)))), bounds);
     for (graph.functions.items, 0..) |_, index|
         try payload.function(entities.Ids, try views.functionView(graph, @enumFromInt(@as(u32, @intCast(index)))), bounds);
@@ -97,6 +98,20 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (semantic.function_refs.items) |id| try require(verify.idFits(id, graph.functions.items.len));
     for (semantic.virtual_registry_refs.items) |id| try require(verify.idFits(id, semantic.virtual_registries.items.len));
     for (semantic.roots.items) |id| try require(verify.idFits(id, semantic.nodes.items.len));
+}
+
+fn requireLogicalDomainsFit(graph: *const graph_mod.ModuleSemanticGraph) !void {
+    const max = std.math.maxInt(u32);
+    try require(graph.declarations.items.len <= max);
+    try require(graph.functions.items.len <= max);
+    try require(graph.file_offsets.items.len <= max);
+    try require(views.typeCount(graph) <= max);
+    try require(views.fieldCount(graph) <= max);
+    try require(views.variantCount(graph) <= max);
+    try require(views.genericArgumentCount(graph) <= max);
+    try require(graph.semantic.nodes.items.len <= max);
+    try require(graph.semantic.bindings.items.len <= max);
+    try require(graph.semantic.blocks.items.len <= max);
 }
 
 fn verifyFilePartitions(graph: *const graph_mod.ModuleSemanticGraph) !void {
@@ -192,7 +207,7 @@ fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
         .blocks = semantic.blocks.items.len,
         .fields = views.fieldCount(graph),
         .variants = views.variantCount(graph),
-        .generic_arguments = graph.generic_type_arguments.items.len,
+        .generic_arguments = views.genericArgumentCount(graph),
         .value_fields = semantic.value_fields.items.len,
         .switch_cases = semantic.switch_cases.items.len,
         .switches = semantic.switches.items.len,
@@ -274,5 +289,14 @@ test "module verifier accepts a well formed external type hole" {
         .source = .{ .file_index = 0, .offset = 1 },
     });
     try graph.semantic.external_types.append(allocator, @enumFromInt(0));
+    try verifyModule(&graph);
+}
+
+test "module verifier accepts canonical generic argument tails" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
+    defer graph.deinit(allocator);
+    const name = try @import("semantic_strings.zig").append(&graph.strings, allocator, "n");
+    try graph.semantic.generic_arguments.append(allocator, .{ .name = name, .value = .{ .comptime_int = 4 } });
     try verifyModule(&graph);
 }
