@@ -799,13 +799,13 @@ pub const Semantizer = struct {
         const file = self.syntaxFile(node);
         const decl = file.symbolDeclaration(node.node).?;
         const value = decl.value orelse return;
-        const import = file.importStatement(value) orelse return;
+        const import = self.global_builder.findImportReference(@intFromEnum(node.file_id), value) orelse return;
         if (global.module_aliases.contains(name)) return;
         const resolved = source_files.resolveImportDir(
             self.allocator,
             self.io,
             self.locationPath(self.nodeLocation(node)),
-            self.tokenText(node, import.path_token),
+            self.global_builder.text(import.path),
         ) catch return;
         try global.module_aliases.put(name, resolved);
     }
@@ -2531,12 +2531,12 @@ pub const Semantizer = struct {
         const declaration = file.symbolDeclaration(node.node) orelse return error.InvalidType;
         const name = file.tokenText(&self.diags.source_db, declaration.name_token);
         const location = file.tokenLocation(declaration.name_token);
-        if (declaration.value) |value_node| if (file.importStatement(value_node)) |import| {
+        if (declaration.value) |value_node| if (self.global_builder.findImportReference(@intFromEnum(node.file_id), value_node)) |import| {
             const resolved = source_files.resolveImportDir(
                 self.allocator,
                 self.io,
                 self.locationPath(location),
-                file.tokenText(&self.diags.source_db, import.path_token),
+                self.global_builder.text(import.path),
             ) catch return error.Reported;
             if (!scope.module_aliases.contains(name)) try scope.module_aliases.put(name, resolved);
             return typ.makeTypeLiteral(self.allocator, location, .{ .builtin = .Any });

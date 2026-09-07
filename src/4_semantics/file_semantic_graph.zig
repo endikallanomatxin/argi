@@ -8,6 +8,13 @@ pub const FileDeclId = enum(u32) { _ };
 pub const FileTypeRefId = enum(u32) { _ };
 pub const StringRange = file_strings.StringRange;
 
+/// The spelling of an import is file-local; locating its module is global work.
+pub const ImportReference = struct {
+    path: StringRange,
+    source_offset: u32,
+    syntax_node: syn.NodeIndex,
+};
+
 /// A type lookup requirement, not a selected declaration or canonical type.
 /// Even a name declared in this file may participate in global resolution.
 pub const TypeReference = struct {
@@ -47,12 +54,14 @@ pub const FileSemanticGraph = struct {
     strings: std.ArrayList(u8) = .empty,
     lexical: file_bindings.FileBindings = .{},
     type_references: std.ArrayList(TypeReference) = .empty,
+    import_references: std.ArrayList(ImportReference) = .empty,
 
     pub fn deinit(self: *FileSemanticGraph, allocator: std.mem.Allocator) void {
         self.declarations.deinit(allocator);
         self.strings.deinit(allocator);
         self.lexical.deinit(allocator);
         self.type_references.deinit(allocator);
+        self.import_references.deinit(allocator);
         self.* = .{};
     }
 
@@ -66,7 +75,8 @@ pub const FileSemanticGraph = struct {
 
     pub fn storageBytes(self: *const FileSemanticGraph) usize {
         return self.declarations.items.len * @sizeOf(Declaration) + self.strings.items.len + self.lexical.storageBytes() +
-            self.type_references.items.len * @sizeOf(TypeReference);
+            self.type_references.items.len * @sizeOf(TypeReference) +
+            self.import_references.items.len * @sizeOf(ImportReference);
     }
 
     fn addString(self: *FileSemanticGraph, allocator: std.mem.Allocator, value: []const u8) !StringRange {
@@ -126,6 +136,16 @@ pub fn semantizeFile(allocator: std.mem.Allocator, tree: *const syn.FileSyntaxTr
     // Syntax-node order permits binary lookup during the global consumer
     // migration without retaining a dense map for every expression node.
     for (tree.nodes.items(.tag), 0..) |tag, index| {
+        if (tag == .import_statement) {
+            const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(index)));
+            const path_token = tree.importStatement(node).?.path_token;
+            const path = try graph.addString(allocator, tree.tokenTextFromSource(source, path_token));
+            try graph.import_references.append(allocator, .{
+                .path = path,
+                .source_offset = tree.tokenLocation(path_token).offset,
+                .syntax_node = node,
+            });
+        }
         if (tag != .type_name) continue;
         const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(index)));
         const name = tree.syntaxType(node).?.name;
