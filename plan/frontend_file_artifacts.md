@@ -488,7 +488,9 @@ into transient source buffers.
 - [x] Discover top-level declarations once per file with dense declaration IDs,
   source offsets and owned names; feed that discovery into global predeclaration.
 - [x] Measure file semantizing time and logical FileSG storage with `--stats`.
-- [ ] Lower lexical scopes, local bindings and explicit external references.
+- [x] Discover lexical scopes and binding identities in ordinary functions,
+  with owned spellings, external name references and explicit deferred syntax.
+- [ ] Lower generic template bindings and complete contextual reference handling.
 - [ ] Lower complete expressions, types and pending global operations without
   requiring the syntax tree during globalization.
 - [x] Flatten declaration tables and relocate declaration IDs and owned names
@@ -497,11 +499,16 @@ into transient source buffers.
 - [ ] Canonicalize global types and migrate resolution, Safety and Codegen to IDs.
 - [ ] Implement the persistent FileSG format and cache.
 
-The initial `FileSemanticGraph` owns declaration metadata but still has a local
+The initial `FileSemanticGraph` owns declaration and lexical metadata but still has a local
 syntax-node bridge for declaration structure and bodies. It must not be cached
 as a standalone semantic artifact until that dependency is removed. The global
 representation still contains pointers. This checklist records migration work,
 not completion of the architectural boundary below.
+
+Lexical tables are currently prepared for the global consumer migration; global
+body semantizing still performs its existing scope lookup. Generic templates and
+module-shaped field accesses are explicitly deferred, because generic value and
+module alias precedence prevent an unconditional local binding decision.
 
 ### Phase 1 — establish names and file-local semantic representation
 
