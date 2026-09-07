@@ -66,7 +66,8 @@ pub const FieldRange = primitives.Range(ModuleFieldId);
 pub const VariantRange = primitives.Range(ModuleVariantId);
 pub const GenericArgRange = primitives.Range(ModuleGenericArgId);
 
-pub const ModuleType = primitives.SemanticType(Ids);
+pub const ResolvedType = primitives.SemanticType(Ids);
+pub const Declaration = primitives.Declaration(Ids);
 pub const Field = primitives.Field(Ids);
 pub const ChoiceVariant = primitives.ChoiceVariant(Ids);
 pub const GenericArgument = primitives.GenericArgument(Ids);
@@ -88,6 +89,23 @@ pub const TestingExpectError = primitives.TestingExpectError(Ids);
 pub const ErrorPropagation = primitives.ErrorPropagation(Ids);
 pub const ErrorContext = primitives.ErrorContext(Ids);
 pub const ResolvedNode = primitives.Node(Ids);
+
+/// Module-local types may be fully resolved without consulting another module,
+/// or may preserve one symbolic imported type requirement. Composite resolved
+/// types can point at an external ModuleTypeId, so pointers/arrays/generics do
+/// not need separate unresolved variants of their own.
+pub const ModuleType = union(enum) {
+    resolved: ResolvedType,
+    external: ExternalRefId,
+};
+
+/// Sparse migration overlay for metadata that belongs in the canonical
+/// declaration but is not present in the compatibility declaration table yet.
+pub const DeclarationSemantic = struct {
+    declaration: ModuleDeclId,
+    struct_layout: primitives.StructLayout = .regular,
+    choice_layout: primitives.ChoiceLayout = .regular,
+};
 
 pub const FunctionSemantic = struct {
     function: ModuleFunctionId,
@@ -172,8 +190,9 @@ pub const ModuleNode = union(enum) {
 
 test "module semantic identities instantiate the shared schema" {
     const decl: ModuleDeclId = @enumFromInt(1);
-    const ty = ModuleType{ .declared = decl };
-    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(ty.declared));
+    const resolved = ResolvedType{ .declared = decl };
+    const ty = ModuleType{ .resolved = resolved };
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(ty.resolved.declared));
 
     const external = ExternalRef{
         .kind = .type,
@@ -183,10 +202,10 @@ test "module semantic identities instantiate the shared schema" {
     };
     try std.testing.expectEqual(ExternalKind.type, external.kind);
 
-    const resolved = ResolvedNode{
+    const node = ResolvedNode{
         .source = .{ .file_index = 0, .offset = 9 },
         .ty = null,
         .content = .{ .bool_literal = true },
     };
-    try std.testing.expect(resolved.content.bool_literal);
+    try std.testing.expect(node.content.bool_literal);
 }
