@@ -6049,6 +6049,11 @@ pub const Semantizer = struct {
                     else => return err,
                 };
             },
+            .inferred_errable => |child_id| try self.makeCompactInferredErrableTypeFromInner(
+                try self.materializeCompactType(child_id, scope),
+                scope,
+                null,
+            ),
         };
     }
 
@@ -10024,6 +10029,15 @@ pub const Semantizer = struct {
             try self.resolveSyntaxTypeWithSubstPreservingAbstracts(inner_ref, s, values)
         else
             try self.resolveSyntaxTypeWithMode(inner_ref, s, true, null);
+        return self.makeCompactInferredErrableTypeFromInner(inner, s, subst);
+    }
+
+    fn makeCompactInferredErrableTypeFromInner(
+        self: *Semantizer,
+        inner: sg.Type,
+        s: *Scope,
+        subst: ?*const GenericSubst,
+    ) SemErr!sg.Type {
         const reasons = try self.allocator.create(sg.ChoiceType);
         reasons.* = .{ .variants = &.{} };
         reasons.identity = .{ .inferred_choice = try self.nextInferredChoiceIdentity(.reasons) };
