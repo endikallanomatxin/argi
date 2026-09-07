@@ -40,6 +40,15 @@ fn require(ok: bool) !void {
     if (!ok) return error.InvalidSemanticGraphReference;
 }
 
+pub fn declaration(comptime Ids: type, value: primitives.Declaration(Ids), bounds: Bounds) !void {
+    try require(verify.stringFits(value.name, bounds.strings));
+    try require(verify.sourceFits(value.source, bounds.files));
+    try require(verify.optionalIdFits(value.type_id, bounds.types));
+    try require(verify.optionalIdFits(value.function_id, bounds.functions));
+    if (value.struct_fields) |range| try require(verify.rangeFits(range, bounds.fields));
+    if (value.choice_variants) |range| try require(verify.rangeFits(range, bounds.variants));
+}
+
 pub fn semanticType(comptime Ids: type, value: primitives.SemanticType(Ids), bounds: Bounds) !void {
     switch (value) {
         .builtin => {},
@@ -47,6 +56,7 @@ pub fn semanticType(comptime Ids: type, value: primitives.SemanticType(Ids), bou
         .pointer => |item| try require(verify.idFits(item.child, bounds.types)),
         .array => |item| try require(verify.idFits(item.element, bounds.types)),
         .nullable, .inferred_errable => |id| try require(verify.idFits(id, bounds.types)),
+        .inferred_choice => |item| try require(verify.rangeFits(item.variants, bounds.variants)),
         .structural => |item| try require(verify.rangeFits(item.fields, bounds.fields)),
         .structural_choice => |item| try require(verify.rangeFits(item.variants, bounds.variants)),
         .generic => |item| {
@@ -282,11 +292,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
             try require(verify.idFits(item.field_type, bounds.types));
             try require(verify.idFits(item.value, bounds.nodes));
         },
-        .binary_operation, .comparison => |item| {
-            try require(verify.idFits(item.left, bounds.nodes));
-            try require(verify.idFits(item.right, bounds.nodes));
-        },
-        .logical_operation => |item| {
+        .binary_operation, .comparison, .logical_operation => |item| {
             try require(verify.idFits(item.left, bounds.nodes));
             try require(verify.idFits(item.right, bounds.nodes));
         },
@@ -337,7 +343,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
     }
 }
 
-test "shared payload verifier accepts a self-contained literal node" {
+test "shared payload verifier covers declarations and inferred choices" {
     const Ids = struct {
         pub const DeclId = enum(u32) { _ };
         pub const TypeId = enum(u32) { _ };
@@ -364,6 +370,19 @@ test "shared payload verifier accepts a self-contained literal node" {
         pub const ErrorPropagationId = enum(u32) { _ };
         pub const ErrorContextId = enum(u32) { _ };
     };
+
+    try declaration(Ids, .{
+        .kind = .type,
+        .name = .{ .start = 0, .len = 1 },
+        .source = .{ .file_index = 0, .offset = 0 },
+    }, .{ .files = 1, .strings = "T" });
+
+    try semanticType(Ids, .{ .inferred_choice = .{
+        .identity = 3,
+        .kind = .reasons,
+        .variants = .{ .start = 0, .len = 0 },
+    } }, .{});
+
     const Node = primitives.Node(Ids);
     try node(Ids, Node{
         .source = .{ .file_index = 0, .offset = 0 },
