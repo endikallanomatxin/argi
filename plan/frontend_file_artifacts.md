@@ -1,651 +1,634 @@
-# Frontend file artifacts
+# Frontend file and module artifacts
 
 ## Goal
 
-Make the frontend naturally incremental across compiler invocations by giving each
-source file self-contained, compact artifacts and delaying only genuinely
-program-wide semantic work until the files are combined.
+Make the frontend naturally incremental across compiler invocations while using
+semantic boundaries that match the language rather than forcing semantic analysis
+to follow source-file boundaries.
 
-The target pipeline is:
+Argi has two different natural units:
+
+- a **source file** is the natural unit of tokenizing and parsing;
+- a **module directory** is the natural unit of semantic analysis.
+
+The target pipeline is therefore:
 
 ```text
 SourceFile
     ↓
 FileTokenList
     ↓
-FileSyntaxTree
-    ↓
-FileSemanticGraph
-    ↓
-GlobalSemanticGraph
-    ↓
-Safety
-    ↓
-Codegen
+FileSyntaxTree ────────────────┐
+                              │ all direct .rg files in one module
+FileSyntaxTree ────────────────┤
+                              ▼
+                     ModuleSemanticGraph
+                              │
+                              │ modules used by this compilation
+                              ▼
+                     GlobalSemanticGraph
+                              ↓
+                            Safety
+                              ↓
+                           Codegen
 ```
 
-The important architectural boundary is `FileSemanticGraph`:
-
-- everything up to and including it is file-local;
-- it can be persisted and reused independently for an unchanged file;
-- everything whose meaning can change when another file is added, removed, or
-  changed is deferred to globalization;
-- `GlobalSemanticGraph` is the fully linked semantic representation consumed by
-  later whole-program passes.
-
-This gives us a stronger cache boundary than syntax alone without requiring
-fine-grained incremental parsing or semantic invalidation as the first step.
-
-## Current state
-
-The compact frontend migration is complete enough that tokenizing and syntaxing
-already operate independently per source file. `FrontendPipeline` owns one
-compact syntax artifact per file and Semantizer consumes those compact syntax
-files directly.
-
-The artifact names have been introduced. `FileTokenList` is defined by the
-tokenizing layer and its columns are transferred into `FileSyntaxTree`.
-`GlobalSemanticGraph` names the existing global representation; it does not yet
-imply indexed storage. The ownership model still needs migration:
-
-- tokens are currently retained as part of `FileSyntaxTree`;
-- semantic analysis currently constructs one global, pointer-heavy
-  `GlobalSemanticGraph`/`SGNode` world;
-- semantic declarations, types, bindings, calls, scopes, and helper structures
-  are connected extensively through pointers and allocator-owned slices;
-- local and global semantic work are performed by the same Semantizer.
-
-The next work is therefore not another syntax migration. It is to establish the
-file/global semantic boundary and make semantic storage data-oriented and
-index-based.
-
-## Naming
-
-Use the following names consistently for the long-lived frontend artifacts:
+The intended persistent cache boundaries are:
 
 ```text
-FileTokenList
-FileSyntaxTree
-FileSemanticGraph
-GlobalSemanticGraph
+FileSyntaxTree          per source file
+ModuleSemanticGraph     per module directory
 ```
 
-`File*` means that the artifact's correctness depends only on that source file
-plus compiler/language configuration explicitly included in its cache key.
+`FileTokenList` remains a useful pipeline artifact, but does not necessarily need
+its own persistent cache. `FileSemanticGraph` is no longer an intended persistent
+artifact or semantic boundary.
 
-`GlobalSemanticGraph` means that cross-file names, types, calls, abstracts,
-generics, and other program-wide relationships have been resolved as required
-by later passes.
+## Why semantics should start at module scope
 
-Internal builders or temporary merge state do not need to become additional
-public artifact kinds. Conceptually:
+A file boundary is syntactic, but in Argi a directory is already a real semantic
+module boundary:
 
-```text
-globalize(file_graphs)
-    = mergeFileGraphs(file_graphs)
-    + resolveGlobalGraph()
-```
+- a module consists of the `.rg` files directly in one directory;
+- `#import` resolves another module directory;
+- module dependency order is already constructed from those imports;
+- declarations in different files of the same directory participate in the same
+  module world;
+- existing semantic lookup already distinguishes module-scoped resolution.
 
-## Fundamental `FileSemanticGraph` invariant
-
-A `FileSemanticGraph` must never contain a semantic decision whose correctness
-depends on the contents of another source file.
-
-This is stronger and safer than "do as much semantic work as possible".
-
-If changing another file could change the answer, `FileSema` must preserve an
-explicit unresolved/pending representation for `GlobalSema` instead.
-
-For example, this is safe to resolve in `FileSema`:
-
-```argi
-foo :: () -> Int32 {
-    x ::= 3
-    return x
-}
-```
-
-The file graph can know that the return refers to the local binding `x` and can
-represent that with a local binding/node index.
-
-By contrast, if a call, type, abstract implementation, destructor, copy
-operation, overload, or other operation may be affected by declarations in
-another file, the file graph records the semantic requirement but does not
-choose the global target yet.
-
-This invariant is what makes per-file semantic caching correct by construction.
-
-## File-local semantic work
-
-`FileSema` should lower syntax into a more semantic, compact representation and
-finish all work whose answer is guaranteed to be file-local.
-
-Likely responsibilities include:
-
-- top-level declaration discovery and file-local declaration identities;
-- lexical scopes and local binding identities;
-- references to parameters and local bindings;
-- local control-flow structure;
-- literals and operations whose meaning is intrinsically known;
-- structural information for declarations and type expressions;
-- generic parameter declarations and other local template structure;
-- source locations needed by later diagnostics;
-- module/import references in a compact form;
-- explicit external references;
-- explicit pending semantic operations that require global knowledge.
-
-The exact boundary should be refined as implementation proceeds, but the rule
-above is non-negotiable: a decision is file-local only if another file cannot
-change it.
-
-## What remains global
-
-`GlobalSema` handles work whose candidate set, identity, or result can depend on
-other files or on the program as a whole. This includes, where applicable:
-
-- external name and type resolution;
-- call/overload resolution;
-- cross-file field/type completion;
-- abstract implementation lookup and verification;
-- generic instantiation whose inputs or selected declaration are global;
-- `copy` and `deinit` selection;
-- inferred information that crosses declaration/file boundaries;
-- virtual method closure/registries;
-- reachability-dependent semantic work;
-- any other operation whose result could change when another visible
-  declaration changes.
-
-Safety remains after `GlobalSemanticGraph` for now. Incremental safety or
-fine-grained semantic invalidation is a separate future problem.
-
-## File-local identities
-
-`FileSemanticGraph` should use dense local indices rather than pointers.
-Conceptually:
-
-```text
-FileNodeId
-FileDeclId
-FileFunctionId
-FileTypeId
-FileBindingId
-ExternalRefId
-```
-
-The concrete set can evolve, but semantic relationships should be represented
-by integer IDs into compact tables rather than allocator addresses.
-
-A file graph can then look roughly like:
-
-```text
-FileSemanticGraph
-    nodes
-    declarations
-    functions
-    types
-    bindings
-    extra_data
-    external_refs
-    pending_global_ops
-```
-
-Storage should follow the same data-oriented principles as the compact syntax
-representation where useful: dense arrays, small tagged records, stable local
-indices, and side tables/`extra_data` for variable payloads.
-
-## Local versus external references
-
-References inside `FileSemanticGraph` should make the boundary explicit in the
-type system.
+Consequently, many useful semantic decisions are artificially deferred if each
+file must first produce an independently valid semantic graph.
 
 For example:
 
 ```text
-FileDeclRef =
-    local(FileDeclId)
-    external(ExternalRefId)
+geometry/
+    point.rg
+    distance.rg
 ```
 
-Similarly, where needed:
-
-```text
-FileTypeRef
-FileFunctionRef
-FileAbstractRef
+```argi
+-- point.rg
+Point :: struct {
+    x: Float64,
+    y: Float64,
+}
 ```
 
-may distinguish local and external identities.
+```argi
+-- distance.rg
+distance :: (a: Point, b: Point) -> Float64 {
+    ...
+}
+```
 
-Bindings that are lexically local do not need an external form.
+A file-semantic pass over `distance.rg` has to preserve `Point` as an unresolved
+lookup even though `Point` is part of the same semantic module. A module semantic
+pass can first discover declarations from both syntax trees and then resolve
+`Point` directly while semantizing `distance`.
 
-An external reference stores enough stable symbolic information for the global
-pass to resolve it, for example:
+This is both more useful and simpler than constructing a file graph, copying its
+names and IDs, relocating it, and only then doing the semantic work that required
+another file in the same module.
+
+## Parsing and semantic analysis are intentionally different granularities
+
+Do not conflate the unit of parsing with the unit of semantic analysis.
+
+Tokenizing and parsing remain independent per file:
 
 ```text
-ExternalRef #0
-    kind = type
+a.rg -> FileSyntaxTree A
+b.rg -> FileSyntaxTree B
+c.rg -> FileSyntaxTree C
+```
+
+The syntax trees do not need to be physically concatenated. ModuleSema receives a
+view over all file trees belonging to the module:
+
+```text
+ModuleSyntaxInputs {
+    files: []const FileSyntaxTree,
+}
+```
+
+Syntax references can continue carrying file provenance where necessary. Semantic
+identities created by ModuleSema, however, should be module identities rather than
+`{ file, local_id }` identities.
+
+Conceptually:
+
+```text
+ModuleDeclId
+ModuleFunctionId
+ModuleBindingId
+ModuleNodeId
+ModuleTypeId
+ModuleExternalRefId
+```
+
+A declaration remembers where it came from for diagnostics, but its semantic
+identity belongs to the module:
+
+```text
+ModuleFunctionId #21
+    source = { module_file = 2, byte_offset = 418 }
+```
+
+The source location is provenance, not semantic identity.
+
+## `ModuleSemanticGraph` invariant
+
+A `ModuleSemanticGraph` may contain only semantic decisions whose correctness is
+independent of the contents of other modules.
+
+This is the semantic cache invariant.
+
+If changing another module could change a decision, ModuleSema must represent the
+requirement explicitly for GlobalSema instead of choosing a final target.
+
+This permits aggressive resolution inside one module while keeping the module
+artifact independently cacheable.
+
+### Safe to finish in ModuleSema
+
+Where language rules permit it, ModuleSema can finish work such as:
+
+- declaration discovery across all files in the module;
+- module symbol-table construction;
+- lexical scopes and local binding identities;
+- references to parameters and local bindings;
+- cross-file references to declarations in the same module;
+- type declarations and type names defined in the same module;
+- function interfaces whose types are module-local or built in;
+- field lookup on known module-local types;
+- local control-flow lowering;
+- literals and intrinsically known operations;
+- generic/template structure defined by the module;
+- overload sets whose relevant candidate set is closed within the module;
+- abstract and implementation information that can be established without
+  consulting another module;
+- source provenance needed by later diagnostics.
+
+The exact set should follow language semantics, not a target percentage of work.
+The rule is simply: another module must not be able to invalidate the answer.
+
+### Must remain pending for GlobalSema
+
+ModuleSema preserves explicit unresolved requirements for work that depends on
+other modules or the whole program, including where applicable:
+
+- imported-module name and type resolution;
+- calls whose candidate set includes declarations from imported modules;
+- cross-module abstract implementation selection;
+- generic instantiation whose selected declaration or inputs are external;
+- `copy` / `deinit` selection when external candidates can affect the answer;
+- inferred information that crosses module boundaries;
+- virtual method closure/registries with external participants;
+- reachability-dependent program-wide work;
+- any other operation whose result could change when another module changes.
+
+These should be represented as semantic requirements, not as pointers into
+another module artifact.
+
+For example:
+
+```text
+ExternalTypeRef {
     module = "geometry"
     name = "Point"
-
-ExternalRef #1
-    kind = function
-    module = "geometry"
-    name = "distance"
-    resolution_inputs = ...
+}
 ```
 
-The representation should encode semantic lookup requirements, not pointers to
-objects owned by another file graph.
+or:
 
-A `FileSemanticGraph` must therefore never directly reference another
-`FileSemanticGraph`'s local IDs.
+```text
+PendingCall {
+    target = ExternalFunctionSetRef(...)
+    arguments = ...
+}
+```
+
+## Module semantic construction
+
+The first implementation should semantize one module directly from its
+`FileSyntaxTree`s rather than constructing `FileSemanticGraph`s first.
+
+A useful staged shape is:
+
+```text
+all FileSyntaxTrees in module
+        ↓
+1. discover all module declarations
+        ↓
+2. build module symbol indexes
+        ↓
+3. stabilize module types/support declarations
+        ↓
+4. semantize callable interfaces
+        ↓
+5. verify module-local abstract/template relationships where valid
+        ↓
+6. semantize function defaults and bodies
+        ↓
+7. emit explicit external refs / pending global operations
+        ↓
+ModuleSemanticGraph
+```
+
+This deliberately resembles the useful staging already present in the current
+Semantizer, but moves the first semantic world from program scope to module scope.
+
+### Direct construction, not file relocation
+
+The module builder should allocate semantic IDs directly in module storage.
+
+Instead of:
+
+```text
+file A Binding #0 ─┐
+                   ├─ relocate → module Binding #37
+file B Binding #0 ─┘
+```
+
+prefer:
+
+```text
+process file A -> ModuleBindingId #0 ...
+process file B -> ModuleBindingId #37 ...
+```
+
+This removes an otherwise unnecessary intermediate representation, string copy,
+ID relocation pass, and set of offset tables.
+
+The current file-local discovery helpers can still be reused internally where
+they are convenient, but their results should write into module-owned stores or
+short-lived builder scratch rather than becoming a long-lived FileSG artifact.
+
+## Compact semantic representation
+
+`ModuleSemanticGraph` should be compact and index-based. Do not reproduce the
+current pointer-heavy semantic graph in serializable form.
+
+Use a small number of semantic tables based on actual access patterns, for
+example:
+
+```text
+ModuleSemanticGraph
+    nodes
+    declarations
+    functions
+    bindings
+    blocks
+    types
+    external_refs
+    pending_global_ops
+    extra_data
+    strings
+    source_files / source provenance
+```
+
+The representation should use the same data-oriented principles that worked for
+the compact syntax tree, but not blindly force every semantic entity into one
+universal node format.
+
+A reasonable split is:
+
+- expression/statement nodes: compact tagged records with small fixed payloads
+  and `extra_data` for variable operands;
+- functions, bindings, declarations and other large semantic populations:
+  dedicated dense tables;
+- types: compact module-local type IDs, with canonicalization/interning where it
+  is semantically useful;
+- variable-length collections: ranges into shared side storage;
+- names: one module-owned string store, unless measurements justify a different
+  representation.
+
+Pointers between independently allocated semantic objects should not be part of
+the persistent representation.
 
 ## Building the global graph
 
-The initial design should favor a simple flatten-and-resolve strategy:
+The global boundary is now between modules, not files:
 
 ```text
-FileSG A ─┐
-FileSG B ─┼─→ merge + relocate
-FileSG C ─┘          ↓
-              provisional global state
+ModuleSG A ─┐
+ModuleSG B ─┼─→ globalize / link
+ModuleSG C ─┘         ↓
+                 resolve external refs
+                 resolve pending ops
                        ↓
-                 resolve pending
-                       ↓
-              GlobalSemanticGraph
+                GlobalSemanticGraph
 ```
 
-Do not initially keep the final graph as `[]FileSemanticGraph` with permanent
-`{ file, local_id }` references. A compact copy/relocation step should be cheap,
-and flattening lets Safety and Codegen use simple global IDs thereafter.
-
-### 1. Merge
-
-`mergeFileGraphs()` should be mostly mechanical, not semantic.
-
-For each file, compute base offsets for the flat global tables:
-
-```text
-                 node_base   decl_base   function_base
-A                    0           0             0
-B                   21           5             3
-C                   34           9             8
-```
-
-Then local identities relocate naturally:
-
-```text
-A FileNodeId(7) + node_base 0  → GlobalNodeId(7)
-B FileNodeId(7) + node_base 21 → GlobalNodeId(28)
-C FileNodeId(7) + node_base 34 → GlobalNodeId(41)
-```
-
-The implementation can be close to:
-
-```text
-allocate total storage
-copy/append file arrays
-relocate local IDs by their table base
-collect external references
-collect pending global operations
-```
-
-The expected cost is linear copying and integer fixups over compact arrays. We
-should measure it before considering schemes that avoid the copy.
-
-### 2. Canonicalize global types
-
-Types need special treatment. File-local type tables are useful while building
-`FileSemanticGraph`, but the final program should not retain duplicate canonical
-copies of equivalent global types.
+Globalization may still use a flatten-and-relocate strategy for compact module
+arrays if that is simplest. At this level the copy has semantic value because it
+crosses the real module boundary and gives Safety/Codegen simple global IDs.
 
 Conceptually:
 
 ```text
-A FileType #4 = Int32 ─┐
-B FileType #7 = Int32 ─┼→ GlobalType #0 = Int32
-C FileType #2 = Int32 ─┘
+ModuleDeclId     -> GlobalDeclId
+ModuleFunctionId -> GlobalFunctionId
+ModuleBindingId  -> GlobalBindingId
+ModuleNodeId     -> GlobalNodeId
+ModuleTypeId     -> GlobalTypeId
 ```
 
-During globalization, build a per-file type remap:
+Types may require canonicalization rather than a simple offset relocation. Start
+with the simplest correct representation and introduce interning where canonical
+identity is actually useful.
 
-```text
-(FileId, FileTypeId) -> GlobalTypeId
-```
+### Global symbol indexes
 
-and intern/canonicalize types into the global type store.
-
-This is analogous in spirit to Zig's `InternPool`: later global semantic nodes
-should refer to compact canonical type IDs rather than pointer identity.
-
-Not every semantic entity necessarily needs interning. Introduce it where
-canonical identity is useful, starting with types.
-
-### 3. Build global symbol indexes
-
-After declarations from all files are known, construct the indexes needed for
-program-wide lookup. These indexes should resolve stable symbolic requirements
-from `external_refs` to global declaration/function/type identities.
-
-The symbol index is global semantic infrastructure, not part of any individual
-file cache.
-
-### 4. Resolve external references
+GlobalSema builds the indexes required to resolve symbolic references exported by
+module artifacts. Normal downstream consumers should see resolved global IDs, not
+symbolic module references on hot paths.
 
 For example:
 
 ```text
-ExternalTypeRef("geometry::Point")
+ExternalTypeRef("geometry", "Point")
         ↓
-GlobalTypeId(74)
-
-ExternalFunctionRef("geometry::distance", ...)
-        ↓
-GlobalFunctionId(183)
+GlobalTypeId #74
 ```
 
-Once resolved, final global nodes should use direct global IDs:
+and:
 
 ```text
+PendingCall(...)
+        ↓
 Call {
-    callee = GlobalFunctionId(183)
+    callee = GlobalFunctionId #183
 }
 ```
 
-rather than retaining symbolic external references on hot downstream paths.
-
-### 5. Resolve pending global operations
-
-Some file-local nodes cannot be finalized merely by resolving one symbol.
-
-For example:
-
-```argi
-get_x :: (p: Point) -> Int32 {
-    return p.x
-}
-```
-
-If `Point` is external, `FileSema` may produce:
-
-```text
-UnresolvedFieldAccess {
-    value = FileNodeId(...)
-    field_name = "x"
-    receiver_type = ExternalTypeRef(...)
-}
-```
-
-After `Point` resolves globally, `GlobalSema` can replace/finalize it as:
-
-```text
-FieldAccess {
-    value = GlobalNodeId(...)
-    struct_type = GlobalTypeId(42)
-    field_index = 0
-    result_type = GlobalTypeId(0) // Int32
-}
-```
-
-The same model applies to calls, overloads, abstracts, copy/deinit lookup,
-generic instantiation, and other operations that require a global world.
-
-## `GlobalSemanticGraph`
-
-The finalized graph should also be compact and index-based.
-
-Conceptually:
-
-```text
-GlobalNodeId
-GlobalDeclId
-GlobalFunctionId
-GlobalTypeId
-GlobalBindingId
-```
-
-and flat stores such as:
-
-```text
-GlobalSemanticGraph
-    nodes
-    declarations
-    functions
-    types
-    bindings
-    extra_data
-    ...
-```
-
-The exact tables should follow actual access patterns rather than forcing every
-current pointer-owned struct into a one-to-one array. The migration is an
-opportunity to make the semantic representation data-oriented instead of
-serializing the existing pointer graph.
-
-A finalized `GlobalSemanticGraph` should not expose file-local IDs or unresolved
-external references to normal Safety/Codegen consumers.
+Safety remains after `GlobalSemanticGraph` for now. Incremental Safety and
+fine-grained semantic dependency invalidation are separate future work.
 
 ## Persistence and caching
 
-The primary persistent frontend cache target should eventually be
-`FileSemanticGraph`, because it subsumes the expensive file-local work before
-the global semantic pass.
+### File syntax cache
+
+A `FileSyntaxTree` is naturally independent and can be cached per source file.
+On a module cache miss after changing one source file:
 
 ```text
-source file
-    ↓ cache miss
-FileTokenList
-    ↓
-FileSyntaxTree
-    ↓
-FileSemanticGraph ──→ persistent cache
-
-cache hit ──────────→ FileSemanticGraph
+load FileST(a)
+parse b.rg
+load FileST(c)
+        ↓
+ModuleSema
 ```
 
-`FileTokenList` and `FileSyntaxTree` remain useful architectural artifacts and
-may also be cached where LSP or diagnostics benefit, but they do not need to be
-the primary compilation cache boundary once `FileSemanticGraph` exists.
+This preserves fine-grained reuse where file boundaries are genuinely natural.
 
-A file-semantic cache key must include everything allowed to affect
-`FileSemanticGraph`, at minimum:
+`FileTokenList` can remain part of `FileSyntaxTree` ownership as today. Do not add
+a separate persistent token cache unless measurements or LSP requirements justify
+it.
 
-- source identity/content fingerprint or equivalent validity metadata;
+### Module semantic cache
+
+`ModuleSemanticGraph` is the primary semantic cache target.
+
+```text
+module files
+    ↓ cache miss
+load/parse FileSyntaxTrees
+    ↓
+ModuleSema
+    ↓
+ModuleSemanticGraph ──→ persistent cache
+
+cache hit ─────────────→ ModuleSemanticGraph
+```
+
+If no file in a module has changed, a normal compilation should be able to load
+the cached ModuleSG without reading/tokenizing/parsing those sources merely to
+reconstruct semantic state.
+
+A ModuleSG cache key must include everything allowed to affect module-local
+semantics, at minimum:
+
+- the identity and content fingerprint of every direct `.rg` file in the module;
 - compiler/language semantic format version;
-- any compiler options that are permitted to change file-local semantics.
+- compiler options that can affect module-local semantics;
+- module layout/configuration inputs that are semantically relevant.
 
-It must not depend on arbitrary other files. If such a dependency appears, the
-FileSG invariant has been violated or the dependency belongs in `GlobalSema`.
+Adding, removing, renaming or changing a direct source file invalidates that
+module artifact.
 
-Bundled `core` is the first high-value consumer: release/compiler builds can
-ship or generate precomputed core `FileSemanticGraph` artifacts, avoiding
-source reads, tokenizing, parsing, and file-local semantizing for unchanged
-stdlib files during ordinary compilation.
+Imported modules do **not** belong in the basic V1 ModuleSG cache key if their
+contents are only represented as unresolved external requirements. This keeps the
+artifact independently cacheable.
 
-The first implementation does not need mmap or zero-copy persistence. A simple
-explicit binary format plus allocate/read is enough to validate the
-architecture and benchmark the win. Optimize loading only after measurements.
+### Future dependency-interface cache
+
+A later optimization can allow a more resolved module artifact to depend on
+stable semantic interfaces of imported modules:
+
+```text
+ModuleInterface(geometry) -> hash ABC
+```
+
+A dependent cache key could then include interface hashes rather than full
+implementation hashes. Changes to another module that preserve its interface
+would not invalidate dependent semantic work.
+
+Do not build this dependency-interface layer in the first implementation.
+
+### Why there is no persistent FileSG cache
+
+The current branch demonstrated that a FileSG can safely precompute declaration,
+lexical-binding, type-reference and import metadata. However, most valuable
+semantic work remains artificially pending until other files in the same module
+are visible.
+
+Persisting FileSG as another cache layer would therefore add:
+
+- another semantic representation;
+- another string/ownership boundary;
+- local IDs that later require relocation;
+- another serialization format and validity rule;
+- another merge pass;
+- duplicated semantic traversal during migration;
+- limited saved work compared with caching the complete ModuleSG.
+
+For V1, prefer the simpler model:
+
+```text
+FileSyntaxTree cache
+        ↓
+ModuleSemanticGraph cache
+```
+
+If future measurements show that rebuilding very large changed modules is a
+problem, solve that with real semantic dependency tracking at declaration or
+analysis-unit granularity rather than reinstating source files as an arbitrary
+semantic boundary.
 
 ## Source and diagnostics
 
-A persistent `FileSemanticGraph` must contain the semantic strings/identities
-needed by globalization without requiring the original source to be read on a
-cache hit.
+A persistent ModuleSG must not depend on runtime `FileId` values or slices into
+transient source buffers.
 
-Source text and/or `FileSyntaxTree` may still be loaded lazily when rich
-diagnostics, LSP operations, or source reconstruction require them. Do not make
-ordinary semantic cache hits read and parse source merely because diagnostic
-paths may need it later.
+Use module-local source provenance, for example:
 
-This should be designed explicitly rather than accidentally retaining slices
-into transient source buffers.
+```text
+ModuleFileId / ModuleFileIndex
+byte_offset
+```
+
+with a module-owned table mapping those file identities to stable relative paths
+or equivalent source identities.
+
+The source text or FileSyntaxTree may be loaded lazily when rich diagnostics,
+LSP operations or source reconstruction require it. Ordinary ModuleSG cache hits
+should not read and parse source only because a later error might need source
+text.
+
+## Current branch and migration direction
+
+The `compact-semantic-graph` branch currently contains useful exploratory work
+around `FileSemanticGraph` and a `GlobalSemanticGraphBuilder`:
+
+- frontend artifact naming (`FileTokenList`, `FileSyntaxTree`);
+- file-local declaration discovery;
+- lexical scope/binding/reference discovery;
+- owned shared string ranges;
+- symbolic type references;
+- import references;
+- file-local IDs;
+- flatten/relocation experiments for declarations and lexical tables;
+- integration of some pre-discovered information into the legacy Semantizer;
+- storage and timing instrumentation.
+
+This work was useful because it exposed the natural semantic boundary. It should
+now be treated as migration scaffolding, not as architecture to preserve.
+
+Do **not** continue investing in a persistent FileSG format or complete
+file-to-global relocation machinery.
+
+Reuse or adapt the algorithms that are still useful, but redirect them toward:
+
+```text
+[]FileSyntaxTree for one module
+        ↓
+ModuleSemanticGraphBuilder
+        ↓
+ModuleSemanticGraph
+```
+
+In particular:
+
+- declaration discovery should populate module declaration storage directly;
+- lexical scope and binding discovery should allocate module IDs directly;
+- type/import reference extraction should feed module resolution directly;
+- file provenance should remain available for diagnostics;
+- the current global flattening helpers can inform the eventual
+  ModuleSG-to-GlobalSG globalization layer, where relocation is actually useful.
+
+Do not preserve an intermediate FileSG merely to avoid deleting or reshaping code
+written during this investigation.
 
 ## Implementation plan
 
-### Migration progress
+### Phase 0 — pivot the current scaffolding
 
-All file-local declaration, type-reference and lexical names use the same
-`StringRange` into `FileSemanticGraph.strings`. Lexical builders borrow that
-store during construction; retained lexical tables own no separate strings.
+1. Keep `FileTokenList` and `FileSyntaxTree` as the per-file frontend artifacts.
+2. Introduce an explicit module grouping in the frontend pipeline: one module is
+   one directory and contains its direct `.rg` files.
+3. Introduce `ModuleSemanticGraph` / `ModuleSemanticGraphBuilder` terminology and
+   storage.
+4. Stop extending `FileSemanticGraph` as a persistent or complete semantic
+   artifact.
+5. Move/reuse file declaration, lexical, type-reference and import discovery so
+   it writes directly into module-owned builder state.
+6. Remove file-local relocation layers once their consumers have moved.
+7. Keep tests that describe language semantics and ownership guarantees; rewrite
+   tests that only exist to validate the obsolete file-to-global architecture.
 
-`FileTypeRefId` identifies an unresolved type lookup in one file. Its relocated
-counterpart is `GlobalTypeRefId`; neither denotes a canonical resolved type or
-implies that the target declaration belongs to a different file.
+### Phase 1 — direct module semantic analysis
 
-`GlobalSemanticGraphBuilder` owns provisional merged tables for globalization.
-It replaces the declaration-only scaffolding as more tables are introduced;
-it is internal build state, not another persistent artifact or a finalized
-`GlobalSemanticGraph`. Safety and Codegen still consume the legacy global
-representation until their indexed migration is complete.
+1. Give ModuleSema all `FileSyntaxTree`s belonging to one module.
+2. Discover all top-level declarations before resolving module semantics.
+3. Build module symbol indexes.
+4. Semantize module-local types and callable interfaces.
+5. Lower lexical scopes, bindings, expressions and control flow directly to
+   module IDs.
+6. Resolve cross-file references inside the same module.
+7. Emit explicit external-module references and pending global operations for
+   everything whose answer can depend on another module.
+8. Ensure ModuleSema does not need semantic state from imported modules to build
+   the basic cacheable ModuleSG.
 
-- [x] Define `FileTokenList` in tokenizing and retain `FileSyntaxTree` terminology.
-- [x] Discover top-level declarations once per file with dense declaration IDs,
-  source offsets and owned names; feed that discovery into global predeclaration.
-- [x] Measure file semantizing time and logical FileSG storage with `--stats`.
-- [x] Discover lexical scopes and binding identities in ordinary functions,
-  with owned spellings, external name references and explicit deferred syntax.
-- [ ] Lower generic template bindings and complete contextual reference handling.
-- [x] Own symbolic named-type references (including module qualifiers), relocate
-  them during merge and use them in global named-type resolution.
-- [x] Own import paths at all lexical depths and relocate them during merge;
-  resolve module directories globally using those owned paths.
-- [ ] Lower complete expressions, types and pending global operations without
-  requiring the syntax tree during globalization.
-- [x] Flatten declaration tables and relocate declaration IDs and owned names
-  before global predeclaration; measure merge cost separately.
-- [x] Flatten lexical scopes, bindings, references and deferred syntax bridges;
-  relocate their identities and names into the builder's shared global stores.
-- [ ] Flatten and relocate the remaining file tables into global storage.
-- [ ] Canonicalize global types and migrate resolution, Safety and Codegen to IDs.
-- [ ] Implement the persistent FileSG format and cache.
+### Phase 2 — compact `ModuleSemanticGraph`
 
-The initial `FileSemanticGraph` owns declaration and lexical metadata but still has a local
-syntax-node bridge for declaration structure and bodies. It must not be cached
-as a standalone semantic artifact until that dependency is removed. The global
-representation still contains pointers. This checklist records migration work,
-not completion of the architectural boundary below.
+1. Stabilize the semantic tables and ID taxonomy before optimizing layout.
+2. Convert hot/large tables to data-oriented compact storage as justified by
+   access patterns.
+3. Introduce module-local type IDs and canonicalization where needed.
+4. Eliminate raw semantic pointers and transient source slices from the
+   persistent representation.
+5. Measure ModuleSG build time, retained bytes and downstream traversal cost.
 
-Lexical tables are currently prepared for the global consumer migration; global
-body semantizing still performs its existing scope lookup. Generic templates and
-module-shaped field accesses are explicitly deferred, because generic value and
-module alias precedence prevent an unconditional local binding decision.
+### Phase 3 — module globalization
 
-### Phase 1 — establish names and file-local semantic representation
+1. Make `GlobalSemanticGraphBuilder` consume ModuleSGs rather than FileSGs.
+2. Flatten/relocate module semantic IDs into global IDs where appropriate.
+3. Canonicalize global types where simple relocation is insufficient.
+4. Build global symbol indexes.
+5. Resolve external module references.
+6. Resolve pending cross-module/program operations.
+7. Produce an indexed `GlobalSemanticGraph` for Safety and Codegen.
 
-1. Introduce the `FileTokenList` / `FileSyntaxTree` terminology and types where
-   it improves clarity without doing a gratuitous all-at-once rename.
-2. Design compact local semantic IDs and `FileSemanticGraph` storage.
-3. Split the existing Semantizer conceptually into file-local and global work.
-4. Lower one file at a time into `FileSemanticGraph`.
-5. Represent every cross-file dependency explicitly as an external reference or
-   pending global operation.
-6. Add invariants/tests proving one FileSG cannot directly reference another
-   file's local identities.
-
-### Phase 2 — globalization
-
-1. Implement `mergeFileGraphs()` with base offsets and local-ID relocation.
-2. Introduce canonical global type IDs/type interning.
-3. Build global symbol indexes.
-4. Resolve external references.
-5. Resolve pending global semantic operations.
-6. Produce the index-based `GlobalSemanticGraph` expected by Safety and Codegen.
-7. Preserve current language behavior and test baseline throughout the
-   migration.
-
-### Phase 3 — migrate downstream consumers
+### Phase 4 — migrate downstream consumers
 
 1. Move Safety from pointer-based SG objects to global semantic IDs/views.
-2. Move Codegen and semantic debug/printing utilities to the same indexed
+2. Move Codegen and semantic debug/printing utilities to the indexed global
    representation.
-3. Remove the legacy pointer-heavy semantic graph once no consumers require it.
-4. Measure memory, semantic build time, globalization time, and downstream
-   traversal performance.
+3. Remove the legacy pointer-heavy semantic graph once no consumer needs it.
+4. Preserve the current language/test baseline throughout the migration.
 
-### Phase 4 — persistent FileSG cache
+### Phase 5 — persistent caches
 
-1. Define an explicit versioned FileSG disk format; do not serialize raw Zig
+1. Define an explicit versioned FileSyntaxTree cache format if measurements show
+   that parsing reuse is worthwhile independently of ModuleSG cache hits.
+2. Define an explicit versioned ModuleSG disk format; do not serialize raw Zig
    pointer/slice ABI.
-2. Add round-trip tests:
+3. Key ModuleSGs by module source set/content plus semantic configuration.
+4. Make bundled `core` the first high-value consumer of prebuilt ModuleSGs.
+5. On ModuleSG cache hits, avoid loading source/FileST unless diagnostics or LSP
+   require them.
+6. Benchmark cold builds, unchanged rebuilds and one-file-changed rebuilds.
+7. Optimize loading (including mmap/zero-copy) only if measurements justify it.
 
-   ```text
-   source
-       ↓
-   FileSemanticGraph A
-       ↓ serialize
-   artifact
-       ↓ deserialize
-   FileSemanticGraph B
+### Phase 6 — later incremental semantics
 
-   globalize(A, others) == globalize(B, others)
-   ```
+If changed-module ModuleSema becomes a bottleneck, add true semantic dependency
+tracking at declaration/analysis-unit granularity:
 
-3. Add cache validity metadata and cache-hit/miss plumbing.
-4. Make bundled `core` use persistent/prebuilt FileSG artifacts first.
-5. Extend the same mechanism to project files.
-6. Benchmark cache-hit startup and compilation costs before considering mmap or
-   finer-grained incremental parsing.
+```text
+analysis unit B depends on interface/value of analysis unit A
+```
 
-### Phase 5 — future semantic incrementalism
+Invalidate only affected units when possible. This is preferable to treating
+source files as semantic dependency units merely because they are convenient
+filesystem boundaries.
 
-Only after the file/global split and persistence are stable, investigate
-fine-grained invalidation inside `GlobalSemanticGraph`.
+## Non-goals for the first module-semantic implementation
 
-Possible future work includes:
+Do not combine these into the initial pivot:
 
-- stable global semantic identities across updates;
-- dependency edges between semantic analysis units;
-- declaration/interface hashes;
-- preserving unaffected global semantic results when one FileSG changes;
-- old-to-new semantic identity mapping similar in spirit to Zig's tracked ZIR
-  instructions and semantic dependency graph.
-
-This is deliberately not required for the first persistent FileSG cache.
-
-## Non-goals for the first version
-
-Do not initially require:
-
-- incremental parsing within an edited file;
-- stable `FileNodeId` values across edits;
+- subtree-incremental parsing;
+- declaration-level incremental Sema;
+- dependency-interface hashing;
+- persistent GlobalSemanticGraph cache;
+- incremental Safety;
 - mmap/zero-copy cache loading;
-- avoiding the flatten/copy step when building the global graph;
-- cross-version cache compatibility;
-- fine-grained incremental Safety or Codegen;
-- preservation of the current pointer-based `SemanticGraph` layout.
+- stable semantic IDs across arbitrary source edits;
+- redesigning every semantic table for maximum compactness before its shape is
+  stable.
 
-A changed source file may simply rebuild its complete `FileTokenList`,
-`FileSyntaxTree`, and `FileSemanticGraph`. Unchanged files should be reusable as
-whole file artifacts.
-
-## Measurements
-
-Keep measuring the frontend with `--stats`, but extend the measurements around
-the new boundary:
-
-```text
-tokenize time
-syntax time
-FileSema time
-FileSG storage bytes
-global merge/relocation time
-global type interning time
-global resolution time
-GlobalSG storage bytes
-safety time
-total compilation time
-```
-
-For cache experiments also measure:
-
-```text
-FileSG cache hits/misses
-bytes read from source
-bytes read from cache
-FileSG deserialize/load time
-stdlib work avoided
-```
-
-The design should be judged primarily by correctness of the file/global
-invariant, cacheability, and measured whole-compilation wins rather than by
-avoiding a cheap linear copy during globalization.
+The immediate goal is simpler: make files the parsing unit, modules the semantic
+unit, and modules the primary semantic cache boundary.
