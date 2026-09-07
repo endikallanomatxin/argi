@@ -209,6 +209,30 @@ test "module callable interfaces preserve anonymous choice types" {
     try std.testing.expectEqualStrings("none", graph.text(graph.structural_choice_variants.items[shape.start + 1].name));
 }
 
+test "module callable interfaces preserve type-only generic instantiations" {
+    const allocator = std.testing.allocator;
+    const type_source = "Box#(.t: Type) : Type = (.value: t)\n";
+    const function_source = "read(.box: Box#(.t: Int32)) -> () := {}\n";
+    var type_tree = try parseSource(allocator, type_source, @enumFromInt(0));
+    defer type_tree.deinit(allocator);
+    var function_tree = try parseSource(allocator, function_source, @enumFromInt(1));
+    defer function_tree.deinit(allocator);
+    var graph = try module_graph.build(allocator, "generics", &.{
+        .{ .path = "generics/type.rg", .tree = &type_tree, .source = type_source },
+        .{ .path = "generics/function.rg", .tree = &function_tree, .source = function_source },
+    });
+    defer graph.deinit(allocator);
+
+    const interface = graph.functions.items[0];
+    const input = graph.fields.items[interface.input.start];
+    const generic = graph.types.items[@intFromEnum(input.ty)].generic;
+    try std.testing.expectEqualStrings("Box", graph.text(generic.base));
+    try std.testing.expectEqual(@as(u32, 1), generic.arguments.len);
+    const argument = graph.generic_type_arguments.items[generic.arguments.start];
+    try std.testing.expectEqualStrings("t", graph.text(argument.name));
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(argument.ty)].builtin);
+}
+
 test "module graph builds and relocates nominal choice variants" {
     const allocator = std.testing.allocator;
     const source = "Result : Type = (\n    ..ok Int32\n    ..done\n)\n";

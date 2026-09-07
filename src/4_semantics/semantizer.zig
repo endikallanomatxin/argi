@@ -6094,6 +6094,23 @@ pub const Semantizer = struct {
                 result.* = .{ .variants = variants };
                 break :blk .{ .choice_type = result };
             },
+            .generic => |generic| blk: {
+                var values = GenericSubst.init(self.allocator);
+                defer values.deinit();
+                const arguments = self.global_builder.generic_type_arguments.items[generic.arguments.start..][0..generic.arguments.len];
+                for (arguments) |argument| try values.types.put(
+                    self.global_builder.text(argument.name),
+                    try self.materializeCompactType(argument.ty, scope),
+                );
+                break :blk self.instantiateCompactGenericTypeFromSubstNamed(
+                    self.global_builder.text(generic.base),
+                    scope,
+                    &values,
+                ) catch |err| switch (err) {
+                    error.SymbolNotFound => return error.UnknownType,
+                    else => return err,
+                };
+            },
         };
     }
 
