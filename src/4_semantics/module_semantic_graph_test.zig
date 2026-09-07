@@ -223,6 +223,24 @@ test "module callable interfaces preserve anonymous choice types" {
     try std.testing.expectEqualStrings("none", graph.text(graph.structural_choice_variants.items[shape.start + 1].name));
 }
 
+test "module callable interfaces normalize choice unions" {
+    const allocator = std.testing.allocator;
+    const source = "Left : Type = (..first, ..shared)\nRight : Type = (..shared, ..second)\nmerge() -> (.result: choice_union#(.a: Left, .b: Right)) := { result = ..shared }\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var graph = try module_graph.build(allocator, "choice_unions", &.{.{ .path = "choice_unions/main.rg", .tree = &tree, .source = source }});
+    defer graph.deinit(allocator);
+
+    const interface = graph.functions.items[0];
+    const output = graph.fields.items[interface.output.start];
+    const shape = graph.types.items[@intFromEnum(output.ty)].structural_choice;
+    try std.testing.expectEqual(@as(u32, 3), shape.len);
+    const variants = graph.structural_choice_variants.items[shape.start..][0..shape.len];
+    try std.testing.expectEqualStrings("first", graph.text(variants[0].name));
+    try std.testing.expectEqualStrings("second", graph.text(variants[1].name));
+    try std.testing.expectEqualStrings("shared", graph.text(variants[2].name));
+}
+
 test "module callable interfaces preserve type-only generic instantiations" {
     const allocator = std.testing.allocator;
     const type_source = "Box#(.t: Type) : Type = (.value: t)\n";
