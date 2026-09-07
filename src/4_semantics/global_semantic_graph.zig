@@ -11,28 +11,80 @@ pub const GlobalBlockId = enum(u32) { _ };
 pub const GlobalFieldId = enum(u32) { _ };
 pub const GlobalVariantId = enum(u32) { _ };
 pub const GlobalGenericArgId = enum(u32) { _ };
+pub const GlobalValueFieldId = enum(u32) { _ };
+pub const GlobalSwitchCaseId = enum(u32) { _ };
+pub const GlobalSwitchId = enum(u32) { _ };
+pub const GlobalAutoDeinitFieldId = enum(u32) { _ };
+pub const GlobalAutoDeinitId = enum(u32) { _ };
+pub const GlobalVirtualRegistryId = enum(u32) { _ };
+pub const GlobalVirtualizeId = enum(u32) { _ };
+pub const GlobalVirtualCallId = enum(u32) { _ };
+pub const GlobalReachSegmentId = enum(u32) { _ };
+pub const GlobalReachAlternativeId = enum(u32) { _ };
+pub const GlobalReachId = enum(u32) { _ };
+pub const GlobalNullableUnwrapId = enum(u32) { _ };
+pub const GlobalTestingExpectErrorId = enum(u32) { _ };
+pub const GlobalErrorPropagationId = enum(u32) { _ };
+pub const GlobalErrorContextId = enum(u32) { _ };
 pub const GlobalFileId = enum(u32) { _ };
 pub const GlobalModuleId = enum(u32) { _ };
 
+pub const Ids = struct {
+    pub const DeclId = GlobalDeclId;
+    pub const TypeId = GlobalTypeId;
+    pub const FunctionId = GlobalFunctionId;
+    pub const BindingId = GlobalBindingId;
+    pub const NodeId = GlobalNodeId;
+    pub const BlockId = GlobalBlockId;
+    pub const FieldId = GlobalFieldId;
+    pub const VariantId = GlobalVariantId;
+    pub const GenericArgId = GlobalGenericArgId;
+    pub const ValueFieldId = GlobalValueFieldId;
+    pub const SwitchCaseId = GlobalSwitchCaseId;
+    pub const SwitchId = GlobalSwitchId;
+    pub const AutoDeinitFieldId = GlobalAutoDeinitFieldId;
+    pub const AutoDeinitId = GlobalAutoDeinitId;
+    pub const VirtualRegistryId = GlobalVirtualRegistryId;
+    pub const VirtualizeId = GlobalVirtualizeId;
+    pub const VirtualCallId = GlobalVirtualCallId;
+    pub const ReachSegmentId = GlobalReachSegmentId;
+    pub const ReachAlternativeId = GlobalReachAlternativeId;
+    pub const ReachId = GlobalReachId;
+    pub const NullableUnwrapId = GlobalNullableUnwrapId;
+    pub const TestingExpectErrorId = GlobalTestingExpectErrorId;
+    pub const ErrorPropagationId = GlobalErrorPropagationId;
+    pub const ErrorContextId = GlobalErrorContextId;
+};
+
 pub const StringRange = primitives.StringRange;
 pub const DeclRange = primitives.Range(GlobalDeclId);
-pub const TypeRange = primitives.Range(GlobalTypeId);
-pub const FunctionRange = primitives.Range(GlobalFunctionId);
 pub const BindingRange = primitives.Range(GlobalBindingId);
 pub const NodeRange = primitives.Range(GlobalNodeId);
-pub const BlockRange = primitives.Range(GlobalBlockId);
 pub const FieldRange = primitives.Range(GlobalFieldId);
 pub const VariantRange = primitives.Range(GlobalVariantId);
-pub const GenericArgRange = primitives.Range(GlobalGenericArgId);
 
-pub const GlobalType = primitives.SemanticType(GlobalTypeId, GlobalDeclId, GlobalFieldId, GlobalGenericArgId);
-pub const Field = primitives.Field(GlobalTypeId, GlobalNodeId);
-pub const ChoiceVariant = primitives.ChoiceVariant(GlobalTypeId, GlobalDeclId);
-pub const GenericTypeArgument = primitives.GenericTypeArgument(GlobalTypeId);
-pub const Function = primitives.Function(GlobalDeclId, GlobalFieldId, GlobalBlockId, GlobalBindingId, GlobalTypeId);
-pub const Binding = primitives.Binding(GlobalTypeId, GlobalNodeId);
-pub const Block = primitives.Block(GlobalNodeId);
-pub const Node = primitives.Node(GlobalNodeId, GlobalTypeId, GlobalDeclId, GlobalFunctionId, GlobalBindingId, GlobalBlockId, GlobalFieldId, GlobalVariantId);
+pub const GlobalType = primitives.SemanticType(Ids);
+pub const Field = primitives.Field(Ids);
+pub const ChoiceVariant = primitives.ChoiceVariant(Ids);
+pub const GenericArgument = primitives.GenericArgument(Ids);
+pub const Function = primitives.Function(Ids);
+pub const Binding = primitives.Binding(Ids);
+pub const Block = primitives.Block(Ids);
+pub const ValueField = primitives.ValueField(Ids);
+pub const SwitchCase = primitives.SwitchCase(Ids);
+pub const Switch = primitives.Switch(Ids);
+pub const AutoDeinitField = primitives.AutoDeinitField(Ids);
+pub const AutoDeinit = primitives.AutoDeinit(Ids);
+pub const VirtualMethodRegistry = primitives.VirtualMethodRegistry(Ids);
+pub const Virtualize = primitives.Virtualize(Ids);
+pub const VirtualCall = primitives.VirtualCall(Ids);
+pub const ReachAlternative = primitives.ReachAlternative(Ids);
+pub const Reach = primitives.Reach(Ids);
+pub const NullableUnwrap = primitives.NullableUnwrap(Ids);
+pub const TestingExpectError = primitives.TestingExpectError(Ids);
+pub const ErrorPropagation = primitives.ErrorPropagation(Ids);
+pub const ErrorContext = primitives.ErrorContext(Ids);
+pub const Node = primitives.Node(Ids);
 
 pub const File = struct {
     module: GlobalModuleId,
@@ -58,6 +110,7 @@ pub const Declaration = struct {
 
 pub const Symbol = struct {
     name: StringRange,
+    /// Range into `symbol_declarations`, not directly into `declarations`.
     declarations: DeclRange,
 };
 
@@ -72,30 +125,74 @@ pub const GlobalSemanticGraph = struct {
     bindings: std.ArrayList(Binding) = .empty,
     nodes: std.ArrayList(Node) = .empty,
     blocks: std.ArrayList(Block) = .empty,
-    block_nodes: std.ArrayList(GlobalNodeId) = .empty,
     fields: std.ArrayList(Field) = .empty,
     variants: std.ArrayList(ChoiceVariant) = .empty,
-    generic_arguments: std.ArrayList(GenericTypeArgument) = .empty,
+    generic_arguments: std.ArrayList(GenericArgument) = .empty,
+    value_fields: std.ArrayList(ValueField) = .empty,
+    switch_cases: std.ArrayList(SwitchCase) = .empty,
+    switches: std.ArrayList(Switch) = .empty,
+    auto_deinit_fields: std.ArrayList(AutoDeinitField) = .empty,
+    auto_deinits: std.ArrayList(AutoDeinit) = .empty,
+    virtual_registries: std.ArrayList(VirtualMethodRegistry) = .empty,
+    virtualizes: std.ArrayList(Virtualize) = .empty,
+    virtual_calls: std.ArrayList(VirtualCall) = .empty,
+    reach_segments: std.ArrayList(StringRange) = .empty,
+    reach_alternatives: std.ArrayList(ReachAlternative) = .empty,
+    reaches: std.ArrayList(Reach) = .empty,
+    nullable_unwraps: std.ArrayList(NullableUnwrap) = .empty,
+    testing_expect_errors: std.ArrayList(TestingExpectError) = .empty,
+    error_propagations: std.ArrayList(ErrorPropagation) = .empty,
+    error_contexts: std.ArrayList(ErrorContext) = .empty,
+
+    /// Pools used by Range(Id) fields when referenced identities are not
+    /// guaranteed to be physically contiguous in their entity table.
+    node_refs: std.ArrayList(GlobalNodeId) = .empty,
+    type_refs: std.ArrayList(GlobalTypeId) = .empty,
+    binding_refs: std.ArrayList(GlobalBindingId) = .empty,
+    function_refs: std.ArrayList(GlobalFunctionId) = .empty,
+    virtual_registry_refs: std.ArrayList(GlobalVirtualRegistryId) = .empty,
+
     strings: std.ArrayList(u8) = .empty,
     roots: std.ArrayList(GlobalNodeId) = .empty,
 
     pub fn deinit(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
-        self.modules.deinit(allocator);
-        self.files.deinit(allocator);
-        self.declarations.deinit(allocator);
-        self.symbols.deinit(allocator);
-        self.symbol_declarations.deinit(allocator);
-        self.types.deinit(allocator);
-        self.functions.deinit(allocator);
-        self.bindings.deinit(allocator);
-        self.nodes.deinit(allocator);
-        self.blocks.deinit(allocator);
-        self.block_nodes.deinit(allocator);
-        self.fields.deinit(allocator);
-        self.variants.deinit(allocator);
-        self.generic_arguments.deinit(allocator);
-        self.strings.deinit(allocator);
-        self.roots.deinit(allocator);
+        inline for (.{
+            &self.modules,
+            &self.files,
+            &self.declarations,
+            &self.symbols,
+            &self.symbol_declarations,
+            &self.types,
+            &self.functions,
+            &self.bindings,
+            &self.nodes,
+            &self.blocks,
+            &self.fields,
+            &self.variants,
+            &self.generic_arguments,
+            &self.value_fields,
+            &self.switch_cases,
+            &self.switches,
+            &self.auto_deinit_fields,
+            &self.auto_deinits,
+            &self.virtual_registries,
+            &self.virtualizes,
+            &self.virtual_calls,
+            &self.reach_segments,
+            &self.reach_alternatives,
+            &self.reaches,
+            &self.nullable_unwraps,
+            &self.testing_expect_errors,
+            &self.error_propagations,
+            &self.error_contexts,
+            &self.node_refs,
+            &self.type_refs,
+            &self.binding_refs,
+            &self.function_refs,
+            &self.virtual_registry_refs,
+            &self.strings,
+            &self.roots,
+        }) |list| list.deinit(allocator);
         self.* = .{};
     }
 
@@ -123,6 +220,10 @@ pub const GlobalSemanticGraph = struct {
         return self.nodes.items[@intFromEnum(id)];
     }
 
+    pub fn addString(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, value: []const u8) !StringRange {
+        return semantic_strings.append(&self.strings, allocator, value);
+    }
+
     pub fn storageBytes(self: *const GlobalSemanticGraph) usize {
         return self.modules.items.len * @sizeOf(Module) +
             self.files.items.len * @sizeOf(File) +
@@ -134,20 +235,35 @@ pub const GlobalSemanticGraph = struct {
             self.bindings.items.len * @sizeOf(Binding) +
             self.nodes.items.len * @sizeOf(Node) +
             self.blocks.items.len * @sizeOf(Block) +
-            self.block_nodes.items.len * @sizeOf(GlobalNodeId) +
             self.fields.items.len * @sizeOf(Field) +
             self.variants.items.len * @sizeOf(ChoiceVariant) +
-            self.generic_arguments.items.len * @sizeOf(GenericTypeArgument) +
+            self.generic_arguments.items.len * @sizeOf(GenericArgument) +
+            self.value_fields.items.len * @sizeOf(ValueField) +
+            self.switch_cases.items.len * @sizeOf(SwitchCase) +
+            self.switches.items.len * @sizeOf(Switch) +
+            self.auto_deinit_fields.items.len * @sizeOf(AutoDeinitField) +
+            self.auto_deinits.items.len * @sizeOf(AutoDeinit) +
+            self.virtual_registries.items.len * @sizeOf(VirtualMethodRegistry) +
+            self.virtualizes.items.len * @sizeOf(Virtualize) +
+            self.virtual_calls.items.len * @sizeOf(VirtualCall) +
+            self.reach_segments.items.len * @sizeOf(StringRange) +
+            self.reach_alternatives.items.len * @sizeOf(ReachAlternative) +
+            self.reaches.items.len * @sizeOf(Reach) +
+            self.nullable_unwraps.items.len * @sizeOf(NullableUnwrap) +
+            self.testing_expect_errors.items.len * @sizeOf(TestingExpectError) +
+            self.error_propagations.items.len * @sizeOf(ErrorPropagation) +
+            self.error_contexts.items.len * @sizeOf(ErrorContext) +
+            self.node_refs.items.len * @sizeOf(GlobalNodeId) +
+            self.type_refs.items.len * @sizeOf(GlobalTypeId) +
+            self.binding_refs.items.len * @sizeOf(GlobalBindingId) +
+            self.function_refs.items.len * @sizeOf(GlobalFunctionId) +
+            self.virtual_registry_refs.items.len * @sizeOf(GlobalVirtualRegistryId) +
             self.strings.items.len +
             self.roots.items.len * @sizeOf(GlobalNodeId);
     }
-
-    pub fn addString(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, value: []const u8) !StringRange {
-        return semantic_strings.append(&self.strings, allocator, value);
-    }
 };
 
-test "global semantic graph owns independent typed tables" {
+test "global semantic graph owns the complete indexed representation" {
     const allocator = std.testing.allocator;
     var graph: GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
@@ -160,7 +276,14 @@ test "global semantic graph owns independent typed tables" {
         .type_id = @enumFromInt(0),
     });
     try graph.types.append(allocator, .{ .declared = @enumFromInt(0) });
+    try graph.nodes.append(allocator, .{
+        .source = .{ .file_index = 0, .offset = 8 },
+        .ty = null,
+        .content = .{ .int_literal = 7 },
+    });
+    try graph.roots.append(allocator, @enumFromInt(0));
 
     try std.testing.expectEqualStrings("Thing", graph.text(name));
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(graph.declaration(@enumFromInt(0)).type_id.?));
+    try std.testing.expectEqual(@as(i64, 7), graph.node(@enumFromInt(0)).content.int_literal);
 }
