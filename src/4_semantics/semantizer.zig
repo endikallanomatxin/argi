@@ -11,6 +11,7 @@ const log = std.log.scoped(.semantizer);
 const typ = @import("types.zig");
 const abs = @import("abstracts.zig");
 const gen = @import("generics.zig");
+const global_graph = @import("global_semantic_graph_builder.zig");
 const Scope = @import("scope.zig").Scope;
 const SemErr = @import("errors.zig").SemErr;
 
@@ -927,11 +928,18 @@ pub const Semantizer = struct {
         const name = discovered_name orelse self.functionNameText(node) orelse return;
         const location = self.nodeLocation(node);
         var function_scope = try Scope.init(self.allocator, global, null);
-        const input = self.structTypeSignatureFromNode(file.ref(declaration.input), &function_scope, false) catch |err| switch (err) {
+        const compact_interface = self.compactFunctionInterfaceForSyntax(node);
+        const input = (if (compact_interface) |interface|
+            self.structTypeSignatureFromCompact(interface.input, file.ref(declaration.input), &function_scope)
+        else
+            self.structTypeSignatureFromNode(file.ref(declaration.input), &function_scope, false)) catch |err| switch (err) {
             error.UnknownType, error.SymbolNotFound, error.InvalidType => return,
             else => return err,
         };
-        const output = self.structTypeSignatureFromNode(file.ref(declaration.output), &function_scope, true) catch |err| switch (err) {
+        const output = (if (compact_interface) |interface|
+            self.structTypeSignatureFromCompact(interface.output, file.ref(declaration.output), &function_scope)
+        else
+            self.structTypeSignatureFromNode(file.ref(declaration.output), &function_scope, true)) catch |err| switch (err) {
             error.UnknownType, error.SymbolNotFound, error.InvalidType => return,
             else => return err,
         };
@@ -5888,6 +5896,67 @@ pub const Semantizer = struct {
         const result = try self.allocator.create(sg.ChoiceType);
         result.* = .{ .variants = try variants.toOwnedSlice() };
         return result;
+    }
+
+    fn compactFunctionInterfaceForSyntax(self: *Semantizer, node: syn.SyntaxRef) ?global_graph.FunctionInterface {
+        const declaration_id = self.global_builder.findDeclaration(@intFromEnum(node.file_id), node.node) orelse return null;
+        const declaration = self.global_builder.declaration(declaration_id);
+        const function_id = declaration.function_id orelse return null;
+        return self.global_builder.functions.items[@intFromEnum(function_id)];
+    }
+
+    fn structTypeSignatureFromCompact(
+        self: *Semantizer,
+        range: @import("module_semantic_graph.zig").FieldRange,
+        syntax_node: syn.SyntaxRef,
+        scope: *Scope,
+    ) SemErr!*sg.StructType {
+        const file = self.syntaxFile(syntax_node);
+        const syntax_fields = (file.structTypeLiteral(syntax_node.node) orelse return error.InvalidType).fields;
+        if (syntax_fields.len != range.len) return error.InvalidType;
+        const compact_fields = self.global_builder.function_fields.items[range.start..][0..range.len];
+        const fields = try self.allocator.alloc(sg.StructTypeField, compact_fields.len);
+        for (compact_fields, syntax_fields, 0..) |compact, field_node, index| {
+            _ = file.structTypeField(field_node) orelse return error.InvalidType;
+            const field_type = try self.materializeCompactType(compact.ty);
+            const field_location: tok.Location = .{ .file = syntax_node.file_id, .offset = compact.source_offset };
+            fields[index] = .{
+                .name = self.global_builder.text(compact.name),
+                .ty = field_type,
+                .default_value = if (compact.has_default) try self.makeNoopNode(field_location) else null,
+            };
+            const binding = try self.allocator.create(sg.BindingDeclaration);
+            binding.* = .{
+                .name = fields[index].name,
+                .location = field_location,
+                .origin_file = self.locationPath(field_location),
+                .mutability = .constant,
+                .ty = field_type,
+                .initialization = null,
+            };
+            try scope.bindings.put(fields[index].name, binding);
+        }
+        const result = try self.allocator.create(sg.StructType);
+        result.* = .{ .fields = fields };
+        return result;
+    }
+
+    fn materializeCompactType(self: *Semantizer, id: global_graph.GlobalTypeId) SemErr!sg.Type {
+        return switch (self.global_builder.types.items[@intFromEnum(id)]) {
+            .builtin => |builtin| .{ .builtin = @enumFromInt(@intFromEnum(builtin)) },
+            .declared => |declaration_id| blk: {
+                const declaration = self.predeclared_types[@intFromEnum(declaration_id)] orelse return error.UnknownType;
+                if (!typeDeclIsReady(declaration)) return error.UnknownType;
+                break :blk declaration.ty;
+            },
+            .pointer => |pointer| blk: {
+                const child = try self.allocator.create(sg.Type);
+                child.* = try self.materializeCompactType(pointer.child);
+                const result = try self.allocator.create(sg.PointerType);
+                result.* = .{ .mutability = pointer.mutability, .child = child };
+                break :blk .{ .pointer_type = result };
+            },
+        };
     }
 
     fn structTypeSignatureFromNode(

@@ -7,6 +7,8 @@ const semantic_strings = @import("semantic_strings.zig");
 pub const ModuleDeclId = enum(u32) { _ };
 /// Module-local identity of an unresolved lookup.
 pub const ModuleTypeRefId = enum(u32) { _ };
+pub const ModuleTypeId = enum(u32) { _ };
+pub const ModuleFunctionId = enum(u32) { _ };
 pub const StringRange = semantic_strings.StringRange;
 pub const DeclarationRange = struct { start: u32, len: u32 };
 
@@ -25,7 +27,19 @@ pub const TypeReference = struct {
     source_offset: u32,
     syntax_node: syn.NodeIndex,
     resolved_declaration: ?ModuleDeclId = null,
+    resolved_type: ?ModuleTypeId = null,
 };
+
+pub const BuiltinType = enum { Int8, Int16, Int32, Int64, UIntNative, UInt8, UInt16, UInt32, UInt64, Float16, Float32, Float64, Char, Bool, Void, Type, Any };
+pub const ModuleType = union(enum) {
+    builtin: BuiltinType,
+    declared: ModuleDeclId,
+    pointer: struct { child: ModuleTypeId, mutability: syn.PointerMutability },
+};
+
+pub const FieldRange = struct { start: u32, len: u32 };
+pub const FunctionField = struct { name: StringRange, ty: ModuleTypeId, source_offset: u32, has_default: bool };
+pub const FunctionInterface = struct { declaration: ModuleDeclId, input: FieldRange, output: FieldRange };
 
 pub const DeclarationKind = enum {
     binding,
@@ -44,6 +58,8 @@ pub const Declaration = struct {
     module_file_index: u32,
     // Temporary syntax provenance bridge while expression lowering is migrated.
     syntax_node: syn.NodeIndex,
+    type_id: ?ModuleTypeId = null,
+    function_id: ?ModuleFunctionId = null,
 };
 
 pub const FileOffsets = struct {
@@ -69,6 +85,9 @@ pub const ModuleSemanticGraph = struct {
     declarations: std.ArrayList(Declaration) = .empty,
     symbols: std.ArrayList(Symbol) = .empty,
     symbol_declarations: std.ArrayList(ModuleDeclId) = .empty,
+    types: std.ArrayList(ModuleType) = .empty,
+    functions: std.ArrayList(FunctionInterface) = .empty,
+    function_fields: std.ArrayList(FunctionField) = .empty,
     strings: std.ArrayList(u8) = .empty,
     lexical: lexical_tables.LexicalTables = .{},
     type_references: std.ArrayList(TypeReference) = .empty,
@@ -80,6 +99,9 @@ pub const ModuleSemanticGraph = struct {
         self.declarations.deinit(allocator);
         self.symbols.deinit(allocator);
         self.symbol_declarations.deinit(allocator);
+        self.types.deinit(allocator);
+        self.functions.deinit(allocator);
+        self.function_fields.deinit(allocator);
         self.strings.deinit(allocator);
         self.lexical.deinit(allocator);
         self.type_references.deinit(allocator);
@@ -116,6 +138,8 @@ pub const ModuleSemanticGraph = struct {
         lexical_bytes = self.lexical.storageBytes();
         return self.module_dir.len + self.declarations.items.len * @sizeOf(Declaration) +
             self.symbols.items.len * @sizeOf(Symbol) + self.symbol_declarations.items.len * @sizeOf(ModuleDeclId) +
+            self.types.items.len * @sizeOf(ModuleType) + self.functions.items.len * @sizeOf(FunctionInterface) +
+            self.function_fields.items.len * @sizeOf(FunctionField) +
             self.strings.items.len + lexical_bytes +
             self.type_references.items.len * @sizeOf(TypeReference) +
             self.import_references.items.len * @sizeOf(ImportReference) +
@@ -163,7 +187,9 @@ pub const ModuleSemanticGraphBuilder = struct {
             });
         }
         try buildSymbolIndex(self.allocator, &self.graph);
+        try predeclareTypes(self.allocator, &self.graph);
         resolveModuleTypeReferences(&self.graph);
+        try buildFunctionInterfaces(self.allocator, &self.graph, files);
         const result = self.graph;
         self.graph = .{};
         return result;
@@ -208,12 +234,102 @@ fn resolveModuleTypeReferences(graph: *ModuleSemanticGraph) void {
             switch (graph.declaration(declaration_id).kind) {
                 .type, .abstract_type => {
                     reference.resolved_declaration = declaration_id;
+                    reference.resolved_type = graph.declaration(declaration_id).type_id;
                     break;
                 },
                 else => {},
             }
         }
     }
+}
+
+fn predeclareTypes(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph) !void {
+    for (graph.declarations.items, 0..) |*declaration, index| switch (declaration.kind) {
+        .type, .abstract_type => {
+            if (graph.types.items.len >= std.math.maxInt(u32)) return error.ModuleSemanticGraphTooLarge;
+            declaration.type_id = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+            try graph.types.append(allocator, .{ .declared = @enumFromInt(@as(u32, @intCast(index))) });
+        },
+        else => {},
+    };
+}
+
+fn buildFunctionInterfaces(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, files: []const FileInput) !void {
+    for (graph.declarations.items, 0..) |*declaration, declaration_index| {
+        if (declaration.kind != .function and declaration.kind != .test_function) continue;
+        const file_input = files[declaration.module_file_index];
+        const function = if (declaration.kind == .test_function)
+            file_input.tree.testDeclaration(declaration.syntax_node).?.function
+        else
+            file_input.tree.functionDeclaration(declaration.syntax_node).?;
+        if (function.generic_params.len != 0 or function.generic_params_struct != null) continue;
+        const field_start = graph.function_fields.items.len;
+        if (!try appendFunctionFields(allocator, graph, file_input, function.input) or
+            !try appendFunctionFields(allocator, graph, file_input, function.output))
+        {
+            graph.function_fields.shrinkRetainingCapacity(field_start);
+            continue;
+        }
+        const input_len = file_input.tree.structTypeLiteral(function.input).?.fields.len;
+        const output_len = file_input.tree.structTypeLiteral(function.output).?.fields.len;
+        const function_id: ModuleFunctionId = @enumFromInt(@as(u32, @intCast(graph.functions.items.len)));
+        try graph.functions.append(allocator, .{
+            .declaration = @enumFromInt(@as(u32, @intCast(declaration_index))),
+            .input = .{ .start = @intCast(field_start), .len = @intCast(input_len) },
+            .output = .{ .start = @intCast(field_start + input_len), .len = @intCast(output_len) },
+        });
+        declaration.function_id = function_id;
+    }
+}
+
+fn appendFunctionFields(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input: FileInput, struct_node: syn.NodeIndex) !bool {
+    const literal = input.tree.structTypeLiteral(struct_node) orelse return false;
+    for (literal.fields) |field_node| {
+        const field = input.tree.structTypeField(field_node) orelse return false;
+        const type_node = field.type_node orelse return false;
+        const ty = try lowerType(allocator, graph, input.tree, input.source, input.file_index, type_node) orelse return false;
+        const name = if (field.inferred_result) "result" else input.tree.tokenTextFromSource(input.source, field.name_token);
+        try graph.function_fields.append(allocator, .{ .name = try graph.addString(allocator, name), .ty = ty, .source_offset = input.tree.tokenLocation(field.name_token).offset, .has_default = field.default_value != null });
+    }
+    return true;
+}
+
+fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *const syn.FileSyntaxTree, source: []const u8, source_file_index: u32, node: syn.NodeIndex) !?ModuleTypeId {
+    const syntax_type = tree.syntaxType(node) orelse return null;
+    return switch (syntax_type) {
+        .name => |name| blk: {
+            if (name.qualifier_token != null) break :blk null;
+            const spelling = tree.tokenTextFromSource(source, name.name_token);
+            if (builtinFromName(spelling)) |builtin| break :blk try appendType(allocator, graph, .{ .builtin = builtin });
+            const reference = findTypeReferenceForSourceFile(graph, source_file_index, node) orelse break :blk null;
+            break :blk reference.resolved_type;
+        },
+        .pointer => |pointer| blk: {
+            const child = try lowerType(allocator, graph, tree, source, source_file_index, pointer.child) orelse break :blk null;
+            break :blk try appendType(allocator, graph, .{ .pointer = .{ .child = child, .mutability = pointer.mutability } });
+        },
+        else => null,
+    };
+}
+
+fn appendType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, ty: ModuleType) !ModuleTypeId {
+    if (graph.types.items.len >= std.math.maxInt(u32)) return error.ModuleSemanticGraphTooLarge;
+    const id: ModuleTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+    try graph.types.append(allocator, ty);
+    return id;
+}
+
+fn findTypeReferenceForSourceFile(graph: *const ModuleSemanticGraph, source_file_index: u32, node: syn.NodeIndex) ?TypeReference {
+    for (graph.file_offsets.items) |file| {
+        if (file.source_file_index != source_file_index) continue;
+        for (graph.type_references.items[file.type_reference_base..][0..file.type_reference_count]) |reference| if (reference.syntax_node == node) return reference;
+    }
+    return null;
+}
+
+fn builtinFromName(name: []const u8) ?BuiltinType {
+    inline for (@typeInfo(BuiltinType).@"enum".fields) |field| if (std.mem.eql(u8, name, field.name)) return @enumFromInt(field.value);
+    return null;
 }
 
 fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input: FileInput, module_file_index: u32) !void {
