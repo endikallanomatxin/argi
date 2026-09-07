@@ -29,7 +29,6 @@ pub const GlobalErrorPropagationId = enum(u32) { _ };
 pub const GlobalErrorContextId = enum(u32) { _ };
 pub const GlobalFileId = enum(u32) { _ };
 pub const GlobalModuleId = enum(u32) { _ };
-pub const GlobalSymbolId = enum(u32) { _ };
 
 pub const Ids = struct {
     pub const DeclId = GlobalDeclId;
@@ -64,7 +63,6 @@ pub const BindingRange = primitives.Range(GlobalBindingId);
 pub const NodeRange = primitives.Range(GlobalNodeId);
 pub const FieldRange = primitives.Range(GlobalFieldId);
 pub const VariantRange = primitives.Range(GlobalVariantId);
-pub const SymbolRange = primitives.Range(GlobalSymbolId);
 
 pub const Declaration = primitives.Declaration(Ids);
 pub const GlobalType = primitives.SemanticType(Ids);
@@ -100,12 +98,14 @@ pub const Module = struct {
     dir: StringRange,
     files: primitives.Range(GlobalFileId),
     declarations: DeclRange,
-    symbols: SymbolRange,
 };
 
 pub const Symbol = struct {
     name: StringRange,
     /// Range into `symbol_declarations`, not directly into `declarations`.
+    /// All declarations in one Symbol must belong to the same module. Module
+    /// ownership is therefore derivable from declaration partitions and is not
+    /// duplicated in this record.
     declarations: DeclRange,
 };
 
@@ -140,8 +140,6 @@ pub const GlobalSemanticGraph = struct {
     error_propagations: std.ArrayList(ErrorPropagation) = .empty,
     error_contexts: std.ArrayList(ErrorContext) = .empty,
 
-    /// Pools used by Range(Id) fields when referenced identities are not
-    /// guaranteed to be physically contiguous in their entity table.
     node_refs: std.ArrayList(GlobalNodeId) = .empty,
     type_refs: std.ArrayList(GlobalTypeId) = .empty,
     binding_refs: std.ArrayList(GlobalBindingId) = .empty,
@@ -153,42 +151,18 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn deinit(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
         inline for (.{
-            &self.modules,
-            &self.files,
-            &self.declarations,
-            &self.symbols,
-            &self.symbol_declarations,
-            &self.types,
-            &self.generic_instances,
-            &self.functions,
-            &self.bindings,
-            &self.nodes,
-            &self.blocks,
-            &self.fields,
-            &self.variants,
-            &self.generic_arguments,
-            &self.value_fields,
-            &self.switch_cases,
-            &self.switches,
-            &self.auto_deinit_fields,
-            &self.auto_deinits,
-            &self.virtual_registries,
-            &self.virtualizes,
-            &self.virtual_calls,
-            &self.reach_segments,
-            &self.reach_alternatives,
-            &self.reaches,
-            &self.nullable_unwraps,
-            &self.testing_expect_errors,
-            &self.error_propagations,
-            &self.error_contexts,
-            &self.node_refs,
-            &self.type_refs,
-            &self.binding_refs,
-            &self.function_refs,
-            &self.virtual_registry_refs,
-            &self.strings,
-            &self.roots,
+            &self.modules, &self.files, &self.declarations, &self.symbols,
+            &self.symbol_declarations, &self.types, &self.generic_instances,
+            &self.functions, &self.bindings, &self.nodes, &self.blocks,
+            &self.fields, &self.variants, &self.generic_arguments,
+            &self.value_fields, &self.switch_cases, &self.switches,
+            &self.auto_deinit_fields, &self.auto_deinits,
+            &self.virtual_registries, &self.virtualizes, &self.virtual_calls,
+            &self.reach_segments, &self.reach_alternatives, &self.reaches,
+            &self.nullable_unwraps, &self.testing_expect_errors,
+            &self.error_propagations, &self.error_contexts, &self.node_refs,
+            &self.type_refs, &self.binding_refs, &self.function_refs,
+            &self.virtual_registry_refs, &self.strings, &self.roots,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -215,6 +189,22 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn node(self: *const GlobalSemanticGraph, id: GlobalNodeId) Node {
         return self.nodes.items[@intFromEnum(id)];
+    }
+
+    pub fn moduleForDeclaration(self: *const GlobalSemanticGraph, id: GlobalDeclId) ?GlobalModuleId {
+        const raw = @intFromEnum(id);
+        for (self.modules.items, 0..) |module, index| {
+            const start: usize = module.declarations.start;
+            const end = start + module.declarations.len;
+            if (raw >= start and raw < end) return @enumFromInt(@as(u32, @intCast(index)));
+        }
+        return null;
+    }
+
+    pub fn moduleForSymbol(self: *const GlobalSemanticGraph, symbol: Symbol) ?GlobalModuleId {
+        if (symbol.declarations.len == 0) return null;
+        const first = self.symbol_declarations.items[symbol.declarations.start];
+        return self.moduleForDeclaration(first);
     }
 
     pub fn addString(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, value: []const u8) !StringRange {
@@ -256,34 +246,33 @@ pub const GlobalSemanticGraph = struct {
             self.binding_refs.items.len * @sizeOf(GlobalBindingId) +
             self.function_refs.items.len * @sizeOf(GlobalFunctionId) +
             self.virtual_registry_refs.items.len * @sizeOf(GlobalVirtualRegistryId) +
-            self.strings.items.len +
-            self.roots.items.len * @sizeOf(GlobalNodeId);
+            self.strings.items.len + self.roots.items.len * @sizeOf(GlobalNodeId);
     }
 };
 
-test "global semantic graph owns the complete indexed representation" {
+test "global semantic graph derives symbol module ownership from declarations" {
     const allocator = std.testing.allocator;
     var graph: GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
 
-    const name = try graph.addString(allocator, "Thing");
+    const module_name = try graph.addString(allocator, "demo");
+    const type_name = try graph.addString(allocator, "Thing");
+    try graph.modules.append(allocator, .{
+        .dir = module_name,
+        .files = .{ .start = 0, .len = 0 },
+        .declarations = .{ .start = 0, .len = 1 },
+    });
     try graph.declarations.append(allocator, .{
         .kind = .type,
-        .name = name,
+        .name = type_name,
         .source = .{ .file_index = 0, .offset = 4 },
         .type_id = @enumFromInt(0),
-        .struct_layout = .c_union,
     });
     try graph.types.append(allocator, .{ .declared = @enumFromInt(0) });
-    try graph.nodes.append(allocator, .{
-        .source = .{ .file_index = 0, .offset = 8 },
-        .ty = null,
-        .content = .{ .int_literal = 7 },
-    });
-    try graph.roots.append(allocator, @enumFromInt(0));
+    try graph.symbol_declarations.append(allocator, @enumFromInt(0));
+    const symbol = Symbol{ .name = type_name, .declarations = .{ .start = 0, .len = 1 } };
+    try graph.symbols.append(allocator, symbol);
 
-    try std.testing.expectEqualStrings("Thing", graph.text(name));
-    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(graph.declaration(@enumFromInt(0)).type_id.?));
-    try std.testing.expectEqual(primitives.StructLayout.c_union, graph.declaration(@enumFromInt(0)).struct_layout);
-    try std.testing.expectEqual(@as(i64, 7), graph.node(@enumFromInt(0)).content.int_literal);
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(graph.moduleForSymbol(symbol).?));
+    try std.testing.expectEqualStrings("Thing", graph.text(type_name));
 }
