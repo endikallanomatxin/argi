@@ -2,59 +2,58 @@ const std = @import("std");
 const entities = @import("module_semantic_entities.zig");
 const primitives = @import("semantic_primitives.zig");
 
-pub const ParameterId = enum(u32) { _ };
-pub const TypeId = enum(u32) { _ };
-pub const DeclId = enum(u32) { _ };
-pub const FunctionId = enum(u32) { _ };
-pub const BindingId = enum(u32) { _ };
-pub const NodeId = enum(u32) { _ };
-pub const BlockId = enum(u32) { _ };
-pub const FieldId = enum(u32) { _ };
-pub const VariantId = enum(u32) { _ };
-pub const GenericArgId = enum(u32) { _ };
-pub const ValueFieldId = enum(u32) { _ };
-pub const SwitchCaseId = enum(u32) { _ };
-pub const SwitchId = enum(u32) { _ };
-pub const AutoDeinitFieldId = enum(u32) { _ };
-pub const AutoDeinitId = enum(u32) { _ };
-pub const VirtualRegistryId = enum(u32) { _ };
-pub const VirtualizeId = enum(u32) { _ };
-pub const VirtualCallId = enum(u32) { _ };
-pub const ReachSegmentId = enum(u32) { _ };
-pub const ReachAlternativeId = enum(u32) { _ };
-pub const ReachId = enum(u32) { _ };
-pub const NullableUnwrapId = enum(u32) { _ };
-pub const TestingExpectErrorId = enum(u32) { _ };
-pub const ErrorPropagationId = enum(u32) { _ };
-pub const ErrorContextId = enum(u32) { _ };
-pub const PendingId = enum(u32) { _ };
+pub const TemplateParameterId = enum(u32) { _ };
+pub const TemplateTypeId = enum(u32) { _ };
+pub const TemplateDeclId = enum(u32) { _ };
+pub const TemplateFunctionId = enum(u32) { _ };
+pub const TemplateBindingId = enum(u32) { _ };
+pub const TemplateNodeId = enum(u32) { _ };
+pub const TemplateBlockId = enum(u32) { _ };
+pub const TemplateFieldId = enum(u32) { _ };
+pub const TemplateVariantId = enum(u32) { _ };
+pub const TemplateGenericArgId = enum(u32) { _ };
+pub const TemplateValueFieldId = enum(u32) { _ };
+pub const TemplateSwitchCaseId = enum(u32) { _ };
+pub const TemplateSwitchId = enum(u32) { _ };
+pub const TemplateAutoDeinitFieldId = enum(u32) { _ };
+pub const TemplateAutoDeinitId = enum(u32) { _ };
+pub const TemplateVirtualRegistryId = enum(u32) { _ };
+pub const TemplateVirtualizeId = enum(u32) { _ };
+pub const TemplateVirtualCallId = enum(u32) { _ };
+pub const TemplateReachSegmentId = enum(u32) { _ };
+pub const TemplateReachAlternativeId = enum(u32) { _ };
+pub const TemplateReachId = enum(u32) { _ };
+pub const TemplateNullableUnwrapId = enum(u32) { _ };
+pub const TemplateTestingExpectErrorId = enum(u32) { _ };
+pub const TemplateErrorPropagationId = enum(u32) { _ };
+pub const TemplateErrorContextId = enum(u32) { _ };
+pub const TemplatePendingId = enum(u32) { _ };
 
 pub const Ids = struct {
-    pub const DeclId = @This().Outer.DeclId;
-    pub const TypeId = @This().Outer.TypeId;
-    pub const FunctionId = @This().Outer.FunctionId;
-    pub const BindingId = @This().Outer.BindingId;
-    pub const NodeId = @This().Outer.NodeId;
-    pub const BlockId = @This().Outer.BlockId;
-    pub const FieldId = @This().Outer.FieldId;
-    pub const VariantId = @This().Outer.VariantId;
-    pub const GenericArgId = @This().Outer.GenericArgId;
-    pub const ValueFieldId = @This().Outer.ValueFieldId;
-    pub const SwitchCaseId = @This().Outer.SwitchCaseId;
-    pub const SwitchId = @This().Outer.SwitchId;
-    pub const AutoDeinitFieldId = @This().Outer.AutoDeinitFieldId;
-    pub const AutoDeinitId = @This().Outer.AutoDeinitId;
-    pub const VirtualRegistryId = @This().Outer.VirtualRegistryId;
-    pub const VirtualizeId = @This().Outer.VirtualizeId;
-    pub const VirtualCallId = @This().Outer.VirtualCallId;
-    pub const ReachSegmentId = @This().Outer.ReachSegmentId;
-    pub const ReachAlternativeId = @This().Outer.ReachAlternativeId;
-    pub const ReachId = @This().Outer.ReachId;
-    pub const NullableUnwrapId = @This().Outer.NullableUnwrapId;
-    pub const TestingExpectErrorId = @This().Outer.TestingExpectErrorId;
-    pub const ErrorPropagationId = @This().Outer.ErrorPropagationId;
-    pub const ErrorContextId = @This().Outer.ErrorContextId;
-    const Outer = @import("module_semantic_template_ir.zig");
+    pub const DeclId = TemplateDeclId;
+    pub const TypeId = TemplateTypeId;
+    pub const FunctionId = TemplateFunctionId;
+    pub const BindingId = TemplateBindingId;
+    pub const NodeId = TemplateNodeId;
+    pub const BlockId = TemplateBlockId;
+    pub const FieldId = TemplateFieldId;
+    pub const VariantId = TemplateVariantId;
+    pub const GenericArgId = TemplateGenericArgId;
+    pub const ValueFieldId = TemplateValueFieldId;
+    pub const SwitchCaseId = TemplateSwitchCaseId;
+    pub const SwitchId = TemplateSwitchId;
+    pub const AutoDeinitFieldId = TemplateAutoDeinitFieldId;
+    pub const AutoDeinitId = TemplateAutoDeinitId;
+    pub const VirtualRegistryId = TemplateVirtualRegistryId;
+    pub const VirtualizeId = TemplateVirtualizeId;
+    pub const VirtualCallId = TemplateVirtualCallId;
+    pub const ReachSegmentId = TemplateReachSegmentId;
+    pub const ReachAlternativeId = TemplateReachAlternativeId;
+    pub const ReachId = TemplateReachId;
+    pub const NullableUnwrapId = TemplateNullableUnwrapId;
+    pub const TestingExpectErrorId = TemplateTestingExpectErrorId;
+    pub const ErrorPropagationId = TemplateErrorPropagationId;
+    pub const ErrorContextId = TemplateErrorContextId;
 };
 
 pub const DeclarationRef = union(enum) {
@@ -77,7 +76,7 @@ pub const VariantRef = union(enum) {
 /// template ID domain until instantiation substitutes them.
 pub const Type = union(enum) {
     concrete: entities.ModuleTypeId,
-    parameter: ParameterId,
+    parameter: TemplateParameterId,
     external: entities.ExternalRefId,
     resolved: primitives.SemanticType(Ids),
 };
@@ -116,21 +115,21 @@ pub const Pending = union(enum) {
     },
     resolve_call: struct {
         name: primitives.StringRange,
-        input: NodeId,
+        input: TemplateNodeId,
         source: primitives.SourceRef,
     },
     resolve_field: struct {
-        value: NodeId,
+        value: TemplateNodeId,
         field_name: primitives.StringRange,
         source: primitives.SourceRef,
     },
-    resolve_copy: struct { value: NodeId },
-    resolve_deinit: struct { binding: BindingId },
+    resolve_copy: struct { value: TemplateNodeId },
+    resolve_deinit: struct { binding: TemplateBindingId },
 };
 
 pub const Node = union(enum) {
     resolved: ResolvedNode,
-    pending: PendingId,
+    pending: TemplatePendingId,
 };
 
 pub const Storage = struct {
@@ -160,11 +159,11 @@ pub const Storage = struct {
     error_contexts: std.ArrayList(ErrorContext) = .empty,
     pending: std.ArrayList(Pending) = .empty,
 
-    node_refs: std.ArrayList(NodeId) = .empty,
-    type_refs: std.ArrayList(TypeId) = .empty,
-    binding_refs: std.ArrayList(BindingId) = .empty,
-    function_refs: std.ArrayList(FunctionId) = .empty,
-    virtual_registry_refs: std.ArrayList(VirtualRegistryId) = .empty,
+    node_refs: std.ArrayList(TemplateNodeId) = .empty,
+    type_refs: std.ArrayList(TemplateTypeId) = .empty,
+    binding_refs: std.ArrayList(TemplateBindingId) = .empty,
+    function_refs: std.ArrayList(TemplateFunctionId) = .empty,
+    virtual_registry_refs: std.ArrayList(TemplateVirtualRegistryId) = .empty,
 
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         inline for (.{
@@ -228,11 +227,11 @@ pub const Storage = struct {
             self.error_propagations.items.len * @sizeOf(ErrorPropagation) +
             self.error_contexts.items.len * @sizeOf(ErrorContext) +
             self.pending.items.len * @sizeOf(Pending) +
-            self.node_refs.items.len * @sizeOf(NodeId) +
-            self.type_refs.items.len * @sizeOf(TypeId) +
-            self.binding_refs.items.len * @sizeOf(BindingId) +
-            self.function_refs.items.len * @sizeOf(FunctionId) +
-            self.virtual_registry_refs.items.len * @sizeOf(VirtualRegistryId);
+            self.node_refs.items.len * @sizeOf(TemplateNodeId) +
+            self.type_refs.items.len * @sizeOf(TemplateTypeId) +
+            self.binding_refs.items.len * @sizeOf(TemplateBindingId) +
+            self.function_refs.items.len * @sizeOf(TemplateFunctionId) +
+            self.virtual_registry_refs.items.len * @sizeOf(TemplateVirtualRegistryId);
     }
 };
 
