@@ -3,14 +3,9 @@ const entities = @import("module_semantic_entities.zig");
 const primitives = @import("semantic_primitives.zig");
 
 pub const Storage = struct {
-    types: std.ArrayList(entities.ModuleType) = .empty,
-    functions: std.ArrayList(entities.Function) = .empty,
     bindings: std.ArrayList(entities.Binding) = .empty,
     nodes: std.ArrayList(entities.ModuleNode) = .empty,
     blocks: std.ArrayList(entities.Block) = .empty,
-    fields: std.ArrayList(entities.Field) = .empty,
-    variants: std.ArrayList(entities.ChoiceVariant) = .empty,
-    generic_arguments: std.ArrayList(entities.GenericArgument) = .empty,
     value_fields: std.ArrayList(entities.ValueField) = .empty,
     switch_cases: std.ArrayList(entities.SwitchCase) = .empty,
     switches: std.ArrayList(entities.Switch) = .empty,
@@ -39,14 +34,9 @@ pub const Storage = struct {
     roots: std.ArrayList(entities.ModuleNodeId) = .empty,
 
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
-        self.types.deinit(allocator);
-        self.functions.deinit(allocator);
         self.bindings.deinit(allocator);
         self.nodes.deinit(allocator);
         self.blocks.deinit(allocator);
-        self.fields.deinit(allocator);
-        self.variants.deinit(allocator);
-        self.generic_arguments.deinit(allocator);
         self.value_fields.deinit(allocator);
         self.switch_cases.deinit(allocator);
         self.switches.deinit(allocator);
@@ -75,14 +65,9 @@ pub const Storage = struct {
     }
 
     pub fn storageBytes(self: *const Storage) usize {
-        return self.types.items.len * @sizeOf(entities.ModuleType) +
-            self.functions.items.len * @sizeOf(entities.Function) +
-            self.bindings.items.len * @sizeOf(entities.Binding) +
+        return self.bindings.items.len * @sizeOf(entities.Binding) +
             self.nodes.items.len * @sizeOf(entities.ModuleNode) +
             self.blocks.items.len * @sizeOf(entities.Block) +
-            self.fields.items.len * @sizeOf(entities.Field) +
-            self.variants.items.len * @sizeOf(entities.ChoiceVariant) +
-            self.generic_arguments.items.len * @sizeOf(entities.GenericArgument) +
             self.value_fields.items.len * @sizeOf(entities.ValueField) +
             self.switch_cases.items.len * @sizeOf(entities.SwitchCase) +
             self.switches.items.len * @sizeOf(entities.Switch) +
@@ -110,18 +95,24 @@ pub const Storage = struct {
     }
 };
 
-test "module semantic storage owns resolved and pending tables" {
+test "module semantic storage adds only non-core module tables" {
     const allocator = std.testing.allocator;
     var storage: Storage = .{};
     defer storage.deinit(allocator);
 
-    try storage.types.append(allocator, .{ .builtin = .Int32 });
     try storage.external_refs.append(allocator, .{
         .kind = .function,
         .module_path = null,
         .name = .{ .start = 0, .len = 3 },
         .source = .{ .file_index = 0, .offset = 5 },
     });
-    try std.testing.expect(storage.storageBytes() >= @sizeOf(entities.ModuleType));
+    try storage.bindings.append(allocator, .{
+        .name = .{ .start = 0, .len = 1 },
+        .source = .{ .file_index = 0, .offset = 8 },
+        .ty = @enumFromInt(0),
+        .mutability = .constant,
+    });
+
+    try std.testing.expect(storage.storageBytes() >= @sizeOf(entities.Binding));
     try std.testing.expectEqual(@as(usize, 1), storage.external_refs.items.len);
 }
