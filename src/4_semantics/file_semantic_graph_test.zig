@@ -213,3 +213,27 @@ test "file semantic graph owns import paths at module and function scope" {
     try std.testing.expectEqualStrings("../outer", graph.text(graph.import_references.items[0].path));
     try std.testing.expectEqualStrings("./inner", graph.text(graph.import_references.items[1].path));
 }
+
+test "file semantic graph lexical names relocate with the shared string pool" {
+    const allocator = std.testing.allocator;
+    const source = "read(.x: Int32) -> (.result: Int32) := {\n return x\n}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(1));
+    defer tree.deinit(allocator);
+    try std.testing.checkAllAllocationFailures(allocator, mergeLexicalWithAllocator, .{ &tree, source });
+}
+
+fn mergeLexicalWithAllocator(allocator: std.mem.Allocator, tree: *const syn.FileSyntaxTree, source: []const u8) !void {
+    const global = @import("global_semantic_graph_builder.zig");
+    var graph = try graph_mod.semantizeFile(allocator, tree, source);
+    defer graph.deinit(allocator);
+    var merged = try global.mergeFileGraphs(allocator, &.{ graph, graph });
+    defer merged.deinit(allocator);
+    graph.deinit(allocator);
+    const offsets = merged.lexical.file_offsets.items[1];
+    const reference = merged.lexical.references.items[offsets.reference_base];
+    const binding = merged.lexical.bindings.items[@intFromEnum(reference.binding)];
+    try std.testing.expectEqual(offsets.binding_base, @intFromEnum(reference.binding));
+    try std.testing.expectEqualStrings("x", merged.text(reference.name));
+    try std.testing.expectEqualStrings("x", merged.text(binding.name));
+    try std.testing.expectEqual(@as(u32, 1), reference.syntax.file_index);
+}

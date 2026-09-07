@@ -513,6 +513,8 @@ representation until their indexed migration is complete.
   requiring the syntax tree during globalization.
 - [x] Flatten declaration tables and relocate declaration IDs and owned names
   before global predeclaration; measure merge cost separately.
+- [x] Flatten lexical scopes, bindings, references and deferred syntax bridges;
+  relocate their identities and names into the builder's shared global stores.
 - [ ] Flatten and relocate the remaining file tables into global storage.
 - [ ] Canonicalize global types and migrate resolution, Safety and Codegen to IDs.
 - [ ] Implement the persistent FileSG format and cache.
