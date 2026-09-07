@@ -331,11 +331,6 @@ pub const FileSyntaxTree = struct {
         }
     };
 
-    // Representative syntaxing measurements compare the compact base and
-    // extra_data with the legacy tree's 128-byte logical STNode records:
-    // minimal: 10 nodes, 130 + 44 bytes (legacy 6 nodes, 768 bytes);
-    // cat_cli: 143 nodes, 1,859 + 640 bytes (legacy 120, 15,360 bytes);
-    // dynamic array: 222 nodes, 2,886 + 696 bytes (legacy 184, 23,552 bytes).
     // Compact counts include type syntax, which the legacy parallel Type tree
     // omitted from its STNode count.
 
