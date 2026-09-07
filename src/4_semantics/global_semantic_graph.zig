@@ -1,6 +1,7 @@
 const std = @import("std");
 const primitives = @import("semantic_primitives.zig");
 const semantic_strings = @import("semantic_strings.zig");
+const type_shapes = @import("semantic_type_shapes.zig");
 
 pub const GlobalDeclId = enum(u32) { _ };
 pub const GlobalTypeId = enum(u32) { _ };
@@ -65,6 +66,7 @@ pub const VariantRange = primitives.Range(GlobalVariantId);
 
 pub const Declaration = primitives.Declaration(Ids);
 pub const GlobalType = primitives.SemanticType(Ids);
+pub const GenericInstance = type_shapes.GenericInstance(Ids);
 pub const Field = primitives.Field(Ids);
 pub const ChoiceVariant = primitives.ChoiceVariant(Ids);
 pub const GenericArgument = primitives.GenericArgument(Ids);
@@ -111,6 +113,7 @@ pub const GlobalSemanticGraph = struct {
     symbols: std.ArrayList(Symbol) = .empty,
     symbol_declarations: std.ArrayList(GlobalDeclId) = .empty,
     types: std.ArrayList(GlobalType) = .empty,
+    generic_instances: std.ArrayList(GenericInstance) = .empty,
     functions: std.ArrayList(Function) = .empty,
     bindings: std.ArrayList(Binding) = .empty,
     nodes: std.ArrayList(Node) = .empty,
@@ -153,6 +156,7 @@ pub const GlobalSemanticGraph = struct {
             &self.symbols,
             &self.symbol_declarations,
             &self.types,
+            &self.generic_instances,
             &self.functions,
             &self.bindings,
             &self.nodes,
@@ -221,6 +225,7 @@ pub const GlobalSemanticGraph = struct {
             self.symbols.items.len * @sizeOf(Symbol) +
             self.symbol_declarations.items.len * @sizeOf(GlobalDeclId) +
             self.types.items.len * @sizeOf(GlobalType) +
+            self.generic_instances.items.len * @sizeOf(GenericInstance) +
             self.functions.items.len * @sizeOf(Function) +
             self.bindings.items.len * @sizeOf(Binding) +
             self.nodes.items.len * @sizeOf(Node) +
