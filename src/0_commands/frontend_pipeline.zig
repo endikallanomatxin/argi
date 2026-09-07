@@ -8,7 +8,7 @@ const tokenizer = @import("../2_tokens/tokenizer.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
 const syntaxer = @import("../3_syntax/syntaxer.zig");
 const sg = @import("../4_semantics/semantic_graph.zig");
-const file_sg = @import("../4_semantics/file_semantic_graph.zig");
+const module_sg = @import("../4_semantics/module_semantic_graph.zig");
 const global_semantic_graph_builder = @import("../4_semantics/global_semantic_graph_builder.zig");
 const semantizer = @import("../4_semantics/semantizer.zig");
 const safety_checker = @import("../4_semantics/safety_checker.zig");
@@ -30,14 +30,14 @@ pub const FrontendPipeline = struct {
     source_db: *const source_db.SourceDb,
     syntax_files: std.array_list.Managed(st.FileSyntaxTree),
     syntax_root_list: std.array_list.Managed(st.SyntaxRef),
-    file_graphs: std.ArrayList(file_sg.FileSemanticGraph) = .empty,
+    module_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty,
     global_builder: global_semantic_graph_builder.GlobalSemanticGraphBuilder = .{},
     syntax_ctx: ?syntaxer.Syntaxer = null,
     sem_ctx: ?semantizer.Semantizer = null,
     safety_ctx: ?safety_checker.SafetyChecker = null,
     semantize_timings: semantizer.Semantizer.SemantizeTimings = .{},
     safety_ns: u64 = 0,
-    file_semantizing_ns: u64 = 0,
+    module_semantizing_ns: u64 = 0,
     global_merge_ns: u64 = 0,
     syntax_node_count: usize = 0,
     sg_node_count: usize = 0,
@@ -63,15 +63,15 @@ pub const FrontendPipeline = struct {
 
     pub fn deinit(self: *FrontendPipeline) void {
         if (self.safety_ctx) |*ctx| ctx.deinit();
-        self.clearFileGraphs();
-        self.file_graphs.deinit(self.allocator);
+        self.clearModuleGraphs();
+        self.module_graphs.deinit(self.allocator);
         for (self.syntax_files.items) |*file| file.deinit(self.allocator);
         self.syntax_files.deinit();
         self.syntax_root_list.deinit();
     }
 
     pub fn tokenizeFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !void {
-        self.clearFileGraphs();
+        self.clearModuleGraphs();
         for (self.syntax_files.items) |*file| file.deinit(self.allocator);
         self.syntax_files.clearRetainingCapacity();
 
@@ -151,17 +151,44 @@ pub const FrontendPipeline = struct {
     }
 
     pub fn semantize(self: *FrontendPipeline) ![]const *sg.SGNode {
-        const file_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-        self.clearFileGraphs();
-        errdefer self.clearFileGraphs();
-        try self.file_graphs.ensureTotalCapacity(self.allocator, self.syntax_files.items.len);
-        for (self.syntax_files.items) |*file| {
-            const graph = try file_sg.semantizeFile(self.allocator, file, self.source_db.get(file.file_id).source);
-            self.file_graphs.appendAssumeCapacity(graph);
+        const module_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
+        self.clearModuleGraphs();
+        errdefer self.clearModuleGraphs();
+        const ModuleInputs = struct {
+            dir: []const u8,
+            files: std.ArrayList(module_sg.FileInput) = .empty,
+        };
+        var groups: std.ArrayList(ModuleInputs) = .empty;
+        defer {
+            for (groups.items) |*group| group.files.deinit(self.allocator);
+            groups.deinit(self.allocator);
         }
-        self.file_semantizing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - file_start);
+        for (self.syntax_files.items, 0..) |*file, file_index| {
+            const source = self.source_db.get(file.file_id);
+            const dir = std.fs.path.dirname(source.path) orelse ".";
+            var group_index: ?usize = null;
+            for (groups.items, 0..) |group, index| if (std.mem.eql(u8, group.dir, dir)) {
+                group_index = index;
+                break;
+            };
+            if (group_index == null) {
+                try groups.append(self.allocator, .{ .dir = dir });
+                group_index = groups.items.len - 1;
+            }
+            try groups.items[group_index.?].files.append(self.allocator, .{
+                .file_index = @intCast(file_index),
+                .tree = file,
+                .source = source.source,
+            });
+        }
+        try self.module_graphs.ensureTotalCapacity(self.allocator, groups.items.len);
+        for (groups.items) |group| {
+            const graph = try module_sg.build(self.allocator, group.dir, group.files.items);
+            self.module_graphs.appendAssumeCapacity(graph);
+        }
+        self.module_semantizing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - module_start);
         const merge_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-        self.global_builder = try global_semantic_graph_builder.mergeFileGraphs(self.allocator, self.file_graphs.items);
+        self.global_builder = try global_semantic_graph_builder.mergeModuleGraphs(self.allocator, self.module_graphs.items, self.syntax_files.items.len);
         self.global_merge_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - merge_start);
         self.sg_node_count = 0;
         if (self.options.collect_stats) sg.beginNodeCounting(&self.sg_node_count);
@@ -178,15 +205,15 @@ pub const FrontendPipeline = struct {
         return self.sg_nodes;
     }
 
-    fn clearFileGraphs(self: *FrontendPipeline) void {
+    fn clearModuleGraphs(self: *FrontendPipeline) void {
         self.global_builder.deinit(self.allocator);
-        for (self.file_graphs.items) |*graph| graph.deinit(self.allocator);
-        self.file_graphs.clearRetainingCapacity();
+        for (self.module_graphs.items) |*graph| graph.deinit(self.allocator);
+        self.module_graphs.clearRetainingCapacity();
     }
 
-    pub fn fileSemanticStorageBytes(self: *const FrontendPipeline) usize {
+    pub fn moduleSemanticStorageBytes(self: *const FrontendPipeline) usize {
         var bytes: usize = 0;
-        for (self.file_graphs.items) |*graph| bytes += graph.storageBytes();
+        for (self.module_graphs.items) |*graph| bytes += graph.storageBytes();
         return bytes;
     }
 };

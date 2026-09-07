@@ -1,12 +1,12 @@
 const std = @import("std");
 const syn = @import("../3_syntax/syntax_tree.zig");
-const file_strings = @import("file_strings.zig");
-const Error = file_strings.Error || error{FileBindingsTooLarge};
+const semantic_strings = @import("semantic_strings.zig");
+const Error = semantic_strings.Error || error{FileBindingsTooLarge};
 
 pub const ScopeId = enum(u32) { none = std.math.maxInt(u32), _ };
 pub const BindingId = enum(u32) { external = std.math.maxInt(u32), _ };
 pub const ReferenceId = enum(u32) { _ };
-pub const StringRange = file_strings.StringRange;
+pub const StringRange = semantic_strings.StringRange;
 pub const BindingKind = enum(u8) { input, output, local, iteration, payload };
 pub const ReferenceKind = enum(u8) { value, assignment, keep, call, module, type };
 pub const Scope = struct { parent: ScopeId, syntax_node: syn.NodeIndex };
@@ -91,7 +91,7 @@ pub const Reference = struct {
 /// Lexical identities only: a local reference says which declaration supplies
 /// its name, never its type, value, availability, ownership or overload choice.
 /// Unhandled constructs retain explicit syntax bridges in deferred_nodes.
-/// Names index the owning FileSemanticGraph's string store. These tables retain
+/// Names index the owning ModuleSemanticGraph's string store. These tables retain
 /// neither a separate string allocation nor source, tree or owner pointers.
 pub const FileBindings = struct {
     scopes: std.ArrayList(Scope) = .empty,
@@ -147,7 +147,7 @@ const Builder = struct {
     }
 
     fn name(self: *Builder, value: []const u8) !StringRange {
-        return file_strings.append(self.strings, self.allocator, value);
+        return semantic_strings.append(self.strings, self.allocator, value);
     }
 
     fn scope(self: *Builder, parent: ScopeId, node: syn.NodeIndex) !ScopeId {
