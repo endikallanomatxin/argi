@@ -491,7 +491,9 @@ into transient source buffers.
 - [ ] Lower lexical scopes, local bindings and explicit external references.
 - [ ] Lower complete expressions, types and pending global operations without
   requiring the syntax tree during globalization.
-- [ ] Flatten and relocate file tables into global storage.
+- [x] Flatten declaration tables and relocate declaration IDs and owned names
+  before global predeclaration; measure merge cost separately.
+- [ ] Flatten and relocate the remaining file tables into global storage.
 - [ ] Canonicalize global types and migrate resolution, Safety and Codegen to IDs.
 - [ ] Implement the persistent FileSG format and cache.
 
