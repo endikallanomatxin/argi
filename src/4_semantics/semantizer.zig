@@ -5935,7 +5935,7 @@ pub const Semantizer = struct {
         for (compact_variants, syntax_variants, 0..) |compact, variant_node, index| {
             const syntax_variant = file.choiceTypeVariant(variant_node) orelse return error.InvalidType;
             const name = self.global_builder.text(compact.name);
-            const payload_type = if (compact.payload_type) |payload| try self.materializeCompactType(payload) else null;
+            const payload_type = if (compact.payload_type) |payload| try self.materializeCompactType(payload, scope) else null;
             const option_decl = if (payload_type == null)
                 self.resolveChoiceOptionReference(
                     if (compact.qualifier) |qualifier| self.global_builder.text(qualifier) else null,
@@ -5975,7 +5975,7 @@ pub const Semantizer = struct {
             const syntax_field = file.structTypeField(field_node) orelse return error.InvalidType;
             fields[index] = .{
                 .name = self.global_builder.text(compact.name),
-                .ty = try self.materializeCompactType(compact.ty),
+                .ty = try self.materializeCompactType(compact.ty, scope),
                 .default_value = if (syntax_field.default_value) |default_node| (try self.visitNode(file.ref(default_node), scope)).node else null,
             };
         }
@@ -5997,7 +5997,7 @@ pub const Semantizer = struct {
         const fields = try self.allocator.alloc(sg.StructTypeField, compact_fields.len);
         for (compact_fields, syntax_fields, 0..) |compact, field_node, index| {
             _ = file.structTypeField(field_node) orelse return error.InvalidType;
-            const field_type = try self.materializeCompactType(compact.ty);
+            const field_type = try self.materializeCompactType(compact.ty, scope);
             const field_location: tok.Location = .{ .file = syntax_node.file_id, .offset = compact.source_offset };
             fields[index] = .{
                 .name = self.global_builder.text(compact.name),
@@ -6020,7 +6020,7 @@ pub const Semantizer = struct {
         return result;
     }
 
-    fn materializeCompactType(self: *Semantizer, id: global_graph.GlobalTypeId) SemErr!sg.Type {
+    fn materializeCompactType(self: *Semantizer, id: global_graph.GlobalTypeId, scope: *Scope) SemErr!sg.Type {
         return switch (self.global_builder.types.items[@intFromEnum(id)]) {
             .builtin => |builtin| .{ .builtin = @enumFromInt(@intFromEnum(builtin)) },
             .declared => |declaration_id| blk: {
@@ -6030,15 +6030,24 @@ pub const Semantizer = struct {
             },
             .pointer => |pointer| blk: {
                 const child = try self.allocator.create(sg.Type);
-                child.* = try self.materializeCompactType(pointer.child);
+                child.* = try self.materializeCompactType(pointer.child, scope);
                 const result = try self.allocator.create(sg.PointerType);
                 result.* = .{ .mutability = pointer.mutability, .child = child };
                 break :blk .{ .pointer_type = result };
             },
             .array => |array| blk: {
-                const element = try self.materializeCompactType(array.element);
+                const element = try self.materializeCompactType(array.element, scope);
                 const length = std.math.cast(usize, array.length) orelse return error.InvalidType;
                 break :blk try self.makeArrayType(length, element);
+            },
+            .nullable => |child_id| blk: {
+                var values = GenericSubst.init(self.allocator);
+                defer values.deinit();
+                try values.types.put("t", try self.materializeCompactType(child_id, scope));
+                break :blk self.instantiateCompactGenericTypeFromSubstNamed("Nullable", scope, &values) catch |err| switch (err) {
+                    error.SymbolNotFound => return error.UnknownType,
+                    else => return err,
+                };
             },
         };
     }

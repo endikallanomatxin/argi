@@ -139,6 +139,22 @@ test "module callable interfaces intern pointer and array types" {
     try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(pointer.child)].builtin);
 }
 
+test "module callable interfaces preserve nullable types" {
+    const allocator = std.testing.allocator;
+    const source = "find(.fallback: ?Int32) -> (.result: ?Int32) := { result = fallback }\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var graph = try module_graph.build(allocator, "nullable", &.{.{ .path = "nullable/main.rg", .tree = &tree, .source = source }});
+    defer graph.deinit(allocator);
+
+    const interface = graph.functions.items[0];
+    const input = graph.fields.items[interface.input.start];
+    const output = graph.fields.items[interface.output.start];
+    try std.testing.expectEqual(input.ty, output.ty);
+    const child = graph.types.items[@intFromEnum(input.ty)].nullable;
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(child)].builtin);
+}
+
 test "module graph builds and relocates nominal choice variants" {
     const allocator = std.testing.allocator;
     const source = "Result : Type = (\n    ..ok Int32\n    ..done\n)\n";

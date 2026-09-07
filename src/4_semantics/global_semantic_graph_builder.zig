@@ -25,6 +25,7 @@ pub const GlobalType = union(enum) {
     declared: GlobalDeclId,
     pointer: struct { child: GlobalTypeId, mutability: syn.PointerMutability },
     array: struct { length: u64, element: GlobalTypeId },
+    nullable: GlobalTypeId,
 };
 pub const Field = struct { name: module_sema.StringRange, ty: GlobalTypeId, source_offset: u32, has_default: bool };
 pub const FunctionInterface = struct { declaration: GlobalDeclId, input: module_sema.FieldRange, output: module_sema.FieldRange };
@@ -192,6 +193,7 @@ pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_s
             .declared => |id| .{ .declared = @enumFromInt(declaration_base + @intFromEnum(id)) },
             .pointer => |pointer| .{ .pointer = .{ .child = @enumFromInt(type_base + @intFromEnum(pointer.child)), .mutability = pointer.mutability } },
             .array => |array| .{ .array = .{ .length = array.length, .element = @enumFromInt(type_base + @intFromEnum(array.element)) } },
+            .nullable => |child| .{ .nullable = @enumFromInt(type_base + @intFromEnum(child)) },
         });
         for (module.fields.items) |field| try merged.fields.append(allocator, .{
             .name = try relocateName(module.strings.items, field.name, string_base),
