@@ -570,7 +570,8 @@ file-to-global semantic merge remains.
 6. [ ] Resolve cross-file references inside the same module. Unqualified named
    type references are the first migrated case.
 7. [ ] Emit explicit external-module references and pending global operations for
-   everything whose answer can depend on another module.
+   everything whose answer can depend on another module. Named type references
+   now distinguish builtin, module-local and external requirements.
 8. [x] Ensure ModuleSema does not need semantic state from imported modules to build
    the basic cacheable ModuleSG.
 
