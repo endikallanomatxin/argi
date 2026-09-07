@@ -205,6 +205,34 @@ test "module callable interfaces preserve anonymous structural types" {
     }
 }
 
+test "anonymous structural types retain default expression provenance" {
+    const allocator = std.testing.allocator;
+    const source = "read(.value: (.number: Int32 = 4)) -> () := {}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var graph = try module_graph.build(allocator, "structural_defaults", &.{.{ .path = "structural_defaults/main.rg", .tree = &tree, .source = source }});
+    defer graph.deinit(allocator);
+
+    const interface = graph.functions.items[0];
+    const input = graph.fields.items[interface.input.start];
+    const shape = graph.types.items[@intFromEnum(input.ty)].structural;
+    const number = graph.structural_fields.items[shape.start];
+    try std.testing.expect(number.has_default);
+    try std.testing.expect(number.default_value != null);
+    try std.testing.expectEqual(@as(u32, 0), number.module_file_index);
+
+    const sources = [_]source_files.SourceFile{.{ .path = "structural_defaults/main.rg", .code = source }};
+    var db = try source_db.SourceDb.init(allocator, &sources);
+    defer db.deinit(allocator);
+    var merged = try global_builder.mergeModuleGraphs(allocator, &.{graph}, &db);
+    defer merged.deinit(allocator);
+    const global_input = merged.fields.items[merged.functions.items[0].input.start];
+    const global_shape = merged.types.items[@intFromEnum(global_input.ty)].structural;
+    const global_number = merged.structural_fields.items[global_shape.start];
+    try std.testing.expect(global_number.default_value != null);
+    try std.testing.expectEqual(@as(u32, 0), global_number.file_index);
+}
+
 test "module callable interfaces preserve anonymous choice types" {
     const allocator = std.testing.allocator;
     const source = "inspect(.value: (..some Int32, ..none)) -> () := {}\n";

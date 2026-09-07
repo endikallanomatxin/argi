@@ -31,7 +31,14 @@ pub const GlobalType = union(enum) {
     structural_choice: module_sema.FieldRange,
     generic: struct { base: GlobalDeclId, arguments: module_sema.FieldRange },
 };
-pub const Field = struct { name: module_sema.StringRange, ty: GlobalTypeId, source_offset: u32, has_default: bool };
+pub const Field = struct {
+    name: module_sema.StringRange,
+    ty: GlobalTypeId,
+    source_offset: u32,
+    has_default: bool,
+    default_value: ?syn.NodeIndex,
+    file_index: u32,
+};
 pub const FunctionInterface = struct { declaration: GlobalDeclId, input: module_sema.FieldRange, output: module_sema.FieldRange };
 pub const ChoiceVariant = struct { name: module_sema.StringRange, qualifier: ?module_sema.StringRange, payload_type: ?GlobalTypeId, source_offset: u32, file_index: u32 };
 pub const GenericTypeArgument = struct { name: module_sema.StringRange, ty: GlobalTypeId };
@@ -224,12 +231,16 @@ pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_s
             .ty = @enumFromInt(type_base + @intFromEnum(field.ty)),
             .source_offset = field.source_offset,
             .has_default = field.has_default,
+            .default_value = field.default_value,
+            .file_index = source_file_indices.items[field.module_file_index],
         });
         for (module.structural_fields.items) |field| try merged.structural_fields.append(allocator, .{
             .name = try relocateName(module.strings.items, field.name, string_base),
             .ty = @enumFromInt(type_base + @intFromEnum(field.ty)),
             .source_offset = field.source_offset,
             .has_default = field.has_default,
+            .default_value = field.default_value,
+            .file_index = source_file_indices.items[field.module_file_index],
         });
         for (module.functions.items) |function| try merged.functions.append(allocator, .{
             .declaration = @enumFromInt(declaration_base + @intFromEnum(function.declaration)),

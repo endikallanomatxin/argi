@@ -6065,6 +6065,10 @@ pub const Semantizer = struct {
                 for (compact_fields, 0..) |field, index| fields[index] = .{
                     .name = self.global_builder.text(field.name),
                     .ty = try self.materializeCompactType(field.ty, scope),
+                    .default_value = if (field.default_value) |default_node|
+                        (try self.visitNode(self.syntax_files[field.file_index].ref(default_node), scope)).node
+                    else
+                        null,
                 };
                 const result = try self.allocator.create(sg.StructType);
                 result.* = .{ .fields = fields };
