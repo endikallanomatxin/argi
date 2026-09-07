@@ -10,10 +10,52 @@ pub const ModuleBlockId = enum(u32) { _ };
 pub const ModuleFieldId = enum(u32) { _ };
 pub const ModuleVariantId = enum(u32) { _ };
 pub const ModuleGenericArgId = enum(u32) { _ };
+pub const ModuleValueFieldId = enum(u32) { _ };
+pub const ModuleSwitchCaseId = enum(u32) { _ };
+pub const ModuleSwitchId = enum(u32) { _ };
+pub const ModuleAutoDeinitFieldId = enum(u32) { _ };
+pub const ModuleAutoDeinitId = enum(u32) { _ };
+pub const ModuleVirtualRegistryId = enum(u32) { _ };
+pub const ModuleVirtualizeId = enum(u32) { _ };
+pub const ModuleVirtualCallId = enum(u32) { _ };
+pub const ModuleReachSegmentId = enum(u32) { _ };
+pub const ModuleReachAlternativeId = enum(u32) { _ };
+pub const ModuleReachId = enum(u32) { _ };
+pub const ModuleNullableUnwrapId = enum(u32) { _ };
+pub const ModuleTestingExpectErrorId = enum(u32) { _ };
+pub const ModuleErrorPropagationId = enum(u32) { _ };
+pub const ModuleErrorContextId = enum(u32) { _ };
 pub const ModuleScopeId = enum(u32) { none = std.math.maxInt(u32), _ };
 pub const ModuleFileId = enum(u32) { _ };
 pub const ExternalRefId = enum(u32) { _ };
 pub const PendingOperationId = enum(u32) { _ };
+
+pub const Ids = struct {
+    pub const DeclId = ModuleDeclId;
+    pub const TypeId = ModuleTypeId;
+    pub const FunctionId = ModuleFunctionId;
+    pub const BindingId = ModuleBindingId;
+    pub const NodeId = ModuleNodeId;
+    pub const BlockId = ModuleBlockId;
+    pub const FieldId = ModuleFieldId;
+    pub const VariantId = ModuleVariantId;
+    pub const GenericArgId = ModuleGenericArgId;
+    pub const ValueFieldId = ModuleValueFieldId;
+    pub const SwitchCaseId = ModuleSwitchCaseId;
+    pub const SwitchId = ModuleSwitchId;
+    pub const AutoDeinitFieldId = ModuleAutoDeinitFieldId;
+    pub const AutoDeinitId = ModuleAutoDeinitId;
+    pub const VirtualRegistryId = ModuleVirtualRegistryId;
+    pub const VirtualizeId = ModuleVirtualizeId;
+    pub const VirtualCallId = ModuleVirtualCallId;
+    pub const ReachSegmentId = ModuleReachSegmentId;
+    pub const ReachAlternativeId = ModuleReachAlternativeId;
+    pub const ReachId = ModuleReachId;
+    pub const NullableUnwrapId = ModuleNullableUnwrapId;
+    pub const TestingExpectErrorId = ModuleTestingExpectErrorId;
+    pub const ErrorPropagationId = ModuleErrorPropagationId;
+    pub const ErrorContextId = ModuleErrorContextId;
+};
 
 pub const DeclRange = primitives.Range(ModuleDeclId);
 pub const BindingRange = primitives.Range(ModuleBindingId);
@@ -22,14 +64,28 @@ pub const FieldRange = primitives.Range(ModuleFieldId);
 pub const VariantRange = primitives.Range(ModuleVariantId);
 pub const GenericArgRange = primitives.Range(ModuleGenericArgId);
 
-pub const ModuleType = primitives.SemanticType(ModuleTypeId, ModuleDeclId, ModuleFieldId, ModuleGenericArgId);
-pub const Field = primitives.Field(ModuleTypeId, ModuleNodeId);
-pub const ChoiceVariant = primitives.ChoiceVariant(ModuleTypeId, ModuleDeclId);
-pub const GenericTypeArgument = primitives.GenericTypeArgument(ModuleTypeId);
-pub const Function = primitives.Function(ModuleDeclId, ModuleFieldId, ModuleBlockId, ModuleBindingId, ModuleTypeId);
-pub const Binding = primitives.Binding(ModuleTypeId, ModuleNodeId);
-pub const Block = primitives.Block(ModuleNodeId);
-pub const ResolvedNode = primitives.Node(ModuleNodeId, ModuleTypeId, ModuleDeclId, ModuleFunctionId, ModuleBindingId, ModuleBlockId, ModuleFieldId, ModuleVariantId);
+pub const ModuleType = primitives.SemanticType(Ids);
+pub const Field = primitives.Field(Ids);
+pub const ChoiceVariant = primitives.ChoiceVariant(Ids);
+pub const GenericArgument = primitives.GenericArgument(Ids);
+pub const Function = primitives.Function(Ids);
+pub const Binding = primitives.Binding(Ids);
+pub const Block = primitives.Block(Ids);
+pub const ValueField = primitives.ValueField(Ids);
+pub const SwitchCase = primitives.SwitchCase(Ids);
+pub const Switch = primitives.Switch(Ids);
+pub const AutoDeinitField = primitives.AutoDeinitField(Ids);
+pub const AutoDeinit = primitives.AutoDeinit(Ids);
+pub const VirtualMethodRegistry = primitives.VirtualMethodRegistry(Ids);
+pub const Virtualize = primitives.Virtualize(Ids);
+pub const VirtualCall = primitives.VirtualCall(Ids);
+pub const ReachAlternative = primitives.ReachAlternative(Ids);
+pub const Reach = primitives.Reach(Ids);
+pub const NullableUnwrap = primitives.NullableUnwrap(Ids);
+pub const TestingExpectError = primitives.TestingExpectError(Ids);
+pub const ErrorPropagation = primitives.ErrorPropagation(Ids);
+pub const ErrorContext = primitives.ErrorContext(Ids);
+pub const ResolvedNode = primitives.Node(Ids);
 
 pub const Scope = struct {
     parent: ModuleScopeId = .none,
@@ -83,15 +139,14 @@ pub const PendingOperation = union(enum) {
     },
 };
 
-/// Module nodes either contain a semantic fact whose identity is completely
-/// module-local, or a typed hole that globalization must resolve. The resolved
-/// payload uses exactly the same schema as GlobalSemanticGraph nodes.
+/// Resolved module nodes use the shared semantic payload schema. Only ModuleSG
+/// can additionally contain a typed hole represented by a pending operation.
 pub const ModuleNode = union(enum) {
     resolved: ResolvedNode,
     pending: PendingOperationId,
 };
 
-test "module semantic identities stay separate" {
+test "module semantic identities instantiate the shared schema" {
     const decl: ModuleDeclId = @enumFromInt(1);
     const ty = ModuleType{ .declared = decl };
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(ty.declared));
@@ -103,4 +158,11 @@ test "module semantic identities stay separate" {
         .source = .{ .file_index = 0, .offset = 7 },
     };
     try std.testing.expectEqual(ExternalKind.type, external.kind);
+
+    const resolved = ResolvedNode{
+        .source = .{ .file_index = 0, .offset = 9 },
+        .ty = null,
+        .content = .{ .bool_literal = true },
+    };
+    try std.testing.expect(resolved.content.bool_literal);
 }
