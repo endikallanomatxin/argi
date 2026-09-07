@@ -29,6 +29,7 @@ pub const GlobalErrorPropagationId = enum(u32) { _ };
 pub const GlobalErrorContextId = enum(u32) { _ };
 pub const GlobalFileId = enum(u32) { _ };
 pub const GlobalModuleId = enum(u32) { _ };
+pub const GlobalSymbolId = enum(u32) { _ };
 
 pub const Ids = struct {
     pub const DeclId = GlobalDeclId;
@@ -63,6 +64,7 @@ pub const BindingRange = primitives.Range(GlobalBindingId);
 pub const NodeRange = primitives.Range(GlobalNodeId);
 pub const FieldRange = primitives.Range(GlobalFieldId);
 pub const VariantRange = primitives.Range(GlobalVariantId);
+pub const SymbolRange = primitives.Range(GlobalSymbolId);
 
 pub const Declaration = primitives.Declaration(Ids);
 pub const GlobalType = primitives.SemanticType(Ids);
@@ -98,6 +100,7 @@ pub const Module = struct {
     dir: StringRange,
     files: primitives.Range(GlobalFileId),
     declarations: DeclRange,
+    symbols: SymbolRange,
 };
 
 pub const Symbol = struct {
