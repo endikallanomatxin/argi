@@ -6065,6 +6065,35 @@ pub const Semantizer = struct {
                 result.* = .{ .fields = fields };
                 break :blk .{ .struct_type = result };
             },
+            .structural_choice => |range| blk: {
+                const compact_variants = self.global_builder.structural_choice_variants.items[range.start..][0..range.len];
+                const variants = try self.allocator.alloc(sg.ChoiceVariant, compact_variants.len);
+                for (compact_variants, 0..) |variant, index| {
+                    const name = self.global_builder.text(variant.name);
+                    const payload_type = if (variant.payload_type) |payload| try self.materializeCompactType(payload, scope) else null;
+                    const option_decl = if (payload_type == null)
+                        self.resolveChoiceOptionReference(
+                            if (variant.qualifier) |qualifier| self.global_builder.text(qualifier) else null,
+                            name,
+                            .{ .file = @enumFromInt(variant.file_index), .offset = variant.source_offset },
+                            scope,
+                        ) catch |err| switch (err) {
+                            error.SymbolNotFound => null,
+                            else => return err,
+                        }
+                    else
+                        null;
+                    variants[index] = .{
+                        .name = name,
+                        .value = if (option_decl) |declaration| @intCast(declaration.id) else @intCast(index),
+                        .payload_type = payload_type,
+                        .option_decl = option_decl,
+                    };
+                }
+                const result = try self.allocator.create(sg.ChoiceType);
+                result.* = .{ .variants = variants };
+                break :blk .{ .choice_type = result };
+            },
         };
     }
 

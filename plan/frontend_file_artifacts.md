@@ -568,8 +568,8 @@ the current `SourceDb` only when constructing the compatibility graph.
 4. [ ] Semantize module-local types and callable interfaces. Module-local type
    identities, simple nominal struct and choice shapes, and non-generic callable
    interfaces made from names, builtins, pointers, arrays, nullable types and
-   inferred errable types and anonymous structures without defaults are now
-   produced and consumed; richer type forms remain.
+   inferred errable types, anonymous structures without defaults and anonymous
+   choices are now produced and consumed; richer type forms remain.
 5. [ ] Lower lexical scopes, bindings, expressions and control flow directly to
    module IDs.
 6. [ ] Resolve cross-file references inside the same module. Unqualified named
