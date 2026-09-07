@@ -43,6 +43,7 @@ pub const ModuleType = union(enum) {
     pointer: struct { child: ModuleTypeId, mutability: syn.PointerMutability },
     array: struct { length: u64, element: ModuleTypeId },
     nullable: ModuleTypeId,
+    inferred_errable: ModuleTypeId,
 };
 
 pub const FieldRange = struct { start: u32, len: u32 };
@@ -407,6 +408,10 @@ fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *c
             const child = try lowerType(allocator, graph, tree, source, module_file_index, child_node) orelse break :blk null;
             break :blk try appendType(allocator, graph, .{ .nullable = child });
         },
+        .inferred_errable => |child_node| blk: {
+            const child = try lowerType(allocator, graph, tree, source, module_file_index, child_node) orelse break :blk null;
+            break :blk try appendType(allocator, graph, .{ .inferred_errable = child });
+        },
         else => null,
     };
 }
@@ -429,6 +434,7 @@ fn moduleTypesEqual(lhs: ModuleType, rhs: ModuleType) bool {
         .pointer => |value| value.child == rhs.pointer.child and value.mutability == rhs.pointer.mutability,
         .array => |value| value.length == rhs.array.length and value.element == rhs.array.element,
         .nullable => |value| value == rhs.nullable,
+        .inferred_errable => |value| value == rhs.inferred_errable,
     };
 }
 
