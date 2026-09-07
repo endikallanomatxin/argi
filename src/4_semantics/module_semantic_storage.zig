@@ -3,6 +3,10 @@ const entities = @import("module_semantic_entities.zig");
 const primitives = @import("semantic_primitives.zig");
 
 pub const Storage = struct {
+    function_semantics: std.ArrayList(entities.FunctionSemantic) = .empty,
+    field_semantics: std.ArrayList(entities.FieldSemantic) = .empty,
+    variant_semantics: std.ArrayList(entities.VariantSemantic) = .empty,
+
     bindings: std.ArrayList(entities.Binding) = .empty,
     nodes: std.ArrayList(entities.ModuleNode) = .empty,
     blocks: std.ArrayList(entities.Block) = .empty,
@@ -34,6 +38,9 @@ pub const Storage = struct {
     roots: std.ArrayList(entities.ModuleNodeId) = .empty,
 
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
+        self.function_semantics.deinit(allocator);
+        self.field_semantics.deinit(allocator);
+        self.variant_semantics.deinit(allocator);
         self.bindings.deinit(allocator);
         self.nodes.deinit(allocator);
         self.blocks.deinit(allocator);
@@ -65,7 +72,10 @@ pub const Storage = struct {
     }
 
     pub fn storageBytes(self: *const Storage) usize {
-        return self.bindings.items.len * @sizeOf(entities.Binding) +
+        return self.function_semantics.items.len * @sizeOf(entities.FunctionSemantic) +
+            self.field_semantics.items.len * @sizeOf(entities.FieldSemantic) +
+            self.variant_semantics.items.len * @sizeOf(entities.VariantSemantic) +
+            self.bindings.items.len * @sizeOf(entities.Binding) +
             self.nodes.items.len * @sizeOf(entities.ModuleNode) +
             self.blocks.items.len * @sizeOf(entities.Block) +
             self.value_fields.items.len * @sizeOf(entities.ValueField) +
@@ -95,11 +105,12 @@ pub const Storage = struct {
     }
 };
 
-test "module semantic storage adds only non-core module tables" {
+test "module semantic storage adds body tables and core overlays" {
     const allocator = std.testing.allocator;
     var storage: Storage = .{};
     defer storage.deinit(allocator);
 
+    try storage.function_semantics.append(allocator, .{ .function = @enumFromInt(0) });
     try storage.external_refs.append(allocator, .{
         .kind = .function,
         .module_path = null,
@@ -114,5 +125,5 @@ test "module semantic storage adds only non-core module tables" {
     });
 
     try std.testing.expect(storage.storageBytes() >= @sizeOf(entities.Binding));
-    try std.testing.expectEqual(@as(usize, 1), storage.external_refs.items.len);
+    try std.testing.expectEqual(@as(usize, 1), storage.function_semantics.items.len);
 }
