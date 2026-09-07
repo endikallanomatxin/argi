@@ -22,7 +22,7 @@ fn parseSource(allocator: std.mem.Allocator, source: []const u8, file_id: source
 
 test "module semantic graph owns declarations from all direct files" {
     const allocator = std.testing.allocator;
-    const first_source = "Point : Type = ()\n";
+    const first_source = "Point : Type = (\n .x: Int32\n)\n";
     const second_source = "distance(.point: Point) -> () := {}\n";
     var first = try parseSource(allocator, first_source, @enumFromInt(0));
     defer first.deinit(allocator);
@@ -57,9 +57,12 @@ test "module semantic graph owns declarations from all direct files" {
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(distance_interface.declaration));
     try std.testing.expectEqual(@as(u32, 1), distance_interface.input.len);
     try std.testing.expectEqual(@as(u32, 0), distance_interface.output.len);
-    const point_field = graph.function_fields.items[distance_interface.input.start];
+    const point_field = graph.fields.items[distance_interface.input.start];
     try std.testing.expectEqualStrings("point", graph.text(point_field.name));
     try std.testing.expectEqual(module_graph.ModuleType{ .declared = @enumFromInt(0) }, graph.types.items[@intFromEnum(point_field.ty)]);
+    const point_fields = graph.declarations.items[0].struct_fields.?;
+    try std.testing.expectEqual(@as(u32, 1), point_fields.len);
+    try std.testing.expectEqualStrings("x", graph.text(graph.fields.items[point_fields.start].name));
 
     var merged = try global_builder.mergeModuleGraphs(allocator, &.{graph}, 2);
     defer merged.deinit(allocator);
@@ -109,4 +112,23 @@ test "module symbol index retains overload candidates" {
     try std.testing.expectEqual(@as(usize, 2), declarations.len);
     try std.testing.expectEqual(.function, graph.declaration(declarations[0]).kind);
     try std.testing.expectEqual(.function, graph.declaration(declarations[1]).kind);
+}
+
+test "module callable interfaces intern pointer and array types" {
+    const allocator = std.testing.allocator;
+    const source = "consume(.first: [2]&Int32, .second: [2]&Int32) -> () := {}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var graph = try module_graph.build(allocator, "arrays", &.{.{ .file_index = 0, .tree = &tree, .source = source }});
+    defer graph.deinit(allocator);
+
+    const interface = graph.functions.items[0];
+    const first = graph.fields.items[interface.input.start];
+    const second = graph.fields.items[interface.input.start + 1];
+    try std.testing.expectEqual(first.ty, second.ty);
+    const array = graph.types.items[@intFromEnum(first.ty)].array;
+    try std.testing.expectEqual(@as(u64, 2), array.length);
+    const pointer = graph.types.items[@intFromEnum(array.element)].pointer;
+    try std.testing.expectEqual(.read_only, pointer.mutability);
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(pointer.child)].builtin);
 }

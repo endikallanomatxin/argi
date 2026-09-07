@@ -4009,7 +4009,10 @@ pub const Semantizer = struct {
             .struct_type_literal => {
                 var subst = GenericSubst.init(self.allocator);
                 defer subst.deinit();
-                const resolved = try self.structTypeFromNodeWithSubst(file.ref(value), scope, &subst);
+                const resolved = if (self.compactStructFieldsForSyntax(node)) |fields|
+                    try self.structTypeFromCompactDefinition(fields, file.ref(value), scope)
+                else
+                    try self.structTypeFromNodeWithSubst(file.ref(value), scope, &subst);
                 const target = @constCast(declaration.ty.struct_type);
                 target.fields = resolved.fields;
                 target.layout = if (file.tag(node.node) == .c_union_declaration) .c_union else .regular;
@@ -5905,6 +5908,35 @@ pub const Semantizer = struct {
         return self.global_builder.functions.items[@intFromEnum(function_id)];
     }
 
+    fn compactStructFieldsForSyntax(self: *Semantizer, node: syn.SyntaxRef) ?@import("module_semantic_graph.zig").FieldRange {
+        const declaration_id = self.global_builder.findDeclaration(@intFromEnum(node.file_id), node.node) orelse return null;
+        return self.global_builder.declaration(declaration_id).struct_fields;
+    }
+
+    fn structTypeFromCompactDefinition(
+        self: *Semantizer,
+        range: @import("module_semantic_graph.zig").FieldRange,
+        syntax_node: syn.SyntaxRef,
+        scope: *Scope,
+    ) SemErr!*sg.StructType {
+        const file = self.syntaxFile(syntax_node);
+        const syntax_fields = (file.structTypeLiteral(syntax_node.node) orelse return error.InvalidType).fields;
+        if (syntax_fields.len != range.len) return error.InvalidType;
+        const compact_fields = self.global_builder.fields.items[range.start..][0..range.len];
+        const fields = try self.allocator.alloc(sg.StructTypeField, compact_fields.len);
+        for (compact_fields, syntax_fields, 0..) |compact, field_node, index| {
+            const syntax_field = file.structTypeField(field_node) orelse return error.InvalidType;
+            fields[index] = .{
+                .name = self.global_builder.text(compact.name),
+                .ty = try self.materializeCompactType(compact.ty),
+                .default_value = if (syntax_field.default_value) |default_node| (try self.visitNode(file.ref(default_node), scope)).node else null,
+            };
+        }
+        const result = try self.allocator.create(sg.StructType);
+        result.* = .{ .fields = fields };
+        return result;
+    }
+
     fn structTypeSignatureFromCompact(
         self: *Semantizer,
         range: @import("module_semantic_graph.zig").FieldRange,
@@ -5914,7 +5946,7 @@ pub const Semantizer = struct {
         const file = self.syntaxFile(syntax_node);
         const syntax_fields = (file.structTypeLiteral(syntax_node.node) orelse return error.InvalidType).fields;
         if (syntax_fields.len != range.len) return error.InvalidType;
-        const compact_fields = self.global_builder.function_fields.items[range.start..][0..range.len];
+        const compact_fields = self.global_builder.fields.items[range.start..][0..range.len];
         const fields = try self.allocator.alloc(sg.StructTypeField, compact_fields.len);
         for (compact_fields, syntax_fields, 0..) |compact, field_node, index| {
             _ = file.structTypeField(field_node) orelse return error.InvalidType;
@@ -5955,6 +5987,11 @@ pub const Semantizer = struct {
                 const result = try self.allocator.create(sg.PointerType);
                 result.* = .{ .mutability = pointer.mutability, .child = child };
                 break :blk .{ .pointer_type = result };
+            },
+            .array => |array| blk: {
+                const element = try self.materializeCompactType(array.element);
+                const length = std.math.cast(usize, array.length) orelse return error.InvalidType;
+                break :blk try self.makeArrayType(length, element);
             },
         };
     }

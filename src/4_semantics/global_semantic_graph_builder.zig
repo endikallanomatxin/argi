@@ -23,8 +23,9 @@ pub const GlobalType = union(enum) {
     builtin: module_sema.BuiltinType,
     declared: GlobalDeclId,
     pointer: struct { child: GlobalTypeId, mutability: syn.PointerMutability },
+    array: struct { length: u64, element: GlobalTypeId },
 };
-pub const FunctionField = struct { name: module_sema.StringRange, ty: GlobalTypeId, source_offset: u32, has_default: bool };
+pub const Field = struct { name: module_sema.StringRange, ty: GlobalTypeId, source_offset: u32, has_default: bool };
 pub const FunctionInterface = struct { declaration: GlobalDeclId, input: module_sema.FieldRange, output: module_sema.FieldRange };
 
 pub const Declaration = struct {
@@ -35,6 +36,7 @@ pub const Declaration = struct {
     syntax_node: syn.NodeIndex,
     type_id: ?GlobalTypeId,
     function_id: ?GlobalFunctionId,
+    struct_fields: ?module_sema.FieldRange,
 };
 
 pub const TypeReference = struct {
@@ -56,7 +58,7 @@ pub const GlobalSemanticGraphBuilder = struct {
     type_references: std.ArrayList(TypeReference) = .empty,
     types: std.ArrayList(GlobalType) = .empty,
     functions: std.ArrayList(FunctionInterface) = .empty,
-    function_fields: std.ArrayList(FunctionField) = .empty,
+    fields: std.ArrayList(Field) = .empty,
     import_references: std.ArrayList(module_sema.ImportReference) = .empty,
     lexical: global_lexical.LexicalTables = .{},
 
@@ -68,7 +70,7 @@ pub const GlobalSemanticGraphBuilder = struct {
         self.type_references.deinit(allocator);
         self.types.deinit(allocator);
         self.functions.deinit(allocator);
-        self.function_fields.deinit(allocator);
+        self.fields.deinit(allocator);
         self.import_references.deinit(allocator);
         self.lexical.deinit(allocator);
         self.* = .{};
@@ -93,7 +95,7 @@ pub const GlobalSemanticGraphBuilder = struct {
             self.module_offsets.items.len * @sizeOf(ModuleOffsets) + self.file_offsets.items.len * @sizeOf(FileOffsets) +
             self.type_references.items.len * @sizeOf(TypeReference) +
             self.types.items.len * @sizeOf(GlobalType) + self.functions.items.len * @sizeOf(FunctionInterface) +
-            self.function_fields.items.len * @sizeOf(FunctionField) +
+            self.fields.items.len * @sizeOf(Field) +
             self.import_references.items.len * @sizeOf(module_sema.ImportReference) + self.lexical.storageBytes();
     }
 
@@ -149,7 +151,7 @@ pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_s
         const declaration_base: u32 = @intCast(merged.declarations.items.len);
         const type_base: u32 = @intCast(merged.types.items.len);
         const function_base: u32 = @intCast(merged.functions.items.len);
-        const field_base: u32 = @intCast(merged.function_fields.items.len);
+        const field_base: u32 = @intCast(merged.fields.items.len);
         merged.module_offsets.appendAssumeCapacity(.{ .declaration_base = declaration_base, .declaration_count = @intCast(module.declarations.items.len), .string_base = string_base, .type_base = type_base, .function_base = function_base, .field_base = field_base });
         try merged.strings.appendSlice(allocator, module.strings.items);
         try merged.declarations.ensureUnusedCapacity(allocator, module.declarations.items.len);
@@ -161,13 +163,15 @@ pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_s
             .syntax_node = declaration.syntax_node,
             .type_id = if (declaration.type_id) |id| @enumFromInt(type_base + @intFromEnum(id)) else null,
             .function_id = if (declaration.function_id) |id| @enumFromInt(function_base + @intFromEnum(id)) else null,
+            .struct_fields = if (declaration.struct_fields) |range| .{ .start = field_base + range.start, .len = range.len } else null,
         });
         for (module.types.items) |ty| try merged.types.append(allocator, switch (ty) {
             .builtin => |builtin| .{ .builtin = builtin },
             .declared => |id| .{ .declared = @enumFromInt(declaration_base + @intFromEnum(id)) },
             .pointer => |pointer| .{ .pointer = .{ .child = @enumFromInt(type_base + @intFromEnum(pointer.child)), .mutability = pointer.mutability } },
+            .array => |array| .{ .array = .{ .length = array.length, .element = @enumFromInt(type_base + @intFromEnum(array.element)) } },
         });
-        for (module.function_fields.items) |field| try merged.function_fields.append(allocator, .{
+        for (module.fields.items) |field| try merged.fields.append(allocator, .{
             .name = try relocateName(module.strings.items, field.name, string_base),
             .ty = @enumFromInt(type_base + @intFromEnum(field.ty)),
             .source_offset = field.source_offset,

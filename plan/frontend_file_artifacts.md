@@ -562,8 +562,9 @@ file-to-global semantic merge remains.
 2. [x] Discover all top-level declarations before resolving module semantics.
 3. [x] Build module symbol indexes.
 4. [ ] Semantize module-local types and callable interfaces. Module-local type
-   identities and non-generic callable interfaces made only from names,
-   builtins and pointers are now produced and consumed; richer type forms remain.
+   identities, simple nominal struct fields and non-generic callable interfaces
+   made from names, builtins, pointers and arrays are now produced and consumed;
+   richer type forms remain.
 5. [ ] Lower lexical scopes, bindings, expressions and control flow directly to
    module IDs.
 6. [ ] Resolve cross-file references inside the same module. Unqualified named
