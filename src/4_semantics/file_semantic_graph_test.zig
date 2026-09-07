@@ -110,26 +110,15 @@ test "file semantic graph does not depend on SourceDb file identity" {
 
 test "file semantic graph cleans up when declaration storage allocation fails" {
     const allocator = std.testing.allocator;
-    const source = "value := 1\n";
+    const source = "value := 1\nread(.x: Int32) -> (.result: Int32) := {\n y := x\n return y\n}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(1));
     defer tree.deinit(allocator);
+    try std.testing.checkAllAllocationFailures(allocator, lowerWithAllocator, .{ &tree, source });
+}
 
-    var fail_index: usize = 0;
-    while (fail_index < 64) : (fail_index += 1) {
-        var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = fail_index });
-        const result = graph_mod.semantizeFile(failing.allocator(), &tree, source);
-        if (result) |graph| {
-            var completed = graph;
-            completed.deinit(failing.allocator());
-            try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
-            return;
-        } else |err| {
-            try std.testing.expectEqual(error.OutOfMemory, err);
-            try std.testing.expect(failing.has_induced_failure);
-            try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
-        }
-    }
-    return error.TestUnexpectedResult;
+fn lowerWithAllocator(allocator: std.mem.Allocator, tree: *const syn.FileSyntaxTree, source: []const u8) !void {
+    var graph = try graph_mod.semantizeFile(allocator, tree, source);
+    defer graph.deinit(allocator);
 }
 
 test "file semantic graph preserves normalized operator names" {
@@ -149,4 +138,25 @@ test "file semantic graph preserves normalized operator names" {
         try std.testing.expectEqual(.function, graph.declaration(@enumFromInt(index)).kind);
         try std.testing.expectEqualStrings(name, graph.text(graph.declaration(@enumFromInt(index)).name));
     }
+}
+
+test "file semantic graph resolves lexical values but defers module-shaped access" {
+    const allocator = std.testing.allocator;
+    const source = "read(.x: Int32) -> (.result: Int32) := {\n y := x\n return y\n}\n" ++
+        "field(.x: Int32) -> (.result: Int32) := {\n return x.member\n}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(1));
+    defer tree.deinit(allocator);
+    var graph = try graph_mod.semantizeFile(allocator, &tree, source);
+    defer graph.deinit(allocator);
+    const lexical = &graph.lexical;
+    try std.testing.expectEqual(@as(usize, 2), lexical.references.items.len);
+    try std.testing.expectEqualStrings("x", lexical.text(lexical.references.items[0].name));
+    try std.testing.expectEqualStrings("y", lexical.text(lexical.references.items[1].name));
+    try std.testing.expectEqualStrings("x", lexical.text(lexical.bindings.items[@intFromEnum(lexical.references.items[0].binding)].name));
+    try std.testing.expectEqualStrings("y", lexical.text(lexical.bindings.items[@intFromEnum(lexical.references.items[1].binding)].name));
+    var pending_field = false;
+    for (lexical.deferred_nodes.items) |node| {
+        if (tree.tag(node) == .struct_field_access) pending_field = true;
+    }
+    try std.testing.expect(pending_field);
 }

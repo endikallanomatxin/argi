@@ -1,5 +1,6 @@
 const std = @import("std");
 const syn = @import("../3_syntax/syntax_tree.zig");
+const file_bindings = @import("file_bindings.zig");
 
 pub const FileDeclId = enum(u32) { _ };
 pub const StringRange = struct { start: u32, len: u32 };
@@ -32,10 +33,12 @@ pub const Declaration = struct {
 pub const FileSemanticGraph = struct {
     declarations: std.ArrayList(Declaration) = .empty,
     strings: std.ArrayList(u8) = .empty,
+    lexical: file_bindings.FileBindings = .{},
 
     pub fn deinit(self: *FileSemanticGraph, allocator: std.mem.Allocator) void {
         self.declarations.deinit(allocator);
         self.strings.deinit(allocator);
+        self.lexical.deinit(allocator);
         self.* = .{};
     }
 
@@ -48,7 +51,7 @@ pub const FileSemanticGraph = struct {
     }
 
     pub fn storageBytes(self: *const FileSemanticGraph) usize {
-        return self.declarations.items.len * @sizeOf(Declaration) + self.strings.items.len;
+        return self.declarations.items.len * @sizeOf(Declaration) + self.strings.items.len + self.lexical.storageBytes();
     }
 };
 
@@ -102,5 +105,6 @@ pub fn semantizeFile(allocator: std.mem.Allocator, tree: *const syn.FileSyntaxTr
             .syntax_node = node,
         });
     }
+    graph.lexical = try file_bindings.build(allocator, tree, source);
     return graph;
 }
