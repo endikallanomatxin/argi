@@ -44,6 +44,7 @@ pub const ModuleType = union(enum) {
     array: struct { length: u64, element: ModuleTypeId },
     nullable: ModuleTypeId,
     inferred_errable: ModuleTypeId,
+    structural: FieldRange,
 };
 
 pub const FieldRange = struct { start: u32, len: u32 };
@@ -100,6 +101,7 @@ pub const ModuleSemanticGraph = struct {
     types: std.ArrayList(ModuleType) = .empty,
     functions: std.ArrayList(FunctionInterface) = .empty,
     fields: std.ArrayList(Field) = .empty,
+    structural_fields: std.ArrayList(Field) = .empty,
     choice_variant_entries: std.ArrayList(ChoiceVariant) = .empty,
     strings: std.ArrayList(u8) = .empty,
     lexical: lexical_tables.LexicalTables = .{},
@@ -115,6 +117,7 @@ pub const ModuleSemanticGraph = struct {
         self.types.deinit(allocator);
         self.functions.deinit(allocator);
         self.fields.deinit(allocator);
+        self.structural_fields.deinit(allocator);
         self.choice_variant_entries.deinit(allocator);
         self.strings.deinit(allocator);
         self.lexical.deinit(allocator);
@@ -153,7 +156,7 @@ pub const ModuleSemanticGraph = struct {
         return self.module_dir.len + self.declarations.items.len * @sizeOf(Declaration) +
             self.symbols.items.len * @sizeOf(Symbol) + self.symbol_declarations.items.len * @sizeOf(ModuleDeclId) +
             self.types.items.len * @sizeOf(ModuleType) + self.functions.items.len * @sizeOf(FunctionInterface) +
-            self.fields.items.len * @sizeOf(Field) + self.choice_variant_entries.items.len * @sizeOf(ChoiceVariant) +
+            (self.fields.items.len + self.structural_fields.items.len) * @sizeOf(Field) + self.choice_variant_entries.items.len * @sizeOf(ChoiceVariant) +
             self.strings.items.len + lexical_bytes +
             self.type_references.items.len * @sizeOf(TypeReference) +
             self.import_references.items.len * @sizeOf(ImportReference) +
@@ -381,7 +384,7 @@ fn appendFields(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
     return true;
 }
 
-fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *const syn.FileSyntaxTree, source: []const u8, module_file_index: u32, node: syn.NodeIndex) !?ModuleTypeId {
+fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *const syn.FileSyntaxTree, source: []const u8, module_file_index: u32, node: syn.NodeIndex) semantic_strings.Error!?ModuleTypeId {
     const syntax_type = tree.syntaxType(node) orelse return null;
     return switch (syntax_type) {
         .name => |name| blk: {
@@ -412,8 +415,52 @@ fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *c
             const child = try lowerType(allocator, graph, tree, source, module_file_index, child_node) orelse break :blk null;
             break :blk try appendType(allocator, graph, .{ .inferred_errable = child });
         },
+        .struct_literal => |literal| try lowerStructuralType(allocator, graph, tree, source, module_file_index, literal),
         else => null,
     };
+}
+
+fn lowerStructuralType(
+    allocator: std.mem.Allocator,
+    graph: *ModuleSemanticGraph,
+    tree: *const syn.FileSyntaxTree,
+    source: []const u8,
+    module_file_index: u32,
+    literal: syn.StructTypeLiteral,
+) semantic_strings.Error!?ModuleTypeId {
+    const field_start = graph.structural_fields.items.len;
+    const type_start = graph.types.items.len;
+    var fields: std.ArrayList(Field) = .empty;
+    defer fields.deinit(allocator);
+    errdefer {
+        graph.structural_fields.shrinkRetainingCapacity(field_start);
+        graph.types.shrinkRetainingCapacity(type_start);
+    }
+    for (literal.fields) |field_node| {
+        const field = tree.structTypeField(field_node) orelse break;
+        if (field.default_value != null) break;
+        const type_node = field.type_node orelse break;
+        const ty = try lowerType(allocator, graph, tree, source, module_file_index, type_node) orelse break;
+        const name = if (field.inferred_result) "result" else tree.tokenTextFromSource(source, field.name_token);
+        try fields.append(allocator, .{
+            .name = try graph.addString(allocator, name),
+            .ty = ty,
+            .source_offset = tree.tokenLocation(field.name_token).offset,
+            .has_default = false,
+        });
+    } else {
+        const shape_start = graph.structural_fields.items.len;
+        try graph.structural_fields.appendSlice(allocator, fields.items);
+        const id: ModuleTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+        try graph.types.append(allocator, .{ .structural = .{
+            .start = @intCast(shape_start),
+            .len = @intCast(fields.items.len),
+        } });
+        return id;
+    }
+    graph.structural_fields.shrinkRetainingCapacity(field_start);
+    graph.types.shrinkRetainingCapacity(type_start);
+    return null;
 }
 
 fn appendType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, ty: ModuleType) !ModuleTypeId {
@@ -435,6 +482,9 @@ fn moduleTypesEqual(lhs: ModuleType, rhs: ModuleType) bool {
         .array => |value| value.length == rhs.array.length and value.element == rhs.array.element,
         .nullable => |value| value == rhs.nullable,
         .inferred_errable => |value| value == rhs.inferred_errable,
+        // Structural shapes are stored as distinct ranges. Legacy structural
+        // equality remains responsible for equating identical anonymous types.
+        .structural => false,
     };
 }
 

@@ -6054,6 +6054,17 @@ pub const Semantizer = struct {
                 scope,
                 null,
             ),
+            .structural => |range| blk: {
+                const compact_fields = self.global_builder.structural_fields.items[range.start..][0..range.len];
+                const fields = try self.allocator.alloc(sg.StructTypeField, compact_fields.len);
+                for (compact_fields, 0..) |field, index| fields[index] = .{
+                    .name = self.global_builder.text(field.name),
+                    .ty = try self.materializeCompactType(field.ty, scope),
+                };
+                const result = try self.allocator.create(sg.StructType);
+                result.* = .{ .fields = fields };
+                break :blk .{ .struct_type = result };
+            },
         };
     }
 
