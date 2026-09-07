@@ -8,6 +8,7 @@ pub const ModuleDeclId = enum(u32) { _ };
 /// Module-local identity of an unresolved lookup.
 pub const ModuleTypeRefId = enum(u32) { _ };
 pub const StringRange = semantic_strings.StringRange;
+pub const DeclarationRange = struct { start: u32, len: u32 };
 
 /// The spelling of an import is file-local; locating its module is global work.
 pub const ImportReference = struct {
@@ -23,6 +24,7 @@ pub const TypeReference = struct {
     qualifier: ?StringRange,
     source_offset: u32,
     syntax_node: syn.NodeIndex,
+    resolved_declaration: ?ModuleDeclId = null,
 };
 
 pub const DeclarationKind = enum {
@@ -54,12 +56,19 @@ pub const FileOffsets = struct {
     import_reference_count: u32,
 };
 
+pub const Symbol = struct {
+    name: StringRange,
+    declarations: DeclarationRange,
+};
+
 /// Compact semantic storage owned by one module directory. Source-file indices
 /// and syntax nodes are provenance only; all semantic table identities are
 /// allocated in this module-wide storage.
 pub const ModuleSemanticGraph = struct {
     module_dir: []const u8 = "",
     declarations: std.ArrayList(Declaration) = .empty,
+    symbols: std.ArrayList(Symbol) = .empty,
+    symbol_declarations: std.ArrayList(ModuleDeclId) = .empty,
     strings: std.ArrayList(u8) = .empty,
     lexical: lexical_tables.LexicalTables = .{},
     type_references: std.ArrayList(TypeReference) = .empty,
@@ -69,6 +78,8 @@ pub const ModuleSemanticGraph = struct {
     pub fn deinit(self: *ModuleSemanticGraph, allocator: std.mem.Allocator) void {
         allocator.free(self.module_dir);
         self.declarations.deinit(allocator);
+        self.symbols.deinit(allocator);
+        self.symbol_declarations.deinit(allocator);
         self.strings.deinit(allocator);
         self.lexical.deinit(allocator);
         self.type_references.deinit(allocator);
@@ -85,10 +96,27 @@ pub const ModuleSemanticGraph = struct {
         return self.strings.items[range.start..][0..range.len];
     }
 
+    pub fn declarationsNamed(self: *const ModuleSemanticGraph, name: []const u8) []const ModuleDeclId {
+        var start: usize = 0;
+        var end = self.symbols.items.len;
+        while (start < end) {
+            const middle = start + (end - start) / 2;
+            const symbol = self.symbols.items[middle];
+            switch (std.mem.order(u8, self.text(symbol.name), name)) {
+                .lt => start = middle + 1,
+                .gt => end = middle,
+                .eq => return self.symbol_declarations.items[symbol.declarations.start..][0..symbol.declarations.len],
+            }
+        }
+        return &.{};
+    }
+
     pub fn storageBytes(self: *const ModuleSemanticGraph) usize {
         var lexical_bytes: usize = 0;
         lexical_bytes = self.lexical.storageBytes();
-        return self.module_dir.len + self.declarations.items.len * @sizeOf(Declaration) + self.strings.items.len + lexical_bytes +
+        return self.module_dir.len + self.declarations.items.len * @sizeOf(Declaration) +
+            self.symbols.items.len * @sizeOf(Symbol) + self.symbol_declarations.items.len * @sizeOf(ModuleDeclId) +
+            self.strings.items.len + lexical_bytes +
             self.type_references.items.len * @sizeOf(TypeReference) +
             self.import_references.items.len * @sizeOf(ImportReference) +
             self.file_offsets.items.len * @sizeOf(FileOffsets);
@@ -105,29 +133,87 @@ pub const FileInput = struct {
     source: []const u8,
 };
 
+pub const ModuleSemanticGraphBuilder = struct {
+    allocator: std.mem.Allocator,
+    graph: ModuleSemanticGraph,
+
+    pub fn init(allocator: std.mem.Allocator, module_dir: []const u8) !ModuleSemanticGraphBuilder {
+        return .{ .allocator = allocator, .graph = .{ .module_dir = try allocator.dupe(u8, module_dir) } };
+    }
+
+    pub fn deinit(self: *ModuleSemanticGraphBuilder) void {
+        self.graph.deinit(self.allocator);
+    }
+
+    pub fn build(self: *ModuleSemanticGraphBuilder, files: []const FileInput) !ModuleSemanticGraph {
+        try self.graph.file_offsets.ensureTotalCapacity(self.allocator, files.len);
+        for (files, 0..) |file, module_file_index| {
+            const declaration_base: u32 = @intCast(self.graph.declarations.items.len);
+            const type_reference_base: u32 = @intCast(self.graph.type_references.items.len);
+            const import_reference_base: u32 = @intCast(self.graph.import_references.items.len);
+            try discoverFile(self.allocator, &self.graph, file, @intCast(module_file_index));
+            self.graph.file_offsets.appendAssumeCapacity(.{
+                .source_file_index = file.file_index,
+                .declaration_base = declaration_base,
+                .declaration_count = @intCast(self.graph.declarations.items.len - declaration_base),
+                .type_reference_base = type_reference_base,
+                .type_reference_count = @intCast(self.graph.type_references.items.len - type_reference_base),
+                .import_reference_base = import_reference_base,
+                .import_reference_count = @intCast(self.graph.import_references.items.len - import_reference_base),
+            });
+        }
+        try buildSymbolIndex(self.allocator, &self.graph);
+        resolveModuleTypeReferences(&self.graph);
+        const result = self.graph;
+        self.graph = .{};
+        return result;
+    }
+};
+
 /// Starts semantic construction at the language's module boundary. The helper
 /// performs discovery file by file, but writes every durable result directly
 /// into module-owned tables; there is no intermediate file semantic artifact.
 pub fn build(allocator: std.mem.Allocator, module_dir: []const u8, files: []const FileInput) !ModuleSemanticGraph {
-    var graph: ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, module_dir) };
-    errdefer graph.deinit(allocator);
-    try graph.file_offsets.ensureTotalCapacity(allocator, files.len);
-    for (files, 0..) |file, module_file_index| {
-        const declaration_base: u32 = @intCast(graph.declarations.items.len);
-        const type_reference_base: u32 = @intCast(graph.type_references.items.len);
-        const import_reference_base: u32 = @intCast(graph.import_references.items.len);
-        try discoverFile(allocator, &graph, file, @intCast(module_file_index));
-        graph.file_offsets.appendAssumeCapacity(.{
-            .source_file_index = file.file_index,
-            .declaration_base = declaration_base,
-            .declaration_count = @intCast(graph.declarations.items.len - declaration_base),
-            .type_reference_base = type_reference_base,
-            .type_reference_count = @intCast(graph.type_references.items.len - type_reference_base),
-            .import_reference_base = import_reference_base,
-            .import_reference_count = @intCast(graph.import_references.items.len - import_reference_base),
-        });
+    var builder = try ModuleSemanticGraphBuilder.init(allocator, module_dir);
+    errdefer builder.deinit();
+    return builder.build(files);
+}
+
+fn buildSymbolIndex(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph) !void {
+    try graph.symbol_declarations.ensureTotalCapacity(allocator, graph.declarations.items.len);
+    for (graph.declarations.items, 0..) |_, index| graph.symbol_declarations.appendAssumeCapacity(@enumFromInt(@as(u32, @intCast(index))));
+    std.mem.sort(ModuleDeclId, graph.symbol_declarations.items, graph, struct {
+        fn lessThan(g: *ModuleSemanticGraph, lhs: ModuleDeclId, rhs: ModuleDeclId) bool {
+            const left = g.text(g.declaration(lhs).name);
+            const right = g.text(g.declaration(rhs).name);
+            const order = std.mem.order(u8, left, right);
+            return order == .lt or (order == .eq and @intFromEnum(lhs) < @intFromEnum(rhs));
+        }
+    }.lessThan);
+    try graph.symbols.ensureTotalCapacity(allocator, graph.declarations.items.len);
+    var start: usize = 0;
+    while (start < graph.symbol_declarations.items.len) {
+        const name = graph.declaration(graph.symbol_declarations.items[start]).name;
+        var end = start + 1;
+        while (end < graph.symbol_declarations.items.len and std.mem.eql(u8, graph.text(name), graph.text(graph.declaration(graph.symbol_declarations.items[end]).name))) end += 1;
+        graph.symbols.appendAssumeCapacity(.{ .name = name, .declarations = .{ .start = @intCast(start), .len = @intCast(end - start) } });
+        start = end;
     }
-    return graph;
+}
+
+fn resolveModuleTypeReferences(graph: *ModuleSemanticGraph) void {
+    for (graph.type_references.items) |*reference| {
+        if (reference.qualifier != null) continue;
+        for (graph.declarationsNamed(graph.text(reference.name))) |declaration_id| {
+            switch (graph.declaration(declaration_id).kind) {
+                .type, .abstract_type => {
+                    reference.resolved_declaration = declaration_id;
+                    break;
+                },
+                else => {},
+            }
+        }
+    }
 }
 
 fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input: FileInput, module_file_index: u32) !void {
