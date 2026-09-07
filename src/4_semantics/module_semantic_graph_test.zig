@@ -226,11 +226,29 @@ test "module callable interfaces preserve type-only generic instantiations" {
     const interface = graph.functions.items[0];
     const input = graph.fields.items[interface.input.start];
     const generic = graph.types.items[@intFromEnum(input.ty)].generic;
-    try std.testing.expectEqualStrings("Box", graph.text(generic.base));
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(generic.base));
     try std.testing.expectEqual(@as(u32, 1), generic.arguments.len);
     const argument = graph.generic_type_arguments.items[generic.arguments.start];
     try std.testing.expectEqualStrings("t", graph.text(argument.name));
     try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(argument.ty)].builtin);
+
+    const other_source = "Box#(.t: Type) : Type = (.other: t)\n";
+    var other_tree = try parseSource(allocator, other_source, @enumFromInt(2));
+    defer other_tree.deinit(allocator);
+    var other = try module_graph.build(allocator, "other", &.{.{ .path = "other/type.rg", .tree = &other_tree, .source = other_source }});
+    defer other.deinit(allocator);
+    const sources = [_]source_files.SourceFile{
+        .{ .path = "generics/type.rg", .code = type_source },
+        .{ .path = "generics/function.rg", .code = function_source },
+        .{ .path = "other/type.rg", .code = other_source },
+    };
+    var db = try source_db.SourceDb.init(allocator, &sources);
+    defer db.deinit(allocator);
+    var merged = try global_builder.mergeModuleGraphs(allocator, &.{ graph, other }, &db);
+    defer merged.deinit(allocator);
+    const read = merged.declarations.items[1];
+    const global_input = merged.fields.items[merged.functions.items[@intFromEnum(read.function_id.?)].input.start];
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(merged.types.items[@intFromEnum(global_input.ty)].generic.base));
 }
 
 test "module graph builds and relocates nominal choice variants" {

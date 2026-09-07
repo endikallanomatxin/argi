@@ -46,7 +46,7 @@ pub const ModuleType = union(enum) {
     inferred_errable: ModuleTypeId,
     structural: FieldRange,
     structural_choice: FieldRange,
-    generic: struct { base: StringRange, arguments: FieldRange },
+    generic: struct { base: ModuleDeclId, arguments: FieldRange },
 };
 
 pub const FieldRange = struct { start: u32, len: u32 };
@@ -475,7 +475,7 @@ fn lowerGenericType(
         try graph.generic_type_arguments.appendSlice(allocator, arguments.items);
         const id: ModuleTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
         try graph.types.append(allocator, .{ .generic = .{
-            .base = try graph.addString(allocator, base_name),
+            .base = declaration_id,
             .arguments = .{ .start = @intCast(start), .len = @intCast(arguments.items.len) },
         } });
         return id;

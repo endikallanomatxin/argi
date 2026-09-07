@@ -203,6 +203,7 @@ pub const Semantizer = struct {
     syntax_files: []const syn.FileSyntaxTree,
     global_builder: *const @import("global_semantic_graph_builder.zig").GlobalSemanticGraphBuilder,
     predeclared_types: []?*sg.TypeDeclaration = &.{},
+    predeclared_generic_types: []?gen.GenericTypeTemplate = &.{},
     syntax_roots: []const syn.SyntaxRef,
     root_list: std.array_list.Managed(*sg.SGNode), // buffer mut
     root_nodes: []const *sg.SGNode = &.{}, // slice final
@@ -770,6 +771,8 @@ pub const Semantizer = struct {
     fn predeclareTopLevelSymbols(self: *Semantizer, global: *Scope) SemErr!void {
         self.predeclared_types = try self.allocator.alloc(?*sg.TypeDeclaration, self.global_builder.declarations.items.len);
         @memset(self.predeclared_types, null);
+        self.predeclared_generic_types = try self.allocator.alloc(?gen.GenericTypeTemplate, self.global_builder.declarations.items.len);
+        @memset(self.predeclared_generic_types, null);
         for (self.global_builder.declarations.items, 0..) |declaration, declaration_index| {
             const file = self.syntax_files[declaration.file_index];
             const node = file.ref(declaration.syntax_node);
@@ -783,7 +786,7 @@ pub const Semantizer = struct {
                     try self.predeclareTopLevelBindingRef(node, name, global);
                 },
                 .abstract_type => self.predeclared_types[declaration_index] = try self.predeclareTopLevelAbstractRef(node, name, global),
-                .type => self.predeclared_types[declaration_index] = try self.predeclareTopLevelTypeRef(node, name, global),
+                .type => self.predeclared_types[declaration_index] = try self.predeclareTopLevelTypeRef(node, name, global, declaration_index),
                 .choice_option => try self.predeclareTopLevelChoiceOptionRef(node, name, global),
                 .function => try self.predeclareTopLevelFunctionRef(node, global, false, name),
                 .test_function => if (self.options.include_tests) try self.predeclareTopLevelFunctionRef(node, global, true, name),
@@ -865,7 +868,7 @@ pub const Semantizer = struct {
         return type_decl;
     }
 
-    fn predeclareTopLevelTypeRef(self: *Semantizer, node: syn.SyntaxRef, name: []const u8, global: *Scope) SemErr!?*sg.TypeDeclaration {
+    fn predeclareTopLevelTypeRef(self: *Semantizer, node: syn.SyntaxRef, name: []const u8, global: *Scope, declaration_index: usize) SemErr!?*sg.TypeDeclaration {
         const file = self.syntaxFile(node);
         const generic_params, const generic_params_struct, const value = switch (self.nodeTag(node)) {
             .type_declaration => blk: {
@@ -884,13 +887,15 @@ pub const Semantizer = struct {
         };
         if (generic_params.len > 0 or generic_params_struct != null) {
             const generic_info = self.compactGenericParamDefs(node, generic_params, generic_params_struct, global) catch return null;
-            try global.appendGenericTypeTemplate(name, .{
+            const template: gen.GenericTypeTemplate = .{
                 .name = name,
                 .location = file.location(value),
                 .params = generic_info.params,
                 .param_abstract_constraints = generic_info.abstract_constraints,
                 .body = file.ref(value),
-            });
+            };
+            try global.appendGenericTypeTemplate(name, template);
+            self.predeclared_generic_types[declaration_index] = template;
             return null;
         }
         const ty: sg.Type = switch (file.tag(value)) {
@@ -6102,14 +6107,13 @@ pub const Semantizer = struct {
                     self.global_builder.text(argument.name),
                     try self.materializeCompactType(argument.ty, scope),
                 );
-                break :blk self.instantiateCompactGenericTypeFromSubstNamed(
-                    self.global_builder.text(generic.base),
-                    scope,
-                    &values,
-                ) catch |err| switch (err) {
-                    error.SymbolNotFound => return error.UnknownType,
-                    else => return err,
-                };
+                const template = self.predeclared_generic_types[@intFromEnum(generic.base)] orelse return error.UnknownType;
+                for (template.params, 0..) |param, index| {
+                    const actual = values.types.get(param.name) orelse return error.InvalidType;
+                    const constraint = template.param_abstract_constraints[index] orelse continue;
+                    if (!(try self.abstractConstraintMatches(actual, constraint, scope, &values))) return error.InvalidType;
+                }
+                break :blk try self.instantiateCompactGenericTypeTemplate(template, scope, &values);
             },
         };
     }
