@@ -1,6 +1,7 @@
 const std = @import("std");
 const module_sema = @import("module_semantic_graph.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
+const source_db = @import("../1_base/source_db.zig");
 const global_lexical = @import("global_lexical.zig");
 
 pub const GlobalDeclId = enum(u32) { _ };
@@ -141,8 +142,9 @@ pub const GlobalSemanticGraphBuilder = struct {
     }
 };
 
-pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_sema.ModuleSemanticGraph, file_count: usize) !GlobalSemanticGraphBuilder {
+pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_sema.ModuleSemanticGraph, sources: *const source_db.SourceDb) !GlobalSemanticGraphBuilder {
     const maximum = std.math.maxInt(u32);
+    const file_count = sources.files.len;
     if (modules.len > maximum or file_count > maximum) return error.GlobalSemanticGraphBuilderTooLarge;
     var merged: GlobalSemanticGraphBuilder = .{};
     errdefer merged.deinit(allocator);
@@ -151,6 +153,13 @@ pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_s
     @memset(merged.file_offsets.items, .{});
 
     for (modules) |module| {
+        var source_file_indices: std.ArrayList(u32) = .empty;
+        defer source_file_indices.deinit(allocator);
+        try source_file_indices.ensureTotalCapacity(allocator, module.file_offsets.items.len);
+        for (module.file_offsets.items) |file| {
+            const file_index = findSourceFile(sources, module.module_dir, module.text(file.path)) orelse return error.ModuleSourceFileNotFound;
+            source_file_indices.appendAssumeCapacity(@intCast(file_index));
+        }
         if (module.declarations.items.len > maximum - merged.declarations.items.len or module.strings.items.len > maximum - merged.strings.items.len)
             return error.GlobalSemanticGraphBuilderTooLarge;
         const string_base: u32 = @intCast(merged.strings.items.len);
@@ -165,7 +174,7 @@ pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_s
             .kind = declaration.kind,
             .name = try relocateName(module.strings.items, declaration.name, string_base),
             .source_offset = declaration.source_offset,
-            .file_index = module.file_offsets.items[declaration.module_file_index].source_file_index,
+            .file_index = source_file_indices.items[declaration.module_file_index],
             .syntax_node = declaration.syntax_node,
             .type_id = if (declaration.type_id) |id| @enumFromInt(type_base + @intFromEnum(id)) else null,
             .function_id = if (declaration.function_id) |id| @enumFromInt(function_base + @intFromEnum(id)) else null,
@@ -189,8 +198,8 @@ pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_s
             .output = .{ .start = field_base + function.output.start, .len = function.output.len },
         });
 
-        for (module.file_offsets.items) |file| {
-            if (file.source_file_index >= file_count) return error.InvalidModuleFileIndex;
+        for (module.file_offsets.items, 0..) |file, module_file_index| {
+            const source_file_index = source_file_indices.items[module_file_index];
             const type_reference_base: u32 = @intCast(merged.type_references.items.len);
             const import_base: u32 = @intCast(merged.import_references.items.len);
             for (module.type_references.items[file.type_reference_base..][0..file.type_reference_count]) |reference| try merged.type_references.append(allocator, .{
@@ -209,7 +218,7 @@ pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_s
                 .source_offset = reference.source_offset,
                 .syntax_node = reference.syntax_node,
             });
-            merged.file_offsets.items[file.source_file_index] = .{
+            merged.file_offsets.items[source_file_index] = .{
                 .declaration_base = declaration_base + file.declaration_base,
                 .declaration_count = file.declaration_count,
                 .type_reference_base = type_reference_base,
@@ -218,9 +227,17 @@ pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_s
                 .import_reference_count = file.import_reference_count,
             };
         }
-        try merged.lexical.appendModule(allocator, module.strings.items, &module.lexical, module.file_offsets.items, string_base);
+        try merged.lexical.appendModule(allocator, module.strings.items, &module.lexical, source_file_indices.items, string_base);
     }
     return merged;
+}
+
+fn findSourceFile(sources: *const source_db.SourceDb, module_dir: []const u8, basename: []const u8) ?usize {
+    for (sources.files, 0..) |file, index| {
+        if (!std.mem.eql(u8, std.fs.path.dirname(file.path) orelse ".", module_dir)) continue;
+        if (std.mem.eql(u8, std.fs.path.basename(file.path), basename)) return index;
+    }
+    return null;
 }
 
 fn relocateName(strings: []const u8, name: module_sema.StringRange, base: u32) !module_sema.StringRange {
