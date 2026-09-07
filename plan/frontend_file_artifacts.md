@@ -484,6 +484,10 @@ into transient source buffers.
 
 ### Migration progress
 
+All file-local declaration, type-reference and lexical names use the same
+`StringRange` into `FileSemanticGraph.strings`. Lexical builders borrow that
+store during construction; retained lexical tables own no separate strings.
+
 - [x] Define `FileTokenList` in tokenizing and retain `FileSyntaxTree` terminology.
 - [x] Discover top-level declarations once per file with dense declaration IDs,
   source offsets and owned names; feed that discovery into global predeclaration.

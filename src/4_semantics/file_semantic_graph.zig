@@ -1,10 +1,11 @@
 const std = @import("std");
 const syn = @import("../3_syntax/syntax_tree.zig");
 const file_bindings = @import("file_bindings.zig");
+const file_strings = @import("file_strings.zig");
 
 pub const FileDeclId = enum(u32) { _ };
 pub const ExternalTypeRefId = enum(u32) { _ };
-pub const StringRange = struct { start: u32, len: u32 };
+pub const StringRange = file_strings.StringRange;
 
 /// A type lookup requirement, not a selected declaration or canonical type.
 /// Even a name declared in this file may participate in global resolution.
@@ -68,11 +69,7 @@ pub const FileSemanticGraph = struct {
     }
 
     fn addString(self: *FileSemanticGraph, allocator: std.mem.Allocator, value: []const u8) !StringRange {
-        if (value.len > std.math.maxInt(u32) or self.strings.items.len > std.math.maxInt(u32) - value.len)
-            return error.FileSemanticGraphTooLarge;
-        const range: StringRange = .{ .start = @intCast(self.strings.items.len), .len = @intCast(value.len) };
-        try self.strings.appendSlice(allocator, value);
-        return range;
+        return file_strings.append(&self.strings, allocator, value);
     }
 };
 
@@ -143,6 +140,6 @@ pub fn semantizeFile(allocator: std.mem.Allocator, tree: *const syn.FileSyntaxTr
             .syntax_node = node,
         });
     }
-    graph.lexical = try file_bindings.build(allocator, tree, source);
+    graph.lexical = try file_bindings.build(allocator, tree, source, &graph.strings);
     return graph;
 }

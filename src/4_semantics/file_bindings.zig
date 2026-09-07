@@ -1,11 +1,12 @@
 const std = @import("std");
 const syn = @import("../3_syntax/syntax_tree.zig");
-const Error = std.mem.Allocator.Error || error{FileBindingsTooLarge};
+const file_strings = @import("file_strings.zig");
+const Error = file_strings.Error || error{FileBindingsTooLarge};
 
 pub const ScopeId = enum(u32) { none = std.math.maxInt(u32), _ };
 pub const BindingId = enum(u32) { external = std.math.maxInt(u32), _ };
 pub const ReferenceId = enum(u32) { _ };
-pub const StringRange = struct { start: u32, len: u32 };
+pub const StringRange = file_strings.StringRange;
 pub const BindingKind = enum(u8) { input, output, local, iteration, payload };
 pub const ReferenceKind = enum(u8) { value, assignment, keep, call, module, type };
 pub const Scope = struct { parent: ScopeId, syntax_node: syn.NodeIndex };
@@ -48,7 +49,9 @@ fn testLexicalBindings(allocator: std.mem.Allocator) !void {
     const cases = try tree.addNodeRange(allocator, &.{ captured_case, plain_case });
     const match_extra = try tree.addExtra(allocator, cases);
     const match_node = try tree.addNode(allocator, .{ .tag = .match_statement, .main_token = token, .data = .{ .node_and_extra = .{ .node = identifier, .extra = match_extra } } });
-    var builder: Builder = .{ .allocator = allocator, .tree = &tree, .source = "x" };
+    var strings: std.ArrayList(u8) = .empty;
+    defer strings.deinit(allocator);
+    var builder: Builder = .{ .allocator = allocator, .tree = &tree, .source = "x", .strings = &strings };
     defer builder.deinit();
     defer builder.result.deinit(allocator);
     const parent = try builder.scope(.none, body);
@@ -73,7 +76,8 @@ fn testLexicalBindings(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(@as(BindingId, @enumFromInt(1)), references[7].binding);
     try std.testing.expectEqual(@as(BindingId, @enumFromInt(3)), references[8].binding);
     try std.testing.expectEqual(@as(BindingId, @enumFromInt(1)), references[9].binding);
-    try std.testing.expectEqualStrings("x", builder.result.text(references[4].name));
+    const spelling = references[4].name;
+    try std.testing.expectEqualStrings("x", strings.items[spelling.start..][0..spelling.len]);
 }
 pub const Reference = struct {
     name: StringRange,
@@ -87,37 +91,34 @@ pub const Reference = struct {
 /// Lexical identities only: a local reference says which declaration supplies
 /// its name, never its type, value, availability, ownership or overload choice.
 /// Unhandled constructs retain explicit syntax bridges in deferred_nodes.
-/// The tables own their strings and retain no source or tree pointers.
+/// Names index the owning FileSemanticGraph's string store. These tables retain
+/// neither a separate string allocation nor source, tree or owner pointers.
 pub const FileBindings = struct {
     scopes: std.ArrayList(Scope) = .empty,
     bindings: std.ArrayList(Binding) = .empty,
     references: std.ArrayList(Reference) = .empty,
     deferred_nodes: std.ArrayList(syn.NodeIndex) = .empty,
-    strings: std.ArrayList(u8) = .empty,
 
     pub fn deinit(self: *FileBindings, allocator: std.mem.Allocator) void {
         self.scopes.deinit(allocator);
         self.bindings.deinit(allocator);
         self.references.deinit(allocator);
         self.deferred_nodes.deinit(allocator);
-        self.strings.deinit(allocator);
         self.* = .{};
-    }
-
-    pub fn text(self: *const FileBindings, name: StringRange) []const u8 {
-        return self.strings.items[name.start..][0..name.len];
     }
 
     pub fn storageBytes(self: *const FileBindings) usize {
         return self.scopes.items.len * @sizeOf(Scope) +
             self.bindings.items.len * @sizeOf(Binding) +
             self.references.items.len * @sizeOf(Reference) +
-            self.deferred_nodes.items.len * @sizeOf(syn.NodeIndex) + self.strings.items.len;
+            self.deferred_nodes.items.len * @sizeOf(syn.NodeIndex);
     }
 };
 
-pub fn build(allocator: std.mem.Allocator, tree: *const syn.FileSyntaxTree, source: []const u8) !FileBindings {
-    var builder: Builder = .{ .allocator = allocator, .tree = tree, .source = source };
+pub fn build(allocator: std.mem.Allocator, tree: *const syn.FileSyntaxTree, source: []const u8, strings: *std.ArrayList(u8)) !FileBindings {
+    const original_length = strings.items.len;
+    errdefer strings.shrinkRetainingCapacity(original_length);
+    var builder: Builder = .{ .allocator = allocator, .tree = tree, .source = source, .strings = strings };
     defer builder.deinit();
     errdefer builder.result.deinit(allocator);
     for (tree.roots) |node| {
@@ -135,6 +136,7 @@ const Builder = struct {
     tree: *const syn.FileSyntaxTree,
     source: []const u8,
     result: FileBindings = .{},
+    strings: *std.ArrayList(u8),
     // Borrow source spellings only while building. Per-scope maps avoid scanning
     // unrelated functions or closed sibling scopes for every reference.
     names: std.ArrayList(std.StringHashMapUnmanaged(BindingId)) = .empty,
@@ -145,11 +147,7 @@ const Builder = struct {
     }
 
     fn name(self: *Builder, value: []const u8) !StringRange {
-        if (value.len > std.math.maxInt(u32) or self.result.strings.items.len > std.math.maxInt(u32) - value.len)
-            return error.FileBindingsTooLarge;
-        const range: StringRange = .{ .start = @intCast(self.result.strings.items.len), .len = @intCast(value.len) };
-        try self.result.strings.appendSlice(self.allocator, value);
-        return range;
+        return file_strings.append(self.strings, self.allocator, value);
     }
 
     fn scope(self: *Builder, parent: ScopeId, node: syn.NodeIndex) !ScopeId {
