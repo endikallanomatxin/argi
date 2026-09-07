@@ -506,7 +506,7 @@ test "semantic primitives instantiate with isolated id namespaces" {
     };
 
     const Ty = SemanticType(Ids);
-    const pointer = Ty{ .pointer = .{ .child = @enumFromInt(3), .mutability = .constant } };
+    const pointer = Ty{ .pointer = .{ .child = @enumFromInt(3), .mutability = .read_only } };
     try std.testing.expectEqual(@as(u32, 3), @intFromEnum(pointer.pointer.child));
 
     const Decl = Declaration(Ids);
