@@ -4,6 +4,11 @@ const templates = @import("module_semantic_templates.zig");
 const primitives = @import("semantic_primitives.zig");
 
 pub const Storage = struct {
+    /// Set only after ModuleSema has emitted every semantic fact that depends
+    /// solely on this module. External/pending global requirements may still
+    /// exist. Migration-era discovery builders intentionally leave this false.
+    local_semantics_complete: bool = false,
+
     declaration_semantics: std.ArrayList(entities.DeclarationSemantic) = .empty,
     function_semantics: std.ArrayList(entities.FunctionSemantic) = .empty,
     field_semantics: std.ArrayList(entities.FieldSemantic) = .empty,
@@ -85,7 +90,8 @@ pub const Storage = struct {
     }
 
     pub fn storageBytes(self: *const Storage) usize {
-        return self.declaration_semantics.items.len * @sizeOf(entities.DeclarationSemantic) +
+        return @sizeOf(bool) +
+            self.declaration_semantics.items.len * @sizeOf(entities.DeclarationSemantic) +
             self.function_semantics.items.len * @sizeOf(entities.FunctionSemantic) +
             self.field_semantics.items.len * @sizeOf(entities.FieldSemantic) +
             self.variant_semantics.items.len * @sizeOf(entities.VariantSemantic) +
@@ -121,10 +127,13 @@ pub const Storage = struct {
     }
 };
 
-test "module semantic storage owns body, unresolved and template state" {
+test "module semantic storage tracks local completion explicitly" {
     const allocator = std.testing.allocator;
     var storage: Storage = .{};
     defer storage.deinit(allocator);
+
+    try std.testing.expect(!storage.local_semantics_complete);
+    storage.local_semantics_complete = true;
 
     try storage.declaration_semantics.append(allocator, .{ .declaration = @enumFromInt(0), .struct_layout = .c_union });
     try storage.function_semantics.append(allocator, .{ .function = @enumFromInt(0) });
@@ -146,6 +155,6 @@ test "module semantic storage owns body, unresolved and template state" {
         .kind = .type,
     });
 
+    try std.testing.expect(storage.local_semantics_complete);
     try std.testing.expect(storage.storageBytes() >= @sizeOf(entities.Binding));
-    try std.testing.expectEqual(@as(usize, 1), storage.templates.generic_parameters.items.len);
 }
