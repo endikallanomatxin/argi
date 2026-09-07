@@ -169,6 +169,28 @@ test "module callable interfaces preserve inferred errable types" {
     try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(child)].builtin);
 }
 
+test "module callable interfaces preserve anonymous structural types" {
+    const allocator = std.testing.allocator;
+    const source = "read(.value: (.nested: (.number: Int32))) -> (.result: (.nested: (.number: Int32))) := { result = value }\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var graph = try module_graph.build(allocator, "structural", &.{.{ .path = "structural/main.rg", .tree = &tree, .source = source }});
+    defer graph.deinit(allocator);
+
+    const interface = graph.functions.items[0];
+    for ([_]module_graph.Field{ graph.fields.items[interface.input.start], graph.fields.items[interface.output.start] }) |field| {
+        const shape = graph.types.items[@intFromEnum(field.ty)].structural;
+        try std.testing.expectEqual(@as(u32, 1), shape.len);
+        const nested = graph.structural_fields.items[shape.start];
+        try std.testing.expectEqualStrings("nested", graph.text(nested.name));
+        const nested_shape = graph.types.items[@intFromEnum(nested.ty)].structural;
+        try std.testing.expectEqual(@as(u32, 1), nested_shape.len);
+        const number = graph.structural_fields.items[nested_shape.start];
+        try std.testing.expectEqualStrings("number", graph.text(number.name));
+        try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(number.ty)].builtin);
+    }
+}
+
 test "module graph builds and relocates nominal choice variants" {
     const allocator = std.testing.allocator;
     const source = "Result : Type = (\n    ..ok Int32\n    ..done\n)\n";
