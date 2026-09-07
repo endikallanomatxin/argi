@@ -200,7 +200,7 @@ pub const Semantizer = struct {
     allocator: *const std.mem.Allocator,
     io: std.Io,
     syntax_files: []const syn.FileSyntaxTree,
-    file_graphs: []const @import("file_semantic_graph.zig").FileSemanticGraph,
+    declarations: *const @import("global_declarations.zig").MergedDeclarations,
     syntax_roots: []const syn.SyntaxRef,
     root_list: std.array_list.Managed(*sg.SGNode), // buffer mut
     root_nodes: []const *sg.SGNode = &.{}, // slice final
@@ -246,7 +246,7 @@ pub const Semantizer = struct {
         io: std.Io,
         syntax_files: []const syn.FileSyntaxTree,
         st: []const syn.SyntaxRef,
-        file_graphs: []const @import("file_semantic_graph.zig").FileSemanticGraph,
+        declarations: *const @import("global_declarations.zig").MergedDeclarations,
         diags: *diagnostic.Diagnostics,
         options: SemantizerOptions,
     ) Semantizer {
@@ -255,7 +255,7 @@ pub const Semantizer = struct {
             .io = io,
             .syntax_files = syntax_files,
             .syntax_roots = st,
-            .file_graphs = file_graphs,
+            .declarations = declarations,
             .root_list = std.array_list.Managed(*sg.SGNode).init(alloc.*),
             .diags = diags,
             .options = options,
@@ -766,24 +766,23 @@ pub const Semantizer = struct {
     }
 
     fn predeclareTopLevelSymbols(self: *Semantizer, global: *Scope) SemErr!void {
-        for (self.file_graphs, self.syntax_files) |graph, file| {
-            for (graph.declarations.items) |declaration| {
-                const node = file.ref(declaration.syntax_node);
-                // LSP retains global results after the frontend artifacts have
-                // been released. Names crossing this bridge belong to the
-                // global result arena, not the independently owned file graph.
-                const name = try self.allocator.dupe(u8, graph.text(declaration.name));
-                switch (declaration.kind) {
-                    .binding, .import_alias => {
-                        try self.predeclareTopLevelImportAliasRef(node, name, global);
-                        try self.predeclareTopLevelBindingRef(node, name, global);
-                    },
-                    .abstract_type => try self.predeclareTopLevelAbstractRef(node, name, global),
-                    .type => try self.predeclareTopLevelTypeRef(node, name, global),
-                    .choice_option => try self.predeclareTopLevelChoiceOptionRef(node, name, global),
-                    .function => try self.predeclareTopLevelFunctionRef(node, global, false, name),
-                    .test_function => if (self.options.include_tests) try self.predeclareTopLevelFunctionRef(node, global, true, name),
-                }
+        for (self.declarations.declarations.items) |declaration| {
+            const file = self.syntax_files[declaration.file_index];
+            const node = file.ref(declaration.syntax_node);
+            // LSP retains global results after the frontend artifacts have
+            // been released. Names crossing this bridge belong to the
+            // global result arena, not the independently owned file graph.
+            const name = try self.allocator.dupe(u8, self.declarations.text(declaration.name));
+            switch (declaration.kind) {
+                .binding, .import_alias => {
+                    try self.predeclareTopLevelImportAliasRef(node, name, global);
+                    try self.predeclareTopLevelBindingRef(node, name, global);
+                },
+                .abstract_type => try self.predeclareTopLevelAbstractRef(node, name, global),
+                .type => try self.predeclareTopLevelTypeRef(node, name, global),
+                .choice_option => try self.predeclareTopLevelChoiceOptionRef(node, name, global),
+                .function => try self.predeclareTopLevelFunctionRef(node, global, false, name),
+                .test_function => if (self.options.include_tests) try self.predeclareTopLevelFunctionRef(node, global, true, name),
             }
         }
     }
