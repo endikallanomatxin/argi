@@ -292,7 +292,15 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
             try require(verify.idFits(item.field_type, bounds.types));
             try require(verify.idFits(item.value, bounds.nodes));
         },
-        .binary_operation, .comparison, .logical_operation => |item| {
+        .binary_operation => |item| {
+            try require(verify.idFits(item.left, bounds.nodes));
+            try require(verify.idFits(item.right, bounds.nodes));
+        },
+        .comparison => |item| {
+            try require(verify.idFits(item.left, bounds.nodes));
+            try require(verify.idFits(item.right, bounds.nodes));
+        },
+        .logical_operation => |item| {
             try require(verify.idFits(item.left, bounds.nodes));
             try require(verify.idFits(item.right, bounds.nodes));
         },
