@@ -1,5 +1,6 @@
 const std = @import("std");
 const entities = @import("module_semantic_entities.zig");
+const templates = @import("module_semantic_templates.zig");
 const primitives = @import("semantic_primitives.zig");
 
 pub const Storage = struct {
@@ -30,6 +31,10 @@ pub const Storage = struct {
     testing_expect_errors: std.ArrayList(entities.TestingExpectError) = .empty,
     error_propagations: std.ArrayList(entities.ErrorPropagation) = .empty,
     error_contexts: std.ArrayList(entities.ErrorContext) = .empty,
+
+    /// Module-only semantic inputs consumed by later specialization/linking.
+    /// They deliberately do not survive into the finalized GlobalSG.
+    templates: templates.Storage = .{},
 
     scopes: std.ArrayList(entities.Scope) = .empty,
     external_refs: std.ArrayList(entities.ExternalRef) = .empty,
@@ -66,6 +71,7 @@ pub const Storage = struct {
         self.testing_expect_errors.deinit(allocator);
         self.error_propagations.deinit(allocator);
         self.error_contexts.deinit(allocator);
+        self.templates.deinit(allocator);
         self.scopes.deinit(allocator);
         self.external_refs.deinit(allocator);
         self.pending_operations.deinit(allocator);
@@ -102,6 +108,7 @@ pub const Storage = struct {
             self.testing_expect_errors.items.len * @sizeOf(entities.TestingExpectError) +
             self.error_propagations.items.len * @sizeOf(entities.ErrorPropagation) +
             self.error_contexts.items.len * @sizeOf(entities.ErrorContext) +
+            self.templates.storageBytes() +
             self.scopes.items.len * @sizeOf(entities.Scope) +
             self.external_refs.items.len * @sizeOf(entities.ExternalRef) +
             self.pending_operations.items.len * @sizeOf(entities.PendingOperation) +
@@ -114,7 +121,7 @@ pub const Storage = struct {
     }
 };
 
-test "module semantic storage adds body tables and unresolved type slots" {
+test "module semantic storage owns body, unresolved and template state" {
     const allocator = std.testing.allocator;
     var storage: Storage = .{};
     defer storage.deinit(allocator);
@@ -134,7 +141,11 @@ test "module semantic storage adds body tables and unresolved type slots" {
         .ty = @enumFromInt(0),
         .mutability = .constant,
     });
+    try storage.templates.generic_parameters.append(allocator, .{
+        .name = .{ .start = 0, .len = 1 },
+        .kind = .type,
+    });
 
     try std.testing.expect(storage.storageBytes() >= @sizeOf(entities.Binding));
-    try std.testing.expectEqual(@as(usize, 1), storage.external_types.items.len);
+    try std.testing.expectEqual(@as(usize, 1), storage.templates.generic_parameters.items.len);
 }
