@@ -191,6 +191,24 @@ test "module callable interfaces preserve anonymous structural types" {
     }
 }
 
+test "module callable interfaces preserve anonymous choice types" {
+    const allocator = std.testing.allocator;
+    const source = "inspect(.value: (..some Int32, ..none)) -> () := {}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var graph = try module_graph.build(allocator, "choices", &.{.{ .path = "choices/main.rg", .tree = &tree, .source = source }});
+    defer graph.deinit(allocator);
+
+    const interface = graph.functions.items[0];
+    const input = graph.fields.items[interface.input.start];
+    const shape = graph.types.items[@intFromEnum(input.ty)].structural_choice;
+    try std.testing.expectEqual(@as(u32, 2), shape.len);
+    const some = graph.structural_choice_variants.items[shape.start];
+    try std.testing.expectEqualStrings("some", graph.text(some.name));
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(some.payload_type.?)].builtin);
+    try std.testing.expectEqualStrings("none", graph.text(graph.structural_choice_variants.items[shape.start + 1].name));
+}
+
 test "module graph builds and relocates nominal choice variants" {
     const allocator = std.testing.allocator;
     const source = "Result : Type = (\n    ..ok Int32\n    ..done\n)\n";

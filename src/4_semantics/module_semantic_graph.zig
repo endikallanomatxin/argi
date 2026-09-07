@@ -45,12 +45,13 @@ pub const ModuleType = union(enum) {
     nullable: ModuleTypeId,
     inferred_errable: ModuleTypeId,
     structural: FieldRange,
+    structural_choice: FieldRange,
 };
 
 pub const FieldRange = struct { start: u32, len: u32 };
 pub const Field = struct { name: StringRange, ty: ModuleTypeId, source_offset: u32, has_default: bool };
 pub const FunctionInterface = struct { declaration: ModuleDeclId, input: FieldRange, output: FieldRange };
-pub const ChoiceVariant = struct { name: StringRange, qualifier: ?StringRange, payload_type: ?ModuleTypeId };
+pub const ChoiceVariant = struct { name: StringRange, qualifier: ?StringRange, payload_type: ?ModuleTypeId, source_offset: u32, module_file_index: u32 };
 
 pub const DeclarationKind = enum {
     binding,
@@ -103,6 +104,7 @@ pub const ModuleSemanticGraph = struct {
     fields: std.ArrayList(Field) = .empty,
     structural_fields: std.ArrayList(Field) = .empty,
     choice_variant_entries: std.ArrayList(ChoiceVariant) = .empty,
+    structural_choice_variants: std.ArrayList(ChoiceVariant) = .empty,
     strings: std.ArrayList(u8) = .empty,
     lexical: lexical_tables.LexicalTables = .{},
     type_references: std.ArrayList(TypeReference) = .empty,
@@ -119,6 +121,7 @@ pub const ModuleSemanticGraph = struct {
         self.fields.deinit(allocator);
         self.structural_fields.deinit(allocator);
         self.choice_variant_entries.deinit(allocator);
+        self.structural_choice_variants.deinit(allocator);
         self.strings.deinit(allocator);
         self.lexical.deinit(allocator);
         self.type_references.deinit(allocator);
@@ -156,7 +159,8 @@ pub const ModuleSemanticGraph = struct {
         return self.module_dir.len + self.declarations.items.len * @sizeOf(Declaration) +
             self.symbols.items.len * @sizeOf(Symbol) + self.symbol_declarations.items.len * @sizeOf(ModuleDeclId) +
             self.types.items.len * @sizeOf(ModuleType) + self.functions.items.len * @sizeOf(FunctionInterface) +
-            (self.fields.items.len + self.structural_fields.items.len) * @sizeOf(Field) + self.choice_variant_entries.items.len * @sizeOf(ChoiceVariant) +
+            (self.fields.items.len + self.structural_fields.items.len) * @sizeOf(Field) +
+            (self.choice_variant_entries.items.len + self.structural_choice_variants.items.len) * @sizeOf(ChoiceVariant) +
             self.strings.items.len + lexical_bytes +
             self.type_references.items.len * @sizeOf(TypeReference) +
             self.import_references.items.len * @sizeOf(ImportReference) +
@@ -362,6 +366,8 @@ fn buildChoiceDefinitions(allocator: std.mem.Allocator, graph: *ModuleSemanticGr
                 .name = try graph.addString(allocator, input.tree.tokenTextFromSource(input.source, variant.name_token)),
                 .qualifier = if (variant.module_qualifier) |qualifier| try graph.addString(allocator, input.tree.tokenTextFromSource(input.source, qualifier)) else null,
                 .payload_type = payload_type,
+                .source_offset = input.tree.tokenLocation(variant.name_token).offset,
+                .module_file_index = declaration.module_file_index,
             });
         }
         if (!complete) {
@@ -416,8 +422,50 @@ fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *c
             break :blk try appendType(allocator, graph, .{ .inferred_errable = child });
         },
         .struct_literal => |literal| try lowerStructuralType(allocator, graph, tree, source, module_file_index, literal),
+        .choice_literal => |literal| try lowerStructuralChoiceType(allocator, graph, tree, source, module_file_index, literal),
         else => null,
     };
+}
+
+fn lowerStructuralChoiceType(
+    allocator: std.mem.Allocator,
+    graph: *ModuleSemanticGraph,
+    tree: *const syn.FileSyntaxTree,
+    source: []const u8,
+    module_file_index: u32,
+    literal: syn.ChoiceTypeLiteral,
+) semantic_strings.Error!?ModuleTypeId {
+    const variant_start = graph.structural_choice_variants.items.len;
+    const type_start = graph.types.items.len;
+    var variants: std.ArrayList(ChoiceVariant) = .empty;
+    defer variants.deinit(allocator);
+    errdefer {
+        graph.structural_choice_variants.shrinkRetainingCapacity(variant_start);
+        graph.types.shrinkRetainingCapacity(type_start);
+    }
+    for (literal.variants) |variant_node| {
+        const variant = tree.choiceTypeVariant(variant_node) orelse break;
+        const payload_type = if (variant.payload_type) |payload|
+            try lowerType(allocator, graph, tree, source, module_file_index, payload) orelse break
+        else
+            null;
+        try variants.append(allocator, .{
+            .name = try graph.addString(allocator, tree.tokenTextFromSource(source, variant.name_token)),
+            .qualifier = if (variant.module_qualifier) |qualifier| try graph.addString(allocator, tree.tokenTextFromSource(source, qualifier)) else null,
+            .payload_type = payload_type,
+            .source_offset = tree.tokenLocation(variant.name_token).offset,
+            .module_file_index = module_file_index,
+        });
+    } else {
+        const shape_start = graph.structural_choice_variants.items.len;
+        try graph.structural_choice_variants.appendSlice(allocator, variants.items);
+        const id: ModuleTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+        try graph.types.append(allocator, .{ .structural_choice = .{ .start = @intCast(shape_start), .len = @intCast(variants.items.len) } });
+        return id;
+    }
+    graph.structural_choice_variants.shrinkRetainingCapacity(variant_start);
+    graph.types.shrinkRetainingCapacity(type_start);
+    return null;
 }
 
 fn lowerStructuralType(
@@ -485,6 +533,7 @@ fn moduleTypesEqual(lhs: ModuleType, rhs: ModuleType) bool {
         // Structural shapes are stored as distinct ranges. Legacy structural
         // equality remains responsible for equating identical anonymous types.
         .structural => false,
+        .structural_choice => false,
     };
 }
 
