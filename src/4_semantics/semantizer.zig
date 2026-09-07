@@ -11086,7 +11086,8 @@ pub const Semantizer = struct {
         preserve_abstract: bool,
     ) SemErr!sg.Type {
         if (self.global_builder.findTypeReference(@intFromEnum(owner.file_id), owner.node)) |reference| {
-            if (reference.resolved_declaration) |declaration_id| {
+            if (reference.resolution == .module) {
+                const declaration_id = reference.resolution.module;
                 if (self.predeclared_types[@intFromEnum(declaration_id)]) |declaration| {
                     var local_scope: ?*Scope = s;
                     while (local_scope) |candidate_scope| : (local_scope = candidate_scope.parent) {

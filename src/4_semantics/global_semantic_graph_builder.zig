@@ -44,7 +44,13 @@ pub const TypeReference = struct {
     qualifier: ?module_sema.StringRange,
     source_offset: u32,
     syntax_node: syn.NodeIndex,
-    resolved_declaration: ?GlobalDeclId,
+    resolution: TypeReferenceResolution,
+};
+
+pub const TypeReferenceResolution = union(enum) {
+    builtin: module_sema.BuiltinType,
+    module: GlobalDeclId,
+    external,
 };
 
 /// Provisional globalization storage. Its input boundary is a module semantic
@@ -192,7 +198,11 @@ pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_s
                 .qualifier = if (reference.qualifier) |name| try relocateName(module.strings.items, name, string_base) else null,
                 .source_offset = reference.source_offset,
                 .syntax_node = reference.syntax_node,
-                .resolved_declaration = if (reference.resolved_declaration) |id| @enumFromInt(declaration_base + @intFromEnum(id)) else null,
+                .resolution = switch (reference.resolution) {
+                    .builtin => |builtin| .{ .builtin = builtin },
+                    .module => |id| .{ .module = @enumFromInt(declaration_base + @intFromEnum(id)) },
+                    .external => .external,
+                },
             });
             for (module.import_references.items[file.import_reference_base..][0..file.import_reference_count]) |reference| try merged.import_references.append(allocator, .{
                 .path = try relocateName(module.strings.items, reference.path, string_base),

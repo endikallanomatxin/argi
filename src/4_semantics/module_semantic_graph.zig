@@ -26,8 +26,14 @@ pub const TypeReference = struct {
     qualifier: ?StringRange,
     source_offset: u32,
     syntax_node: syn.NodeIndex,
-    resolved_declaration: ?ModuleDeclId = null,
+    resolution: TypeReferenceResolution = .external,
     resolved_type: ?ModuleTypeId = null,
+};
+
+pub const TypeReferenceResolution = union(enum) {
+    builtin: BuiltinType,
+    module: ModuleDeclId,
+    external,
 };
 
 pub const BuiltinType = enum { Int8, Int16, Int32, Int64, UIntNative, UInt8, UInt16, UInt32, UInt64, Float16, Float32, Float64, Char, Bool, Void, Type, Any };
@@ -233,10 +239,14 @@ fn buildSymbolIndex(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph) !
 fn resolveModuleTypeReferences(graph: *ModuleSemanticGraph) void {
     for (graph.type_references.items) |*reference| {
         if (reference.qualifier != null) continue;
+        if (builtinFromName(graph.text(reference.name))) |builtin| {
+            reference.resolution = .{ .builtin = builtin };
+            continue;
+        }
         for (graph.declarationsNamed(graph.text(reference.name))) |declaration_id| {
             switch (graph.declaration(declaration_id).kind) {
                 .type, .abstract_type => {
-                    reference.resolved_declaration = declaration_id;
+                    reference.resolution = .{ .module = declaration_id };
                     reference.resolved_type = graph.declaration(declaration_id).type_id;
                     break;
                 },
@@ -327,7 +337,11 @@ fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *c
             const spelling = tree.tokenTextFromSource(source, name.name_token);
             if (builtinFromName(spelling)) |builtin| break :blk try appendType(allocator, graph, .{ .builtin = builtin });
             const reference = findTypeReferenceForSourceFile(graph, source_file_index, node) orelse break :blk null;
-            break :blk reference.resolved_type;
+            break :blk switch (reference.resolution) {
+                .builtin => |builtin| try appendType(allocator, graph, .{ .builtin = builtin }),
+                .module => reference.resolved_type,
+                .external => null,
+            };
         },
         .pointer => |pointer| blk: {
             const child = try lowerType(allocator, graph, tree, source, source_file_index, pointer.child) orelse break :blk null;

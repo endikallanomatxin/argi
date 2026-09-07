@@ -47,7 +47,7 @@ test "module semantic graph owns declarations from all direct files" {
     var resolved_point = false;
     for (graph.type_references.items) |reference| {
         if (std.mem.eql(u8, graph.text(reference.name), "Point")) {
-            try std.testing.expectEqual(point_declarations[0], reference.resolved_declaration.?);
+            try std.testing.expectEqual(point_declarations[0], reference.resolution.module);
             resolved_point = true;
         }
     }
@@ -68,7 +68,7 @@ test "module semantic graph owns declarations from all direct files" {
     defer merged.deinit(allocator);
     for (merged.type_references.items) |reference| {
         if (std.mem.eql(u8, merged.text(reference.name), "Point")) {
-            try std.testing.expectEqual(@as(u32, 0), @intFromEnum(reference.resolved_declaration.?));
+            try std.testing.expectEqual(@as(u32, 0), @intFromEnum(reference.resolution.module));
         }
     }
 }
@@ -131,4 +131,29 @@ test "module callable interfaces intern pointer and array types" {
     const pointer = graph.types.items[@intFromEnum(array.element)].pointer;
     try std.testing.expectEqual(.read_only, pointer.mutability);
     try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(pointer.child)].builtin);
+}
+
+test "module type references distinguish builtin and external requirements" {
+    const allocator = std.testing.allocator;
+    const source = "inspect(.local: Int32, .remote: dep.Value) -> () := {}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var graph = try module_graph.build(allocator, "consumer", &.{.{ .file_index = 0, .tree = &tree, .source = source }});
+    defer graph.deinit(allocator);
+
+    var found_builtin = false;
+    var found_external = false;
+    for (graph.type_references.items) |reference| {
+        const name = graph.text(reference.name);
+        if (std.mem.eql(u8, name, "Int32")) {
+            try std.testing.expectEqual(module_graph.BuiltinType.Int32, reference.resolution.builtin);
+            found_builtin = true;
+        } else if (std.mem.eql(u8, name, "Value")) {
+            try std.testing.expect(reference.resolution == .external);
+            try std.testing.expectEqualStrings("dep", graph.text(reference.qualifier.?));
+            found_external = true;
+        }
+    }
+    try std.testing.expect(found_builtin and found_external);
+    try std.testing.expectEqual(@as(usize, 0), graph.functions.items.len);
 }
