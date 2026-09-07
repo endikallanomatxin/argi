@@ -46,12 +46,14 @@ pub const ModuleType = union(enum) {
     inferred_errable: ModuleTypeId,
     structural: FieldRange,
     structural_choice: FieldRange,
+    generic: struct { base: StringRange, arguments: FieldRange },
 };
 
 pub const FieldRange = struct { start: u32, len: u32 };
 pub const Field = struct { name: StringRange, ty: ModuleTypeId, source_offset: u32, has_default: bool };
 pub const FunctionInterface = struct { declaration: ModuleDeclId, input: FieldRange, output: FieldRange };
 pub const ChoiceVariant = struct { name: StringRange, qualifier: ?StringRange, payload_type: ?ModuleTypeId, source_offset: u32, module_file_index: u32 };
+pub const GenericTypeArgument = struct { name: StringRange, ty: ModuleTypeId };
 
 pub const DeclarationKind = enum {
     binding,
@@ -74,6 +76,7 @@ pub const Declaration = struct {
     function_id: ?ModuleFunctionId = null,
     struct_fields: ?FieldRange = null,
     choice_variants: ?FieldRange = null,
+    generic_parameter_count: ?u32 = null,
 };
 
 pub const FileOffsets = struct {
@@ -105,6 +108,7 @@ pub const ModuleSemanticGraph = struct {
     structural_fields: std.ArrayList(Field) = .empty,
     choice_variant_entries: std.ArrayList(ChoiceVariant) = .empty,
     structural_choice_variants: std.ArrayList(ChoiceVariant) = .empty,
+    generic_type_arguments: std.ArrayList(GenericTypeArgument) = .empty,
     strings: std.ArrayList(u8) = .empty,
     lexical: lexical_tables.LexicalTables = .{},
     type_references: std.ArrayList(TypeReference) = .empty,
@@ -122,6 +126,7 @@ pub const ModuleSemanticGraph = struct {
         self.structural_fields.deinit(allocator);
         self.choice_variant_entries.deinit(allocator);
         self.structural_choice_variants.deinit(allocator);
+        self.generic_type_arguments.deinit(allocator);
         self.strings.deinit(allocator);
         self.lexical.deinit(allocator);
         self.type_references.deinit(allocator);
@@ -161,6 +166,7 @@ pub const ModuleSemanticGraph = struct {
             self.types.items.len * @sizeOf(ModuleType) + self.functions.items.len * @sizeOf(FunctionInterface) +
             (self.fields.items.len + self.structural_fields.items.len) * @sizeOf(Field) +
             (self.choice_variant_entries.items.len + self.structural_choice_variants.items.len) * @sizeOf(ChoiceVariant) +
+            self.generic_type_arguments.items.len * @sizeOf(GenericTypeArgument) +
             self.strings.items.len + lexical_bytes +
             self.type_references.items.len * @sizeOf(TypeReference) +
             self.import_references.items.len * @sizeOf(ImportReference) +
@@ -423,8 +429,60 @@ fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *c
         },
         .struct_literal => |literal| try lowerStructuralType(allocator, graph, tree, source, module_file_index, literal),
         .choice_literal => |literal| try lowerStructuralChoiceType(allocator, graph, tree, source, module_file_index, literal),
-        else => null,
+        .generic => |generic| try lowerGenericType(allocator, graph, tree, source, module_file_index, generic),
     };
+}
+
+fn lowerGenericType(
+    allocator: std.mem.Allocator,
+    graph: *ModuleSemanticGraph,
+    tree: *const syn.FileSyntaxTree,
+    source: []const u8,
+    module_file_index: u32,
+    generic: syn.GenericType,
+) semantic_strings.Error!?ModuleTypeId {
+    const base = tree.syntaxType(generic.base) orelse return null;
+    if (base != .name or base.name.qualifier_token != null) return null;
+    const base_name = tree.tokenTextFromSource(source, base.name.name_token);
+    if (std.mem.eql(u8, base_name, "choice_union") or std.mem.eql(u8, base_name, "Array") or std.mem.eql(u8, base_name, "Virtual")) return null;
+    const literal = tree.structTypeLiteral(generic.arguments) orelse return null;
+    const reference = findTypeReference(graph, module_file_index, generic.base) orelse return null;
+    const declaration_id = switch (reference.resolution) {
+        .module => |id| id,
+        else => return null,
+    };
+    const parameter_count = graph.declaration(declaration_id).generic_parameter_count orelse return null;
+    if (literal.fields.len != parameter_count) return null;
+    const argument_start = graph.generic_type_arguments.items.len;
+    const type_start = graph.types.items.len;
+    var arguments: std.ArrayList(GenericTypeArgument) = .empty;
+    defer arguments.deinit(allocator);
+    errdefer {
+        graph.generic_type_arguments.shrinkRetainingCapacity(argument_start);
+        graph.types.shrinkRetainingCapacity(type_start);
+    }
+    for (literal.fields) |field_node| {
+        const field = tree.structTypeField(field_node) orelse break;
+        if (field.default_value != null) break;
+        const type_node = field.type_node orelse break;
+        const ty = try lowerType(allocator, graph, tree, source, module_file_index, type_node) orelse break;
+        try arguments.append(allocator, .{
+            .name = try graph.addString(allocator, tree.tokenTextFromSource(source, field.name_token)),
+            .ty = ty,
+        });
+    } else {
+        const start = graph.generic_type_arguments.items.len;
+        try graph.generic_type_arguments.appendSlice(allocator, arguments.items);
+        const id: ModuleTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+        try graph.types.append(allocator, .{ .generic = .{
+            .base = try graph.addString(allocator, base_name),
+            .arguments = .{ .start = @intCast(start), .len = @intCast(arguments.items.len) },
+        } });
+        return id;
+    }
+    graph.generic_type_arguments.shrinkRetainingCapacity(argument_start);
+    graph.types.shrinkRetainingCapacity(type_start);
+    return null;
 }
 
 fn lowerStructuralChoiceType(
@@ -534,6 +592,7 @@ fn moduleTypesEqual(lhs: ModuleType, rhs: ModuleType) bool {
         // equality remains responsible for equating identical anonymous types.
         .structural => false,
         .structural_choice => false,
+        .generic => false,
     };
 }
 
@@ -594,6 +653,7 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
             .source_offset = tree.location(node).offset,
             .module_file_index = module_file_index,
             .syntax_node = node,
+            .generic_parameter_count = genericParameterCount(tree, node),
         });
     }
     // Syntax-node order permits binary lookup during the global consumer
@@ -627,4 +687,23 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
     var lexical = try file_bindings.build(allocator, tree, source, &graph.strings);
     defer lexical.deinit(allocator);
     try graph.lexical.appendFileBindings(allocator, graph.strings.items, &lexical, module_file_index);
+}
+
+fn genericParameterCount(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) ?u32 {
+    const params, const params_struct = switch (tree.tag(node)) {
+        .type_declaration => blk: {
+            const declaration = tree.typeDeclaration(node).?;
+            break :blk .{ declaration.generic_params, declaration.generic_params_struct };
+        },
+        .c_enum_declaration => blk: {
+            const declaration = tree.cEnumDeclaration(node).?;
+            break :blk .{ declaration.generic_params, declaration.generic_params_struct };
+        },
+        .c_union_declaration => blk: {
+            const declaration = tree.cUnionDeclaration(node).?;
+            break :blk .{ declaration.generic_params, declaration.generic_params_struct };
+        },
+        else => return null,
+    };
+    return @intCast(if (params_struct) |struct_node| tree.structTypeLiteral(struct_node).?.fields.len else params.len);
 }
