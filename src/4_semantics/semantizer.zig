@@ -4033,7 +4033,10 @@ pub const Semantizer = struct {
                         }
                     }
                 }
-                const resolved = try self.choiceTypeFromNode(file.ref(value), scope);
+                const resolved = if (self.compactChoiceVariantsForSyntax(node)) |variants|
+                    try self.choiceTypeFromCompactDefinition(variants, file.ref(value), scope)
+                else
+                    try self.choiceTypeFromNode(file.ref(value), scope);
                 const target = @constCast(declaration.ty.choice_type);
                 target.variants = resolved.variants;
                 target.layout = if (file.tag(node.node) == .c_enum_declaration) .c_enum else .regular;
@@ -5911,6 +5914,50 @@ pub const Semantizer = struct {
     fn compactStructFieldsForSyntax(self: *Semantizer, node: syn.SyntaxRef) ?@import("module_semantic_graph.zig").FieldRange {
         const declaration_id = self.global_builder.findDeclaration(@intFromEnum(node.file_id), node.node) orelse return null;
         return self.global_builder.declaration(declaration_id).struct_fields;
+    }
+
+    fn compactChoiceVariantsForSyntax(self: *Semantizer, node: syn.SyntaxRef) ?@import("module_semantic_graph.zig").FieldRange {
+        const declaration_id = self.global_builder.findDeclaration(@intFromEnum(node.file_id), node.node) orelse return null;
+        return self.global_builder.declaration(declaration_id).choice_variants;
+    }
+
+    fn choiceTypeFromCompactDefinition(
+        self: *Semantizer,
+        range: @import("module_semantic_graph.zig").FieldRange,
+        syntax_node: syn.SyntaxRef,
+        scope: *Scope,
+    ) SemErr!*sg.ChoiceType {
+        const file = self.syntaxFile(syntax_node);
+        const syntax_variants = (file.choiceTypeLiteral(syntax_node.node) orelse return error.InvalidType).variants;
+        if (syntax_variants.len != range.len) return error.InvalidType;
+        const compact_variants = self.global_builder.choice_variant_entries.items[range.start..][0..range.len];
+        const variants = try self.allocator.alloc(sg.ChoiceVariant, compact_variants.len);
+        for (compact_variants, syntax_variants, 0..) |compact, variant_node, index| {
+            const syntax_variant = file.choiceTypeVariant(variant_node) orelse return error.InvalidType;
+            const name = self.global_builder.text(compact.name);
+            const payload_type = if (compact.payload_type) |payload| try self.materializeCompactType(payload) else null;
+            const option_decl = if (payload_type == null)
+                self.resolveChoiceOptionReference(
+                    if (compact.qualifier) |qualifier| self.global_builder.text(qualifier) else null,
+                    name,
+                    file.tokenLocation(syntax_variant.name_token),
+                    scope,
+                ) catch |err| switch (err) {
+                    error.SymbolNotFound => null,
+                    else => return err,
+                }
+            else
+                null;
+            variants[index] = .{
+                .name = name,
+                .value = if (option_decl) |declaration| @intCast(declaration.id) else @intCast(index),
+                .payload_type = payload_type,
+                .option_decl = option_decl,
+            };
+        }
+        const result = try self.allocator.create(sg.ChoiceType);
+        result.* = .{ .variants = variants };
+        return result;
     }
 
     fn structTypeFromCompactDefinition(
