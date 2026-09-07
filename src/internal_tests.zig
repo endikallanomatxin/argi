@@ -8,7 +8,7 @@ const syntax_tree = @import("3_syntax/syntax_tree.zig");
 const syntaxer = @import("3_syntax/syntaxer.zig");
 const syntaxer_test = @import("3_syntax/syntaxer_test.zig");
 const file_semantic_graph_test = @import("4_semantics/file_semantic_graph_test.zig");
-const global_declarations = @import("4_semantics/global_declarations.zig");
+const global_semantic_graph_builder = @import("4_semantics/global_semantic_graph_builder.zig");
 
 test {
     _ = source_files;
@@ -21,5 +21,5 @@ test {
     _ = syntaxer;
     _ = syntaxer_test;
     _ = file_semantic_graph_test;
-    _ = global_declarations;
+    _ = global_semantic_graph_builder;
 }

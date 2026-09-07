@@ -22,17 +22,18 @@ pub const Declaration = struct {
     syntax_node: syn.NodeIndex,
 };
 
-/// Mechanical concatenation of file declarations, not the final semantic graph.
-/// File ordinals and syntax nodes remain a temporary bridge to expression
-/// lowering. The merge owns its strings and relocates identities without making
-/// decisions about visibility, imports, types, or overloads.
-pub const MergedDeclarations = struct {
+/// Provisional storage for globalization, not a persistent frontend artifact or
+/// the finalized GlobalSemanticGraph consumed by Safety and Codegen. Mechanical
+/// merging populates these tables before global resolution selects their targets.
+/// File ordinals and syntax nodes bridge consumers during expression lowering;
+/// they must disappear from finalized global relationships as migration proceeds.
+pub const GlobalSemanticGraphBuilder = struct {
     declarations: std.ArrayList(Declaration) = .empty,
     strings: std.ArrayList(u8) = .empty,
     file_offsets: std.ArrayList(FileOffsets) = .empty,
     type_references: std.ArrayList(file_sema.TypeReference) = .empty,
 
-    pub fn deinit(self: *MergedDeclarations, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *GlobalSemanticGraphBuilder, allocator: std.mem.Allocator) void {
         self.declarations.deinit(allocator);
         self.strings.deinit(allocator);
         self.file_offsets.deinit(allocator);
@@ -40,34 +41,34 @@ pub const MergedDeclarations = struct {
         self.* = .{};
     }
 
-    pub fn globalDeclId(self: *const MergedDeclarations, file_index: usize, local_id: file_sema.FileDeclId) GlobalDeclId {
+    pub fn globalDeclId(self: *const GlobalSemanticGraphBuilder, file_index: usize, local_id: file_sema.FileDeclId) GlobalDeclId {
         const offsets = self.file_offsets.items[file_index];
         const local_index = @intFromEnum(local_id);
         std.debug.assert(local_index < offsets.declaration_count);
         return @enumFromInt(offsets.declaration_base + local_index);
     }
 
-    pub fn declaration(self: *const MergedDeclarations, id: GlobalDeclId) Declaration {
+    pub fn declaration(self: *const GlobalSemanticGraphBuilder, id: GlobalDeclId) Declaration {
         return self.declarations.items[@intFromEnum(id)];
     }
 
-    pub fn text(self: *const MergedDeclarations, range: file_sema.StringRange) []const u8 {
+    pub fn text(self: *const GlobalSemanticGraphBuilder, range: file_sema.StringRange) []const u8 {
         return self.strings.items[range.start..][0..range.len];
     }
 
-    pub fn storageBytes(self: *const MergedDeclarations) usize {
+    pub fn storageBytes(self: *const GlobalSemanticGraphBuilder) usize {
         return self.declarations.items.len * @sizeOf(Declaration) +
             self.strings.items.len + self.file_offsets.items.len * @sizeOf(FileOffsets) +
             self.type_references.items.len * @sizeOf(file_sema.TypeReference);
     }
 
-    pub fn globalTypeRefId(self: *const MergedDeclarations, file_index: usize, local_id: file_sema.FileTypeRefId) GlobalTypeRefId {
+    pub fn globalTypeRefId(self: *const GlobalSemanticGraphBuilder, file_index: usize, local_id: file_sema.FileTypeRefId) GlobalTypeRefId {
         const offsets = self.file_offsets.items[file_index];
         std.debug.assert(@intFromEnum(local_id) < offsets.type_reference_count);
         return @enumFromInt(offsets.type_reference_base + @intFromEnum(local_id));
     }
 
-    pub fn findTypeReference(self: *const MergedDeclarations, file_index: usize, node: syn.NodeIndex) ?file_sema.TypeReference {
+    pub fn findTypeReference(self: *const GlobalSemanticGraphBuilder, file_index: usize, node: syn.NodeIndex) ?file_sema.TypeReference {
         const offsets = self.file_offsets.items[file_index];
         var start: usize = offsets.type_reference_base;
         var end = start + offsets.type_reference_count;
@@ -84,9 +85,9 @@ pub const MergedDeclarations = struct {
     }
 };
 
-pub fn mergeFileGraphs(allocator: std.mem.Allocator, files: []const file_sema.FileSemanticGraph) !MergedDeclarations {
+pub fn mergeFileGraphs(allocator: std.mem.Allocator, files: []const file_sema.FileSemanticGraph) !GlobalSemanticGraphBuilder {
     const max_count = std.math.maxInt(u32);
-    if (files.len > max_count) return error.MergedDeclarationsTooLarge;
+    if (files.len > max_count) return error.GlobalSemanticGraphBuilderTooLarge;
     var declaration_count: usize = 0;
     var string_count: usize = 0;
     var type_reference_count: usize = 0;
@@ -94,13 +95,13 @@ pub fn mergeFileGraphs(allocator: std.mem.Allocator, files: []const file_sema.Fi
         if (file.declarations.items.len > max_count - declaration_count or
             file.strings.items.len > max_count - string_count or
             file.type_references.items.len > max_count - type_reference_count)
-            return error.MergedDeclarationsTooLarge;
+            return error.GlobalSemanticGraphBuilderTooLarge;
         declaration_count += file.declarations.items.len;
         string_count += file.strings.items.len;
         type_reference_count += file.type_references.items.len;
     }
 
-    var merged: MergedDeclarations = .{};
+    var merged: GlobalSemanticGraphBuilder = .{};
     errdefer merged.deinit(allocator);
     try merged.declarations.ensureTotalCapacity(allocator, declaration_count);
     try merged.strings.ensureTotalCapacity(allocator, string_count);

@@ -200,7 +200,7 @@ pub const Semantizer = struct {
     allocator: *const std.mem.Allocator,
     io: std.Io,
     syntax_files: []const syn.FileSyntaxTree,
-    declarations: *const @import("global_declarations.zig").MergedDeclarations,
+    global_builder: *const @import("global_semantic_graph_builder.zig").GlobalSemanticGraphBuilder,
     syntax_roots: []const syn.SyntaxRef,
     root_list: std.array_list.Managed(*sg.SGNode), // buffer mut
     root_nodes: []const *sg.SGNode = &.{}, // slice final
@@ -246,7 +246,7 @@ pub const Semantizer = struct {
         io: std.Io,
         syntax_files: []const syn.FileSyntaxTree,
         st: []const syn.SyntaxRef,
-        declarations: *const @import("global_declarations.zig").MergedDeclarations,
+        global_builder: *const @import("global_semantic_graph_builder.zig").GlobalSemanticGraphBuilder,
         diags: *diagnostic.Diagnostics,
         options: SemantizerOptions,
     ) Semantizer {
@@ -255,7 +255,7 @@ pub const Semantizer = struct {
             .io = io,
             .syntax_files = syntax_files,
             .syntax_roots = st,
-            .declarations = declarations,
+            .global_builder = global_builder,
             .root_list = std.array_list.Managed(*sg.SGNode).init(alloc.*),
             .diags = diags,
             .options = options,
@@ -766,13 +766,13 @@ pub const Semantizer = struct {
     }
 
     fn predeclareTopLevelSymbols(self: *Semantizer, global: *Scope) SemErr!void {
-        for (self.declarations.declarations.items) |declaration| {
+        for (self.global_builder.declarations.items) |declaration| {
             const file = self.syntax_files[declaration.file_index];
             const node = file.ref(declaration.syntax_node);
             // LSP retains global results after the frontend artifacts have
             // been released. Names crossing this bridge belong to the
             // global result arena, not the independently owned file graph.
-            const name = try self.allocator.dupe(u8, self.declarations.text(declaration.name));
+            const name = try self.allocator.dupe(u8, self.global_builder.text(declaration.name));
             switch (declaration.kind) {
                 .binding, .import_alias => {
                     try self.predeclareTopLevelImportAliasRef(node, name, global);
@@ -10976,10 +10976,10 @@ pub const Semantizer = struct {
         s: *Scope,
         preserve_abstract: bool,
     ) SemErr!sg.Type {
-        if (self.declarations.findTypeReference(@intFromEnum(owner.file_id), owner.node)) |reference| {
+        if (self.global_builder.findTypeReference(@intFromEnum(owner.file_id), owner.node)) |reference| {
             return self.resolveTypeName(
-                self.declarations.text(reference.name),
-                if (reference.qualifier) |qualifier| self.declarations.text(qualifier) else null,
+                self.global_builder.text(reference.name),
+                if (reference.qualifier) |qualifier| self.global_builder.text(qualifier) else null,
                 .{ .file = owner.file_id, .offset = reference.source_offset },
                 s,
                 preserve_abstract,

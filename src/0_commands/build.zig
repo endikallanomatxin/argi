@@ -234,7 +234,7 @@ fn printCompilerStats(
     std.debug.print("  extra_data bytes: {d}\n", .{syntax_storage.extra_data_bytes});
     std.debug.print("  FileSyntaxTree total: {d}\n", .{syntax_storage.total()});
     std.debug.print("  FileSemanticGraph total: {d}\n", .{pipeline.fileSemanticStorageBytes()});
-    std.debug.print("  merged declaration/reference bytes: {d}\n", .{pipeline.merged_declarations.storageBytes()});
+    std.debug.print("  merged declaration/reference bytes: {d}\n", .{pipeline.global_builder.storageBytes()});
     std.debug.print("  SG nodes:     {d}\n", .{pipeline.sg_node_count});
 
     std.debug.print("Types\n", .{});
