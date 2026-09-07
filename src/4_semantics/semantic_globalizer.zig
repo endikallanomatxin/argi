@@ -130,6 +130,7 @@ fn appendModule(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticG
     try appendVariants(allocator, result, module, offsets);
     try appendGenericArguments(allocator, result, module, offsets);
     try appendTypes(allocator, result, module, offsets);
+    try appendGenericInstances(allocator, result, module, offsets);
     try appendFunctions(allocator, result, module, offsets);
     try appendSymbols(allocator, result, module, offsets);
     try appendReferencePools(allocator, result, module, offsets);
@@ -208,6 +209,27 @@ fn appendTypes(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGr
         };
         try result.types.append(allocator, relocateType(o, resolved));
     }
+}
+
+fn appendGenericInstances(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGraph, module: *const module_sg.ModuleSemanticGraph, o: Offsets) !void {
+    for (module.semantic.generic_instances.items) |instance| try result.generic_instances.append(allocator, .{
+        .type_id = globalType(o, instance.type_id),
+        .shape = switch (instance.shape) {
+            .structure => |shape| .{ .structure = .{
+                .fields = relocateEntityRange(global_sg.GlobalFieldId, o.field_base, shape.fields),
+                .layout = shape.layout,
+            } },
+            .choice => |shape| .{ .choice = .{
+                .variants = relocateEntityRange(global_sg.GlobalVariantId, o.variant_base, shape.variants),
+                .layout = shape.layout,
+            } },
+            .array => |shape| .{ .array = .{
+                .length = shape.length,
+                .element = globalType(o, shape.element),
+            } },
+            .alias => |target| .{ .alias = globalType(o, target) },
+        },
+    });
 }
 
 fn relocateType(o: Offsets, value: module_entities.ResolvedType) global_sg.GlobalType {
