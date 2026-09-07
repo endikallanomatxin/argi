@@ -63,6 +63,7 @@ pub const NodeRange = primitives.Range(GlobalNodeId);
 pub const FieldRange = primitives.Range(GlobalFieldId);
 pub const VariantRange = primitives.Range(GlobalVariantId);
 
+pub const Declaration = primitives.Declaration(Ids);
 pub const GlobalType = primitives.SemanticType(Ids);
 pub const Field = primitives.Field(Ids);
 pub const ChoiceVariant = primitives.ChoiceVariant(Ids);
@@ -95,17 +96,6 @@ pub const Module = struct {
     dir: StringRange,
     files: primitives.Range(GlobalFileId),
     declarations: DeclRange,
-};
-
-pub const Declaration = struct {
-    kind: primitives.DeclarationKind,
-    name: StringRange,
-    source: primitives.SourceRef,
-    type_id: ?GlobalTypeId = null,
-    function_id: ?GlobalFunctionId = null,
-    struct_fields: ?FieldRange = null,
-    choice_variants: ?VariantRange = null,
-    generic_parameter_count: ?u32 = null,
 };
 
 pub const Symbol = struct {
@@ -274,6 +264,7 @@ test "global semantic graph owns the complete indexed representation" {
         .name = name,
         .source = .{ .file_index = 0, .offset = 4 },
         .type_id = @enumFromInt(0),
+        .struct_layout = .c_union,
     });
     try graph.types.append(allocator, .{ .declared = @enumFromInt(0) });
     try graph.nodes.append(allocator, .{
@@ -285,5 +276,6 @@ test "global semantic graph owns the complete indexed representation" {
 
     try std.testing.expectEqualStrings("Thing", graph.text(name));
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(graph.declaration(@enumFromInt(0)).type_id.?));
+    try std.testing.expectEqual(primitives.StructLayout.c_union, graph.declaration(@enumFromInt(0)).struct_layout);
     try std.testing.expectEqual(@as(i64, 7), graph.node(@enumFromInt(0)).content.int_literal);
 }
