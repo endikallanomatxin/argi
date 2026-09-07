@@ -50,7 +50,15 @@ pub const ModuleType = union(enum) {
 };
 
 pub const FieldRange = struct { start: u32, len: u32 };
-pub const Field = struct { name: StringRange, ty: ModuleTypeId, source_offset: u32, has_default: bool };
+pub const Field = struct {
+    name: StringRange,
+    ty: ModuleTypeId,
+    source_offset: u32,
+    has_default: bool,
+    // Expression lowering has not moved into the module graph yet.
+    default_value: ?syn.NodeIndex = null,
+    module_file_index: u32 = 0,
+};
 pub const FunctionInterface = struct { declaration: ModuleDeclId, input: FieldRange, output: FieldRange };
 pub const ChoiceVariant = struct { name: StringRange, qualifier: ?StringRange, payload_type: ?ModuleTypeId, source_offset: u32, module_file_index: u32 };
 pub const GenericTypeArgument = struct { name: StringRange, ty: ModuleTypeId };
@@ -391,7 +399,14 @@ fn appendFields(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
         const type_node = field.type_node orelse return false;
         const ty = try lowerType(allocator, graph, input.tree, input.source, module_file_index, type_node) orelse return false;
         const name = if (field.inferred_result) "result" else input.tree.tokenTextFromSource(input.source, field.name_token);
-        try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, name), .ty = ty, .source_offset = input.tree.tokenLocation(field.name_token).offset, .has_default = field.default_value != null });
+        try graph.fields.append(allocator, .{
+            .name = try graph.addString(allocator, name),
+            .ty = ty,
+            .source_offset = input.tree.tokenLocation(field.name_token).offset,
+            .has_default = field.default_value != null,
+            .default_value = field.default_value,
+            .module_file_index = module_file_index,
+        });
     }
     return true;
 }
@@ -638,7 +653,6 @@ fn lowerStructuralType(
     }
     for (literal.fields) |field_node| {
         const field = tree.structTypeField(field_node) orelse break;
-        if (field.default_value != null) break;
         const type_node = field.type_node orelse break;
         const ty = try lowerType(allocator, graph, tree, source, module_file_index, type_node) orelse break;
         const name = if (field.inferred_result) "result" else tree.tokenTextFromSource(source, field.name_token);
@@ -646,7 +660,9 @@ fn lowerStructuralType(
             .name = try graph.addString(allocator, name),
             .ty = ty,
             .source_offset = tree.tokenLocation(field.name_token).offset,
-            .has_default = false,
+            .has_default = field.default_value != null,
+            .default_value = field.default_value,
+            .module_file_index = module_file_index,
         });
     } else {
         const shape_start = graph.structural_fields.items.len;
