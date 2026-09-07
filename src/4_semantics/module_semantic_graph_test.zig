@@ -41,11 +41,25 @@ test "module semantic graph owns declarations from all direct files" {
     try std.testing.expectEqualStrings("distance", graph.text(graph.declarations.items[1].name));
     try std.testing.expectEqual(@as(u32, 0), graph.declarations.items[0].module_file_index);
     try std.testing.expectEqual(@as(u32, 1), graph.declarations.items[1].module_file_index);
-    var found_point = false;
+    const point_declarations = graph.declarationsNamed("Point");
+    try std.testing.expectEqual(@as(usize, 1), point_declarations.len);
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(point_declarations[0]));
+    var resolved_point = false;
     for (graph.type_references.items) |reference| {
-        if (std.mem.eql(u8, graph.text(reference.name), "Point")) found_point = true;
+        if (std.mem.eql(u8, graph.text(reference.name), "Point")) {
+            try std.testing.expectEqual(point_declarations[0], reference.resolved_declaration.?);
+            resolved_point = true;
+        }
     }
-    try std.testing.expect(found_point);
+    try std.testing.expect(resolved_point);
+
+    var merged = try global_builder.mergeModuleGraphs(allocator, &.{graph}, 2);
+    defer merged.deinit(allocator);
+    for (merged.type_references.items) |reference| {
+        if (std.mem.eql(u8, merged.text(reference.name), "Point")) {
+            try std.testing.expectEqual(@as(u32, 0), @intFromEnum(reference.resolved_declaration.?));
+        }
+    }
 }
 
 test "global builder consumes module graphs and preserves file provenance" {
@@ -67,4 +81,24 @@ test "global builder consumes module graphs and preserves file provenance" {
     try std.testing.expectEqualStrings("value", merged.text(merged.declaration(second_id).name));
     try std.testing.expectEqual(@as(u32, 1), merged.declaration(second_id).file_index);
     try std.testing.expectEqual(@as(u32, 1), merged.file_offsets.items[1].declaration_base);
+}
+
+test "module symbol index retains overload candidates" {
+    const allocator = std.testing.allocator;
+    const first_source = "convert(.value: Int32) -> () := {}\n";
+    const second_source = "convert(.value: Bool) -> () := {}\n";
+    var first = try parseSource(allocator, first_source, @enumFromInt(0));
+    defer first.deinit(allocator);
+    var second = try parseSource(allocator, second_source, @enumFromInt(1));
+    defer second.deinit(allocator);
+    var graph = try module_graph.build(allocator, "conversion", &.{
+        .{ .file_index = 0, .tree = &first, .source = first_source },
+        .{ .file_index = 1, .tree = &second, .source = second_source },
+    });
+    defer graph.deinit(allocator);
+
+    const declarations = graph.declarationsNamed("convert");
+    try std.testing.expectEqual(@as(usize, 2), declarations.len);
+    try std.testing.expectEqual(.function, graph.declaration(declarations[0]).kind);
+    try std.testing.expectEqual(.function, graph.declaration(declarations[1]).kind);
 }

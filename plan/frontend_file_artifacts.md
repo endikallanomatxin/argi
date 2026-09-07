@@ -556,18 +556,19 @@ file-to-global semantic merge remains.
 7. Keep tests that describe language semantics and ownership guarantees; rewrite
    tests that only exist to validate the obsolete file-to-global architecture.
 
-### Phase 1 — direct module semantic analysis
+### Phase 1 — direct module semantic analysis (in progress)
 
-1. Give ModuleSema all `FileSyntaxTree`s belonging to one module.
-2. Discover all top-level declarations before resolving module semantics.
-3. Build module symbol indexes.
-4. Semantize module-local types and callable interfaces.
-5. Lower lexical scopes, bindings, expressions and control flow directly to
+1. [x] Give ModuleSema all `FileSyntaxTree`s belonging to one module.
+2. [x] Discover all top-level declarations before resolving module semantics.
+3. [x] Build module symbol indexes.
+4. [ ] Semantize module-local types and callable interfaces.
+5. [ ] Lower lexical scopes, bindings, expressions and control flow directly to
    module IDs.
-6. Resolve cross-file references inside the same module.
-7. Emit explicit external-module references and pending global operations for
+6. [ ] Resolve cross-file references inside the same module. Unqualified named
+   type references are the first migrated case.
+7. [ ] Emit explicit external-module references and pending global operations for
    everything whose answer can depend on another module.
-8. Ensure ModuleSema does not need semantic state from imported modules to build
+8. [x] Ensure ModuleSema does not need semantic state from imported modules to build
    the basic cacheable ModuleSG.
 
 ### Phase 2 — compact `ModuleSemanticGraph`

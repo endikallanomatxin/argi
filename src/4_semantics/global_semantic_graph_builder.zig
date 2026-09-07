@@ -25,6 +25,14 @@ pub const Declaration = struct {
     syntax_node: syn.NodeIndex,
 };
 
+pub const TypeReference = struct {
+    name: module_sema.StringRange,
+    qualifier: ?module_sema.StringRange,
+    source_offset: u32,
+    syntax_node: syn.NodeIndex,
+    resolved_declaration: ?GlobalDeclId,
+};
+
 /// Provisional globalization storage. Its input boundary is a module semantic
 /// graph; file indices survive only as source/syntax provenance for consumers
 /// that have not yet moved off the legacy pointer-heavy graph.
@@ -33,7 +41,7 @@ pub const GlobalSemanticGraphBuilder = struct {
     strings: std.ArrayList(u8) = .empty,
     module_offsets: std.ArrayList(ModuleOffsets) = .empty,
     file_offsets: std.ArrayList(FileOffsets) = .empty,
-    type_references: std.ArrayList(module_sema.TypeReference) = .empty,
+    type_references: std.ArrayList(TypeReference) = .empty,
     import_references: std.ArrayList(module_sema.ImportReference) = .empty,
     lexical: global_lexical.LexicalTables = .{},
 
@@ -65,7 +73,7 @@ pub const GlobalSemanticGraphBuilder = struct {
     pub fn storageBytes(self: *const GlobalSemanticGraphBuilder) usize {
         return self.declarations.items.len * @sizeOf(Declaration) + self.strings.items.len +
             self.module_offsets.items.len * @sizeOf(ModuleOffsets) + self.file_offsets.items.len * @sizeOf(FileOffsets) +
-            self.type_references.items.len * @sizeOf(module_sema.TypeReference) +
+            self.type_references.items.len * @sizeOf(TypeReference) +
             self.import_references.items.len * @sizeOf(module_sema.ImportReference) + self.lexical.storageBytes();
     }
 
@@ -75,14 +83,22 @@ pub const GlobalSemanticGraphBuilder = struct {
         return @enumFromInt(offsets.type_reference_base + @intFromEnum(local_id));
     }
 
-    pub fn findTypeReference(self: *const GlobalSemanticGraphBuilder, file_index: usize, node: syn.NodeIndex) ?module_sema.TypeReference {
+    pub fn findTypeReference(self: *const GlobalSemanticGraphBuilder, file_index: usize, node: syn.NodeIndex) ?TypeReference {
         const offsets = self.file_offsets.items[file_index];
-        return findReference(module_sema.TypeReference, self.type_references.items[offsets.type_reference_base..][0..offsets.type_reference_count], node);
+        return findReference(TypeReference, self.type_references.items[offsets.type_reference_base..][0..offsets.type_reference_count], node);
     }
 
     pub fn findImportReference(self: *const GlobalSemanticGraphBuilder, file_index: usize, node: syn.NodeIndex) ?module_sema.ImportReference {
         const offsets = self.file_offsets.items[file_index];
         return findReference(module_sema.ImportReference, self.import_references.items[offsets.import_reference_base..][0..offsets.import_reference_count], node);
+    }
+
+    pub fn findDeclaration(self: *const GlobalSemanticGraphBuilder, file_index: usize, node: syn.NodeIndex) ?GlobalDeclId {
+        const offsets = self.file_offsets.items[file_index];
+        for (self.declarations.items[offsets.declaration_base..][0..offsets.declaration_count], offsets.declaration_base..) |candidate, index| {
+            if (candidate.syntax_node == node) return @enumFromInt(@as(u32, @intCast(index)));
+        }
+        return null;
     }
 
     fn findReference(comptime T: type, references: []const T, node: syn.NodeIndex) ?T {
@@ -131,6 +147,7 @@ pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_s
                 .qualifier = if (reference.qualifier) |name| try relocateName(module.strings.items, name, string_base) else null,
                 .source_offset = reference.source_offset,
                 .syntax_node = reference.syntax_node,
+                .resolved_declaration = if (reference.resolved_declaration) |id| @enumFromInt(declaration_base + @intFromEnum(id)) else null,
             });
             for (module.import_references.items[file.import_reference_base..][0..file.import_reference_count]) |reference| try merged.import_references.append(allocator, .{
                 .path = try relocateName(module.strings.items, reference.path, string_base),

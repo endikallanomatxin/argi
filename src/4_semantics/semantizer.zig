@@ -201,6 +201,7 @@ pub const Semantizer = struct {
     io: std.Io,
     syntax_files: []const syn.FileSyntaxTree,
     global_builder: *const @import("global_semantic_graph_builder.zig").GlobalSemanticGraphBuilder,
+    predeclared_types: []?*sg.TypeDeclaration = &.{},
     syntax_roots: []const syn.SyntaxRef,
     root_list: std.array_list.Managed(*sg.SGNode), // buffer mut
     root_nodes: []const *sg.SGNode = &.{}, // slice final
@@ -766,7 +767,9 @@ pub const Semantizer = struct {
     }
 
     fn predeclareTopLevelSymbols(self: *Semantizer, global: *Scope) SemErr!void {
-        for (self.global_builder.declarations.items) |declaration| {
+        self.predeclared_types = try self.allocator.alloc(?*sg.TypeDeclaration, self.global_builder.declarations.items.len);
+        @memset(self.predeclared_types, null);
+        for (self.global_builder.declarations.items, 0..) |declaration, declaration_index| {
             const file = self.syntax_files[declaration.file_index];
             const node = file.ref(declaration.syntax_node);
             // LSP retains global results after the frontend artifacts have
@@ -778,8 +781,8 @@ pub const Semantizer = struct {
                     try self.predeclareTopLevelImportAliasRef(node, name, global);
                     try self.predeclareTopLevelBindingRef(node, name, global);
                 },
-                .abstract_type => try self.predeclareTopLevelAbstractRef(node, name, global),
-                .type => try self.predeclareTopLevelTypeRef(node, name, global),
+                .abstract_type => self.predeclared_types[declaration_index] = try self.predeclareTopLevelAbstractRef(node, name, global),
+                .type => self.predeclared_types[declaration_index] = try self.predeclareTopLevelTypeRef(node, name, global),
                 .choice_option => try self.predeclareTopLevelChoiceOptionRef(node, name, global),
                 .function => try self.predeclareTopLevelFunctionRef(node, global, false, name),
                 .test_function => if (self.options.include_tests) try self.predeclareTopLevelFunctionRef(node, global, true, name),
@@ -833,10 +836,9 @@ pub const Semantizer = struct {
         try global.bindings.put(name, binding);
     }
 
-    fn predeclareTopLevelAbstractRef(self: *Semantizer, node: syn.SyntaxRef, name: []const u8, global: *Scope) SemErr!void {
+    fn predeclareTopLevelAbstractRef(self: *Semantizer, node: syn.SyntaxRef, name: []const u8, global: *Scope) SemErr!?*sg.TypeDeclaration {
         const abstract_file = self.syntaxFile(node);
         const decl = abstract_file.abstractDeclaration(node.node).?;
-        if (global.abstracts.contains(name) or global.types.contains(name)) return;
         const param_names = try self.compactAbstractParamNames(node, decl.generic_params, decl.generic_params_struct);
         const params = try self.allocator.alloc(gen.GenericParam, param_names.len);
         for (param_names, 0..) |param_name, index| params[index] = .{ .name = param_name, .kind = .type };
@@ -857,11 +859,12 @@ pub const Semantizer = struct {
         abstract_type.* = .{ .name = name };
         const type_decl = try self.allocator.create(sg.TypeDeclaration);
         type_decl.* = .{ .name = name, .origin_file = self.locationPath(self.nodeLocation(node)), .ty = .{ .abstract_type = abstract_type } };
-        try global.abstracts.put(name, info);
-        try global.types.put(name, type_decl);
+        if (!global.abstracts.contains(name)) try global.abstracts.put(name, info);
+        if (!global.types.contains(name)) try global.types.put(name, type_decl);
+        return type_decl;
     }
 
-    fn predeclareTopLevelTypeRef(self: *Semantizer, node: syn.SyntaxRef, name: []const u8, global: *Scope) SemErr!void {
+    fn predeclareTopLevelTypeRef(self: *Semantizer, node: syn.SyntaxRef, name: []const u8, global: *Scope) SemErr!?*sg.TypeDeclaration {
         const file = self.syntaxFile(node);
         const generic_params, const generic_params_struct, const value = switch (self.nodeTag(node)) {
             .type_declaration => blk: {
@@ -879,7 +882,7 @@ pub const Semantizer = struct {
             else => unreachable,
         };
         if (generic_params.len > 0 or generic_params_struct != null) {
-            const generic_info = self.compactGenericParamDefs(node, generic_params, generic_params_struct, global) catch return;
+            const generic_info = self.compactGenericParamDefs(node, generic_params, generic_params_struct, global) catch return null;
             try global.appendGenericTypeTemplate(name, .{
                 .name = name,
                 .location = file.location(value),
@@ -887,9 +890,8 @@ pub const Semantizer = struct {
                 .param_abstract_constraints = generic_info.abstract_constraints,
                 .body = file.ref(value),
             });
-            return;
+            return null;
         }
-        if (global.types.contains(name)) return;
         const ty: sg.Type = switch (file.tag(value)) {
             .struct_type_literal => blk: {
                 const struct_type = try self.allocator.create(sg.StructType);
@@ -901,11 +903,12 @@ pub const Semantizer = struct {
                 choice_type.* = .{ .variants = &.{} };
                 break :blk .{ .choice_type = choice_type };
             },
-            else => self.resolveTypeExpression(file.ref(value), global) catch return,
+            else => self.resolveTypeExpression(file.ref(value), global) catch return null,
         };
         const type_decl = try self.allocator.create(sg.TypeDeclaration);
         type_decl.* = .{ .name = name, .origin_file = self.locationPath(file.location(value)), .ty = ty };
-        try global.types.put(name, type_decl);
+        if (!global.types.contains(name)) try global.types.put(name, type_decl);
+        return type_decl;
     }
 
     fn predeclareTopLevelFunctionRef(self: *Semantizer, node: syn.SyntaxRef, global: *Scope, is_test: bool, discovered_name: ?[]const u8) SemErr!void {
@@ -3987,7 +3990,7 @@ pub const Semantizer = struct {
             try scope.nodes.append(noop);
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
         }
-        const declaration = scope.lookupType(name) orelse blk: {
+        const declaration = self.predeclaredTypeForSyntax(node) orelse scope.lookupType(name) orelse blk: {
             const alias_type = try self.resolveTypeExpression(file.ref(value), scope);
             const created = try self.allocator.create(sg.TypeDeclaration);
             created.* = .{ .name = name, .origin_file = self.locationPath(file.location(value)), .ty = alias_type };
@@ -10977,6 +10980,27 @@ pub const Semantizer = struct {
         preserve_abstract: bool,
     ) SemErr!sg.Type {
         if (self.global_builder.findTypeReference(@intFromEnum(owner.file_id), owner.node)) |reference| {
+            if (reference.resolved_declaration) |declaration_id| {
+                if (self.predeclared_types[@intFromEnum(declaration_id)]) |declaration| {
+                    var local_scope: ?*Scope = s;
+                    while (local_scope) |candidate_scope| : (local_scope = candidate_scope.parent) {
+                        if (candidate_scope.parent == null) break;
+                        if (candidate_scope.types.get(self.global_builder.text(reference.name))) |shadow| return shadow.ty;
+                    }
+                    if (!typeDeclIsReady(declaration)) return error.UnknownType;
+                    const location: tok.Location = .{ .file = owner.file_id, .offset = reference.source_offset };
+                    if (!(try self.typeIsVisible(declaration, self.locationPath(location)))) {
+                        try self.addPrivateMemberDiag(location, "type", self.global_builder.text(reference.name));
+                        return error.Reported;
+                    }
+                    if (declaration.ty == .abstract_type) {
+                        if (preserve_abstract) return declaration.ty;
+                        if (s.lookupAbstractDefault(declaration.name)) |default| return default.ty;
+                        return error.AbstractNeedsDefault;
+                    }
+                    return declaration.ty;
+                }
+            }
             return self.resolveTypeName(
                 self.global_builder.text(reference.name),
                 if (reference.qualifier) |qualifier| self.global_builder.text(qualifier) else null,
@@ -10987,6 +11011,11 @@ pub const Semantizer = struct {
         }
         const location = self.tokenLocation(owner, qualifier_token orelse name_token);
         return self.resolveTypeName(self.tokenText(owner, name_token), if (qualifier_token) |qualifier| self.tokenText(owner, qualifier) else null, location, s, preserve_abstract);
+    }
+
+    fn predeclaredTypeForSyntax(self: *Semantizer, node: syn.SyntaxRef) ?*sg.TypeDeclaration {
+        const declaration_id = self.global_builder.findDeclaration(@intFromEnum(node.file_id), node.node) orelse return null;
+        return self.predeclared_types[@intFromEnum(declaration_id)];
     }
 
     fn resolveTypeName(self: *Semantizer, name: []const u8, qualifier: ?[]const u8, location: tok.Location, s: *Scope, preserve_abstract: bool) SemErr!sg.Type {
