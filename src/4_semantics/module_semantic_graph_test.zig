@@ -139,6 +139,33 @@ test "module callable interfaces intern pointer and array types" {
     try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(pointer.child)].builtin);
 }
 
+test "module graph builds and relocates nominal choice variants" {
+    const allocator = std.testing.allocator;
+    const source = "Result : Type = (\n    ..ok Int32\n    ..done\n)\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var graph = try module_graph.build(allocator, "results", &.{.{ .path = "results/main.rg", .tree = &tree, .source = source }});
+    defer graph.deinit(allocator);
+
+    const range = graph.declarations.items[0].choice_variants.?;
+    try std.testing.expectEqual(@as(u32, 2), range.len);
+    const ok = graph.choice_variant_entries.items[range.start];
+    try std.testing.expectEqualStrings("ok", graph.text(ok.name));
+    try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(ok.payload_type.?)].builtin);
+    const done = graph.choice_variant_entries.items[range.start + 1];
+    try std.testing.expectEqualStrings("done", graph.text(done.name));
+    try std.testing.expectEqual(@as(?module_graph.ModuleTypeId, null), done.payload_type);
+
+    const sources = [_]source_files.SourceFile{.{ .path = "results/main.rg", .code = source }};
+    var db = try source_db.SourceDb.init(allocator, &sources);
+    defer db.deinit(allocator);
+    var merged = try global_builder.mergeModuleGraphs(allocator, &.{graph}, &db);
+    defer merged.deinit(allocator);
+    const global_range = merged.declarations.items[0].choice_variants.?;
+    try std.testing.expectEqualStrings("ok", merged.text(merged.choice_variant_entries.items[global_range.start].name));
+    try std.testing.expectEqual(global_builder.GlobalType{ .builtin = .Int32 }, merged.types.items[@intFromEnum(merged.choice_variant_entries.items[global_range.start].payload_type.?)]);
+}
+
 test "module type references distinguish builtin and external requirements" {
     const allocator = std.testing.allocator;
     const source = "inspect(.local: Int32, .remote: dep.Value) -> () := {}\n";

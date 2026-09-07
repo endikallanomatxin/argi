@@ -18,7 +18,7 @@ pub const FileOffsets = struct {
     import_reference_count: u32 = 0,
 };
 
-pub const ModuleOffsets = struct { declaration_base: u32, declaration_count: u32, string_base: u32, type_base: u32, function_base: u32, field_base: u32 };
+pub const ModuleOffsets = struct { declaration_base: u32, declaration_count: u32, string_base: u32, type_base: u32, function_base: u32, field_base: u32, choice_variant_base: u32 };
 
 pub const GlobalType = union(enum) {
     builtin: module_sema.BuiltinType,
@@ -28,6 +28,7 @@ pub const GlobalType = union(enum) {
 };
 pub const Field = struct { name: module_sema.StringRange, ty: GlobalTypeId, source_offset: u32, has_default: bool };
 pub const FunctionInterface = struct { declaration: GlobalDeclId, input: module_sema.FieldRange, output: module_sema.FieldRange };
+pub const ChoiceVariant = struct { name: module_sema.StringRange, qualifier: ?module_sema.StringRange, payload_type: ?GlobalTypeId };
 
 pub const Declaration = struct {
     kind: module_sema.DeclarationKind,
@@ -38,6 +39,7 @@ pub const Declaration = struct {
     type_id: ?GlobalTypeId,
     function_id: ?GlobalFunctionId,
     struct_fields: ?module_sema.FieldRange,
+    choice_variants: ?module_sema.FieldRange,
 };
 
 pub const TypeReference = struct {
@@ -66,6 +68,7 @@ pub const GlobalSemanticGraphBuilder = struct {
     types: std.ArrayList(GlobalType) = .empty,
     functions: std.ArrayList(FunctionInterface) = .empty,
     fields: std.ArrayList(Field) = .empty,
+    choice_variant_entries: std.ArrayList(ChoiceVariant) = .empty,
     import_references: std.ArrayList(module_sema.ImportReference) = .empty,
     lexical: global_lexical.LexicalTables = .{},
 
@@ -78,6 +81,7 @@ pub const GlobalSemanticGraphBuilder = struct {
         self.types.deinit(allocator);
         self.functions.deinit(allocator);
         self.fields.deinit(allocator);
+        self.choice_variant_entries.deinit(allocator);
         self.import_references.deinit(allocator);
         self.lexical.deinit(allocator);
         self.* = .{};
@@ -103,6 +107,7 @@ pub const GlobalSemanticGraphBuilder = struct {
             self.type_references.items.len * @sizeOf(TypeReference) +
             self.types.items.len * @sizeOf(GlobalType) + self.functions.items.len * @sizeOf(FunctionInterface) +
             self.fields.items.len * @sizeOf(Field) +
+            self.choice_variant_entries.items.len * @sizeOf(ChoiceVariant) +
             self.import_references.items.len * @sizeOf(module_sema.ImportReference) + self.lexical.storageBytes();
     }
 
@@ -167,7 +172,8 @@ pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_s
         const type_base: u32 = @intCast(merged.types.items.len);
         const function_base: u32 = @intCast(merged.functions.items.len);
         const field_base: u32 = @intCast(merged.fields.items.len);
-        merged.module_offsets.appendAssumeCapacity(.{ .declaration_base = declaration_base, .declaration_count = @intCast(module.declarations.items.len), .string_base = string_base, .type_base = type_base, .function_base = function_base, .field_base = field_base });
+        const choice_variant_base: u32 = @intCast(merged.choice_variant_entries.items.len);
+        merged.module_offsets.appendAssumeCapacity(.{ .declaration_base = declaration_base, .declaration_count = @intCast(module.declarations.items.len), .string_base = string_base, .type_base = type_base, .function_base = function_base, .field_base = field_base, .choice_variant_base = choice_variant_base });
         try merged.strings.appendSlice(allocator, module.strings.items);
         try merged.declarations.ensureUnusedCapacity(allocator, module.declarations.items.len);
         for (module.declarations.items) |declaration| merged.declarations.appendAssumeCapacity(.{
@@ -179,6 +185,7 @@ pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_s
             .type_id = if (declaration.type_id) |id| @enumFromInt(type_base + @intFromEnum(id)) else null,
             .function_id = if (declaration.function_id) |id| @enumFromInt(function_base + @intFromEnum(id)) else null,
             .struct_fields = if (declaration.struct_fields) |range| .{ .start = field_base + range.start, .len = range.len } else null,
+            .choice_variants = if (declaration.choice_variants) |range| .{ .start = choice_variant_base + range.start, .len = range.len } else null,
         });
         for (module.types.items) |ty| try merged.types.append(allocator, switch (ty) {
             .builtin => |builtin| .{ .builtin = builtin },
@@ -196,6 +203,11 @@ pub fn mergeModuleGraphs(allocator: std.mem.Allocator, modules: []const module_s
             .declaration = @enumFromInt(declaration_base + @intFromEnum(function.declaration)),
             .input = .{ .start = field_base + function.input.start, .len = function.input.len },
             .output = .{ .start = field_base + function.output.start, .len = function.output.len },
+        });
+        for (module.choice_variant_entries.items) |variant| try merged.choice_variant_entries.append(allocator, .{
+            .name = try relocateName(module.strings.items, variant.name, string_base),
+            .qualifier = if (variant.qualifier) |qualifier| try relocateName(module.strings.items, qualifier, string_base) else null,
+            .payload_type = if (variant.payload_type) |id| @enumFromInt(type_base + @intFromEnum(id)) else null,
         });
 
         for (module.file_offsets.items, 0..) |file, module_file_index| {

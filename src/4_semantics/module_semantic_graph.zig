@@ -47,6 +47,7 @@ pub const ModuleType = union(enum) {
 pub const FieldRange = struct { start: u32, len: u32 };
 pub const Field = struct { name: StringRange, ty: ModuleTypeId, source_offset: u32, has_default: bool };
 pub const FunctionInterface = struct { declaration: ModuleDeclId, input: FieldRange, output: FieldRange };
+pub const ChoiceVariant = struct { name: StringRange, qualifier: ?StringRange, payload_type: ?ModuleTypeId };
 
 pub const DeclarationKind = enum {
     binding,
@@ -68,6 +69,7 @@ pub const Declaration = struct {
     type_id: ?ModuleTypeId = null,
     function_id: ?ModuleFunctionId = null,
     struct_fields: ?FieldRange = null,
+    choice_variants: ?FieldRange = null,
 };
 
 pub const FileOffsets = struct {
@@ -96,6 +98,7 @@ pub const ModuleSemanticGraph = struct {
     types: std.ArrayList(ModuleType) = .empty,
     functions: std.ArrayList(FunctionInterface) = .empty,
     fields: std.ArrayList(Field) = .empty,
+    choice_variant_entries: std.ArrayList(ChoiceVariant) = .empty,
     strings: std.ArrayList(u8) = .empty,
     lexical: lexical_tables.LexicalTables = .{},
     type_references: std.ArrayList(TypeReference) = .empty,
@@ -110,6 +113,7 @@ pub const ModuleSemanticGraph = struct {
         self.types.deinit(allocator);
         self.functions.deinit(allocator);
         self.fields.deinit(allocator);
+        self.choice_variant_entries.deinit(allocator);
         self.strings.deinit(allocator);
         self.lexical.deinit(allocator);
         self.type_references.deinit(allocator);
@@ -147,7 +151,7 @@ pub const ModuleSemanticGraph = struct {
         return self.module_dir.len + self.declarations.items.len * @sizeOf(Declaration) +
             self.symbols.items.len * @sizeOf(Symbol) + self.symbol_declarations.items.len * @sizeOf(ModuleDeclId) +
             self.types.items.len * @sizeOf(ModuleType) + self.functions.items.len * @sizeOf(FunctionInterface) +
-            self.fields.items.len * @sizeOf(Field) +
+            self.fields.items.len * @sizeOf(Field) + self.choice_variant_entries.items.len * @sizeOf(ChoiceVariant) +
             self.strings.items.len + lexical_bytes +
             self.type_references.items.len * @sizeOf(TypeReference) +
             self.import_references.items.len * @sizeOf(ImportReference) +
@@ -198,6 +202,7 @@ pub const ModuleSemanticGraphBuilder = struct {
         try predeclareTypes(self.allocator, &self.graph);
         resolveModuleTypeReferences(&self.graph);
         try buildStructDefinitions(self.allocator, &self.graph, files);
+        try buildChoiceDefinitions(self.allocator, &self.graph, files);
         try buildFunctionInterfaces(self.allocator, &self.graph, files);
         const result = self.graph;
         self.graph = .{};
@@ -314,6 +319,51 @@ fn buildStructDefinitions(allocator: std.mem.Allocator, graph: *ModuleSemanticGr
             continue;
         }
         declaration.struct_fields = .{ .start = @intCast(start), .len = @intCast(graph.fields.items.len - start) };
+    }
+}
+
+fn buildChoiceDefinitions(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, files: []const FileInput) !void {
+    for (graph.declarations.items) |*declaration| {
+        if (declaration.kind != .type) continue;
+        const input = files[declaration.module_file_index];
+        const generic_params, const generic_params_struct, const value = switch (input.tree.tag(declaration.syntax_node)) {
+            .type_declaration => blk: {
+                const item = input.tree.typeDeclaration(declaration.syntax_node).?;
+                break :blk .{ item.generic_params, item.generic_params_struct, item.value };
+            },
+            .c_enum_declaration => blk: {
+                const item = input.tree.cEnumDeclaration(declaration.syntax_node).?;
+                break :blk .{ item.generic_params, item.generic_params_struct, item.value };
+            },
+            else => continue,
+        };
+        if (generic_params.len != 0 or generic_params_struct != null) continue;
+        const literal = input.tree.choiceTypeLiteral(value) orelse continue;
+        const start = graph.choice_variant_entries.items.len;
+        var complete = true;
+        for (literal.variants) |variant_node| {
+            const variant = input.tree.choiceTypeVariant(variant_node) orelse {
+                complete = false;
+                break;
+            };
+            const payload_type = if (variant.payload_type) |payload|
+                try lowerType(allocator, graph, input.tree, input.source, declaration.module_file_index, payload) orelse {
+                    complete = false;
+                    break;
+                }
+            else
+                null;
+            try graph.choice_variant_entries.append(allocator, .{
+                .name = try graph.addString(allocator, input.tree.tokenTextFromSource(input.source, variant.name_token)),
+                .qualifier = if (variant.module_qualifier) |qualifier| try graph.addString(allocator, input.tree.tokenTextFromSource(input.source, qualifier)) else null,
+                .payload_type = payload_type,
+            });
+        }
+        if (!complete) {
+            graph.choice_variant_entries.shrinkRetainingCapacity(start);
+            continue;
+        }
+        declaration.choice_variants = .{ .start = @intCast(start), .len = @intCast(literal.variants.len) };
     }
 }
 
