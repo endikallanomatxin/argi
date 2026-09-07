@@ -488,6 +488,10 @@ All file-local declaration, type-reference and lexical names use the same
 `StringRange` into `FileSemanticGraph.strings`. Lexical builders borrow that
 store during construction; retained lexical tables own no separate strings.
 
+`FileTypeRefId` identifies an unresolved type lookup in one file. Its relocated
+counterpart is `GlobalTypeRefId`; neither denotes a canonical resolved type or
+implies that the target declaration belongs to a different file.
+
 - [x] Define `FileTokenList` in tokenizing and retain `FileSyntaxTree` terminology.
 - [x] Discover top-level declarations once per file with dense declaration IDs,
   source offsets and owned names; feed that discovery into global predeclaration.

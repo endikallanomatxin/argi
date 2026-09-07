@@ -3,7 +3,8 @@ const file_sema = @import("file_semantic_graph.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
 
 pub const GlobalDeclId = enum(u32) { _ };
-pub const GlobalExternalTypeRefId = enum(u32) { _ };
+/// Relocated lookup identity; this is not a resolved canonical GlobalTypeId.
+pub const GlobalTypeRefId = enum(u32) { _ };
 
 pub const FileOffsets = struct {
     declaration_base: u32,
@@ -60,7 +61,7 @@ pub const MergedDeclarations = struct {
             self.type_references.items.len * @sizeOf(file_sema.TypeReference);
     }
 
-    pub fn globalTypeRefId(self: *const MergedDeclarations, file_index: usize, local_id: file_sema.ExternalTypeRefId) GlobalExternalTypeRefId {
+    pub fn globalTypeRefId(self: *const MergedDeclarations, file_index: usize, local_id: file_sema.FileTypeRefId) GlobalTypeRefId {
         const offsets = self.file_offsets.items[file_index];
         std.debug.assert(@intFromEnum(local_id) < offsets.type_reference_count);
         return @enumFromInt(offsets.type_reference_base + @intFromEnum(local_id));
@@ -223,7 +224,7 @@ test "merge rejects invalid local string ranges" {
     try std.testing.expectError(error.InvalidFileDeclarationName, mergeFileGraphs(allocator, &.{file}));
 }
 
-test "merge relocates external type references without selecting types" {
+test "merge relocates unresolved type references without selecting types" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, testMergeTypeReferences, .{});
 }
 

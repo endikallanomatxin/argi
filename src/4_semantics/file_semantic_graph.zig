@@ -4,7 +4,8 @@ const file_bindings = @import("file_bindings.zig");
 const file_strings = @import("file_strings.zig");
 
 pub const FileDeclId = enum(u32) { _ };
-pub const ExternalTypeRefId = enum(u32) { _ };
+/// File-local identity of an unresolved lookup, including names from this file.
+pub const FileTypeRefId = enum(u32) { _ };
 pub const StringRange = file_strings.StringRange;
 
 /// A type lookup requirement, not a selected declaration or canonical type.
