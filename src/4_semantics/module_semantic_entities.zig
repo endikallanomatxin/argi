@@ -7,7 +7,9 @@ pub const ModuleFunctionId = enum(u32) { _ };
 pub const ModuleBindingId = enum(u32) { _ };
 pub const ModuleNodeId = enum(u32) { _ };
 pub const ModuleBlockId = enum(u32) { _ };
+/// Logical field space: regular fields first, structural fields second.
 pub const ModuleFieldId = enum(u32) { _ };
+/// Logical variant space: declared-choice entries first, structural choices second.
 pub const ModuleVariantId = enum(u32) { _ };
 pub const ModuleGenericArgId = enum(u32) { _ };
 pub const ModuleValueFieldId = enum(u32) { _ };
@@ -86,6 +88,28 @@ pub const TestingExpectError = primitives.TestingExpectError(Ids);
 pub const ErrorPropagation = primitives.ErrorPropagation(Ids);
 pub const ErrorContext = primitives.ErrorContext(Ids);
 pub const ResolvedNode = primitives.Node(Ids);
+
+pub const FunctionSemantic = struct {
+    function: ModuleFunctionId,
+    body: ?ModuleBlockId = null,
+    input_bindings: BindingRange = .{ .start = 0, .len = 0 },
+    output_bindings: BindingRange = .{ .start = 0, .len = 0 },
+    inferred_error_reasons: ?ModuleTypeId = null,
+    safety_primitive: primitives.SafetyPrimitive = .none,
+    flags: primitives.FunctionFlags = .{},
+};
+
+pub const FieldSemantic = struct {
+    field: ModuleFieldId,
+    storage_type: ?ModuleTypeId = null,
+    default_value: ?ModuleNodeId = null,
+};
+
+pub const VariantSemantic = struct {
+    variant: ModuleVariantId,
+    value: i32,
+    option_decl: ?ModuleDeclId = null,
+};
 
 pub const Scope = struct {
     parent: ModuleScopeId = .none,
