@@ -1,6 +1,7 @@
 const std = @import("std");
 const file_sema = @import("file_semantic_graph.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
+const global_lexical = @import("global_lexical.zig");
 
 pub const GlobalDeclId = enum(u32) { _ };
 /// Relocated lookup identity; this is not a resolved canonical GlobalTypeId.
@@ -35,6 +36,7 @@ pub const GlobalSemanticGraphBuilder = struct {
     file_offsets: std.ArrayList(FileOffsets) = .empty,
     type_references: std.ArrayList(file_sema.TypeReference) = .empty,
     import_references: std.ArrayList(file_sema.ImportReference) = .empty,
+    lexical: global_lexical.GlobalLexicalTables = .{},
 
     pub fn deinit(self: *GlobalSemanticGraphBuilder, allocator: std.mem.Allocator) void {
         self.declarations.deinit(allocator);
@@ -42,6 +44,7 @@ pub const GlobalSemanticGraphBuilder = struct {
         self.file_offsets.deinit(allocator);
         self.type_references.deinit(allocator);
         self.import_references.deinit(allocator);
+        self.lexical.deinit(allocator);
         self.* = .{};
     }
 
@@ -64,7 +67,7 @@ pub const GlobalSemanticGraphBuilder = struct {
         return self.declarations.items.len * @sizeOf(Declaration) +
             self.strings.items.len + self.file_offsets.items.len * @sizeOf(FileOffsets) +
             self.type_references.items.len * @sizeOf(file_sema.TypeReference) +
-            self.import_references.items.len * @sizeOf(file_sema.ImportReference);
+            self.import_references.items.len * @sizeOf(file_sema.ImportReference) + self.lexical.storageBytes();
     }
 
     pub fn globalTypeRefId(self: *const GlobalSemanticGraphBuilder, file_index: usize, local_id: file_sema.FileTypeRefId) GlobalTypeRefId {
@@ -137,6 +140,7 @@ pub fn mergeFileGraphs(allocator: std.mem.Allocator, files: []const file_sema.Fi
         };
         merged.file_offsets.appendAssumeCapacity(offsets);
         merged.strings.appendSliceAssumeCapacity(file.strings.items);
+        try merged.lexical.appendFile(allocator, &file, offsets.string_base, @intCast(file_index));
         for (file.declarations.items) |decl| {
             // Validate local ranges before relocation, avoiding both invalid
             // slices and overflowing additions for malformed artifacts.
@@ -223,7 +227,7 @@ test "merge relocates local declaration identities and owns names" {
     try std.testing.expectEqual(@as(u32, 42), merged.declaration(second).source_offset);
     try std.testing.expectEqual(@as(u32, 3), @intFromEnum(merged.declaration(second).syntax_node));
     try std.testing.expectEqual(@as(u32, 5), merged.file_offsets.items[1].string_base);
-    try std.testing.expectEqual(2 * @sizeOf(Declaration) + 11 + 2 * @sizeOf(FileOffsets), merged.storageBytes());
+    try std.testing.expectEqual(2 * @sizeOf(Declaration) + 11 + 2 * @sizeOf(FileOffsets) + 2 * @sizeOf(global_lexical.FileOffsets), merged.storageBytes());
 }
 
 test "merge accepts empty input and empty files" {
