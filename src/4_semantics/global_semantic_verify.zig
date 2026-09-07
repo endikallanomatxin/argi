@@ -75,13 +75,16 @@ fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
 fn verifyModulePartitions(graph: *const graph_mod.GlobalSemanticGraph) !void {
     var file_cursor: usize = 0;
     var declaration_cursor: usize = 0;
+    var symbol_cursor: usize = 0;
 
     for (graph.modules.items, 0..) |module, module_index| {
         try require(verify.stringFits(module.dir, graph.strings.items));
         try require(module.files.start == file_cursor);
         try require(module.declarations.start == declaration_cursor);
+        try require(module.symbols.start == symbol_cursor);
         try require(verify.rangeFits(module.files, graph.files.items.len));
         try require(verify.rangeFits(module.declarations, graph.declarations.items.len));
+        try require(verify.rangeFits(module.symbols, graph.symbols.items.len));
 
         for (graph.files.items[module.files.start..][0..module.files.len]) |file| {
             try require(@intFromEnum(file.module) == module_index);
@@ -90,10 +93,12 @@ fn verifyModulePartitions(graph: *const graph_mod.GlobalSemanticGraph) !void {
 
         file_cursor += module.files.len;
         declaration_cursor += module.declarations.len;
+        symbol_cursor += module.symbols.len;
     }
 
     try require(file_cursor == graph.files.items.len);
     try require(declaration_cursor == graph.declarations.items.len);
+    try require(symbol_cursor == graph.symbols.items.len);
 }
 
 fn makeBounds(graph: *const graph_mod.GlobalSemanticGraph) payload.Bounds {
