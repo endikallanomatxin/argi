@@ -2,9 +2,49 @@ const std = @import("std");
 const graph_mod = @import("module_semantic_graph.zig");
 const entities = @import("module_semantic_entities.zig");
 
+pub fn typeCount(graph: *const graph_mod.ModuleSemanticGraph) usize {
+    return graph.types.items.len + graph.semantic.external_types.items.len;
+}
+
+pub fn fieldCount(graph: *const graph_mod.ModuleSemanticGraph) usize {
+    return graph.fields.items.len + graph.structural_fields.items.len;
+}
+
+pub fn variantCount(graph: *const graph_mod.ModuleSemanticGraph) usize {
+    return graph.choice_variant_entries.items.len + graph.structural_choice_variants.items.len;
+}
+
+pub fn declarationView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleDeclId) !entities.Declaration {
+    const raw = @intFromEnum(id);
+    if (raw >= graph.declarations.items.len) return error.InvalidModuleDeclarationId;
+    const declaration = graph.declarations.items[raw];
+    if (declaration.module_file_index >= graph.file_offsets.items.len) return error.InvalidModuleFileIndex;
+    const semantic = findDeclarationSemantic(graph, id);
+
+    return .{
+        .kind = declaration.kind,
+        .name = declaration.name,
+        .source = .{ .file_index = declaration.module_file_index, .offset = declaration.source_offset },
+        .type_id = declaration.type_id,
+        .function_id = declaration.function_id,
+        .struct_fields = if (declaration.struct_fields) |range| .{ .start = range.start, .len = range.len } else null,
+        .choice_variants = if (declaration.choice_variants) |range| .{ .start = range.start, .len = range.len } else null,
+        .generic_parameter_count = declaration.generic_parameter_count,
+        .struct_layout = if (semantic) |value| value.struct_layout else .regular,
+        .choice_layout = if (semantic) |value| value.choice_layout else .regular,
+    };
+}
+
 pub fn typeView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleTypeId) !entities.ModuleType {
-    if (@intFromEnum(id) >= graph.types.items.len) return error.InvalidModuleTypeId;
-    return switch (graph.types.items[@intFromEnum(id)]) {
+    const raw = @intFromEnum(id);
+    const resolved_count: u32 = @intCast(graph.types.items.len);
+    if (raw >= resolved_count) {
+        const external_index = raw - resolved_count;
+        if (external_index >= graph.semantic.external_types.items.len) return error.InvalidModuleTypeId;
+        return .{ .external = graph.semantic.external_types.items[external_index] };
+    }
+
+    const resolved: entities.ResolvedType = switch (graph.types.items[raw]) {
         .builtin => |value| .{ .builtin = value },
         .declared => |value| .{ .declared = value },
         .pointer => |value| .{ .pointer = .{ .child = value.child, .mutability = value.mutability } },
@@ -24,6 +64,7 @@ pub fn typeView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.Module
             .arguments = .{ .start = value.arguments.start, .len = value.arguments.len },
         } },
     };
+    return .{ .resolved = resolved };
 }
 
 pub fn fieldView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFieldId) !entities.Field {
@@ -99,6 +140,11 @@ pub fn functionView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.Mo
     };
 }
 
+fn findDeclarationSemantic(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleDeclId) ?entities.DeclarationSemantic {
+    for (graph.semantic.declaration_semantics.items) |value| if (value.declaration == id) return value;
+    return null;
+}
+
 fn findFunctionSemantic(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFunctionId) ?entities.FunctionSemantic {
     for (graph.semantic.function_semantics.items) |value| if (value.function == id) return value;
     return null;
@@ -114,12 +160,23 @@ fn findVariantSemantic(graph: *const graph_mod.ModuleSemanticGraph, id: entities
     return null;
 }
 
-test "module views expose compatibility types through shared primitives" {
+test "module views expose resolved and external type domains" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
     defer graph.deinit(allocator);
 
     try graph.types.append(allocator, .{ .builtin = .Int32 });
-    const view = try typeView(&graph, @enumFromInt(0));
-    try std.testing.expectEqual(@import("semantic_primitives.zig").BuiltinType.Int32, view.builtin);
+    try graph.semantic.external_refs.append(allocator, .{
+        .kind = .type,
+        .module_path = null,
+        .name = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
+    try graph.semantic.external_types.append(allocator, @enumFromInt(0));
+
+    const resolved = try typeView(&graph, @enumFromInt(0));
+    try std.testing.expectEqual(@import("semantic_primitives.zig").BuiltinType.Int32, resolved.resolved.builtin);
+    const external = try typeView(&graph, @enumFromInt(1));
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(external.external));
+    try std.testing.expectEqual(@as(usize, 2), typeCount(&graph));
 }
