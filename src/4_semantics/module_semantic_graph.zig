@@ -1,12 +1,13 @@
 const std = @import("std");
 const syn = @import("../3_syntax/syntax_tree.zig");
 const file_bindings = @import("file_bindings.zig");
-const file_strings = @import("file_strings.zig");
+const lexical_tables = @import("global_lexical.zig");
+const semantic_strings = @import("semantic_strings.zig");
 
-pub const FileDeclId = enum(u32) { _ };
-/// File-local identity of an unresolved lookup, including names from this file.
-pub const FileTypeRefId = enum(u32) { _ };
-pub const StringRange = file_strings.StringRange;
+pub const ModuleDeclId = enum(u32) { _ };
+/// Module-local identity of an unresolved lookup.
+pub const ModuleTypeRefId = enum(u32) { _ };
+pub const StringRange = semantic_strings.StringRange;
 
 /// The spelling of an import is file-local; locating its module is global work.
 pub const ImportReference = struct {
@@ -38,57 +39,100 @@ pub const Declaration = struct {
     kind: DeclarationKind,
     name: StringRange,
     source_offset: u32,
-    // Temporary bridge to GlobalSema while expression lowering is migrated.
-    // This is local to the owning file, never a program SourceDb identity.
+    module_file_index: u32,
+    // Temporary syntax provenance bridge while expression lowering is migrated.
     syntax_node: syn.NodeIndex,
 };
 
-/// File-local declaration discovery. Records own their spelling and use only
-/// dense local identities. No module visibility, overload choice, type identity
-/// or import path resolution is decided here: all depend on the global world.
-///
-/// Expression bodies still use the syntax bridge during migration. Consequently
-/// this initial representation is not yet a standalone persistent cache artifact.
-pub const FileSemanticGraph = struct {
+pub const FileOffsets = struct {
+    source_file_index: u32,
+    declaration_base: u32,
+    declaration_count: u32,
+    type_reference_base: u32,
+    type_reference_count: u32,
+    import_reference_base: u32,
+    import_reference_count: u32,
+};
+
+/// Compact semantic storage owned by one module directory. Source-file indices
+/// and syntax nodes are provenance only; all semantic table identities are
+/// allocated in this module-wide storage.
+pub const ModuleSemanticGraph = struct {
+    module_dir: []const u8 = "",
     declarations: std.ArrayList(Declaration) = .empty,
     strings: std.ArrayList(u8) = .empty,
-    lexical: file_bindings.FileBindings = .{},
+    lexical: lexical_tables.LexicalTables = .{},
     type_references: std.ArrayList(TypeReference) = .empty,
     import_references: std.ArrayList(ImportReference) = .empty,
+    file_offsets: std.ArrayList(FileOffsets) = .empty,
 
-    pub fn deinit(self: *FileSemanticGraph, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *ModuleSemanticGraph, allocator: std.mem.Allocator) void {
+        allocator.free(self.module_dir);
         self.declarations.deinit(allocator);
         self.strings.deinit(allocator);
         self.lexical.deinit(allocator);
         self.type_references.deinit(allocator);
         self.import_references.deinit(allocator);
+        self.file_offsets.deinit(allocator);
         self.* = .{};
     }
 
-    pub fn declaration(self: *const FileSemanticGraph, id: FileDeclId) Declaration {
+    pub fn declaration(self: *const ModuleSemanticGraph, id: ModuleDeclId) Declaration {
         return self.declarations.items[@intFromEnum(id)];
     }
 
-    pub fn text(self: *const FileSemanticGraph, range: StringRange) []const u8 {
+    pub fn text(self: *const ModuleSemanticGraph, range: StringRange) []const u8 {
         return self.strings.items[range.start..][0..range.len];
     }
 
-    pub fn storageBytes(self: *const FileSemanticGraph) usize {
-        return self.declarations.items.len * @sizeOf(Declaration) + self.strings.items.len + self.lexical.storageBytes() +
+    pub fn storageBytes(self: *const ModuleSemanticGraph) usize {
+        var lexical_bytes: usize = 0;
+        lexical_bytes = self.lexical.storageBytes();
+        return self.module_dir.len + self.declarations.items.len * @sizeOf(Declaration) + self.strings.items.len + lexical_bytes +
             self.type_references.items.len * @sizeOf(TypeReference) +
-            self.import_references.items.len * @sizeOf(ImportReference);
+            self.import_references.items.len * @sizeOf(ImportReference) +
+            self.file_offsets.items.len * @sizeOf(FileOffsets);
     }
 
-    fn addString(self: *FileSemanticGraph, allocator: std.mem.Allocator, value: []const u8) !StringRange {
-        return file_strings.append(&self.strings, allocator, value);
+    fn addString(self: *ModuleSemanticGraph, allocator: std.mem.Allocator, value: []const u8) !StringRange {
+        return semantic_strings.append(&self.strings, allocator, value);
     }
 };
 
-/// This entrypoint deliberately has no source database, filesystem, global
-/// scope, or other file graphs. Adding files cannot change its answers.
-pub fn semantizeFile(allocator: std.mem.Allocator, tree: *const syn.FileSyntaxTree, source: []const u8) !FileSemanticGraph {
-    var graph: FileSemanticGraph = .{};
+pub const FileInput = struct {
+    file_index: u32,
+    tree: *const syn.FileSyntaxTree,
+    source: []const u8,
+};
+
+/// Starts semantic construction at the language's module boundary. The helper
+/// performs discovery file by file, but writes every durable result directly
+/// into module-owned tables; there is no intermediate file semantic artifact.
+pub fn build(allocator: std.mem.Allocator, module_dir: []const u8, files: []const FileInput) !ModuleSemanticGraph {
+    var graph: ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, module_dir) };
     errdefer graph.deinit(allocator);
+    try graph.file_offsets.ensureTotalCapacity(allocator, files.len);
+    for (files, 0..) |file, module_file_index| {
+        const declaration_base: u32 = @intCast(graph.declarations.items.len);
+        const type_reference_base: u32 = @intCast(graph.type_references.items.len);
+        const import_reference_base: u32 = @intCast(graph.import_references.items.len);
+        try discoverFile(allocator, &graph, file, @intCast(module_file_index));
+        graph.file_offsets.appendAssumeCapacity(.{
+            .source_file_index = file.file_index,
+            .declaration_base = declaration_base,
+            .declaration_count = @intCast(graph.declarations.items.len - declaration_base),
+            .type_reference_base = type_reference_base,
+            .type_reference_count = @intCast(graph.type_references.items.len - type_reference_base),
+            .import_reference_base = import_reference_base,
+            .import_reference_count = @intCast(graph.import_references.items.len - import_reference_base),
+        });
+    }
+    return graph;
+}
+
+fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input: FileInput, module_file_index: u32) !void {
+    const tree = input.tree;
+    const source = input.source;
     for (tree.roots) |node| {
         const kind: DeclarationKind = switch (tree.tag(node)) {
             .symbol_declaration_constant, .symbol_declaration_variable => blk: {
@@ -124,12 +168,13 @@ pub fn semantizeFile(allocator: std.mem.Allocator, tree: *const syn.FileSyntaxTr
         else
             tree.tokenTextFromSource(source, name_token);
         if (graph.declarations.items.len >= std.math.maxInt(u32))
-            return error.FileSemanticGraphTooLarge;
+            return error.ModuleSemanticGraphTooLarge;
         const range = try graph.addString(allocator, name);
         try graph.declarations.append(allocator, .{
             .kind = kind,
             .name = range,
             .source_offset = tree.location(node).offset,
+            .module_file_index = module_file_index,
             .syntax_node = node,
         });
     }
@@ -161,6 +206,7 @@ pub fn semantizeFile(allocator: std.mem.Allocator, tree: *const syn.FileSyntaxTr
             .syntax_node = node,
         });
     }
-    graph.lexical = try file_bindings.build(allocator, tree, source, &graph.strings);
-    return graph;
+    var lexical = try file_bindings.build(allocator, tree, source, &graph.strings);
+    defer lexical.deinit(allocator);
+    try graph.lexical.appendFileBindings(allocator, graph.strings.items, &lexical, module_file_index);
 }

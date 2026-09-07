@@ -489,7 +489,7 @@ text.
 
 ## Current branch and migration direction
 
-The `compact-semantic-graph` branch currently contains useful exploratory work
+The `compact-semantic-graph` branch first accumulated useful exploratory work
 around `FileSemanticGraph` and a `GlobalSemanticGraphBuilder`:
 
 - frontend artifact naming (`FileTokenList`, `FileSyntaxTree`);
@@ -531,9 +531,17 @@ In particular:
 Do not preserve an intermediate FileSG merely to avoid deleting or reshaping code
 written during this investigation.
 
+The Phase 0 pivot is now reflected in the implementation. `FrontendPipeline`
+groups syntax trees by their directory, constructs one `ModuleSemanticGraph` per
+group directly from those trees, and globalizes module graphs. Declaration,
+reference, string and lexical storage is module-owned; file ordinals inside it
+are module-local provenance and are translated to invocation `FileId`s only by
+the temporary global compatibility bridge. No `FileSemanticGraph` artifact or
+file-to-global semantic merge remains.
+
 ## Implementation plan
 
-### Phase 0 — pivot the current scaffolding
+### Phase 0 — pivot the current scaffolding (complete)
 
 1. Keep `FileTokenList` and `FileSyntaxTree` as the per-file frontend artifacts.
 2. Introduce an explicit module grouping in the frontend pipeline: one module is
