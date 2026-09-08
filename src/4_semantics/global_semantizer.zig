@@ -176,13 +176,20 @@ fn dumpUnresolved(modules: []const module_sg.ModuleSemanticGraph, resolved: []co
         for (module.semantic.pending_operations.items) |operation| {
             if (!resolved[flat] and shown < 8) {
                 switch (operation) {
+                    .resolve_call => |call| {
+                        const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
+                        std.debug.print(
+                            "global sema unresolved: module={d} dir={s} op=resolve_call name={s} generic={any} input={d}\n",
+                            .{ module_index, module.module_dir, module.text(reference.name), reference.generic_arguments != null, @intFromEnum(call.input) },
+                        );
+                    },
                     .resolve_expression => |expression| std.debug.print(
-                        "global sema unresolved: module={d} op=resolve_expression kind={s} node={d}\n",
-                        .{ module_index, @tagName(expression.kind), @intFromEnum(expression.node) },
+                        "global sema unresolved: module={d} dir={s} op=resolve_expression kind={s} node={d}\n",
+                        .{ module_index, module.module_dir, @tagName(expression.kind), @intFromEnum(expression.node) },
                     ),
                     else => std.debug.print(
-                        "global sema unresolved: module={d} op={s}\n",
-                        .{ module_index, @tagName(operation) },
+                        "global sema unresolved: module={d} dir={s} op={s}\n",
+                        .{ module_index, module.module_dir, @tagName(operation) },
                     ),
                 }
                 shown += 1;
