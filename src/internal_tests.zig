@@ -11,13 +11,17 @@ const module_semantic_graph_test = @import("4_semantics/module_semantic_graph_te
 const global_semantic_graph_builder = @import("4_semantics/global_semantic_graph_builder.zig");
 
 const semantic_primitives = @import("4_semantics/semantic_primitives.zig");
+const semantic_type_shapes = @import("4_semantics/semantic_type_shapes.zig");
 const module_semantic_entities = @import("4_semantics/module_semantic_entities.zig");
 const module_semantic_storage = @import("4_semantics/module_semantic_storage.zig");
 const module_semantic_templates = @import("4_semantics/module_semantic_templates.zig");
+const module_semantic_template_ir = @import("4_semantics/module_semantic_template_ir.zig");
 const module_semantic_views = @import("4_semantics/module_semantic_views.zig");
 const semantic_verify = @import("4_semantics/semantic_verify.zig");
 const semantic_payload_verify = @import("4_semantics/semantic_payload_verify.zig");
 const module_semantic_verify = @import("4_semantics/module_semantic_verify.zig");
+const module_generic_instance_verify = @import("4_semantics/module_generic_instance_verify.zig");
+const module_semantic_template_ir_verify = @import("4_semantics/module_semantic_template_ir_verify.zig");
 const module_semantic_template_verify = @import("4_semantics/module_semantic_template_verify.zig");
 const module_semantic_complete_verify = @import("4_semantics/module_semantic_complete_verify.zig");
 const global_semantic_graph = @import("4_semantics/global_semantic_graph.zig");
@@ -39,13 +43,17 @@ test {
     _ = global_semantic_graph_builder;
 
     _ = semantic_primitives;
+    _ = semantic_type_shapes;
     _ = module_semantic_entities;
     _ = module_semantic_storage;
     _ = module_semantic_templates;
+    _ = module_semantic_template_ir;
     _ = module_semantic_views;
     _ = semantic_verify;
     _ = semantic_payload_verify;
     _ = module_semantic_verify;
+    _ = module_generic_instance_verify;
+    _ = module_semantic_template_ir_verify;
     _ = module_semantic_template_verify;
     _ = module_semantic_complete_verify;
     _ = global_semantic_graph;
