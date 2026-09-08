@@ -72,13 +72,7 @@ pub const VariantRef = union(enum) {
     external: entities.ExternalRefId,
 };
 
-pub const IntBinaryOperator = enum(u8) {
-    add,
-    subtract,
-    multiply,
-    divide,
-    modulo,
-};
+pub const IntBinaryOperator = enum(u8) { add, subtract, multiply, divide, modulo };
 
 pub const IntExpression = union(enum) {
     literal: i64,
@@ -104,7 +98,12 @@ pub const Type = union(enum) {
 
 pub const Decl = struct { target: DeclarationRef };
 pub const Function = struct { target: FunctionRef };
-pub const Variant = struct { target: VariantRef };
+/// Generic choices need to own their payload shapes. Referenced variants are
+/// still useful when a template pattern points at a module/external option.
+pub const Variant = union(enum) {
+    reference: VariantRef,
+    semantic: primitives.ChoiceVariant(Ids),
+};
 
 pub const GenericArgument = struct {
     name: primitives.StringRange,
@@ -135,9 +134,6 @@ pub const ErrorPropagation = primitives.ErrorPropagation(Ids);
 pub const ErrorContext = primitives.ErrorContext(Ids);
 pub const ResolvedNode = primitives.Node(Ids);
 
-/// Compact semantic opcodes for syntax whose final meaning depends on template
-/// substitution. They deliberately describe language semantics instead of ST
-/// node tags, keeping persisted TemplateIR independent of the parser schema.
 pub const PendingExpressionKind = enum(u8) {
     unknown_identifier,
     pipe,
@@ -181,9 +177,6 @@ pub const PendingExpression = struct {
     aux: u32 = 0,
 };
 
-/// Decisions intentionally deferred to template instantiation. These holes are
-/// semantic, not syntax references, so a cached ModuleSG needs no FileST/source
-/// to continue monomorphization.
 pub const Pending = union(enum) {
     resolve_name: struct {
         name: primitives.StringRange,
@@ -245,37 +238,16 @@ pub const Storage = struct {
 
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         inline for (.{
-            &self.int_expressions,
-            &self.types,
-            &self.declarations,
-            &self.functions,
-            &self.variants,
-            &self.fields,
-            &self.generic_arguments,
-            &self.bindings,
-            &self.nodes,
-            &self.blocks,
-            &self.value_fields,
-            &self.switch_cases,
-            &self.switches,
-            &self.auto_deinit_fields,
-            &self.auto_deinits,
-            &self.virtual_registries,
-            &self.virtualizes,
-            &self.virtual_calls,
-            &self.reach_segments,
-            &self.reach_alternatives,
-            &self.reaches,
-            &self.nullable_unwraps,
-            &self.testing_expect_errors,
-            &self.error_propagations,
-            &self.error_contexts,
-            &self.pending,
-            &self.node_refs,
-            &self.type_refs,
-            &self.binding_refs,
-            &self.function_refs,
-            &self.virtual_registry_refs,
+            &self.int_expressions, &self.types, &self.declarations, &self.functions,
+            &self.variants, &self.fields, &self.generic_arguments, &self.bindings,
+            &self.nodes, &self.blocks, &self.value_fields, &self.switch_cases,
+            &self.switches, &self.auto_deinit_fields, &self.auto_deinits,
+            &self.virtual_registries, &self.virtualizes, &self.virtual_calls,
+            &self.reach_segments, &self.reach_alternatives, &self.reaches,
+            &self.nullable_unwraps, &self.testing_expect_errors,
+            &self.error_propagations, &self.error_contexts, &self.pending,
+            &self.node_refs, &self.type_refs, &self.binding_refs,
+            &self.function_refs, &self.virtual_registry_refs,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -323,9 +295,12 @@ test "template IR represents dependent type state without syntax refs" {
     try storage.types.append(allocator, .{ .parameter = @enumFromInt(0) });
     try storage.types.append(allocator, .abstract_self);
     try storage.int_expressions.append(allocator, .{ .parameter = @enumFromInt(0) });
-    try storage.types.append(allocator, .{ .array = .{
-        .length = @enumFromInt(0),
-        .element = @enumFromInt(0),
+    try storage.types.append(allocator, .{ .array = .{ .length = @enumFromInt(0), .element = @enumFromInt(0) } });
+    try storage.variants.append(allocator, .{ .semantic = .{
+        .name = .{ .start = 0, .len = 0 },
+        .payload_type = @enumFromInt(0),
+        .source = .{ .file_index = 0, .offset = 0 },
+        .value = 0,
     } });
     try storage.nodes.append(allocator, .{ .pending = @enumFromInt(0) });
     try storage.pending.append(allocator, .{ .resolve_expression = .{
