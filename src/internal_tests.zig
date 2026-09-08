@@ -19,6 +19,7 @@ const module_semantic_template_ir = @import("4_semantics/module_semantic_templat
 const module_semantic_views = @import("4_semantics/module_semantic_views.zig");
 const module_semantic_writer = @import("4_semantics/module_semantic_writer.zig");
 const module_type_lowerer = @import("4_semantics/module_type_lowerer.zig");
+const module_body_lowerer = @import("4_semantics/module_body_lowerer.zig");
 const semantic_verify = @import("4_semantics/semantic_verify.zig");
 const semantic_payload_verify = @import("4_semantics/semantic_payload_verify.zig");
 const module_semantic_verify = @import("4_semantics/module_semantic_verify.zig");
@@ -53,6 +54,7 @@ test {
     _ = module_semantic_views;
     _ = module_semantic_writer;
     _ = module_type_lowerer;
+    _ = module_body_lowerer;
     _ = semantic_verify;
     _ = semantic_payload_verify;
     _ = module_semantic_verify;
