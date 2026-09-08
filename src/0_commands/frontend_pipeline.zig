@@ -12,9 +12,9 @@ const module_sg = @import("../4_semantics/module_semantic_graph.zig");
 const module_semantizer = @import("../4_semantics/module_semantizer.zig");
 const global_sg = @import("../4_semantics/global_semantic_graph.zig");
 const global_semantizer = @import("../4_semantics/global_semantizer.zig");
+const global_safety_checker = @import("../4_semantics/global_safety_checker.zig");
 const global_semantic_graph_builder = @import("../4_semantics/global_semantic_graph_builder.zig");
 const semantizer = @import("../4_semantics/semantizer.zig");
-const safety_checker = @import("../4_semantics/safety_checker.zig");
 
 pub const FrontendPipeline = struct {
     pub const Options = struct {
@@ -31,14 +31,15 @@ pub const FrontendPipeline = struct {
     syntax_root_list: std.array_list.Managed(st.SyntaxRef),
     module_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty,
     /// Authoritative whole-program semantic artifact. The pointer-heavy fields
-    /// below are a temporary consumer bridge only; they must never be used to
-    /// decide semantics after this graph has been produced.
+    /// below are a temporary Codegen/LSP bridge only; they must never be used
+    /// to decide semantics or temporal safety after this graph is produced.
     global_graph: ?global_sg.GlobalSemanticGraph = null,
     global_stats: global_semantizer.Stats = .{},
+    global_safety_stats: global_safety_checker.SafetyChecker.Stats = .{},
     global_builder: global_semantic_graph_builder.GlobalSemanticGraphBuilder = .{},
     syntax_ctx: ?syntaxer.Syntaxer = null,
     sem_ctx: ?semantizer.Semantizer = null,
-    safety_ctx: ?safety_checker.SafetyChecker = null,
+    safety_ctx: ?global_safety_checker.SafetyChecker = null,
     semantize_timings: semantizer.Semantizer.SemantizeTimings = .{},
     safety_ns: u64 = 0,
     module_semantizing_ns: u64 = 0,
@@ -69,7 +70,6 @@ pub const FrontendPipeline = struct {
     }
 
     pub fn deinit(self: *FrontendPipeline) void {
-        if (self.safety_ctx) |*ctx| ctx.deinit();
         self.clearModuleGraphs();
         self.module_graphs.deinit(self.allocator);
         for (self.syntax_files.items) |*file| file.deinit(self.allocator);
@@ -156,20 +156,22 @@ pub const FrontendPipeline = struct {
         return try self.semantize();
     }
 
-    /// Produce the final indexed semantic graph without invoking legacy
-    /// consumers. New compiler phases should use this API.
+    /// Produce and safety-check the final indexed semantic graph without
+    /// invoking any legacy semantic consumer. New compiler phases use this API.
     pub fn semantizeGlobalFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !*const global_sg.GlobalSemanticGraph {
         _ = try self.parseFiles(files);
         try self.buildGlobalGraph();
+        try self.analyzeGlobalSafety();
         return &self.global_graph.?;
     }
 
     pub fn semantize(self: *FrontendPipeline) ![]const *sg.SGNode {
         try self.buildGlobalGraph();
+        try self.analyzeGlobalSafety();
 
-        // TEMPORARY CONSUMER BRIDGE: old Safety/Codegen/LSP still consume the
-        // pointer graph. GlobalSema above is authoritative and no failure falls
-        // back to this path. Delete this block when consumers move to GlobalSG.
+        // TEMPORARY CODEGEN/LSP BRIDGE: these consumers still expect the old
+        // pointer graph. Semantics and Safety have already completed over
+        // GlobalSG and this bridge is forbidden from changing those decisions.
         const merge_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         self.global_builder = try global_semantic_graph_builder.mergeModuleGraphs(self.allocator, self.module_graphs.items, self.source_db);
         self.global_merge_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - merge_start);
@@ -179,13 +181,20 @@ pub const FrontendPipeline = struct {
         self.sem_ctx = semantizer.Semantizer.init(&self.allocator, self.io, self.syntax_files.items, self.syntax_roots, &self.global_builder, self.diagnostics, self.options.semantizer);
         const result = try self.sem_ctx.?.semantizeWithTimings();
         self.sg_nodes = result.nodes;
-        self.safety_ctx = safety_checker.SafetyChecker.init(&self.allocator, self.diagnostics);
-        if (self.options.collect_stats) self.safety_ctx.?.enableStats();
-        const safety_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-        try self.safety_ctx.?.analyze(self.sg_nodes);
-        self.safety_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - safety_start);
         self.semantize_timings = result.timings;
         return self.sg_nodes;
+    }
+
+    fn analyzeGlobalSafety(self: *FrontendPipeline) !void {
+        if (self.safety_ctx) |*ctx| ctx.deinit();
+        self.safety_ctx = null;
+        const graph = &self.global_graph.?;
+        self.safety_ctx = global_safety_checker.SafetyChecker.init(self.allocator, self.diagnostics, graph);
+        if (self.options.collect_stats) self.safety_ctx.?.enableStats();
+        const safety_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
+        try self.safety_ctx.?.analyze();
+        self.safety_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - safety_start);
+        self.global_safety_stats = self.safety_ctx.?.stats;
     }
 
     fn buildGlobalGraph(self: *FrontendPipeline) !void {
@@ -239,6 +248,8 @@ pub const FrontendPipeline = struct {
     }
 
     fn clearModuleGraphs(self: *FrontendPipeline) void {
+        if (self.safety_ctx) |*ctx| ctx.deinit();
+        self.safety_ctx = null;
         self.global_builder.deinit(self.allocator);
         if (self.global_graph) |*graph| graph.deinit(self.allocator);
         self.global_graph = null;
