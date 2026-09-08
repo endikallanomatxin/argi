@@ -545,10 +545,25 @@ fn tokenRange(db: *const source_db.SourceDb, location: token.Location, len: u32)
     };
 }
 
+const HoverWriter = struct {
+    allocator: std.mem.Allocator,
+    buffer: *std.array_list.Managed(u8),
+
+    fn writeAll(self: HoverWriter, text: []const u8) !void {
+        try self.buffer.appendSlice(text);
+    }
+
+    fn print(self: HoverWriter, comptime format: []const u8, args: anytype) !void {
+        const text = try std.fmt.allocPrint(self.allocator, format, args);
+        defer self.allocator.free(text);
+        try self.buffer.appendSlice(text);
+    }
+};
+
 fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, target: editor_index.Target) ![]u8 {
     var output = std.array_list.Managed(u8).init(allocator);
     errdefer output.deinit();
-    const writer = output.writer();
+    const writer = HoverWriter{ .allocator = allocator, .buffer = &output };
     try writer.writeAll("```argi\n");
     switch (target) {
         .function => |id| {
