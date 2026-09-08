@@ -12,7 +12,7 @@ pub const Context = struct {
     tree: *const syn.FileSyntaxTree,
     source: []const u8,
 
-    pub fn lower(self: *Context, node: syn.NodeIndex) !entities.ModuleTypeId {
+    pub fn lower(self: *Context, node: syn.NodeIndex) anyerror!entities.ModuleTypeId {
         const syntax_type = self.tree.syntaxType(node) orelse return error.ExpectedTypeSyntax;
         return switch (syntax_type) {
             .name => |name| self.lowerName(node, name.name_token, name.qualifier_token, null),
@@ -82,7 +82,7 @@ pub const Context = struct {
         return self.writer.addExternalType(external);
     }
 
-    fn lowerStructural(self: *Context, owner: syn.NodeIndex, literal: syn.StructTypeLiteral) !entities.ModuleTypeId {
+    fn lowerStructural(self: *Context, owner: syn.NodeIndex, literal: syn.StructTypeLiteral) anyerror!entities.ModuleTypeId {
         var first: ?entities.ModuleFieldId = null;
         var count: u32 = 0;
         for (literal.fields) |field_node| {
@@ -108,7 +108,7 @@ pub const Context = struct {
         } });
     }
 
-    fn lowerChoice(self: *Context, owner: syn.NodeIndex, literal: syn.ChoiceTypeLiteral) !entities.ModuleTypeId {
+    fn lowerChoice(self: *Context, owner: syn.NodeIndex, literal: syn.ChoiceTypeLiteral) anyerror!entities.ModuleTypeId {
         var first: ?entities.ModuleVariantId = null;
         var count: u32 = 0;
         for (literal.variants) |variant_node| {
@@ -134,7 +134,7 @@ pub const Context = struct {
         } });
     }
 
-    fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) !entities.ModuleTypeId {
+    fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
         const arguments_literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericArguments;
         var first: ?entities.ModuleGenericArgId = null;
         var count: u32 = 0;
@@ -163,7 +163,7 @@ pub const Context = struct {
         };
     }
 
-    fn evalComptimeInt(self: *Context, node: syn.NodeIndex) !i64 {
+    fn evalComptimeInt(self: *Context, node: syn.NodeIndex) anyerror!i64 {
         if (self.tree.literal(node)) |literal| {
             const text = self.tree.tokenTextFromSource(self.source, literal.token);
             const parsed = std.fmt.parseInt(i64, text, 0) catch return error.InvalidComptimeInteger;
