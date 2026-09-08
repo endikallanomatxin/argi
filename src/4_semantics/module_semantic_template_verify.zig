@@ -75,6 +75,13 @@ pub fn verifyTemplates(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try require(verify.idFits(default.ty, views.typeCount(graph)));
         try require(verify.sourceFits(default.source, graph.file_offsets.items.len));
     }
+
+    for (storage.abstract_default_templates.items) |default| {
+        try declarationRef(graph, default.abstract_ref);
+        try require(verify.rangeFits(default.parameters, storage.generic_parameters.items.len));
+        try require(verify.idFits(default.ty, storage.ir.types.items.len));
+        try require(verify.sourceFits(default.source, graph.file_offsets.items.len));
+    }
 }
 
 fn declarationRef(graph: *const graph_mod.ModuleSemanticGraph, ref: templates.DeclarationRef) !void {
@@ -122,6 +129,12 @@ test "template verifier accepts self contained semantic IR" {
         .input = @enumFromInt(0),
         .output = @enumFromInt(0),
         .body = null,
+    });
+    try graph.semantic.templates.abstract_default_templates.append(allocator, .{
+        .abstract_ref = .{ .module = @enumFromInt(0) },
+        .parameters = .{ .start = 0, .len = 1 },
+        .ty = @enumFromInt(0),
+        .source = .{ .file_index = 0, .offset = 0 },
     });
 
     try verifyTemplates(&graph);
