@@ -72,7 +72,7 @@ pub const Resolver = struct {
         kinds: []const primitives.DeclarationKind,
     ) !global_sg.GlobalDeclId {
         const module_filter = if (reference.module_path) |path|
-            try self.findModuleBySpelling(self.modules[current_module].text(path))
+            try self.findModuleForQualifier(current_module, self.modules[current_module].text(path))
         else
             null;
         const name = self.modules[current_module].text(reference.name);
@@ -105,7 +105,7 @@ pub const Resolver = struct {
         input_node: global_sg.GlobalNodeId,
     ) !global_sg.GlobalFunctionId {
         const module_filter = if (reference.module_path) |path|
-            try self.findModuleBySpelling(self.modules[current_module].text(path))
+            try self.findModuleForQualifier(current_module, self.modules[current_module].text(path))
         else
             null;
         const name = self.modules[current_module].text(reference.name);
@@ -186,8 +186,10 @@ pub const Resolver = struct {
         if (nodes.len != function.input.len) return error.InvalidCallInputArity;
         const start: u32 = @intCast(self.graph.value_fields.items.len);
         for (nodes, 0..) |node, index| {
-            const field = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))];
-            try self.graph.value_fields.append(self.allocator, .{ .name = field.name, .value = node });
+            const field = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))].ty;
+            _ = field;
+            const source_field = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))];
+            try self.graph.value_fields.append(self.allocator, .{ .name = source_field.name, .value = node });
         }
         const ty = try self.structType(function.input);
         const source = if (nodes.len != 0) self.graph.nodes.items[@intFromEnum(nodes[0])].source else self.syntheticSource();
@@ -407,6 +409,82 @@ pub const Resolver = struct {
         };
     }
 
+    /// Resolve a qualifier through the import binding in the calling module.
+    /// ExternalRef.module_path currently stores the source-level qualifier, so
+    /// recover the import it names before selecting a global module. This keeps
+    /// aliases such as `support := #import("_test_support/basic")` independent
+    /// from the dependency directory's basename.
+    fn findModuleForQualifier(self: *Resolver, current_module: usize, qualifier: []const u8) !global_sg.GlobalModuleId {
+        if (self.importPathForAlias(current_module, qualifier)) |import_path|
+            return self.findModuleByImportPath(current_module, import_path);
+        // Keep direct module spellings working for compiler-generated and
+        // transitional references that are not source import aliases.
+        return self.findModuleBySpelling(qualifier);
+    }
+
+    fn importPathForAlias(self: *const Resolver, current_module: usize, alias: []const u8) ?[]const u8 {
+        if (current_module >= self.modules.len) return null;
+        const module = &self.modules[current_module];
+        var matched: ?module_sg.Declaration = null;
+        for (module.declarationsNamed(alias)) |id| {
+            const declaration = module.declaration(id);
+            if (declaration.kind != .import_alias) continue;
+            if (matched != null) return null;
+            matched = declaration;
+        }
+        const declaration = matched orelse return null;
+        if (declaration.module_file_index >= module.file_offsets.items.len) return null;
+        const file = module.file_offsets.items[declaration.module_file_index];
+
+        var declaration_end = std.math.maxInt(u32);
+        const declarations = module.declarations.items[file.declaration_base..][0..file.declaration_count];
+        for (declarations) |candidate| {
+            if (candidate.source_offset > declaration.source_offset and candidate.source_offset < declaration_end)
+                declaration_end = candidate.source_offset;
+        }
+
+        var found: ?[]const u8 = null;
+        const imports = module.import_references.items[file.import_reference_base..][0..file.import_reference_count];
+        for (imports) |reference| {
+            if (reference.source_offset < declaration.source_offset or reference.source_offset >= declaration_end) continue;
+            if (found != null) return null;
+            found = module.text(reference.path);
+        }
+        return found;
+    }
+
+    fn findModuleByImportPath(self: *Resolver, current_module: usize, spelling: []const u8) !global_sg.GlobalModuleId {
+        const import_path = std.mem.trim(u8, spelling, "\"'");
+        if (std.mem.startsWith(u8, import_path, "./") or std.mem.startsWith(u8, import_path, "../")) {
+            const current_dir = self.modules[current_module].module_dir;
+            const resolved = try std.fs.path.resolve(self.allocator, &.{ current_dir, import_path });
+            defer self.allocator.free(resolved);
+            return self.findModuleByExactDir(resolved);
+        }
+
+        // Project-root (`.../`) and tool-more imports have already been resolved
+        // by source collection. ModuleSG currently retains only their source
+        // spelling, so compare it to the canonical module-dir suffix and reject
+        // ambiguity instead of guessing from a basename.
+        const suffix = if (std.mem.startsWith(u8, import_path, ".../")) import_path[4..] else import_path;
+        var found: ?global_sg.GlobalModuleId = null;
+        for (self.graph.modules.items, 0..) |module, index| {
+            const dir = self.graph.text(module.dir);
+            if (!pathEndsWith(dir, suffix)) continue;
+            if (found != null) return error.AmbiguousModuleReference;
+            found = @enumFromInt(@as(u32, @intCast(index)));
+        }
+        return found orelse error.UnknownModuleReference;
+    }
+
+    fn findModuleByExactDir(self: *Resolver, wanted: []const u8) !global_sg.GlobalModuleId {
+        for (self.graph.modules.items, 0..) |module, index| {
+            if (std.mem.eql(u8, self.graph.text(module.dir), wanted))
+                return @enumFromInt(@as(u32, @intCast(index)));
+        }
+        return error.UnknownModuleReference;
+    }
+
     fn findModuleBySpelling(self: *Resolver, spelling: []const u8) !global_sg.GlobalModuleId {
         var found: ?global_sg.GlobalModuleId = null;
         for (self.graph.modules.items, 0..) |module, index| {
@@ -435,8 +513,57 @@ pub const Resolver = struct {
     }
 };
 
+fn pathEndsWith(path: []const u8, suffix: []const u8) bool {
+    if (std.mem.eql(u8, path, suffix)) return true;
+    if (!std.mem.endsWith(u8, path, suffix) or path.len <= suffix.len) return false;
+    const boundary = path[path.len - suffix.len - 1];
+    return boundary == '/' or boundary == '\\';
+}
+
 test "global core resolver is graph-only" {
     try std.testing.expect(@sizeOf(Resolver) <= 96);
+}
+
+test "qualified lookup follows import alias binding" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "/workspace/app") };
+    defer module.deinit(allocator);
+
+    try module.strings.appendSlice(allocator, "support_test_support/basic");
+    const alias = module_sg.StringRange{ .start = 0, .len = 7 };
+    const import_path = module_sg.StringRange{ .start = 7, .len = 19 };
+    try module.declarations.append(allocator, .{
+        .kind = .import_alias,
+        .name = alias,
+        .source_offset = 10,
+        .module_file_index = 0,
+        .syntax_node = @enumFromInt(0),
+    });
+    try module.symbol_declarations.append(allocator, @enumFromInt(0));
+    try module.symbols.append(allocator, .{ .name = alias, .declarations = .{ .start = 0, .len = 1 } });
+    try module.import_references.append(allocator, .{
+        .path = import_path,
+        .source_offset = 24,
+        .syntax_node = @enumFromInt(1),
+    });
+    try module.file_offsets.append(allocator, .{
+        .path = .{ .start = 0, .len = 0 },
+        .declaration_base = 0,
+        .declaration_count = 1,
+        .type_reference_base = 0,
+        .type_reference_count = 0,
+        .import_reference_base = 0,
+        .import_reference_count = 1,
+    });
+
+    try graph.modules.append(allocator, .{ .dir = try graph.addString(allocator, "/workspace/app"), .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 0 } });
+    try graph.modules.append(allocator, .{ .dir = try graph.addString(allocator, "/tool/more/_test_support/basic"), .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 0 } });
+    try graph.modules.append(allocator, .{ .dir = try graph.addString(allocator, "/unrelated/basic"), .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 0 } });
+
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{module}, .offsets = &.{} };
+    try std.testing.expectEqual(@as(global_sg.GlobalModuleId, @enumFromInt(1)), try resolver.findModuleForQualifier(0, "support"));
 }
 
 test "global declaration lookup preserves module visibility" {
