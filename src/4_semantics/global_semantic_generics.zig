@@ -115,11 +115,14 @@ pub const Resolver = struct {
         return null;
     }
 
-    const Bindings = struct {
+    /// Generic substitutions are shared by type and function monomorphization.
+    /// They are intentionally indexed by TemplateParameterId so nested template
+    /// expressions can reuse the same substitution environment without maps.
+    pub const Bindings = struct {
         types: []?global_sg.GlobalTypeId,
         ints: []?i64,
 
-        fn init(allocator: std.mem.Allocator, count: usize) !Bindings {
+        pub fn init(allocator: std.mem.Allocator, count: usize) !Bindings {
             const types_slice = try allocator.alloc(?global_sg.GlobalTypeId, count);
             errdefer allocator.free(types_slice);
             const ints_slice = try allocator.alloc(?i64, count);
@@ -128,14 +131,14 @@ pub const Resolver = struct {
             return .{ .types = types_slice, .ints = ints_slice };
         }
 
-        fn deinit(self: *Bindings, allocator: std.mem.Allocator) void {
+        pub fn deinit(self: *Bindings, allocator: std.mem.Allocator) void {
             allocator.free(self.types);
             allocator.free(self.ints);
             self.* = undefined;
         }
     };
 
-    fn bindGlobalArguments(
+    pub fn bindGlobalArguments(
         self: *Resolver,
         module_index: usize,
         parameters: primitives.Range(ir.TemplateParameterId),
@@ -178,7 +181,7 @@ pub const Resolver = struct {
         return null;
     }
 
-    fn relocateModuleArguments(
+    pub fn relocateModuleArguments(
         self: *Resolver,
         module_index: usize,
         range: module_entities.GenericArgRange,
@@ -199,7 +202,7 @@ pub const Resolver = struct {
         return .{ .start = start, .len = range.len };
     }
 
-    fn instantiateTemplateType(
+    pub fn instantiateTemplateType(
         self: *Resolver,
         module_index: usize,
         id: ir.TemplateTypeId,
@@ -279,14 +282,12 @@ pub const Resolver = struct {
                 const base = try self.resolveTemplateDeclaration(module_index, generic.base);
                 const args = try self.instantiateTemplateArguments(module_index, generic.arguments, bindings, self_type);
                 const id = try self.internType(.{ .generic = .{ .base = base, .arguments = args } });
-                // Do not recurse eagerly into the same identity. The outer scan
-                // materializes nested instances after this template returns.
                 break :blk id;
             },
         };
     }
 
-    fn resolveTemplateDeclaration(self: *Resolver, module_index: usize, id: ir.TemplateDeclId) !global_sg.GlobalDeclId {
+    pub fn resolveTemplateDeclaration(self: *Resolver, module_index: usize, id: ir.TemplateDeclId) !global_sg.GlobalDeclId {
         const target = self.modules[module_index].semantic.templates.ir.declarations.items[@intFromEnum(id)].target;
         return switch (target) {
             .module => |local| globalizer.globalDecl(self.offsets[module_index], local),
@@ -298,7 +299,7 @@ pub const Resolver = struct {
         };
     }
 
-    fn instantiateTemplateArguments(
+    pub fn instantiateTemplateArguments(
         self: *Resolver,
         module_index: usize,
         range: primitives.Range(ir.TemplateGenericArgId),
@@ -338,8 +339,6 @@ pub const Resolver = struct {
                 .ty = try self.instantiateTemplateType(module_index, field.ty, bindings, self_type),
                 .storage_type = if (field.storage_type) |value| try self.instantiateTemplateType(module_index, value, bindings, self_type) else null,
                 .source = self.globalSource(module_index, field.source),
-                // Template defaults are instantiated by the function/default
-                // body instantiator once node substitution is available.
                 .default_value = null,
             });
         }
@@ -387,7 +386,7 @@ pub const Resolver = struct {
         return .{ .start = start, .len = range.len };
     }
 
-    fn evalInt(self: *Resolver, module_index: usize, id: ir.TemplateIntExprId, bindings: *Bindings) anyerror!i64 {
+    pub fn evalInt(self: *Resolver, module_index: usize, id: ir.TemplateIntExprId, bindings: *Bindings) anyerror!i64 {
         const expression = self.modules[module_index].semantic.templates.ir.int_expressions.items[@intFromEnum(id)];
         return switch (expression) {
             .literal => |value| value,
@@ -406,7 +405,7 @@ pub const Resolver = struct {
         };
     }
 
-    fn internType(self: *Resolver, value: global_sg.GlobalType) !global_sg.GlobalTypeId {
+    pub fn internType(self: *Resolver, value: global_sg.GlobalType) !global_sg.GlobalTypeId {
         for (self.graph.types.items, 0..) |candidate, raw| {
             if (sameShallowType(candidate, value)) return @enumFromInt(@as(u32, @intCast(raw)));
         }
@@ -415,8 +414,7 @@ pub const Resolver = struct {
         return id;
     }
 
-    fn globalSource(self: *Resolver, module_index: usize, source: primitives.SourceRef) primitives.SourceRef {
-        _ = self;
+    pub fn globalSource(self: *Resolver, module_index: usize, source: primitives.SourceRef) primitives.SourceRef {
         return .{ .file_index = self.offsets[module_index].file_base + source.file_index, .offset = source.offset };
     }
 };
