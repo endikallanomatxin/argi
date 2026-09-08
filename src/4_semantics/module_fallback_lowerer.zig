@@ -495,10 +495,10 @@ const Context = struct {
             const body = try self.lowerBlock(case.body);
             self.popScope();
             const case_id = self.nextNodeId();
-            const pending = try self.writer.addPendingOperation(.{ .resolve_match_case = .{
+            const pending_id = try self.writer.addPendingOperation(.{ .resolve_match_case = .{
                 .node = case_id, .option = option, .payload_binding = payload_binding, .body = body, .mode = case.mode,
             } });
-            const stored = try self.writer.addNode(.{ .pending = pending });
+            const stored = try self.writer.addNode(.{ .pending = pending_id });
             try case_nodes.append(stored);
         }
         return self.pending(node, .{ .resolve_match = .{
@@ -584,6 +584,7 @@ const Context = struct {
     }
 
     fn pending(self: *Context, node: syn.NodeIndex, operation: entities.PendingOperation, ty: entities.ModuleTypeId) !Lowered {
+        _ = node;
         const id = try self.writer.addPendingNode(operation);
         return .{ .node = id, .ty = ty };
     }

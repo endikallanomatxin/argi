@@ -269,8 +269,8 @@ pub const CodeGenerator = struct {
         }
         try self.global_bindings.put(binding, .in_progress);
         const storage = self.bindings.get(binding) orelse return CodegenError.SymbolNotFound;
-        if (record.initialization) |init| {
-            const value = try self.globalConstant(init);
+        if (record.initialization) |initialization| {
+            const value = try self.globalConstant(initialization);
             if (value.type_ref != storage.type_ref) return CodegenError.InvalidType;
             c.LLVMSetInitializer(storage.ref, value.value_ref);
         }
@@ -280,7 +280,7 @@ pub const CodeGenerator = struct {
     fn globalConstant(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) !TypedValue {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
-            .int_literal, .float_literal, .char_literal, .bool_literal, .string_literal => self.literal(node_id),
+            .int_literal, .float_literal, .char_literal, .bool_literal, .string_literal => self.emitLiteral(node_id),
             .binding_use => |binding| blk: {
                 try self.ensureGlobalInitialized(binding);
                 const storage = self.bindings.get(binding) orelse return CodegenError.SymbolNotFound;
@@ -404,7 +404,7 @@ pub const CodeGenerator = struct {
             .function_call => |call| try self.genFunctionCall(call),
             .virtualize, .virtual_call => CodegenError.NotYetImplemented,
             .code_block => |block| try self.genBlock(block),
-            .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal => try self.literal(node_id),
+            .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal => try self.emitLiteral(node_id),
             .list_literal => |literal| try self.listLiteral(literal, node.ty),
             .struct_value_literal => |literal| try self.structLiteral(literal),
             .struct_field_access => |access| try self.fieldAccess(node_id, access),
@@ -417,7 +417,7 @@ pub const CodeGenerator = struct {
             .array_store => |store| blk: { try self.arrayStore(store); break :blk null; },
             .struct_field_store => |store| blk: { try self.structFieldStore(store); break :blk null; },
             .binary_operation => |operation| try self.binary(operation),
-            .comparison => |comparison| try self.comparison(comparison),
+            .comparison => |comparison| try self.emitComparison(comparison),
             .logical_operation => |operation| try self.logical(operation),
             .return_statement => |ret| blk: { try self.genReturn(ret); break :blk null; },
             .if_statement => |statement| blk: { try self.genIf(statement); break :blk null; },
@@ -440,7 +440,7 @@ pub const CodeGenerator = struct {
         return .{ .value_ref = c.LLVMBuildLoad2(self.builder, storage.type_ref, storage.ref, "binding"), .type_ref = storage.type_ref, .ty = storage.ty };
     }
 
-    fn literal(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) !TypedValue {
+    fn emitLiteral(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) !TypedValue {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
             .bool_literal => |value| .{ .value_ref = c.LLVMConstInt(c.LLVMInt1Type(), if (value) 1 else 0, 0), .type_ref = c.LLVMInt1Type(), .ty = node.ty },
@@ -616,7 +616,7 @@ pub const CodeGenerator = struct {
         return .{ .value_ref = result, .type_ref = left.type_ref, .ty = left.ty };
     }
 
-    fn comparison(self: *CodeGenerator, comparison: anytype) !TypedValue {
+    fn emitComparison(self: *CodeGenerator, comparison: anytype) !TypedValue {
         const left = (try self.visitNode(comparison.left)) orelse return CodegenError.ValueNotFound;
         const right = (try self.visitNode(comparison.right)) orelse return CodegenError.ValueNotFound;
         const float = if (left.ty) |ty| self.isFloat(ty) else false;
@@ -690,7 +690,7 @@ pub const CodeGenerator = struct {
     }
 
     fn genFor(self: *CodeGenerator, statement: anytype) !void {
-        if (statement.init) |init| _ = try self.visitNode(init);
+        if (statement.init) |initialization| _ = try self.visitNode(initialization);
         const current = c.LLVMGetInsertBlock(self.builder);
         const function = c.LLVMGetBasicBlockParent(current);
         const condition_block = c.LLVMAppendBasicBlock(function, "for.cond");
@@ -1202,11 +1202,11 @@ pub const CodeGenerator = struct {
 
     fn generateCMainWrapper(self: *CodeGenerator, main: graph_mod.GlobalFunctionId) !void {
         const symbol = self.functions.get(main) orelse return CodegenError.SymbolNotFound;
-        const i32 = c.LLVMInt32Type();
+        const i32_ty = c.LLVMInt32Type();
         const i8ptr = c.LLVMPointerType(c.LLVMInt8Type(), 0);
         const argv_ty = c.LLVMPointerType(i8ptr, 0);
-        var params = [_]llvm.c.LLVMTypeRef{ i32, argv_ty };
-        const fn_type = c.LLVMFunctionType(i32, &params, 2, 0);
+        var params = [_]llvm.c.LLVMTypeRef{ i32_ty, argv_ty };
+        const fn_type = c.LLVMFunctionType(i32_ty, &params, 2, 0);
         const wrapper = c.LLVMAddFunction(self.module, "main", fn_type);
         const entry = c.LLVMAppendBasicBlock(wrapper, "entry");
         c.LLVMPositionBuilderAtEnd(self.builder, entry);
@@ -1224,8 +1224,8 @@ pub const CodeGenerator = struct {
 
     fn generateCTestWrapper(self: *CodeGenerator, test_function: graph_mod.GlobalFunctionId) !void {
         const symbol = self.functions.get(test_function) orelse return CodegenError.SymbolNotFound;
-        const i32 = c.LLVMInt32Type();
-        const fn_type = c.LLVMFunctionType(i32, null, 0, 0);
+        const i32_ty = c.LLVMInt32Type();
+        const fn_type = c.LLVMFunctionType(i32_ty, null, 0, 0);
         const wrapper = c.LLVMAddFunction(self.module, "main", fn_type);
         const entry = c.LLVMAppendBasicBlock(wrapper, "entry");
         c.LLVMPositionBuilderAtEnd(self.builder, entry);
@@ -1233,7 +1233,7 @@ pub const CodeGenerator = struct {
         const input_type = try self.fieldsLLVMType(function.input);
         var args = [_]llvm.c.LLVMValueRef{c.LLVMGetUndef(input_type)};
         _ = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 1, "test");
-        _ = c.LLVMBuildRet(self.builder, c.LLVMConstInt(i32, 0, 0));
+        _ = c.LLVMBuildRet(self.builder, c.LLVMConstInt(i32_ty, 0, 0));
     }
 
     fn ensureRuntimeArgGlobals(self: *CodeGenerator) !void {

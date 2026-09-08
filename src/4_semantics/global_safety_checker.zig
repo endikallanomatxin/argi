@@ -186,11 +186,11 @@ pub const SafetyChecker = struct {
                     _ = try self.evaluate(function, statement.condition, state);
                     var then_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
                     defer then_state.deinit();
-                    if (statement.choice_test) |test| self.refineChoice(&then_state, test.choice_value, test.variant, test.then_has_variant);
+                    if (statement.choice_test) |choice_test| self.refineChoice(&then_state, choice_test.choice_value, choice_test.variant, choice_test.then_has_variant);
                     try self.validateBlock(function, statement.then_block, &then_state);
                     var else_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
                     defer else_state.deinit();
-                    if (statement.choice_test) |test| self.refineChoice(&else_state, test.choice_value, test.variant, !test.then_has_variant);
+                    if (statement.choice_test) |choice_test| self.refineChoice(&else_state, choice_test.choice_value, choice_test.variant, !choice_test.then_has_variant);
                     if (statement.else_block) |child| try self.validateBlock(function, child, &else_state);
                     try self.joinState(state, &then_state, &else_state);
                 },

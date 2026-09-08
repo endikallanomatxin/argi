@@ -136,7 +136,7 @@ pub const Resolver = struct {
 
         const identity = switch (self.graph.types.items[@intFromEnum(concrete)]) {
             .generic => |value| value,
-            .declared => |decl| blk: {
+            .declared => |decl| {
                 if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(decl)].name), wanted)) return false;
                 return template.parameters.len == 0;
             },

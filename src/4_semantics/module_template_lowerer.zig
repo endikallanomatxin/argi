@@ -210,7 +210,7 @@ const Context = struct {
         const name = self.tree.tokenTextFromSource(self.source, name_token);
         if (allow_self and std.mem.eql(u8, name, "Self")) return self.addType(.abstract_self);
         if (qualifier == null) {
-            if (self.parameter(name)) |parameter| if (parameter.kind == .type) return self.addType(.{ .parameter = parameter.id });
+            if (self.parameter(name)) |binding| if (binding.kind == .type) return self.addType(.{ .parameter = binding.id });
             if (builtinFromName(name)) |builtin| {
                 const concrete = try self.moduleBuiltin(builtin);
                 return self.addType(.{ .concrete = concrete });
@@ -301,8 +301,8 @@ const Context = struct {
 
     fn lowerIntExpressionFromToken(self: *Context, token_index: syn.TokenIndex) !ir.TemplateIntExprId {
         const text = self.tree.tokenTextFromSource(self.source, token_index);
-        if (self.parameter(text)) |parameter| if (parameter.kind == .comptime_int) {
-            return self.addInt(.{ .parameter = parameter.id });
+        if (self.parameter(text)) |binding| if (binding.kind == .comptime_int) {
+            return self.addInt(.{ .parameter = binding.id });
         };
         const value = std.fmt.parseInt(i64, text, 0) catch return error.InvalidTemplateComptimeInteger;
         return self.addInt(.{ .literal = value });
@@ -317,9 +317,9 @@ const Context = struct {
         }
         if (self.tree.tag(node) == .identifier) {
             const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
-            const parameter = self.parameter(name) orelse return error.UnknownTemplateComptimeParameter;
-            if (parameter.kind != .comptime_int) return error.ExpectedTemplateComptimeParameter;
-            return self.addInt(.{ .parameter = parameter.id });
+            const binding = self.parameter(name) orelse return error.UnknownTemplateComptimeParameter;
+            if (binding.kind != .comptime_int) return error.ExpectedTemplateComptimeParameter;
+            return self.addInt(.{ .parameter = binding.id });
         }
         const op = self.tree.binaryOperation(node) orelse return error.InvalidTemplateComptimeInteger;
         const operator: ir.IntBinaryOperator = switch (self.tree.tag(node)) {
