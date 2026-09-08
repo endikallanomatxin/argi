@@ -8,10 +8,24 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
     const storage = &graph.semantic.templates.ir;
     const bounds = makeBounds(graph);
 
+    for (storage.int_expressions.items) |expression| switch (expression) {
+        .literal => {},
+        .parameter => |id| try require(verify.idFits(id, graph.semantic.templates.generic_parameters.items.len)),
+        .binary => |value| {
+            try require(verify.idFits(value.left, storage.int_expressions.items.len));
+            try require(verify.idFits(value.right, storage.int_expressions.items.len));
+        },
+    };
+
     for (storage.types.items) |ty| switch (ty) {
         .concrete => |id| try require(verify.idFits(id, views.typeCount(graph))),
         .parameter => |id| try require(verify.idFits(id, graph.semantic.templates.generic_parameters.items.len)),
+        .abstract_self => {},
         .external => |id| try require(verify.idFits(id, graph.semantic.external_refs.items.len)),
+        .array => |value| {
+            try require(verify.idFits(value.length, storage.int_expressions.items.len));
+            try require(verify.idFits(value.element, storage.types.items.len));
+        },
         .resolved => |resolved| try payload.semanticType(ir.Ids, resolved, bounds),
     };
 
@@ -26,7 +40,13 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
     };
 
     for (storage.fields.items) |value| try payload.field(ir.Ids, value, bounds);
-    for (storage.generic_arguments.items) |value| try payload.genericArgument(ir.Ids, value, bounds);
+    for (storage.generic_arguments.items) |value| {
+        try require(verify.stringFits(value.name, graph.strings.items));
+        switch (value.value) {
+            .type => |id| try require(verify.idFits(id, storage.types.items.len)),
+            .comptime_int => |id| try require(verify.idFits(id, storage.int_expressions.items.len)),
+        }
+    }
     for (storage.bindings.items) |value| try payload.binding(ir.Ids, value, bounds);
     for (storage.blocks.items) |value| try payload.block(ir.Ids, value, bounds);
     for (storage.value_fields.items) |value| try payload.valueField(ir.Ids, value, bounds);
@@ -128,7 +148,7 @@ fn require(ok: bool) !void {
     if (!ok) return error.InvalidModuleTemplateIR;
 }
 
-test "template IR verifier accepts parameter-only type state" {
+test "template IR verifier accepts dependent Self and comptime types" {
     const std = @import("std");
     const allocator = std.testing.allocator;
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
@@ -136,8 +156,13 @@ test "template IR verifier accepts parameter-only type state" {
 
     try graph.semantic.templates.generic_parameters.append(allocator, .{
         .name = .{ .start = 0, .len = 0 },
-        .kind = .type,
+        .kind = .comptime_int,
     });
-    try graph.semantic.templates.ir.types.append(allocator, .{ .parameter = @enumFromInt(0) });
+    try graph.semantic.templates.ir.int_expressions.append(allocator, .{ .parameter = @enumFromInt(0) });
+    try graph.semantic.templates.ir.types.append(allocator, .abstract_self);
+    try graph.semantic.templates.ir.types.append(allocator, .{ .array = .{
+        .length = @enumFromInt(0),
+        .element = @enumFromInt(0),
+    } });
     try verifyIR(&graph);
 }
