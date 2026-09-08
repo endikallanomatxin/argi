@@ -10,14 +10,12 @@ const syntaxer = @import("../3_syntax/syntaxer.zig");
 const sg = @import("../4_semantics/semantic_graph.zig");
 const module_sg = @import("../4_semantics/module_semantic_graph.zig");
 const module_semantizer = @import("../4_semantics/module_semantizer.zig");
+const global_sg = @import("../4_semantics/global_semantic_graph.zig");
+const global_semantizer = @import("../4_semantics/global_semantizer.zig");
 const global_semantic_graph_builder = @import("../4_semantics/global_semantic_graph_builder.zig");
 const semantizer = @import("../4_semantics/semantizer.zig");
 const safety_checker = @import("../4_semantics/safety_checker.zig");
 
-// FrontendPipeline is the shared orchestration layer for the pre-codegen
-// compiler phases. The intent is to keep `build` and `lsp` on exactly the same
-// tokenizing/syntaxing/semantizing path so architectural changes in the
-// compiler do not fork into subtly different command-specific pipelines.
 pub const FrontendPipeline = struct {
     pub const Options = struct {
         semantizer: semantizer.SemantizerOptions = .{},
@@ -32,6 +30,11 @@ pub const FrontendPipeline = struct {
     syntax_files: std.array_list.Managed(st.FileSyntaxTree),
     syntax_root_list: std.array_list.Managed(st.SyntaxRef),
     module_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty,
+    /// Authoritative whole-program semantic artifact. The pointer-heavy fields
+    /// below are a temporary consumer bridge only; they must never be used to
+    /// decide semantics after this graph has been produced.
+    global_graph: ?global_sg.GlobalSemanticGraph = null,
+    global_stats: global_semantizer.Stats = .{},
     global_builder: global_semantic_graph_builder.GlobalSemanticGraphBuilder = .{},
     syntax_ctx: ?syntaxer.Syntaxer = null,
     sem_ctx: ?semantizer.Semantizer = null,
@@ -39,9 +42,10 @@ pub const FrontendPipeline = struct {
     semantize_timings: semantizer.Semantizer.SemantizeTimings = .{},
     safety_ns: u64 = 0,
     module_semantizing_ns: u64 = 0,
+    global_semantic_ns: u64 = 0,
     global_merge_ns: u64 = 0,
     module_lowered_functions: u32 = 0,
-    module_deferred_functions: u32 = 0,
+    module_fallback_functions: u32 = 0,
     syntax_node_count: usize = 0,
     sg_node_count: usize = 0,
     syntax_roots: []const st.SyntaxRef = &.{},
@@ -101,7 +105,6 @@ pub const FrontendPipeline = struct {
             self.syntax_ctx = syntaxer.Syntaxer.initFile(self.allocator, file.*, self.source_db.get(file_id).source, self.diagnostics);
             file.* = .{ .file_id = file_id };
             file.* = self.syntax_ctx.?.parse() catch |err| {
-                // Keep the failed file's tokens for lexical LSP fallback.
                 file.* = self.syntax_ctx.?.file;
                 self.syntax_ctx.?.file = .{ .file_id = file_id };
                 return err;
@@ -153,12 +156,45 @@ pub const FrontendPipeline = struct {
         return try self.semantize();
     }
 
+    /// Produce the final indexed semantic graph without invoking legacy
+    /// consumers. New compiler phases should use this API.
+    pub fn semantizeGlobalFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !*const global_sg.GlobalSemanticGraph {
+        _ = try self.parseFiles(files);
+        try self.buildGlobalGraph();
+        return &self.global_graph.?;
+    }
+
     pub fn semantize(self: *FrontendPipeline) ![]const *sg.SGNode {
+        try self.buildGlobalGraph();
+
+        // TEMPORARY CONSUMER BRIDGE: old Safety/Codegen/LSP still consume the
+        // pointer graph. GlobalSema above is authoritative and no failure falls
+        // back to this path. Delete this block when consumers move to GlobalSG.
+        const merge_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
+        self.global_builder = try global_semantic_graph_builder.mergeModuleGraphs(self.allocator, self.module_graphs.items, self.source_db);
+        self.global_merge_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - merge_start);
+        self.sg_node_count = 0;
+        if (self.options.collect_stats) sg.beginNodeCounting(&self.sg_node_count);
+        defer if (self.options.collect_stats) sg.endNodeCounting();
+        self.sem_ctx = semantizer.Semantizer.init(&self.allocator, self.io, self.syntax_files.items, self.syntax_roots, &self.global_builder, self.diagnostics, self.options.semantizer);
+        const result = try self.sem_ctx.?.semantizeWithTimings();
+        self.sg_nodes = result.nodes;
+        self.safety_ctx = safety_checker.SafetyChecker.init(&self.allocator, self.diagnostics);
+        if (self.options.collect_stats) self.safety_ctx.?.enableStats();
+        const safety_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
+        try self.safety_ctx.?.analyze(self.sg_nodes);
+        self.safety_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - safety_start);
+        self.semantize_timings = result.timings;
+        return self.sg_nodes;
+    }
+
+    fn buildGlobalGraph(self: *FrontendPipeline) !void {
         const module_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         self.clearModuleGraphs();
         errdefer self.clearModuleGraphs();
         self.module_lowered_functions = 0;
-        self.module_deferred_functions = 0;
+        self.module_fallback_functions = 0;
+
         const ModuleInputs = struct {
             dir: []const u8,
             files: std.ArrayList(module_sg.FileInput) = .empty,
@@ -190,30 +226,22 @@ pub const FrontendPipeline = struct {
         for (groups.items) |group| {
             const result = try module_semantizer.build(self.allocator, group.dir, group.files.items);
             self.module_lowered_functions += result.stats.lowered_functions;
-            self.module_deferred_functions += result.stats.deferred_functions;
+            self.module_fallback_functions += result.stats.fallback_functions;
             self.module_graphs.appendAssumeCapacity(result.graph);
         }
         self.module_semantizing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - module_start);
-        const merge_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-        self.global_builder = try global_semantic_graph_builder.mergeModuleGraphs(self.allocator, self.module_graphs.items, self.source_db);
-        self.global_merge_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - merge_start);
-        self.sg_node_count = 0;
-        if (self.options.collect_stats) sg.beginNodeCounting(&self.sg_node_count);
-        defer if (self.options.collect_stats) sg.endNodeCounting();
-        self.sem_ctx = semantizer.Semantizer.init(&self.allocator, self.io, self.syntax_files.items, self.syntax_roots, &self.global_builder, self.diagnostics, self.options.semantizer);
-        const result = try self.sem_ctx.?.semantizeWithTimings();
-        self.sg_nodes = result.nodes;
-        self.safety_ctx = safety_checker.SafetyChecker.init(&self.allocator, self.diagnostics);
-        if (self.options.collect_stats) self.safety_ctx.?.enableStats();
-        const safety_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-        try self.safety_ctx.?.analyze(self.sg_nodes);
-        self.safety_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - safety_start);
-        self.semantize_timings = result.timings;
-        return self.sg_nodes;
+
+        const global_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
+        const result = try global_semantizer.semantize(self.allocator, self.module_graphs.items);
+        self.global_graph = result.graph;
+        self.global_stats = result.stats;
+        self.global_semantic_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - global_start);
     }
 
     fn clearModuleGraphs(self: *FrontendPipeline) void {
         self.global_builder.deinit(self.allocator);
+        if (self.global_graph) |*graph| graph.deinit(self.allocator);
+        self.global_graph = null;
         for (self.module_graphs.items) |*graph| graph.deinit(self.allocator);
         self.module_graphs.clearRetainingCapacity();
     }
@@ -222,5 +250,9 @@ pub const FrontendPipeline = struct {
         var bytes: usize = 0;
         for (self.module_graphs.items) |*graph| bytes += graph.storageBytes();
         return bytes;
+    }
+
+    pub fn globalSemanticStorageBytes(self: *const FrontendPipeline) usize {
+        return if (self.global_graph) |*graph| graph.storageBytes() else 0;
     }
 };
