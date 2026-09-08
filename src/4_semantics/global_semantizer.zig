@@ -9,6 +9,7 @@ const generic_mod = @import("global_semantic_generics.zig");
 const generic_functions_mod = @import("global_semantic_generic_functions.zig");
 const abstract_mod = @import("global_semantic_abstracts.zig");
 const error_mod = @import("global_semantic_errors.zig");
+const ownership_mod = @import("global_semantic_ownership.zig");
 
 pub const Stats = struct {
     core: core_mod.Stats = .{},
@@ -17,6 +18,7 @@ pub const Stats = struct {
     generic_functions: generic_functions_mod.Stats = .{},
     abstracts: abstract_mod.Stats = .{},
     errors: error_mod.Stats = .{},
+    ownership: ownership_mod.Stats = .{},
     pending_total: u32 = 0,
     pending_resolved: u32 = 0,
     remaining: u32 = 0,
@@ -76,6 +78,14 @@ pub fn semantize(
         .offsets = relocation.offsets.items,
         .core = &core,
     };
+    var ownership = ownership_mod.Resolver{
+        .allocator = allocator,
+        .graph = &relocation.graph,
+        .modules = modules,
+        .offsets = relocation.offsets.items,
+        .core = &core,
+    };
+    defer ownership.deinit();
 
     try core.resolveExternalTypes();
     _ = try generics.materializeKnownTypes();
@@ -100,6 +110,7 @@ pub fn semantize(
                     if (!done) done = (try abstracts.tryResolve(module_index, module, o, operation)) orelse false;
                     if (!done) done = (try control.tryResolve(module_index, module, o, operation)) orelse false;
                     if (!done) done = (try errors.tryResolve(module_index, module, o, operation)) orelse false;
+                    if (!done) done = (try ownership.tryResolve(module_index, module, o, operation)) orelse false;
                     if (done) {
                         resolved[flat] = true;
                         changed = true;
@@ -118,6 +129,13 @@ pub fn semantize(
     var resolved_count: usize = 0;
     for (resolved) |done| if (done) { resolved_count += 1; };
     const remaining = total - resolved_count;
+    if (remaining != 0 or hasUnresolvedExternalTypes(modules, core.stats.external_types + generics.stats.type_holes))
+        return error.UnsupportedGlobalSemantic;
+
+    // Cleanup is finalized only after all calls/types/abstract dispatch decisions
+    // are stable. Safety and Codegen consume these explicit cleanup edges.
+    try ownership.finalize();
+
     var stats = Stats{
         .core = core.stats,
         .control = control.stats,
@@ -125,13 +143,11 @@ pub fn semantize(
         .generic_functions = generic_functions.stats,
         .abstracts = abstracts.stats,
         .errors = errors.stats,
+        .ownership = ownership.stats,
         .pending_total = @intCast(total),
         .pending_resolved = @intCast(resolved_count),
-        .remaining = @intCast(remaining),
+        .remaining = 0,
     };
-
-    if (remaining != 0 or hasUnresolvedExternalTypes(modules, core.stats.external_types + generics.stats.type_holes))
-        return error.UnsupportedGlobalSemantic;
 
     try global_verify.verifyGlobal(&relocation.graph);
     stats.remaining = 0;
