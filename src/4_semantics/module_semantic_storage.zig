@@ -15,22 +15,22 @@ pub const Storage = struct {
     field_semantics: std.ArrayList(entities.FieldSemantic) = .empty,
     variant_semantics: std.ArrayList(entities.VariantSemantic) = .empty,
 
-    /// Canonical tails extend the migration-era core tables without creating
-    /// another semantic ID domain. Logical ModuleTypeId/FieldId/VariantId and
-    /// GenericArgId values address compatibility prefixes followed by these
-    /// shared-payload records.
+    /// Migration prefixes retained while the old module builder is removed.
     resolved_types: std.ArrayList(entities.ResolvedType) = .empty,
     fields: std.ArrayList(entities.Field) = .empty,
     variants: std.ArrayList(entities.ChoiceVariant) = .empty,
     generic_arguments: std.ArrayList(entities.GenericArgument) = .empty,
 
+    /// Earlier representation work placed external types after resolved_types.
+    /// Keep that prefix readable for cherry-pick compatibility, but new
+    /// ModuleSema code must use `types`, whose ModuleType union can freely
+    /// interleave local and external states without renumbering later IDs.
+    external_types: std.ArrayList(entities.ExternalRefId) = .empty,
+    types: std.ArrayList(entities.ModuleType) = .empty,
+
     /// Materialized layouts for resolved generic identities. A complete ModuleSG
     /// has exactly one entry for every resolved SemanticType.generic.
     generic_instances: std.ArrayList(type_shapes.GenericInstance(entities.Ids)) = .empty,
-
-    /// External type slots form the final tail of the logical ModuleTypeId
-    /// space, after compatibility types and canonical resolved types.
-    external_types: std.ArrayList(entities.ExternalRefId) = .empty,
 
     bindings: std.ArrayList(entities.Binding) = .empty,
     nodes: std.ArrayList(entities.ModuleNode) = .empty,
@@ -75,8 +75,9 @@ pub const Storage = struct {
         self.fields.deinit(allocator);
         self.variants.deinit(allocator);
         self.generic_arguments.deinit(allocator);
-        self.generic_instances.deinit(allocator);
         self.external_types.deinit(allocator);
+        self.types.deinit(allocator);
+        self.generic_instances.deinit(allocator);
         self.bindings.deinit(allocator);
         self.nodes.deinit(allocator);
         self.blocks.deinit(allocator);
@@ -118,8 +119,9 @@ pub const Storage = struct {
             self.fields.items.len * @sizeOf(entities.Field) +
             self.variants.items.len * @sizeOf(entities.ChoiceVariant) +
             self.generic_arguments.items.len * @sizeOf(entities.GenericArgument) +
-            self.generic_instances.items.len * @sizeOf(type_shapes.GenericInstance(entities.Ids)) +
             self.external_types.items.len * @sizeOf(entities.ExternalRefId) +
+            self.types.items.len * @sizeOf(entities.ModuleType) +
+            self.generic_instances.items.len * @sizeOf(type_shapes.GenericInstance(entities.Ids)) +
             self.bindings.items.len * @sizeOf(entities.Binding) +
             self.nodes.items.len * @sizeOf(entities.ModuleNode) +
             self.blocks.items.len * @sizeOf(entities.Block) +
@@ -151,24 +153,17 @@ pub const Storage = struct {
     }
 };
 
-test "module semantic storage extends compatibility domains with canonical tails" {
+test "module semantic storage accepts mixed canonical type states" {
     const allocator = std.testing.allocator;
     var storage: Storage = .{};
     defer storage.deinit(allocator);
 
     try std.testing.expect(!storage.local_semantics_complete);
-    storage.local_semantics_complete = true;
-    try storage.resolved_types.append(allocator, .{ .builtin = .Int32 });
-    try storage.generic_arguments.append(allocator, .{
-        .name = .{ .start = 0, .len = 1 },
-        .value = .{ .comptime_int = 4 },
-    });
-    try storage.templates.generic_parameters.append(allocator, .{
-        .name = .{ .start = 0, .len = 1 },
-        .kind = .type,
-    });
-
-    try std.testing.expect(storage.local_semantics_complete);
-    try std.testing.expectEqual(@as(usize, 1), storage.resolved_types.items.len);
-    try std.testing.expectEqual(@as(i64, 4), storage.generic_arguments.items[0].value.comptime_int);
+    try storage.types.append(allocator, .{ .resolved = .{ .builtin = .Int32 } });
+    try storage.types.append(allocator, .{ .external = @enumFromInt(0) });
+    try storage.types.append(allocator, .{ .resolved = .{ .pointer = .{
+        .child = @enumFromInt(1),
+        .mutability = .read_only,
+    } } });
+    try std.testing.expectEqual(@as(usize, 3), storage.types.items.len);
 }
