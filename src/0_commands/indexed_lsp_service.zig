@@ -418,7 +418,7 @@ pub const LanguageService = struct {
         try augmentTypeOccurrences(allocator.*, &index, &graph, &diagnostics.source_db, pipeline.syntax_files.items);
         index.sort();
 
-        const db = try diagnostics.source_db.clone(allocator.*);
+        var db = try diagnostics.source_db.clone(allocator.*);
         errdefer db.deinit(allocator.*);
         const tokens = try (pipeline.tokensForPath(doc.path) orelse token.View{}).clone(allocator.*);
         return .{ .source_db = db, .graph = graph, .index = index, .tokens = tokens };
