@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -31,21 +31,6 @@ jobs:
           sudo apt-get install -y llvm-21-dev clang-21
           zig version
           llvm-config-21 --version
-
-      - name: Apply pending LSP fix
-        if: github.actor != 'github-actions[bot]'
-        run: python3 .github/apply_compact_semantic_fixes_8.py
-
-      - name: Commit pending LSP fix
-        if: github.actor != 'github-actions[bot]'
-        run: |
-          if ! git diff --quiet; then
-            git config user.name github-actions[bot]
-            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git add src
-            git commit -m $'Keep indexed LSP navigation across safety errors\n\nTests:\n- zig build test'
-            git push
-          fi
 
       - name: Run test suite
         run: zig build test
