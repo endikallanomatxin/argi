@@ -117,8 +117,7 @@ const Context = struct {
             .address_of, .address_of_mut => self.lowerAddress(node),
             .dereference => self.lowerDereference(node, expected),
             .reach_directive => self.lowerReach(node),
-            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type,
-            .array_type, .generic_type_instantiation, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
+            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .generic_type_instantiation, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
             else => self.pendingFallback(node, expected),
         };
     }
@@ -127,11 +126,11 @@ const Context = struct {
         const literal = self.tree.literal(node).?;
         return switch (self.tree.tokenContent(literal.token).literal) {
             .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => blk: {
-const value = try literals.integer(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
+                const value = try literals.integer(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
                 break :blk self.resolved(node, try self.builtin(.Int32), .{ .int_literal = value });
             },
             .regular_float_literal, .scientific_float_literal => blk: {
-const value = try literals.float(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
+                const value = try literals.float(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
                 break :blk self.resolved(node, try self.builtin(.Float32), .{ .float_literal = value });
             },
             .bool_literal => |value| self.resolved(node, try self.builtin(.Bool), .{ .bool_literal = value }),
@@ -160,7 +159,8 @@ const value = try literals.float(self.tree.tokenTextFromSource(self.source, lite
             .kind = .function,
             .module_path = if (call.module_qualifier) |token_index|
                 try self.writer.addString(self.tree.tokenTextFromSource(self.source, token_index))
-            else null,
+            else
+                null,
             .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)),
             .source = self.sourceRef(node),
         });
@@ -181,7 +181,8 @@ const value = try literals.float(self.tree.tokenTextFromSource(self.source, lite
             const value = try self.lowerExpr(field.value, null);
             const name = if (field.name_token) |token_index|
                 try self.writer.addString(self.tree.tokenTextFromSource(self.source, token_index))
-            else try self.writer.addString("");
+            else
+                try self.writer.addString("");
             try self.graph.semantic.value_fields.append(self.allocator, .{ .name = name, .value = value.node });
         }
         const ty = try self.builtin(.Any);
@@ -228,7 +229,9 @@ const value = try literals.float(self.tree.tokenTextFromSource(self.source, lite
         const value = try self.lowerExpr(access.value, null);
         const index = try self.lowerExpr(access.index, try self.builtin(.Int32));
         return self.pending(.{ .resolve_index = .{
-            .node = self.nextNodeId(), .value = value.node, .index = index.node,
+            .node = self.nextNodeId(),
+            .value = value.node,
+            .index = index.node,
         } }, expected orelse try self.builtin(.Any));
     }
 
@@ -237,11 +240,18 @@ const value = try literals.float(self.tree.tokenTextFromSource(self.source, lite
         const left = try self.lowerExpr(operation.lhs, null);
         const right = try self.lowerExpr(operation.rhs, left.ty);
         const operator: tok.BinaryOperator = switch (self.tree.tag(node)) {
-            .binary_add => .addition, .binary_subtract => .subtraction, .binary_multiply => .multiplication,
-            .binary_divide => .division, .binary_modulo => .modulo, else => unreachable,
+            .binary_add => .addition,
+            .binary_subtract => .subtraction,
+            .binary_multiply => .multiplication,
+            .binary_divide => .division,
+            .binary_modulo => .modulo,
+            else => unreachable,
         };
         return self.pending(.{ .resolve_binary = .{
-            .node = self.nextNodeId(), .operator = operator, .left = left.node, .right = right.node,
+            .node = self.nextNodeId(),
+            .operator = operator,
+            .left = left.node,
+            .right = right.node,
         } }, expected orelse left.ty);
     }
 
@@ -250,13 +260,19 @@ const value = try literals.float(self.tree.tokenTextFromSource(self.source, lite
         const left = try self.lowerExpr(operation.lhs, null);
         const right = try self.lowerExpr(operation.rhs, left.ty);
         const operator: tok.ComparisonOperator = switch (self.tree.tag(node)) {
-            .compare_equal => .equal, .compare_not_equal => .not_equal,
-            .compare_less => .less_than, .compare_greater => .greater_than,
-            .compare_less_equal => .less_than_or_equal, .compare_greater_equal => .greater_than_or_equal,
+            .compare_equal => .equal,
+            .compare_not_equal => .not_equal,
+            .compare_less => .less_than,
+            .compare_greater => .greater_than,
+            .compare_less_equal => .less_than_or_equal,
+            .compare_greater_equal => .greater_than_or_equal,
             else => unreachable,
         };
         return self.pending(.{ .resolve_comparison = .{
-            .node = self.nextNodeId(), .operator = operator, .left = left.node, .right = right.node,
+            .node = self.nextNodeId(),
+            .operator = operator,
+            .left = left.node,
+            .right = right.node,
         } }, try self.builtin(.Bool));
     }
 
@@ -267,7 +283,8 @@ const value = try literals.float(self.tree.tokenTextFromSource(self.source, lite
         const right = try self.lowerExpr(operation.rhs, bool_ty);
         return self.resolved(node, bool_ty, .{ .logical_operation = .{
             .operator = if (self.tree.tag(node) == .logical_and) .and_ else .or_,
-            .left = left.node, .right = right.node,
+            .left = left.node,
+            .right = right.node,
         } });
     }
 
@@ -290,8 +307,7 @@ const value = try literals.float(self.tree.tokenTextFromSource(self.source, lite
         for (directive.alternatives) |alt_node| {
             const alt = self.tree.reachAlternative(alt_node).?;
             const seg_start: u32 = @intCast(self.graph.semantic.reach_segments.items.len);
-            for (alt.segments) |segment| try self.graph.semantic.reach_segments.append(self.allocator,
-                try self.writer.addString(self.tree.tokenTextFromSource(self.source, self.tree.mainToken(segment))));
+            for (alt.segments) |segment| try self.graph.semantic.reach_segments.append(self.allocator, try self.writer.addString(self.tree.tokenTextFromSource(self.source, self.tree.mainToken(segment))));
             try self.graph.semantic.reach_alternatives.append(self.allocator, .{
                 .segments = .{ .start = seg_start, .len = @intCast(alt.segments.len) },
             });
@@ -321,8 +337,10 @@ const value = try literals.float(self.tree.tokenTextFromSource(self.source, lite
     fn pendingNamed(self: *Context, node: syn.NodeIndex, kind: entities.PendingExpressionKind, text: []const u8, expected: ?entities.ModuleTypeId) !Lowered {
         _ = node;
         return self.pending(.{ .resolve_expression = .{
-            .node = self.nextNodeId(), .kind = kind,
-            .name = try self.writer.addString(text), .expected_type = expected,
+            .node = self.nextNodeId(),
+            .kind = kind,
+            .name = try self.writer.addString(text),
+            .expected_type = expected,
         } }, expected orelse try self.builtin(.Any));
     }
 
@@ -337,8 +355,11 @@ const value = try literals.float(self.tree.tokenTextFromSource(self.source, lite
 
     fn lowerType(self: *Context, node: syn.NodeIndex) !entities.ModuleTypeId {
         var lowerer = type_lowerer.Context{
-            .graph = self.graph, .writer = &self.writer, .file_index = self.file_index,
-            .tree = self.tree, .source = self.source,
+            .graph = self.graph,
+            .writer = &self.writer,
+            .file_index = self.file_index,
+            .tree = self.tree,
+            .source = self.source,
         };
         return lowerer.lower(node);
     }
@@ -360,7 +381,10 @@ const value = try literals.float(self.tree.tokenTextFromSource(self.source, lite
     fn isAny(self: *Context, id: entities.ModuleTypeId) bool {
         const value = views.typeView(self.graph, id) catch return false;
         return switch (value) {
-            .resolved => |resolved_type| switch (resolved_type) { .builtin => |builtin_value| builtin_value == .Any, else => false },
+            .resolved => |resolved_type| switch (resolved_type) {
+                .builtin => |builtin_value| builtin_value == .Any,
+                else => false,
+            },
             .external => false,
         };
     }

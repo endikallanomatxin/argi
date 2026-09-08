@@ -301,6 +301,7 @@ pub const Resolver = struct {
                     .char_literal => |value| .{ .char_literal = value },
                     .bool_literal => |value| .{ .bool_literal = value },
                     .string_literal => |value| .{ .string_literal = try self.copyString(value) },
+                    .type_literal => |value| .{ .type_literal = try self.resolver.generics.instantiateTemplateType(self.module_index, value, self.substitutions, null) },
                     .break_statement => .break_statement,
                     .continue_statement => .continue_statement,
                     else => return error.UnsupportedResolvedTemplateNode,
@@ -320,7 +321,8 @@ pub const Resolver = struct {
                 const name = try self.copyString(field.name);
                 try values.append(self.resolver.allocator, .{ .name = name, .value = value });
                 try fields.append(self.resolver.allocator, .{
-                    .name = name, .ty = self.resolver.graph.nodes.items[@intFromEnum(value)].ty orelse return error.MissingTemplateValueType,
+                    .name = name,
+                    .ty = self.resolver.graph.nodes.items[@intFromEnum(value)].ty orelse return error.MissingTemplateValueType,
                     .source = self.resolver.sourceFor(self.module_index, node.source),
                 });
             }
@@ -382,6 +384,7 @@ pub const Resolver = struct {
                 .logical => self.resolveLogical(operands.items, value.source, value.aux),
                 .index => self.resolveIndex(operands.items, value.source, false),
                 .index_store => self.resolveIndex(operands.items, value.source, true),
+                .field_access => if (value.name) |name| self.resolveField(operands.items[0], name, value.source) else error.InvalidTemplateFieldAccess,
                 .choice_payload => if (value.name) |name| self.resolveField(operands.items[0], name, value.source) else error.InvalidTemplateChoicePayload,
                 .return_statement => self.resolveReturn(operands.items, value.source),
                 .if_statement => self.resolveIf(operands.items, value.source),
@@ -390,9 +393,22 @@ pub const Resolver = struct {
                 .dereference => self.resolveDereference(operands.items, value.source),
                 .pointer_store => self.resolvePointerStore(operands.items, value.source),
                 .pipe => if (operands.items.len != 0) self.resolver.graph.nodes.items[@intFromEnum(operands.items[operands.items.len - 1])] else error.InvalidTemplatePipe,
-                .struct_value, .list_value, .choice_literal, .nullable_test, .unwrap_or, .unwrap_or_do,
-                .error_propagation, .error_context, .for_each, .match, .match_case,
-                .defer_value, .keep_binding, .type_initializer, .explicit_cast, .other,
+                .struct_value,
+                .list_value,
+                .choice_literal,
+                .nullable_test,
+                .unwrap_or,
+                .unwrap_or_do,
+                .error_propagation,
+                .error_context,
+                .for_each,
+                .match,
+                .match_case,
+                .defer_value,
+                .keep_binding,
+                .type_initializer,
+                .explicit_cast,
+                .other,
                 => error.TemplateExpressionRequiresGlobalResolver,
             };
         }
@@ -405,6 +421,10 @@ pub const Resolver = struct {
             input: global_sg.GlobalNodeId,
             source: primitives.SourceRef,
         ) !global_sg.Node {
+            if (module_path == null and std.mem.eql(u8, name, "cast"))
+                return self.makeExplicitCast(arguments, input, source);
+            if (module_path == null and std.mem.eql(u8, name, "size_of"))
+                return self.makeSizeOf(input, source);
             const declaration = self.findFunctionDeclaration(name, module_path) orelse return error.UnknownTemplateFunction;
             const function = if (arguments.len != 0 or self.resolver.findTemplate(declaration) != null)
                 try self.resolver.instantiate(declaration, arguments)
@@ -414,6 +434,68 @@ pub const Resolver = struct {
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = try self.resolver.core.functionOutputType(function),
                 .content = .{ .function_call = .{ .callee = function, .input = input } },
+            };
+        }
+
+        fn makeExplicitCast(
+            self: *InstanceContext,
+            arguments: primitives.Range(global_sg.GlobalGenericArgId),
+            input: global_sg.GlobalNodeId,
+            source: primitives.SourceRef,
+        ) !global_sg.Node {
+            var target_type: ?global_sg.GlobalTypeId = null;
+            for (self.resolver.graph.generic_arguments.items[arguments.start..][0..arguments.len]) |argument| {
+                if (!std.mem.eql(u8, self.resolver.graph.text(argument.name), "to")) continue;
+                target_type = switch (argument.value) {
+                    .type => |ty| ty,
+                    .comptime_int => return error.CastTargetMustBeType,
+                };
+                break;
+            }
+            const literal = switch (self.resolver.graph.nodes.items[@intFromEnum(input)].content) {
+                .struct_value_literal => |value| value,
+                else => return error.CastInputMustBeStruct,
+            };
+            var cast_value: ?global_sg.GlobalNodeId = null;
+            for (self.resolver.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
+                if (std.mem.eql(u8, self.resolver.graph.text(field.name), "value")) {
+                    cast_value = field.value;
+                    break;
+                }
+            }
+            return .{
+                .source = self.resolver.sourceFor(self.module_index, source),
+                .ty = target_type orelse return error.CastTargetMissing,
+                .content = .{ .explicit_cast = .{
+                    .value = cast_value orelse return error.CastValueMissing,
+                    .target_type = target_type.?,
+                } },
+            };
+        }
+
+        fn makeSizeOf(
+            self: *InstanceContext,
+            input: global_sg.GlobalNodeId,
+            source: primitives.SourceRef,
+        ) !global_sg.Node {
+            const literal = switch (self.resolver.graph.nodes.items[@intFromEnum(input)].content) {
+                .struct_value_literal => |value| value,
+                else => return error.SizeOfInputMustBeStruct,
+            };
+            var measured_type: ?global_sg.GlobalTypeId = null;
+            for (self.resolver.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
+                if (!std.mem.eql(u8, self.resolver.graph.text(field.name), "type")) continue;
+                measured_type = switch (self.resolver.graph.nodes.items[@intFromEnum(field.value)].content) {
+                    .type_literal => |ty| ty,
+                    else => return error.SizeOfArgumentMustBeType,
+                };
+                break;
+            }
+            const size = try global_types.sizeOf(self.resolver.graph, measured_type orelse return error.SizeOfTypeMissing);
+            return .{
+                .source = self.resolver.sourceFor(self.module_index, source),
+                .ty = try self.resolver.generics.internType(.{ .builtin = .UIntNative }),
+                .content = .{ .int_literal = std.math.cast(i64, size) orelse return error.TypeSizeOverflow },
             };
         }
 
@@ -503,6 +585,7 @@ pub const Resolver = struct {
         fn resolveField(self: *InstanceContext, value: global_sg.GlobalNodeId, field_name: primitives.StringRange, source: primitives.SourceRef) !global_sg.Node {
             const ty = self.resolver.graph.nodes.items[@intFromEnum(value)].ty orelse return error.TemplateFieldOnUntypedValue;
             const name = self.resolver.modules[self.module_index].text(field_name);
+            _ = try self.resolver.generics.ensureGenericInstance(ty);
             const hit = global_types.findField(self.resolver.graph, ty, name) orelse return error.UnknownTemplateField;
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
@@ -537,8 +620,14 @@ pub const Resolver = struct {
 
         fn resolveIf(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {
             if (operands.len < 2) return error.InvalidTemplateIf;
-            const then_block = switch (self.resolver.graph.nodes.items[@intFromEnum(operands[1])].content) { .code_block => |block| block, else => return error.TemplateIfBlockExpected };
-            const else_block = if (operands.len > 2) switch (self.resolver.graph.nodes.items[@intFromEnum(operands[2])].content) { .code_block => |block| block, else => return error.TemplateIfBlockExpected } else null;
+            const then_block = switch (self.resolver.graph.nodes.items[@intFromEnum(operands[1])].content) {
+                .code_block => |block| block,
+                else => return error.TemplateIfBlockExpected,
+            };
+            const else_block = if (operands.len > 2) switch (self.resolver.graph.nodes.items[@intFromEnum(operands[2])].content) {
+                .code_block => |block| block,
+                else => return error.TemplateIfBlockExpected,
+            } else null;
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = try self.resolver.generics.internType(.{ .builtin = .Void }),
@@ -548,7 +637,10 @@ pub const Resolver = struct {
 
         fn resolveWhile(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {
             if (operands.len != 2) return error.InvalidTemplateWhile;
-            const body = switch (self.resolver.graph.nodes.items[@intFromEnum(operands[1])].content) { .code_block => |block| block, else => return error.TemplateWhileBlockExpected };
+            const body = switch (self.resolver.graph.nodes.items[@intFromEnum(operands[1])].content) {
+                .code_block => |block| block,
+                else => return error.TemplateWhileBlockExpected,
+            };
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = try self.resolver.generics.internType(.{ .builtin = .Void }),
@@ -567,7 +659,10 @@ pub const Resolver = struct {
         fn resolveDereference(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {
             if (operands.len != 1) return error.InvalidTemplateDereference;
             const pointer_ty = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.TemplateDereferenceUntyped;
-            const child = switch (self.resolver.graph.types.items[@intFromEnum(pointer_ty)]) { .pointer => |pointer| pointer.child, else => return error.TemplateDereferenceNonPointer };
+            const child = switch (self.resolver.graph.types.items[@intFromEnum(pointer_ty)]) {
+                .pointer => |pointer| pointer.child,
+                else => return error.TemplateDereferenceNonPointer,
+            };
             return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = child, .content = .{ .dereference = .{ .pointer = operands[0], .ty = child, .pointer_type = pointer_ty } } };
         }
 
@@ -600,8 +695,14 @@ fn argumentRangesEqual(
         const right = graph.generic_arguments.items[b.start + @as(u32, @intCast(offset))];
         if (!std.mem.eql(u8, graph.text(left.name), graph.text(right.name))) return false;
         switch (left.value) {
-            .type => |left_ty| switch (right.value) { .type => |right_ty| if (left_ty != right_ty) return false, else => return false },
-            .comptime_int => |left_int| switch (right.value) { .comptime_int => |right_int| if (left_int != right_int) return false, else => return false },
+            .type => |left_ty| switch (right.value) {
+                .type => |right_ty| if (left_ty != right_ty) return false,
+                else => return false,
+            },
+            .comptime_int => |left_int| switch (right.value) {
+                .comptime_int => |right_int| if (left_int != right_int) return false,
+                else => return false,
+            },
         }
     }
     return true;

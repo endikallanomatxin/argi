@@ -175,11 +175,11 @@ const Context = struct {
         const value = self.tree.tokenContent(literal.token).literal;
         return switch (value) {
             .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => blk: {
-const parsed = try literals.integer(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
+                const parsed = try literals.integer(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
                 break :blk try self.resolved(node, try self.builtin(.Int32), .{ .int_literal = parsed });
             },
             .regular_float_literal, .scientific_float_literal => blk: {
-const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
+                const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
                 break :blk try self.resolved(node, try self.builtin(.Float32), .{ .float_literal = parsed });
             },
             .bool_literal => |item| self.resolved(node, try self.builtin(.Bool), .{ .bool_literal = item }),
@@ -227,8 +227,11 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
         const value = try self.lowerNode(assignment.value, expected);
         const ops = try self.writer.appendNodeRefs(&.{value.node});
         return self.pending(node, .{ .resolve_expression = .{
-            .node = self.nextNodeId(), .kind = .unknown_identifier, .operands = ops,
-            .name = try self.writer.addString(name_text), .expected_type = expected,
+            .node = self.nextNodeId(),
+            .kind = .unknown_identifier,
+            .operands = ops,
+            .name = try self.writer.addString(name_text),
+            .expected_type = expected,
         } }, expected orelse value.ty);
     }
 
@@ -246,7 +249,9 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
         const value = try self.lowerNode(op.lhs, null);
         const fallback = try self.lowerNode(op.rhs, expected);
         return self.pending(node, .{ .resolve_nullable_unwrap = .{
-            .node = self.nextNodeId(), .nullable_value = value.node, .fallback_value = fallback.node,
+            .node = self.nextNodeId(),
+            .nullable_value = value.node,
+            .fallback_value = fallback.node,
         } }, expected orelse fallback.ty);
     }
 
@@ -265,7 +270,10 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
             .source = self.sourceRef(node),
         });
         return self.pending(node, .{ .resolve_call = .{
-            .node = self.nextNodeId(), .callee = external, .input = input.node, .expected_type = expected,
+            .node = self.nextNodeId(),
+            .callee = external,
+            .input = input.node,
+            .expected_type = expected,
         } }, expected orelse try self.builtin(.Any));
     }
 
@@ -316,10 +324,16 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
         const payload = if (literal.payload) |payload_node| (try self.lowerNode(payload_node, null)).node else null;
         const name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, literal.name_token));
         const option = try self.writer.addExternalRef(.{
-            .kind = .choice_option, .module_path = null, .name = name, .source = self.sourceRef(node),
+            .kind = .choice_option,
+            .module_path = null,
+            .name = name,
+            .source = self.sourceRef(node),
         });
         return self.pending(node, .{ .resolve_choice_literal = .{
-            .node = self.nextNodeId(), .option = option, .payload = payload, .expected_type = expected,
+            .node = self.nextNodeId(),
+            .option = option,
+            .payload = payload,
+            .expected_type = expected,
         } }, expected orelse try self.builtin(.Any));
     }
 
@@ -327,7 +341,8 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
         const access = self.tree.structFieldAccess(node).?;
         const value = try self.lowerNode(access.value, null);
         return self.pending(node, .{ .resolve_field = .{
-            .node = self.nextNodeId(), .value = value.node,
+            .node = self.nextNodeId(),
+            .value = value.node,
             .field_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.field_token)),
         } }, expected orelse try self.builtin(.Any));
     }
@@ -336,7 +351,8 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
         const access = self.tree.choicePayloadAccess(node).?;
         const value = try self.lowerNode(access.value, null);
         return self.pending(node, .{ .resolve_choice_payload = .{
-            .node = self.nextNodeId(), .value = value.node,
+            .node = self.nextNodeId(),
+            .value = value.node,
             .option_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.variant_token)),
         } }, expected orelse try self.builtin(.Any));
     }
@@ -344,7 +360,9 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
     fn lowerErrorPropagation(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId, context: ?entities.ModuleNodeId) !Lowered {
         const child = try self.lowerNode(self.tree.unaryOperand(node).?, null);
         return self.pending(node, .{ .resolve_error_propagation = .{
-            .node = self.nextNodeId(), .errable_value = child.node, .context = context,
+            .node = self.nextNodeId(),
+            .errable_value = child.node,
+            .context = context,
         } }, expected orelse try self.builtin(.Any));
     }
 
@@ -353,7 +371,9 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
         const value = try self.lowerNode(op.lhs, null);
         const context = try self.lowerNode(op.rhs, null);
         return self.pending(node, .{ .resolve_error_propagation = .{
-            .node = self.nextNodeId(), .errable_value = value.node, .context = context.node,
+            .node = self.nextNodeId(),
+            .errable_value = value.node,
+            .context = context.node,
         } }, expected orelse try self.builtin(.Any));
     }
 
@@ -367,7 +387,10 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
         const value = try self.lowerNode(access.value, null);
         const index = try self.lowerNode(access.index, try self.builtin(.Int32));
         return self.pending(node, .{ .resolve_index = .{
-            .node = self.nextNodeId(), .value = value.node, .index = index.node, .store_value = store,
+            .node = self.nextNodeId(),
+            .value = value.node,
+            .index = index.node,
+            .store_value = store,
         } }, expected orelse try self.builtin(.Any));
     }
 
@@ -381,7 +404,10 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
         const index = try self.lowerNode(target.index, try self.builtin(.Int32));
         const value = try self.lowerNode(assignment.value, expected);
         return self.pending(node, .{ .resolve_index = .{
-            .node = self.nextNodeId(), .value = collection.node, .index = index.node, .store_value = value.node,
+            .node = self.nextNodeId(),
+            .value = collection.node,
+            .index = index.node,
+            .store_value = value.node,
         } }, expected orelse value.ty);
     }
 
@@ -400,12 +426,18 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
         const lhs = try self.lowerNode(op.lhs, null);
         const rhs = try self.lowerNode(op.rhs, lhs.ty);
         const operator: tok.BinaryOperator = switch (self.tree.tag(node)) {
-            .binary_add => .addition, .binary_subtract => .subtraction,
-            .binary_multiply => .multiplication, .binary_divide => .division, .binary_modulo => .modulo,
+            .binary_add => .addition,
+            .binary_subtract => .subtraction,
+            .binary_multiply => .multiplication,
+            .binary_divide => .division,
+            .binary_modulo => .modulo,
             else => unreachable,
         };
         return self.pending(node, .{ .resolve_binary = .{
-            .node = self.nextNodeId(), .operator = operator, .left = lhs.node, .right = rhs.node,
+            .node = self.nextNodeId(),
+            .operator = operator,
+            .left = lhs.node,
+            .right = rhs.node,
         } }, expected orelse lhs.ty);
     }
 
@@ -414,13 +446,19 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
         const lhs = try self.lowerNode(op.lhs, null);
         const rhs = try self.lowerNode(op.rhs, lhs.ty);
         const operator: tok.ComparisonOperator = switch (self.tree.tag(node)) {
-            .compare_equal => .equal, .compare_not_equal => .not_equal,
-            .compare_less => .less_than, .compare_greater => .greater_than,
-            .compare_less_equal => .less_than_or_equal, .compare_greater_equal => .greater_than_or_equal,
+            .compare_equal => .equal,
+            .compare_not_equal => .not_equal,
+            .compare_less => .less_than,
+            .compare_greater => .greater_than,
+            .compare_less_equal => .less_than_or_equal,
+            .compare_greater_equal => .greater_than_or_equal,
             else => unreachable,
         };
         return self.pending(node, .{ .resolve_comparison = .{
-            .node = self.nextNodeId(), .operator = operator, .left = lhs.node, .right = rhs.node,
+            .node = self.nextNodeId(),
+            .operator = operator,
+            .left = lhs.node,
+            .right = rhs.node,
         } }, try self.builtin(.Bool));
     }
 
@@ -431,7 +469,8 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
         const rhs = try self.lowerNode(op.rhs, bool_ty);
         return self.resolved(node, bool_ty, .{ .logical_operation = .{
             .operator = if (self.tree.tag(node) == .logical_and) .and_ else .or_,
-            .left = lhs.node, .right = rhs.node,
+            .left = lhs.node,
+            .right = rhs.node,
         } });
     }
 
@@ -441,7 +480,9 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
         const then_block = try self.lowerBlock(statement.then_block);
         const else_block = if (statement.else_block) |child| try self.lowerBlock(child) else null;
         return self.resolved(node, try self.builtin(.Void), .{ .if_statement = .{
-            .condition = condition.node, .then_block = then_block, .else_block = else_block,
+            .condition = condition.node,
+            .then_block = then_block,
+            .else_block = else_block,
         } });
     }
 
@@ -457,15 +498,21 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
         const iterable = try self.lowerNode(statement.iterable, null);
         const name_text = self.tree.tokenTextFromSource(self.source, statement.name_token);
         const binding = try self.writer.addBinding(.{
-            .name = try self.writer.addString(name_text), .source = self.sourceRef(node),
-            .ty = try self.builtin(.Any), .mutability = if (statement.mode == .mut_borrow) .variable else .constant,
+            .name = try self.writer.addString(name_text),
+            .source = self.sourceRef(node),
+            .ty = try self.builtin(.Any),
+            .mutability = if (statement.mode == .mut_borrow) .variable else .constant,
         });
         try self.pushScope();
         try self.bindings.append(.{ .name = name_text, .id = binding });
         const body = try self.lowerBlock(statement.body);
         self.popScope();
         return self.pending(node, .{ .resolve_for_each = .{
-            .node = self.nextNodeId(), .binding = binding, .iterable = iterable.node, .body = body, .mode = statement.mode,
+            .node = self.nextNodeId(),
+            .binding = binding,
+            .iterable = iterable.node,
+            .body = body,
+            .mode = statement.mode,
         } }, try self.builtin(.Void));
     }
 
@@ -478,15 +525,20 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
             const case = self.tree.matchCase(case_node).?;
             const option_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, case.variant_token));
             const option = try self.writer.addExternalRef(.{
-                .kind = .choice_option, .module_path = null, .name = option_name, .source = self.sourceRef(case_node),
+                .kind = .choice_option,
+                .module_path = null,
+                .name = option_name,
+                .source = self.sourceRef(case_node),
             });
             var payload_binding: ?entities.ModuleBindingId = null;
             try self.pushScope();
             if (case.payload_name) |token_index| {
                 const text = self.tree.tokenTextFromSource(self.source, token_index);
                 const id = try self.writer.addBinding(.{
-                    .name = try self.writer.addString(text), .source = self.sourceRef(case_node),
-                    .ty = try self.builtin(.Any), .mutability = if (case.mode == .mut_borrow) .variable else .constant,
+                    .name = try self.writer.addString(text),
+                    .source = self.sourceRef(case_node),
+                    .ty = try self.builtin(.Any),
+                    .mutability = if (case.mode == .mut_borrow) .variable else .constant,
                 });
                 payload_binding = id;
                 try self.bindings.append(.{ .name = text, .id = id });
@@ -495,13 +547,19 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
             self.popScope();
             const case_id = self.nextNodeId();
             const pending_id = try self.writer.addPendingOperation(.{ .resolve_match_case = .{
-                .node = case_id, .option = option, .payload_binding = payload_binding, .body = body, .mode = case.mode,
+                .node = case_id,
+                .option = option,
+                .payload_binding = payload_binding,
+                .body = body,
+                .mode = case.mode,
             } });
             const stored = try self.writer.addNode(.{ .pending = pending_id });
             try case_nodes.append(stored);
         }
         return self.pending(node, .{ .resolve_match = .{
-            .node = self.nextNodeId(), .value = value.node, .cases = try self.writer.appendNodeRefs(case_nodes.items),
+            .node = self.nextNodeId(),
+            .value = value.node,
+            .cases = try self.writer.appendNodeRefs(case_nodes.items),
         } }, try self.builtin(.Void));
     }
 
@@ -525,8 +583,7 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
             const alt = self.tree.reachAlternative(alt_node).?;
             const seg_start: u32 = @intCast(self.graph.semantic.reach_segments.items.len);
             for (alt.segments) |segment| {
-                try self.graph.semantic.reach_segments.append(self.allocator,
-                    try self.writer.addString(self.tree.tokenTextFromSource(self.source, self.tree.mainToken(segment))));
+                try self.graph.semantic.reach_segments.append(self.allocator, try self.writer.addString(self.tree.tokenTextFromSource(self.source, self.tree.mainToken(segment))));
             }
             try self.graph.semantic.reach_alternatives.append(self.allocator, .{
                 .segments = .{ .start = seg_start, .len = @intCast(alt.segments.len) },
@@ -571,14 +628,20 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
 
     fn pendingLeaf(self: *Context, node: syn.NodeIndex, kind: entities.PendingExpressionKind, name: ?primitives.StringRange, expected: ?entities.ModuleTypeId) !Lowered {
         return self.pending(node, .{ .resolve_expression = .{
-            .node = self.nextNodeId(), .kind = kind, .name = name, .expected_type = expected,
+            .node = self.nextNodeId(),
+            .kind = kind,
+            .name = name,
+            .expected_type = expected,
         } }, expected orelse try self.builtin(.Any));
     }
 
     fn pendingFallback(self: *Context, node: syn.NodeIndex, kind: entities.PendingExpressionKind, operands: []const entities.ModuleNodeId, name: ?primitives.StringRange, expected: ?entities.ModuleTypeId) !Lowered {
         return self.pending(node, .{ .resolve_expression = .{
-            .node = self.nextNodeId(), .kind = kind, .operands = try self.writer.appendNodeRefs(operands),
-            .name = name, .expected_type = expected,
+            .node = self.nextNodeId(),
+            .kind = kind,
+            .operands = try self.writer.appendNodeRefs(operands),
+            .name = name,
+            .expected_type = expected,
         } }, expected orelse try self.builtin(.Any));
     }
 
@@ -598,8 +661,11 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
 
     fn lowerType(self: *Context, node: syn.NodeIndex) !entities.ModuleTypeId {
         var lowerer = type_lowerer.Context{
-            .graph = self.graph, .writer = &self.writer, .file_index = self.file_index,
-            .tree = self.tree, .source = self.source,
+            .graph = self.graph,
+            .writer = &self.writer,
+            .file_index = self.file_index,
+            .tree = self.tree,
+            .source = self.source,
         };
         return lowerer.lower(node);
     }
@@ -626,7 +692,9 @@ const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, lit
         return @enumFromInt(@as(u32, @intCast(self.graph.semantic.nodes.items.len)));
     }
 
-    fn pushScope(self: *Context) !void { try self.scope_marks.append(self.bindings.items.len); }
+    fn pushScope(self: *Context) !void {
+        try self.scope_marks.append(self.bindings.items.len);
+    }
     fn popScope(self: *Context) void {
         const mark = self.scope_marks.pop().?;
         self.bindings.shrinkRetainingCapacity(mark);

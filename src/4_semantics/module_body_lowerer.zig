@@ -278,13 +278,13 @@ const Context = struct {
         const content = self.tree.tokenContent(literal.token).literal;
         return switch (content) {
             .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => blk: {
-const value = try literals.integer(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
+                const value = try literals.integer(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
                 const ty = try self.builtinType(.Int32);
                 const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = ty, .content = .{ .int_literal = value } });
                 break :blk .{ .node = id, .ty = ty };
             },
             .regular_float_literal, .scientific_float_literal => blk: {
-const value = try literals.float(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
+                const value = try literals.float(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
                 const ty = try self.builtinType(.Float32);
                 const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = ty, .content = .{ .float_literal = value } });
                 break :blk .{ .node = id, .ty = ty };
