@@ -126,7 +126,7 @@ const Context = struct {
             if (hasFunctionSemantic(self.graph, function_id)) continue;
             const declaration = self.graph.declarations.items[@intFromEnum(interface.declaration)];
             self.file_index = declaration.module_file_index;
-            const input = self.files[self.file_index];
+            const input = self.files[@intCast(self.file_index)];
             self.tree = input.tree;
             self.source = input.source;
             const function = switch (declaration.kind) {
@@ -139,8 +139,8 @@ const Context = struct {
             const checkpoint = Checkpoint.capture(self.graph);
             self.bindings.clearRetainingCapacity();
             self.scope_marks.clearRetainingCapacity();
-            self.pushScope() catch |err| return err;
-            const lowered = self.lowerOneFunction(function_id, interface, function, declaration.kind == .test_function) catch |err| switch (err) {
+            try self.pushScope();
+            self.lowerOneFunction(function_id, interface, function, declaration.kind == .test_function) catch |err| switch (err) {
                 error.UnsupportedLocalSemantic,
                 error.UnresolvedLocalType,
                 error.CannotInferLocalType,
@@ -151,7 +151,6 @@ const Context = struct {
                 },
                 else => return err,
             };
-            _ = lowered;
             self.popScope();
             result.lowered_functions += 1;
         }
@@ -176,7 +175,10 @@ const Context = struct {
         const output_range = try self.writer.appendBindingRefs(output_ids.items);
 
         const body = if (declaration.body) |body_node| try self.lowerBlock(body_node) else null;
-        const scope_bindings = try self.writer.appendBindingRefs(self.currentScopeBindings());
+        var scope_ids = std.array_list.Managed(entities.ModuleBindingId).init(self.allocator);
+        defer scope_ids.deinit();
+        for (self.bindings.items) |binding| try scope_ids.append(binding.id);
+        const scope_bindings = try self.writer.appendBindingRefs(scope_ids.items);
         try self.graph.semantic.scopes.append(self.allocator, .{
             .parent = .none,
             .bindings = scope_bindings,
@@ -200,7 +202,9 @@ const Context = struct {
         mutability: syn.Mutability,
         ids: *std.array_list.Managed(entities.ModuleBindingId),
     ) !void {
-        for (self.graph.fields.items[range.start..][0..range.len]) |field| {
+        const start: usize = range.start;
+        const count: usize = range.len;
+        for (self.graph.fields.items[start..][0..count]) |field| {
             const id = try self.writer.addBinding(.{
                 .name = field.name,
                 .source = .{ .file_index = field.module_file_index, .offset = field.source_offset },
@@ -366,15 +370,17 @@ const Context = struct {
     fn lowerReturn(self: *Context, node: syn.NodeIndex) !Lowered {
         const ret = self.tree.returnStatement(node) orelse return error.UnsupportedLocalSemantic;
         const value = if (ret.value) |value_node| try self.lowerNode(value_node, null) else null;
+        const void_ty = try self.builtinType(.Void);
+        const result_ty: ?entities.ModuleTypeId = if (value) |resolved| resolved.ty else void_ty;
         const id = try self.writer.addResolvedNode(.{
             .source = self.sourceRef(node),
-            .ty = if (value) |resolved| resolved.ty else try self.builtinType(.Void),
+            .ty = result_ty,
             .content = .{ .return_statement = .{
                 .expression = if (value) |resolved| resolved.node else null,
                 .cleanup = .{ .start = @intCast(self.graph.semantic.node_refs.items.len), .len = 0 },
             } },
         });
-        return .{ .node = id, .ty = if (value) |resolved| resolved.ty else try self.builtinType(.Void) };
+        return .{ .node = id, .ty = result_ty };
     }
 
     fn lowerIf(self: *Context, node: syn.NodeIndex) !Lowered {
@@ -419,7 +425,7 @@ const Context = struct {
         const operation = self.tree.binaryOperation(node) orelse return error.UnsupportedLocalSemantic;
         const lhs = try self.lowerNode(operation.lhs, null);
         const rhs = try self.lowerNode(operation.rhs, lhs.ty);
-        const ty = lhs.ty orelse rhs.ty;
+        const ty = lhs.ty orelse rhs.ty orelse return error.CannotInferLocalType;
         const operator: tok.BinaryOperator = switch (self.tree.tag(node)) {
             .binary_add => .addition,
             .binary_subtract => .subtraction,
@@ -606,7 +612,7 @@ const Context = struct {
     fn lowerDereference(self: *Context, node: syn.NodeIndex) !Lowered {
         const pointer = try self.lowerNode(self.tree.unaryOperand(node).?, null);
         const pointer_ty = pointer.ty orelse return error.CannotInferLocalType;
-        const child_ty = try self.pointerChild(pointer_ty) orelse return error.UnresolvedLocalType;
+        const child_ty = (try self.pointerChild(pointer_ty)) orelse return error.UnresolvedLocalType;
         const id = try self.writer.addResolvedNode(.{
             .source = self.sourceRef(node),
             .ty = child_ty,
@@ -619,7 +625,7 @@ const Context = struct {
         const assignment = self.tree.pointerAssignment(node) orelse return error.UnsupportedLocalSemantic;
         const pointer = try self.lowerNode(assignment.target, null);
         const pointer_ty = pointer.ty orelse return error.CannotInferLocalType;
-        const child_ty = try self.pointerChild(pointer_ty) orelse return error.UnresolvedLocalType;
+        const child_ty = (try self.pointerChild(pointer_ty)) orelse return error.UnresolvedLocalType;
         const value = try self.lowerNode(assignment.value, child_ty);
         const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = child_ty, .content = .{ .pointer_assignment = .{ .pointer = pointer.node, .value = value.node } } });
         return .{ .node = id, .ty = child_ty };
@@ -630,7 +636,7 @@ const Context = struct {
         const value = try self.lowerNode(access.value, null);
         const index = try self.lowerNode(access.index, try self.builtinType(.Int32));
         const array_ty = value.ty orelse return error.CannotInferLocalType;
-        const element_ty = try self.arrayElement(array_ty) orelse return error.UnresolvedLocalType;
+        const element_ty = (try self.arrayElement(array_ty)) orelse return error.UnresolvedLocalType;
         const id = try self.writer.addResolvedNode(.{
             .source = self.sourceRef(node),
             .ty = element_ty,
@@ -645,7 +651,7 @@ const Context = struct {
         const array = try self.lowerNode(access.value, null);
         const index = try self.lowerNode(access.index, try self.builtinType(.Int32));
         const array_ty = array.ty orelse return error.CannotInferLocalType;
-        const element_ty = try self.arrayElement(array_ty) orelse return error.UnresolvedLocalType;
+        const element_ty = (try self.arrayElement(array_ty)) orelse return error.UnresolvedLocalType;
         const value = try self.lowerNode(assignment.value, element_ty);
         const id = try self.writer.addResolvedNode(.{
             .source = self.sourceRef(node),
@@ -674,7 +680,7 @@ const Context = struct {
     }
 
     fn functionOutputType(self: *Context, function: entities.Function) !?entities.ModuleTypeId {
-        if (function.output.len == 0) return self.builtinType(.Void);
+        if (function.output.len == 0) return try self.builtinType(.Void);
         if (function.output.len == 1) return (try views.fieldView(self.graph, @enumFromInt(function.output.start))).ty;
         return null;
     }
@@ -682,7 +688,7 @@ const Context = struct {
     const FieldLookup = struct { index: u32, ty: entities.ModuleTypeId };
 
     fn findField(self: *Context, ty: entities.ModuleTypeId, name: []const u8) !?FieldLookup {
-        const fields = try self.fieldsOf(ty) orelse return null;
+        const fields = (try self.fieldsOf(ty)) orelse return null;
         for (0..fields.len) |offset| {
             const field_id: entities.ModuleFieldId = @enumFromInt(fields.start + @as(u32, @intCast(offset)));
             const field = try views.fieldView(self.graph, field_id);
@@ -774,22 +780,6 @@ const Context = struct {
     fn popScope(self: *Context) void {
         const mark = self.scope_marks.pop().?;
         self.bindings.shrinkRetainingCapacity(mark);
-    }
-
-    fn currentScopeBindings(self: *Context) []const entities.ModuleBindingId {
-        const mark = self.scope_marks.items[self.scope_marks.items.len - 1];
-        // Function scope bindings are contiguous in semantic.bindings because
-        // nested scopes are popped before this is queried.
-        const count = self.bindings.items.len - mark;
-        const start = self.bindings.items.len - count;
-        _ = start;
-        // The caller currently uses input/output ranges separately; return all
-        // live IDs for the scope metadata.
-        const scratch = self.bindings.items[mark..];
-        // NamedBinding is not layout-compatible with ModuleBindingId, so this
-        // function is intentionally handled by the caller through a temporary.
-        _ = scratch;
-        return &.{};
     }
 
     fn lookupBinding(self: *const Context, name: []const u8) ?entities.ModuleBindingId {
