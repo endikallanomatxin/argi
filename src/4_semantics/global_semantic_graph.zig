@@ -1,6 +1,7 @@
 const std = @import("std");
 const primitives = @import("semantic_primitives.zig");
 const semantic_strings = @import("semantic_strings.zig");
+const callable = @import("semantic_callable.zig");
 const type_shapes = @import("semantic_type_shapes.zig");
 
 pub const GlobalDeclId = enum(u32) { _ };
@@ -118,6 +119,8 @@ pub const GlobalSemanticGraph = struct {
     types: std.ArrayList(GlobalType) = .empty,
     generic_instances: std.ArrayList(GenericInstance) = .empty,
     functions: std.ArrayList(Function) = .empty,
+    /// Cold metadata aligned 1:1 with `functions`.
+    function_operators: std.ArrayList(?callable.OperatorKind) = .empty,
     bindings: std.ArrayList(Binding) = .empty,
     nodes: std.ArrayList(Node) = .empty,
     blocks: std.ArrayList(Block) = .empty,
@@ -153,7 +156,7 @@ pub const GlobalSemanticGraph = struct {
         inline for (.{
             &self.modules, &self.files, &self.declarations, &self.symbols,
             &self.symbol_declarations, &self.types, &self.generic_instances,
-            &self.functions, &self.bindings, &self.nodes, &self.blocks,
+            &self.functions, &self.function_operators, &self.bindings, &self.nodes, &self.blocks,
             &self.fields, &self.variants, &self.generic_arguments,
             &self.value_fields, &self.switch_cases, &self.switches,
             &self.auto_deinit_fields, &self.auto_deinits,
@@ -181,6 +184,10 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn function(self: *const GlobalSemanticGraph, id: GlobalFunctionId) Function {
         return self.functions.items[@intFromEnum(id)];
+    }
+
+    pub fn functionOperator(self: *const GlobalSemanticGraph, id: GlobalFunctionId) ?callable.OperatorKind {
+        return self.function_operators.items[@intFromEnum(id)];
     }
 
     pub fn binding(self: *const GlobalSemanticGraph, id: GlobalBindingId) Binding {
@@ -220,6 +227,7 @@ pub const GlobalSemanticGraph = struct {
             self.types.items.len * @sizeOf(GlobalType) +
             self.generic_instances.items.len * @sizeOf(GenericInstance) +
             self.functions.items.len * @sizeOf(Function) +
+            self.function_operators.items.len * @sizeOf(?callable.OperatorKind) +
             self.bindings.items.len * @sizeOf(Binding) +
             self.nodes.items.len * @sizeOf(Node) +
             self.blocks.items.len * @sizeOf(Block) +
@@ -272,7 +280,12 @@ test "global semantic graph derives symbol module ownership from declarations" {
     try graph.symbol_declarations.append(allocator, @enumFromInt(0));
     const symbol = Symbol{ .name = type_name, .declarations = .{ .start = 0, .len = 1 } };
     try graph.symbols.append(allocator, symbol);
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 },
+    });
+    try graph.function_operators.append(allocator, .add);
 
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(graph.moduleForSymbol(symbol).?));
     try std.testing.expectEqualStrings("Thing", graph.text(type_name));
+    try std.testing.expectEqual(callable.OperatorKind.add, graph.functionOperator(@enumFromInt(0)).?);
 }
