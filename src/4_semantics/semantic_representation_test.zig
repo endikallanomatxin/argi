@@ -111,6 +111,55 @@ fn makeInferredChoiceModule(allocator: std.mem.Allocator) !module_sg.ModuleSeman
     return module;
 }
 
+fn makeGenericArrayModule(allocator: std.mem.Allocator) !module_sg.ModuleSemanticGraph {
+    var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "generic") };
+    errdefer module.deinit(allocator);
+
+    const path = try strings.append(&module.strings, allocator, "generic.rg");
+    const type_name = try strings.append(&module.strings, allocator, "Vector");
+    const argument_name = try strings.append(&module.strings, allocator, "t");
+
+    try module.file_offsets.append(allocator, .{
+        .path = path,
+        .declaration_base = 0,
+        .declaration_count = 1,
+        .type_reference_base = 0,
+        .type_reference_count = 0,
+        .import_reference_base = 0,
+        .import_reference_count = 0,
+    });
+    try module.declarations.append(allocator, .{
+        .kind = .type,
+        .name = type_name,
+        .source_offset = 1,
+        .module_file_index = 0,
+        .syntax_node = @enumFromInt(0),
+        .type_id = @enumFromInt(1),
+        .generic_parameter_count = 1,
+    });
+    try module.symbol_declarations.append(allocator, @enumFromInt(0));
+    try module.symbols.append(allocator, .{ .name = type_name, .declarations = .{ .start = 0, .len = 1 } });
+
+    try module.semantic.resolved_types.append(allocator, .{ .builtin = .Int32 });
+    try module.semantic.generic_arguments.append(allocator, .{
+        .name = argument_name,
+        .value = .{ .type = @enumFromInt(0) },
+    });
+    try module.semantic.resolved_types.append(allocator, .{ .generic = .{
+        .base = @enumFromInt(0),
+        .arguments = .{ .start = 0, .len = 1 },
+    } });
+    try module.semantic.generic_instances.append(allocator, .{
+        .type_id = @enumFromInt(1),
+        .shape = .{ .array = .{
+            .length = 4,
+            .element = @enumFromInt(0),
+        } },
+    });
+    module.semantic.local_semantics_complete = true;
+    return module;
+}
+
 test "module semantic ids relocate independently into the global graph" {
     const allocator = std.testing.allocator;
     var left = try makeScalarModule(allocator, "left", "Left", 10);
@@ -148,4 +197,49 @@ test "module semantic ids relocate independently into the global graph" {
 
     // Globalization copies and relocates; it does not mutate module-local IDs.
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum((try @import("module_semantic_views.zig").typeView(&right, @enumFromInt(0))).resolved.declared));
+}
+
+test "generic identities and materialized shapes relocate together" {
+    const allocator = std.testing.allocator;
+    var scalar = try makeScalarModule(allocator, "prefix", "Prefix", 1);
+    defer scalar.deinit(allocator);
+    var generic = try makeGenericArrayModule(allocator);
+    defer generic.deinit(allocator);
+
+    try module_verify.verifyModule(&generic);
+    var global = try globalizer.globalize(allocator, &.{ scalar, generic });
+    defer global.deinit(allocator);
+    try global_verify.verifyGlobal(&global);
+
+    // The prefix module contributes one type, so generic-local type 0/1 become
+    // global type 1/2. Its declaration is global declaration 1.
+    const identity = global.types.items[2].generic;
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(identity.base));
+    try std.testing.expectEqual(@as(u32, 0), identity.arguments.start);
+    try std.testing.expectEqual(@as(u32, 1), identity.arguments.len);
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(global.generic_arguments.items[0].value.type));
+
+    try std.testing.expectEqual(@as(usize, 1), global.generic_instances.items.len);
+    const instance = global.generic_instances.items[0];
+    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(instance.type_id));
+    try std.testing.expectEqual(@as(u64, 4), instance.shape.array.length);
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(instance.shape.array.element));
+}
+
+test "equal symbol names remain owned by different modules" {
+    const allocator = std.testing.allocator;
+    var left = try makeScalarModule(allocator, "left", "Shared", 1);
+    defer left.deinit(allocator);
+    var right = try makeScalarModule(allocator, "right", "Shared", 2);
+    defer right.deinit(allocator);
+
+    var global = try globalizer.globalize(allocator, &.{ left, right });
+    defer global.deinit(allocator);
+    try global_verify.verifyGlobal(&global);
+
+    try std.testing.expectEqual(@as(usize, 2), global.symbols.items.len);
+    try std.testing.expectEqualStrings("Shared", global.text(global.symbols.items[0].name));
+    try std.testing.expectEqualStrings("Shared", global.text(global.symbols.items[1].name));
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(global.moduleForSymbol(global.symbols.items[0]).?));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(global.moduleForSymbol(global.symbols.items[1]).?));
 }
