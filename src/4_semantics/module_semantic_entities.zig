@@ -145,6 +145,28 @@ pub const ExternalRef = struct {
     source: primitives.SourceRef,
 };
 
+pub const PendingExpressionKind = enum(u8) {
+    unknown_identifier,
+    pipe,
+    unwrap_or,
+    unwrap_or_do,
+    nullable_test,
+    import_value,
+    generic_call,
+    type_initializer,
+    explicit_cast,
+    other,
+};
+
+pub const PendingExpression = struct {
+    node: ModuleNodeId,
+    kind: PendingExpressionKind,
+    operands: NodeRange = .{ .start = 0, .len = 0 },
+    name: ?primitives.StringRange = null,
+    expected_type: ?ModuleTypeId = null,
+    aux: u32 = 0,
+};
+
 /// Cross-module/program decisions retained by ModuleSema. Operands and symbolic
 /// names are already canonical ModuleSG values, so resolving these holes is a
 /// pure semantic link step rather than a second syntax traversal.
@@ -234,6 +256,7 @@ pub const PendingOperation = union(enum) {
         node: ModuleNodeId,
         binding: ModuleBindingId,
     },
+    resolve_expression: PendingExpression,
     resolve_abstract: struct {
         declaration: ModuleDeclId,
         abstract_ref: ExternalRefId,
