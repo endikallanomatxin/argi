@@ -38,6 +38,7 @@ jobs:
           python3 .github/apply_compact_semantic_fixes.py
           python3 .github/apply_compact_semantic_fixes_3.py
           python3 .github/apply_compact_semantic_fixes_4.py
+          python3 .github/apply_compact_semantic_fixes_5.py
 
       - name: Commit pending migration fixes
         if: github.actor != 'github-actions[bot]'
