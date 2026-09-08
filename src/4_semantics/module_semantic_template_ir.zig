@@ -143,6 +143,7 @@ pub const PendingExpressionKind = enum(u8) {
     type_initializer,
     explicit_cast,
     choice_literal,
+    field_access,
     choice_payload,
     error_propagation,
     error_context,
@@ -239,16 +240,14 @@ pub const Storage = struct {
 
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         inline for (.{
-            &self.int_expressions, &self.types, &self.declarations, &self.functions,
-            &self.variants, &self.fields, &self.generic_arguments, &self.bindings,
-            &self.nodes, &self.blocks, &self.value_fields, &self.switch_cases,
-            &self.switches, &self.auto_deinit_fields, &self.auto_deinits,
-            &self.virtual_registries, &self.virtualizes, &self.virtual_calls,
-            &self.reach_segments, &self.reach_alternatives, &self.reaches,
-            &self.nullable_unwraps, &self.testing_expect_errors,
-            &self.error_propagations, &self.error_contexts, &self.pending,
-            &self.node_refs, &self.type_refs, &self.binding_refs,
-            &self.function_refs, &self.virtual_registry_refs,
+            &self.int_expressions, &self.types,              &self.declarations,          &self.functions,
+            &self.variants,        &self.fields,             &self.generic_arguments,     &self.bindings,
+            &self.nodes,           &self.blocks,             &self.value_fields,          &self.switch_cases,
+            &self.switches,        &self.auto_deinit_fields, &self.auto_deinits,          &self.virtual_registries,
+            &self.virtualizes,     &self.virtual_calls,      &self.reach_segments,        &self.reach_alternatives,
+            &self.reaches,         &self.nullable_unwraps,   &self.testing_expect_errors, &self.error_propagations,
+            &self.error_contexts,  &self.pending,            &self.node_refs,             &self.type_refs,
+            &self.binding_refs,    &self.function_refs,      &self.virtual_registry_refs,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }

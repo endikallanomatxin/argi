@@ -420,9 +420,11 @@ pub const Context = struct {
                         .{ .type = try self.lowerType(type_node, false) }
                     else if (field.default_value) |value_node|
                         try self.lowerGenericValue(value_node, false)
-                    else return error.InvalidTemplateCallArgument;
+                    else
+                        return error.InvalidTemplateCallArgument;
                     try arguments.append(self.allocator, .{
-                        .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token)), .value = value,
+                        .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token)),
+                        .value = value,
                     });
                 }
             } else for (call.type_arguments) |type_node| {
@@ -442,8 +444,11 @@ pub const Context = struct {
             const name = self.tree.tokenTextFromSource(self.source, declaration.name_token);
             const binding: ir.TemplateBindingId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.templates.ir.bindings.items.len)));
             try self.graph.semantic.templates.ir.bindings.append(self.allocator, .{
-                .name = try self.writer.addString(name), .source = self.sourceRef(node),
-                .ty = ty, .initialization = initialization, .mutability = declaration.mutability,
+                .name = try self.writer.addString(name),
+                .source = self.sourceRef(node),
+                .ty = ty,
+                .initialization = initialization,
+                .mutability = declaration.mutability,
             });
             try self.bindings.append(.{ .name = name, .id = binding });
             return self.addResolvedNode(node, try self.templateBuiltin(.Void), .{ .binding_declaration = binding });
@@ -452,7 +457,8 @@ pub const Context = struct {
             const name = self.tree.tokenTextFromSource(self.source, assignment.name_token);
             const binding = self.templateBinding(name) orelse return error.UnknownTemplateAssignment;
             return self.addResolvedNode(node, try self.templateBuiltin(.Void), .{ .assignment = .{
-                .binding = binding, .value = try self.lowerBodyNode(assignment.value),
+                .binding = binding,
+                .value = try self.lowerBodyNode(assignment.value),
             } });
         }
         if (self.tree.structValueLiteral(node)) |literal| {
@@ -469,7 +475,8 @@ pub const Context = struct {
             try self.graph.semantic.templates.ir.value_fields.appendSlice(self.allocator, fields.items);
             const ty = try self.templateBuiltin(.Any);
             return self.addResolvedNode(node, ty, .{ .struct_value_literal = .{
-                .fields = .{ .start = start, .len = @intCast(fields.items.len) }, .ty = ty,
+                .fields = .{ .start = start, .len = @intCast(fields.items.len) },
+                .ty = ty,
             } });
         }
         // Keep the few parameter-independent leaves compact and represent every
@@ -478,11 +485,11 @@ pub const Context = struct {
             const token_content = self.tree.tokenContent(literal.token).literal;
             return switch (token_content) {
                 .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => blk: {
-const value = try literals.integer(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
+                    const value = try literals.integer(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
                     break :blk self.addResolvedNode(node, try self.templateBuiltin(.Int32), .{ .int_literal = value });
                 },
                 .regular_float_literal, .scientific_float_literal => blk: {
-const value = try literals.float(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
+                    const value = try literals.float(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
                     break :blk self.addResolvedNode(node, try self.templateBuiltin(.Float32), .{ .float_literal = value });
                 },
                 .bool_literal => |value| self.addResolvedNode(node, try self.templateBuiltin(.Bool), .{ .bool_literal = value }),
@@ -497,6 +504,12 @@ const value = try literals.float(self.tree.tokenTextFromSource(self.source, lite
             if (self.templateBinding(name)) |binding| {
                 const ty = self.graph.semantic.templates.ir.bindings.items[@intFromEnum(binding)].ty;
                 return self.addResolvedNode(node, ty, .{ .binding_use = binding });
+            }
+            if (self.parameter(name)) |parameter_binding| {
+                if (parameter_binding.kind == .type) {
+                    const value = try self.addType(.{ .parameter = parameter_binding.id });
+                    return self.addResolvedNode(node, try self.templateBuiltin(.Type), .{ .type_literal = value });
+                }
             }
             return self.addPending(node, .unknown_identifier, &.{}, try self.writer.addString(name), null, 0);
         }
@@ -516,6 +529,14 @@ const value = try literals.float(self.tree.tokenTextFromSource(self.source, lite
     }
 
     fn collectBodyOperands(self: *Context, node: syn.NodeIndex, result: *std.array_list.Managed(ir.TemplateNodeId)) anyerror!void {
+        if (self.tree.structFieldAccess(node)) |access| {
+            try result.append(try self.lowerBodyNode(access.value));
+            return;
+        }
+        if (self.tree.choicePayloadAccess(node)) |access| {
+            try result.append(try self.lowerBodyNode(access.value));
+            return;
+        }
         if (self.tree.binaryOperation(node)) |operation| {
             try result.append(try self.lowerBodyNode(operation.lhs));
             try result.append(try self.lowerBodyNode(operation.rhs));
@@ -597,7 +618,9 @@ const value = try literals.float(self.tree.tokenTextFromSource(self.source, lite
     fn addResolvedNode(self: *Context, node: syn.NodeIndex, ty: ir.TemplateTypeId, content: ir.ResolvedNode.Content) !ir.TemplateNodeId {
         const id: ir.TemplateNodeId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.templates.ir.nodes.items.len)));
         try self.graph.semantic.templates.ir.nodes.append(self.allocator, .{ .resolved = .{
-            .source = self.sourceRef(node), .ty = ty, .content = content,
+            .source = self.sourceRef(node),
+            .ty = ty,
+            .content = content,
         } });
         return id;
     }
@@ -622,7 +645,10 @@ const value = try literals.float(self.tree.tokenTextFromSource(self.source, lite
         for (0..views.typeCount(self.graph)) |raw| {
             const id: entities.ModuleTypeId = @enumFromInt(@as(u32, @intCast(raw)));
             switch (try views.typeView(self.graph, id)) {
-                .resolved => |resolved| switch (resolved) { .builtin => |value| if (value == builtin) return id, else => {} },
+                .resolved => |resolved| switch (resolved) {
+                    .builtin => |value| if (value == builtin) return id,
+                    else => {},
+                },
                 .external => {},
             }
         }
@@ -684,6 +710,7 @@ fn templateKindForTag(tag: syn.Node.Tag) ir.PendingExpressionKind {
         .nullable_test => .nullable_test,
         .function_call => .generic_call,
         .choice_literal, .choice_some_literal => .choice_literal,
+        .struct_field_access => .field_access,
         .choice_payload_access => .choice_payload,
         .error_propagation => .error_propagation,
         .error_context => .error_context,
