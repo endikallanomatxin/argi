@@ -29,7 +29,6 @@ const module_template_block_normalizer = @import("4_semantics/module_template_bl
 const module_generic_operator_lowerer = @import("4_semantics/module_generic_operator_lowerer.zig");
 const module_abstract_relation_lowerer = @import("4_semantics/module_abstract_relation_lowerer.zig");
 const module_generic_call_args_lowerer = @import("4_semantics/module_generic_call_args_lowerer.zig");
-const module_deinit_metadata_lowerer = @import("4_semantics/module_deinit_metadata_lowerer.zig");
 const module_semantizer = @import("4_semantics/module_semantizer.zig");
 const semantic_verify = @import("4_semantics/semantic_verify.zig");
 const semantic_payload_verify = @import("4_semantics/semantic_payload_verify.zig");
@@ -91,7 +90,6 @@ test {
     _ = module_generic_operator_lowerer;
     _ = module_abstract_relation_lowerer;
     _ = module_generic_call_args_lowerer;
-    _ = module_deinit_metadata_lowerer;
     _ = module_semantizer;
     _ = semantic_verify;
     _ = semantic_payload_verify;
