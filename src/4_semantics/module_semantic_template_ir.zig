@@ -72,9 +72,6 @@ pub const VariantRef = union(enum) {
     external: entities.ExternalRefId,
 };
 
-/// Small symbolic integer IR used by dependent template types. The legacy
-/// matcher supports literals, comptime parameters and + - * / % compositions;
-/// storing the same information here keeps cached templates independent of ST.
 pub const IntBinaryOperator = enum(u8) {
     add,
     subtract,
@@ -93,18 +90,11 @@ pub const IntExpression = union(enum) {
     },
 };
 
-/// A template type is self-contained in the ModuleSG. Concrete module types are
-/// referenced directly; placeholders and composite template shapes stay in the
-/// template ID domain until instantiation substitutes them.
 pub const Type = union(enum) {
     concrete: entities.ModuleTypeId,
     parameter: TemplateParameterId,
-    /// `Self` inside an Abstract requirement. Its concrete meaning is supplied
-    /// by the abstract implementation being checked/instantiated.
     abstract_self,
     external: entities.ExternalRefId,
-    /// Dependent array length that cannot be expressed by the resolved semantic
-    /// type's concrete u64 length until comptime parameters are substituted.
     array: struct {
         length: TemplateIntExprId,
         element: TemplateTypeId,
@@ -145,6 +135,52 @@ pub const ErrorPropagation = primitives.ErrorPropagation(Ids);
 pub const ErrorContext = primitives.ErrorContext(Ids);
 pub const ResolvedNode = primitives.Node(Ids);
 
+/// Compact semantic opcodes for syntax whose final meaning depends on template
+/// substitution. They deliberately describe language semantics instead of ST
+/// node tags, keeping persisted TemplateIR independent of the parser schema.
+pub const PendingExpressionKind = enum(u8) {
+    unknown_identifier,
+    pipe,
+    unwrap_or,
+    unwrap_or_do,
+    nullable_test,
+    generic_call,
+    type_initializer,
+    explicit_cast,
+    choice_literal,
+    choice_payload,
+    error_propagation,
+    error_context,
+    index,
+    index_store,
+    binary,
+    comparison,
+    logical,
+    if_statement,
+    while_statement,
+    for_each,
+    match,
+    match_case,
+    defer_value,
+    keep_binding,
+    address_of,
+    dereference,
+    pointer_store,
+    struct_value,
+    list_value,
+    return_statement,
+    other,
+};
+
+pub const PendingExpression = struct {
+    kind: PendingExpressionKind,
+    operands: primitives.Range(TemplateNodeId) = .{ .start = 0, .len = 0 },
+    name: ?primitives.StringRange = null,
+    expected_type: ?TemplateTypeId = null,
+    source: primitives.SourceRef,
+    aux: u32 = 0,
+};
+
 /// Decisions intentionally deferred to template instantiation. These holes are
 /// semantic, not syntax references, so a cached ModuleSG needs no FileST/source
 /// to continue monomorphization.
@@ -163,6 +199,7 @@ pub const Pending = union(enum) {
         field_name: primitives.StringRange,
         source: primitives.SourceRef,
     },
+    resolve_expression: PendingExpression,
     resolve_copy: struct { value: TemplateNodeId },
     resolve_deinit: struct { binding: TemplateBindingId },
 };
@@ -291,12 +328,13 @@ test "template IR represents dependent type state without syntax refs" {
         .element = @enumFromInt(0),
     } });
     try storage.nodes.append(allocator, .{ .pending = @enumFromInt(0) });
-    try storage.pending.append(allocator, .{ .resolve_name = .{
-        .name = .{ .start = 0, .len = 1 },
+    try storage.pending.append(allocator, .{ .resolve_expression = .{
+        .kind = .for_each,
         .source = .{ .file_index = 0, .offset = 3 },
     } });
 
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(storage.types.items[0].parameter));
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(storage.types.items[2].array.length));
+    try std.testing.expectEqual(PendingExpressionKind.for_each, storage.pending.items[0].resolve_expression.kind);
     try std.testing.expect(storage.storageBytes() > 0);
 }
