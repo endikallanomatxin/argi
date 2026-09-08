@@ -13,9 +13,6 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.types.items) |value| {
         try payload.semanticType(graph_mod.Ids, value, bounds);
         switch (value) {
-            // These are compact ModuleSema states. The legacy semantizer
-            // materializes both into concrete generic/choice types before
-            // Safety and Codegen, so they must not survive final globalization.
             .nullable, .inferred_errable => return error.InvalidGlobalSemanticGraph,
             else => {},
         }
@@ -25,6 +22,7 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.variants.items) |value| try payload.variant(graph_mod.Ids, value, bounds);
     for (graph.generic_arguments.items) |value| try payload.genericArgument(graph_mod.Ids, value, bounds);
     for (graph.functions.items) |value| try payload.function(graph_mod.Ids, value, bounds);
+    try verifyGenericFunctionInstances(graph);
     for (graph.bindings.items) |value| try payload.binding(graph_mod.Ids, value, bounds);
     for (graph.blocks.items) |value| try payload.block(graph_mod.Ids, value, bounds);
     for (graph.value_fields.items) |value| try payload.valueField(graph_mod.Ids, value, bounds);
@@ -57,7 +55,6 @@ fn verifySymbols(graph: *const graph_mod.GlobalSemanticGraph) !void {
         try require(verify.stringFits(symbol.name, graph.strings.items));
         try require(symbol.declarations.len != 0);
         try require(verify.rangeFits(symbol.declarations, graph.symbol_declarations.items.len));
-
         const declarations = graph.symbol_declarations.items[symbol.declarations.start..][0..symbol.declarations.len];
         const owner = graph.moduleForDeclaration(declarations[0]) orelse return error.InvalidGlobalSemanticGraph;
         for (declarations) |id| {
@@ -94,26 +91,55 @@ fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
     }
 }
 
+fn verifyGenericFunctionInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
+    for (graph.generic_function_instances.items, 0..) |instance, index| {
+        try require(verify.idFits(instance.function, graph.functions.items.len));
+        try require(verify.idFits(instance.template_declaration, graph.declarations.items.len));
+        try require(verify.rangeFits(instance.arguments, graph.generic_arguments.items.len));
+        const function = graph.functions.items[@intFromEnum(instance.function)];
+        try require(function.flags.is_generic_instantiation);
+        try require(function.declaration == instance.template_declaration);
+        for (graph.generic_function_instances.items[0..index]) |previous| {
+            if (previous.template_declaration != instance.template_declaration) continue;
+            try require(!genericArgumentRangesEqual(graph, previous.arguments, instance.arguments));
+        }
+    }
+}
+
+fn genericArgumentRangesEqual(
+    graph: *const graph_mod.GlobalSemanticGraph,
+    a: @TypeOf(graph.generic_function_instances.items[0].arguments),
+    b: @TypeOf(graph.generic_function_instances.items[0].arguments),
+) bool {
+    if (a.len != b.len) return false;
+    for (0..a.len) |offset| {
+        const left = graph.generic_arguments.items[a.start + @as(u32, @intCast(offset))];
+        const right = graph.generic_arguments.items[b.start + @as(u32, @intCast(offset))];
+        if (!std.mem.eql(u8, graph.text(left.name), graph.text(right.name))) return false;
+        switch (left.value) {
+            .type => |left_ty| switch (right.value) { .type => |right_ty| if (left_ty != right_ty) return false, else => return false },
+            .comptime_int => |left_int| switch (right.value) { .comptime_int => |right_int| if (left_int != right_int) return false, else => return false },
+        }
+    }
+    return true;
+}
+
 fn verifyModulePartitions(graph: *const graph_mod.GlobalSemanticGraph) !void {
     var file_cursor: usize = 0;
     var declaration_cursor: usize = 0;
-
     for (graph.modules.items, 0..) |module, module_index| {
         try require(verify.stringFits(module.dir, graph.strings.items));
         try require(module.files.start == file_cursor);
         try require(module.declarations.start == declaration_cursor);
         try require(verify.rangeFits(module.files, graph.files.items.len));
         try require(verify.rangeFits(module.declarations, graph.declarations.items.len));
-
         for (graph.files.items[module.files.start..][0..module.files.len]) |file| {
             try require(@intFromEnum(file.module) == module_index);
             try require(verify.stringFits(file.path, graph.strings.items));
         }
-
         file_cursor += module.files.len;
         declaration_cursor += module.declarations.len;
     }
-
     try require(file_cursor == graph.files.items.len);
     try require(declaration_cursor == graph.declarations.items.len);
 }
