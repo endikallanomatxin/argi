@@ -2,12 +2,23 @@ const std = @import("std");
 const module_sg = @import("module_semantic_graph.zig");
 const body_lowerer = @import("module_body_lowerer.zig");
 const fallback_lowerer = @import("module_fallback_lowerer.zig");
+const initializer_lowerer = @import("module_initializer_lowerer.zig");
+const template_lowerer = @import("module_template_lowerer.zig");
+const abstract_relation_lowerer = @import("module_abstract_relation_lowerer.zig");
+const generic_call_args_lowerer = @import("module_generic_call_args_lowerer.zig");
 const callable = @import("semantic_callable.zig");
 const complete_verify = @import("module_semantic_complete_verify.zig");
 
 pub const BuildStats = struct {
     lowered_functions: u32 = 0,
     fallback_functions: u32 = 0,
+    global_bindings: u32 = 0,
+    field_defaults: u32 = 0,
+    generic_types: u32 = 0,
+    generic_functions: u32 = 0,
+    abstract_definitions: u32 = 0,
+    abstract_relations: u32 = 0,
+    generic_calls: u32 = 0,
     local_semantics_complete: bool = false,
 };
 
@@ -16,9 +27,10 @@ pub const BuildResult = struct {
     stats: BuildStats,
 };
 
-/// Module-local semantic orchestration. Precise lowering is opportunistic, but
-/// the fallback pass guarantees that every non-generic body is represented by
-/// Module* IDs and semantic holes rather than retained syntax.
+/// Complete module-local semantic orchestration. FileST is an input to this
+/// phase only: every body/default/template/abstract relation is converted to
+/// Module* IDs, TemplateIR, or explicit PendingOperation records before return.
+/// Once this function succeeds GlobalSema never needs the syntax tree again.
 pub fn build(
     allocator: std.mem.Allocator,
     module_dir: []const u8,
@@ -28,13 +40,24 @@ pub fn build(
     errdefer graph.deinit(allocator);
 
     try lowerOperatorMetadata(allocator, &graph, files);
+
+    // Predeclare module-owned runtime storage/defaults before bodies so global
+    // identities already exist when body holes reference top-level names.
+    const initializers = try initializer_lowerer.lower(allocator, &graph, files);
+
     const precise = try body_lowerer.lower(allocator, &graph, files);
     const fallback = try fallback_lowerer.lowerMissingFunctions(allocator, &graph, files);
 
-    // Generic/abstract templates and defaults are the only remaining producers
-    // that may still need FileST. Later passes flip this once those tables are
-    // populated; non-generic bodies are already syntax-independent here.
-    graph.semantic.local_semantics_complete = false;
+    // Generic declarations are not ordinary functions/types yet. Preserve them
+    // as syntax-free TemplateIR, then capture implements/defaultsto relations.
+    const template_stats = try template_lowerer.lower(allocator, &graph, files);
+    const relation_stats = try abstract_relation_lowerer.lower(allocator, &graph, files);
+
+    // Calls are lowered before generic argument normalization. This pass attaches
+    // the #(...) payload to the corresponding ExternalRef by semantic SourceRef.
+    const generic_calls = try generic_call_args_lowerer.lower(allocator, &graph, files);
+
+    graph.semantic.local_semantics_complete = true;
     try complete_verify.verifyModule(&graph);
 
     return .{
@@ -42,7 +65,14 @@ pub fn build(
         .stats = .{
             .lowered_functions = precise.lowered_functions,
             .fallback_functions = fallback.lowered_functions,
-            .local_semantics_complete = false,
+            .global_bindings = initializers.global_bindings,
+            .field_defaults = initializers.field_defaults,
+            .generic_types = template_stats.generic_types,
+            .generic_functions = template_stats.generic_functions,
+            .abstract_definitions = template_stats.abstract_definitions,
+            .abstract_relations = relation_stats.implementations + relation_stats.implementation_templates + relation_stats.defaults + relation_stats.default_templates,
+            .generic_calls = generic_calls.generic_calls,
+            .local_semantics_complete = true,
         },
     };
 }
@@ -68,10 +98,11 @@ fn lowerOperatorMetadata(
     }
 }
 
-test "module semantizer keeps completion false only for templates and defaults" {
+test "module semantizer completes syntax-independent local semantics" {
     const allocator = std.testing.allocator;
     var result = try build(allocator, "empty", &.{});
     defer result.graph.deinit(allocator);
-    try std.testing.expect(!result.graph.semantic.local_semantics_complete);
+    try std.testing.expect(result.graph.semantic.local_semantics_complete);
+    try std.testing.expect(result.stats.local_semantics_complete);
     try std.testing.expectEqual(@as(u32, 0), result.stats.fallback_functions);
 }
