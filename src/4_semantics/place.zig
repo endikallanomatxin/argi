@@ -1,25 +1,8 @@
 const std = @import("std");
 const sg = @import("semantic_graph.zig");
 
-/// A Place names stable program storage. It does not name the value currently
-/// stored there and therefore survives replacement of that value.
-pub const Place = struct {
-    root: *const sg.BindingDeclaration,
-    projections: []const Projection = &.{},
-
-    pub fn eql(left: Place, right: Place) bool {
-        if (left.root != right.root or left.projections.len != right.projections.len) return false;
-        for (left.projections, right.projections) |a, b| if (!a.eql(b)) return false;
-        return true;
-    }
-
-    pub fn isPrefixOf(prefix: Place, place: Place) bool {
-        if (prefix.root != place.root or prefix.projections.len > place.projections.len) return false;
-        for (prefix.projections, place.projections[0..prefix.projections.len]) |a, b| if (!a.eql(b)) return false;
-        return true;
-    }
-};
-
+/// Projection vocabulary is independent of the graph representation. Both the
+/// legacy pointer checker and the indexed checker use exactly these paths.
 pub const Projection = union(enum) {
     field: u32,
     static_index: usize,
@@ -35,3 +18,41 @@ pub const Projection = union(enum) {
         };
     }
 };
+
+/// A Place names stable program storage. `Root` is the semantic identity of a
+/// binding: pointer identity for the migration checker, GlobalBindingId for the
+/// final checker. Projection semantics stay representation-independent.
+pub fn PlaceFor(comptime Root: type) type {
+    return struct {
+        root: Root,
+        projections: []const Projection = &.{},
+
+        const Self = @This();
+
+        pub fn eql(left: Self, right: Self) bool {
+            if (left.root != right.root or left.projections.len != right.projections.len) return false;
+            for (left.projections, right.projections) |a, b| if (!a.eql(b)) return false;
+            return true;
+        }
+
+        pub fn isPrefixOf(prefix: Self, place: Self) bool {
+            if (prefix.root != place.root or prefix.projections.len > place.projections.len) return false;
+            for (prefix.projections, place.projections[0..prefix.projections.len]) |a, b| if (!a.eql(b)) return false;
+            return true;
+        }
+    };
+}
+
+/// Compatibility alias. Delete it together with the pointer SemanticGraph.
+pub const Place = PlaceFor(*const sg.BindingDeclaration);
+
+test "generic Places preserve root identity and structural prefixes" {
+    const Id = enum(u32) { _ };
+    const IndexedPlace = PlaceFor(Id);
+    const root: Id = @enumFromInt(3);
+    const child = [_]Projection{.{ .field = 1 }};
+    const a = IndexedPlace{ .root = root };
+    const b = IndexedPlace{ .root = root, .projections = &child };
+    try std.testing.expect(a.isPrefixOf(b));
+    try std.testing.expect(!b.isPrefixOf(a));
+}
