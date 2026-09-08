@@ -103,6 +103,31 @@ for old, new in [
 ]:
     replace("src/4_semantics/global_semantic_generic_functions.zig", old, new)
 
+# SourceDb cleanup is mutating, so the cloned database must remain mutable until
+# ownership is transferred into the returned Analysis.
+replace(
+    "src/0_commands/indexed_lsp_service.zig",
+    "        const db = try diagnostics.source_db.clone(allocator.*);\n        errdefer db.deinit(allocator.*);",
+    "        var db = try diagnostics.source_db.clone(allocator.*);\n        errdefer db.deinit(allocator.*);",
+)
+
+# Zig 0.16's managed ArrayList no longer exposes the old writer().print API.
+# Centralize formatted appends so mangling keeps using the managed buffer.
+replace(
+    "src/5_codegen/global_codegen_types.zig",
+    "    pub fn encodeType(self: *Lowerer, buffer: *std.array_list.Managed(u8), ty: graph_mod.GlobalTypeId) !void {",
+    "    fn appendPrint(self: *Lowerer, buffer: *std.array_list.Managed(u8), comptime format: []const u8, args: anytype) !void {\n        const text = try std.fmt.allocPrint(self.allocator, format, args);\n        defer self.allocator.free(text);\n        try buffer.appendSlice(text);\n    }\n\n    pub fn encodeType(self: *Lowerer, buffer: *std.array_list.Managed(u8), ty: graph_mod.GlobalTypeId) !void {",
+)
+for old, new in [
+    ("                try buffer.writer().print(\"arr{d}_\", .{array.length});", "                try self.appendPrint(buffer, \"arr{d}_\", .{array.length});"),
+    ("                try buffer.writer().print(\"{d}_\", .{@intFromEnum(decl)});", "                try self.appendPrint(buffer, \"{d}_\", .{@intFromEnum(decl)});"),
+    ("            .inferred_choice => |shape| try buffer.writer().print(\"choice_i{d}\", .{shape.identity}),", "            .inferred_choice => |shape| try self.appendPrint(buffer, \"choice_i{d}\", .{shape.identity}),"),
+    ("                try buffer.writer().print(\"g{d}\", .{@intFromEnum(identity.base)});", "                try self.appendPrint(buffer, \"g{d}\", .{@intFromEnum(identity.base)});"),
+    ("                    .comptime_int => |value| try buffer.writer().print(\"_n{d}\", .{value}),", "                    .comptime_int => |value| try self.appendPrint(buffer, \"_n{d}\", .{value}),"),
+    ("        try buffer.writer().print(\"__f{d}__in_\", .{@intFromEnum(function_id)});", "        try self.appendPrint(&buffer, \"__f{d}__in_\", .{@intFromEnum(function_id)});"),
+]:
+    replace("src/5_codegen/global_codegen_types.zig", old, new)
+
 # TemplateIR resolved shapes are the shared semantic type instantiated with Template IDs.
 replace(
     "src/4_semantics/module_semantic_template_ir.zig",
