@@ -168,7 +168,7 @@ pub const Context = struct {
                 const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
                 const name_text = self.tree.tokenTextFromSource(self.source, field.name_token);
                 const value_type_node = field.type_node orelse return error.InvalidGenericParameter;
-                const kind: templates.GenericParameterKind = if (isTypeBuiltin(self.tree, self.source, value_type_node)) .type else .comptime_int;
+                const kind: templates.GenericParameterKind = if (isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
                 const id: ir.TemplateParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.templates.generic_parameters.items.len)));
                 try self.graph.semantic.templates.generic_parameters.append(self.allocator, .{
                     .name = try self.writer.addString(name_text),
@@ -694,6 +694,20 @@ fn isTypeBuiltin(tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.
     const ty = tree.syntaxType(node) orelse return false;
     if (ty != .name or ty.name.qualifier_token != null) return false;
     return std.mem.eql(u8, tree.tokenTextFromSource(source, ty.name.name_token), "Type");
+}
+
+fn isTypeParameter(tree: *const syn.FileSyntaxTree, source: []const u8, field: syn.StructTypeField) bool {
+    const type_node = field.type_node orelse return true;
+    if (isTypeBuiltin(tree, source, type_node)) return true;
+
+    // Syntaxing validates constrained parameters as `.name: Type: Bound` but
+    // stores only `Bound` as the field type. Preserve that distinction from a
+    // normal comptime parameter by observing the two validated separators.
+    const name_location = tree.tokenLocation(field.name_token);
+    const type_location = tree.location(type_node);
+    const start = name_location.offset + tree.tokenTextFromSource(source, field.name_token).len;
+    if (start > type_location.offset or type_location.offset > source.len) return false;
+    return std.mem.count(u8, source[start..type_location.offset], ":") >= 2;
 }
 
 fn builtinFromName(name: []const u8) ?primitives.BuiltinType {

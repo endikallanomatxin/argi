@@ -23,13 +23,37 @@ pub const Resolver = struct {
     core: *core_mod.Resolver,
     stats: Stats = .{},
 
+    pub fn resolveExternalTypes(self: *Resolver) !void {
+        for (self.modules, 0..) |*module, module_index| {
+            const o = self.offsets[module_index];
+            for (0..module_views.typeCount(module)) |raw_type| {
+                const local_id: module_entities.ModuleTypeId = @enumFromInt(@as(u32, @intCast(raw_type)));
+                const value = try module_views.typeView(module, local_id);
+                const external = switch (value) {
+                    .external => |id| id,
+                    .resolved => continue,
+                };
+                const reference = module.semantic.external_refs.items[@intFromEnum(external)];
+                const args = reference.generic_arguments orelse continue;
+                if (reference.kind != .type) continue;
+                const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch continue;
+                const global_args = try self.relocateModuleArguments(module_index, args);
+                const destination = globalizer.globalType(o, local_id);
+                self.graph.types.items[@intFromEnum(destination)] = .{ .generic = .{ .base = base, .arguments = global_args } };
+                self.stats.type_holes += 1;
+            }
+        }
+    }
+
     pub fn materializeKnownTypes(self: *Resolver) !bool {
         var changed = false;
         var index: usize = 0;
         while (index < self.graph.types.items.len) : (index += 1) {
             const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(index)));
             switch (self.graph.types.items[index]) {
-                .generic => { if (try self.ensureGenericInstance(id)) changed = true; },
+                .generic => {
+                    if (try self.ensureGenericInstance(id)) changed = true;
+                },
                 else => {},
             }
         }

@@ -95,6 +95,7 @@ pub fn semantize(
     defer ownership.deinit();
 
     try core.resolveExternalTypes();
+    try generics.resolveExternalTypes();
     _ = try generics.materializeKnownTypes();
     try control.materializeSugarTypes();
 
