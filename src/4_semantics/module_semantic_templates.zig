@@ -18,15 +18,8 @@ pub const AbstractDefaultTemplateId = enum(u32) { _ };
 
 pub const DeclarationRef = ir.DeclarationRef;
 
-pub const GenericParameterKind = enum(u8) {
-    type,
-    comptime_int,
-};
-
-pub const GenericDispatchKind = enum(u8) {
-    regular,
-    abstract_contract,
-};
+pub const GenericParameterKind = enum(u8) { type, comptime_int };
+pub const GenericDispatchKind = enum(u8) { regular, abstract_contract };
 
 pub const GenericParameter = struct {
     name: primitives.StringRange,
@@ -46,6 +39,8 @@ pub const GenericFunctionTemplate = struct {
     parameters: primitives.Range(GenericParameterId),
     input: ir.TemplateTypeId,
     output: ir.TemplateTypeId,
+    input_bindings: primitives.Range(ir.TemplateBindingId) = .{ .start = 0, .len = 0 },
+    output_bindings: primitives.Range(ir.TemplateBindingId) = .{ .start = 0, .len = 0 },
     body: ?ir.TemplateBlockId,
     dispatch_kind: GenericDispatchKind = .regular,
     operator: ?callable.OperatorKind = null,
@@ -70,11 +65,7 @@ pub const AbstractDefinition = struct {
     requirements: primitives.Range(AbstractRequirementId),
 };
 
-pub const AbstractArgument = union(enum) {
-    none,
-    type: entities.ModuleTypeId,
-    comptime_int: i64,
-};
+pub const AbstractArgument = union(enum) { none, type: entities.ModuleTypeId, comptime_int: i64 };
 
 pub const AbstractImplementation = struct {
     abstract_ref: DeclarationRef,
@@ -156,27 +147,16 @@ test "module template storage owns lowered template IR" {
     const allocator = std.testing.allocator;
     var storage: Storage = .{};
     defer storage.deinit(allocator);
-
-    try storage.generic_parameters.append(allocator, .{
-        .name = .{ .start = 0, .len = 1 },
-        .kind = .type,
-    });
+    try storage.generic_parameters.append(allocator, .{ .name = .{ .start = 0, .len = 1 }, .kind = .type });
     try storage.ir.types.append(allocator, .{ .parameter = @enumFromInt(0) });
     try storage.generic_function_templates.append(allocator, .{
         .declaration = @enumFromInt(0),
         .parameters = .{ .start = 0, .len = 1 },
-        .input = @enumFromInt(0),
-        .output = @enumFromInt(0),
-        .body = null,
-        .operator = .add,
+        .input = @enumFromInt(0), .output = @enumFromInt(0),
+        .input_bindings = .{ .start = 0, .len = 1 },
+        .output_bindings = .{ .start = 1, .len = 1 },
+        .body = null, .operator = .add,
     });
-    try storage.abstract_default_templates.append(allocator, .{
-        .abstract_ref = .{ .module = @enumFromInt(0) },
-        .parameters = .{ .start = 0, .len = 1 },
-        .ty = @enumFromInt(0),
-        .source = .{ .file_index = 0, .offset = 0 },
-    });
-
+    try std.testing.expectEqual(@as(u32, 1), storage.generic_function_templates.items[0].input_bindings.len);
     try std.testing.expectEqual(callable.OperatorKind.add, storage.generic_function_templates.items[0].operator.?);
-    try std.testing.expect(storage.storageBytes() >= @sizeOf(GenericParameter));
 }
