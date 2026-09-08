@@ -436,7 +436,7 @@ pub const Resolver = struct {
         if (declaration.module_file_index >= module.file_offsets.items.len) return null;
         const file = module.file_offsets.items[declaration.module_file_index];
 
-        var declaration_end = std.math.maxInt(u32);
+        var declaration_end: u32 = std.math.maxInt(u32);
         const declarations = module.declarations.items[file.declaration_base..][0..file.declaration_count];
         for (declarations) |candidate| {
             if (candidate.source_offset > declaration.source_offset and candidate.source_offset < declaration_end)
