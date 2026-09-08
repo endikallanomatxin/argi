@@ -32,6 +32,7 @@ pub fn lower(
     };
     var stats: Stats = .{};
     try ctx.lowerDeferredStructDefinitions();
+    try ctx.lowerDeferredFunctionInterfaces();
     try ctx.predeclareGlobals(&stats);
     try ctx.lowerGlobalInitializers();
     try ctx.lowerFieldDefaults(&stats);
@@ -100,6 +101,49 @@ const Context = struct {
                 .len = @intCast(fields.items.len),
             };
         }
+    }
+
+    fn lowerDeferredFunctionInterfaces(self: *Context) !void {
+        for (self.graph.declarations.items, 0..) |declaration, raw| {
+            if ((declaration.kind != .function and declaration.kind != .test_function) or declaration.function_id != null) continue;
+            self.selectFile(declaration.module_file_index);
+            const function = if (declaration.kind == .test_function)
+                self.tree.testDeclaration(declaration.syntax_node).?.function
+            else
+                self.tree.functionDeclaration(declaration.syntax_node).?;
+            if (function.generic_params.len != 0 or function.generic_params_struct != null) continue;
+
+            const input = try self.lowerInterfaceFields(function.input);
+            const output = try self.lowerInterfaceFields(function.output);
+            const function_id: entities.ModuleFunctionId = @enumFromInt(@as(u32, @intCast(self.graph.functions.items.len)));
+            try self.graph.functions.append(self.allocator, .{
+                .declaration = @enumFromInt(@as(u32, @intCast(raw))),
+                .input = .{ .start = input.start, .len = input.len },
+                .output = .{ .start = output.start, .len = output.len },
+            });
+            self.graph.declarations.items[raw].function_id = function_id;
+        }
+    }
+
+    fn lowerInterfaceFields(self: *Context, struct_node: syn.NodeIndex) !entities.FieldRange {
+        const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;
+        var fields: std.ArrayList(entities.Field) = .empty;
+        defer fields.deinit(self.allocator);
+        for (literal.fields) |field_node| {
+            const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
+            const type_node = field.type_node orelse return error.StructFieldTypeRequired;
+            try fields.append(self.allocator, .{
+                .name = try self.writer.addString(if (field.inferred_result)
+                    "result"
+                else
+                    self.tree.tokenTextFromSource(self.source, field.name_token)),
+                .ty = try self.lowerType(type_node),
+                .source = self.sourceRef(field_node),
+            });
+        }
+        const start: u32 = @intCast(views.fieldCount(self.graph));
+        for (fields.items) |field| _ = try self.writer.addField(field);
+        return .{ .start = start, .len = @intCast(fields.items.len) };
     }
 
     fn predeclareGlobals(self: *Context, stats: *Stats) !void {
