@@ -4,6 +4,7 @@ const global_sg = @import("global_semantic_graph.zig");
 const globalizer = @import("semantic_globalizer.zig");
 const global_verify = @import("global_semantic_verify.zig");
 const core_mod = @import("global_semantic_core.zig");
+const expression_mod = @import("global_semantic_expressions.zig");
 const control_mod = @import("global_semantic_control.zig");
 const generic_mod = @import("global_semantic_generics.zig");
 const generic_functions_mod = @import("global_semantic_generic_functions.zig");
@@ -13,6 +14,7 @@ const ownership_mod = @import("global_semantic_ownership.zig");
 
 pub const Stats = struct {
     core: core_mod.Stats = .{},
+    expressions: expression_mod.Stats = .{},
     control: control_mod.Stats = .{},
     generics: generic_mod.Stats = .{},
     generic_functions: generic_functions_mod.Stats = .{},
@@ -38,6 +40,11 @@ pub fn semantize(
 
     var core = core_mod.Resolver{
         .allocator = allocator,
+        .graph = &relocation.graph,
+        .modules = modules,
+        .offsets = relocation.offsets.items,
+    };
+    var expressions = expression_mod.Resolver{
         .graph = &relocation.graph,
         .modules = modules,
         .offsets = relocation.offsets.items,
@@ -105,6 +112,7 @@ pub fn semantize(
             for (module.semantic.pending_operations.items) |operation| {
                 if (!resolved[flat]) {
                     var done = (try core.tryResolve(module_index, module, o, operation)) orelse false;
+                    if (!done) done = (try expressions.tryResolve(module_index, module, o, operation)) orelse false;
                     if (!done) done = (try generics.tryResolve(module_index, module, o, operation)) orelse false;
                     if (!done) done = (try generic_functions.tryResolve(module_index, module, o, operation)) orelse false;
                     if (!done) done = (try abstracts.tryResolve(module_index, module, o, operation)) orelse false;
@@ -138,6 +146,7 @@ pub fn semantize(
 
     var stats = Stats{
         .core = core.stats,
+        .expressions = expressions.stats,
         .control = control.stats,
         .generics = generics.stats,
         .generic_functions = generic_functions.stats,
