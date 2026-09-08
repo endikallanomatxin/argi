@@ -1,5 +1,6 @@
 const std = @import("std");
-const build_cmd = @import("build.zig");
+const build_plan = @import("build.zig");
+const indexed_build = @import("indexed_build.zig");
 
 fn rejectUnsupportedRunFlags(args: []const []const u8) !void {
     for (args) |arg| {
@@ -36,17 +37,19 @@ pub fn run(
     else
         null;
     const build_args = if (selected_executable != null) args[1..] else args;
-    const parsed = try build_cmd.parseBuildArgs(build_args);
+    const parsed = try build_plan.parseBuildArgs(build_args);
 
     const plan = if (in_package)
-        try build_cmd.resolveRunPlan(allocator, io, selected_executable)
+        try build_plan.resolveRunPlan(allocator, io, selected_executable)
     else
-        try build_cmd.resolveBuildPlan(allocator, io, parsed.target_path, parsed.flags);
+        try build_plan.resolveBuildPlan(allocator, io, parsed.target_path, parsed.flags);
 
     var flags = parsed.flags;
     if (plan.executable_name) |name| flags.executable_name = name;
 
-    try build_cmd.compileTarget(parsed.target_path, flags, .{}, io, environ_map);
+    // Manifest/path planning remains shared with the mature CLI code, but the
+    // actual compilation never enters the pointer-heavy semantic pipeline.
+    try indexed_build.compileTarget(parsed.target_path, flags, .{}, io, environ_map);
 
     const result = try std.process.run(allocator, io, .{
         .argv = &.{plan.output_path},
