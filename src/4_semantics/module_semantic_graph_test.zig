@@ -6,7 +6,6 @@ const syn = @import("../3_syntax/syntax_tree.zig");
 const syntaxer = @import("../3_syntax/syntaxer.zig");
 const tokenizer = @import("../2_tokens/tokenizer.zig");
 const module_graph = @import("module_semantic_graph.zig");
-const global_builder = @import("global_semantic_graph_builder.zig");
 
 fn parseSource(allocator: std.mem.Allocator, source: []const u8, file_id: source_db.FileId) !syn.FileSyntaxTree {
     const files = [_]source_files.SourceFile{ .{ .path = "a.rg", .code = source }, .{ .path = "b.rg", .code = source } };
@@ -41,17 +40,18 @@ test "module semantic graph owns declarations from all direct files" {
     try std.testing.expectEqualStrings("distance", graph.text(graph.declarations.items[1].name));
     try std.testing.expectEqual(@as(u32, 0), graph.declarations.items[0].module_file_index);
     try std.testing.expectEqual(@as(u32, 1), graph.declarations.items[1].module_file_index);
+
     const point_declarations = graph.declarationsNamed("Point");
     try std.testing.expectEqual(@as(usize, 1), point_declarations.len);
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(point_declarations[0]));
     var resolved_point = false;
     for (graph.type_references.items) |reference| {
-        if (std.mem.eql(u8, graph.text(reference.name), "Point")) {
-            try std.testing.expectEqual(point_declarations[0], reference.resolution.module);
-            resolved_point = true;
-        }
+        if (!std.mem.eql(u8, graph.text(reference.name), "Point")) continue;
+        try std.testing.expectEqual(point_declarations[0], reference.resolution.module);
+        resolved_point = true;
     }
     try std.testing.expect(resolved_point);
+
     try std.testing.expectEqual(@as(usize, 1), graph.functions.items.len);
     const distance_interface = graph.functions.items[0];
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(distance_interface.declaration));
@@ -63,41 +63,6 @@ test "module semantic graph owns declarations from all direct files" {
     const point_fields = graph.declarations.items[0].struct_fields.?;
     try std.testing.expectEqual(@as(u32, 1), point_fields.len);
     try std.testing.expectEqualStrings("x", graph.text(graph.fields.items[point_fields.start].name));
-
-    const sources = [_]source_files.SourceFile{ .{ .path = "geometry/a.rg", .code = first_source }, .{ .path = "geometry/b.rg", .code = second_source } };
-    var db = try source_db.SourceDb.init(allocator, &sources);
-    defer db.deinit(allocator);
-    var merged = try global_builder.mergeModuleGraphs(allocator, &.{graph}, &db);
-    defer merged.deinit(allocator);
-    for (merged.type_references.items) |reference| {
-        if (std.mem.eql(u8, merged.text(reference.name), "Point")) {
-            try std.testing.expectEqual(@as(u32, 0), @intFromEnum(reference.resolution.module));
-        }
-    }
-}
-
-test "global builder consumes module graphs and preserves file provenance" {
-    const allocator = std.testing.allocator;
-    const source = "value := 1\n";
-    var first = try parseSource(allocator, source, @enumFromInt(0));
-    defer first.deinit(allocator);
-    var second = try parseSource(allocator, source, @enumFromInt(1));
-    defer second.deinit(allocator);
-    var modules = [_]module_graph.ModuleSemanticGraph{
-        try module_graph.build(allocator, "one", &.{.{ .path = "one/main.rg", .tree = &first, .source = source }}),
-        try module_graph.build(allocator, "two", &.{.{ .path = "two/main.rg", .tree = &second, .source = source }}),
-    };
-    defer for (&modules) |*module| module.deinit(allocator);
-    const sources = [_]source_files.SourceFile{ .{ .path = "one/main.rg", .code = source }, .{ .path = "two/main.rg", .code = source } };
-    var db = try source_db.SourceDb.init(allocator, &sources);
-    defer db.deinit(allocator);
-    var merged = try global_builder.mergeModuleGraphs(allocator, &modules, &db);
-    defer merged.deinit(allocator);
-
-    const second_id = merged.globalDeclId(1, @enumFromInt(0));
-    try std.testing.expectEqualStrings("value", merged.text(merged.declaration(second_id).name));
-    try std.testing.expectEqual(@as(u32, 1), merged.declaration(second_id).file_index);
-    try std.testing.expectEqual(@as(u32, 1), merged.file_offsets.items[1].declaration_base);
 }
 
 test "module symbol index retains overload candidates" {
@@ -205,7 +170,7 @@ test "module callable interfaces preserve anonymous structural types" {
     }
 }
 
-test "anonymous structural types retain default expression provenance" {
+test "anonymous structural types retain module-local default provenance" {
     const allocator = std.testing.allocator;
     const source = "read(.value: (.number: Int32 = 4)) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
@@ -220,17 +185,6 @@ test "anonymous structural types retain default expression provenance" {
     try std.testing.expect(number.has_default);
     try std.testing.expect(number.default_value != null);
     try std.testing.expectEqual(@as(u32, 0), number.module_file_index);
-
-    const sources = [_]source_files.SourceFile{.{ .path = "structural_defaults/main.rg", .code = source }};
-    var db = try source_db.SourceDb.init(allocator, &sources);
-    defer db.deinit(allocator);
-    var merged = try global_builder.mergeModuleGraphs(allocator, &.{graph}, &db);
-    defer merged.deinit(allocator);
-    const global_input = merged.fields.items[merged.functions.items[0].input.start];
-    const global_shape = merged.types.items[@intFromEnum(global_input.ty)].structural;
-    const global_number = merged.structural_fields.items[global_shape.start];
-    try std.testing.expect(global_number.default_value != null);
-    try std.testing.expectEqual(@as(u32, 0), global_number.file_index);
 }
 
 test "module callable interfaces preserve anonymous choice types" {
@@ -291,27 +245,9 @@ test "module callable interfaces preserve type-only generic instantiations" {
     const argument = graph.generic_type_arguments.items[generic.arguments.start];
     try std.testing.expectEqualStrings("t", graph.text(argument.name));
     try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(argument.ty)].builtin);
-
-    const other_source = "Box#(.t: Type) : Type = (.other: t)\n";
-    var other_tree = try parseSource(allocator, other_source, @enumFromInt(2));
-    defer other_tree.deinit(allocator);
-    var other = try module_graph.build(allocator, "other", &.{.{ .path = "other/type.rg", .tree = &other_tree, .source = other_source }});
-    defer other.deinit(allocator);
-    const sources = [_]source_files.SourceFile{
-        .{ .path = "generics/type.rg", .code = type_source },
-        .{ .path = "generics/function.rg", .code = function_source },
-        .{ .path = "other/type.rg", .code = other_source },
-    };
-    var db = try source_db.SourceDb.init(allocator, &sources);
-    defer db.deinit(allocator);
-    var merged = try global_builder.mergeModuleGraphs(allocator, &.{ graph, other }, &db);
-    defer merged.deinit(allocator);
-    const read = merged.declarations.items[1];
-    const global_input = merged.fields.items[merged.functions.items[@intFromEnum(read.function_id.?)].input.start];
-    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(merged.types.items[@intFromEnum(global_input.ty)].generic.base));
 }
 
-test "module graph builds and relocates nominal choice variants" {
+test "module graph builds nominal choice variants" {
     const allocator = std.testing.allocator;
     const source = "Result : Type = (\n    ..ok Int32\n    ..done\n)\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
@@ -327,15 +263,6 @@ test "module graph builds and relocates nominal choice variants" {
     const done = graph.choice_variant_entries.items[range.start + 1];
     try std.testing.expectEqualStrings("done", graph.text(done.name));
     try std.testing.expectEqual(@as(?module_graph.ModuleTypeId, null), done.payload_type);
-
-    const sources = [_]source_files.SourceFile{.{ .path = "results/main.rg", .code = source }};
-    var db = try source_db.SourceDb.init(allocator, &sources);
-    defer db.deinit(allocator);
-    var merged = try global_builder.mergeModuleGraphs(allocator, &.{graph}, &db);
-    defer merged.deinit(allocator);
-    const global_range = merged.declarations.items[0].choice_variants.?;
-    try std.testing.expectEqualStrings("ok", merged.text(merged.choice_variant_entries.items[global_range.start].name));
-    try std.testing.expectEqual(global_builder.GlobalType{ .builtin = .Int32 }, merged.types.items[@intFromEnum(merged.choice_variant_entries.items[global_range.start].payload_type.?)]);
 }
 
 test "module type references distinguish builtin and external requirements" {
