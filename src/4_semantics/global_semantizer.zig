@@ -6,11 +6,13 @@ const global_verify = @import("global_semantic_verify.zig");
 const core_mod = @import("global_semantic_core.zig");
 const control_mod = @import("global_semantic_control.zig");
 const generic_mod = @import("global_semantic_generics.zig");
+const generic_functions_mod = @import("global_semantic_generic_functions.zig");
 
 pub const Stats = struct {
     core: core_mod.Stats = .{},
     control: control_mod.Stats = .{},
     generics: generic_mod.Stats = .{},
+    generic_functions: generic_functions_mod.Stats = .{},
     pending_total: u32 = 0,
     pending_resolved: u32 = 0,
     remaining: u32 = 0,
@@ -47,6 +49,14 @@ pub fn semantize(
         .offsets = relocation.offsets.items,
         .core = &core,
     };
+    var generic_functions = generic_functions_mod.Resolver{
+        .allocator = allocator,
+        .graph = &relocation.graph,
+        .modules = modules,
+        .offsets = relocation.offsets.items,
+        .core = &core,
+        .generics = &generics,
+    };
 
     try core.resolveExternalTypes();
     _ = try generics.materializeKnownTypes();
@@ -67,6 +77,7 @@ pub fn semantize(
                 if (!resolved[flat]) {
                     var done = (try core.tryResolve(module_index, module, o, operation)) orelse false;
                     if (!done) done = (try generics.tryResolve(module_index, module, o, operation)) orelse false;
+                    if (!done) done = (try generic_functions.tryResolve(module_index, module, o, operation)) orelse false;
                     if (!done) done = (try control.tryResolve(module_index, module, o, operation)) orelse false;
                     if (done) {
                         resolved[flat] = true;
@@ -77,7 +88,6 @@ pub fn semantize(
             }
         }
         if (try generics.materializeKnownTypes()) changed = true;
-        // Generic materialization may append Nullable/Errable sugar types.
         try control.materializeSugarTypes();
     }
 
@@ -90,14 +100,16 @@ pub fn semantize(
         .core = core.stats,
         .control = control.stats,
         .generics = generics.stats,
+        .generic_functions = generic_functions.stats,
         .pending_total = @intCast(total),
         .pending_resolved = @intCast(resolved_count),
         .remaining = @intCast(remaining),
     };
 
-    // Generic function templates, abstracts and ownership are plugged into this
-    // same fixpoint by later resolvers. Until then, never let placeholders escape.
-    if (remaining != 0 or hasUnresolvedExternalTypes(modules, core.stats.external_types + generics.stats.type_holes) or hasUnconsumedProgramTemplates(modules))
+    // Templates are compile-time input to GlobalSema, not objects that must be
+    // copied into GlobalSG. A template may legitimately remain uninstantiated.
+    // Only unresolved semantic holes prevent the final graph from escaping.
+    if (remaining != 0 or hasUnresolvedExternalTypes(modules, core.stats.external_types + generics.stats.type_holes))
         return error.UnsupportedGlobalSemantic;
 
     try global_verify.verifyGlobal(&relocation.graph);
@@ -109,20 +121,6 @@ fn totalPending(modules: []const module_sg.ModuleSemanticGraph) usize {
     var total: usize = 0;
     for (modules) |module| total += module.semantic.pending_operations.items.len;
     return total;
-}
-
-fn hasUnconsumedProgramTemplates(modules: []const module_sg.ModuleSemanticGraph) bool {
-    for (modules) |module| {
-        const storage = &module.semantic.templates;
-        if (storage.generic_function_templates.items.len != 0 or
-            storage.abstract_definitions.items.len != 0 or
-            storage.abstract_implementations.items.len != 0 or
-            storage.abstract_implementation_templates.items.len != 0 or
-            storage.abstract_defaults.items.len != 0 or
-            storage.abstract_default_templates.items.len != 0)
-            return true;
-    }
-    return false;
 }
 
 fn hasUnresolvedExternalTypes(modules: []const module_sg.ModuleSemanticGraph, resolved_count: u32) bool {
