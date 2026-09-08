@@ -2,6 +2,9 @@ const std = @import("std");
 const graph_mod = @import("global_semantic_graph.zig");
 const primitives = @import("semantic_primitives.zig");
 
+pub const pointer_size_bytes: u64 = @sizeOf(*usize);
+pub const pointer_alignment_bytes: u64 = pointer_size_bytes;
+
 pub const FieldHit = struct {
     index: u32,
     id: graph_mod.GlobalFieldId,
@@ -12,6 +15,11 @@ pub const VariantHit = struct {
     index: u32,
     id: graph_mod.GlobalVariantId,
     variant: graph_mod.ChoiceVariant,
+};
+
+pub const Layout = struct {
+    size: u64,
+    alignment: u64,
 };
 
 pub fn fields(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.FieldRange {
@@ -102,6 +110,10 @@ pub fn typeForDeclaration(graph: *const graph_mod.GlobalSemanticGraph, decl: gra
     return graph.declarations.items[@intFromEnum(decl)].type_id;
 }
 
+pub fn effectiveFieldType(field: graph_mod.Field) graph_mod.GlobalTypeId {
+    return field.storage_type orelse field.ty;
+}
+
 pub fn isBuiltin(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, builtin: primitives.BuiltinType) bool {
     return switch (graph.types.items[@intFromEnum(ty)]) {
         .builtin => |value| value == builtin,
@@ -134,6 +146,113 @@ pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTyp
         .structural => |x| switch (right) { .structural => |y| fieldRangesEqual(graph, x.fields, y.fields), else => false },
         .structural_choice => |x| switch (right) { .structural_choice => |y| variantRangesEqual(graph, x.variants, y.variants), else => false },
     };
+}
+
+/// Runtime layout of a fully resolved GlobalTypeId. Compact ModuleSema sugar
+/// (`nullable`/`inferred_errable`) is rejected because GlobalSema must
+/// materialize it before Safety/Codegen.
+pub fn layoutOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) !Layout {
+    return switch (graph.types.items[@intFromEnum(ty)]) {
+        .builtin => |builtin| builtinLayout(builtin),
+        .pointer => .{ .size = pointer_size_bytes, .alignment = pointer_alignment_bytes },
+        .array => |array| blk: {
+            const element = try layoutOf(graph, array.element);
+            const stride = alignForward(element.size, element.alignment);
+            break :blk .{ .size = stride * array.length, .alignment = element.alignment };
+        },
+        .declared => |decl| declaredLayout(graph, decl),
+        .structural => |shape| structLayout(graph, shape.fields, shape.layout),
+        .structural_choice => |shape| choiceLayout(graph, shape.variants, shape.layout),
+        .inferred_choice => |shape| choiceLayout(graph, shape.variants, .regular),
+        .generic => genericLayout(graph, ty),
+        .nullable, .inferred_errable => error.UnmaterializedGlobalType,
+    };
+}
+
+pub fn sizeOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) !u64 {
+    return (try layoutOf(graph, ty)).size;
+}
+
+pub fn alignmentOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) !u64 {
+    return (try layoutOf(graph, ty)).alignment;
+}
+
+fn builtinLayout(builtin: primitives.BuiltinType) Layout {
+    return switch (builtin) {
+        .Void => .{ .size = 0, .alignment = 1 },
+        .Int8, .UInt8, .Char, .Bool, .Any => .{ .size = 1, .alignment = 1 },
+        .Int16, .UInt16, .Float16 => .{ .size = 2, .alignment = 2 },
+        .Int32, .UInt32, .Float32 => .{ .size = 4, .alignment = 4 },
+        .Int64, .UInt64, .Float64 => .{ .size = 8, .alignment = 8 },
+        .UIntNative, .Type => .{ .size = pointer_size_bytes, .alignment = pointer_alignment_bytes },
+    };
+}
+
+fn declaredLayout(graph: *const graph_mod.GlobalSemanticGraph, decl_id: graph_mod.GlobalDeclId) !Layout {
+    const decl = graph.declarations.items[@intFromEnum(decl_id)];
+    if (decl.struct_fields) |range| return structLayout(graph, range, decl.struct_layout);
+    if (decl.choice_variants) |range| return choiceLayout(graph, range, decl.choice_layout);
+    return error.TypeHasNoRuntimeLayout;
+}
+
+fn genericLayout(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) !Layout {
+    const instance = genericInstance(graph, ty) orelse return error.UnmaterializedGenericType;
+    return switch (instance.shape) {
+        .structure => |shape| structLayout(graph, shape.fields, shape.layout),
+        .choice => |shape| choiceLayout(graph, shape.variants, shape.layout),
+        .array => |shape| blk: {
+            const element = try layoutOf(graph, shape.element);
+            const stride = alignForward(element.size, element.alignment);
+            break :blk .{ .size = stride * shape.length, .alignment = element.alignment };
+        },
+        .alias => |target| layoutOf(graph, target),
+    };
+}
+
+fn structLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.FieldRange, kind: primitives.StructLayout) !Layout {
+    if (range.len == 0) return .{ .size = 0, .alignment = 1 };
+    if (kind == .c_union) {
+        var size: u64 = 0;
+        var alignment: u64 = 1;
+        for (graph.fields.items[range.start..][0..range.len]) |field| {
+            const layout = try layoutOf(graph, effectiveFieldType(field));
+            size = @max(size, layout.size);
+            alignment = @max(alignment, layout.alignment);
+        }
+        return .{ .size = alignForward(size, alignment), .alignment = alignment };
+    }
+
+    var offset: u64 = 0;
+    var alignment: u64 = 1;
+    for (graph.fields.items[range.start..][0..range.len]) |field| {
+        const layout = try layoutOf(graph, effectiveFieldType(field));
+        offset = alignForward(offset, layout.alignment);
+        offset += layout.size;
+        alignment = @max(alignment, layout.alignment);
+    }
+    return .{ .size = alignForward(offset, alignment), .alignment = alignment };
+}
+
+fn choiceLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.VariantRange, kind: primitives.ChoiceLayout) !Layout {
+    if (kind == .c_enum) return .{ .size = 4, .alignment = 4 };
+    // Keep the current ABI exactly: regular choices are a tag followed by one
+    // storage field per variant (rather than a payload union).
+    var offset: u64 = 4;
+    var alignment: u64 = 4;
+    for (graph.variants.items[range.start..][0..range.len]) |variant| {
+        const payload_ty = variant.payload_type orelse continue;
+        const layout = try layoutOf(graph, payload_ty);
+        offset = alignForward(offset, layout.alignment);
+        offset += layout.size;
+        alignment = @max(alignment, layout.alignment);
+    }
+    return .{ .size = alignForward(offset, alignment), .alignment = alignment };
+}
+
+fn alignForward(value: u64, alignment: u64) u64 {
+    if (alignment <= 1) return value;
+    const remainder = value % alignment;
+    return if (remainder == 0) value else value + alignment - remainder;
 }
 
 fn genericFields(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.FieldRange {
@@ -204,4 +323,6 @@ test "global semantic types expose structural fields and variants" {
     try graph.types.append(allocator, .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 1 } } });
     try std.testing.expectEqual(@as(u32, 0), findField(&graph, @enumFromInt(1), "x").?.index);
     try std.testing.expectEqual(@as(u32, 0), findVariant(&graph, @enumFromInt(2), "some").?.index);
+    try std.testing.expectEqual(@as(u64, 4), try sizeOf(&graph, @enumFromInt(1)));
+    try std.testing.expect((try sizeOf(&graph, @enumFromInt(2))) >= 8);
 }
