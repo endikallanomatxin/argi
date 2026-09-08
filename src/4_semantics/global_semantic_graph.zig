@@ -103,11 +103,16 @@ pub const Module = struct {
 
 pub const Symbol = struct {
     name: StringRange,
-    /// Range into `symbol_declarations`, not directly into `declarations`.
-    /// All declarations in one Symbol must belong to the same module. Module
-    /// ownership is therefore derivable from declaration partitions and is not
-    /// duplicated in this record.
     declarations: DeclRange,
+};
+
+/// Cold identity for a concrete generic function. Runtime call dispatch uses
+/// only `GlobalFunctionId`; this record prevents distinct comptime instances
+/// with identical runtime signatures from being merged accidentally.
+pub const GenericFunctionInstance = struct {
+    function: GlobalFunctionId,
+    template_declaration: GlobalDeclId,
+    arguments: primitives.Range(GlobalGenericArgId),
 };
 
 pub const GlobalSemanticGraph = struct {
@@ -119,8 +124,8 @@ pub const GlobalSemanticGraph = struct {
     types: std.ArrayList(GlobalType) = .empty,
     generic_instances: std.ArrayList(GenericInstance) = .empty,
     functions: std.ArrayList(Function) = .empty,
-    /// Cold metadata aligned 1:1 with `functions`.
     function_operators: std.ArrayList(?callable.OperatorKind) = .empty,
+    generic_function_instances: std.ArrayList(GenericFunctionInstance) = .empty,
     bindings: std.ArrayList(Binding) = .empty,
     nodes: std.ArrayList(Node) = .empty,
     blocks: std.ArrayList(Block) = .empty,
@@ -156,7 +161,8 @@ pub const GlobalSemanticGraph = struct {
         inline for (.{
             &self.modules, &self.files, &self.declarations, &self.symbols,
             &self.symbol_declarations, &self.types, &self.generic_instances,
-            &self.functions, &self.function_operators, &self.bindings, &self.nodes, &self.blocks,
+            &self.functions, &self.function_operators, &self.generic_function_instances,
+            &self.bindings, &self.nodes, &self.blocks,
             &self.fields, &self.variants, &self.generic_arguments,
             &self.value_fields, &self.switch_cases, &self.switches,
             &self.auto_deinit_fields, &self.auto_deinits,
@@ -228,6 +234,7 @@ pub const GlobalSemanticGraph = struct {
             self.generic_instances.items.len * @sizeOf(GenericInstance) +
             self.functions.items.len * @sizeOf(Function) +
             self.function_operators.items.len * @sizeOf(?callable.OperatorKind) +
+            self.generic_function_instances.items.len * @sizeOf(GenericFunctionInstance) +
             self.bindings.items.len * @sizeOf(Binding) +
             self.nodes.items.len * @sizeOf(Node) +
             self.blocks.items.len * @sizeOf(Block) +
