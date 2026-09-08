@@ -9,16 +9,16 @@ const codegen = @import("../5_codegen/global_codegen.zig");
 const graph_mod = @import("../4_semantics/global_semantic_graph.zig");
 const types = @import("../4_semantics/global_semantic_types.zig");
 const graph_print = @import("../4_semantics/global_semantic_print.zig");
-const legacy_cli = @import("build.zig");
+const planning = @import("build_plan.zig");
 
-pub const BuildFlags = legacy_cli.BuildFlags;
-pub const BuildPlan = legacy_cli.BuildPlan;
-pub const parseBuildArgs = legacy_cli.parseBuildArgs;
-pub const resolveBuildModuleDir = legacy_cli.resolveBuildModuleDir;
-pub const resolveBuildPlans = legacy_cli.resolveBuildPlans;
-pub const resolveBuildPlan = legacy_cli.resolveBuildPlan;
-pub const resolveRunPlan = legacy_cli.resolveRunPlan;
-pub const localCacheRoot = legacy_cli.localCacheRoot;
+pub const BuildFlags = planning.BuildFlags;
+pub const BuildPlan = planning.BuildPlan;
+pub const parseBuildArgs = planning.parseBuildArgs;
+pub const resolveBuildModuleDir = planning.resolveBuildModuleDir;
+pub const resolveBuildPlans = planning.resolveBuildPlans;
+pub const resolveBuildPlan = planning.resolveBuildPlan;
+pub const resolveRunPlan = planning.resolveRunPlan;
+pub const localCacheRoot = planning.localCacheRoot;
 
 pub const CompileOptions = struct {
     frontend_options: frontend.FrontendPipeline.Options = .{},
@@ -128,7 +128,7 @@ pub fn compileTarget(
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const plans = try legacy_cli.resolveBuildPlans(allocator, io, target_path, flags);
+    const plans = try planning.resolveBuildPlans(allocator, io, target_path, flags);
     if (plans.items.len > 1 and flags.output_path != null) {
         std.debug.print("Error: --output is ambiguous when building multiple executables.\n", .{});
         return error.CompilationFailed;
@@ -250,12 +250,12 @@ fn compileResolvedPlan(
 }
 
 pub fn compile(io: std.Io, environ_map: ?*const std.process.Environ.Map, args: []const []const u8) !void {
-    const parsed = try legacy_cli.parseBuildArgs(args);
+    const parsed = try planning.parseBuildArgs(args);
     try compileTarget(parsed.target_path, parsed.flags, .{}, io, environ_map);
 }
 
 pub fn check(io: std.Io, environ_map: ?*const std.process.Environ.Map, args: []const []const u8) !void {
-    const parsed = try legacy_cli.parseBuildArgs(args);
+    const parsed = try planning.parseBuildArgs(args);
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
