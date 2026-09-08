@@ -204,6 +204,7 @@ pub const FrontendPipeline = struct {
                 .path = source.path,
                 .tree = file,
                 .source = source.source,
+                .is_bundled_core = source.origin == .bundled_core,
             });
         }
         try self.module_graphs.ensureTotalCapacity(self.allocator, groups.items.len);

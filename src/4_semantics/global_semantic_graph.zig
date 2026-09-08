@@ -97,6 +97,7 @@ pub const File = struct {
 
 pub const Module = struct {
     dir: StringRange,
+    is_bundled_core: bool = false,
     files: primitives.Range(GlobalFileId),
     declarations: DeclRange,
 };

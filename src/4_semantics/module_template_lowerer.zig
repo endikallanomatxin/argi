@@ -1,4 +1,5 @@
 const std = @import("std");
+const literals = @import("semantic_literals.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
 const tok = @import("../2_tokens/token.zig");
 const graph_mod = @import("module_semantic_graph.zig");
@@ -15,7 +16,7 @@ pub const Stats = struct {
     abstract_definitions: u32 = 0,
 };
 
-const ParameterBinding = struct {
+pub const ParameterBinding = struct {
     name: []const u8,
     id: ir.TemplateParameterId,
     kind: templates.GenericParameterKind,
@@ -44,7 +45,7 @@ pub fn lower(
     return ctx.lowerDeclarations();
 }
 
-const Context = struct {
+pub const Context = struct {
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
@@ -86,8 +87,11 @@ const Context = struct {
                     const params = try self.lowerParameters(function.generic_params, function.generic_params_struct);
                     const input = try self.lowerType(function.input, false);
                     const output = try self.lowerType(function.output, false);
+                    const input_start: u32 = @intCast(self.graph.semantic.templates.ir.bindings.items.len);
                     try self.seedFunctionBindings(function.input);
+                    const output_start: u32 = @intCast(self.graph.semantic.templates.ir.bindings.items.len);
                     try self.seedFunctionBindings(function.output);
+                    const output_end: u32 = @intCast(self.graph.semantic.templates.ir.bindings.items.len);
                     const body = if (function.body) |node| try self.lowerBlock(node) else null;
                     try self.graph.semantic.templates.generic_function_templates.append(self.allocator, .{
                         .declaration = decl_id,
@@ -95,6 +99,8 @@ const Context = struct {
                         .input = input,
                         .output = output,
                         .body = body,
+                        .input_bindings = .{ .start = input_start, .len = output_start - input_start },
+                        .output_bindings = .{ .start = output_start, .len = output_end - output_start },
                     });
                     stats.generic_functions += 1;
                 },
@@ -185,7 +191,7 @@ const Context = struct {
         return .{ .start = start, .len = @intCast(self.graph.semantic.templates.generic_parameters.items.len - start) };
     }
 
-    fn lowerType(self: *Context, node: syn.NodeIndex, allow_self: bool) anyerror!ir.TemplateTypeId {
+    pub fn lowerType(self: *Context, node: syn.NodeIndex, allow_self: bool) anyerror!ir.TemplateTypeId {
         const syntax_type = self.tree.syntaxType(node) orelse return error.ExpectedTemplateType;
         return switch (syntax_type) {
             .name => |name| self.lowerNamedType(node, name.name_token, name.qualifier_token, allow_self),
@@ -249,18 +255,21 @@ const Context = struct {
         try self.graph.semantic.templates.ir.declarations.append(self.allocator, .{ .target = declaration_ref });
 
         const literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericTemplateArguments;
-        const arg_start: u32 = @intCast(self.graph.semantic.templates.ir.generic_arguments.items.len);
+        var arguments: std.ArrayList(ir.GenericArgument) = .empty;
+        defer arguments.deinit(self.allocator);
         for (literal.fields) |field_node| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericTemplateArgument;
             const name_range = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token));
             const arg_value: ir.GenericArgument.Value = if (field.type_node) |type_node|
                 .{ .type = try self.lowerType(type_node, allow_self) }
             else if (field.default_value) |value_node|
-                .{ .comptime_int = try self.lowerIntExpression(value_node) }
+                try self.lowerGenericValue(value_node, allow_self)
             else
                 return error.InvalidGenericTemplateArgument;
-            try self.graph.semantic.templates.ir.generic_arguments.append(self.allocator, .{ .name = name_range, .value = arg_value });
+            try arguments.append(self.allocator, .{ .name = name_range, .value = arg_value });
         }
+        const arg_start: u32 = @intCast(self.graph.semantic.templates.ir.generic_arguments.items.len);
+        try self.graph.semantic.templates.ir.generic_arguments.appendSlice(self.allocator, arguments.items);
         return self.addType(.{ .resolved = .{ .generic = .{
             .base = template_decl,
             .arguments = .{ .start = arg_start, .len = @intCast(literal.fields.len) },
@@ -268,32 +277,54 @@ const Context = struct {
     }
 
     fn lowerStructType(self: *Context, literal: syn.StructTypeLiteral, allow_self: bool) !ir.TemplateTypeId {
-        const start: u32 = @intCast(self.graph.semantic.templates.ir.fields.items.len);
+        // Recursive types can append to the same pool. Publish immediate fields
+        // together only after their children have been lowered.
+        var fields: std.ArrayList(ir.Field) = .empty;
+        defer fields.deinit(self.allocator);
         for (literal.fields) |field_node| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidTemplateStructField;
             const type_node = field.type_node orelse return error.InvalidTemplateStructField;
-            try self.graph.semantic.templates.ir.fields.append(self.allocator, .{
+            try fields.append(self.allocator, .{
                 .name = try self.writer.addString(if (field.inferred_result) "result" else self.tree.tokenTextFromSource(self.source, field.name_token)),
                 .ty = try self.lowerType(type_node, allow_self),
                 .source = self.sourceRef(field_node),
             });
         }
+        const start: u32 = @intCast(self.graph.semantic.templates.ir.fields.items.len);
+        try self.graph.semantic.templates.ir.fields.appendSlice(self.allocator, fields.items);
         return self.addType(.{ .resolved = .{ .structural = .{
             .fields = .{ .start = start, .len = @intCast(literal.fields.len) },
         } } });
     }
 
+    pub fn lowerGenericValue(self: *Context, node: syn.NodeIndex, allow_self: bool) !ir.GenericArgument.Value {
+        if (self.tree.tag(node) == .identifier) {
+            const token = self.tree.mainToken(node);
+            const name = self.tree.tokenTextFromSource(self.source, token);
+            if (self.parameter(name)) |binding| {
+                if (binding.kind == .type) return .{ .type = try self.addType(.{ .parameter = binding.id }) };
+            } else if (builtinFromName(name) != null or self.localType(name) != null) {
+                return .{ .type = try self.lowerNamedType(node, token, null, allow_self) };
+            }
+        }
+        if (self.tree.syntaxType(node) != null) return .{ .type = try self.lowerType(node, allow_self) };
+        return .{ .comptime_int = try self.lowerIntExpression(node) };
+    }
+
     fn lowerChoiceType(self: *Context, literal: syn.ChoiceTypeLiteral, allow_self: bool) !ir.TemplateTypeId {
-        const start: u32 = @intCast(self.graph.semantic.templates.ir.variants.items.len);
+        var variants: std.ArrayList(ir.Variant) = .empty;
+        defer variants.deinit(self.allocator);
         for (literal.variants, 0..) |variant_node, index| {
             const variant = self.tree.choiceTypeVariant(variant_node) orelse return error.InvalidTemplateChoiceVariant;
-            try self.graph.semantic.templates.ir.variants.append(self.allocator, .{ .semantic = .{
+            try variants.append(self.allocator, .{ .semantic = .{
                 .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, variant.name_token)),
                 .payload_type = if (variant.payload_type) |payload| try self.lowerType(payload, allow_self) else null,
                 .source = self.sourceRef(variant_node),
                 .value = @intCast(index),
             } });
         }
+        const start: u32 = @intCast(self.graph.semantic.templates.ir.variants.items.len);
+        try self.graph.semantic.templates.ir.variants.appendSlice(self.allocator, variants.items);
         return self.addType(.{ .resolved = .{ .structural_choice = .{
             .variants = .{ .start = start, .len = @intCast(literal.variants.len) },
         } } });
@@ -356,13 +387,18 @@ const Context = struct {
 
     fn lowerBlock(self: *Context, node: syn.NodeIndex) anyerror!ir.TemplateBlockId {
         const block = self.tree.codeBlock(node) orelse return error.ExpectedTemplateBlock;
-        const start: u32 = @intCast(self.graph.semantic.templates.ir.node_refs.items.len);
+        const binding_mark = self.bindings.items.len;
+        defer self.bindings.shrinkRetainingCapacity(binding_mark);
+        var statements: std.ArrayList(ir.TemplateNodeId) = .empty;
+        defer statements.deinit(self.allocator);
         var ret_val: ?ir.TemplateNodeId = null;
         for (block.statements) |statement| {
             const lowered = try self.lowerBodyNode(statement);
-            try self.graph.semantic.templates.ir.node_refs.append(self.allocator, lowered);
+            try statements.append(self.allocator, lowered);
             ret_val = lowered;
         }
+        const start: u32 = @intCast(self.graph.semantic.templates.ir.node_refs.items.len);
+        try self.graph.semantic.templates.ir.node_refs.appendSlice(self.allocator, statements.items);
         const id: ir.TemplateBlockId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.templates.ir.blocks.items.len)));
         try self.graph.semantic.templates.ir.blocks.append(self.allocator, .{
             .nodes = .{ .start = start, .len = @intCast(block.statements.len) },
@@ -372,19 +408,81 @@ const Context = struct {
     }
 
     fn lowerBodyNode(self: *Context, node: syn.NodeIndex) anyerror!ir.TemplateNodeId {
+        if (self.tree.functionCall(node)) |call| {
+            const input = try self.lowerBodyNode(call.input);
+            var arguments: std.ArrayList(ir.GenericArgument) = .empty;
+            defer arguments.deinit(self.allocator);
+            if (call.type_arguments_struct) |struct_node| {
+                const literal = self.tree.structTypeLiteral(struct_node) orelse return error.InvalidTemplateCallArguments;
+                for (literal.fields) |field_node| {
+                    const field = self.tree.structTypeField(field_node) orelse return error.InvalidTemplateCallArgument;
+                    const value: ir.GenericArgument.Value = if (field.type_node) |type_node|
+                        .{ .type = try self.lowerType(type_node, false) }
+                    else if (field.default_value) |value_node|
+                        try self.lowerGenericValue(value_node, false)
+                    else return error.InvalidTemplateCallArgument;
+                    try arguments.append(self.allocator, .{
+                        .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token)), .value = value,
+                    });
+                }
+            } else for (call.type_arguments) |type_node| {
+                try arguments.append(self.allocator, .{ .name = try self.writer.addString(""), .value = .{ .type = try self.lowerType(type_node, false) } });
+            }
+            const start: u32 = @intCast(self.graph.semantic.templates.ir.generic_arguments.items.len);
+            try self.graph.semantic.templates.ir.generic_arguments.appendSlice(self.allocator, arguments.items);
+            const id = try self.addPending(node, .generic_call, &.{input}, try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)), null, 0);
+            const pending_id = self.graph.semantic.templates.ir.nodes.items[@intFromEnum(id)].pending;
+            self.graph.semantic.templates.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.generic_arguments = .{ .start = start, .len = @intCast(arguments.items.len) };
+            self.graph.semantic.templates.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.module_path = if (call.module_qualifier) |token| try self.writer.addString(self.tree.tokenTextFromSource(self.source, token)) else null;
+            return id;
+        }
+        if (self.tree.symbolDeclaration(node)) |declaration| {
+            const initialization = if (declaration.value) |value| try self.lowerBodyNode(value) else null;
+            const ty = if (declaration.type_node) |value| try self.lowerType(value, false) else try self.templateBuiltin(.Any);
+            const name = self.tree.tokenTextFromSource(self.source, declaration.name_token);
+            const binding: ir.TemplateBindingId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.templates.ir.bindings.items.len)));
+            try self.graph.semantic.templates.ir.bindings.append(self.allocator, .{
+                .name = try self.writer.addString(name), .source = self.sourceRef(node),
+                .ty = ty, .initialization = initialization, .mutability = declaration.mutability,
+            });
+            try self.bindings.append(.{ .name = name, .id = binding });
+            return self.addResolvedNode(node, try self.templateBuiltin(.Void), .{ .binding_declaration = binding });
+        }
+        if (self.tree.assignment(node)) |assignment| {
+            const name = self.tree.tokenTextFromSource(self.source, assignment.name_token);
+            const binding = self.templateBinding(name) orelse return error.UnknownTemplateAssignment;
+            return self.addResolvedNode(node, try self.templateBuiltin(.Void), .{ .assignment = .{
+                .binding = binding, .value = try self.lowerBodyNode(assignment.value),
+            } });
+        }
+        if (self.tree.structValueLiteral(node)) |literal| {
+            var fields: std.ArrayList(ir.ValueField) = .empty;
+            defer fields.deinit(self.allocator);
+            for (literal.fields) |field_node| {
+                const field = self.tree.valueField(field_node) orelse return error.InvalidTemplateValueField;
+                try fields.append(self.allocator, .{
+                    .name = try self.writer.addString(if (field.name_token) |token| self.tree.tokenTextFromSource(self.source, token) else ""),
+                    .value = try self.lowerBodyNode(field.value),
+                });
+            }
+            const start: u32 = @intCast(self.graph.semantic.templates.ir.value_fields.items.len);
+            try self.graph.semantic.templates.ir.value_fields.appendSlice(self.allocator, fields.items);
+            const ty = try self.templateBuiltin(.Any);
+            return self.addResolvedNode(node, ty, .{ .struct_value_literal = .{
+                .fields = .{ .start = start, .len = @intCast(fields.items.len) }, .ty = ty,
+            } });
+        }
         // Keep the few parameter-independent leaves compact and represent every
         // semantic composition uniformly as a syntax-free pending expression.
         if (self.tree.literal(node)) |literal| {
             const token_content = self.tree.tokenContent(literal.token).literal;
             return switch (token_content) {
                 .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => blk: {
-                    var value = std.fmt.parseInt(i64, self.tree.tokenTextFromSource(self.source, literal.token), 0) catch 0;
-                    if (literal.negative) value = -value;
+const value = try literals.integer(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
                     break :blk self.addResolvedNode(node, try self.templateBuiltin(.Int32), .{ .int_literal = value });
                 },
                 .regular_float_literal, .scientific_float_literal => blk: {
-                    var value = std.fmt.parseFloat(f64, self.tree.tokenTextFromSource(self.source, literal.token)) catch 0;
-                    if (literal.negative) value = -value;
+const value = try literals.float(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
                     break :blk self.addResolvedNode(node, try self.templateBuiltin(.Float32), .{ .float_literal = value });
                 },
                 .bool_literal => |value| self.addResolvedNode(node, try self.templateBuiltin(.Bool), .{ .bool_literal = value }),

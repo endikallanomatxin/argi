@@ -1,3 +1,4 @@
+const template_lowerer = @import("module_template_lowerer.zig");
 const std = @import("std");
 const syn = @import("../3_syntax/syntax_tree.zig");
 const graph_mod = @import("module_semantic_graph.zig");
@@ -15,11 +16,7 @@ pub const Stats = struct {
     default_templates: u32 = 0,
 };
 
-const Param = struct {
-    name: []const u8,
-    id: ir.TemplateParameterId,
-    kind: templates.GenericParameterKind,
-};
+const Param = template_lowerer.ParameterBinding;
 
 pub fn lower(
     allocator: std.mem.Allocator,
@@ -159,7 +156,8 @@ const Context = struct {
         const reference = try self.declarationRef(base_node, name, .abstract);
         var module_args: std.ArrayList(templates.AbstractArgument) = .empty;
         errdefer module_args.deinit(self.allocator);
-        const template_start: u32 = @intCast(self.graph.semantic.templates.ir.generic_arguments.items.len);
+        var template_args: std.ArrayList(ir.GenericArgument) = .empty;
+        defer template_args.deinit(self.allocator);
         if (arguments_node) |args_node| {
             const literal = self.tree.structTypeLiteral(args_node) orelse return error.InvalidAbstractArguments;
             for (literal.fields) |field_node| {
@@ -167,14 +165,16 @@ const Context = struct {
                 const arg_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token));
                 if (template_mode) {
                     if (field.type_node) |type_node| {
-                        try self.graph.semantic.templates.ir.generic_arguments.append(self.allocator, .{
+                        try template_args.append(self.allocator, .{
                             .name = arg_name,
                             .value = .{ .type = try self.lowerTemplateType(type_node) },
                         });
                     } else if (field.default_value) |value_node| {
-                        try self.graph.semantic.templates.ir.generic_arguments.append(self.allocator, .{
+                        var lowerer = self.templateContext();
+                        defer lowerer.bindings.deinit();
+                        try template_args.append(self.allocator, .{
                             .name = arg_name,
-                            .value = .{ .comptime_int = try self.lowerTemplateInt(value_node) },
+                            .value = try lowerer.lowerGenericValue(value_node, false),
                         });
                     } else return error.InvalidAbstractArgument;
                 } else {
@@ -187,12 +187,14 @@ const Context = struct {
                 }
             }
         }
+        const template_start: u32 = @intCast(self.graph.semantic.templates.ir.generic_arguments.items.len);
+        try self.graph.semantic.templates.ir.generic_arguments.appendSlice(self.allocator, template_args.items);
         return .{
             .reference = reference,
             .module_arguments = try module_args.toOwnedSlice(self.allocator),
             .template_arguments = .{
                 .start = template_start,
-                .len = @intCast(self.graph.semantic.templates.ir.generic_arguments.items.len - template_start),
+                .len = @intCast(template_args.items.len),
             },
         };
     }
@@ -227,63 +229,24 @@ const Context = struct {
         return .{ .start = start, .len = @intCast(self.graph.semantic.templates.generic_parameters.items.len - start) };
     }
 
-    fn lowerTemplateType(self: *Context, node: syn.NodeIndex) anyerror!ir.TemplateTypeId {
-        const ty = self.tree.syntaxType(node) orelse return error.ExpectedTemplateType;
-        return switch (ty) {
-            .name => |name| blk: {
-                const text = self.tree.tokenTextFromSource(self.source, name.name_token);
-                if (name.qualifier_token == null) {
-                    for (self.params.items) |param| if (param.kind == .type and std.mem.eql(u8, param.name, text))
-                        break :blk try self.addTemplateType(.{ .parameter = param.id });
-                    if (self.localType(text)) |local|
-                        break :blk try self.addTemplateType(.{ .concrete = self.graph.declarations.items[@intFromEnum(local)].type_id.? });
-                    if (builtinFromName(text)) |builtin|
-                        break :blk try self.addTemplateType(.{ .concrete = try self.moduleBuiltin(builtin) });
-                }
-                const external = try self.writer.addExternalRef(.{
-                    .kind = .type,
-                    .module_path = if (name.qualifier_token) |token| try self.writer.addString(self.tree.tokenTextFromSource(self.source, token)) else null,
-                    .name = try self.writer.addString(text), .source = self.sourceRef(node),
-                });
-                break :blk try self.addTemplateType(.{ .external = external });
-            },
-            .pointer => |ptr| try self.addTemplateType(.{ .resolved = .{ .pointer = .{
-                .child = try self.lowerTemplateType(ptr.child), .mutability = ptr.mutability,
-            } } }),
-            .nullable => |child| try self.addTemplateType(.{ .resolved = .{ .nullable = try self.lowerTemplateType(child) } }),
-            .inferred_errable => |child| try self.addTemplateType(.{ .resolved = .{ .inferred_errable = try self.lowerTemplateType(child) } }),
-            .array => |array| try self.addTemplateType(.{ .array = .{
-                .length = try self.lowerTemplateIntFromToken(array.length_token),
-                .element = try self.lowerTemplateType(array.element),
-            } }),
-            .generic => |generic| self.lowerTemplateGeneric(generic),
-            .struct_literal, .choice_literal => return error.UnsupportedAbstractRelationTemplateType,
-        };
+    fn lowerTemplateType(self: *Context, node: syn.NodeIndex) !ir.TemplateTypeId {
+        var lowerer = self.templateContext();
+        defer lowerer.bindings.deinit();
+        return lowerer.lowerType(node, false);
     }
 
-    fn lowerTemplateGeneric(self: *Context, generic: syn.GenericType) !ir.TemplateTypeId {
-        const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericBase;
-        if (base != .name) return error.InvalidGenericBase;
-        const name = self.tree.tokenTextFromSource(self.source, base.name.name_token);
-        const ref = try self.declarationRef(generic.base, name, .type);
-        const decl_id: ir.TemplateDeclId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.templates.ir.declarations.items.len)));
-        try self.graph.semantic.templates.ir.declarations.append(self.allocator, .{ .target = ref });
-        const literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericArguments;
-        const start: u32 = @intCast(self.graph.semantic.templates.ir.generic_arguments.items.len);
-        for (literal.fields) |field_node| {
-            const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericArgument;
-            const name_range = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token));
-            const value: ir.GenericArgument.Value = if (field.type_node) |type_node|
-                .{ .type = try self.lowerTemplateType(type_node) }
-            else if (field.default_value) |value_node|
-                .{ .comptime_int = try self.lowerTemplateInt(value_node) }
-            else return error.InvalidGenericArgument;
-            try self.graph.semantic.templates.ir.generic_arguments.append(self.allocator, .{ .name = name_range, .value = value });
-        }
-        return self.addTemplateType(.{ .resolved = .{ .generic = .{
-            .base = decl_id,
-            .arguments = .{ .start = start, .len = @intCast(literal.fields.len) },
-        } } });
+    fn templateContext(self: *Context) template_lowerer.Context {
+        return .{
+            .allocator = self.allocator,
+            .graph = self.graph,
+            .files = self.files,
+            .writer = self.writer,
+            .parameters = self.params,
+            .bindings = .init(self.allocator),
+            .file_index = self.file_index,
+            .tree = self.tree,
+            .source = self.source,
+        };
     }
 
     fn lowerModuleType(self: *Context, node: syn.NodeIndex) !entities.ModuleTypeId {

@@ -308,10 +308,11 @@ pub const Resolver = struct {
     ) !primitives.Range(global_sg.GlobalGenericArgId) {
         const module = &self.modules[module_index];
         const storage = &module.semantic.templates.ir;
-        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        var items: std.ArrayList(global_sg.GenericArgument) = .empty;
+        defer items.deinit(self.allocator);
         for (0..range.len) |offset| {
             const argument = storage.generic_arguments.items[range.start + @as(u32, @intCast(offset))];
-            try self.graph.generic_arguments.append(self.allocator, .{
+            try items.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, module.text(argument.name)),
                 .value = switch (argument.value) {
                     .type => |value| .{ .type = try self.instantiateTemplateType(module_index, value, bindings, self_type) },
@@ -319,6 +320,8 @@ pub const Resolver = struct {
                 },
             });
         }
+        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        try self.graph.generic_arguments.appendSlice(self.allocator, items.items);
         return .{ .start = start, .len = range.len };
     }
 
@@ -331,10 +334,11 @@ pub const Resolver = struct {
     ) !global_sg.FieldRange {
         const module = &self.modules[module_index];
         const storage = &module.semantic.templates.ir;
-        const start: u32 = @intCast(self.graph.fields.items.len);
+        var items: std.ArrayList(global_sg.Field) = .empty;
+        defer items.deinit(self.allocator);
         for (0..range.len) |offset| {
             const field = storage.fields.items[range.start + @as(u32, @intCast(offset))];
-            try self.graph.fields.append(self.allocator, .{
+            try items.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, module.text(field.name)),
                 .ty = try self.instantiateTemplateType(module_index, field.ty, bindings, self_type),
                 .storage_type = if (field.storage_type) |value| try self.instantiateTemplateType(module_index, value, bindings, self_type) else null,
@@ -342,6 +346,8 @@ pub const Resolver = struct {
                 .default_value = null,
             });
         }
+        const start: u32 = @intCast(self.graph.fields.items.len);
+        try self.graph.fields.appendSlice(self.allocator, items.items);
         return .{ .start = start, .len = range.len };
     }
 
@@ -354,7 +360,8 @@ pub const Resolver = struct {
     ) !global_sg.VariantRange {
         const module = &self.modules[module_index];
         const storage = &module.semantic.templates.ir;
-        const start: u32 = @intCast(self.graph.variants.items.len);
+        var items: std.ArrayList(global_sg.ChoiceVariant) = .empty;
+        defer items.deinit(self.allocator);
         for (0..range.len) |offset| {
             const variant = storage.variants.items[range.start + @as(u32, @intCast(offset))];
             switch (variant) {
@@ -372,9 +379,9 @@ pub const Resolver = struct {
                             break :blk found orelse return error.UnknownTemplateVariant;
                         },
                     };
-                    try self.graph.variants.append(self.allocator, existing);
+                    try items.append(self.allocator, existing);
                 },
-                .semantic => |value| try self.graph.variants.append(self.allocator, .{
+                .semantic => |value| try items.append(self.allocator, .{
                     .name = try self.graph.addString(self.allocator, module.text(value.name)),
                     .payload_type = if (value.payload_type) |payload| try self.instantiateTemplateType(module_index, payload, bindings, self_type) else null,
                     .option_decl = null,
@@ -383,6 +390,8 @@ pub const Resolver = struct {
                 }),
             }
         }
+        const start: u32 = @intCast(self.graph.variants.items.len);
+        try self.graph.variants.appendSlice(self.allocator, items.items);
         return .{ .start = start, .len = range.len };
     }
 

@@ -102,6 +102,7 @@ pub const Symbol = struct {
 /// bodies and semantic identities live in `semantic` using Module* IDs.
 pub const ModuleSemanticGraph = struct {
     module_dir: []const u8 = "",
+    is_bundled_core: bool = false,
     declarations: std.ArrayList(Declaration) = .empty,
     symbols: std.ArrayList(Symbol) = .empty,
     symbol_declarations: std.ArrayList(ModuleDeclId) = .empty,
@@ -187,6 +188,7 @@ pub const FileInput = struct {
     path: []const u8,
     tree: *const syn.FileSyntaxTree,
     source: []const u8,
+    is_bundled_core: bool = false,
 };
 
 pub const ModuleSemanticGraphBuilder = struct {
@@ -202,6 +204,8 @@ pub const ModuleSemanticGraphBuilder = struct {
     }
 
     pub fn build(self: *ModuleSemanticGraphBuilder, files: []const FileInput) !ModuleSemanticGraph {
+        self.graph.is_bundled_core = files.len != 0 and files[0].is_bundled_core;
+        for (files) |file| if (file.is_bundled_core != self.graph.is_bundled_core) return error.MixedModuleOrigins;
         try self.graph.file_offsets.ensureTotalCapacity(self.allocator, files.len);
         for (files, 0..) |file, module_file_index| {
             const declaration_base: u32 = @intCast(self.graph.declarations.items.len);

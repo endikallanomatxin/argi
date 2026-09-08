@@ -1,4 +1,5 @@
 const source_files = @import("1_base/source_files.zig");
+const semantic_literals = @import("4_semantics/semantic_literals.zig");
 const link = @import("5_codegen/link.zig");
 const lsp = @import("0_commands/lsp.zig");
 const indexed_lsp_service = @import("0_commands/indexed_lsp_service.zig");
@@ -23,9 +24,6 @@ const module_fallback_lowerer = @import("4_semantics/module_fallback_lowerer.zig
 const module_initializer_lowerer = @import("4_semantics/module_initializer_lowerer.zig");
 const module_global_roots_lowerer = @import("4_semantics/module_global_roots_lowerer.zig");
 const module_template_lowerer = @import("4_semantics/module_template_lowerer.zig");
-const module_template_binding_ranges = @import("4_semantics/module_template_binding_ranges.zig");
-const module_template_call_metadata = @import("4_semantics/module_template_call_metadata.zig");
-const module_template_block_normalizer = @import("4_semantics/module_template_block_normalizer.zig");
 const module_generic_operator_lowerer = @import("4_semantics/module_generic_operator_lowerer.zig");
 const module_abstract_relation_lowerer = @import("4_semantics/module_abstract_relation_lowerer.zig");
 const module_generic_call_args_lowerer = @import("4_semantics/module_generic_call_args_lowerer.zig");
@@ -59,6 +57,7 @@ const global_codegen_types = @import("5_codegen/global_codegen_types.zig");
 const global_codegen = @import("5_codegen/global_codegen.zig");
 
 test {
+    _ = semantic_literals;
     _ = source_files;
     _ = link;
     _ = lsp;
@@ -84,9 +83,6 @@ test {
     _ = module_initializer_lowerer;
     _ = module_global_roots_lowerer;
     _ = module_template_lowerer;
-    _ = module_template_binding_ranges;
-    _ = module_template_call_metadata;
-    _ = module_template_block_normalizer;
     _ = module_generic_operator_lowerer;
     _ = module_abstract_relation_lowerer;
     _ = module_generic_call_args_lowerer;

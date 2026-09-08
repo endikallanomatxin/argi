@@ -178,6 +178,7 @@ fn appendModule(
 
     try result.modules.append(allocator, .{
         .dir = module_dir,
+        .is_bundled_core = module.is_bundled_core,
         .files = .{ .start = o.file_base, .len = try index32(module.file_offsets.items.len) },
         .declarations = .{ .start = o.declaration_base, .len = try index32(module.declarations.items.len) },
     });
