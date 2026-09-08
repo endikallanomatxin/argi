@@ -12,6 +12,7 @@ const global_semantic_graph_builder = @import("4_semantics/global_semantic_graph
 
 const semantic_primitives = @import("4_semantics/semantic_primitives.zig");
 const semantic_type_shapes = @import("4_semantics/semantic_type_shapes.zig");
+const semantic_callable = @import("4_semantics/semantic_callable.zig");
 const module_semantic_entities = @import("4_semantics/module_semantic_entities.zig");
 const module_semantic_storage = @import("4_semantics/module_semantic_storage.zig");
 const module_semantic_templates = @import("4_semantics/module_semantic_templates.zig");
@@ -20,6 +21,17 @@ const module_semantic_views = @import("4_semantics/module_semantic_views.zig");
 const module_semantic_writer = @import("4_semantics/module_semantic_writer.zig");
 const module_type_lowerer = @import("4_semantics/module_type_lowerer.zig");
 const module_body_lowerer = @import("4_semantics/module_body_lowerer.zig");
+const module_fallback_lowerer = @import("4_semantics/module_fallback_lowerer.zig");
+const module_initializer_lowerer = @import("4_semantics/module_initializer_lowerer.zig");
+const module_global_roots_lowerer = @import("4_semantics/module_global_roots_lowerer.zig");
+const module_template_lowerer = @import("4_semantics/module_template_lowerer.zig");
+const module_template_binding_ranges = @import("4_semantics/module_template_binding_ranges.zig");
+const module_template_call_metadata = @import("4_semantics/module_template_call_metadata.zig");
+const module_template_block_normalizer = @import("4_semantics/module_template_block_normalizer.zig");
+const module_generic_operator_lowerer = @import("4_semantics/module_generic_operator_lowerer.zig");
+const module_abstract_relation_lowerer = @import("4_semantics/module_abstract_relation_lowerer.zig");
+const module_generic_call_args_lowerer = @import("4_semantics/module_generic_call_args_lowerer.zig");
+const module_deinit_metadata_lowerer = @import("4_semantics/module_deinit_metadata_lowerer.zig");
 const module_semantizer = @import("4_semantics/module_semantizer.zig");
 const semantic_verify = @import("4_semantics/semantic_verify.zig");
 const semantic_payload_verify = @import("4_semantics/semantic_payload_verify.zig");
@@ -28,16 +40,32 @@ const module_generic_instance_verify = @import("4_semantics/module_generic_insta
 const module_semantic_template_ir_verify = @import("4_semantics/module_semantic_template_ir_verify.zig");
 const module_semantic_template_verify = @import("4_semantics/module_semantic_template_verify.zig");
 const module_semantic_complete_verify = @import("4_semantics/module_semantic_complete_verify.zig");
+
 const global_semantic_graph = @import("4_semantics/global_semantic_graph.zig");
+const global_semantic_types = @import("4_semantics/global_semantic_types.zig");
 const global_semantic_verify = @import("4_semantics/global_semantic_verify.zig");
 const semantic_globalizer = @import("4_semantics/semantic_globalizer.zig");
+const global_semantic_core = @import("4_semantics/global_semantic_core.zig");
+const global_semantic_control = @import("4_semantics/global_semantic_control.zig");
+const global_semantic_generics = @import("4_semantics/global_semantic_generics.zig");
+const global_semantic_generic_functions = @import("4_semantics/global_semantic_generic_functions.zig");
+const global_semantic_abstracts = @import("4_semantics/global_semantic_abstracts.zig");
+const global_semantic_errors = @import("4_semantics/global_semantic_errors.zig");
+const global_semantic_ownership = @import("4_semantics/global_semantic_ownership.zig");
+const global_semantizer = @import("4_semantics/global_semantizer.zig");
+const global_safety_facts = @import("4_semantics/global_safety_facts.zig");
+const global_safety_checker = @import("4_semantics/global_safety_checker.zig");
 const semantic_representation_test = @import("4_semantics/semantic_representation_test.zig");
+
+const global_codegen_types = @import("5_codegen/global_codegen_types.zig");
+const global_codegen = @import("5_codegen/global_codegen.zig");
 
 test {
     _ = source_files;
     _ = link;
     _ = lsp;
     _ = tokenizer;
+    // Legacy imports stay registered until their last consumers are deleted.
     _ = safety_facts;
     _ = safety_checker;
     _ = syntax_tree;
@@ -48,6 +76,7 @@ test {
 
     _ = semantic_primitives;
     _ = semantic_type_shapes;
+    _ = semantic_callable;
     _ = module_semantic_entities;
     _ = module_semantic_storage;
     _ = module_semantic_templates;
@@ -56,6 +85,17 @@ test {
     _ = module_semantic_writer;
     _ = module_type_lowerer;
     _ = module_body_lowerer;
+    _ = module_fallback_lowerer;
+    _ = module_initializer_lowerer;
+    _ = module_global_roots_lowerer;
+    _ = module_template_lowerer;
+    _ = module_template_binding_ranges;
+    _ = module_template_call_metadata;
+    _ = module_template_block_normalizer;
+    _ = module_generic_operator_lowerer;
+    _ = module_abstract_relation_lowerer;
+    _ = module_generic_call_args_lowerer;
+    _ = module_deinit_metadata_lowerer;
     _ = module_semantizer;
     _ = semantic_verify;
     _ = semantic_payload_verify;
@@ -64,8 +104,23 @@ test {
     _ = module_semantic_template_ir_verify;
     _ = module_semantic_template_verify;
     _ = module_semantic_complete_verify;
+
     _ = global_semantic_graph;
+    _ = global_semantic_types;
     _ = global_semantic_verify;
     _ = semantic_globalizer;
+    _ = global_semantic_core;
+    _ = global_semantic_control;
+    _ = global_semantic_generics;
+    _ = global_semantic_generic_functions;
+    _ = global_semantic_abstracts;
+    _ = global_semantic_errors;
+    _ = global_semantic_ownership;
+    _ = global_semantizer;
+    _ = global_safety_facts;
+    _ = global_safety_checker;
     _ = semantic_representation_test;
+
+    _ = global_codegen_types;
+    _ = global_codegen;
 }
