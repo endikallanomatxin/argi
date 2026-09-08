@@ -7,7 +7,9 @@ const global_sg = @import("global_semantic_graph.zig");
 const global_verify = @import("global_semantic_verify.zig");
 const primitives = @import("semantic_primitives.zig");
 
-const Offsets = struct {
+pub const Mode = enum { strict, allow_holes };
+
+pub const Offsets = struct {
     file_base: u32,
     declaration_base: u32,
     type_base: u32,
@@ -42,21 +44,51 @@ const Offsets = struct {
     string_base: u32,
 };
 
-/// Mechanical finalization of already-linked modules. This is intentionally
-/// distinct from GlobalSema: external references, pending operations and
-/// generic/abstract templates must be consumed before this function is called.
-pub fn globalize(allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph) !global_sg.GlobalSemanticGraph {
-    var result: global_sg.GlobalSemanticGraph = .{};
+pub const Relocation = struct {
+    graph: global_sg.GlobalSemanticGraph,
+    offsets: std.ArrayList(Offsets) = .empty,
+
+    pub fn deinit(self: *Relocation, allocator: std.mem.Allocator) void {
+        self.graph.deinit(allocator);
+        self.offsets.deinit(allocator);
+        self.* = undefined;
+    }
+
+    pub fn takeGraph(self: *Relocation, allocator: std.mem.Allocator) global_sg.GlobalSemanticGraph {
+        const graph = self.graph;
+        self.graph = .{};
+        self.offsets.deinit(allocator);
+        self.offsets = .empty;
+        return graph;
+    }
+};
+
+/// Relocate every module-owned identity into the final Global* spaces. In
+/// `allow_holes` mode unresolved types/nodes occupy placeholders at their final
+/// IDs; GlobalSema patches those exact slots without rebuilding ranges.
+pub fn relocate(
+    allocator: std.mem.Allocator,
+    modules: []const module_sg.ModuleSemanticGraph,
+    mode: Mode,
+) !Relocation {
+    var result: Relocation = .{ .graph = .{} };
     errdefer result.deinit(allocator);
+    try result.offsets.ensureTotalCapacity(allocator, modules.len);
 
     for (modules) |*module| {
         try module_verify.verifyModule(module);
-        try requireFinalizable(module);
-        try appendModule(allocator, &result, module);
+        if (mode == .strict) try requireFinalizable(module);
+        const offsets = try appendModule(allocator, &result.graph, module, mode);
+        result.offsets.appendAssumeCapacity(offsets);
     }
 
-    try global_verify.verifyGlobal(&result);
+    if (mode == .strict) try global_verify.verifyGlobal(&result.graph);
     return result;
+}
+
+pub fn globalize(allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph) !global_sg.GlobalSemanticGraph {
+    var relocated = try relocate(allocator, modules, .strict);
+    return relocated.takeGraph(allocator);
 }
 
 pub const finalizeResolvedModules = globalize;
@@ -67,7 +99,10 @@ fn requireFinalizable(module: *const module_sg.ModuleSemanticGraph) !void {
     if (semantic.external_refs.items.len != 0 or semantic.external_types.items.len != 0 or semantic.pending_operations.items.len != 0)
         return error.UnresolvedModuleSemantics;
     if (semantic.templates.storageBytes() != 0) return error.ModuleTemplatesNotConsumed;
-
+    for (semantic.types.items) |ty| switch (ty) {
+        .resolved => {},
+        .external => return error.UnresolvedModuleSemantics,
+    };
     for (semantic.nodes.items) |node| switch (node) {
         .resolved => {},
         .pending => return error.UnresolvedModuleSemantics,
@@ -78,14 +113,19 @@ fn requireFinalizable(module: *const module_sg.ModuleSemanticGraph) !void {
     };
 }
 
-fn appendModule(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGraph, module: *const module_sg.ModuleSemanticGraph) !void {
+fn appendModule(
+    allocator: std.mem.Allocator,
+    result: *global_sg.GlobalSemanticGraph,
+    module: *const module_sg.ModuleSemanticGraph,
+    mode: Mode,
+) !Offsets {
     const module_id: global_sg.GlobalModuleId = @enumFromInt(try index32(result.modules.items.len));
     const module_dir = try result.addString(allocator, module.module_dir);
     const string_base = try index32(result.strings.items.len);
     if (module.strings.items.len > std.math.maxInt(u32) - string_base) return error.GlobalSemanticGraphTooLarge;
     try result.strings.appendSlice(allocator, module.strings.items);
 
-    const offsets = Offsets{
+    const o = Offsets{
         .file_base = try baseFor(result.files.items.len, module.file_offsets.items.len),
         .declaration_base = try baseFor(result.declarations.items.len, module.declarations.items.len),
         .type_base = try baseFor(result.types.items.len, module_views.typeCount(module)),
@@ -122,25 +162,26 @@ fn appendModule(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticG
 
     for (module.file_offsets.items) |file| try result.files.append(allocator, .{
         .module = module_id,
-        .path = try relocateString(module, file.path, offsets.string_base),
+        .path = try relocateString(module, file.path, o.string_base),
     });
 
-    try appendDeclarations(allocator, result, module, offsets);
-    try appendFields(allocator, result, module, offsets);
-    try appendVariants(allocator, result, module, offsets);
-    try appendGenericArguments(allocator, result, module, offsets);
-    try appendTypes(allocator, result, module, offsets);
-    try appendGenericInstances(allocator, result, module, offsets);
-    try appendFunctions(allocator, result, module, offsets);
-    try appendSymbols(allocator, result, module, offsets);
-    try appendReferencePools(allocator, result, module, offsets);
-    try appendBodyTables(allocator, result, module, offsets);
+    try appendDeclarations(allocator, result, module, o);
+    try appendFields(allocator, result, module, o);
+    try appendVariants(allocator, result, module, o);
+    try appendGenericArguments(allocator, result, module, o);
+    try appendTypes(allocator, result, module, o, mode);
+    try appendGenericInstances(allocator, result, module, o);
+    try appendFunctions(allocator, result, module, o);
+    try appendSymbols(allocator, result, module, o);
+    try appendReferencePools(allocator, result, module, o);
+    try appendBodyTables(allocator, result, module, o, mode);
 
     try result.modules.append(allocator, .{
         .dir = module_dir,
-        .files = .{ .start = offsets.file_base, .len = try index32(module.file_offsets.items.len) },
-        .declarations = .{ .start = offsets.declaration_base, .len = try index32(module.declarations.items.len) },
+        .files = .{ .start = o.file_base, .len = try index32(module.file_offsets.items.len) },
+        .declarations = .{ .start = o.declaration_base, .len = try index32(module.declarations.items.len) },
     });
+    return o;
 }
 
 fn appendDeclarations(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGraph, module: *const module_sg.ModuleSemanticGraph, o: Offsets) !void {
@@ -200,14 +241,14 @@ fn appendGenericArguments(allocator: std.mem.Allocator, result: *global_sg.Globa
     }
 }
 
-fn appendTypes(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGraph, module: *const module_sg.ModuleSemanticGraph, o: Offsets) !void {
+fn appendTypes(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGraph, module: *const module_sg.ModuleSemanticGraph, o: Offsets, mode: Mode) !void {
     for (0..module_views.typeCount(module)) |index| {
         const value = try module_views.typeView(module, @enumFromInt(@as(u32, @intCast(index))));
-        const resolved = switch (value) {
-            .resolved => |item| item,
-            .external => return error.UnresolvedModuleSemantics,
+        const global: global_sg.GlobalType = switch (value) {
+            .resolved => |item| relocateType(o, item),
+            .external => if (mode == .allow_holes) .{ .builtin = .Any } else return error.UnresolvedModuleSemantics,
         };
-        try result.types.append(allocator, relocateType(o, resolved));
+        try result.types.append(allocator, global);
     }
 }
 
@@ -223,10 +264,7 @@ fn appendGenericInstances(allocator: std.mem.Allocator, result: *global_sg.Globa
                 .variants = relocateEntityRange(global_sg.GlobalVariantId, o.variant_base, shape.variants),
                 .layout = shape.layout,
             } },
-            .array => |shape| .{ .array = .{
-                .length = shape.length,
-                .element = globalType(o, shape.element),
-            } },
+            .array => |shape| .{ .array = .{ .length = shape.length, .element = globalType(o, shape.element) } },
             .alias => |target| .{ .alias = globalType(o, target) },
         },
     });
@@ -241,17 +279,14 @@ fn relocateType(o: Offsets, value: module_entities.ResolvedType) global_sg.Globa
         .nullable => |id| .{ .nullable = globalType(o, id) },
         .inferred_errable => |id| .{ .inferred_errable = globalType(o, id) },
         .inferred_choice => |item| .{ .inferred_choice = .{
-            .identity = item.identity,
-            .kind = item.kind,
+            .identity = item.identity, .kind = item.kind,
             .variants = relocateEntityRange(global_sg.GlobalVariantId, o.variant_base, item.variants),
         } },
         .structural => |item| .{ .structural = .{
-            .fields = relocateEntityRange(global_sg.GlobalFieldId, o.field_base, item.fields),
-            .layout = item.layout,
+            .fields = relocateEntityRange(global_sg.GlobalFieldId, o.field_base, item.fields), .layout = item.layout,
         } },
         .structural_choice => |item| .{ .structural_choice = .{
-            .variants = relocateEntityRange(global_sg.GlobalVariantId, o.variant_base, item.variants),
-            .layout = item.layout,
+            .variants = relocateEntityRange(global_sg.GlobalVariantId, o.variant_base, item.variants), .layout = item.layout,
         } },
         .generic => |item| .{ .generic = .{
             .base = globalDecl(o, item.base),
@@ -274,6 +309,8 @@ fn appendFunctions(allocator: std.mem.Allocator, result: *global_sg.GlobalSemant
             .safety_primitive = value.safety_primitive,
             .flags = value.flags,
         });
+        const operator = if (index < module.semantic.function_operators.items.len) module.semantic.function_operators.items[index] else null;
+        try result.function_operators.append(allocator, operator);
     }
 }
 
@@ -293,14 +330,11 @@ fn appendReferencePools(allocator: std.mem.Allocator, result: *global_sg.GlobalS
     for (module.semantic.virtual_registry_refs.items) |id| try result.virtual_registry_refs.append(allocator, globalVirtualRegistry(o, id));
 }
 
-fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGraph, module: *const module_sg.ModuleSemanticGraph, o: Offsets) !void {
+fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGraph, module: *const module_sg.ModuleSemanticGraph, o: Offsets, mode: Mode) !void {
     const storage = &module.semantic;
-
     for (storage.bindings.items) |value| try result.bindings.append(allocator, .{
-        .name = try relocateString(module, value.name, o.string_base),
-        .source = globalSource(o, value.source),
-        .ty = globalType(o, value.ty),
-        .initialization = if (value.initialization) |id| globalNode(o, id) else null,
+        .name = try relocateString(module, value.name, o.string_base), .source = globalSource(o, value.source),
+        .ty = globalType(o, value.ty), .initialization = if (value.initialization) |id| globalNode(o, id) else null,
         .mutability = value.mutability,
     });
     for (storage.blocks.items) |value| try result.blocks.append(allocator, .{
@@ -308,57 +342,42 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
         .ret_val = if (value.ret_val) |id| globalNode(o, id) else null,
     });
     for (storage.value_fields.items) |value| try result.value_fields.append(allocator, .{
-        .name = try relocateString(module, value.name, o.string_base),
-        .value = globalNode(o, value.value),
+        .name = try relocateString(module, value.name, o.string_base), .value = globalNode(o, value.value),
     });
     for (storage.switch_cases.items) |value| try result.switch_cases.append(allocator, .{
-        .value = globalNode(o, value.value),
-        .variant = globalVariant(o, value.variant),
-        .body = globalBlock(o, value.body),
+        .value = globalNode(o, value.value), .variant = globalVariant(o, value.variant), .body = globalBlock(o, value.body),
     });
     for (storage.switches.items) |value| try result.switches.append(allocator, .{
         .expression = globalNode(o, value.expression),
         .cases = relocateEntityRange(global_sg.GlobalSwitchCaseId, o.switch_case_base, value.cases),
-        .default_block = if (value.default_block) |id| globalBlock(o, id) else null,
-        .exhaustive = value.exhaustive,
+        .default_block = if (value.default_block) |id| globalBlock(o, id) else null, .exhaustive = value.exhaustive,
     });
     for (storage.auto_deinit_fields.items) |value| try result.auto_deinit_fields.append(allocator, .{
-        .field_index = value.field_index,
-        .deinit_fn = if (value.deinit_fn) |id| globalFunction(o, id) else null,
-        .input = if (value.input) |id| globalNode(o, id) else null,
-        .self_field_index = value.self_field_index,
+        .field_index = value.field_index, .deinit_fn = if (value.deinit_fn) |id| globalFunction(o, id) else null,
+        .input = if (value.input) |id| globalNode(o, id) else null, .self_field_index = value.self_field_index,
         .fields = relocateEntityRange(global_sg.GlobalAutoDeinitFieldId, o.auto_deinit_field_base, value.fields),
     });
     for (storage.auto_deinits.items) |value| try result.auto_deinits.append(allocator, .{
-        .binding = globalBinding(o, value.binding),
-        .deinit_fn = if (value.deinit_fn) |id| globalFunction(o, id) else null,
-        .input = if (value.input) |id| globalNode(o, id) else null,
-        .self_field_index = value.self_field_index,
+        .binding = globalBinding(o, value.binding), .deinit_fn = if (value.deinit_fn) |id| globalFunction(o, id) else null,
+        .input = if (value.input) |id| globalNode(o, id) else null, .self_field_index = value.self_field_index,
         .fields = relocateEntityRange(global_sg.GlobalAutoDeinitFieldId, o.auto_deinit_field_base, value.fields),
     });
     for (storage.virtual_registries.items) |value| try result.virtual_registries.append(allocator, .{
         .implementations = relocatePoolRange(global_sg.GlobalFunctionId, o.function_ref_base, value.implementations),
     });
     for (storage.virtualizes.items) |value| try result.virtualizes.append(allocator, .{
-        .value = globalNode(o, value.value),
-        .concrete_type = globalType(o, value.concrete_type),
-        .abstract_decl = globalDecl(o, value.abstract_decl),
-        .virtual_type = globalType(o, value.virtual_type),
+        .value = globalNode(o, value.value), .concrete_type = globalType(o, value.concrete_type),
+        .abstract_decl = globalDecl(o, value.abstract_decl), .virtual_type = globalType(o, value.virtual_type),
         .methods = relocatePoolRange(global_sg.GlobalFunctionId, o.function_ref_base, value.methods),
         .safety_methods = relocatePoolRange(global_sg.GlobalVirtualRegistryId, o.virtual_registry_ref_base, value.safety_methods),
         .source = globalSource(o, value.source),
     });
     for (storage.virtual_calls.items) |value| try result.virtual_calls.append(allocator, .{
-        .handle = globalNode(o, value.handle),
-        .input = globalNode(o, value.input),
-        .self_input_index = value.self_input_index,
-        .method_index = value.method_index,
-        .method_count = value.method_count,
+        .handle = globalNode(o, value.handle), .input = globalNode(o, value.input), .self_input_index = value.self_input_index,
+        .method_index = value.method_index, .method_count = value.method_count,
         .method_name = try relocateString(module, value.method_name, o.string_base),
-        .input_type = globalType(o, value.input_type),
-        .output_type = globalType(o, value.output_type),
-        .self_permission = value.self_permission,
-        .safety_methods = globalVirtualRegistry(o, value.safety_methods),
+        .input_type = globalType(o, value.input_type), .output_type = globalType(o, value.output_type),
+        .self_permission = value.self_permission, .safety_methods = globalVirtualRegistry(o, value.safety_methods),
         .consumes_auto_deinit = if (value.consumes_auto_deinit) |id| globalNode(o, id) else null,
     });
     for (storage.reach_segments.items) |value| try result.reach_segments.append(allocator, try relocateString(module, value, o.string_base));
@@ -369,61 +388,44 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
         .alternatives = relocateEntityRange(global_sg.GlobalReachAlternativeId, o.reach_alternative_base, value.alternatives),
     });
     for (storage.nullable_unwraps.items) |value| try result.nullable_unwraps.append(allocator, .{
-        .nullable_value = globalNode(o, value.nullable_value),
-        .fallback_value = globalNode(o, value.fallback_value),
-        .some_variant = globalVariant(o, value.some_variant),
-        .some_value_field_index = value.some_value_field_index,
+        .nullable_value = globalNode(o, value.nullable_value), .fallback_value = globalNode(o, value.fallback_value),
+        .some_variant = globalVariant(o, value.some_variant), .some_value_field_index = value.some_value_field_index,
         .result_type = globalType(o, value.result_type),
     });
     for (storage.testing_expect_errors.items) |value| try result.testing_expect_errors.append(allocator, .{
-        .expected_reason = globalNode(o, value.expected_reason),
-        .actual_result = globalNode(o, value.actual_result),
-        .actual_error_variant = globalVariant(o, value.actual_error_variant),
-        .actual_error_payload_type = globalType(o, value.actual_error_payload_type),
-        .actual_reason_field_index = value.actual_reason_field_index,
-        .result_type = globalType(o, value.result_type),
-        .result_ok_variant = globalVariant(o, value.result_ok_variant),
-        .test_fail_function = globalFunction(o, value.test_fail_function),
+        .expected_reason = globalNode(o, value.expected_reason), .actual_result = globalNode(o, value.actual_result),
+        .actual_error_variant = globalVariant(o, value.actual_error_variant), .actual_error_payload_type = globalType(o, value.actual_error_payload_type),
+        .actual_reason_field_index = value.actual_reason_field_index, .result_type = globalType(o, value.result_type),
+        .result_ok_variant = globalVariant(o, value.result_ok_variant), .test_fail_function = globalFunction(o, value.test_fail_function),
         .expected_reason_name = if (value.expected_reason_name) |name| try relocateString(module, name, o.string_base) else null,
-        .diagnostic_line = value.diagnostic_line,
-        .diagnostic_column = value.diagnostic_column,
+        .diagnostic_line = value.diagnostic_line, .diagnostic_column = value.diagnostic_column,
         .diagnostic_source_line = try relocateString(module, value.diagnostic_source_line, o.string_base),
     });
     for (storage.error_propagations.items) |value| try result.error_propagations.append(allocator, .{
-        .errable_value = globalNode(o, value.errable_value),
-        .cleanup_nodes = relocatePoolRange(global_sg.GlobalNodeId, o.node_ref_base, value.cleanup_nodes),
-        .ok_variant = globalVariant(o, value.ok_variant),
-        .ok_value_field_index = value.ok_value_field_index,
-        .error_variant = globalVariant(o, value.error_variant),
-        .propagated_errable_type = globalType(o, value.propagated_errable_type),
-        .propagated_error_variant = globalVariant(o, value.propagated_error_variant),
-        .ok_payload_type = globalType(o, value.ok_payload_type),
-        .error_payload_type = globalType(o, value.error_payload_type),
-        .propagated_error_payload_type = globalType(o, value.propagated_error_payload_type),
-        .diagnostic_line = value.diagnostic_line,
-        .diagnostic_column = value.diagnostic_column,
+        .errable_value = globalNode(o, value.errable_value), .cleanup_nodes = relocatePoolRange(global_sg.GlobalNodeId, o.node_ref_base, value.cleanup_nodes),
+        .ok_variant = globalVariant(o, value.ok_variant), .ok_value_field_index = value.ok_value_field_index,
+        .error_variant = globalVariant(o, value.error_variant), .propagated_errable_type = globalType(o, value.propagated_errable_type),
+        .propagated_error_variant = globalVariant(o, value.propagated_error_variant), .ok_payload_type = globalType(o, value.ok_payload_type),
+        .error_payload_type = globalType(o, value.error_payload_type), .propagated_error_payload_type = globalType(o, value.propagated_error_payload_type),
+        .diagnostic_line = value.diagnostic_line, .diagnostic_column = value.diagnostic_column,
         .diagnostic_source_line = try relocateString(module, value.diagnostic_source_line, o.string_base),
     });
     for (storage.error_contexts.items) |value| try result.error_contexts.append(allocator, .{
-        .errable_value = globalNode(o, value.errable_value),
-        .context = globalNode(o, value.context),
+        .errable_value = globalNode(o, value.errable_value), .context = globalNode(o, value.context),
         .cleanup_nodes = relocatePoolRange(global_sg.GlobalNodeId, o.node_ref_base, value.cleanup_nodes),
-        .ok_variant = globalVariant(o, value.ok_variant),
-        .ok_value_field_index = value.ok_value_field_index,
-        .error_variant = globalVariant(o, value.error_variant),
-        .propagated_errable_type = globalType(o, value.propagated_errable_type),
-        .propagated_error_variant = globalVariant(o, value.propagated_error_variant),
-        .ok_payload_type = globalType(o, value.ok_payload_type),
-        .error_payload_type = globalType(o, value.error_payload_type),
-        .propagated_error_payload_type = globalType(o, value.propagated_error_payload_type),
-        .diagnostic_line = value.diagnostic_line,
-        .diagnostic_column = value.diagnostic_column,
+        .ok_variant = globalVariant(o, value.ok_variant), .ok_value_field_index = value.ok_value_field_index,
+        .error_variant = globalVariant(o, value.error_variant), .propagated_errable_type = globalType(o, value.propagated_errable_type),
+        .propagated_error_variant = globalVariant(o, value.propagated_error_variant), .ok_payload_type = globalType(o, value.ok_payload_type),
+        .error_payload_type = globalType(o, value.error_payload_type), .propagated_error_payload_type = globalType(o, value.propagated_error_payload_type),
+        .diagnostic_line = value.diagnostic_line, .diagnostic_column = value.diagnostic_column,
         .diagnostic_source_line = try relocateString(module, value.diagnostic_source_line, o.string_base),
     });
 
     for (storage.nodes.items) |node| switch (node) {
-        .pending => return error.UnresolvedModuleSemantics,
         .resolved => |value| try result.nodes.append(allocator, try relocateNode(module, o, value)),
+        .pending => if (mode == .allow_holes) try result.nodes.append(allocator, .{
+            .source = .{ .file_index = o.file_base, .offset = 0 }, .ty = null, .content = .{ .bool_literal = false },
+        }) else return error.UnresolvedModuleSemantics,
     };
     for (storage.roots.items) |id| try result.roots.append(allocator, globalNode(o, id));
 }
@@ -441,16 +443,14 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .assignment => |value| .{ .assignment = .{ .binding = globalBinding(o, value.binding), .value = globalNode(o, value.value) } },
             .auto_deinit_binding => |id| .{ .auto_deinit_binding = globalAutoDeinit(o, id) },
             .function_call => |value| .{ .function_call = .{
-                .callee = globalFunction(o, value.callee),
-                .input = globalNode(o, value.input),
+                .callee = globalFunction(o, value.callee), .input = globalNode(o, value.input),
                 .consumes_auto_deinit = if (value.consumes_auto_deinit) |id| globalNode(o, id) else null,
                 .initializes_auto_deinit = if (value.initializes_auto_deinit) |id| globalNode(o, id) else null,
             } },
             .virtualize => |id| .{ .virtualize = globalVirtualize(o, id) },
             .virtual_call => |id| .{ .virtual_call = globalVirtualCall(o, id) },
             .code_block => |id| .{ .code_block = globalBlock(o, id) },
-            .int_literal => |value| .{ .int_literal = value },
-            .float_literal => |value| .{ .float_literal = value },
+            .int_literal => |value| .{ .int_literal = value }, .float_literal => |value| .{ .float_literal = value },
             .char_literal => |value| .{ .char_literal = value },
             .string_literal => |value| .{ .string_literal = try relocateString(module, value, o.string_base) },
             .bool_literal => |value| .{ .bool_literal = value },
@@ -460,23 +460,17 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             } },
             .struct_value_literal => |value| .{ .struct_value_literal = .{
                 .fields = relocateEntityRange(global_sg.GlobalValueFieldId, o.value_field_base, value.fields),
-                .ty = globalType(o, value.ty),
-                .dispatch_prefix_positional_count = value.dispatch_prefix_positional_count,
+                .ty = globalType(o, value.ty), .dispatch_prefix_positional_count = value.dispatch_prefix_positional_count,
             } },
             .struct_field_access => |value| .{ .struct_field_access = .{
-                .value = globalNode(o, value.value),
-                .field_name = try relocateString(module, value.field_name, o.string_base),
-                .field_index = value.field_index,
+                .value = globalNode(o, value.value), .field_name = try relocateString(module, value.field_name, o.string_base), .field_index = value.field_index,
             } },
             .choice_literal => |value| .{ .choice_literal = .{
-                .choice_type = globalType(o, value.choice_type),
-                .variant = globalVariant(o, value.variant),
+                .choice_type = globalType(o, value.choice_type), .variant = globalVariant(o, value.variant),
                 .payload = if (value.payload) |id| globalNode(o, id) else null,
             } },
             .choice_payload_access => |value| .{ .choice_payload_access = .{
-                .value = globalNode(o, value.value),
-                .variant = globalVariant(o, value.variant),
-                .payload_type = globalType(o, value.payload_type),
+                .value = globalNode(o, value.value), .variant = globalVariant(o, value.variant), .payload_type = globalType(o, value.payload_type),
             } },
             .nullable_unwrap_or => |id| .{ .nullable_unwrap_or = globalNullableUnwrap(o, id) },
             .testing_expect_error => |id| .{ .testing_expect_error = globalTestingExpectError(o, id) },
@@ -484,28 +478,19 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .error_context => |id| .{ .error_context = globalErrorContext(o, id) },
             .array_literal => |value| .{ .array_literal = .{
                 .elements = relocatePoolRange(global_sg.GlobalNodeId, o.node_ref_base, value.elements),
-                .element_type = globalType(o, value.element_type),
-                .length = value.length,
+                .element_type = globalType(o, value.element_type), .length = value.length,
             } },
             .array_index => |value| .{ .array_index = .{
-                .array_ptr = globalNode(o, value.array_ptr),
-                .index = globalNode(o, value.index),
-                .element_type = globalType(o, value.element_type),
-                .array_type = globalType(o, value.array_type),
+                .array_ptr = globalNode(o, value.array_ptr), .index = globalNode(o, value.index),
+                .element_type = globalType(o, value.element_type), .array_type = globalType(o, value.array_type),
             } },
             .array_store => |value| .{ .array_store = .{
-                .array_ptr = globalNode(o, value.array_ptr),
-                .index = globalNode(o, value.index),
-                .value = globalNode(o, value.value),
-                .element_type = globalType(o, value.element_type),
-                .array_type = globalType(o, value.array_type),
+                .array_ptr = globalNode(o, value.array_ptr), .index = globalNode(o, value.index), .value = globalNode(o, value.value),
+                .element_type = globalType(o, value.element_type), .array_type = globalType(o, value.array_type),
             } },
             .struct_field_store => |value| .{ .struct_field_store = .{
-                .struct_ptr = globalNode(o, value.struct_ptr),
-                .struct_type = globalType(o, value.struct_type),
-                .field_index = value.field_index,
-                .field_type = globalType(o, value.field_type),
-                .value = globalNode(o, value.value),
+                .struct_ptr = globalNode(o, value.struct_ptr), .struct_type = globalType(o, value.struct_type),
+                .field_index = value.field_index, .field_type = globalType(o, value.field_type), .value = globalNode(o, value.value),
             } },
             .binary_operation => |value| .{ .binary_operation = .{ .operator = value.operator, .left = globalNode(o, value.left), .right = globalNode(o, value.right) } },
             .comparison => |value| .{ .comparison = .{ .operator = value.operator, .left = globalNode(o, value.left), .right = globalNode(o, value.right) } },
@@ -517,35 +502,25 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .if_statement => |value| .{ .if_statement = .{
                 .condition = globalNode(o, value.condition),
                 .choice_test = if (value.choice_test) |test_value| .{
-                    .choice_value = globalNode(o, test_value.choice_value),
-                    .choice_type = globalType(o, test_value.choice_type),
-                    .variant = globalVariant(o, test_value.variant),
-                    .then_has_variant = test_value.then_has_variant,
+                    .choice_value = globalNode(o, test_value.choice_value), .choice_type = globalType(o, test_value.choice_type),
+                    .variant = globalVariant(o, test_value.variant), .then_has_variant = test_value.then_has_variant,
                 } else null,
-                .then_block = globalBlock(o, value.then_block),
-                .else_block = if (value.else_block) |id| globalBlock(o, id) else null,
+                .then_block = globalBlock(o, value.then_block), .else_block = if (value.else_block) |id| globalBlock(o, id) else null,
             } },
             .while_statement => |value| .{ .while_statement = .{ .condition = globalNode(o, value.condition), .body = globalBlock(o, value.body) } },
             .for_statement => |value| .{ .for_statement = .{
-                .init = if (value.init) |id| globalNode(o, id) else null,
-                .condition = globalNode(o, value.condition),
-                .increment = if (value.increment) |id| globalNode(o, id) else null,
-                .body = globalBlock(o, value.body),
+                .init = if (value.init) |id| globalNode(o, id) else null, .condition = globalNode(o, value.condition),
+                .increment = if (value.increment) |id| globalNode(o, id) else null, .body = globalBlock(o, value.body),
             } },
             .switch_statement => |id| .{ .switch_statement = globalSwitch(o, id) },
-            .break_statement => .break_statement,
-            .continue_statement => .continue_statement,
+            .break_statement => .break_statement, .continue_statement => .continue_statement,
             .address_of => |id| .{ .address_of = globalNode(o, id) },
             .dereference => |value| .{ .dereference = .{
-                .pointer = globalNode(o, value.pointer),
-                .ty = globalType(o, value.ty),
-                .pointer_type = globalType(o, value.pointer_type),
+                .pointer = globalNode(o, value.pointer), .ty = globalType(o, value.ty), .pointer_type = globalType(o, value.pointer_type),
             } },
             .pointer_assignment => |value| .{ .pointer_assignment = .{ .pointer = globalNode(o, value.pointer), .value = globalNode(o, value.value) } },
             .type_initializer => |value| .{ .type_initializer = .{
-                .type_decl = globalDecl(o, value.type_decl),
-                .init_fn = globalFunction(o, value.init_fn),
-                .args = globalNode(o, value.args),
+                .type_decl = globalDecl(o, value.type_decl), .init_fn = globalFunction(o, value.init_fn), .args = globalNode(o, value.args),
             } },
             .type_literal => |id| .{ .type_literal = globalType(o, id) },
             .explicit_cast => |value| .{ .explicit_cast = .{ .value = globalNode(o, value.value), .target_type = globalType(o, value.target_type) } },
@@ -559,25 +534,17 @@ fn relocateString(module: *const module_sg.ModuleSemanticGraph, value: module_sg
     return .{ .start = base + value.start, .len = value.len };
 }
 
-fn globalSource(o: Offsets, value: primitives.SourceRef) primitives.SourceRef {
-    return .{ .file_index = o.file_base + value.file_index, .offset = value.offset };
-}
+fn globalSource(o: Offsets, value: primitives.SourceRef) primitives.SourceRef { return .{ .file_index = o.file_base + value.file_index, .offset = value.offset }; }
+fn relocateEntityRange(comptime GlobalId: type, base: u32, range: anytype) primitives.Range(GlobalId) { return .{ .start = base + range.start, .len = range.len }; }
+fn relocatePoolRange(comptime GlobalId: type, pool_base: u32, range: anytype) primitives.Range(GlobalId) { return .{ .start = pool_base + range.start, .len = range.len }; }
 
-fn relocateEntityRange(comptime GlobalId: type, base: u32, range: anytype) primitives.Range(GlobalId) {
-    return .{ .start = base + range.start, .len = range.len };
-}
-
-fn relocatePoolRange(comptime GlobalId: type, pool_base: u32, range: anytype) primitives.Range(GlobalId) {
-    return .{ .start = pool_base + range.start, .len = range.len };
-}
-
-fn globalDecl(o: Offsets, id: module_entities.ModuleDeclId) global_sg.GlobalDeclId { return @enumFromInt(o.declaration_base + @intFromEnum(id)); }
-fn globalType(o: Offsets, id: module_entities.ModuleTypeId) global_sg.GlobalTypeId { return @enumFromInt(o.type_base + @intFromEnum(id)); }
-fn globalFunction(o: Offsets, id: module_entities.ModuleFunctionId) global_sg.GlobalFunctionId { return @enumFromInt(o.function_base + @intFromEnum(id)); }
-fn globalBinding(o: Offsets, id: module_entities.ModuleBindingId) global_sg.GlobalBindingId { return @enumFromInt(o.binding_base + @intFromEnum(id)); }
-fn globalNode(o: Offsets, id: module_entities.ModuleNodeId) global_sg.GlobalNodeId { return @enumFromInt(o.node_base + @intFromEnum(id)); }
-fn globalBlock(o: Offsets, id: module_entities.ModuleBlockId) global_sg.GlobalBlockId { return @enumFromInt(o.block_base + @intFromEnum(id)); }
-fn globalVariant(o: Offsets, id: module_entities.ModuleVariantId) global_sg.GlobalVariantId { return @enumFromInt(o.variant_base + @intFromEnum(id)); }
+pub fn globalDecl(o: Offsets, id: module_entities.ModuleDeclId) global_sg.GlobalDeclId { return @enumFromInt(o.declaration_base + @intFromEnum(id)); }
+pub fn globalType(o: Offsets, id: module_entities.ModuleTypeId) global_sg.GlobalTypeId { return @enumFromInt(o.type_base + @intFromEnum(id)); }
+pub fn globalFunction(o: Offsets, id: module_entities.ModuleFunctionId) global_sg.GlobalFunctionId { return @enumFromInt(o.function_base + @intFromEnum(id)); }
+pub fn globalBinding(o: Offsets, id: module_entities.ModuleBindingId) global_sg.GlobalBindingId { return @enumFromInt(o.binding_base + @intFromEnum(id)); }
+pub fn globalNode(o: Offsets, id: module_entities.ModuleNodeId) global_sg.GlobalNodeId { return @enumFromInt(o.node_base + @intFromEnum(id)); }
+pub fn globalBlock(o: Offsets, id: module_entities.ModuleBlockId) global_sg.GlobalBlockId { return @enumFromInt(o.block_base + @intFromEnum(id)); }
+pub fn globalVariant(o: Offsets, id: module_entities.ModuleVariantId) global_sg.GlobalVariantId { return @enumFromInt(o.variant_base + @intFromEnum(id)); }
 fn globalSwitch(o: Offsets, id: module_entities.ModuleSwitchId) global_sg.GlobalSwitchId { return @enumFromInt(o.switch_base + @intFromEnum(id)); }
 fn globalAutoDeinit(o: Offsets, id: module_entities.ModuleAutoDeinitId) global_sg.GlobalAutoDeinitId { return @enumFromInt(o.auto_deinit_base + @intFromEnum(id)); }
 fn globalVirtualRegistry(o: Offsets, id: module_entities.ModuleVirtualRegistryId) global_sg.GlobalVirtualRegistryId { return @enumFromInt(o.virtual_registry_base + @intFromEnum(id)); }
@@ -593,90 +560,27 @@ fn baseFor(existing: usize, additional: usize) !u32 {
     if (existing > std.math.maxInt(u32) or additional > std.math.maxInt(u32) - existing) return error.GlobalSemanticGraphTooLarge;
     return @intCast(existing);
 }
-
 fn index32(value: usize) !u32 {
     if (value > std.math.maxInt(u32)) return error.GlobalSemanticGraphTooLarge;
     return @intCast(value);
 }
 
-test "globalize preserves canonical declaration layouts and body ids" {
+test "globalizer preserves hole identity for GlobalSema" {
     const allocator = std.testing.allocator;
     var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
     defer module.deinit(allocator);
-
-    const strings = @import("semantic_strings.zig");
-    const path = try strings.append(&module.strings, allocator, "main.rg");
-    const type_name = try strings.append(&module.strings, allocator, "Thing");
-    const binding_name = try strings.append(&module.strings, allocator, "x");
-    try module.file_offsets.append(allocator, .{
-        .path = path,
-        .declaration_base = 0,
-        .declaration_count = 1,
-        .type_reference_base = 0,
-        .type_reference_count = 0,
-        .import_reference_base = 0,
-        .import_reference_count = 0,
-    });
-    try module.declarations.append(allocator, .{
-        .kind = .type,
-        .name = type_name,
-        .source_offset = 4,
-        .module_file_index = 0,
-        .syntax_node = @enumFromInt(0),
-        .type_id = @enumFromInt(0),
-    });
-    try module.types.append(allocator, .{ .declared = @enumFromInt(0) });
-    try module.semantic.declaration_semantics.append(allocator, .{
-        .declaration = @enumFromInt(0),
-        .struct_layout = .c_union,
-    });
-    try module.semantic.bindings.append(allocator, .{
-        .name = binding_name,
-        .source = .{ .file_index = 0, .offset = 10 },
-        .ty = @enumFromInt(0),
-        .mutability = .constant,
-    });
-    try module.semantic.nodes.append(allocator, .{ .resolved = .{
-        .source = .{ .file_index = 0, .offset = 12 },
-        .ty = null,
-        .content = .{ .binding_use = @enumFromInt(0) },
-    } });
-    try module.semantic.roots.append(allocator, @enumFromInt(0));
-    module.semantic.local_semantics_complete = true;
-
-    var global = try globalize(allocator, &.{module});
-    defer global.deinit(allocator);
-
-    try std.testing.expectEqual(primitives.StructLayout.c_union, global.declarations.items[0].struct_layout);
-    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(global.nodes.items[0].content.binding_use));
-    try std.testing.expectEqualStrings("Thing", global.text(global.declarations.items[0].name));
-}
-
-test "globalize rejects well formed unresolved module types" {
-    const allocator = std.testing.allocator;
-    var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
-    defer module.deinit(allocator);
-
-    const strings = @import("semantic_strings.zig");
-    const path = try strings.append(&module.strings, allocator, "main.rg");
-    const name = try strings.append(&module.strings, allocator, "Other");
-    try module.file_offsets.append(allocator, .{
-        .path = path,
-        .declaration_base = 0,
-        .declaration_count = 0,
-        .type_reference_base = 0,
-        .type_reference_count = 0,
-        .import_reference_base = 0,
-        .import_reference_count = 0,
-    });
     try module.semantic.external_refs.append(allocator, .{
-        .kind = .type,
-        .module_path = null,
-        .name = name,
-        .source = .{ .file_index = 0, .offset = 1 },
+        .kind = .type, .module_path = null, .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 },
     });
-    try module.semantic.external_types.append(allocator, @enumFromInt(0));
-    module.semantic.local_semantics_complete = true;
-
-    try std.testing.expectError(error.UnresolvedModuleSemantics, globalize(allocator, &.{module}));
+    try module.semantic.types.append(allocator, .{ .external = @enumFromInt(0) });
+    try module.semantic.nodes.append(allocator, .{ .pending = @enumFromInt(0) });
+    try module.semantic.pending_operations.append(allocator, .{ .resolve_expression = .{
+        .node = @enumFromInt(0), .kind = .other,
+    } });
+    var result = try relocate(allocator, &.{module}, .allow_holes);
+    defer result.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), result.graph.types.items.len);
+    try std.testing.expectEqual(@as(usize, 1), result.graph.nodes.items.len);
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(globalType(result.offsets.items[0], @enumFromInt(0))));
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(globalNode(result.offsets.items[0], @enumFromInt(0))));
 }
