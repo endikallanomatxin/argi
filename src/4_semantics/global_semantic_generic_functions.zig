@@ -49,10 +49,24 @@ pub const Resolver = struct {
     ) !bool {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
         const local_args = reference.generic_arguments orelse return false;
+        const name = module.text(reference.name);
+        const input = globalizer.globalNode(o, value.input);
+        if (reference.module_path == null and std.mem.eql(u8, name, "cast")) {
+            const args = try self.generics.relocateModuleArguments(module_index, local_args);
+            const node = (try self.makeExplicitCast(args, input, self.sourceFor(module_index, reference.source))) orelse return false;
+            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            self.stats.calls += 1;
+            return true;
+        }
+        if (reference.module_path == null and std.mem.eql(u8, name, "size_of")) {
+            const node = (try self.makeSizeOf(input, self.sourceFor(module_index, reference.source))) orelse return false;
+            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            self.stats.calls += 1;
+            return true;
+        }
         const declaration = self.core.resolveDeclaration(module_index, reference, &.{.function}) catch return false;
         const args = try self.generics.relocateModuleArguments(module_index, local_args);
         const function = try self.instantiate(declaration, args);
-        const input = globalizer.globalNode(o, value.input);
         const output_ty = try self.core.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -62,6 +76,69 @@ pub const Resolver = struct {
         };
         self.stats.calls += 1;
         return true;
+    }
+
+    fn makeExplicitCast(
+        self: *Resolver,
+        arguments: primitives.Range(global_sg.GlobalGenericArgId),
+        input: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+    ) !?global_sg.Node {
+        var target_type: ?global_sg.GlobalTypeId = null;
+        for (self.graph.generic_arguments.items[arguments.start..][0..arguments.len]) |argument| {
+            if (!std.mem.eql(u8, self.graph.text(argument.name), "to")) continue;
+            target_type = switch (argument.value) {
+                .type => |ty| ty,
+                .comptime_int => return error.CastTargetMustBeType,
+            };
+            break;
+        }
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |literal| literal,
+            else => return null,
+        };
+        var cast_value: ?global_sg.GlobalNodeId = null;
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
+            if (std.mem.eql(u8, self.graph.text(field.name), "value")) {
+                cast_value = field.value;
+                break;
+            }
+        }
+        const ty = target_type orelse return error.CastTargetMissing;
+        return .{
+            .source = source,
+            .ty = ty,
+            .content = .{ .explicit_cast = .{
+                .value = cast_value orelse return error.CastValueMissing,
+                .target_type = ty,
+            } },
+        };
+    }
+
+    fn makeSizeOf(
+        self: *Resolver,
+        input: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+    ) !?global_sg.Node {
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |literal| literal,
+            else => return null,
+        };
+        var measured_type: ?global_sg.GlobalTypeId = null;
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
+            if (!std.mem.eql(u8, self.graph.text(field.name), "type")) continue;
+            measured_type = switch (self.graph.nodes.items[@intFromEnum(field.value)].content) {
+                .type_literal => |ty| ty,
+                else => return null,
+            };
+            break;
+        }
+        const size = global_types.sizeOf(self.graph, measured_type orelse return error.SizeOfTypeMissing) catch return null;
+        return .{
+            .source = source,
+            .ty = try self.generics.internType(.{ .builtin = .UIntNative }),
+            .content = .{ .int_literal = std.math.cast(i64, size) orelse return error.TypeSizeOverflow },
+        };
     }
 
     pub fn instantiate(
@@ -422,9 +499,9 @@ pub const Resolver = struct {
             source: primitives.SourceRef,
         ) !global_sg.Node {
             if (module_path == null and std.mem.eql(u8, name, "cast"))
-                return self.makeExplicitCast(arguments, input, source);
+                return (try self.resolver.makeExplicitCast(arguments, input, self.resolver.sourceFor(self.module_index, source))) orelse error.CastInputMustBeStruct;
             if (module_path == null and std.mem.eql(u8, name, "size_of"))
-                return self.makeSizeOf(input, source);
+                return (try self.resolver.makeSizeOf(input, self.resolver.sourceFor(self.module_index, source))) orelse error.SizeOfInputMustBeStruct;
             const declaration = self.findFunctionDeclaration(name, module_path) orelse return error.UnknownTemplateFunction;
             const function = if (arguments.len != 0 or self.resolver.findTemplate(declaration) != null)
                 try self.resolver.instantiate(declaration, arguments)
@@ -434,68 +511,6 @@ pub const Resolver = struct {
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = try self.resolver.core.functionOutputType(function),
                 .content = .{ .function_call = .{ .callee = function, .input = input } },
-            };
-        }
-
-        fn makeExplicitCast(
-            self: *InstanceContext,
-            arguments: primitives.Range(global_sg.GlobalGenericArgId),
-            input: global_sg.GlobalNodeId,
-            source: primitives.SourceRef,
-        ) !global_sg.Node {
-            var target_type: ?global_sg.GlobalTypeId = null;
-            for (self.resolver.graph.generic_arguments.items[arguments.start..][0..arguments.len]) |argument| {
-                if (!std.mem.eql(u8, self.resolver.graph.text(argument.name), "to")) continue;
-                target_type = switch (argument.value) {
-                    .type => |ty| ty,
-                    .comptime_int => return error.CastTargetMustBeType,
-                };
-                break;
-            }
-            const literal = switch (self.resolver.graph.nodes.items[@intFromEnum(input)].content) {
-                .struct_value_literal => |value| value,
-                else => return error.CastInputMustBeStruct,
-            };
-            var cast_value: ?global_sg.GlobalNodeId = null;
-            for (self.resolver.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
-                if (std.mem.eql(u8, self.resolver.graph.text(field.name), "value")) {
-                    cast_value = field.value;
-                    break;
-                }
-            }
-            return .{
-                .source = self.resolver.sourceFor(self.module_index, source),
-                .ty = target_type orelse return error.CastTargetMissing,
-                .content = .{ .explicit_cast = .{
-                    .value = cast_value orelse return error.CastValueMissing,
-                    .target_type = target_type.?,
-                } },
-            };
-        }
-
-        fn makeSizeOf(
-            self: *InstanceContext,
-            input: global_sg.GlobalNodeId,
-            source: primitives.SourceRef,
-        ) !global_sg.Node {
-            const literal = switch (self.resolver.graph.nodes.items[@intFromEnum(input)].content) {
-                .struct_value_literal => |value| value,
-                else => return error.SizeOfInputMustBeStruct,
-            };
-            var measured_type: ?global_sg.GlobalTypeId = null;
-            for (self.resolver.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
-                if (!std.mem.eql(u8, self.resolver.graph.text(field.name), "type")) continue;
-                measured_type = switch (self.resolver.graph.nodes.items[@intFromEnum(field.value)].content) {
-                    .type_literal => |ty| ty,
-                    else => return error.SizeOfArgumentMustBeType,
-                };
-                break;
-            }
-            const size = try global_types.sizeOf(self.resolver.graph, measured_type orelse return error.SizeOfTypeMissing);
-            return .{
-                .source = self.resolver.sourceFor(self.module_index, source),
-                .ty = try self.resolver.generics.internType(.{ .builtin = .UIntNative }),
-                .content = .{ .int_literal = std.math.cast(i64, size) orelse return error.TypeSizeOverflow },
             };
         }
 
