@@ -98,8 +98,6 @@ pub const Type = union(enum) {
 
 pub const Decl = struct { target: DeclarationRef };
 pub const Function = struct { target: FunctionRef };
-/// Generic choices need to own their payload shapes. Referenced variants are
-/// still useful when a template pattern points at a module/external option.
 pub const Variant = union(enum) {
     reference: VariantRef,
     semantic: primitives.ChoiceVariant(Ids),
@@ -172,6 +170,8 @@ pub const PendingExpression = struct {
     kind: PendingExpressionKind,
     operands: primitives.Range(TemplateNodeId) = .{ .start = 0, .len = 0 },
     name: ?primitives.StringRange = null,
+    module_path: ?primitives.StringRange = null,
+    generic_arguments: primitives.Range(TemplateGenericArgId) = .{ .start = 0, .len = 0 },
     expected_type: ?TemplateTypeId = null,
     source: primitives.SourceRef,
     aux: u32 = 0,
@@ -304,12 +304,14 @@ test "template IR represents dependent type state without syntax refs" {
     } });
     try storage.nodes.append(allocator, .{ .pending = @enumFromInt(0) });
     try storage.pending.append(allocator, .{ .resolve_expression = .{
-        .kind = .for_each,
+        .kind = .generic_call,
+        .module_path = .{ .start = 0, .len = 0 },
+        .generic_arguments = .{ .start = 0, .len = 1 },
         .source = .{ .file_index = 0, .offset = 3 },
     } });
 
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(storage.types.items[0].parameter));
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(storage.types.items[2].array.length));
-    try std.testing.expectEqual(PendingExpressionKind.for_each, storage.pending.items[0].resolve_expression.kind);
+    try std.testing.expectEqual(PendingExpressionKind.generic_call, storage.pending.items[0].resolve_expression.kind);
     try std.testing.expect(storage.storageBytes() > 0);
 }
