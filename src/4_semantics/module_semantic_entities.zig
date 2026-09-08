@@ -1,4 +1,5 @@
 const std = @import("std");
+const tok = @import("../2_tokens/token.zig");
 const primitives = @import("semantic_primitives.zig");
 
 pub const ModuleDeclId = enum(u32) { _ };
@@ -7,9 +8,7 @@ pub const ModuleFunctionId = enum(u32) { _ };
 pub const ModuleBindingId = enum(u32) { _ };
 pub const ModuleNodeId = enum(u32) { _ };
 pub const ModuleBlockId = enum(u32) { _ };
-/// Logical field space: regular fields first, structural fields second.
 pub const ModuleFieldId = enum(u32) { _ };
-/// Logical variant space: declared-choice entries first, structural choices second.
 pub const ModuleVariantId = enum(u32) { _ };
 pub const ModuleGenericArgId = enum(u32) { _ };
 pub const ModuleValueFieldId = enum(u32) { _ };
@@ -137,10 +136,6 @@ pub const ExternalKind = enum(u8) {
     module,
 };
 
-/// Symbolic reference whose answer is intentionally not fixed by ModuleSema.
-/// `generic_arguments`, when present, are already-lowered module-local values;
-/// GlobalSema therefore never needs the original generic syntax to resolve an
-/// imported type/function specialization.
 pub const ExternalRef = struct {
     kind: ExternalKind,
     module_path: ?primitives.StringRange,
@@ -149,6 +144,9 @@ pub const ExternalRef = struct {
     source: primitives.SourceRef,
 };
 
+/// Cross-module/program decisions retained by ModuleSema. Operands and symbolic
+/// names are already canonical ModuleSG values, so resolving these holes is a
+/// pure semantic link step rather than a second syntax traversal.
 pub const PendingOperation = union(enum) {
     resolve_type: struct {
         external: ExternalRefId,
@@ -158,11 +156,51 @@ pub const PendingOperation = union(enum) {
         node: ModuleNodeId,
         callee: ExternalRefId,
         input: ModuleNodeId,
+        expected_type: ?ModuleTypeId = null,
     },
     resolve_field: struct {
         node: ModuleNodeId,
         value: ModuleNodeId,
         field_name: primitives.StringRange,
+    },
+    resolve_binary: struct {
+        node: ModuleNodeId,
+        operator: tok.BinaryOperator,
+        left: ModuleNodeId,
+        right: ModuleNodeId,
+    },
+    resolve_comparison: struct {
+        node: ModuleNodeId,
+        operator: tok.ComparisonOperator,
+        left: ModuleNodeId,
+        right: ModuleNodeId,
+    },
+    resolve_index: struct {
+        node: ModuleNodeId,
+        value: ModuleNodeId,
+        index: ModuleNodeId,
+        store_value: ?ModuleNodeId = null,
+    },
+    resolve_choice_literal: struct {
+        node: ModuleNodeId,
+        option: ExternalRefId,
+        payload: ?ModuleNodeId,
+        expected_type: ?ModuleTypeId = null,
+    },
+    resolve_choice_payload: struct {
+        node: ModuleNodeId,
+        value: ModuleNodeId,
+        option_name: primitives.StringRange,
+    },
+    resolve_nullable_unwrap: struct {
+        node: ModuleNodeId,
+        nullable_value: ModuleNodeId,
+        fallback_value: ModuleNodeId,
+    },
+    resolve_error_propagation: struct {
+        node: ModuleNodeId,
+        errable_value: ModuleNodeId,
+        context: ?ModuleNodeId = null,
     },
     resolve_abstract: struct {
         declaration: ModuleDeclId,
@@ -198,10 +236,11 @@ test "module semantic identities instantiate the shared schema" {
     try std.testing.expectEqual(ExternalKind.type, external.kind);
     try std.testing.expectEqual(@as(u32, 2), external.generic_arguments.?.start);
 
-    const node = ResolvedNode{
-        .source = .{ .file_index = 0, .offset = 9 },
-        .ty = null,
-        .content = .{ .bool_literal = true },
-    };
-    try std.testing.expect(node.content.bool_literal);
+    const pending = PendingOperation{ .resolve_binary = .{
+        .node = @enumFromInt(2),
+        .operator = .addition,
+        .left = @enumFromInt(0),
+        .right = @enumFromInt(1),
+    } };
+    try std.testing.expectEqual(tok.BinaryOperator.addition, pending.resolve_binary.operator);
 }
