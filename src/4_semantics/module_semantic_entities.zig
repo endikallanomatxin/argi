@@ -101,6 +101,14 @@ pub const DeclarationSemantic = struct {
     choice_layout: primitives.ChoiceLayout = .regular,
 };
 
+/// Cold relation for declaration kinds that own runtime storage. Keeping this
+/// sparse avoids inflating every Declaration while making the identity explicit
+/// for lookup, reach, Safety and Codegen.
+pub const DeclarationBinding = struct {
+    declaration: ModuleDeclId,
+    binding: ModuleBindingId,
+};
+
 pub const FunctionSemantic = struct {
     function: ModuleFunctionId,
     body: ?ModuleBlockId = null,
@@ -167,9 +175,6 @@ pub const PendingExpression = struct {
     aux: u32 = 0,
 };
 
-/// Cross-module/program decisions retained by ModuleSema. Operands and symbolic
-/// names are already canonical ModuleSG values, so resolving these holes is a
-/// pure semantic link step rather than a second syntax traversal.
 pub const PendingOperation = union(enum) {
     resolve_type: struct {
         external: ExternalRefId,
@@ -290,6 +295,9 @@ test "module semantic identities instantiate the shared schema" {
     };
     try std.testing.expectEqual(ExternalKind.type, external.kind);
     try std.testing.expectEqual(@as(u32, 2), external.generic_arguments.?.start);
+
+    const link = DeclarationBinding{ .declaration = decl, .binding = @enumFromInt(3) };
+    try std.testing.expectEqual(@as(u32, 3), @intFromEnum(link.binding));
 
     const pending = PendingOperation{ .resolve_binary = .{
         .node = @enumFromInt(2),
