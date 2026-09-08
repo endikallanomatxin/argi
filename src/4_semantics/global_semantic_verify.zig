@@ -8,13 +8,18 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     try verifyModulePartitions(graph);
 
     for (graph.declarations.items) |declaration| try payload.declaration(graph_mod.Ids, declaration, bounds);
-    for (graph.symbols.items) |symbol| {
-        try require(verify.stringFits(symbol.name, graph.strings.items));
-        try require(verify.rangeFits(symbol.declarations, graph.symbol_declarations.items.len));
-    }
-    for (graph.symbol_declarations.items) |id| try require(verify.idFits(id, graph.declarations.items.len));
+    try verifySymbols(graph);
 
-    for (graph.types.items) |value| try payload.semanticType(graph_mod.Ids, value, bounds);
+    for (graph.types.items) |value| {
+        try payload.semanticType(graph_mod.Ids, value, bounds);
+        switch (value) {
+            // These are compact ModuleSema states. The legacy semantizer
+            // materializes both into concrete generic/choice types before
+            // Safety and Codegen, so they must not survive final globalization.
+            .nullable, .inferred_errable => return error.InvalidGlobalSemanticGraph,
+            else => {},
+        }
+    }
     try verifyGenericInstances(graph);
     for (graph.fields.items) |value| try payload.field(graph_mod.Ids, value, bounds);
     for (graph.variants.items) |value| try payload.variant(graph_mod.Ids, value, bounds);
@@ -47,6 +52,23 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.roots.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
 }
 
+fn verifySymbols(graph: *const graph_mod.GlobalSemanticGraph) !void {
+    for (graph.symbols.items) |symbol| {
+        try require(verify.stringFits(symbol.name, graph.strings.items));
+        try require(symbol.declarations.len != 0);
+        try require(verify.rangeFits(symbol.declarations, graph.symbol_declarations.items.len));
+
+        const declarations = graph.symbol_declarations.items[symbol.declarations.start..][0..symbol.declarations.len];
+        const owner = graph.moduleForDeclaration(declarations[0]) orelse return error.InvalidGlobalSemanticGraph;
+        for (declarations) |id| {
+            try require(verify.idFits(id, graph.declarations.items.len));
+            try require(graph.moduleForDeclaration(id) == owner);
+            try require(std.mem.eql(u8, graph.text(symbol.name), graph.text(graph.declaration(id).name)));
+        }
+    }
+    for (graph.symbol_declarations.items) |id| try require(verify.idFits(id, graph.declarations.items.len));
+}
+
 fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
     var generic_count: usize = 0;
     for (graph.types.items) |ty| switch (ty) {
@@ -75,16 +97,13 @@ fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
 fn verifyModulePartitions(graph: *const graph_mod.GlobalSemanticGraph) !void {
     var file_cursor: usize = 0;
     var declaration_cursor: usize = 0;
-    var symbol_cursor: usize = 0;
 
     for (graph.modules.items, 0..) |module, module_index| {
         try require(verify.stringFits(module.dir, graph.strings.items));
         try require(module.files.start == file_cursor);
         try require(module.declarations.start == declaration_cursor);
-        try require(module.symbols.start == symbol_cursor);
         try require(verify.rangeFits(module.files, graph.files.items.len));
         try require(verify.rangeFits(module.declarations, graph.declarations.items.len));
-        try require(verify.rangeFits(module.symbols, graph.symbols.items.len));
 
         for (graph.files.items[module.files.start..][0..module.files.len]) |file| {
             try require(@intFromEnum(file.module) == module_index);
@@ -93,12 +112,10 @@ fn verifyModulePartitions(graph: *const graph_mod.GlobalSemanticGraph) !void {
 
         file_cursor += module.files.len;
         declaration_cursor += module.declarations.len;
-        symbol_cursor += module.symbols.len;
     }
 
     try require(file_cursor == graph.files.items.len);
     try require(declaration_cursor == graph.declarations.items.len);
-    try require(symbol_cursor == graph.symbols.items.len);
 }
 
 fn makeBounds(graph: *const graph_mod.GlobalSemanticGraph) payload.Bounds {
@@ -153,5 +170,14 @@ test "global verifier rejects dangling root ids" {
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
     try graph.roots.append(allocator, @enumFromInt(0));
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyGlobal(&graph));
+}
+
+test "global verifier rejects unmaterialized compact sugar types" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .inferred_errable = @enumFromInt(0) });
     try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyGlobal(&graph));
 }
