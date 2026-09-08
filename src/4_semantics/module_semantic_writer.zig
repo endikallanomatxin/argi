@@ -17,17 +17,23 @@ pub const Writer = struct {
         return strings.append(&self.graph.strings, self.allocator, text);
     }
 
-    pub fn addResolvedType(self: *Writer, ty: entities.ResolvedType) !entities.ModuleTypeId {
-        // External types are a terminal tail of the logical ModuleTypeId space.
-        // Once emitted, inserting another resolved type would renumber them.
-        if (self.graph.semantic.external_types.items.len != 0)
-            return error.ResolvedTypeAfterExternalType;
+    fn canonicalTypeBase(self: *const Writer) usize {
+        return self.graph.types.items.len +
+            self.graph.semantic.resolved_types.items.len +
+            self.graph.semantic.external_types.items.len;
+    }
+
+    pub fn addType(self: *Writer, ty: entities.ModuleType) !entities.ModuleTypeId {
         const id = try logicalId(
             entities.ModuleTypeId,
-            self.graph.types.items.len + self.graph.semantic.resolved_types.items.len,
+            self.canonicalTypeBase() + self.graph.semantic.types.items.len,
         );
-        try self.graph.semantic.resolved_types.append(self.allocator, ty);
+        try self.graph.semantic.types.append(self.allocator, ty);
         return id;
+    }
+
+    pub fn addResolvedType(self: *Writer, ty: entities.ResolvedType) !entities.ModuleTypeId {
+        return self.addType(.{ .resolved = ty });
     }
 
     pub fn addExternalRef(self: *Writer, reference: entities.ExternalRef) !entities.ExternalRefId {
@@ -37,12 +43,7 @@ pub const Writer = struct {
     }
 
     pub fn addExternalType(self: *Writer, reference: entities.ExternalRefId) !entities.ModuleTypeId {
-        const id = try logicalId(
-            entities.ModuleTypeId,
-            self.graph.types.items.len + self.graph.semantic.resolved_types.items.len + self.graph.semantic.external_types.items.len,
-        );
-        try self.graph.semantic.external_types.append(self.allocator, reference);
-        return id;
+        return self.addType(.{ .external = reference });
     }
 
     pub fn addField(self: *Writer, field: entities.Field) !entities.ModuleFieldId {
@@ -117,7 +118,7 @@ pub const Writer = struct {
         return .{ .start = start, .len = try index32(values.len) };
     }
 
-    pub fn appendTypeRefs(self: *Writer, values: []const entities.ModuleTypeId) !entities.NodeRange {
+    pub fn appendTypeRefs(self: *Writer, values: []const entities.ModuleTypeId) !struct { start: u32, len: u32 } {
         const start = try index32(self.graph.semantic.type_refs.items.len);
         try self.graph.semantic.type_refs.appendSlice(self.allocator, values);
         return .{ .start = start, .len = try index32(values.len) };
@@ -170,7 +171,7 @@ test "module semantic writer allocates canonical ids after compatibility prefixe
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(field));
 }
 
-test "module semantic writer freezes resolved type prefix before external types" {
+test "module semantic writer interleaves external and resolved canonical types" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
     defer graph.deinit(allocator);
@@ -183,6 +184,11 @@ test "module semantic writer freezes resolved type prefix before external types"
         .name = name,
         .source = .{ .file_index = 0, .offset = 0 },
     });
-    _ = try writer.addExternalType(external);
-    try std.testing.expectError(error.ResolvedTypeAfterExternalType, writer.addResolvedType(.{ .builtin = .Int32 }));
+    const external_ty = try writer.addExternalType(external);
+    const pointer_ty = try writer.addResolvedType(.{ .pointer = .{
+        .child = external_ty,
+        .mutability = .read_only,
+    } });
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(external_ty));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(pointer_ty));
 }
