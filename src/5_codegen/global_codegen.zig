@@ -1061,7 +1061,7 @@ pub const CodeGenerator = struct {
         deinit_fn: ?graph_mod.GlobalFunctionId,
         input: ?graph_mod.GlobalNodeId,
         self_field_index: u32,
-        fields: graph_mod.GlobalSemanticGraph.AutoDeinitFieldRange,
+        fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId),
         storage: llvm.c.LLVMValueRef,
         ty: graph_mod.GlobalTypeId,
         drop: *DropState,
