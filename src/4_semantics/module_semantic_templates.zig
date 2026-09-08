@@ -44,6 +44,9 @@ pub const GenericFunctionTemplate = struct {
     body: ?ir.TemplateBlockId,
     dispatch_kind: GenericDispatchKind = .regular,
     operator: ?callable.OperatorKind = null,
+    /// Destructor identity is resolved once while FileST is available. Global
+    /// ownership consumes this bit and never infers temporal semantics by name.
+    is_deinit: bool = false,
 };
 
 pub const GenericTypeTemplate = struct {
@@ -155,8 +158,9 @@ test "module template storage owns lowered template IR" {
         .input = @enumFromInt(0), .output = @enumFromInt(0),
         .input_bindings = .{ .start = 0, .len = 1 },
         .output_bindings = .{ .start = 1, .len = 1 },
-        .body = null, .operator = .add,
+        .body = null, .operator = .add, .is_deinit = true,
     });
     try std.testing.expectEqual(@as(u32, 1), storage.generic_function_templates.items[0].input_bindings.len);
     try std.testing.expectEqual(callable.OperatorKind.add, storage.generic_function_templates.items[0].operator.?);
+    try std.testing.expect(storage.generic_function_templates.items[0].is_deinit);
 }
