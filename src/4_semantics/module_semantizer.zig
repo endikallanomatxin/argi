@@ -5,6 +5,7 @@ const fallback_lowerer = @import("module_fallback_lowerer.zig");
 const initializer_lowerer = @import("module_initializer_lowerer.zig");
 const global_roots_lowerer = @import("module_global_roots_lowerer.zig");
 const template_lowerer = @import("module_template_lowerer.zig");
+const generic_operator_lowerer = @import("module_generic_operator_lowerer.zig");
 const abstract_relation_lowerer = @import("module_abstract_relation_lowerer.zig");
 const generic_call_args_lowerer = @import("module_generic_call_args_lowerer.zig");
 const callable = @import("semantic_callable.zig");
@@ -18,6 +19,7 @@ pub const BuildStats = struct {
     field_defaults: u32 = 0,
     generic_types: u32 = 0,
     generic_functions: u32 = 0,
+    generic_operators: u32 = 0,
     abstract_definitions: u32 = 0,
     abstract_relations: u32 = 0,
     generic_calls: u32 = 0,
@@ -29,10 +31,6 @@ pub const BuildResult = struct {
     stats: BuildStats,
 };
 
-/// Complete module-local semantic orchestration. FileST is an input to this
-/// phase only: every body/default/template/abstract relation is converted to
-/// Module* IDs, TemplateIR, or explicit PendingOperation records before return.
-/// Once this function succeeds GlobalSema never needs the syntax tree again.
 pub fn build(
     allocator: std.mem.Allocator,
     module_dir: []const u8,
@@ -42,22 +40,15 @@ pub fn build(
     errdefer graph.deinit(allocator);
 
     try lowerOperatorMetadata(allocator, &graph, files);
-
-    // Predeclare module-owned runtime storage/defaults before bodies so global
-    // identities already exist when body holes reference top-level names.
     const initializers = try initializer_lowerer.lower(allocator, &graph, files);
     const global_roots = try global_roots_lowerer.lower(allocator, &graph);
 
     const precise = try body_lowerer.lower(allocator, &graph, files);
     const fallback = try fallback_lowerer.lowerMissingFunctions(allocator, &graph, files);
 
-    // Generic declarations are not ordinary functions/types yet. Preserve them
-    // as syntax-free TemplateIR, then capture implements/defaultsto relations.
     const template_stats = try template_lowerer.lower(allocator, &graph, files);
+    const generic_operators = try generic_operator_lowerer.lower(&graph, files);
     const relation_stats = try abstract_relation_lowerer.lower(allocator, &graph, files);
-
-    // Calls are lowered before generic argument normalization. This pass attaches
-    // the #(...) payload to the corresponding ExternalRef by semantic SourceRef.
     const generic_calls = try generic_call_args_lowerer.lower(allocator, &graph, files);
 
     graph.semantic.local_semantics_complete = true;
@@ -73,6 +64,7 @@ pub fn build(
             .field_defaults = initializers.field_defaults,
             .generic_types = template_stats.generic_types,
             .generic_functions = template_stats.generic_functions,
+            .generic_operators = generic_operators,
             .abstract_definitions = template_stats.abstract_definitions,
             .abstract_relations = relation_stats.implementations + relation_stats.implementation_templates + relation_stats.defaults + relation_stats.default_templates,
             .generic_calls = generic_calls.generic_calls,
