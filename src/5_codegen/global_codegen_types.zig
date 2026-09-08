@@ -135,6 +135,12 @@ pub const Lowerer = struct {
         return c.LLVMBuildBitCast(builder, bytes, c.LLVMPointerType(type_ref, 0), name);
     }
 
+    fn appendPrint(self: *Lowerer, buffer: *std.array_list.Managed(u8), comptime format: []const u8, args: anytype) !void {
+        const text = try std.fmt.allocPrint(self.allocator, format, args);
+        defer self.allocator.free(text);
+        try buffer.appendSlice(text);
+    }
+
     pub fn encodeType(self: *Lowerer, buffer: *std.array_list.Managed(u8), ty: graph_mod.GlobalTypeId) !void {
         switch (self.graph.types.items[@intFromEnum(ty)]) {
             .builtin => |builtin| try buffer.appendSlice(switch (builtin) {
@@ -148,12 +154,12 @@ pub const Lowerer = struct {
                 try self.encodeType(buffer, pointer.child);
             },
             .array => |array| {
-                try buffer.writer().print("arr{d}_", .{array.length});
+                try self.appendPrint(buffer, "arr{d}_", .{array.length});
                 try self.encodeType(buffer, array.element);
             },
             .declared => |decl| {
                 try buffer.appendSlice("d");
-                try buffer.writer().print("{d}_", .{@intFromEnum(decl)});
+                try self.appendPrint(buffer, "{d}_", .{@intFromEnum(decl)});
                 try buffer.appendSlice(self.graph.text(self.graph.declarations.items[@intFromEnum(decl)].name));
             },
             .structural => |shape| {
@@ -167,15 +173,15 @@ pub const Lowerer = struct {
                 try buffer.append('}');
             },
             .structural_choice => try buffer.appendSlice("choice"),
-            .inferred_choice => |shape| try buffer.writer().print("choice_i{d}", .{shape.identity}),
+            .inferred_choice => |shape| try self.appendPrint(buffer, "choice_i{d}", .{shape.identity}),
             .generic => |identity| {
-                try buffer.writer().print("g{d}", .{@intFromEnum(identity.base)});
+                try self.appendPrint(buffer, "g{d}", .{@intFromEnum(identity.base)});
                 for (self.graph.generic_arguments.items[identity.arguments.start..][0..identity.arguments.len]) |argument| switch (argument.value) {
                     .type => |value| {
                         try buffer.append('_');
                         try self.encodeType(buffer, value);
                     },
-                    .comptime_int => |value| try buffer.writer().print("_n{d}", .{value}),
+                    .comptime_int => |value| try self.appendPrint(buffer, "_n{d}", .{value}),
                 };
             },
             .nullable, .inferred_errable => return Error.InvalidType,
@@ -191,7 +197,7 @@ pub const Lowerer = struct {
         var buffer = std.array_list.Managed(u8).init(self.allocator);
         errdefer buffer.deinit();
         try buffer.appendSlice(self.graph.text(declaration.name));
-        try buffer.writer().print("__f{d}__in_", .{@intFromEnum(function_id)});
+        try self.appendPrint(&buffer, "__f{d}__in_", .{@intFromEnum(function_id)});
         for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
             if (index != 0) try buffer.append('_');
             try self.encodeType(&buffer, field.ty);
