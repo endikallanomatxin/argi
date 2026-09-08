@@ -2,6 +2,7 @@ const std = @import("std");
 const entities = @import("module_semantic_entities.zig");
 const templates = @import("module_semantic_templates.zig");
 const primitives = @import("semantic_primitives.zig");
+const callable = @import("semantic_callable.zig");
 const type_shapes = @import("semantic_type_shapes.zig");
 
 pub const Storage = struct {
@@ -12,6 +13,9 @@ pub const Storage = struct {
 
     declaration_semantics: std.ArrayList(entities.DeclarationSemantic) = .empty,
     function_semantics: std.ArrayList(entities.FunctionSemantic) = .empty,
+    /// Aligned with ModuleSemanticGraph.functions. `null` is a normal named
+    /// function; non-null is the semantic overload operator identity.
+    function_operators: std.ArrayList(?callable.OperatorKind) = .empty,
     field_semantics: std.ArrayList(entities.FieldSemantic) = .empty,
     variant_semantics: std.ArrayList(entities.VariantSemantic) = .empty,
 
@@ -69,6 +73,7 @@ pub const Storage = struct {
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         self.declaration_semantics.deinit(allocator);
         self.function_semantics.deinit(allocator);
+        self.function_operators.deinit(allocator);
         self.field_semantics.deinit(allocator);
         self.variant_semantics.deinit(allocator);
         self.resolved_types.deinit(allocator);
@@ -113,6 +118,7 @@ pub const Storage = struct {
         return @sizeOf(bool) +
             self.declaration_semantics.items.len * @sizeOf(entities.DeclarationSemantic) +
             self.function_semantics.items.len * @sizeOf(entities.FunctionSemantic) +
+            self.function_operators.items.len * @sizeOf(?callable.OperatorKind) +
             self.field_semantics.items.len * @sizeOf(entities.FieldSemantic) +
             self.variant_semantics.items.len * @sizeOf(entities.VariantSemantic) +
             self.resolved_types.items.len * @sizeOf(entities.ResolvedType) +
