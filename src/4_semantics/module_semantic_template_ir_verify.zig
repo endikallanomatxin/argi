@@ -101,6 +101,8 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, pending: ir.Pendin
         .resolve_expression => |value| {
             try require(verify.rangeFits(value.operands, storage.node_refs.items.len));
             if (value.name) |name| try require(verify.stringFits(name, graph.strings.items));
+            if (value.module_path) |path| try require(verify.stringFits(path, graph.strings.items));
+            try require(verify.rangeFits(value.generic_arguments, storage.generic_arguments.items.len));
             try require(verify.optionalIdFits(value.expected_type, storage.types.items.len));
             try require(verify.sourceFits(value.source, graph.file_offsets.items.len));
         },
@@ -157,7 +159,7 @@ fn require(ok: bool) !void {
     if (!ok) return error.InvalidModuleTemplateIR;
 }
 
-test "template IR verifier accepts semantic variants and fallback expressions" {
+test "template IR verifier accepts semantic variants and qualified generic calls" {
     const std = @import("std");
     const allocator = std.testing.allocator;
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
@@ -167,21 +169,18 @@ test "template IR verifier accepts semantic variants and fallback expressions" {
         .path = .{ .start = 0, .len = 0 }, .declaration_base = 0, .declaration_count = 0,
         .type_reference_base = 0, .type_reference_count = 0, .import_reference_base = 0, .import_reference_count = 0,
     });
-    try graph.semantic.templates.generic_parameters.append(allocator, .{
-        .name = .{ .start = 0, .len = 0 },
-        .kind = .comptime_int,
-    });
+    try graph.semantic.templates.generic_parameters.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .kind = .comptime_int });
     try graph.semantic.templates.ir.int_expressions.append(allocator, .{ .parameter = @enumFromInt(0) });
     try graph.semantic.templates.ir.types.append(allocator, .abstract_self);
-    try graph.semantic.templates.ir.types.append(allocator, .{ .array = .{
-        .length = @enumFromInt(0), .element = @enumFromInt(0),
-    } });
     try graph.semantic.templates.ir.variants.append(allocator, .{ .semantic = .{
         .name = .{ .start = 0, .len = 0 }, .payload_type = @enumFromInt(0),
         .source = .{ .file_index = 0, .offset = 0 }, .value = 0,
     } });
     try graph.semantic.templates.ir.pending.append(allocator, .{ .resolve_expression = .{
-        .kind = .other, .source = .{ .file_index = 0, .offset = 0 },
+        .kind = .generic_call,
+        .module_path = .{ .start = 0, .len = 0 },
+        .generic_arguments = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
     } });
     try graph.semantic.templates.ir.nodes.append(allocator, .{ .pending = @enumFromInt(0) });
     try verifyIR(&graph);
