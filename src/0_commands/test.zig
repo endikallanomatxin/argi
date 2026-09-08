@@ -3,7 +3,7 @@ const std = @import("std");
 const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const frontend = @import("frontend_pipeline.zig");
-const build_plan = @import("build.zig");
+const build_plan = @import("build_plan.zig");
 const indexed_build = @import("indexed_build.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
 
@@ -152,8 +152,6 @@ pub fn run(
             .sysroot_path = parsed.sysroot_path,
         };
 
-        // Test discovery remains syntax-only; each selected test is compiled
-        // through ModuleSema → GlobalSema → GlobalSafety → GlobalCodegen.
         indexed_build.compileTarget(module_dir, flags, .{
             .frontend_options = .{
                 .semantizer = .{
