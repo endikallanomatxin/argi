@@ -1,14 +1,12 @@
 const source_files = @import("1_base/source_files.zig");
 const link = @import("5_codegen/link.zig");
 const lsp = @import("0_commands/lsp.zig");
+const indexed_lsp_service = @import("0_commands/indexed_lsp_service.zig");
 const tokenizer = @import("2_tokens/tokenizer.zig");
-const safety_facts = @import("4_semantics/safety_facts.zig");
-const safety_checker = @import("4_semantics/safety_checker.zig");
 const syntax_tree = @import("3_syntax/syntax_tree.zig");
 const syntaxer = @import("3_syntax/syntaxer.zig");
 const syntaxer_test = @import("3_syntax/syntaxer_test.zig");
 const module_semantic_graph_test = @import("4_semantics/module_semantic_graph_test.zig");
-const global_semantic_graph_builder = @import("4_semantics/global_semantic_graph_builder.zig");
 
 const semantic_primitives = @import("4_semantics/semantic_primitives.zig");
 const semantic_type_shapes = @import("4_semantics/semantic_type_shapes.zig");
@@ -55,6 +53,7 @@ const global_semantic_ownership = @import("4_semantics/global_semantic_ownership
 const global_semantizer = @import("4_semantics/global_semantizer.zig");
 const global_safety_facts = @import("4_semantics/global_safety_facts.zig");
 const global_safety_checker = @import("4_semantics/global_safety_checker.zig");
+const global_lsp_index = @import("4_semantics/global_lsp_index.zig");
 const semantic_representation_test = @import("4_semantics/semantic_representation_test.zig");
 
 const global_codegen_types = @import("5_codegen/global_codegen_types.zig");
@@ -64,15 +63,12 @@ test {
     _ = source_files;
     _ = link;
     _ = lsp;
+    _ = indexed_lsp_service;
     _ = tokenizer;
-    // Legacy imports stay registered until their last consumers are deleted.
-    _ = safety_facts;
-    _ = safety_checker;
     _ = syntax_tree;
     _ = syntaxer;
     _ = syntaxer_test;
     _ = module_semantic_graph_test;
-    _ = global_semantic_graph_builder;
 
     _ = semantic_primitives;
     _ = semantic_type_shapes;
@@ -119,6 +115,7 @@ test {
     _ = global_semantizer;
     _ = global_safety_facts;
     _ = global_safety_checker;
+    _ = global_lsp_index;
     _ = semantic_representation_test;
 
     _ = global_codegen_types;
