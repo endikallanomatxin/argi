@@ -44,7 +44,7 @@ pub const Resolver = struct {
         operation: module_entities.PendingOperation,
     ) !?bool {
         return switch (operation) {
-            .resolve_type => |value| self.resolveGenericTypeHole(module_index, module, o, value),
+            .resolve_type => |value| @as(?bool, try self.resolveGenericTypeHole(module_index, module, o, value)),
             else => null,
         };
     }

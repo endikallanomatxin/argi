@@ -48,10 +48,10 @@ pub const Resolver = struct {
         _ = module_index;
         _ = module;
         return switch (operation) {
-            .resolve_defer => |value| try self.resolveDefer(o, value),
-            .resolve_keep => |value| try self.resolveKeep(o, value),
-            .resolve_copy => |value| try self.resolveCopy(o, value),
-            .resolve_deinit => |value| try self.resolveExplicitDeinit(o, value),
+            .resolve_defer => |value| @as(?bool, try self.resolveDefer(o, value)),
+            .resolve_keep => |value| @as(?bool, try self.resolveKeep(o, value)),
+            .resolve_copy => |value| @as(?bool, try self.resolveCopy(o, value)),
+            .resolve_deinit => |value| @as(?bool, try self.resolveExplicitDeinit(o, value)),
             else => null,
         };
     }

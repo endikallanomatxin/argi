@@ -37,9 +37,9 @@ pub const Resolver = struct {
         return switch (operation) {
             .resolve_abstract => |value| blk: {
                 const declaration = globalizer.globalDecl(o, value.declaration);
-                const ty = self.graph.declarations.items[@intFromEnum(declaration)].type_id orelse break :blk false;
+                const ty = self.graph.declarations.items[@intFromEnum(declaration)].type_id orelse break :blk @as(?bool, false);
                 const abstract_decl = try self.resolveExternalAbstract(module_index, value.abstract_ref);
-                break :blk try self.implements(ty, abstract_decl);
+                break :blk @as(?bool, try self.implements(ty, abstract_decl));
             },
             else => null,
         };

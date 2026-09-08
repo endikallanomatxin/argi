@@ -30,7 +30,7 @@ pub const Resolver = struct {
         _ = module_index;
         _ = module;
         return switch (operation) {
-            .resolve_error_propagation => |value| try self.resolve(o, value),
+            .resolve_error_propagation => |value| @as(?bool, try self.resolve(o, value)),
             else => null,
         };
     }

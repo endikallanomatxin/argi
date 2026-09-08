@@ -43,13 +43,13 @@ pub const Resolver = struct {
         operation: module_entities.PendingOperation,
     ) !?bool {
         return switch (operation) {
-            .resolve_choice_literal => |value| try self.resolveChoiceLiteral(module, o, value),
-            .resolve_choice_payload => |value| try self.resolveChoicePayload(module, o, value),
-            .resolve_nullable_unwrap => |value| try self.resolveNullableUnwrap(o, value),
-            .resolve_nullable_test => |value| try self.resolveNullableTest(o, value),
-            .resolve_match => |value| try self.resolveMatch(module, o, value),
-            .resolve_match_case => |value| self.matchCaseAlreadyResolved(o, value),
-            .resolve_for_each => |value| try self.resolveForEach(module_index, o, value),
+            .resolve_choice_literal => |value| @as(?bool, try self.resolveChoiceLiteral(module, o, value)),
+            .resolve_choice_payload => |value| @as(?bool, try self.resolveChoicePayload(module, o, value)),
+            .resolve_nullable_unwrap => |value| @as(?bool, try self.resolveNullableUnwrap(o, value)),
+            .resolve_nullable_test => |value| @as(?bool, try self.resolveNullableTest(o, value)),
+            .resolve_match => |value| @as(?bool, try self.resolveMatch(module, o, value)),
+            .resolve_match_case => |value| @as(?bool, self.matchCaseAlreadyResolved(o, value)),
+            .resolve_for_each => |value| @as(?bool, try self.resolveForEach(module_index, o, value)),
             else => null,
         };
     }
