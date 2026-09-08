@@ -57,7 +57,6 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    // Allow argument passing: `zig build run -- arg1 arg2 etc`
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
@@ -101,8 +100,6 @@ pub fn build(b: *std.Build) void {
 }
 
 fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, []const u8 } {
-    // Obtain LLVM paths. First try environment variables to avoid spawning
-    // `llvm-config` which might not be supported in restricted environments.
     const env_include = b.graph.environ_map.get("LLVM_INCLUDE_DIR");
     const env_lib = b.graph.environ_map.get("LLVM_LIB_DIR");
     const env_libs = b.graph.environ_map.get("LLVM_LIBS");
@@ -140,6 +137,7 @@ fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, 
 }
 
 const llvm_config_candidates = [_][]const u8{
+    "llvm-config-21",
     "llvm-config",
     "llvm-config-20",
     "llvm-config-19",
