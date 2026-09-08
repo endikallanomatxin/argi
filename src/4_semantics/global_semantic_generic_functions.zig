@@ -35,7 +35,7 @@ pub const Resolver = struct {
         operation: module_entities.PendingOperation,
     ) !?bool {
         return switch (operation) {
-            .resolve_call => |value| self.resolveModuleGenericCall(module_index, module, o, value),
+            .resolve_call => |value| @as(?bool, try self.resolveModuleGenericCall(module_index, module, o, value)),
             else => null,
         };
     }
