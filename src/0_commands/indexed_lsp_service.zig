@@ -549,21 +549,6 @@ const HoverWriter = struct {
     allocator: std.mem.Allocator,
     buffer: *std.array_list.Managed(u8),
 
-    fn writeAll(self: HoverWriter, text: []const u8) !void {
-        try self.buffer.appendSlice(text);
-    }
-
-    fn print(self: HoverWriter, comptime format: []const u8, args: anytype) !void {
-        const text = try std.fmt.allocPrint(self.allocator, format, args);
-        defer self.allocator.free(text);
-        try self.buffer.appendSlice(text);
-    }
-};
-
-const HoverWriter = struct {
-    allocator: std.mem.Allocator,
-    buffer: *std.array_list.Managed(u8),
-
     fn writeAll(self: HoverWriter, text: []const u8) std.mem.Allocator.Error!void {
         try self.buffer.appendSlice(text);
     }
