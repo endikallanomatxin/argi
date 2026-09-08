@@ -79,7 +79,7 @@ pub const Resolver = struct {
         var found: ?global_sg.GlobalDeclId = null;
         for (self.graph.declarations.items, 0..) |decl, raw| {
             const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
-            if (module_filter) |wanted| if (self.graph.moduleForDeclaration(id).? != wanted) continue;
+            if (!self.declarationVisible(current_module, id, module_filter)) continue;
             var allowed = false;
             for (kinds) |kind| if (decl.kind == kind) { allowed = true; break; };
             if (!allowed or !std.mem.eql(u8, self.graph.text(decl.name), name)) continue;
@@ -116,7 +116,7 @@ pub const Resolver = struct {
         for (self.graph.functions.items, 0..) |function, raw| {
             const decl = self.graph.declarations.items[@intFromEnum(function.declaration)];
             if (!std.mem.eql(u8, self.graph.text(decl.name), name)) continue;
-            if (module_filter) |wanted| if (self.graph.moduleForDeclaration(function.declaration).? != wanted) continue;
+            if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
             const score = self.callScore(function, input_ty) orelse continue;
             if (best == null or score > best_score) {
                 best = @enumFromInt(@as(u32, @intCast(raw)));
@@ -160,6 +160,18 @@ pub const Resolver = struct {
         if (best == null) return error.NoMatchingGlobalFunction;
         if (tied) return error.AmbiguousGlobalFunction;
         return best.?;
+    }
+
+    /// Global storage does not imply global visibility. Unqualified lookup sees
+    /// the current module and the implicit core; explicit imports select one
+    /// module and still respect private declaration names.
+    pub fn declarationVisible(self: *const Resolver, current_module: usize, declaration: global_sg.GlobalDeclId, qualified_module: ?global_sg.GlobalModuleId) bool {
+        const owner = self.graph.moduleForDeclaration(declaration) orelse return false;
+        const own_module = @intFromEnum(owner) == current_module;
+        const name = self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name);
+        if (!own_module and std.mem.startsWith(u8, name, "_")) return false;
+        if (qualified_module) |wanted| return owner == wanted;
+        return own_module or self.graph.modules.items[@intFromEnum(owner)].is_bundled_core;
     }
 
     pub fn functionOutputType(self: *Resolver, id: global_sg.GlobalFunctionId) !global_sg.GlobalTypeId {
@@ -425,4 +437,28 @@ pub const Resolver = struct {
 
 test "global core resolver is graph-only" {
     try std.testing.expect(@sizeOf(Resolver) <= 96);
+}
+
+test "global declaration lookup preserves module visibility" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "app") };
+    defer module.deinit(allocator);
+    try module.strings.appendSlice(allocator, "helper_hidden");
+    const helper = try graph.addString(allocator, "helper");
+    const hidden = try graph.addString(allocator, "_hidden");
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.declarations.append(allocator, .{ .kind = .function, .name = helper, .source = source });
+    try graph.declarations.append(allocator, .{ .kind = .function, .name = hidden, .source = source });
+    try graph.modules.append(allocator, .{ .dir = try graph.addString(allocator, "app"), .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 0 } });
+    try graph.modules.append(allocator, .{ .dir = try graph.addString(allocator, "dependency"), .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 2 } });
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{module}, .offsets = &.{} };
+    const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = null, .name = .{ .start = 0, .len = 6 }, .source = source };
+    try std.testing.expectError(error.UnknownGlobalDeclaration, resolver.resolveDeclaration(0, reference, &.{.function}));
+    graph.modules.items[1].is_bundled_core = true;
+    try std.testing.expectEqual(@as(global_sg.GlobalDeclId, @enumFromInt(0)), try resolver.resolveDeclaration(0, reference, &.{.function}));
+    var private_reference = reference;
+    private_reference.name = .{ .start = 6, .len = 7 };
+    try std.testing.expectError(error.UnknownGlobalDeclaration, resolver.resolveDeclaration(0, private_reference, &.{.function}));
 }

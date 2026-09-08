@@ -99,7 +99,9 @@ pub const Resolver = struct {
             .body = null,
             .input_bindings = input_bindings,
             .output_bindings = output_bindings,
+            .safety_primitive = located.template.safety_primitive,
             .flags = .{
+                .is_deinit = located.template.is_deinit,
                 .has_declared_body = located.template.body != null,
                 .is_generic_instantiation = true,
                 .is_abstract_dispatch = located.template.dispatch_kind == .abstract_contract,
@@ -246,10 +248,13 @@ pub const Resolver = struct {
             self.block_map[@intFromEnum(id)] = global;
 
             const storage = &self.resolver.modules[self.module_index].semantic.templates.ir;
-            const start: u32 = @intCast(self.resolver.graph.node_refs.items.len);
+            var nodes: std.ArrayList(global_sg.GlobalNodeId) = .empty;
+            defer nodes.deinit(self.resolver.allocator);
             for (storage.node_refs.items[local.nodes.start..][0..local.nodes.len]) |node| {
-                try self.resolver.graph.node_refs.append(self.resolver.allocator, try self.instantiateNode(node));
+                try nodes.append(self.resolver.allocator, try self.instantiateNode(node));
             }
+            const start: u32 = @intCast(self.resolver.graph.node_refs.items.len);
+            try self.resolver.graph.node_refs.appendSlice(self.resolver.allocator, nodes.items);
             self.resolver.graph.blocks.items[@intFromEnum(global)] = .{
                 .nodes = .{ .start = start, .len = local.nodes.len },
                 .ret_val = if (local.ret_val) |node| try self.instantiateNode(node) else null,
@@ -278,6 +283,7 @@ pub const Resolver = struct {
         }
 
         fn instantiateResolvedNode(self: *InstanceContext, node: ir.ResolvedNode) anyerror!global_sg.Node {
+            if (node.content == .struct_value_literal) return self.instantiateStructValue(node);
             const ty = if (node.ty) |value| try self.resolver.generics.instantiateTemplateType(self.module_index, value, self.substitutions, null) else null;
             return .{
                 .source = self.resolver.sourceFor(self.module_index, node.source),
@@ -285,6 +291,10 @@ pub const Resolver = struct {
                 .content = switch (node.content) {
                     .binding_use => |binding| .{ .binding_use = try self.instantiateBinding(binding) },
                     .binding_declaration => |binding| .{ .binding_declaration = try self.instantiateBinding(binding) },
+                    .assignment => |assignment| .{ .assignment = .{
+                        .binding = try self.instantiateBinding(assignment.binding),
+                        .value = try self.instantiateNode(assignment.value),
+                    } },
                     .code_block => |block| .{ .code_block = try self.instantiateBlock(block) },
                     .int_literal => |value| .{ .int_literal = value },
                     .float_literal => |value| .{ .float_literal = value },
@@ -296,6 +306,35 @@ pub const Resolver = struct {
                     else => return error.UnsupportedResolvedTemplateNode,
                 },
             };
+        }
+
+        fn instantiateStructValue(self: *InstanceContext, node: ir.ResolvedNode) !global_sg.Node {
+            const storage = &self.resolver.modules[self.module_index].semantic.templates.ir;
+            const range = node.content.struct_value_literal.fields;
+            var values: std.ArrayList(global_sg.ValueField) = .empty;
+            defer values.deinit(self.resolver.allocator);
+            var fields: std.ArrayList(global_sg.Field) = .empty;
+            defer fields.deinit(self.resolver.allocator);
+            for (storage.value_fields.items[range.start..][0..range.len]) |field| {
+                const value = try self.instantiateNode(field.value);
+                const name = try self.copyString(field.name);
+                try values.append(self.resolver.allocator, .{ .name = name, .value = value });
+                try fields.append(self.resolver.allocator, .{
+                    .name = name, .ty = self.resolver.graph.nodes.items[@intFromEnum(value)].ty orelse return error.MissingTemplateValueType,
+                    .source = self.resolver.sourceFor(self.module_index, node.source),
+                });
+            }
+            const field_start: u32 = @intCast(self.resolver.graph.fields.items.len);
+            try self.resolver.graph.fields.appendSlice(self.resolver.allocator, fields.items);
+            const ty: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.types.items.len)));
+            try self.resolver.graph.types.append(self.resolver.allocator, .{ .structural = .{
+                .fields = .{ .start = field_start, .len = @intCast(fields.items.len) },
+            } });
+            const start: u32 = @intCast(self.resolver.graph.value_fields.items.len);
+            try self.resolver.graph.value_fields.appendSlice(self.resolver.allocator, values.items);
+            return .{ .source = self.resolver.sourceFor(self.module_index, node.source), .ty = ty, .content = .{
+                .struct_value_literal = .{ .fields = .{ .start = start, .len = @intCast(values.items.len) }, .ty = ty },
+            } };
         }
 
         fn instantiatePendingNode(self: *InstanceContext, pending: ir.Pending) anyerror!global_sg.Node {

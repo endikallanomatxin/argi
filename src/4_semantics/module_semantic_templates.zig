@@ -47,6 +47,7 @@ pub const GenericFunctionTemplate = struct {
     /// Destructor identity is resolved once while FileST is available. Global
     /// ownership consumes this bit and never infers temporal semantics by name.
     is_deinit: bool = false,
+    safety_primitive: primitives.SafetyPrimitive = .none,
 };
 
 pub const GenericTypeTemplate = struct {

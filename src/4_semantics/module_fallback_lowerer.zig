@@ -1,4 +1,5 @@
 const std = @import("std");
+const literals = @import("semantic_literals.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
 const tok = @import("../2_tokens/token.zig");
 const graph_mod = @import("module_semantic_graph.zig");
@@ -174,13 +175,11 @@ const Context = struct {
         const value = self.tree.tokenContent(literal.token).literal;
         return switch (value) {
             .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => blk: {
-                var parsed = std.fmt.parseInt(i64, self.tree.tokenTextFromSource(self.source, literal.token), 0) catch 0;
-                if (literal.negative) parsed = -parsed;
+const parsed = try literals.integer(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
                 break :blk try self.resolved(node, try self.builtin(.Int32), .{ .int_literal = parsed });
             },
             .regular_float_literal, .scientific_float_literal => blk: {
-                var parsed = std.fmt.parseFloat(f64, self.tree.tokenTextFromSource(self.source, literal.token)) catch 0;
-                if (literal.negative) parsed = -parsed;
+const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
                 break :blk try self.resolved(node, try self.builtin(.Float32), .{ .float_literal = parsed });
             },
             .bool_literal => |item| self.resolved(node, try self.builtin(.Bool), .{ .bool_literal = item }),
