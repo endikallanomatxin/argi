@@ -3,6 +3,7 @@ const entities = @import("module_semantic_entities.zig");
 const primitives = @import("semantic_primitives.zig");
 
 pub const TemplateParameterId = enum(u32) { _ };
+pub const TemplateIntExprId = enum(u32) { _ };
 pub const TemplateTypeId = enum(u32) { _ };
 pub const TemplateDeclId = enum(u32) { _ };
 pub const TemplateFunctionId = enum(u32) { _ };
@@ -71,13 +72,43 @@ pub const VariantRef = union(enum) {
     external: entities.ExternalRefId,
 };
 
+/// Small symbolic integer IR used by dependent template types. The legacy
+/// matcher supports literals, comptime parameters and + - * / % compositions;
+/// storing the same information here keeps cached templates independent of ST.
+pub const IntBinaryOperator = enum(u8) {
+    add,
+    subtract,
+    multiply,
+    divide,
+    modulo,
+};
+
+pub const IntExpression = union(enum) {
+    literal: i64,
+    parameter: TemplateParameterId,
+    binary: struct {
+        operator: IntBinaryOperator,
+        left: TemplateIntExprId,
+        right: TemplateIntExprId,
+    },
+};
+
 /// A template type is self-contained in the ModuleSG. Concrete module types are
 /// referenced directly; placeholders and composite template shapes stay in the
 /// template ID domain until instantiation substitutes them.
 pub const Type = union(enum) {
     concrete: entities.ModuleTypeId,
     parameter: TemplateParameterId,
+    /// `Self` inside an Abstract requirement. Its concrete meaning is supplied
+    /// by the abstract implementation being checked/instantiated.
+    abstract_self,
     external: entities.ExternalRefId,
+    /// Dependent array length that cannot be expressed by the resolved semantic
+    /// type's concrete u64 length until comptime parameters are substituted.
+    array: struct {
+        length: TemplateIntExprId,
+        element: TemplateTypeId,
+    },
     resolved: primitives.SemanticType(Ids),
 };
 
@@ -85,8 +116,17 @@ pub const Decl = struct { target: DeclarationRef };
 pub const Function = struct { target: FunctionRef };
 pub const Variant = struct { target: VariantRef };
 
+pub const GenericArgument = struct {
+    name: primitives.StringRange,
+    value: Value,
+
+    pub const Value = union(enum) {
+        type: TemplateTypeId,
+        comptime_int: TemplateIntExprId,
+    };
+};
+
 pub const Field = primitives.Field(Ids);
-pub const GenericArgument = primitives.GenericArgument(Ids);
 pub const Binding = primitives.Binding(Ids);
 pub const Block = primitives.Block(Ids);
 pub const ValueField = primitives.ValueField(Ids);
@@ -133,6 +173,7 @@ pub const Node = union(enum) {
 };
 
 pub const Storage = struct {
+    int_expressions: std.ArrayList(IntExpression) = .empty,
     types: std.ArrayList(Type) = .empty,
     declarations: std.ArrayList(Decl) = .empty,
     functions: std.ArrayList(Function) = .empty,
@@ -167,6 +208,7 @@ pub const Storage = struct {
 
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         inline for (.{
+            &self.int_expressions,
             &self.types,
             &self.declarations,
             &self.functions,
@@ -202,7 +244,8 @@ pub const Storage = struct {
     }
 
     pub fn storageBytes(self: *const Storage) usize {
-        return self.types.items.len * @sizeOf(Type) +
+        return self.int_expressions.items.len * @sizeOf(IntExpression) +
+            self.types.items.len * @sizeOf(Type) +
             self.declarations.items.len * @sizeOf(Decl) +
             self.functions.items.len * @sizeOf(Function) +
             self.variants.items.len * @sizeOf(Variant) +
@@ -235,12 +278,18 @@ pub const Storage = struct {
     }
 };
 
-test "template IR represents generic placeholders without syntax refs" {
+test "template IR represents dependent type state without syntax refs" {
     const allocator = std.testing.allocator;
     var storage: Storage = .{};
     defer storage.deinit(allocator);
 
     try storage.types.append(allocator, .{ .parameter = @enumFromInt(0) });
+    try storage.types.append(allocator, .abstract_self);
+    try storage.int_expressions.append(allocator, .{ .parameter = @enumFromInt(0) });
+    try storage.types.append(allocator, .{ .array = .{
+        .length = @enumFromInt(0),
+        .element = @enumFromInt(0),
+    } });
     try storage.nodes.append(allocator, .{ .pending = @enumFromInt(0) });
     try storage.pending.append(allocator, .{ .resolve_name = .{
         .name = .{ .start = 0, .len = 1 },
@@ -248,5 +297,6 @@ test "template IR represents generic placeholders without syntax refs" {
     } });
 
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(storage.types.items[0].parameter));
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(storage.types.items[2].array.length));
     try std.testing.expect(storage.storageBytes() > 0);
 }
