@@ -588,7 +588,7 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
         },
     }
     try writer.writeAll("\n```");
-    return output.toOwnedSlice();
+    return try output.toOwnedSlice();
 }
 
 fn writeFieldRange(writer: anytype, graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.FieldRange) !void {
@@ -754,7 +754,7 @@ fn decodeFileUri(allocator: std.mem.Allocator, uri: []const u8) !?[]u8 {
             index += 1;
         }
     }
-    return output.toOwnedSlice();
+    return try output.toOwnedSlice();
 }
 
 test "indexed LSP service public positions stay zero based" {

@@ -61,6 +61,7 @@ pub const Ids = struct {
 
 pub const DeclRange = primitives.Range(ModuleDeclId);
 pub const BindingRange = primitives.Range(ModuleBindingId);
+pub const TypeRange = primitives.Range(ModuleTypeId);
 pub const NodeRange = primitives.Range(ModuleNodeId);
 pub const FieldRange = primitives.Range(ModuleFieldId);
 pub const VariantRange = primitives.Range(ModuleVariantId);

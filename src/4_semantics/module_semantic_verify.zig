@@ -223,6 +223,42 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.errable_value, semantic.nodes.items.len));
             try require(verify.optionalIdFits(value.context, semantic.nodes.items.len));
         },
+        .resolve_nullable_test => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.value, semantic.nodes.items.len));
+        },
+        .resolve_for_each => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.binding, semantic.bindings.items.len));
+            try require(verify.idFits(value.iterable, semantic.nodes.items.len));
+            try require(verify.idFits(value.body, semantic.blocks.items.len));
+        },
+        .resolve_match => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.value, semantic.nodes.items.len));
+            try require(verify.rangeFits(value.cases, semantic.node_refs.items.len));
+        },
+        .resolve_match_case => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.option, semantic.external_refs.items.len));
+            try require(semantic.external_refs.items[@intFromEnum(value.option)].kind == .choice_option);
+            try require(verify.optionalIdFits(value.payload_binding, semantic.bindings.items.len));
+            try require(verify.idFits(value.body, semantic.blocks.items.len));
+        },
+        .resolve_defer => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.value, semantic.nodes.items.len));
+        },
+        .resolve_keep => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.binding, semantic.bindings.items.len));
+        },
+        .resolve_expression => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.rangeFits(value.operands, semantic.node_refs.items.len));
+            if (value.name) |name| try require(verify.stringFits(name, graph.strings.items));
+            try require(verify.optionalIdFits(value.expected_type, views.typeCount(graph)));
+        },
         .resolve_abstract => |value| {
             try require(verify.idFits(value.declaration, graph.declarations.items.len));
             try require(verify.idFits(value.abstract_ref, semantic.external_refs.items.len));
