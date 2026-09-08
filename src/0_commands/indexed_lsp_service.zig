@@ -408,7 +408,12 @@ pub const LanguageService = struct {
         defer diagnostics.deinit();
         var pipeline = frontend.FrontendPipeline.init(allocator.*, self.io, &diagnostics, .{});
         defer pipeline.deinit();
-        _ = pipeline.semantizeGlobalFiles(files) catch return null;
+        _ = pipeline.semantizeGlobalFiles(files) catch {
+            // Parsing/global semantic failures leave no graph. Safety failures,
+            // however, happen after GlobalSG is complete and should not disable
+            // editor navigation for otherwise-resolved symbols.
+            if (pipeline.global_graph == null) return null;
+        };
 
         var graph = pipeline.global_graph.?;
         pipeline.global_graph = null;
