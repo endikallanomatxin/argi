@@ -11,7 +11,7 @@ const type_lowerer = @import("module_type_lowerer.zig");
 
 pub const Stats = struct { lowered_functions: u32 = 0 };
 
-const NamedBinding = struct { name: []const u8, id: entities.ModuleBindingId };
+const NamedBinding = struct { name: primitives.StringRange, id: entities.ModuleBindingId };
 const Lowered = struct { node: entities.ModuleNodeId, ty: entities.ModuleTypeId };
 
 pub fn lowerMissingFunctions(
@@ -106,7 +106,7 @@ const Context = struct {
                 .mutability = mutability,
             });
             try result.append(id);
-            try self.bindings.append(.{ .name = self.graph.text(field.name), .id = id });
+            try self.bindings.append(.{ .name = field.name, .id = id });
         }
     }
 
@@ -212,7 +212,7 @@ const Context = struct {
             .initialization = if (value) |item| item.node else null,
             .mutability = declaration.mutability,
         });
-        try self.bindings.append(.{ .name = name_text, .id = binding });
+        try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(binding)].name, .id = binding });
         return self.resolved(node, ty, .{ .binding_declaration = binding });
     }
 
@@ -504,7 +504,7 @@ const Context = struct {
             .mutability = if (statement.mode == .mut_borrow) .variable else .constant,
         });
         try self.pushScope();
-        try self.bindings.append(.{ .name = name_text, .id = binding });
+        try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(binding)].name, .id = binding });
         const body = try self.lowerBlock(statement.body);
         self.popScope();
         return self.pending(node, .{ .resolve_for_each = .{
@@ -541,7 +541,7 @@ const Context = struct {
                     .mutability = if (case.mode == .mut_borrow) .variable else .constant,
                 });
                 payload_binding = id;
-                try self.bindings.append(.{ .name = text, .id = id });
+                try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(id)].name, .id = id });
             }
             const body = try self.lowerBlock(case.body);
             self.popScope();
@@ -605,8 +605,18 @@ const Context = struct {
 
     fn lowerDereference(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const value = try self.lowerNode(self.tree.unaryOperand(node).?, null);
-        const ty = expected orelse try self.builtin(.Any);
+        const ty = (try self.pointerChild(value.ty)) orelse expected orelse try self.builtin(.Any);
         return self.resolved(node, ty, .{ .dereference = .{ .pointer = value.node, .ty = ty, .pointer_type = value.ty } });
+    }
+
+    fn pointerChild(self: *Context, ty: entities.ModuleTypeId) !?entities.ModuleTypeId {
+        return switch (try views.typeView(self.graph, ty)) {
+            .external => null,
+            .resolved => |semantic_type| switch (semantic_type) {
+                .pointer => |pointer| pointer.child,
+                else => null,
+            },
+        };
     }
 
     fn lowerPointerAssignment(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
@@ -703,7 +713,7 @@ const Context = struct {
         var index = self.bindings.items.len;
         while (index != 0) {
             index -= 1;
-            if (std.mem.eql(u8, self.bindings.items[index].name, name)) return self.bindings.items[index].id;
+            if (std.mem.eql(u8, self.graph.text(self.bindings.items[index].name), name)) return self.bindings.items[index].id;
         }
         return null;
     }
