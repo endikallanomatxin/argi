@@ -6,7 +6,43 @@ const syn = @import("../3_syntax/syntax_tree.zig");
 const syntaxer = @import("../3_syntax/syntaxer.zig");
 const tokenizer = @import("../2_tokens/tokenizer.zig");
 const module_graph = @import("module_semantic_graph.zig");
+const initializer_lowerer = @import("module_initializer_lowerer.zig");
 const template_lowerer = @import("module_template_lowerer.zig");
+
+test "deferred struct definitions retain fields with external generic types" {
+    const allocator = std.testing.allocator;
+    const source = "Holder : Type = (.value: ExternalBox#(.t: Int32))\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "holder/main.rg", .tree = &tree, .source = source }};
+    var graph = try module_graph.build(allocator, "holder", &inputs);
+    defer graph.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?module_graph.FieldRange, null), graph.declarations.items[0].struct_fields);
+    _ = try initializer_lowerer.lower(allocator, &graph, &inputs);
+
+    const fields = graph.declarations.items[0].struct_fields.?;
+    try std.testing.expectEqual(@as(u32, 1), fields.len);
+    const field = try @import("module_semantic_views.zig").fieldView(&graph, @enumFromInt(fields.start));
+    try std.testing.expectEqualStrings("value", graph.text(field.name));
+    try std.testing.expect((try @import("module_semantic_views.zig").typeView(&graph, field.ty)) == .external);
+}
+
+test "constrained generic parameters remain type parameters" {
+    const allocator = std.testing.allocator;
+    const source =
+        "Capability : Abstract = ()\n" ++
+        "Box#(.t: Type: Capability) : Type = (.value: t)\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "box/main.rg", .tree = &tree, .source = source }};
+    var graph = try module_graph.build(allocator, "box", &inputs);
+    defer graph.deinit(allocator);
+
+    _ = try template_lowerer.lower(allocator, &graph, &inputs);
+    const template = graph.semantic.templates.generic_type_templates.items[0];
+    try std.testing.expectEqual(.type, graph.semantic.templates.generic_parameters.items[template.parameters.start].kind);
+}
 
 test "template pools retain immediate children across recursive lowering" {
     const allocator = std.testing.allocator;

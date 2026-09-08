@@ -31,6 +31,7 @@ pub fn lower(
         .writer = writer_mod.Writer.init(allocator, graph),
     };
     var stats: Stats = .{};
+    try ctx.lowerDeferredStructDefinitions();
     try ctx.predeclareGlobals(&stats);
     try ctx.lowerGlobalInitializers();
     try ctx.lowerFieldDefaults(&stats);
@@ -50,6 +51,55 @@ const Context = struct {
         self.file_index = index;
         self.tree = self.files[@intCast(index)].tree;
         self.source = self.files[@intCast(index)].source;
+    }
+
+    /// The compact graph's early interface pass can only materialize fields
+    /// whose types are entirely module-local. Finish declarations containing
+    /// imported or generic types here, where unresolved names have a durable
+    /// ExternalRef representation. Immediate fields are buffered because
+    /// lowering a field type may itself append fields for a structural type.
+    fn lowerDeferredStructDefinitions(self: *Context) !void {
+        for (self.graph.declarations.items, 0..) |declaration, raw| {
+            if (declaration.kind != .type or declaration.struct_fields != null) continue;
+            self.selectFile(declaration.module_file_index);
+            const type_declaration = switch (self.tree.tag(declaration.syntax_node)) {
+                .type_declaration => self.tree.typeDeclaration(declaration.syntax_node).?,
+                .c_union_declaration => blk: {
+                    const value = self.tree.cUnionDeclaration(declaration.syntax_node).?;
+                    break :blk syn.TypeDeclaration{
+                        .name_token = value.name_token,
+                        .generic_params = value.generic_params,
+                        .generic_params_struct = value.generic_params_struct,
+                        .value = value.value,
+                    };
+                },
+                else => continue,
+            };
+            if (type_declaration.generic_params.len != 0 or type_declaration.generic_params_struct != null) continue;
+            const literal = self.tree.structTypeLiteral(type_declaration.value) orelse continue;
+
+            var fields: std.ArrayList(entities.Field) = .empty;
+            defer fields.deinit(self.allocator);
+            for (literal.fields) |field_node| {
+                const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
+                const type_node = field.type_node orelse return error.StructFieldTypeRequired;
+                try fields.append(self.allocator, .{
+                    .name = try self.writer.addString(if (field.inferred_result)
+                        "result"
+                    else
+                        self.tree.tokenTextFromSource(self.source, field.name_token)),
+                    .ty = try self.lowerType(type_node),
+                    .source = self.sourceRef(field_node),
+                });
+            }
+
+            const start: u32 = @intCast(views.fieldCount(self.graph));
+            for (fields.items) |field| _ = try self.writer.addField(field);
+            self.graph.declarations.items[raw].struct_fields = .{
+                .start = start,
+                .len = @intCast(fields.items.len),
+            };
+        }
     }
 
     fn predeclareGlobals(self: *Context, stats: *Stats) !void {
