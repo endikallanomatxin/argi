@@ -3,6 +3,7 @@ const module_sg = @import("module_semantic_graph.zig");
 const body_lowerer = @import("module_body_lowerer.zig");
 const fallback_lowerer = @import("module_fallback_lowerer.zig");
 const initializer_lowerer = @import("module_initializer_lowerer.zig");
+const global_roots_lowerer = @import("module_global_roots_lowerer.zig");
 const template_lowerer = @import("module_template_lowerer.zig");
 const abstract_relation_lowerer = @import("module_abstract_relation_lowerer.zig");
 const generic_call_args_lowerer = @import("module_generic_call_args_lowerer.zig");
@@ -13,6 +14,7 @@ pub const BuildStats = struct {
     lowered_functions: u32 = 0,
     fallback_functions: u32 = 0,
     global_bindings: u32 = 0,
+    global_roots: u32 = 0,
     field_defaults: u32 = 0,
     generic_types: u32 = 0,
     generic_functions: u32 = 0,
@@ -44,6 +46,7 @@ pub fn build(
     // Predeclare module-owned runtime storage/defaults before bodies so global
     // identities already exist when body holes reference top-level names.
     const initializers = try initializer_lowerer.lower(allocator, &graph, files);
+    const global_roots = try global_roots_lowerer.lower(allocator, &graph);
 
     const precise = try body_lowerer.lower(allocator, &graph, files);
     const fallback = try fallback_lowerer.lowerMissingFunctions(allocator, &graph, files);
@@ -66,6 +69,7 @@ pub fn build(
             .lowered_functions = precise.lowered_functions,
             .fallback_functions = fallback.lowered_functions,
             .global_bindings = initializers.global_bindings,
+            .global_roots = global_roots,
             .field_defaults = initializers.field_defaults,
             .generic_types = template_stats.generic_types,
             .generic_functions = template_stats.generic_functions,
