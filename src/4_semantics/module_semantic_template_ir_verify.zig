@@ -34,9 +34,12 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
         .module => |id| try require(verify.idFits(id, graph.functions.items.len)),
         .external => |id| try require(verify.idFits(id, graph.semantic.external_refs.items.len)),
     };
-    for (storage.variants.items) |variant| switch (variant.target) {
-        .module => |id| try require(verify.idFits(id, views.variantCount(graph))),
-        .external => |id| try require(verify.idFits(id, graph.semantic.external_refs.items.len)),
+    for (storage.variants.items) |variant| switch (variant) {
+        .reference => |reference| switch (reference) {
+            .module => |id| try require(verify.idFits(id, views.variantCount(graph))),
+            .external => |id| try require(verify.idFits(id, graph.semantic.external_refs.items.len)),
+        },
+        .semantic => |value| try payload.variant(ir.Ids, value, bounds),
     };
 
     for (storage.fields.items) |value| try payload.field(ir.Ids, value, bounds);
@@ -95,6 +98,12 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, pending: ir.Pendin
             try require(verify.stringFits(value.field_name, graph.strings.items));
             try require(verify.sourceFits(value.source, graph.file_offsets.items.len));
         },
+        .resolve_expression => |value| {
+            try require(verify.rangeFits(value.operands, storage.node_refs.items.len));
+            if (value.name) |name| try require(verify.stringFits(name, graph.strings.items));
+            try require(verify.optionalIdFits(value.expected_type, storage.types.items.len));
+            try require(verify.sourceFits(value.source, graph.file_offsets.items.len));
+        },
         .resolve_copy => |value| try require(verify.idFits(value.value, storage.nodes.items.len)),
         .resolve_deinit => |value| try require(verify.idFits(value.binding, storage.bindings.items.len)),
     }
@@ -148,12 +157,16 @@ fn require(ok: bool) !void {
     if (!ok) return error.InvalidModuleTemplateIR;
 }
 
-test "template IR verifier accepts dependent Self and comptime types" {
+test "template IR verifier accepts semantic variants and fallback expressions" {
     const std = @import("std");
     const allocator = std.testing.allocator;
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
     defer graph.deinit(allocator);
 
+    try graph.file_offsets.append(allocator, .{
+        .path = .{ .start = 0, .len = 0 }, .declaration_base = 0, .declaration_count = 0,
+        .type_reference_base = 0, .type_reference_count = 0, .import_reference_base = 0, .import_reference_count = 0,
+    });
     try graph.semantic.templates.generic_parameters.append(allocator, .{
         .name = .{ .start = 0, .len = 0 },
         .kind = .comptime_int,
@@ -161,8 +174,15 @@ test "template IR verifier accepts dependent Self and comptime types" {
     try graph.semantic.templates.ir.int_expressions.append(allocator, .{ .parameter = @enumFromInt(0) });
     try graph.semantic.templates.ir.types.append(allocator, .abstract_self);
     try graph.semantic.templates.ir.types.append(allocator, .{ .array = .{
-        .length = @enumFromInt(0),
-        .element = @enumFromInt(0),
+        .length = @enumFromInt(0), .element = @enumFromInt(0),
     } });
+    try graph.semantic.templates.ir.variants.append(allocator, .{ .semantic = .{
+        .name = .{ .start = 0, .len = 0 }, .payload_type = @enumFromInt(0),
+        .source = .{ .file_index = 0, .offset = 0 }, .value = 0,
+    } });
+    try graph.semantic.templates.ir.pending.append(allocator, .{ .resolve_expression = .{
+        .kind = .other, .source = .{ .file_index = 0, .offset = 0 },
+    } });
+    try graph.semantic.templates.ir.nodes.append(allocator, .{ .pending = @enumFromInt(0) });
     try verifyIR(&graph);
 }
