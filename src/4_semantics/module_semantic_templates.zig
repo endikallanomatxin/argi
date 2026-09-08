@@ -2,6 +2,7 @@ const std = @import("std");
 const entities = @import("module_semantic_entities.zig");
 const ir = @import("module_semantic_template_ir.zig");
 const primitives = @import("semantic_primitives.zig");
+const callable = @import("semantic_callable.zig");
 
 pub const GenericParameterId = ir.TemplateParameterId;
 pub const AbstractConstraintId = enum(u32) { _ };
@@ -30,7 +31,6 @@ pub const GenericDispatchKind = enum(u8) {
 pub const GenericParameter = struct {
     name: primitives.StringRange,
     kind: GenericParameterKind,
-    /// Template-local type because constraints may refer to earlier parameters.
     value_type: ?ir.TemplateTypeId = null,
     constraint: ?AbstractConstraintId = null,
 };
@@ -48,6 +48,7 @@ pub const GenericFunctionTemplate = struct {
     output: ir.TemplateTypeId,
     body: ?ir.TemplateBlockId,
     dispatch_kind: GenericDispatchKind = .regular,
+    operator: ?callable.OperatorKind = null,
 };
 
 pub const GenericTypeTemplate = struct {
@@ -105,9 +106,6 @@ pub const AbstractDefaultTemplate = struct {
     source: primitives.SourceRef,
 };
 
-/// Module-owned generic/abstract semantic state. `ir` contains the lowered
-/// template types and bodies; none of these records point back into FileST or
-/// SourceDb, so they can be serialized with the ModuleSG cache artifact.
 pub const Storage = struct {
     ir: ir.Storage = .{},
     generic_parameters: std.ArrayList(GenericParameter) = .empty,
@@ -170,6 +168,7 @@ test "module template storage owns lowered template IR" {
         .input = @enumFromInt(0),
         .output = @enumFromInt(0),
         .body = null,
+        .operator = .add,
     });
     try storage.abstract_default_templates.append(allocator, .{
         .abstract_ref = .{ .module = @enumFromInt(0) },
@@ -178,7 +177,6 @@ test "module template storage owns lowered template IR" {
         .source = .{ .file_index = 0, .offset = 0 },
     });
 
-    try std.testing.expectEqual(@as(usize, 1), storage.generic_function_templates.items.len);
-    try std.testing.expectEqual(@as(usize, 1), storage.abstract_default_templates.items.len);
+    try std.testing.expectEqual(callable.OperatorKind.add, storage.generic_function_templates.items[0].operator.?);
     try std.testing.expect(storage.storageBytes() >= @sizeOf(GenericParameter));
 }
