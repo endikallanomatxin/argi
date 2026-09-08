@@ -435,10 +435,10 @@ pub const Resolver = struct {
             const operator: tok.ComparisonOperator = switch (tag) {
                 .compare_equal => .equal,
                 .compare_not_equal => .not_equal,
-                .compare_less => .less,
-                .compare_greater => .greater,
-                .compare_less_equal => .less_equal,
-                .compare_greater_equal => .greater_equal,
+                .compare_less => .less_than,
+                .compare_greater => .greater_than,
+                .compare_less_equal => .less_than_or_equal,
+                .compare_greater_equal => .greater_than_or_equal,
                 else => return error.InvalidTemplateComparison,
             };
             const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });
