@@ -302,7 +302,7 @@ pub const Resolver = struct {
             return switch (pending) {
                 .resolve_name => |value| self.resolveName(value),
                 .resolve_call => |value| self.resolveLegacyCall(value),
-                .resolve_field => |value| self.resolveField(value.value, value.field_name, value.source),
+                .resolve_field => |value| self.resolveTemplateField(value.value, value.field_name, value.source),
                 .resolve_expression => |value| self.resolveExpression(value),
                 .resolve_copy, .resolve_deinit => error.TemplateOwnershipPending,
             };
@@ -457,7 +457,7 @@ pub const Resolver = struct {
             return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = bool_ty, .content = .{ .logical_operation = .{ .operator = operator, .left = operands[0], .right = operands[1] } } };
         }
 
-        fn resolveField(self: *InstanceContext, value: ir.TemplateNodeId, field_name: primitives.StringRange, source: primitives.SourceRef) !global_sg.Node {
+        fn resolveTemplateField(self: *InstanceContext, value: ir.TemplateNodeId, field_name: primitives.StringRange, source: primitives.SourceRef) !global_sg.Node {
             return self.resolveField(try self.instantiateNode(value), field_name, source);
         }
 

@@ -215,12 +215,12 @@ const Context = struct {
         const access = self.tree.structFieldAccess(node).?;
         const value = try self.lowerExpr(access.value, null);
         const target = self.nextNodeId();
-        const pending = try self.writer.addPendingOperation(.{ .resolve_field = .{
+        const pending_id = try self.writer.addPendingOperation(.{ .resolve_field = .{
             .node = target,
             .value = value.node,
             .field_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.field_token)),
         } });
-        const stored = try self.writer.addNode(.{ .pending = pending });
+        const stored = try self.writer.addNode(.{ .pending = pending_id });
         return .{ .node = stored, .ty = expected orelse try self.builtin(.Any) };
     }
 
@@ -310,16 +310,17 @@ const Context = struct {
     }
 
     fn pendingFallback(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
-        const pending = entities.PendingExpression{
+        const pending_expression = entities.PendingExpression{
             .node = self.nextNodeId(),
             .kind = .other,
             .expected_type = expected,
             .aux = @intFromEnum(self.tree.tag(node)),
         };
-        return self.pending(.{ .resolve_expression = pending }, expected orelse try self.builtin(.Any));
+        return self.pending(.{ .resolve_expression = pending_expression }, expected orelse try self.builtin(.Any));
     }
 
     fn pendingNamed(self: *Context, node: syn.NodeIndex, kind: entities.PendingExpressionKind, text: []const u8, expected: ?entities.ModuleTypeId) !Lowered {
+        _ = node;
         return self.pending(.{ .resolve_expression = .{
             .node = self.nextNodeId(), .kind = kind,
             .name = try self.writer.addString(text), .expected_type = expected,
@@ -360,7 +361,7 @@ const Context = struct {
     fn isAny(self: *Context, id: entities.ModuleTypeId) bool {
         const value = views.typeView(self.graph, id) catch return false;
         return switch (value) {
-            .resolved => |resolved| switch (resolved) { .builtin => |builtin_value| builtin_value == .Any, else => false },
+            .resolved => |resolved_type| switch (resolved_type) { .builtin => |builtin_value| builtin_value == .Any, else => false },
             .external => false,
         };
     }

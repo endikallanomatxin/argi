@@ -29,7 +29,7 @@ pub const Resolver = struct {
         while (index < self.graph.types.items.len) : (index += 1) {
             const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(index)));
             switch (self.graph.types.items[index]) {
-                .generic => if (try self.ensureGenericInstance(id)) changed = true,
+                .generic => { if (try self.ensureGenericInstance(id)) changed = true; },
                 else => {},
             }
         }

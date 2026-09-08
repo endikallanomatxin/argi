@@ -457,13 +457,13 @@ pub const Resolver = struct {
         return id;
     }
 
-    fn builtin(self: *Resolver, builtin: primitives.BuiltinType) !global_sg.GlobalTypeId {
+    fn builtin(self: *Resolver, builtin_type: primitives.BuiltinType) !global_sg.GlobalTypeId {
         for (self.graph.types.items, 0..) |ty, raw| switch (ty) {
-            .builtin => |value| if (value == builtin) return @enumFromInt(@as(u32, @intCast(raw))),
+            .builtin => |value| if (value == builtin_type) return @enumFromInt(@as(u32, @intCast(raw))),
             else => {},
         };
         const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
-        try self.graph.types.append(self.allocator, .{ .builtin = builtin });
+        try self.graph.types.append(self.allocator, .{ .builtin = builtin_type });
         return id;
     }
 
