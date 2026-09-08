@@ -79,6 +79,8 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (semantic.external_refs.items) |reference| {
         try require(verify.stringFits(reference.name, graph.strings.items));
         if (reference.module_path) |path| try require(verify.stringFits(path, graph.strings.items));
+        if (reference.generic_arguments) |arguments|
+            try require(verify.rangeFits(arguments, views.genericArgumentCount(graph)));
         try require(verify.sourceFits(reference.source, graph.file_offsets.items.len));
     }
     for (semantic.external_types.items) |external| {
@@ -176,11 +178,50 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.callee, semantic.external_refs.items.len));
             try require(semantic.external_refs.items[@intFromEnum(value.callee)].kind == .function);
             try require(verify.idFits(value.input, semantic.nodes.items.len));
+            try require(verify.optionalIdFits(value.expected_type, views.typeCount(graph)));
         },
         .resolve_field => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.idFits(value.value, semantic.nodes.items.len));
             try require(verify.stringFits(value.field_name, graph.strings.items));
+        },
+        .resolve_binary => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.left, semantic.nodes.items.len));
+            try require(verify.idFits(value.right, semantic.nodes.items.len));
+        },
+        .resolve_comparison => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.left, semantic.nodes.items.len));
+            try require(verify.idFits(value.right, semantic.nodes.items.len));
+        },
+        .resolve_index => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.value, semantic.nodes.items.len));
+            try require(verify.idFits(value.index, semantic.nodes.items.len));
+            try require(verify.optionalIdFits(value.store_value, semantic.nodes.items.len));
+        },
+        .resolve_choice_literal => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.option, semantic.external_refs.items.len));
+            try require(semantic.external_refs.items[@intFromEnum(value.option)].kind == .choice_option);
+            try require(verify.optionalIdFits(value.payload, semantic.nodes.items.len));
+            try require(verify.optionalIdFits(value.expected_type, views.typeCount(graph)));
+        },
+        .resolve_choice_payload => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.value, semantic.nodes.items.len));
+            try require(verify.stringFits(value.option_name, graph.strings.items));
+        },
+        .resolve_nullable_unwrap => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.nullable_value, semantic.nodes.items.len));
+            try require(verify.idFits(value.fallback_value, semantic.nodes.items.len));
+        },
+        .resolve_error_propagation => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.errable_value, semantic.nodes.items.len));
+            try require(verify.optionalIdFits(value.context, semantic.nodes.items.len));
         },
         .resolve_abstract => |value| {
             try require(verify.idFits(value.declaration, graph.declarations.items.len));
