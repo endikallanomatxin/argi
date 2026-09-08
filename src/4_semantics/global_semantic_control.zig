@@ -346,7 +346,7 @@ pub const Resolver = struct {
             .array_type = iterable_ty,
         } });
         const item_binding = globalizer.globalBinding(o, value.binding);
-        const assigned_ty = try self.matchBindingType(element_ty, value.mode);
+        const assigned_ty = try self.forBindingType(element_ty, value.mode);
         self.graph.bindings.items[@intFromEnum(item_binding)].ty = assigned_ty;
         const item_value = switch (value.mode) {
             .value => access,
@@ -422,6 +422,14 @@ pub const Resolver = struct {
     fn matchBindingType(self: *Resolver, payload: global_sg.GlobalTypeId, mode: syn.MatchCaseMode) !global_sg.GlobalTypeId {
         return switch (mode) {
             .value, .move => payload,
+            .borrow => self.pointer(payload, .read_only),
+            .mut_borrow => self.pointer(payload, .read_write),
+        };
+    }
+
+    fn forBindingType(self: *Resolver, payload: global_sg.GlobalTypeId, mode: syn.ForMode) !global_sg.GlobalTypeId {
+        return switch (mode) {
+            .value => payload,
             .borrow => self.pointer(payload, .read_only),
             .mut_borrow => self.pointer(payload, .read_write),
         };
