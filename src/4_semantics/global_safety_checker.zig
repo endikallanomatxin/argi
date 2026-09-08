@@ -521,6 +521,7 @@ pub const SafetyChecker = struct {
     }
 
     fn applyAutoDeinit(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, id: graph_mod.GlobalAutoDeinitId, state: *FunctionState) !void {
+        _ = function;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
         const storage = facts.Place{ .root = cleanup.binding };
         const current = self.getPlace(state, storage) orelse return;

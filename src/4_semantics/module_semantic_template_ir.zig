@@ -113,6 +113,7 @@ pub const GenericArgument = struct {
     };
 };
 
+pub const ResolvedType = primitives.SemanticType(Ids);
 pub const Field = primitives.Field(Ids);
 pub const Binding = primitives.Binding(Ids);
 pub const Block = primitives.Block(Ids);

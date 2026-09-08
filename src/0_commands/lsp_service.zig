@@ -45,7 +45,7 @@ pub fn decodeFileUri(allocator: std.mem.Allocator, uri: []const u8) !?[]u8 {
             index += 1;
         }
     }
-    return output.toOwnedSlice();
+    return try output.toOwnedSlice();
 }
 
 test "LSP service facade exposes only the indexed implementation" {
