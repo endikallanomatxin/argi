@@ -80,6 +80,29 @@ replace(
     "                break :blk @as(?bool, try self.implements(ty, abstract_decl));",
 )
 
+# For-each and match use distinct nominal mode enums. Keep their lowering
+# separate instead of coercing unrelated enums just because their cases overlap.
+replace(
+    "src/4_semantics/global_semantic_control.zig",
+    "        const assigned_ty = try self.matchBindingType(element_ty, value.mode);",
+    "        const assigned_ty = try self.forBindingType(element_ty, value.mode);",
+)
+replace(
+    "src/4_semantics/global_semantic_control.zig",
+    "    fn matchBindingType(self: *Resolver, payload: global_sg.GlobalTypeId, mode: syn.MatchCaseMode) !global_sg.GlobalTypeId {\n        return switch (mode) {\n            .value, .move => payload,\n            .borrow => self.pointer(payload, .read_only),\n            .mut_borrow => self.pointer(payload, .read_write),\n        };\n    }",
+    "    fn matchBindingType(self: *Resolver, payload: global_sg.GlobalTypeId, mode: syn.MatchCaseMode) !global_sg.GlobalTypeId {\n        return switch (mode) {\n            .value, .move => payload,\n            .borrow => self.pointer(payload, .read_only),\n            .mut_borrow => self.pointer(payload, .read_write),\n        };\n    }\n\n    fn forBindingType(self: *Resolver, payload: global_sg.GlobalTypeId, mode: syn.ForMode) !global_sg.GlobalTypeId {\n        return switch (mode) {\n            .value => payload,\n            .borrow => self.pointer(payload, .read_only),\n            .mut_borrow => self.pointer(payload, .read_write),\n        };\n    }",
+)
+
+# Keep generic-function comparison lowering aligned with the canonical token
+# operator enum names used everywhere else in the indexed graph.
+for old, new in [
+    ("                .compare_less => .less,", "                .compare_less => .less_than,"),
+    ("                .compare_greater => .greater,", "                .compare_greater => .greater_than,"),
+    ("                .compare_less_equal => .less_equal,", "                .compare_less_equal => .less_than_or_equal,"),
+    ("                .compare_greater_equal => .greater_equal,", "                .compare_greater_equal => .greater_than_or_equal,"),
+]:
+    replace("src/4_semantics/global_semantic_generic_functions.zig", old, new)
+
 # TemplateIR resolved shapes are the shared semantic type instantiated with Template IDs.
 replace(
     "src/4_semantics/module_semantic_template_ir.zig",
