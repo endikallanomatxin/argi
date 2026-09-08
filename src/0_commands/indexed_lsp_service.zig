@@ -560,6 +560,21 @@ const HoverWriter = struct {
     }
 };
 
+const HoverWriter = struct {
+    allocator: std.mem.Allocator,
+    buffer: *std.array_list.Managed(u8),
+
+    fn writeAll(self: HoverWriter, text: []const u8) std.mem.Allocator.Error!void {
+        try self.buffer.appendSlice(text);
+    }
+
+    fn print(self: HoverWriter, comptime format: []const u8, args: anytype) std.mem.Allocator.Error!void {
+        const text = try std.fmt.allocPrint(self.allocator, format, args);
+        defer self.allocator.free(text);
+        try self.buffer.appendSlice(text);
+    }
+};
+
 fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, target: editor_index.Target) ![]u8 {
     var output = std.array_list.Managed(u8).init(allocator);
     errdefer output.deinit();
@@ -606,7 +621,7 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
     return try output.toOwnedSlice();
 }
 
-fn writeFieldRange(writer: anytype, graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.FieldRange) !void {
+fn writeFieldRange(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.FieldRange) std.mem.Allocator.Error!void {
     for (graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
         if (index != 0) try writer.writeAll(", ");
         try writer.print(".{s}: ", .{graph.text(field.name)});
@@ -614,7 +629,7 @@ fn writeFieldRange(writer: anytype, graph: *const graph_mod.GlobalSemanticGraph,
     }
 }
 
-fn writeType(writer: anytype, graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) !void {
+fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) std.mem.Allocator.Error!void {
     switch (graph.types.items[@intFromEnum(ty)]) {
         .builtin => |value| try writer.writeAll(@tagName(value)),
         .declared => |decl| try writer.writeAll(graph.text(graph.declarations.items[@intFromEnum(decl)].name)),
@@ -659,7 +674,7 @@ fn writeType(writer: anytype, graph: *const graph_mod.GlobalSemanticGraph, ty: g
     }
 }
 
-fn writeVariants(writer: anytype, graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.VariantRange) !void {
+fn writeVariants(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.VariantRange) std.mem.Allocator.Error!void {
     try writer.writeAll("(");
     for (graph.variants.items[range.start..][0..range.len], 0..) |variant, index| {
         if (index != 0) try writer.writeAll(", ");

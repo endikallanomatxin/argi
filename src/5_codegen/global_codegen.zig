@@ -511,8 +511,11 @@ pub const CodeGenerator = struct {
     fn fieldAccess(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId, access: anytype) !TypedValue {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         const field_ty = node.ty orelse return CodegenError.InvalidType;
-        if (self.addressablePointer(node_id)) |pointer_result| {
-            const pointer = pointer_result catch return CodegenError.InvalidType;
+        const maybe_pointer: ?TypedValue = self.addressablePointer(node_id) catch |err| switch (err) {
+            error.InvalidType => null,
+            else => return err,
+        };
+        if (maybe_pointer) |pointer| {
             const type_ref = try self.toLLVMType(field_ty);
             return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, pointer.value_ref, "field"), .type_ref = type_ref, .ty = field_ty };
         }
@@ -807,7 +810,7 @@ pub const CodeGenerator = struct {
         return pointer;
     }
 
-    fn addressablePointer(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) !TypedValue {
+    fn addressablePointer(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) CodegenError!TypedValue {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
             .binding_use => |binding| blk: {
