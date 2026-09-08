@@ -90,17 +90,11 @@ pub const ErrorPropagation = primitives.ErrorPropagation(Ids);
 pub const ErrorContext = primitives.ErrorContext(Ids);
 pub const ResolvedNode = primitives.Node(Ids);
 
-/// Module-local types may be fully resolved without consulting another module,
-/// or may preserve one symbolic imported type requirement. Composite resolved
-/// types can point at an external ModuleTypeId, so pointers/arrays/generics do
-/// not need separate unresolved variants of their own.
 pub const ModuleType = union(enum) {
     resolved: ResolvedType,
     external: ExternalRefId,
 };
 
-/// Sparse migration overlay for metadata that belongs in the canonical
-/// declaration but is not present in the compatibility declaration table yet.
 pub const DeclarationSemantic = struct {
     declaration: ModuleDeclId,
     struct_layout: primitives.StructLayout = .regular,
@@ -144,12 +138,14 @@ pub const ExternalKind = enum(u8) {
 };
 
 /// Symbolic reference whose answer is intentionally not fixed by ModuleSema.
-/// `module_path` is absent for an unqualified open-world lookup and present for
-/// an explicitly imported/qualified module reference.
+/// `generic_arguments`, when present, are already-lowered module-local values;
+/// GlobalSema therefore never needs the original generic syntax to resolve an
+/// imported type/function specialization.
 pub const ExternalRef = struct {
     kind: ExternalKind,
     module_path: ?primitives.StringRange,
     name: primitives.StringRange,
+    generic_arguments: ?GenericArgRange = null,
     source: primitives.SourceRef,
 };
 
@@ -181,8 +177,6 @@ pub const PendingOperation = union(enum) {
     },
 };
 
-/// Resolved module nodes use the shared semantic payload schema. Only ModuleSG
-/// can additionally contain a typed hole represented by a pending operation.
 pub const ModuleNode = union(enum) {
     resolved: ResolvedNode,
     pending: PendingOperationId,
@@ -198,9 +192,11 @@ test "module semantic identities instantiate the shared schema" {
         .kind = .type,
         .module_path = null,
         .name = .{ .start = 0, .len = 5 },
+        .generic_arguments = .{ .start = 2, .len = 1 },
         .source = .{ .file_index = 0, .offset = 7 },
     };
     try std.testing.expectEqual(ExternalKind.type, external.kind);
+    try std.testing.expectEqual(@as(u32, 2), external.generic_arguments.?.start);
 
     const node = ResolvedNode{
         .source = .{ .file_index = 0, .offset = 9 },
