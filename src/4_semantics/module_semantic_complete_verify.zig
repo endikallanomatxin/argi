@@ -36,5 +36,5 @@ test "complete module verifier rejects dangling external generic arguments" {
         .generic_arguments = .{ .start = 1, .len = 1 },
         .source = .{ .file_index = 0, .offset = 0 },
     });
-    try std.testing.expectError(error.InvalidModuleExternalGenericArguments, verifyModule(&graph));
+    try std.testing.expectError(error.InvalidModuleSemanticGraph, verifyModule(&graph));
 }

@@ -45,6 +45,10 @@ test "template binding ranges are explicit semantic state" {
         .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 },
         .ty = @enumFromInt(1), .mutability = .constant,
     });
+    try storage.ir.bindings.append(allocator, .{
+        .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(1), .mutability = .constant,
+    });
     try storage.generic_function_templates.append(allocator, .{
         .declaration = @enumFromInt(0), .parameters = .{ .start = 0, .len = 0 },
         .input = @enumFromInt(0), .output = @enumFromInt(0), .body = null,

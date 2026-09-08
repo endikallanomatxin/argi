@@ -569,6 +569,12 @@ test "globalizer preserves hole identity for GlobalSema" {
     const allocator = std.testing.allocator;
     var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
     defer module.deinit(allocator);
+    try module.file_offsets.append(allocator, .{
+        .path = .{ .start = 0, .len = 0 },
+        .declaration_base = 0, .declaration_count = 0,
+        .type_reference_base = 0, .type_reference_count = 0,
+        .import_reference_base = 0, .import_reference_count = 0,
+    });
     try module.semantic.external_refs.append(allocator, .{
         .kind = .type, .module_path = null, .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 },
     });
