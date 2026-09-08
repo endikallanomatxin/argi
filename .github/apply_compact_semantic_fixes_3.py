@@ -18,35 +18,67 @@ replace(
     "    fn applyAutoDeinit(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, id: graph_mod.GlobalAutoDeinitId, state: *FunctionState) !void {\n        _ = function;\n        const cleanup",
 )
 
-# Zig 0.16 does not implicitly lift !bool into !?bool. Every resolver arm
-# participates in the same optional-dispatch protocol, so normalize them all.
+# Zig 0.16 does not implicitly lift !bool into !?bool. Normalize every
+# GlobalSema fixpoint resolver so they all implement the same protocol.
+replace(
+    "src/4_semantics/global_semantic_core.zig",
+    "            .resolve_type => |value| self.resolveTypeHole(module_index, module, o, value),",
+    "            .resolve_type => |value| @as(?bool, try self.resolveTypeHole(module_index, module, o, value)),",
+)
 for old, new in [
-    (
-        "            .resolve_type => |value| self.resolveTypeHole(module_index, module, o, value),",
-        "            .resolve_type => |value| @as(?bool, try self.resolveTypeHole(module_index, module, o, value)),",
-    ),
-    (
-        "            .resolve_call => |value| self.resolveCall(module_index, module, o, value),",
-        "            .resolve_call => |value| @as(?bool, try self.resolveCall(module_index, module, o, value)),",
-    ),
-    (
-        "            .resolve_field => |value| self.resolveField(module, o, value),",
-        "            .resolve_field => |value| @as(?bool, try self.resolveField(module, o, value)),",
-    ),
-    (
-        "            .resolve_binary => |value| self.resolveBinary(module_index, o, value),",
-        "            .resolve_binary => |value| @as(?bool, try self.resolveBinary(module_index, o, value)),",
-    ),
-    (
-        "            .resolve_comparison => |value| self.resolveComparison(module_index, o, value),",
-        "            .resolve_comparison => |value| @as(?bool, try self.resolveComparison(module_index, o, value)),",
-    ),
-    (
-        "            .resolve_index => |value| self.resolveIndex(module_index, o, value),",
-        "            .resolve_index => |value| @as(?bool, try self.resolveIndex(module_index, o, value)),",
-    ),
+    ("            .resolve_call => |value| self.resolveCall(module_index, module, o, value),", "            .resolve_call => |value| @as(?bool, try self.resolveCall(module_index, module, o, value)),"),
+    ("            .resolve_field => |value| self.resolveField(module, o, value),", "            .resolve_field => |value| @as(?bool, try self.resolveField(module, o, value)),"),
+    ("            .resolve_binary => |value| self.resolveBinary(module_index, o, value),", "            .resolve_binary => |value| @as(?bool, try self.resolveBinary(module_index, o, value)),"),
+    ("            .resolve_comparison => |value| self.resolveComparison(module_index, o, value),", "            .resolve_comparison => |value| @as(?bool, try self.resolveComparison(module_index, o, value)),"),
+    ("            .resolve_index => |value| self.resolveIndex(module_index, o, value),", "            .resolve_index => |value| @as(?bool, try self.resolveIndex(module_index, o, value)),"),
 ]:
     replace("src/4_semantics/global_semantic_core.zig", old, new)
+
+replace(
+    "src/4_semantics/global_semantic_generics.zig",
+    "            .resolve_type => |value| self.resolveGenericTypeHole(module_index, module, o, value),",
+    "            .resolve_type => |value| @as(?bool, try self.resolveGenericTypeHole(module_index, module, o, value)),",
+)
+replace(
+    "src/4_semantics/global_semantic_generic_functions.zig",
+    "            .resolve_call => |value| self.resolveModuleGenericCall(module_index, module, o, value),",
+    "            .resolve_call => |value| @as(?bool, try self.resolveModuleGenericCall(module_index, module, o, value)),",
+)
+
+for old, new in [
+    ("            .resolve_choice_literal => |value| try self.resolveChoiceLiteral(module, o, value),", "            .resolve_choice_literal => |value| @as(?bool, try self.resolveChoiceLiteral(module, o, value)),"),
+    ("            .resolve_choice_payload => |value| try self.resolveChoicePayload(module, o, value),", "            .resolve_choice_payload => |value| @as(?bool, try self.resolveChoicePayload(module, o, value)),"),
+    ("            .resolve_nullable_unwrap => |value| try self.resolveNullableUnwrap(o, value),", "            .resolve_nullable_unwrap => |value| @as(?bool, try self.resolveNullableUnwrap(o, value)),"),
+    ("            .resolve_nullable_test => |value| try self.resolveNullableTest(o, value),", "            .resolve_nullable_test => |value| @as(?bool, try self.resolveNullableTest(o, value)),"),
+    ("            .resolve_match => |value| try self.resolveMatch(module, o, value),", "            .resolve_match => |value| @as(?bool, try self.resolveMatch(module, o, value)),"),
+    ("            .resolve_match_case => |value| self.matchCaseAlreadyResolved(o, value),", "            .resolve_match_case => |value| @as(?bool, self.matchCaseAlreadyResolved(o, value)),"),
+    ("            .resolve_for_each => |value| try self.resolveForEach(module_index, o, value),", "            .resolve_for_each => |value| @as(?bool, try self.resolveForEach(module_index, o, value)),"),
+]:
+    replace("src/4_semantics/global_semantic_control.zig", old, new)
+
+replace(
+    "src/4_semantics/global_semantic_errors.zig",
+    "            .resolve_error_propagation => |value| try self.resolve(o, value),",
+    "            .resolve_error_propagation => |value| @as(?bool, try self.resolve(o, value)),",
+)
+for old, new in [
+    ("            .resolve_defer => |value| try self.resolveDefer(o, value),", "            .resolve_defer => |value| @as(?bool, try self.resolveDefer(o, value)),"),
+    ("            .resolve_keep => |value| try self.resolveKeep(o, value),", "            .resolve_keep => |value| @as(?bool, try self.resolveKeep(o, value)),"),
+    ("            .resolve_copy => |value| try self.resolveCopy(o, value),", "            .resolve_copy => |value| @as(?bool, try self.resolveCopy(o, value)),"),
+    ("            .resolve_deinit => |value| try self.resolveExplicitDeinit(o, value),", "            .resolve_deinit => |value| @as(?bool, try self.resolveExplicitDeinit(o, value)),"),
+]:
+    replace("src/4_semantics/global_semantic_ownership.zig", old, new)
+
+replace(
+    "src/4_semantics/global_semantic_abstracts.zig",
+    "                const ty = self.graph.declarations.items[@intFromEnum(declaration)].type_id orelse break :blk false;",
+    "                const ty = self.graph.declarations.items[@intFromEnum(declaration)].type_id orelse break :blk @as(?bool, false);",
+)
+replace(
+    "src/4_semantics/global_semantic_abstracts.zig",
+    "                break :blk try self.implements(ty, abstract_decl);",
+    "                break :blk @as(?bool, try self.implements(ty, abstract_decl));",
+)
 
 # TemplateIR resolved shapes are the shared semantic type instantiated with Template IDs.
 replace(
