@@ -56,11 +56,11 @@ pub const Resolver = struct {
     ) !?bool {
         return switch (operation) {
             .resolve_type => |value| @as(?bool, try self.resolveTypeHole(module_index, module, o, value)),
-            .resolve_call => |value| self.resolveCall(module_index, module, o, value),
-            .resolve_field => |value| self.resolveField(module, o, value),
-            .resolve_binary => |value| self.resolveBinary(module_index, o, value),
-            .resolve_comparison => |value| self.resolveComparison(module_index, o, value),
-            .resolve_index => |value| self.resolveIndex(module_index, o, value),
+            .resolve_call => |value| @as(?bool, try self.resolveCall(module_index, module, o, value)),
+            .resolve_field => |value| @as(?bool, try self.resolveField(module, o, value)),
+            .resolve_binary => |value| @as(?bool, try self.resolveBinary(module_index, o, value)),
+            .resolve_comparison => |value| @as(?bool, try self.resolveComparison(module_index, o, value)),
+            .resolve_index => |value| @as(?bool, try self.resolveIndex(module_index, o, value)),
             else => null,
         };
     }
