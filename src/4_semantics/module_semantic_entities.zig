@@ -1,5 +1,6 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
+const syn = @import("../3_syntax/syntax_tree.zig");
 const primitives = @import("semantic_primitives.zig");
 
 pub const ModuleDeclId = enum(u32) { _ };
@@ -197,10 +198,41 @@ pub const PendingOperation = union(enum) {
         nullable_value: ModuleNodeId,
         fallback_value: ModuleNodeId,
     },
+    resolve_nullable_test: struct {
+        node: ModuleNodeId,
+        value: ModuleNodeId,
+    },
     resolve_error_propagation: struct {
         node: ModuleNodeId,
         errable_value: ModuleNodeId,
         context: ?ModuleNodeId = null,
+    },
+    resolve_for_each: struct {
+        node: ModuleNodeId,
+        binding: ModuleBindingId,
+        iterable: ModuleNodeId,
+        body: ModuleBlockId,
+        mode: syn.ForMode,
+    },
+    resolve_match: struct {
+        node: ModuleNodeId,
+        value: ModuleNodeId,
+        cases: NodeRange,
+    },
+    resolve_match_case: struct {
+        node: ModuleNodeId,
+        option: ExternalRefId,
+        payload_binding: ?ModuleBindingId,
+        body: ModuleBlockId,
+        mode: syn.MatchCaseMode,
+    },
+    resolve_defer: struct {
+        node: ModuleNodeId,
+        value: ModuleNodeId,
+    },
+    resolve_keep: struct {
+        node: ModuleNodeId,
+        binding: ModuleBindingId,
     },
     resolve_abstract: struct {
         declaration: ModuleDeclId,
