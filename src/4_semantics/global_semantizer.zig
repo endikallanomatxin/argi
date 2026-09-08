@@ -8,6 +8,7 @@ const control_mod = @import("global_semantic_control.zig");
 const generic_mod = @import("global_semantic_generics.zig");
 const generic_functions_mod = @import("global_semantic_generic_functions.zig");
 const abstract_mod = @import("global_semantic_abstracts.zig");
+const error_mod = @import("global_semantic_errors.zig");
 
 pub const Stats = struct {
     core: core_mod.Stats = .{},
@@ -15,6 +16,7 @@ pub const Stats = struct {
     generics: generic_mod.Stats = .{},
     generic_functions: generic_functions_mod.Stats = .{},
     abstracts: abstract_mod.Stats = .{},
+    errors: error_mod.Stats = .{},
     pending_total: u32 = 0,
     pending_resolved: u32 = 0,
     remaining: u32 = 0,
@@ -67,6 +69,13 @@ pub fn semantize(
         .core = &core,
         .generics = &generics,
     };
+    var errors = error_mod.Resolver{
+        .allocator = allocator,
+        .graph = &relocation.graph,
+        .modules = modules,
+        .offsets = relocation.offsets.items,
+        .core = &core,
+    };
 
     try core.resolveExternalTypes();
     _ = try generics.materializeKnownTypes();
@@ -90,6 +99,7 @@ pub fn semantize(
                     if (!done) done = (try generic_functions.tryResolve(module_index, module, o, operation)) orelse false;
                     if (!done) done = (try abstracts.tryResolve(module_index, module, o, operation)) orelse false;
                     if (!done) done = (try control.tryResolve(module_index, module, o, operation)) orelse false;
+                    if (!done) done = (try errors.tryResolve(module_index, module, o, operation)) orelse false;
                     if (done) {
                         resolved[flat] = true;
                         changed = true;
@@ -102,9 +112,6 @@ pub fn semantize(
         try control.materializeSugarTypes();
     }
 
-    // Constraints are compile-time obligations on concrete instances. Check
-    // them after the fixpoint so generic types/calls they depend on are already
-    // materialized.
     try abstracts.validateGenericFunctionInstances();
     control.annotateChoiceTests();
 
@@ -117,6 +124,7 @@ pub fn semantize(
         .generics = generics.stats,
         .generic_functions = generic_functions.stats,
         .abstracts = abstracts.stats,
+        .errors = errors.stats,
         .pending_total = @intCast(total),
         .pending_resolved = @intCast(resolved_count),
         .remaining = @intCast(remaining),
