@@ -6,12 +6,10 @@ const callable = @import("semantic_callable.zig");
 const type_shapes = @import("semantic_type_shapes.zig");
 
 pub const Storage = struct {
-    /// Set only after ModuleSema has emitted every semantic fact that depends
-    /// solely on this module. External/pending global requirements may still
-    /// exist. Migration-era discovery builders intentionally leave this false.
     local_semantics_complete: bool = false,
 
     declaration_semantics: std.ArrayList(entities.DeclarationSemantic) = .empty,
+    declaration_bindings: std.ArrayList(entities.DeclarationBinding) = .empty,
     function_semantics: std.ArrayList(entities.FunctionSemantic) = .empty,
     /// Aligned with ModuleSemanticGraph.functions. `null` is a normal named
     /// function; non-null is the semantic overload operator identity.
@@ -25,15 +23,9 @@ pub const Storage = struct {
     variants: std.ArrayList(entities.ChoiceVariant) = .empty,
     generic_arguments: std.ArrayList(entities.GenericArgument) = .empty,
 
-    /// Earlier representation work placed external types after resolved_types.
-    /// Keep that prefix readable for cherry-pick compatibility, but new
-    /// ModuleSema code must use `types`, whose ModuleType union can freely
-    /// interleave local and external states without renumbering later IDs.
     external_types: std.ArrayList(entities.ExternalRefId) = .empty,
     types: std.ArrayList(entities.ModuleType) = .empty,
 
-    /// Materialized layouts for resolved generic identities. A complete ModuleSG
-    /// has exactly one entry for every resolved SemanticType.generic.
     generic_instances: std.ArrayList(type_shapes.GenericInstance(entities.Ids)) = .empty,
 
     bindings: std.ArrayList(entities.Binding) = .empty,
@@ -55,8 +47,6 @@ pub const Storage = struct {
     error_propagations: std.ArrayList(entities.ErrorPropagation) = .empty,
     error_contexts: std.ArrayList(entities.ErrorContext) = .empty,
 
-    /// Module-only semantic inputs consumed by later specialization/linking.
-    /// They deliberately do not survive into the finalized GlobalSG.
     templates: templates.Storage = .{},
 
     scopes: std.ArrayList(entities.Scope) = .empty,
@@ -72,6 +62,7 @@ pub const Storage = struct {
 
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         self.declaration_semantics.deinit(allocator);
+        self.declaration_bindings.deinit(allocator);
         self.function_semantics.deinit(allocator);
         self.function_operators.deinit(allocator);
         self.field_semantics.deinit(allocator);
@@ -117,6 +108,7 @@ pub const Storage = struct {
     pub fn storageBytes(self: *const Storage) usize {
         return @sizeOf(bool) +
             self.declaration_semantics.items.len * @sizeOf(entities.DeclarationSemantic) +
+            self.declaration_bindings.items.len * @sizeOf(entities.DeclarationBinding) +
             self.function_semantics.items.len * @sizeOf(entities.FunctionSemantic) +
             self.function_operators.items.len * @sizeOf(?callable.OperatorKind) +
             self.field_semantics.items.len * @sizeOf(entities.FieldSemantic) +
@@ -159,17 +151,18 @@ pub const Storage = struct {
     }
 };
 
-test "module semantic storage accepts mixed canonical type states" {
+test "module semantic storage owns cold declaration binding links" {
     const allocator = std.testing.allocator;
     var storage: Storage = .{};
     defer storage.deinit(allocator);
 
     try std.testing.expect(!storage.local_semantics_complete);
+    try storage.declaration_bindings.append(allocator, .{ .declaration = @enumFromInt(1), .binding = @enumFromInt(2) });
     try storage.types.append(allocator, .{ .resolved = .{ .builtin = .Int32 } });
     try storage.types.append(allocator, .{ .external = @enumFromInt(0) });
     try storage.types.append(allocator, .{ .resolved = .{ .pointer = .{
-        .child = @enumFromInt(1),
-        .mutability = .read_only,
+        .child = @enumFromInt(1), .mutability = .read_only,
     } } });
+    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(storage.declaration_bindings.items[0].binding));
     try std.testing.expectEqual(@as(usize, 3), storage.types.items.len);
 }
