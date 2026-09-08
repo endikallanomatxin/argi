@@ -83,22 +83,27 @@ pub const Lowerer = struct {
         if (range.len == 0) return c.LLVMStructType(null, 0, 0);
         var best = self.graph.fields.items[range.start];
         var best_layout = types.layoutOf(self.graph, types.effectiveFieldType(best)) catch return Error.InvalidType;
+        var max_size = best_layout.size;
+        var max_alignment = best_layout.alignment;
         for (self.graph.fields.items[range.start + 1 ..][0 .. range.len - 1]) |field| {
             const layout = types.layoutOf(self.graph, types.effectiveFieldType(field)) catch return Error.InvalidType;
+            max_size = @max(max_size, layout.size);
+            max_alignment = @max(max_alignment, layout.alignment);
             if (layout.alignment > best_layout.alignment or (layout.alignment == best_layout.alignment and layout.size > best_layout.size)) {
                 best = field;
                 best_layout = layout;
             }
         }
-        const total = types.layoutOfStructForCodegen(self.graph, range, .c_union) catch return Error.InvalidType;
+        const remainder = if (max_alignment == 0) 0 else max_size % max_alignment;
+        const total_size = if (remainder == 0) max_size else max_size + max_alignment - remainder;
         const storage_ty = try self.toLLVMType(types.effectiveFieldType(best));
-        if (best_layout.size >= total.size) {
+        if (best_layout.size >= total_size) {
             var one = [_]llvm.c.LLVMTypeRef{storage_ty};
             return c.LLVMStructType(&one, 1, 0);
         }
         var fields = [_]llvm.c.LLVMTypeRef{
             storage_ty,
-            c.LLVMArrayType(c.LLVMInt8Type(), @intCast(total.size - best_layout.size)),
+            c.LLVMArrayType(c.LLVMInt8Type(), @intCast(total_size - best_layout.size)),
         };
         return c.LLVMStructType(&fields, 2, 0);
     }
