@@ -1,0 +1,379 @@
+const std = @import("std");
+const syn = @import("../3_syntax/syntax_tree.zig");
+const tok = @import("../2_tokens/token.zig");
+const graph_mod = @import("module_semantic_graph.zig");
+const entities = @import("module_semantic_entities.zig");
+const writer_mod = @import("module_semantic_writer.zig");
+const type_lowerer = @import("module_type_lowerer.zig");
+const views = @import("module_semantic_views.zig");
+const primitives = @import("semantic_primitives.zig");
+
+pub const Stats = struct {
+    global_bindings: u32 = 0,
+    field_defaults: u32 = 0,
+};
+
+const Lowered = struct {
+    node: entities.ModuleNodeId,
+    ty: entities.ModuleTypeId,
+};
+
+pub fn lower(
+    allocator: std.mem.Allocator,
+    graph: *graph_mod.ModuleSemanticGraph,
+    files: []const graph_mod.FileInput,
+) !Stats {
+    var ctx = Context{
+        .allocator = allocator,
+        .graph = graph,
+        .files = files,
+        .writer = writer_mod.Writer.init(allocator, graph),
+    };
+    var stats: Stats = .{};
+    try ctx.predeclareGlobals(&stats);
+    try ctx.lowerGlobalInitializers();
+    try ctx.lowerFieldDefaults(&stats);
+    return stats;
+}
+
+const Context = struct {
+    allocator: std.mem.Allocator,
+    graph: *graph_mod.ModuleSemanticGraph,
+    files: []const graph_mod.FileInput,
+    writer: writer_mod.Writer,
+    file_index: u32 = 0,
+    tree: *const syn.FileSyntaxTree = undefined,
+    source: []const u8 = &.{},
+
+    fn selectFile(self: *Context, index: u32) void {
+        self.file_index = index;
+        self.tree = self.files[@intCast(index)].tree;
+        self.source = self.files[@intCast(index)].source;
+    }
+
+    fn predeclareGlobals(self: *Context, stats: *Stats) !void {
+        for (self.graph.declarations.items, 0..) |decl, raw| {
+            if (decl.kind != .binding) continue;
+            self.selectFile(decl.module_file_index);
+            const syntax_decl = self.tree.symbolDeclaration(decl.syntax_node) orelse continue;
+            const declared_ty = if (syntax_decl.type_node) |node| try self.lowerType(node) else try self.builtin(.Any);
+            const binding = try self.writer.addBinding(.{
+                .name = decl.name,
+                .source = self.sourceRef(decl.syntax_node),
+                .ty = declared_ty,
+                .mutability = syntax_decl.mutability,
+            });
+            const decl_id: entities.ModuleDeclId = @enumFromInt(@as(u32, @intCast(raw)));
+            try self.graph.semantic.declaration_bindings.append(self.allocator, .{
+                .declaration = decl_id,
+                .binding = binding,
+            });
+            stats.global_bindings += 1;
+        }
+    }
+
+    fn lowerGlobalInitializers(self: *Context) !void {
+        for (self.graph.semantic.declaration_bindings.items) |relation| {
+            const decl = self.graph.declarations.items[@intFromEnum(relation.declaration)];
+            self.selectFile(decl.module_file_index);
+            const syntax_decl = self.tree.symbolDeclaration(decl.syntax_node) orelse continue;
+            const value_node = syntax_decl.value orelse continue;
+            if (self.tree.tag(value_node) == .import_statement) continue;
+            const expected = self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].ty;
+            const value = try self.lowerExpr(value_node, expected);
+            self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].initialization = value.node;
+            if (self.isAny(expected) and !self.isAny(value.ty))
+                self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].ty = value.ty;
+            try self.writer.addRoot(value.node);
+        }
+    }
+
+    fn lowerFieldDefaults(self: *Context, stats: *Stats) !void {
+        for (self.graph.fields.items, 0..) |field, raw| {
+            const node = field.default_value orelse continue;
+            self.selectFile(field.module_file_index);
+            const value = try self.lowerExpr(node, field.ty);
+            try self.graph.semantic.field_semantics.append(self.allocator, .{
+                .field = @enumFromInt(@as(u32, @intCast(raw))),
+                .default_value = value.node,
+            });
+            stats.field_defaults += 1;
+        }
+    }
+
+    fn lowerExpr(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) anyerror!Lowered {
+        return switch (self.tree.tag(node)) {
+            .literal => self.lowerLiteral(node),
+            .identifier => self.lowerIdentifier(node, expected),
+            .function_call => self.lowerCall(node, expected),
+            .struct_value_literal => self.lowerStruct(node),
+            .list_literal => self.lowerList(node),
+            .struct_field_access => self.lowerField(node, expected),
+            .index_access => self.lowerIndex(node, expected),
+            .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo => self.lowerBinary(node, expected),
+            .compare_equal, .compare_not_equal, .compare_less, .compare_greater, .compare_less_equal, .compare_greater_equal => self.lowerComparison(node),
+            .logical_and, .logical_or => self.lowerLogical(node),
+            .address_of, .address_of_mut => self.lowerAddress(node),
+            .dereference => self.lowerDereference(node, expected),
+            .reach_directive => self.lowerReach(node),
+            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type,
+            .array_type, .generic_type_instantiation, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
+            else => self.pendingFallback(node, expected),
+        };
+    }
+
+    fn lowerLiteral(self: *Context, node: syn.NodeIndex) !Lowered {
+        const literal = self.tree.literal(node).?;
+        return switch (self.tree.tokenContent(literal.token).literal) {
+            .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => blk: {
+                var value = std.fmt.parseInt(i64, self.tree.tokenTextFromSource(self.source, literal.token), 0) catch 0;
+                if (literal.negative) value = -value;
+                break :blk self.resolved(node, try self.builtin(.Int32), .{ .int_literal = value });
+            },
+            .regular_float_literal, .scientific_float_literal => blk: {
+                var value = std.fmt.parseFloat(f64, self.tree.tokenTextFromSource(self.source, literal.token)) catch 0;
+                if (literal.negative) value = -value;
+                break :blk self.resolved(node, try self.builtin(.Float32), .{ .float_literal = value });
+            },
+            .bool_literal => |value| self.resolved(node, try self.builtin(.Bool), .{ .bool_literal = value }),
+            .char_literal => |value| self.resolved(node, try self.builtin(.Char), .{ .char_literal = value }),
+            .string_literal => self.resolved(node, try self.builtin(.Any), .{
+                .string_literal = try self.writer.addString(self.tree.tokenTextFromSource(self.source, literal.token)),
+            }),
+        };
+    }
+
+    fn lowerIdentifier(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
+        for (self.graph.semantic.declaration_bindings.items) |relation| {
+            const decl = self.graph.declarations.items[@intFromEnum(relation.declaration)];
+            if (!std.mem.eql(u8, self.graph.text(decl.name), text)) continue;
+            const binding = self.graph.semantic.bindings.items[@intFromEnum(relation.binding)];
+            return self.resolved(node, binding.ty, .{ .binding_use = relation.binding });
+        }
+        return self.pendingNamed(node, .unknown_identifier, text, expected);
+    }
+
+    fn lowerCall(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const call = self.tree.functionCall(node).?;
+        const input = try self.lowerExpr(call.input, null);
+        const external = try self.writer.addExternalRef(.{
+            .kind = .function,
+            .module_path = if (call.module_qualifier) |token_index|
+                try self.writer.addString(self.tree.tokenTextFromSource(self.source, token_index))
+            else null,
+            .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)),
+            .source = self.sourceRef(node),
+        });
+        const target = self.nextNodeId();
+        return self.pending(.{ .resolve_call = .{
+            .node = target,
+            .callee = external,
+            .input = input.node,
+            .expected_type = expected,
+        } }, expected orelse try self.builtin(.Any));
+    }
+
+    fn lowerStruct(self: *Context, node: syn.NodeIndex) !Lowered {
+        const literal = self.tree.structValueLiteral(node).?;
+        const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
+        for (literal.fields) |field_node| {
+            const field = self.tree.valueField(field_node).?;
+            const value = try self.lowerExpr(field.value, null);
+            const name = if (field.name_token) |token_index|
+                try self.writer.addString(self.tree.tokenTextFromSource(self.source, token_index))
+            else try self.writer.addString("");
+            try self.graph.semantic.value_fields.append(self.allocator, .{ .name = name, .value = value.node });
+        }
+        const ty = try self.builtin(.Any);
+        return self.resolved(node, ty, .{ .struct_value_literal = .{
+            .fields = .{ .start = start, .len = @intCast(literal.fields.len) },
+            .ty = ty,
+            .dispatch_prefix_positional_count = literal.positional_prefix_count,
+        } });
+    }
+
+    fn lowerList(self: *Context, node: syn.NodeIndex) !Lowered {
+        const literal = self.tree.listLiteral(node).?;
+        var nodes: std.ArrayList(entities.ModuleNodeId) = .empty;
+        defer nodes.deinit(self.allocator);
+        var types: std.ArrayList(entities.ModuleTypeId) = .empty;
+        defer types.deinit(self.allocator);
+        for (literal.elements) |child| {
+            const value = try self.lowerExpr(child, null);
+            try nodes.append(self.allocator, value.node);
+            try types.append(self.allocator, value.ty);
+        }
+        const ty = try self.builtin(.Any);
+        return self.resolved(node, ty, .{ .list_literal = .{
+            .elements = try self.writer.appendNodeRefs(nodes.items),
+            .element_types = try self.writer.appendTypeRefs(types.items),
+        } });
+    }
+
+    fn lowerField(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const access = self.tree.structFieldAccess(node).?;
+        const value = try self.lowerExpr(access.value, null);
+        const target = self.nextNodeId();
+        const pending = try self.writer.addPendingOperation(.{ .resolve_field = .{
+            .node = target,
+            .value = value.node,
+            .field_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.field_token)),
+        } });
+        const stored = try self.writer.addNode(.{ .pending = pending });
+        return .{ .node = stored, .ty = expected orelse try self.builtin(.Any) };
+    }
+
+    fn lowerIndex(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const access = self.tree.indexAccess(node).?;
+        const value = try self.lowerExpr(access.value, null);
+        const index = try self.lowerExpr(access.index, try self.builtin(.Int32));
+        return self.pending(.{ .resolve_index = .{
+            .node = self.nextNodeId(), .value = value.node, .index = index.node,
+        } }, expected orelse try self.builtin(.Any));
+    }
+
+    fn lowerBinary(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const operation = self.tree.binaryOperation(node).?;
+        const left = try self.lowerExpr(operation.lhs, null);
+        const right = try self.lowerExpr(operation.rhs, left.ty);
+        const operator: tok.BinaryOperator = switch (self.tree.tag(node)) {
+            .binary_add => .addition, .binary_subtract => .subtraction, .binary_multiply => .multiplication,
+            .binary_divide => .division, .binary_modulo => .modulo, else => unreachable,
+        };
+        return self.pending(.{ .resolve_binary = .{
+            .node = self.nextNodeId(), .operator = operator, .left = left.node, .right = right.node,
+        } }, expected orelse left.ty);
+    }
+
+    fn lowerComparison(self: *Context, node: syn.NodeIndex) !Lowered {
+        const operation = self.tree.binaryOperation(node).?;
+        const left = try self.lowerExpr(operation.lhs, null);
+        const right = try self.lowerExpr(operation.rhs, left.ty);
+        const operator: tok.ComparisonOperator = switch (self.tree.tag(node)) {
+            .compare_equal => .equal, .compare_not_equal => .not_equal,
+            .compare_less => .less_than, .compare_greater => .greater_than,
+            .compare_less_equal => .less_than_or_equal, .compare_greater_equal => .greater_than_or_equal,
+            else => unreachable,
+        };
+        return self.pending(.{ .resolve_comparison = .{
+            .node = self.nextNodeId(), .operator = operator, .left = left.node, .right = right.node,
+        } }, try self.builtin(.Bool));
+    }
+
+    fn lowerLogical(self: *Context, node: syn.NodeIndex) !Lowered {
+        const operation = self.tree.binaryOperation(node).?;
+        const bool_ty = try self.builtin(.Bool);
+        const left = try self.lowerExpr(operation.lhs, bool_ty);
+        const right = try self.lowerExpr(operation.rhs, bool_ty);
+        return self.resolved(node, bool_ty, .{ .logical_operation = .{
+            .operator = if (self.tree.tag(node) == .logical_and) .and_ else .or_,
+            .left = left.node, .right = right.node,
+        } });
+    }
+
+    fn lowerAddress(self: *Context, node: syn.NodeIndex) !Lowered {
+        const address = self.tree.addressOf(node).?;
+        const value = try self.lowerExpr(address.value, null);
+        const ty = try self.writer.addResolvedType(.{ .pointer = .{ .child = value.ty, .mutability = address.mutability } });
+        return self.resolved(node, ty, .{ .address_of = value.node });
+    }
+
+    fn lowerDereference(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const value = try self.lowerExpr(self.tree.unaryOperand(node).?, null);
+        const ty = expected orelse try self.builtin(.Any);
+        return self.resolved(node, ty, .{ .dereference = .{ .pointer = value.node, .ty = ty, .pointer_type = value.ty } });
+    }
+
+    fn lowerReach(self: *Context, node: syn.NodeIndex) !Lowered {
+        const directive = self.tree.reachDirective(node).?;
+        const alt_start: u32 = @intCast(self.graph.semantic.reach_alternatives.items.len);
+        for (directive.alternatives) |alt_node| {
+            const alt = self.tree.reachAlternative(alt_node).?;
+            const seg_start: u32 = @intCast(self.graph.semantic.reach_segments.items.len);
+            for (alt.segments) |segment| try self.graph.semantic.reach_segments.append(self.allocator,
+                try self.writer.addString(self.tree.tokenTextFromSource(self.source, self.tree.mainToken(segment))));
+            try self.graph.semantic.reach_alternatives.append(self.allocator, .{
+                .segments = .{ .start = seg_start, .len = @intCast(alt.segments.len) },
+            });
+        }
+        const reach_id: entities.ModuleReachId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.reaches.items.len)));
+        try self.graph.semantic.reaches.append(self.allocator, .{
+            .alternatives = .{ .start = alt_start, .len = @intCast(directive.alternatives.len) },
+        });
+        return self.resolved(node, try self.builtin(.Any), .{ .reach_directive = reach_id });
+    }
+
+    fn lowerTypeLiteral(self: *Context, node: syn.NodeIndex) !Lowered {
+        const value = try self.lowerType(node);
+        return self.resolved(node, try self.builtin(.Type), .{ .type_literal = value });
+    }
+
+    fn pendingFallback(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const pending = entities.PendingExpression{
+            .node = self.nextNodeId(),
+            .kind = .other,
+            .expected_type = expected,
+            .aux = @intFromEnum(self.tree.tag(node)),
+        };
+        return self.pending(.{ .resolve_expression = pending }, expected orelse try self.builtin(.Any));
+    }
+
+    fn pendingNamed(self: *Context, node: syn.NodeIndex, kind: entities.PendingExpressionKind, text: []const u8, expected: ?entities.ModuleTypeId) !Lowered {
+        return self.pending(.{ .resolve_expression = .{
+            .node = self.nextNodeId(), .kind = kind,
+            .name = try self.writer.addString(text), .expected_type = expected,
+        } }, expected orelse try self.builtin(.Any));
+    }
+
+    fn pending(self: *Context, operation: entities.PendingOperation, ty: entities.ModuleTypeId) !Lowered {
+        const id = try self.writer.addPendingNode(operation);
+        return .{ .node = id, .ty = ty };
+    }
+
+    fn resolved(self: *Context, node: syn.NodeIndex, ty: entities.ModuleTypeId, content: entities.ResolvedNode.Content) !Lowered {
+        return .{ .node = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = ty, .content = content }), .ty = ty };
+    }
+
+    fn lowerType(self: *Context, node: syn.NodeIndex) !entities.ModuleTypeId {
+        var lowerer = type_lowerer.Context{
+            .graph = self.graph, .writer = &self.writer, .file_index = self.file_index,
+            .tree = self.tree, .source = self.source,
+        };
+        return lowerer.lower(node);
+    }
+
+    fn builtin(self: *Context, value: primitives.BuiltinType) !entities.ModuleTypeId {
+        for (0..views.typeCount(self.graph)) |index| {
+            const id: entities.ModuleTypeId = @enumFromInt(@as(u32, @intCast(index)));
+            switch (try views.typeView(self.graph, id)) {
+                .resolved => |candidate| switch (candidate) {
+                    .builtin => |builtin_value| if (builtin_value == value) return id,
+                    else => {},
+                },
+                .external => {},
+            }
+        }
+        return self.writer.addResolvedType(.{ .builtin = value });
+    }
+
+    fn isAny(self: *Context, id: entities.ModuleTypeId) bool {
+        const value = views.typeView(self.graph, id) catch return false;
+        return switch (value) {
+            .resolved => |resolved| switch (resolved) { .builtin => |builtin_value| builtin_value == .Any, else => false },
+            .external => false,
+        };
+    }
+
+    fn sourceRef(self: *const Context, node: syn.NodeIndex) primitives.SourceRef {
+        return .{ .file_index = self.file_index, .offset = self.tree.location(node).offset };
+    }
+
+    fn nextNodeId(self: *const Context) entities.ModuleNodeId {
+        return @enumFromInt(@as(u32, @intCast(self.graph.semantic.nodes.items.len)));
+    }
+};
+
+test "module initializer lowering is syntax-free after construction" {
+    try std.testing.expect(@sizeOf(entities.DeclarationBinding) <= 8);
+}
