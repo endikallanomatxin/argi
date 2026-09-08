@@ -152,11 +152,12 @@ pub const Index = struct {
         line: u32,
         character: u32,
     ) ?Occurrence {
-        const file = db.findPath(path) orelse return null;
-        const offset = offsetForPosition(db, file, line, character) orelse return null;
+        const requested = db.findPath(path) orelse return null;
+        const offset = offsetForPosition(db, requested, line, character) orelse return null;
         var best: ?Occurrence = null;
         for (self.occurrences.items) |occurrence| {
-            if (!sourcePathEquals(graph, occurrence.source, path)) continue;
+            const occurrence_file = sourceFileId(graph, db, occurrence.source) orelse continue;
+            if (occurrence_file != requested) continue;
             if (offset < occurrence.source.offset or offset >= occurrence.source.offset + occurrence.len) continue;
             if (best == null or occurrence.len < best.?.len or (occurrence.declaration and !best.?.declaration)) best = occurrence;
         }
@@ -214,24 +215,33 @@ pub const Index = struct {
     }
 };
 
+/// Returns the compact file spelling stored in GlobalSG. Use `sourceFileId`
+/// when a full source path is required; GlobalSG intentionally stores module
+/// identity and file basename separately.
 pub fn sourcePath(graph: *const graph_mod.GlobalSemanticGraph, source: primitives.SourceRef) ?[]const u8 {
     if (source.file_index >= graph.files.items.len) return null;
     return graph.text(graph.files.items[source.file_index].path);
 }
 
-pub fn sourcePathEquals(graph: *const graph_mod.GlobalSemanticGraph, source: primitives.SourceRef, path: []const u8) bool {
-    const actual = sourcePath(graph, source) orelse return false;
-    if (std.mem.eql(u8, actual, path)) return true;
-    return std.mem.eql(u8, std.fs.path.basename(actual), std.fs.path.basename(path));
+pub fn sourceFileId(graph: *const graph_mod.GlobalSemanticGraph, db: *const source_db.SourceDb, source: primitives.SourceRef) ?source_db.FileId {
+    if (source.file_index >= graph.files.items.len) return null;
+    const file = graph.files.items[source.file_index];
+    const basename = graph.text(file.path);
+    const module_dir = graph.text(graph.modules.items[@intFromEnum(file.module)].dir);
+
+    var basename_match: ?source_db.FileId = null;
+    for (db.files, 0..) |candidate, index| {
+        if (!std.mem.eql(u8, std.fs.path.basename(candidate.path), basename)) continue;
+        const id = db.fileId(index);
+        if (std.mem.eql(u8, std.fs.path.dirname(candidate.path) orelse ".", module_dir)) return id;
+        if (basename_match == null) basename_match = id else basename_match = null;
+    }
+    return basename_match;
 }
 
-pub fn sourceFileId(graph: *const graph_mod.GlobalSemanticGraph, db: *const source_db.SourceDb, source: primitives.SourceRef) ?source_db.FileId {
-    const path = sourcePath(graph, source) orelse return null;
-    if (db.findPath(path)) |file| return file;
-    for (db.files, 0..) |file, index| {
-        if (std.mem.eql(u8, std.fs.path.basename(file.path), std.fs.path.basename(path))) return db.fileId(index);
-    }
-    return null;
+pub fn sourcePathEquals(graph: *const graph_mod.GlobalSemanticGraph, db: *const source_db.SourceDb, source: primitives.SourceRef, path: []const u8) bool {
+    const wanted = db.findPath(path) orelse return false;
+    return sourceFileId(graph, db, source) == wanted;
 }
 
 pub fn offsetForPosition(db: *const source_db.SourceDb, file: source_db.FileId, line: u32, character: u32) ?u32 {
