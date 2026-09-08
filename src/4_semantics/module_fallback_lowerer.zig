@@ -96,12 +96,12 @@ const Context = struct {
         mutability: syn.Mutability,
         result: *std.array_list.Managed(entities.ModuleBindingId),
     ) !void {
-        const start: usize = range.start;
-        const len: usize = range.len;
-        for (self.graph.fields.items[start..][0..len]) |field| {
+        for (0..range.len) |offset| {
+            const field_id: entities.ModuleFieldId = @enumFromInt(range.start + @as(u32, @intCast(offset)));
+            const field = try views.fieldView(self.graph, field_id);
             const id = try self.writer.addBinding(.{
                 .name = field.name,
-                .source = .{ .file_index = field.module_file_index, .offset = field.source_offset },
+                .source = field.source,
                 .ty = field.ty,
                 .mutability = mutability,
             });

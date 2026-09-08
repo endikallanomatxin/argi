@@ -41,8 +41,8 @@ pub fn build(
     var graph = try module_sg.build(allocator, module_dir, files);
     errdefer graph.deinit(allocator);
 
-    try lowerOperatorMetadata(allocator, &graph, files);
     const initializers = try initializer_lowerer.lower(allocator, &graph, files);
+    try lowerOperatorMetadata(allocator, &graph, files);
     const global_roots = try global_roots_lowerer.lower(allocator, &graph);
 
     // Body lowering must have one producer. The previous pipeline first ran the

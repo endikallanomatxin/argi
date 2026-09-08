@@ -28,6 +28,24 @@ test "deferred struct definitions retain fields with external generic types" {
     try std.testing.expect((try @import("module_semantic_views.zig").typeView(&graph, field.ty)) == .external);
 }
 
+test "deferred function interfaces retain external parameter types" {
+    const allocator = std.testing.allocator;
+    const source = "consume(.value: ExternalValue) -> () := {}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "consumer/main.rg", .tree = &tree, .source = source }};
+    var graph = try module_graph.build(allocator, "consumer", &inputs);
+    defer graph.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?module_graph.ModuleFunctionId, null), graph.declarations.items[0].function_id);
+    _ = try initializer_lowerer.lower(allocator, &graph, &inputs);
+
+    const function = graph.functions.items[@intFromEnum(graph.declarations.items[0].function_id.?)];
+    try std.testing.expectEqual(@as(u32, 1), function.input.len);
+    const field = try @import("module_semantic_views.zig").fieldView(&graph, @enumFromInt(function.input.start));
+    try std.testing.expect((try @import("module_semantic_views.zig").typeView(&graph, field.ty)) == .external);
+}
+
 test "constrained generic parameters remain type parameters" {
     const allocator = std.testing.allocator;
     const source =
