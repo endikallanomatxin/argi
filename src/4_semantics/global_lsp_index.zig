@@ -40,7 +40,7 @@ pub const Index = struct {
                 .{ .function = function }
             else
                 .{ .declaration = decl_id };
-            try result.appendUnique(allocator, .{
+            try result.add(allocator, .{
                 .source = declaration.source,
                 .len = @intCast(graph.text(declaration.name).len),
                 .target = target,
@@ -49,7 +49,7 @@ pub const Index = struct {
         }
 
         for (graph.bindings.items, 0..) |binding, raw| {
-            try result.appendUnique(allocator, .{
+            try result.add(allocator, .{
                 .source = binding.source,
                 .len = @intCast(graph.text(binding.name).len),
                 .target = .{ .binding = @enumFromInt(@as(u32, @intCast(raw))) },
@@ -58,7 +58,7 @@ pub const Index = struct {
         }
 
         for (graph.fields.items, 0..) |field, raw| {
-            try result.appendUnique(allocator, .{
+            try result.add(allocator, .{
                 .source = field.source,
                 .len = @intCast(graph.text(field.name).len),
                 .target = .{ .field = @enumFromInt(@as(u32, @intCast(raw))) },
@@ -67,7 +67,7 @@ pub const Index = struct {
         }
 
         for (graph.variants.items, 0..) |variant, raw| {
-            try result.appendUnique(allocator, .{
+            try result.add(allocator, .{
                 .source = variant.source,
                 .len = @intCast(graph.text(variant.name).len),
                 .target = .{ .variant = @enumFromInt(@as(u32, @intCast(raw))) },
@@ -79,7 +79,7 @@ pub const Index = struct {
             .function_call => |call| {
                 const function = graph.functions.items[@intFromEnum(call.callee)];
                 const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
-                try result.appendUnique(allocator, .{
+                try result.add(allocator, .{
                     .source = node.source,
                     .len = @intCast(graph.text(declaration.name).len),
                     .target = .{ .function = call.callee },
@@ -87,7 +87,7 @@ pub const Index = struct {
             },
             .binding_use => |binding_id| {
                 const binding = graph.bindings.items[@intFromEnum(binding_id)];
-                try result.appendUnique(allocator, .{
+                try result.add(allocator, .{
                     .source = node.source,
                     .len = @intCast(graph.text(binding.name).len),
                     .target = .{ .binding = binding_id },
@@ -99,7 +99,7 @@ pub const Index = struct {
                     .{ .function = function }
                 else
                     .{ .declaration = decl_id };
-                try result.appendUnique(allocator, .{
+                try result.add(allocator, .{
                     .source = node.source,
                     .len = @intCast(graph.text(declaration.name).len),
                     .target = target,
@@ -107,7 +107,7 @@ pub const Index = struct {
             },
             .type_initializer => |initializer| {
                 const declaration = graph.declarations.items[@intFromEnum(initializer.type_decl)];
-                try result.appendUnique(allocator, .{
+                try result.add(allocator, .{
                     .source = node.source,
                     .len = @intCast(graph.text(declaration.name).len),
                     .target = .{ .declaration = initializer.type_decl },
@@ -119,7 +119,7 @@ pub const Index = struct {
                 if (access.field_index >= fields.len) continue;
                 const field_id: graph_mod.GlobalFieldId = @enumFromInt(fields.start + access.field_index);
                 const field = graph.fields.items[@intFromEnum(field_id)];
-                try result.appendUnique(allocator, .{
+                try result.add(allocator, .{
                     .source = node.source,
                     .len = @intCast(graph.text(field.name).len),
                     .target = .{ .field = field_id },
@@ -131,7 +131,7 @@ pub const Index = struct {
                 const raw_variant = @intFromEnum(access.variant);
                 if (raw_variant < variants.start or raw_variant >= variants.start + variants.len) continue;
                 const variant = graph.variants.items[raw_variant];
-                try result.appendUnique(allocator, .{
+                try result.add(allocator, .{
                     .source = node.source,
                     .len = @intCast(graph.text(variant.name).len),
                     .target = .{ .variant = access.variant },
@@ -140,8 +140,26 @@ pub const Index = struct {
             else => {},
         };
 
-        std.mem.sort(Occurrence, result.occurrences.items, {}, lessOccurrence);
+        result.sort();
         return result;
+    }
+
+    /// Syntax-only provenance (not semantic decisions) may extend this index.
+    /// This is used for type annotations because their resolved declaration is
+    /// compile-time metadata and no runtime expression node needs to exist.
+    pub fn add(self: *Index, allocator: std.mem.Allocator, value: Occurrence) !void {
+        for (self.occurrences.items) |existing| {
+            if (existing.source.file_index == value.source.file_index and
+                existing.source.offset == value.source.offset and
+                existing.len == value.len and
+                existing.declaration == value.declaration and
+                targetsEqual(existing.target, value.target)) return;
+        }
+        try self.occurrences.append(allocator, value);
+    }
+
+    pub fn sort(self: *Index) void {
+        std.mem.sort(Occurrence, self.occurrences.items, {}, lessOccurrence);
     }
 
     pub fn occurrenceAt(
@@ -201,17 +219,6 @@ pub const Index = struct {
             .field => |id| graph.fields.items[@intFromEnum(id)].ty,
             .variant => |id| graph.variants.items[@intFromEnum(id)].payload_type,
         };
-    }
-
-    fn appendUnique(self: *Index, allocator: std.mem.Allocator, value: Occurrence) !void {
-        for (self.occurrences.items) |existing| {
-            if (existing.source.file_index == value.source.file_index and
-                existing.source.offset == value.source.offset and
-                existing.len == value.len and
-                existing.declaration == value.declaration and
-                targetsEqual(existing.target, value.target)) return;
-        }
-        try self.occurrences.append(allocator, value);
     }
 };
 
