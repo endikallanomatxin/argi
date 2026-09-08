@@ -13,6 +13,7 @@ pub const AbstractArgumentId = enum(u32) { _ };
 pub const AbstractImplementationId = enum(u32) { _ };
 pub const AbstractImplementationTemplateId = enum(u32) { _ };
 pub const AbstractDefaultId = enum(u32) { _ };
+pub const AbstractDefaultTemplateId = enum(u32) { _ };
 
 pub const DeclarationRef = ir.DeclarationRef;
 
@@ -97,6 +98,13 @@ pub const AbstractDefault = struct {
     source: primitives.SourceRef,
 };
 
+pub const AbstractDefaultTemplate = struct {
+    abstract_ref: DeclarationRef,
+    parameters: primitives.Range(GenericParameterId),
+    ty: ir.TemplateTypeId,
+    source: primitives.SourceRef,
+};
+
 /// Module-owned generic/abstract semantic state. `ir` contains the lowered
 /// template types and bodies; none of these records point back into FileST or
 /// SourceDb, so they can be serialized with the ModuleSG cache artifact.
@@ -112,6 +120,7 @@ pub const Storage = struct {
     abstract_implementations: std.ArrayList(AbstractImplementation) = .empty,
     abstract_implementation_templates: std.ArrayList(AbstractImplementationTemplate) = .empty,
     abstract_defaults: std.ArrayList(AbstractDefault) = .empty,
+    abstract_default_templates: std.ArrayList(AbstractDefaultTemplate) = .empty,
 
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         self.ir.deinit(allocator);
@@ -125,6 +134,7 @@ pub const Storage = struct {
         self.abstract_implementations.deinit(allocator);
         self.abstract_implementation_templates.deinit(allocator);
         self.abstract_defaults.deinit(allocator);
+        self.abstract_default_templates.deinit(allocator);
         self.* = .{};
     }
 
@@ -139,7 +149,8 @@ pub const Storage = struct {
             self.abstract_arguments.items.len * @sizeOf(AbstractArgument) +
             self.abstract_implementations.items.len * @sizeOf(AbstractImplementation) +
             self.abstract_implementation_templates.items.len * @sizeOf(AbstractImplementationTemplate) +
-            self.abstract_defaults.items.len * @sizeOf(AbstractDefault);
+            self.abstract_defaults.items.len * @sizeOf(AbstractDefault) +
+            self.abstract_default_templates.items.len * @sizeOf(AbstractDefaultTemplate);
     }
 };
 
@@ -160,7 +171,14 @@ test "module template storage owns lowered template IR" {
         .output = @enumFromInt(0),
         .body = null,
     });
+    try storage.abstract_default_templates.append(allocator, .{
+        .abstract_ref = .{ .module = @enumFromInt(0) },
+        .parameters = .{ .start = 0, .len = 1 },
+        .ty = @enumFromInt(0),
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
 
     try std.testing.expectEqual(@as(usize, 1), storage.generic_function_templates.items.len);
+    try std.testing.expectEqual(@as(usize, 1), storage.abstract_default_templates.items.len);
     try std.testing.expect(storage.storageBytes() >= @sizeOf(GenericParameter));
 }
