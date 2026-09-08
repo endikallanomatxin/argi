@@ -216,7 +216,7 @@ const Context = struct {
         }
     }
 
-    fn lowerBlock(self: *Context, node: syn.NodeIndex) !entities.ModuleBlockId {
+    fn lowerBlock(self: *Context, node: syn.NodeIndex) anyerror!entities.ModuleBlockId {
         const block = self.tree.codeBlock(node) orelse return error.UnsupportedLocalSemantic;
         try self.pushScope();
         defer self.popScope();
@@ -233,7 +233,7 @@ const Context = struct {
         return self.writer.addBlock(.{ .nodes = range, .ret_val = ret_val });
     }
 
-    fn lowerNode(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+    fn lowerNode(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) anyerror!Lowered {
         return switch (self.tree.tag(node)) {
             .literal => self.lowerLiteral(node),
             .identifier => self.lowerIdentifier(node),
@@ -591,7 +591,7 @@ const Context = struct {
         return self.pendingField(node, value, access.field_token);
     }
 
-    fn pendingField(self: *Context, node: syn.NodeIndex, value: Lowered, field_token: syn.TokenIndex) !Lowered {
+    fn pendingField(self: *Context, _: syn.NodeIndex, value: Lowered, field_token: syn.TokenIndex) !Lowered {
         const field_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field_token));
         const node_id: entities.ModuleNodeId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.nodes.items.len)));
         const pending_id: entities.PendingOperationId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.pending_operations.items.len)));
