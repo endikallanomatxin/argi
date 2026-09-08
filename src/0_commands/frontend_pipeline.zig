@@ -188,7 +188,7 @@ pub const FrontendPipeline = struct {
         }
         try self.module_graphs.ensureTotalCapacity(self.allocator, groups.items.len);
         for (groups.items) |group| {
-            var result = try module_semantizer.build(self.allocator, group.dir, group.files.items);
+            const result = try module_semantizer.build(self.allocator, group.dir, group.files.items);
             self.module_lowered_functions += result.stats.lowered_functions;
             self.module_deferred_functions += result.stats.deferred_functions;
             self.module_graphs.appendAssumeCapacity(result.graph);
