@@ -95,7 +95,7 @@ fn findSemanticNode(
 
 fn nextDeclarationOffset(graph: *const graph_mod.ModuleSemanticGraph, id: @import("module_semantic_entities.zig").ModuleDeclId) u32 {
     const declaration = graph.declarations.items[@intFromEnum(id)];
-    var end = std.math.maxInt(u32);
+    var end: u32 = std.math.maxInt(u32);
     for (graph.declarations.items) |candidate| {
         if (candidate.module_file_index != declaration.module_file_index) continue;
         if (candidate.source_offset > declaration.source_offset and candidate.source_offset < end) end = candidate.source_offset;

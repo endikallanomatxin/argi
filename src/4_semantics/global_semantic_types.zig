@@ -22,6 +22,12 @@ pub const Layout = struct {
     alignment: u64,
 };
 
+pub const LayoutError = error{
+    UnmaterializedGlobalType,
+    UnmaterializedGenericType,
+    TypeHasNoRuntimeLayout,
+};
+
 pub fn fields(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.FieldRange {
     return switch (graph.types.items[@intFromEnum(ty)]) {
         .structural => |shape| shape.fields,
@@ -151,7 +157,7 @@ pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTyp
 /// Runtime layout of a fully resolved GlobalTypeId. Compact ModuleSema sugar
 /// (`nullable`/`inferred_errable`) is rejected because GlobalSema must
 /// materialize it before Safety/Codegen.
-pub fn layoutOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) !Layout {
+pub fn layoutOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) LayoutError!Layout {
     return switch (graph.types.items[@intFromEnum(ty)]) {
         .builtin => |builtin| builtinLayout(builtin),
         .pointer => .{ .size = pointer_size_bytes, .alignment = pointer_alignment_bytes },
@@ -188,14 +194,14 @@ fn builtinLayout(builtin: primitives.BuiltinType) Layout {
     };
 }
 
-fn declaredLayout(graph: *const graph_mod.GlobalSemanticGraph, decl_id: graph_mod.GlobalDeclId) !Layout {
+fn declaredLayout(graph: *const graph_mod.GlobalSemanticGraph, decl_id: graph_mod.GlobalDeclId) LayoutError!Layout {
     const decl = graph.declarations.items[@intFromEnum(decl_id)];
     if (decl.struct_fields) |range| return structLayout(graph, range, decl.struct_layout);
     if (decl.choice_variants) |range| return choiceLayout(graph, range, decl.choice_layout);
     return error.TypeHasNoRuntimeLayout;
 }
 
-fn genericLayout(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) !Layout {
+fn genericLayout(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) LayoutError!Layout {
     const instance = genericInstance(graph, ty) orelse return error.UnmaterializedGenericType;
     return switch (instance.shape) {
         .structure => |shape| structLayout(graph, shape.fields, shape.layout),
@@ -209,7 +215,7 @@ fn genericLayout(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
     };
 }
 
-fn structLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.FieldRange, kind: primitives.StructLayout) !Layout {
+fn structLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.FieldRange, kind: primitives.StructLayout) LayoutError!Layout {
     if (range.len == 0) return .{ .size = 0, .alignment = 1 };
     if (kind == .c_union) {
         var size: u64 = 0;
@@ -233,7 +239,7 @@ fn structLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.Fi
     return .{ .size = alignForward(offset, alignment), .alignment = alignment };
 }
 
-fn choiceLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.VariantRange, kind: primitives.ChoiceLayout) !Layout {
+fn choiceLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.VariantRange, kind: primitives.ChoiceLayout) LayoutError!Layout {
     if (kind == .c_enum) return .{ .size = 4, .alignment = 4 };
     // Keep the current ABI exactly: regular choices are a tag followed by one
     // storage field per variant (rather than a payload union).

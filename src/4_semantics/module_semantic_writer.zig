@@ -118,7 +118,7 @@ pub const Writer = struct {
         return .{ .start = start, .len = try index32(values.len) };
     }
 
-    pub fn appendTypeRefs(self: *Writer, values: []const entities.ModuleTypeId) !struct { start: u32, len: u32 } {
+    pub fn appendTypeRefs(self: *Writer, values: []const entities.ModuleTypeId) !entities.TypeRange {
         const start = try index32(self.graph.semantic.type_refs.items.len);
         try self.graph.semantic.type_refs.appendSlice(self.allocator, values);
         return .{ .start = start, .len = try index32(values.len) };

@@ -156,7 +156,7 @@ pub const SafetyChecker = struct {
             switch (node.content) {
                 .binding_declaration => |binding| {
                     const record = self.graph.bindings.items[@intFromEnum(binding)];
-                    const value = if (record.initialization) |init| try self.evaluate(function, init, state) else facts.ValueFacts{};
+                    const value = if (record.initialization) |initialization| try self.evaluate(function, initialization, state) else facts.ValueFacts{};
                     try self.setPlace(state, .{ .root = binding }, .initialized, value);
                 },
                 .assignment => |assignment| {
@@ -202,7 +202,7 @@ pub const SafetyChecker = struct {
                     try self.joinState(state, state, &body_state);
                 },
                 .for_statement => |statement| {
-                    if (statement.init) |init| _ = try self.evaluate(function, init, state);
+                    if (statement.init) |initialization| _ = try self.evaluate(function, initialization, state);
                     _ = try self.evaluate(function, statement.condition, state);
                     var body_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
                     defer body_state.deinit();
@@ -403,6 +403,7 @@ pub const SafetyChecker = struct {
         source: primitives.SourceRef,
     ) !facts.ValueFacts {
         _ = function;
+        _ = argument_ids;
         return switch (primitive) {
             .none => .{},
             .raw_allocated_storage => blk: {
@@ -524,7 +525,7 @@ pub const SafetyChecker = struct {
         const storage = facts.Place{ .root = cleanup.binding };
         const current = self.getPlace(state, storage) orelse return;
         if (current.initializedness != .initialized) return;
-        if (cleanup.deinit_fn) |deinit| {
+        if (cleanup.deinit_fn) |deinit_fn| {
             if (cleanup.input) |input| {
                 const call_node: graph_mod.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
                 _ = call_node;
@@ -533,9 +534,9 @@ pub const SafetyChecker = struct {
                 const values = [_]facts.ValueFacts{current.value};
                 var candidate = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
                 defer candidate.deinit();
-                const fn_record = self.graph.functions.items[@intFromEnum(deinit)];
+                const fn_record = self.graph.functions.items[@intFromEnum(deinit_fn)];
                 try self.bindCallInputs(fn_record, &values, &candidate);
-                if (fn_record.body) |body| try self.validateBlock(deinit, body, &candidate);
+                if (fn_record.body) |body| try self.validateBlock(deinit_fn, body, &candidate);
                 self.commitState(state, &candidate);
                 _ = input;
             }
@@ -567,6 +568,7 @@ pub const SafetyChecker = struct {
     }
 
     fn storageGeneration(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) !facts.ValidityRootId {
+        _ = self;
         for (state.storage_generations.items) |entry| if (entry.storage.eql(storage)) return entry.generation;
         const root = try state.tracker.establish(.fresh);
         try state.storage_generations.append(.{ .storage = storage, .generation = root });
@@ -574,6 +576,7 @@ pub const SafetyChecker = struct {
     }
 
     fn setPlace(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, initializedness: value_state.Initializedness, value: facts.ValueFacts) !void {
+        _ = self;
         for (state.places.items) |*entry| if (entry.storage.eql(storage)) {
             entry.initializedness = initializedness;
             entry.value = value;
@@ -583,6 +586,7 @@ pub const SafetyChecker = struct {
     }
 
     fn getPlace(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) ?*facts.PlaceFacts {
+        _ = self;
         for (state.places.items) |*entry| if (entry.storage.eql(storage)) return entry;
         return null;
     }
@@ -654,7 +658,7 @@ pub const SafetyChecker = struct {
     }
 
     fn copyState(self: *SafetyChecker, out: *FunctionState, source: *const FunctionState) !void {
-        var clone = try source.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+        const clone = try source.clone(self.allocator, if (self.collect_stats) &self.stats else null);
         out.deinit();
         out.* = clone;
     }
@@ -685,6 +689,7 @@ pub const SafetyChecker = struct {
     }
 
     fn setActiveVariant(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, index: u32) void {
+        _ = self;
         for (state.choice_active.items) |*entry| if (entry.storage.eql(storage)) { entry.variant_index = index; return; };
         state.choice_active.append(.{ .storage = storage, .variant_index = index }) catch {};
     }
@@ -721,7 +726,6 @@ pub const SafetyChecker = struct {
     }
 
     fn globalValueFieldIds(self: *SafetyChecker, range: primitives.Range(graph_mod.GlobalValueFieldId)) []const graph_mod.GlobalValueFieldId {
-        _ = self;
         // ValueFieldId is a dense table ID; materialize an ID slice only for
         // call analysis. This is cold safety state, never persisted.
         const ids = self.allocator.alloc(graph_mod.GlobalValueFieldId, range.len) catch return &.{};
