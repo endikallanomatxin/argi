@@ -5,6 +5,8 @@ const fallback_lowerer = @import("module_fallback_lowerer.zig");
 const initializer_lowerer = @import("module_initializer_lowerer.zig");
 const global_roots_lowerer = @import("module_global_roots_lowerer.zig");
 const template_lowerer = @import("module_template_lowerer.zig");
+const template_binding_ranges = @import("module_template_binding_ranges.zig");
+const template_call_metadata = @import("module_template_call_metadata.zig");
 const generic_operator_lowerer = @import("module_generic_operator_lowerer.zig");
 const abstract_relation_lowerer = @import("module_abstract_relation_lowerer.zig");
 const generic_call_args_lowerer = @import("module_generic_call_args_lowerer.zig");
@@ -20,6 +22,7 @@ pub const BuildStats = struct {
     generic_types: u32 = 0,
     generic_functions: u32 = 0,
     generic_operators: u32 = 0,
+    template_generic_calls: u32 = 0,
     abstract_definitions: u32 = 0,
     abstract_relations: u32 = 0,
     generic_calls: u32 = 0,
@@ -47,7 +50,9 @@ pub fn build(
     const fallback = try fallback_lowerer.lowerMissingFunctions(allocator, &graph, files);
 
     const template_stats = try template_lowerer.lower(allocator, &graph, files);
+    try template_binding_ranges.attach(&graph);
     const generic_operators = try generic_operator_lowerer.lower(&graph, files);
+    const template_generic_calls = try template_call_metadata.lower(allocator, &graph, files);
     const relation_stats = try abstract_relation_lowerer.lower(allocator, &graph, files);
     const generic_calls = try generic_call_args_lowerer.lower(allocator, &graph, files);
 
@@ -65,6 +70,7 @@ pub fn build(
             .generic_types = template_stats.generic_types,
             .generic_functions = template_stats.generic_functions,
             .generic_operators = generic_operators,
+            .template_generic_calls = template_generic_calls,
             .abstract_definitions = template_stats.abstract_definitions,
             .abstract_relations = relation_stats.implementations + relation_stats.implementation_templates + relation_stats.defaults + relation_stats.default_templates,
             .generic_calls = generic_calls.generic_calls,
