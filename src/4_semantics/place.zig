@@ -1,8 +1,6 @@
 const std = @import("std");
-const sg = @import("semantic_graph.zig");
 
-/// Projection vocabulary is independent of the graph representation. Both the
-/// legacy pointer checker and the indexed checker use exactly these paths.
+/// Projection vocabulary is independent of the graph representation.
 pub const Projection = union(enum) {
     field: u32,
     static_index: usize,
@@ -20,8 +18,7 @@ pub const Projection = union(enum) {
 };
 
 /// A Place names stable program storage. `Root` is the semantic identity of a
-/// binding: pointer identity for the migration checker, GlobalBindingId for the
-/// final checker. Projection semantics stay representation-independent.
+/// binding. The indexed compiler instantiates this with GlobalBindingId.
 pub fn PlaceFor(comptime Root: type) type {
     return struct {
         root: Root,
@@ -42,9 +39,6 @@ pub fn PlaceFor(comptime Root: type) type {
         }
     };
 }
-
-/// Compatibility alias. Delete it together with the pointer SemanticGraph.
-pub const Place = PlaceFor(*const sg.BindingDeclaration);
 
 test "generic Places preserve root identity and structural prefixes" {
     const Id = enum(u32) { _ };
