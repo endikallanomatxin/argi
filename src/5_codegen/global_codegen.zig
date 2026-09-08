@@ -805,12 +805,12 @@ pub const CodeGenerator = struct {
     }
 
     fn addressOf(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId, target: graph_mod.GlobalNodeId) !TypedValue {
-        const pointer = try self.addressablePointer(target);
+        var pointer = try self.addressablePointer(target);
         pointer.ty = self.graph.nodes.items[@intFromEnum(node_id)].ty;
         return pointer;
     }
 
-    fn addressablePointer(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) CodegenError!TypedValue {
+    fn addressablePointer(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) anyerror!TypedValue {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
             .binding_use => |binding| blk: {
