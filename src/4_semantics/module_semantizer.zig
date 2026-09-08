@@ -2,6 +2,7 @@ const std = @import("std");
 const module_sg = @import("module_semantic_graph.zig");
 const body_lowerer = @import("module_body_lowerer.zig");
 const fallback_lowerer = @import("module_fallback_lowerer.zig");
+const callable = @import("semantic_callable.zig");
 const complete_verify = @import("module_semantic_complete_verify.zig");
 
 pub const BuildStats = struct {
@@ -26,6 +27,7 @@ pub fn build(
     var graph = try module_sg.build(allocator, module_dir, files);
     errdefer graph.deinit(allocator);
 
+    try lowerOperatorMetadata(allocator, &graph, files);
     const precise = try body_lowerer.lower(allocator, &graph, files);
     const fallback = try fallback_lowerer.lowerMissingFunctions(allocator, &graph, files);
 
@@ -43,6 +45,27 @@ pub fn build(
             .local_semantics_complete = false,
         },
     };
+}
+
+fn lowerOperatorMetadata(
+    allocator: std.mem.Allocator,
+    graph: *module_sg.ModuleSemanticGraph,
+    files: []const module_sg.FileInput,
+) !void {
+    graph.semantic.function_operators.clearRetainingCapacity();
+    try graph.semantic.function_operators.ensureTotalCapacity(allocator, graph.functions.items.len);
+    for (graph.functions.items) |function| {
+        const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
+        const file = files[declaration.module_file_index];
+        const operator: ?callable.OperatorKind = if (file.tree.functionNameFromSource(file.source, declaration.syntax_node)) |name|
+            switch (name) {
+                .operator => |value| callable.fromSyntax(value),
+                .identifier => null,
+            }
+        else
+            null;
+        graph.semantic.function_operators.appendAssumeCapacity(operator);
+    }
 }
 
 test "module semantizer keeps completion false only for templates and defaults" {
