@@ -137,8 +137,14 @@ pub fn semantize(
     var resolved_count: usize = 0;
     for (resolved) |done| if (done) { resolved_count += 1; };
     const remaining = total - resolved_count;
-    if (remaining != 0 or hasUnresolvedExternalTypes(modules, core.stats.external_types + generics.stats.type_holes))
+    if (remaining != 0) {
+        dumpUnresolved(modules, resolved);
         return error.UnsupportedGlobalSemantic;
+    }
+    if (hasUnresolvedExternalTypes(modules, core.stats.external_types + generics.stats.type_holes)) {
+        std.debug.print("global sema unresolved external types: resolved={d}\n", .{core.stats.external_types + generics.stats.type_holes});
+        return error.UnsupportedGlobalSemantic;
+    }
 
     // Cleanup is finalized only after all calls/types/abstract dispatch decisions
     // are stable. Safety and Codegen consume these explicit cleanup edges.
@@ -161,6 +167,30 @@ pub fn semantize(
     try global_verify.verifyGlobal(&relocation.graph);
     stats.remaining = 0;
     return .{ .graph = relocation.takeGraph(allocator), .stats = stats };
+}
+
+fn dumpUnresolved(modules: []const module_sg.ModuleSemanticGraph, resolved: []const bool) void {
+    var flat: usize = 0;
+    var shown: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items) |operation| {
+            if (!resolved[flat] and shown < 8) {
+                switch (operation) {
+                    .resolve_expression => |expression| std.debug.print(
+                        "global sema unresolved: module={d} op=resolve_expression kind={s} node={d}\n",
+                        .{ module_index, @tagName(expression.kind), @intFromEnum(expression.node) },
+                    ),
+                    else => std.debug.print(
+                        "global sema unresolved: module={d} op={s}\n",
+                        .{ module_index, @tagName(operation) },
+                    ),
+                }
+                shown += 1;
+            }
+            flat += 1;
+        }
+    }
+    if (shown == 8) std.debug.print("global sema unresolved: additional operations omitted\n", .{});
 }
 
 fn totalPending(modules: []const module_sg.ModuleSemanticGraph) usize {
