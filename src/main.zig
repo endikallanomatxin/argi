@@ -1,5 +1,5 @@
 const std = @import("std");
-const build_cmd = @import("0_commands/build.zig");
+const build_cmd = @import("0_commands/indexed_build.zig");
 const init_cmd = @import("0_commands/init.zig");
 const lsp_cmd = @import("0_commands/lsp.zig");
 const run_cmd = @import("0_commands/run.zig");
