@@ -55,7 +55,7 @@ pub const Resolver = struct {
         operation: module_entities.PendingOperation,
     ) !?bool {
         return switch (operation) {
-            .resolve_type => |value| self.resolveTypeHole(module_index, module, o, value),
+            .resolve_type => |value| @as(?bool, try self.resolveTypeHole(module_index, module, o, value)),
             .resolve_call => |value| self.resolveCall(module_index, module, o, value),
             .resolve_field => |value| self.resolveField(module, o, value),
             .resolve_binary => |value| self.resolveBinary(module_index, o, value),
