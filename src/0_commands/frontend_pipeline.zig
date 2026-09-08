@@ -9,6 +9,7 @@ const st = @import("../3_syntax/syntax_tree.zig");
 const syntaxer = @import("../3_syntax/syntaxer.zig");
 const sg = @import("../4_semantics/semantic_graph.zig");
 const module_sg = @import("../4_semantics/module_semantic_graph.zig");
+const module_semantizer = @import("../4_semantics/module_semantizer.zig");
 const global_semantic_graph_builder = @import("../4_semantics/global_semantic_graph_builder.zig");
 const semantizer = @import("../4_semantics/semantizer.zig");
 const safety_checker = @import("../4_semantics/safety_checker.zig");
@@ -39,6 +40,8 @@ pub const FrontendPipeline = struct {
     safety_ns: u64 = 0,
     module_semantizing_ns: u64 = 0,
     global_merge_ns: u64 = 0,
+    module_lowered_functions: u32 = 0,
+    module_deferred_functions: u32 = 0,
     syntax_node_count: usize = 0,
     sg_node_count: usize = 0,
     syntax_roots: []const st.SyntaxRef = &.{},
@@ -154,6 +157,8 @@ pub const FrontendPipeline = struct {
         const module_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         self.clearModuleGraphs();
         errdefer self.clearModuleGraphs();
+        self.module_lowered_functions = 0;
+        self.module_deferred_functions = 0;
         const ModuleInputs = struct {
             dir: []const u8,
             files: std.ArrayList(module_sg.FileInput) = .empty,
@@ -183,8 +188,10 @@ pub const FrontendPipeline = struct {
         }
         try self.module_graphs.ensureTotalCapacity(self.allocator, groups.items.len);
         for (groups.items) |group| {
-            const graph = try module_sg.build(self.allocator, group.dir, group.files.items);
-            self.module_graphs.appendAssumeCapacity(graph);
+            var result = try module_semantizer.build(self.allocator, group.dir, group.files.items);
+            self.module_lowered_functions += result.stats.lowered_functions;
+            self.module_deferred_functions += result.stats.deferred_functions;
+            self.module_graphs.appendAssumeCapacity(result.graph);
         }
         self.module_semantizing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - module_start);
         const merge_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
