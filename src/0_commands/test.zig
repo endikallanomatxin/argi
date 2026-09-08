@@ -3,7 +3,8 @@ const std = @import("std");
 const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const frontend = @import("frontend_pipeline.zig");
-const build_cmd = @import("build.zig");
+const build_plan = @import("build.zig");
+const indexed_build = @import("indexed_build.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
 
 const DiscoverTest = struct {
@@ -85,7 +86,7 @@ fn testCacheDirForModule(allocator: std.mem.Allocator, module_dir: []const u8) !
     var hasher = std.hash.Wyhash.init(0);
     hasher.update(module_dir);
     const module_hash = hasher.final();
-    const cache_root = try build_cmd.localCacheRoot(allocator);
+    const cache_root = try build_plan.localCacheRoot(allocator);
     return try std.fmt.allocPrint(allocator, "{s}/tests/{x}", .{ cache_root, module_hash });
 }
 
@@ -125,7 +126,7 @@ pub fn run(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const module_dir = try build_cmd.resolveBuildModuleDir(allocator, io, parsed.target);
+    const module_dir = try build_plan.resolveBuildModuleDir(allocator, io, parsed.target);
     const core_options = sf.CoreResolutionOptions{
         .explicit_sysroot = parsed.sysroot_path,
         .environ_map = environ_map,
@@ -133,8 +134,6 @@ pub fn run(
     const core_dir = try sf.resolveToolCoreDir(&allocator, io, core_options);
     const testing_module_dir = try std.fs.path.join(allocator, &.{ core_dir, "testing" });
     const discovered = try discoverTests(io, allocator, core_options, module_dir);
-    // Test binaries are transient and test selection changes codegen output, so
-    // rebuild this module's cache slice from scratch on each `argi test` run.
     try clearTestCacheForModule(io, allocator, module_dir);
 
     var ran_any = false;
@@ -147,13 +146,15 @@ pub fn run(
         ran_any = true;
 
         const output_path = try outputPathForTest(allocator, module_dir, test_decl.name);
-        const flags = build_cmd.BuildFlags{
+        const flags = build_plan.BuildFlags{
             .show_cascade = true,
             .output_path = output_path,
             .sysroot_path = parsed.sysroot_path,
         };
 
-        build_cmd.compileTarget(module_dir, flags, .{
+        // Test discovery remains syntax-only; each selected test is compiled
+        // through ModuleSema → GlobalSema → GlobalSafety → GlobalCodegen.
+        indexed_build.compileTarget(module_dir, flags, .{
             .frontend_options = .{
                 .semantizer = .{
                     .include_tests = true,
@@ -177,9 +178,7 @@ pub fn run(
 
         switch (result.term) {
             .exited => |code| switch (code) {
-                0 => {
-                    printResultLine("PASS", test_decl.name);
-                },
+                0 => printResultLine("PASS", test_decl.name),
                 77 => {
                     printResultLine("SKIP", test_decl.name);
                     printCapturedOutput(result);
