@@ -259,7 +259,7 @@ pub const CodeGenerator = struct {
         };
     }
 
-    fn ensureGlobalInitialized(self: *CodeGenerator, binding: graph_mod.GlobalBindingId) !void {
+    fn ensureGlobalInitialized(self: *CodeGenerator, binding: graph_mod.GlobalBindingId) CodegenError!void {
         const state = self.global_bindings.get(binding) orelse return;
         if (state == .done) return;
         const record = self.graph.bindings.items[@intFromEnum(binding)];
@@ -277,7 +277,7 @@ pub const CodeGenerator = struct {
         try self.global_bindings.put(binding, .done);
     }
 
-    fn globalConstant(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) !TypedValue {
+    fn globalConstant(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) CodegenError!TypedValue {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
             .int_literal, .float_literal, .char_literal, .bool_literal, .string_literal => self.emitLiteral(node_id),
