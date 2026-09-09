@@ -75,18 +75,19 @@ env ZIG_LOCAL_CACHE_DIR=$PWD/.zig-cache ZIG_GLOBAL_CACHE_DIR=$PWD/.zig-global-ca
 1. **Finish allocator generic bodies.** Maps `init`, arena `init`,
    `ensure_capacity`, contextual choice literals, matches and ordinary `is`
    tests now resolve. The first allocator failure is `deinit` (input 124): its
-   selected `DynamicArray` body reaches the nested `Allocation.deinit`, whose
-   virtual `deallocate` call is still reported as `NoMatchingGenericFunction`.
-   `push_assume_capacity` (input 408) also remains. Template field defaults are
+   selected `DynamicArray` body currently fails at the nested implicit
+   `trusted_opaque_drop(.slot, .allocator)` call. Recheck the following
+   `Allocation.deinit` after fixing that inference. `push_assume_capacity`
+   (input 408) also remains. Template field defaults are
    lowered, but instantiated generic fields still currently discard their
    default values in `instantiateFields`; preserve those when a failing call
    actually needs them.
-2. **Complete `to_virtual`.** The allocator call at input 228 remains unresolved.
-   Explicit virtual type identity and abstract method-call resolution exist,
-   but construction must select and validate implementations and populate real
-   method registries/vtables. Do not substitute an empty vtable.
-   `src/5_codegen/global_codegen.zig` still returns `NotYetImplemented` for
-   both `virtualize` and `virtual_call`: semantizing alone will not finish this.
+2. **Complete virtual codegen.** All three allocator `to_virtual` calls now
+   resolve by validating every abstract requirement and recording one concrete
+   function per vtable slot. The semantic graph contains real method and safety
+   registries. `src/5_codegen/global_codegen.zig` still returns
+   `NotYetImplemented` for both `virtualize` and `virtual_call`; semantizing
+   alone will not finish this.
 3. **Continue past the allocator.** Once its five direct failures are gone, the
    next visible group is in `core/strings`: unresolved fields around
    `mutable_reference_offset`. Re-run the fixed point after each allocator fix,

@@ -58,6 +58,11 @@ pub const Resolver = struct {
     ) !bool {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
         const input = globalizer.globalNode(o, value.input);
+        if (std.mem.eql(u8, module.text(reference.name), "to_virtual")) {
+            const node = (try self.makeVirtualize(module_index, reference, input)) orelse return false;
+            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            return true;
+        }
         const node = (try self.makeVirtualCall(
             module_index,
             reference,
@@ -66,6 +71,100 @@ pub const Resolver = struct {
         )) orelse return false;
         self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
         return true;
+    }
+
+    fn makeVirtualize(
+        self: *Resolver,
+        module_index: usize,
+        reference: module_entities.ExternalRef,
+        input: global_sg.GlobalNodeId,
+    ) !?global_sg.Node {
+        const local_arguments = reference.generic_arguments orelse return null;
+        const arguments = try self.generics.relocateModuleArguments(module_index, local_arguments);
+        var abstract_type: ?global_sg.GlobalTypeId = null;
+        for (self.graph.generic_arguments.items[arguments.start..][0..arguments.len]) |argument| {
+            if (!std.mem.eql(u8, self.graph.text(argument.name), "abstract")) continue;
+            abstract_type = switch (argument.value) {
+                .type => |ty| ty,
+                else => return null,
+            };
+        }
+        const abstract_ty = abstract_type orelse return null;
+        const abstract_decl = switch (self.graph.types.items[@intFromEnum(abstract_ty)]) {
+            .declared => |declaration| declaration,
+            else => return null,
+        };
+        const located = self.findAbstractDefinition(abstract_decl) orelse return null;
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |value| value,
+            else => return null,
+        };
+        var value: ?global_sg.GlobalNodeId = null;
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
+            if (std.mem.eql(u8, self.graph.text(field.name), "value")) value = field.value;
+        }
+        const handle = value orelse return null;
+        const handle_ty = self.graph.nodes.items[@intFromEnum(handle)].ty orelse return null;
+        const concrete = switch (self.graph.types.items[@intFromEnum(handle_ty)]) {
+            .pointer => |pointer| pointer.child,
+            else => return null,
+        };
+        if (!try self.implements(concrete, abstract_decl)) return null;
+
+        var methods: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
+        defer methods.deinit(self.allocator);
+        const storage = &self.modules[located.module_index].semantic.templates;
+        for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
+            const instance = try self.requirementInstance(abstract_decl, concrete, located, requirement, @intCast(method_index));
+            const implementation = self.findConcreteMethod(self.modules[located.module_index].text(requirement.name), instance.input) orelse return null;
+            try methods.append(self.allocator, implementation);
+        }
+        const method_start: u32 = @intCast(self.graph.function_refs.items.len);
+        try self.graph.function_refs.appendSlice(self.allocator, methods.items);
+        const registry_start: u32 = @intCast(self.graph.virtual_registries.items.len);
+        for (methods.items, 0..) |_, index| try self.graph.virtual_registries.append(self.allocator, .{
+            .implementations = .{ .start = method_start + @as(u32, @intCast(index)), .len = 1 },
+        });
+        const virtual_ty = try self.generics.internType(.{ .virtual = abstract_ty });
+        const virtualize: global_sg.GlobalVirtualizeId = @enumFromInt(@as(u32, @intCast(self.graph.virtualizes.items.len)));
+        try self.graph.virtualizes.append(self.allocator, .{
+            .value = handle,
+            .concrete_type = concrete,
+            .abstract_decl = abstract_decl,
+            .virtual_type = virtual_ty,
+            .methods = .{ .start = method_start, .len = @intCast(methods.items.len) },
+            .safety_methods = .{ .start = registry_start, .len = @intCast(methods.items.len) },
+            .source = self.sourceFor(module_index, reference.source),
+        });
+        return .{
+            .source = self.sourceFor(module_index, reference.source),
+            .ty = virtual_ty,
+            .content = .{ .virtualize = virtualize },
+        };
+    }
+
+    fn findConcreteMethod(self: *Resolver, name: []const u8, expected_input: global_sg.GlobalTypeId) ?global_sg.GlobalFunctionId {
+        const expected_fields = global_types.fields(self.graph, expected_input) orelse return null;
+        var found: ?global_sg.GlobalFunctionId = null;
+        for (self.graph.functions.items, 0..) |function, raw| {
+            const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
+            if (!std.mem.eql(u8, self.graph.text(declaration.name), name) or function.input.len != expected_fields.len) continue;
+            var compatible = true;
+            for (0..expected_fields.len) |index| {
+                const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(index))];
+                const actual = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))];
+                if (!std.mem.eql(u8, self.graph.text(expected.name), self.graph.text(actual.name)) or
+                    !global_types.equal(self.graph, expected.ty, actual.ty))
+                {
+                    compatible = false;
+                    break;
+                }
+            }
+            if (!compatible) continue;
+            if (found != null) return null;
+            found = @enumFromInt(@as(u32, @intCast(raw)));
+        }
+        return found;
     }
 
     pub fn resolveNestedCall(
@@ -345,6 +444,10 @@ pub const Resolver = struct {
                 &.{kind},
             ),
         };
+    }
+
+    fn sourceFor(self: *const Resolver, module_index: usize, source: primitives.SourceRef) primitives.SourceRef {
+        return .{ .file_index = self.offsets[module_index].file_base + source.file_index, .offset = source.offset };
     }
 
     fn findFunctionTemplate(
