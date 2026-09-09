@@ -54,6 +54,7 @@ pub fn semantize(
         .graph = &relocation.graph,
         .modules = modules,
         .offsets = relocation.offsets.items,
+        .core = &core,
     };
     var generics = generic_mod.Resolver{
         .allocator = allocator,
@@ -78,6 +79,7 @@ pub fn semantize(
         .core = &core,
         .generics = &generics,
     };
+    defer abstracts.deinit();
     var errors = error_mod.Resolver{
         .allocator = allocator,
         .graph = &relocation.graph,
@@ -128,6 +130,8 @@ pub fn semantize(
                 flat += 1;
             }
         }
+        if (core.materializeBindingTypes()) changed = true;
+        if (core.materializeDereferences()) changed = true;
         if (try generics.materializeKnownTypes()) changed = true;
         try control.materializeSugarTypes();
     }
@@ -136,7 +140,9 @@ pub fn semantize(
     control.annotateChoiceTests();
 
     var resolved_count: usize = 0;
-    for (resolved) |done| if (done) { resolved_count += 1; };
+    for (resolved) |done| if (done) {
+        resolved_count += 1;
+    };
     const remaining = total - resolved_count;
     if (remaining != 0) {
         dumpUnresolved(modules, resolved);
@@ -188,6 +194,13 @@ fn dumpUnresolved(modules: []const module_sg.ModuleSemanticGraph, resolved: []co
                         "global sema unresolved: module={d} dir={s} op=resolve_expression kind={s} node={d}\n",
                         .{ module_index, module.module_dir, @tagName(expression.kind), @intFromEnum(expression.node) },
                     ),
+                    .resolve_choice_literal => |choice| {
+                        const reference = module.semantic.external_refs.items[@intFromEnum(choice.option)];
+                        std.debug.print(
+                            "global sema unresolved: module={d} dir={s} op=resolve_choice_literal name={s} source={d} payload={any} expected={any}\n",
+                            .{ module_index, module.module_dir, module.text(reference.name), reference.source.offset, choice.payload, choice.expected_type },
+                        );
+                    },
                     else => std.debug.print(
                         "global sema unresolved: module={d} dir={s} op={s}\n",
                         .{ module_index, module.module_dir, @tagName(operation) },
