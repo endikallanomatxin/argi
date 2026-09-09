@@ -24,6 +24,8 @@ pub const Resolver = struct {
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     stats: Stats = .{},
+    abstract_context: ?*anyopaque = null,
+    abstract_compatible: ?*const fn (*anyopaque, global_sg.GlobalTypeId, global_sg.GlobalTypeId) bool = null,
 
     pub fn resolveExternalTypes(self: *Resolver) !void {
         for (self.modules, 0..) |*module, module_index| {
@@ -484,7 +486,7 @@ pub const Resolver = struct {
         return score;
     }
 
-    fn callTypesCompatible(self: *const Resolver, actual: global_sg.GlobalTypeId, expected: global_sg.GlobalTypeId) bool {
+    pub fn callTypesCompatible(self: *const Resolver, actual: global_sg.GlobalTypeId, expected: global_sg.GlobalTypeId) bool {
         const actual_pointer = switch (self.graph.types.items[@intFromEnum(actual)]) {
             .pointer => |pointer| pointer,
             else => return false,
@@ -493,7 +495,12 @@ pub const Resolver = struct {
             .pointer => |pointer| pointer,
             else => return false,
         };
-        if (actual_pointer.mutability != expected_pointer.mutability) return false;
+        if (expected_pointer.mutability == .read_write and actual_pointer.mutability != .read_write) return false;
+        if (types.equal(self.graph, actual_pointer.child, expected_pointer.child)) return true;
+        if (self.abstract_context) |context| {
+            if (self.abstract_compatible) |compatible|
+                if (compatible(context, actual_pointer.child, expected_pointer.child)) return true;
+        }
         return switch (self.graph.types.items[@intFromEnum(actual_pointer.child)]) {
             .virtual => |abstract_type| types.equal(self.graph, abstract_type, expected_pointer.child),
             else => false,
@@ -675,7 +682,7 @@ pub const Resolver = struct {
     /// recover the import it names before selecting a global module. This keeps
     /// aliases such as `support := #import("_test_support/basic")` independent
     /// from the dependency directory's basename.
-    fn findModuleForQualifier(self: *Resolver, current_module: usize, qualifier: []const u8) !global_sg.GlobalModuleId {
+    pub fn findModuleForQualifier(self: *Resolver, current_module: usize, qualifier: []const u8) !global_sg.GlobalModuleId {
         if (self.importPathForAlias(current_module, qualifier)) |import_path|
             return self.findModuleByImportPath(current_module, import_path);
         // Keep direct module spellings working for compiler-generated and
@@ -782,7 +789,7 @@ fn pathEndsWith(path: []const u8, suffix: []const u8) bool {
 }
 
 test "global core resolver is graph-only" {
-    try std.testing.expect(@sizeOf(Resolver) <= 96);
+    try std.testing.expect(@sizeOf(Resolver) <= 112);
 }
 
 test "qualified lookup follows import alias binding" {

@@ -26,10 +26,8 @@ pub const Resolver = struct {
     core: *core_mod.Resolver,
     generics: *generic_mod.Resolver,
     stats: Stats = .{},
-    requirement_instances: std.ArrayList(RequirementInstance) = .empty,
-
     pub fn deinit(self: *Resolver) void {
-        self.requirement_instances.deinit(self.allocator);
+        _ = self;
     }
 
     pub fn tryResolve(
@@ -40,7 +38,7 @@ pub const Resolver = struct {
         operation: module_entities.PendingOperation,
     ) !?bool {
         return switch (operation) {
-            .resolve_call => |value| @as(?bool, try self.resolveVirtualCall(module, o, value)),
+            .resolve_call => |value| @as(?bool, try self.resolveVirtualCall(module_index, module, o, value)),
             .resolve_abstract => |value| blk: {
                 const declaration = globalizer.globalDecl(o, value.declaration);
                 const ty = self.graph.declarations.items[@intFromEnum(declaration)].type_id orelse break :blk @as(?bool, false);
@@ -53,16 +51,56 @@ pub const Resolver = struct {
 
     fn resolveVirtualCall(
         self: *Resolver,
+        module_index: usize,
         module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         value: anytype,
     ) !bool {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
-        if (reference.module_path != null or reference.generic_arguments != null) return false;
         const input = globalizer.globalNode(o, value.input);
+        const node = (try self.makeVirtualCall(
+            module_index,
+            reference,
+            input,
+            .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset },
+        )) orelse return false;
+        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+        return true;
+    }
+
+    pub fn resolveNestedCall(
+        context: *anyopaque,
+        module_index: usize,
+        reference: module_entities.ExternalRef,
+        input: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+    ) anyerror!?global_sg.Node {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        return self.makeVirtualCall(module_index, reference, input, source);
+    }
+
+    pub fn concreteImplements(context: *anyopaque, concrete: global_sg.GlobalTypeId, abstract_type: global_sg.GlobalTypeId) bool {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        const declaration = switch (self.graph.types.items[@intFromEnum(abstract_type)]) {
+            .declared => |value| value,
+            else => return false,
+        };
+        if (self.findAbstractDefinition(declaration) == null) return false;
+        return self.implements(concrete, declaration) catch false;
+    }
+
+    fn makeVirtualCall(
+        self: *Resolver,
+        module_index: usize,
+        reference: module_entities.ExternalRef,
+        input: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+    ) !?global_sg.Node {
+        if (reference.module_path != null or reference.generic_arguments != null) return null;
+        const module = &self.modules[module_index];
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |item| item,
-            else => return false,
+            else => return null,
         };
         const method_name = module.text(reference.name);
 
@@ -124,16 +162,14 @@ pub const Resolver = struct {
                     .self_permission = permission,
                     .safety_methods = registry,
                 });
-                const target = globalizer.globalNode(o, value.node);
-                self.graph.nodes.items[@intFromEnum(target)] = .{
-                    .source = .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset },
-                    .ty = if (value.expected_type) |local| globalizer.globalType(o, local) else try self.core.outputTypeForFields(output_fields),
+                return .{
+                    .source = source,
+                    .ty = try self.core.outputTypeForFields(output_fields),
                     .content = .{ .virtual_call = call_id },
                 };
-                return true;
             }
         }
-        return false;
+        return null;
     }
 
     const LocatedAbstractDefinition = struct {
@@ -156,8 +192,6 @@ pub const Resolver = struct {
         requirement: templates.AbstractRequirement,
         method_index: u32,
     ) !RequirementInstance {
-        for (self.requirement_instances.items) |instance|
-            if (instance.declaration == declaration and instance.method_index == method_index) return instance;
         const storage = &self.modules[located.module_index].semantic.templates;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.generic_parameters.items.len);
         defer bindings.deinit(self.allocator);
@@ -167,7 +201,6 @@ pub const Resolver = struct {
             .input = try self.generics.instantiateTemplateType(located.module_index, requirement.input, &bindings, self_type),
             .output = try self.generics.instantiateTemplateType(located.module_index, requirement.output, &bindings, self_type),
         };
-        try self.requirement_instances.append(self.allocator, instance);
         return instance;
     }
 

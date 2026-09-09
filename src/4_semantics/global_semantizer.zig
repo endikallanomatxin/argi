@@ -80,6 +80,10 @@ pub fn semantize(
         .generics = &generics,
     };
     defer abstracts.deinit();
+    core.abstract_context = &abstracts;
+    core.abstract_compatible = abstract_mod.Resolver.concreteImplements;
+    generic_functions.nested_call_context = &abstracts;
+    generic_functions.nested_call_resolver = abstract_mod.Resolver.resolveNestedCall;
     var errors = error_mod.Resolver{
         .allocator = allocator,
         .graph = &relocation.graph,

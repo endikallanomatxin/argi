@@ -1,4 +1,5 @@
 const std = @import("std");
+const syn = @import("../3_syntax/syntax_tree.zig");
 const entities = @import("module_semantic_entities.zig");
 const primitives = @import("semantic_primitives.zig");
 
@@ -29,6 +30,7 @@ pub const TemplateTestingExpectErrorId = enum(u32) { _ };
 pub const TemplateErrorPropagationId = enum(u32) { _ };
 pub const TemplateErrorContextId = enum(u32) { _ };
 pub const TemplatePendingId = enum(u32) { _ };
+pub const TemplateMatchCaseId = enum(u32) { _ };
 
 pub const Ids = struct {
     pub const DeclId = TemplateDeclId;
@@ -176,8 +178,17 @@ pub const PendingExpression = struct {
     module_path: ?primitives.StringRange = null,
     generic_arguments: primitives.Range(TemplateGenericArgId) = .{ .start = 0, .len = 0 },
     expected_type: ?TemplateTypeId = null,
+    match_cases: primitives.Range(TemplateMatchCaseId) = .{ .start = 0, .len = 0 },
     source: primitives.SourceRef,
     aux: u32 = 0,
+};
+
+pub const MatchCase = struct {
+    name: primitives.StringRange,
+    payload_binding: ?TemplateBindingId,
+    body: TemplateBlockId,
+    mode: syn.MatchCaseMode,
+    source: primitives.SourceRef,
 };
 
 pub const Pending = union(enum) {
@@ -232,6 +243,7 @@ pub const Storage = struct {
     error_propagations: std.ArrayList(ErrorPropagation) = .empty,
     error_contexts: std.ArrayList(ErrorContext) = .empty,
     pending: std.ArrayList(Pending) = .empty,
+    match_cases: std.ArrayList(MatchCase) = .empty,
 
     node_refs: std.ArrayList(TemplateNodeId) = .empty,
     type_refs: std.ArrayList(TemplateTypeId) = .empty,
@@ -247,8 +259,8 @@ pub const Storage = struct {
             &self.switches,        &self.auto_deinit_fields, &self.auto_deinits,          &self.virtual_registries,
             &self.virtualizes,     &self.virtual_calls,      &self.reach_segments,        &self.reach_alternatives,
             &self.reaches,         &self.nullable_unwraps,   &self.testing_expect_errors, &self.error_propagations,
-            &self.error_contexts,  &self.pending,            &self.node_refs,             &self.type_refs,
-            &self.binding_refs,    &self.function_refs,      &self.virtual_registry_refs,
+            &self.error_contexts,  &self.pending,            &self.match_cases,           &self.node_refs,
+            &self.type_refs,       &self.binding_refs,       &self.function_refs,         &self.virtual_registry_refs,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -280,6 +292,7 @@ pub const Storage = struct {
             self.error_propagations.items.len * @sizeOf(ErrorPropagation) +
             self.error_contexts.items.len * @sizeOf(ErrorContext) +
             self.pending.items.len * @sizeOf(Pending) +
+            self.match_cases.items.len * @sizeOf(MatchCase) +
             self.node_refs.items.len * @sizeOf(TemplateNodeId) +
             self.type_refs.items.len * @sizeOf(TemplateTypeId) +
             self.binding_refs.items.len * @sizeOf(TemplateBindingId) +

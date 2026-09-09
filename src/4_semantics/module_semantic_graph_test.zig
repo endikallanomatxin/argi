@@ -441,3 +441,66 @@ test "module semantic graph owns stable file provenance" {
     try std.testing.expectEqualStrings("owned", graph.module_dir);
     try std.testing.expectEqualStrings("main.rg", graph.text(graph.file_offsets.items[0].path));
 }
+
+test "implicit generic calls infer pointer parameters through nested calls" {
+    const allocator = std.testing.allocator;
+    const source =
+        "empty#(.t: Type)(.storage: $&t, .required: Int32) -> () := { absent() }\n" ++
+        "empty#(.t: Type)(.storage: $&t) -> () := {}\n" ++
+        "release#(.t: Type)(.self: $&t) -> () := { local ::= self empty(.storage = local) }\n" ++
+        "main() -> () := { value :: Int32 = 0 release(.self = $&value) }\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "inference/main.rg", .tree = &tree, .source = source }};
+    var module = try @import("module_semantizer.zig").build(allocator, "inference", &inputs);
+    defer module.graph.deinit(allocator);
+    var result = try @import("global_semantizer.zig").semantize(allocator, &.{module.graph});
+    defer result.graph.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
+    try std.testing.expectEqual(@as(usize, 2), result.graph.generic_function_instances.items.len);
+    for (result.graph.generic_function_instances.items) |instance| {
+        try std.testing.expect(result.graph.functions.items[@intFromEnum(instance.function)].body != null);
+    }
+}
+
+test "implicit generic calls reject conflicting repeated parameters" {
+    const allocator = std.testing.allocator;
+    const source =
+        "same#(.t: Type)(.left: $&t, .right: $&t) -> () := {}\n" ++
+        "main() -> () := { left :: Int32 = 0 right :: Bool = false same(.left = $&left, .right = $&right) }\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "conflict/main.rg", .tree = &tree, .source = source }};
+    var module = try @import("module_semantizer.zig").build(allocator, "conflict", &inputs);
+    defer module.graph.deinit(allocator);
+    try std.testing.expectError(error.UnsupportedGlobalSemantic, @import("global_semantizer.zig").semantize(allocator, &.{module.graph}));
+}
+
+test "failed generic bodies do not publish reusable instances" {
+    const allocator = std.testing.allocator;
+    const source = "broken#(.t: Type)(.value: t) -> () := { absent(.value = value) }\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "retry/main.rg", .tree = &tree, .source = source }};
+    var module = try @import("module_semantizer.zig").build(allocator, "retry", &inputs);
+    defer module.graph.deinit(allocator);
+    const modules = [_]module_graph.ModuleSemanticGraph{module.graph};
+    var relocation = try @import("semantic_globalizer.zig").relocate(allocator, &modules, .allow_holes);
+    defer relocation.deinit(allocator);
+    var core = @import("global_semantic_core.zig").Resolver{ .allocator = allocator, .graph = &relocation.graph, .modules = &modules, .offsets = relocation.offsets.items };
+    var generics = @import("global_semantic_generics.zig").Resolver{ .allocator = allocator, .graph = &relocation.graph, .modules = &modules, .offsets = relocation.offsets.items, .core = &core };
+    var functions = @import("global_semantic_generic_functions.zig").Resolver{ .allocator = allocator, .graph = &relocation.graph, .modules = &modules, .offsets = relocation.offsets.items, .core = &core, .generics = &generics };
+    const ty = try generics.internType(.{ .builtin = .Int32 });
+    const name = try relocation.graph.addString(allocator, "t");
+    const arguments = @import("semantic_primitives.zig").Range(@import("global_semantic_graph.zig").GlobalGenericArgId){ .start = @intCast(relocation.graph.generic_arguments.items.len), .len = 1 };
+    try relocation.graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = ty } });
+    const declaration = @import("semantic_globalizer.zig").globalDecl(relocation.offsets.items[0], module.graph.semantic.templates.generic_function_templates.items[0].declaration);
+    const function_count = relocation.graph.functions.items.len;
+    const node_count = relocation.graph.nodes.items.len;
+    for (0..2) |_| {
+        try std.testing.expectError(error.NoMatchingGenericFunction, functions.instantiate(declaration, arguments));
+        try std.testing.expectEqual(function_count, relocation.graph.functions.items.len);
+        try std.testing.expectEqual(node_count, relocation.graph.nodes.items.len);
+        try std.testing.expectEqual(@as(usize, 0), relocation.graph.generic_function_instances.items.len);
+    }
+}
