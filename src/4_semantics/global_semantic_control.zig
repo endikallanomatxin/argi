@@ -4,6 +4,7 @@ const module_sg = @import("module_semantic_graph.zig");
 const module_entities = @import("module_semantic_entities.zig");
 const global_sg = @import("global_semantic_graph.zig");
 const globalizer = @import("semantic_globalizer.zig");
+const core_mod = @import("global_semantic_core.zig");
 const types = @import("global_semantic_types.zig");
 const primitives = @import("semantic_primitives.zig");
 
@@ -19,6 +20,7 @@ pub const Resolver = struct {
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
+    core: ?*core_mod.Resolver = null,
     stats: Stats = .{},
 
     pub fn materializeSugarTypes(self: *Resolver) !void {
@@ -67,7 +69,10 @@ pub const Resolver = struct {
                 const right = self.graph.nodes.items[@intFromEnum(comparison.right)];
                 const choice_ty = left.ty orelse continue;
                 const variants = types.variants(self.graph, choice_ty) orelse continue;
-                const tag = switch (right.content) { .int_literal => |value| value, else => continue };
+                const tag = switch (right.content) {
+                    .int_literal => |value| value,
+                    else => continue,
+                };
                 var variant_id: ?global_sg.GlobalVariantId = null;
                 for (0..variants.len) |index| {
                     const raw = variants.start + @as(u32, @intCast(index));
@@ -151,12 +156,16 @@ pub const Resolver = struct {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.option)];
         const name = module.text(reference.name);
         const payload = if (value.payload) |id| globalizer.globalNode(o, id) else null;
-        const payload_ty = if (payload) |id| self.graph.nodes.items[@intFromEnum(id)].ty else null;
-        const expected = if (value.expected_type) |id| globalizer.globalType(o, id) else null;
+        var payload_ty = if (payload) |id| self.graph.nodes.items[@intFromEnum(id)].ty else null;
+        const target = globalizer.globalNode(o, value.node);
+        const expected = if (value.expected_type) |id| globalizer.globalType(o, id) else self.graph.nodes.items[@intFromEnum(target)].ty;
         const choice_ty = self.findChoiceType(expected, name, payload_ty) orelse return false;
         const variant = types.findVariant(self.graph, choice_ty, name) orelse return false;
+        if (payload) |payload_node| if (variant.variant.payload_type) |expected_payload| {
+            if (self.core) |core| _ = core.coerceContextualValue(payload_node, expected_payload);
+            payload_ty = self.graph.nodes.items[@intFromEnum(payload_node)].ty;
+        };
         if (!self.payloadCompatible(variant.variant.payload_type, payload_ty)) return false;
-        const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = self.sourceFor(reference.source, o),
             .ty = choice_ty,
@@ -258,9 +267,15 @@ pub const Resolver = struct {
 
         for (local_cases) |local_case_node| {
             const local_node = module.semantic.nodes.items[@intFromEnum(local_case_node)];
-            const pending_id = switch (local_node) { .pending => |id| id, else => return false };
+            const pending_id = switch (local_node) {
+                .pending => |id| id,
+                else => return false,
+            };
             const pending = module.semantic.pending_operations.items[@intFromEnum(pending_id)];
-            const case = switch (pending) { .resolve_match_case => |item| item, else => return false };
+            const case = switch (pending) {
+                .resolve_match_case => |item| item,
+                else => return false,
+            };
             const option_ref = module.semantic.external_refs.items[@intFromEnum(case.option)];
             const option_name = module.text(option_ref.name);
             const hit = types.findVariant(self.graph, choice_ty, option_name) orelse return false;
@@ -306,7 +321,10 @@ pub const Resolver = struct {
 
     fn matchCaseAlreadyResolved(self: *Resolver, o: globalizer.Offsets, value: anytype) bool {
         const node = self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))];
-        return switch (node.content) { .code_block => true, else => false };
+        return switch (node.content) {
+            .code_block => true,
+            else => false,
+        };
     }
 
     fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !bool {

@@ -36,8 +36,128 @@ pub const Resolver = struct {
     ) !?bool {
         return switch (operation) {
             .resolve_call => |value| @as(?bool, try self.resolveModuleGenericCall(module_index, module, o, value)),
+            .resolve_index => |value| @as(?bool, try self.resolveGenericIndex(module_index, o, value)),
             else => null,
         };
+    }
+
+    fn resolveGenericIndex(
+        self: *Resolver,
+        module_index: usize,
+        o: globalizer.Offsets,
+        value: anytype,
+    ) !bool {
+        const collection = globalizer.globalNode(o, value.value);
+        const collection_ty = self.graph.nodes.items[@intFromEnum(collection)].ty orelse return false;
+        const identity = switch (self.graph.types.items[@intFromEnum(collection_ty)]) {
+            .generic => |generic| generic,
+            else => return false,
+        };
+        const operator: @import("semantic_callable.zig").OperatorKind = if (value.store_value == null) .get else .set;
+
+        // A generic container operator uses the container's parameters. This
+        // covers value indexing without rebuilding template unification in the
+        // ordinary-operation resolver; templates with a different parameter
+        // list are rejected by instantiation or by the final operand match.
+        for (self.modules, 0..) |*candidate_module, candidate_module_index| {
+            for (candidate_module.semantic.templates.generic_function_templates.items) |template| {
+                if (template.operator != operator or template.parameters.len != identity.arguments.len) continue;
+                if (!self.templateIndexesBase(candidate_module_index, template, identity.base)) continue;
+                const declaration = globalizer.globalDecl(self.offsets[candidate_module_index], template.declaration);
+                _ = self.instantiate(declaration, identity.arguments) catch continue;
+            }
+        }
+
+        const index = globalizer.globalNode(o, value.index);
+        var operands: [3]global_sg.GlobalNodeId = undefined;
+        operands[0] = collection;
+        operands[1] = index;
+        var count: usize = 2;
+        if (value.store_value) |stored| {
+            operands[2] = globalizer.globalNode(o, stored);
+            count = 3;
+        }
+        var operand_types: [3]global_sg.GlobalTypeId = undefined;
+        for (operands[0..count], 0..) |node, i|
+            operand_types[i] = self.graph.nodes.items[@intFromEnum(node)].ty orelse return false;
+        var function = self.core.resolveOperator(module_index, operator, operand_types[0..count]) catch null;
+        if (function == null) {
+            var addressed_function: ?global_sg.GlobalFunctionId = null;
+            var addressed_type: ?global_sg.GlobalTypeId = null;
+            for (self.graph.functions.items, 0..) |candidate, raw| {
+                if (raw >= self.graph.function_operators.items.len or self.graph.function_operators.items[raw] != operator) continue;
+                if (candidate.input.len != count) continue;
+                const expected_self = self.graph.fields.items[candidate.input.start].ty;
+                const child = switch (self.graph.types.items[@intFromEnum(expected_self)]) {
+                    .pointer => |pointer| pointer.child,
+                    else => continue,
+                };
+                if (!global_types.equal(self.graph, child, collection_ty)) continue;
+                var matches = true;
+                for (1..count) |i| {
+                    const expected = self.graph.fields.items[candidate.input.start + @as(u32, @intCast(i))].ty;
+                    if (!global_types.equal(self.graph, expected, operand_types[i])) {
+                        matches = false;
+                        break;
+                    }
+                }
+                if (!matches) continue;
+                if (addressed_function != null) return false;
+                addressed_function = @enumFromInt(@as(u32, @intCast(raw)));
+                addressed_type = expected_self;
+            }
+            function = addressed_function orelse return false;
+            const address: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+            try self.graph.nodes.append(self.allocator, .{
+                .source = self.graph.nodes.items[@intFromEnum(collection)].source,
+                .ty = addressed_type,
+                .content = .{ .address_of = collection },
+            });
+            operands[0] = address;
+        }
+        const input = try self.core.makeCallInput(function.?, operands[0..count]);
+        const target = globalizer.globalNode(o, value.node);
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = self.graph.nodes.items[@intFromEnum(collection)].source,
+            .ty = try self.core.functionOutputType(function.?),
+            .content = .{ .function_call = .{ .callee = function.?, .input = input } },
+        };
+        self.stats.calls += 1;
+        return true;
+    }
+
+    fn templateIndexesBase(
+        self: *Resolver,
+        module_index: usize,
+        template: templates.GenericFunctionTemplate,
+        base: global_sg.GlobalDeclId,
+    ) bool {
+        const module = &self.modules[module_index];
+        const storage = &module.semantic.templates.ir;
+        const input = switch (storage.types.items[@intFromEnum(template.input)]) {
+            .resolved => |ty| switch (ty) {
+                .structural => |shape| shape,
+                else => return false,
+            },
+            else => return false,
+        };
+        if (input.fields.len == 0) return false;
+        const self_field = storage.fields.items[input.fields.start];
+        const child = switch (storage.types.items[@intFromEnum(self_field.ty)]) {
+            .resolved => |ty| switch (ty) {
+                .pointer => |pointer| pointer.child,
+                else => return false,
+            },
+            else => return false,
+        };
+        const template_base = switch (storage.types.items[@intFromEnum(child)]) {
+            .resolved => |ty| switch (ty) {
+                .generic => |generic| generic.base,
+                else => return false,
+            },
+            else => return false,
+        };
+        return (self.generics.resolveTemplateDeclaration(module_index, template_base) catch return false) == base;
     }
 
     fn resolveModuleGenericCall(

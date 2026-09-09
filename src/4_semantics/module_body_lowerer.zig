@@ -512,9 +512,11 @@ const Context = struct {
 
     fn lowerStructValue(self: *Context, node: syn.NodeIndex) !Lowered {
         const literal = self.tree.structValueLiteral(node) orelse return error.UnsupportedLocalSemantic;
-        const value_start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
+        var values: std.ArrayList(entities.ValueField) = .empty;
+        defer values.deinit(self.allocator);
+        var fields: std.ArrayList(entities.Field) = .empty;
+        defer fields.deinit(self.allocator);
         var type_first: ?entities.ModuleFieldId = null;
-        var field_count: u32 = 0;
         for (literal.fields) |field_node| {
             const field = self.tree.valueField(field_node) orelse return error.UnsupportedLocalSemantic;
             const value = try self.lowerNode(field.value, null);
@@ -524,11 +526,16 @@ const Context = struct {
             else
                 "";
             const name = try self.writer.addString(name_text);
-            try self.graph.semantic.value_fields.append(self.allocator, .{ .name = name, .value = value.node });
-            const type_field = try self.writer.addField(.{ .name = name, .ty = ty, .source = self.sourceRef(field_node) });
-            if (type_first == null) type_first = type_field;
-            field_count += 1;
+            try values.append(self.allocator, .{ .name = name, .value = value.node });
+            try fields.append(self.allocator, .{ .name = name, .ty = ty, .source = self.sourceRef(field_node) });
         }
+        const value_start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
+        try self.graph.semantic.value_fields.appendSlice(self.allocator, values.items);
+        for (fields.items) |field| {
+            const type_field = try self.writer.addField(field);
+            if (type_first == null) type_first = type_field;
+        }
+        const field_count: u32 = @intCast(fields.items.len);
         const structural_ty = try self.writer.addResolvedType(.{ .structural = .{
             .fields = .{ .start = if (type_first) |id| @intFromEnum(id) else @intCast(views.fieldCount(self.graph)), .len = field_count },
             .layout = .regular,

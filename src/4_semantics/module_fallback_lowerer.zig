@@ -301,7 +301,8 @@ const Context = struct {
 
     fn lowerStructValue(self: *Context, node: syn.NodeIndex) !Lowered {
         const literal = self.tree.structValueLiteral(node).?;
-        const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
+        var values: std.ArrayList(entities.ValueField) = .empty;
+        defer values.deinit(self.allocator);
         for (literal.fields) |field_node| {
             const field = self.tree.valueField(field_node).?;
             const value = try self.lowerNode(field.value, null);
@@ -309,8 +310,10 @@ const Context = struct {
                 try self.writer.addString(self.tree.tokenTextFromSource(self.source, token_index))
             else
                 try self.writer.addString("");
-            try self.graph.semantic.value_fields.append(self.allocator, .{ .name = name, .value = value.node });
+            try values.append(self.allocator, .{ .name = name, .value = value.node });
         }
+        const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
+        try self.graph.semantic.value_fields.appendSlice(self.allocator, values.items);
         const ty = try self.builtin(.Any);
         return self.resolved(node, ty, .{ .struct_value_literal = .{
             .fields = .{ .start = start, .len = @intCast(literal.fields.len) },
