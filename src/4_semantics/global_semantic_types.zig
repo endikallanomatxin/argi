@@ -132,8 +132,14 @@ pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTyp
     const left = graph.types.items[@intFromEnum(a)];
     const right = graph.types.items[@intFromEnum(b)];
     return switch (left) {
-        .builtin => |x| switch (right) { .builtin => |y| x == y, else => false },
-        .declared => |x| switch (right) { .declared => |y| x == y, else => false },
+        .builtin => |x| switch (right) {
+            .builtin => |y| x == y,
+            else => false,
+        },
+        .declared => |x| switch (right) {
+            .declared => |y| x == y,
+            else => false,
+        },
         .pointer => |x| switch (right) {
             .pointer => |y| x.mutability == y.mutability and equal(graph, x.child, y.child),
             else => false,
@@ -142,15 +148,34 @@ pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTyp
             .array => |y| x.length == y.length and equal(graph, x.element, y.element),
             else => false,
         },
-        .nullable => |x| switch (right) { .nullable => |y| equal(graph, x, y), else => false },
-        .inferred_errable => |x| switch (right) { .inferred_errable => |y| equal(graph, x, y), else => false },
+        .nullable => |x| switch (right) {
+            .nullable => |y| equal(graph, x, y),
+            else => false,
+        },
+        .inferred_errable => |x| switch (right) {
+            .inferred_errable => |y| equal(graph, x, y),
+            else => false,
+        },
         .generic => |x| switch (right) {
             .generic => |y| x.base == y.base and genericArgumentsEqual(graph, x.arguments, y.arguments),
             else => false,
         },
-        .inferred_choice => |x| switch (right) { .inferred_choice => |y| x.identity == y.identity and x.kind == y.kind, else => false },
-        .structural => |x| switch (right) { .structural => |y| fieldRangesEqual(graph, x.fields, y.fields), else => false },
-        .structural_choice => |x| switch (right) { .structural_choice => |y| variantRangesEqual(graph, x.variants, y.variants), else => false },
+        .virtual => |x| switch (right) {
+            .virtual => |y| equal(graph, x, y),
+            else => false,
+        },
+        .inferred_choice => |x| switch (right) {
+            .inferred_choice => |y| x.identity == y.identity and x.kind == y.kind,
+            else => false,
+        },
+        .structural => |x| switch (right) {
+            .structural => |y| fieldRangesEqual(graph, x.fields, y.fields),
+            else => false,
+        },
+        .structural_choice => |x| switch (right) {
+            .structural_choice => |y| variantRangesEqual(graph, x.variants, y.variants),
+            else => false,
+        },
     };
 }
 
@@ -171,6 +196,7 @@ pub fn layoutOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Globa
         .structural_choice => |shape| choiceLayout(graph, shape.variants, shape.layout),
         .inferred_choice => |shape| choiceLayout(graph, shape.variants, .regular),
         .generic => genericLayout(graph, ty),
+        .virtual => .{ .size = pointer_size_bytes * 2, .alignment = pointer_alignment_bytes },
         .nullable, .inferred_errable => error.UnmaterializedGlobalType,
     };
 }
@@ -286,8 +312,14 @@ fn genericArgumentsEqual(graph: *const graph_mod.GlobalSemanticGraph, a: anytype
         const right = graph.generic_arguments.items[b.start + @as(u32, @intCast(index))];
         if (!std.mem.eql(u8, graph.text(left.name), graph.text(right.name))) return false;
         switch (left.value) {
-            .type => |left_ty| switch (right.value) { .type => |right_ty| if (!equal(graph, left_ty, right_ty)) return false, else => return false },
-            .comptime_int => |left_int| switch (right.value) { .comptime_int => |right_int| if (left_int != right_int) return false, else => return false },
+            .type => |left_ty| switch (right.value) {
+                .type => |right_ty| if (!equal(graph, left_ty, right_ty)) return false,
+                else => return false,
+            },
+            .comptime_int => |left_int| switch (right.value) {
+                .comptime_int => |right_int| if (left_int != right_int) return false,
+                else => return false,
+            },
         }
     }
     return true;

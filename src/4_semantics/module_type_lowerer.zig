@@ -136,6 +136,16 @@ pub const Context = struct {
 
     fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
         const arguments_literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericArguments;
+        const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericBase;
+        if (base == .name and base.name.qualifier_token == null and
+            std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Virtual"))
+        {
+            if (arguments_literal.fields.len != 1) return error.InvalidVirtualArguments;
+            const field = self.tree.structTypeField(arguments_literal.fields[0]) orelse return error.InvalidVirtualArguments;
+            if (!std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, field.name_token), "abstract")) return error.InvalidVirtualArguments;
+            const abstract_type = try self.lower(field.type_node orelse return error.InvalidVirtualArguments);
+            return self.writer.addResolvedType(.{ .virtual = abstract_type });
+        }
         var first: ?entities.ModuleGenericArgId = null;
         var count: u32 = 0;
         for (arguments_literal.fields) |field_node| {
@@ -156,7 +166,6 @@ pub const Context = struct {
             .len = count,
         };
 
-        const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericBase;
         return switch (base) {
             .name => |name| self.lowerName(owner, name.name_token, name.qualifier_token, range),
             else => error.InvalidGenericBase,

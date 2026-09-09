@@ -134,6 +134,10 @@ pub fn SemanticType(comptime Ids: type) type {
             base: Ids.DeclId,
             arguments: Range(Ids.GenericArgId),
         },
+        /// Runtime pair (data pointer, vtable pointer) carrying an Abstract.
+        /// The abstract type identity is explicit because `Virtual` is an
+        /// intrinsic type constructor, not a source declaration.
+        virtual: Ids.TypeId,
     };
 }
 

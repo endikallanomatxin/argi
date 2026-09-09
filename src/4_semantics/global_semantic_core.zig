@@ -478,10 +478,26 @@ pub const Resolver = struct {
             const supplied = self.callArgument(literal, expected_offset, expected.name);
             if (supplied) |node| {
                 const actual = self.graph.nodes.items[@intFromEnum(node)].ty orelse return null;
-                if (types.equal(self.graph, actual, expected.ty)) score += 4 else if (types.isBuiltin(self.graph, expected.ty, .Any)) score += 1 else if (self.contextualLiteralFits(node, expected.ty)) score += 3 else return null;
+                if (types.equal(self.graph, actual, expected.ty)) score += 4 else if (self.callTypesCompatible(actual, expected.ty)) score += 3 else if (types.isBuiltin(self.graph, expected.ty, .Any)) score += 1 else if (self.contextualLiteralFits(node, expected.ty)) score += 3 else return null;
             } else if (expected.default_value == null) return null;
         }
         return score;
+    }
+
+    fn callTypesCompatible(self: *const Resolver, actual: global_sg.GlobalTypeId, expected: global_sg.GlobalTypeId) bool {
+        const actual_pointer = switch (self.graph.types.items[@intFromEnum(actual)]) {
+            .pointer => |pointer| pointer,
+            else => return false,
+        };
+        const expected_pointer = switch (self.graph.types.items[@intFromEnum(expected)]) {
+            .pointer => |pointer| pointer,
+            else => return false,
+        };
+        if (actual_pointer.mutability != expected_pointer.mutability) return false;
+        return switch (self.graph.types.items[@intFromEnum(actual_pointer.child)]) {
+            .virtual => |abstract_type| types.equal(self.graph, abstract_type, expected_pointer.child),
+            else => false,
+        };
     }
 
     fn callArgument(self: *const Resolver, literal: anytype, expected_offset: usize, expected_name: primitives.StringRange) ?global_sg.GlobalNodeId {

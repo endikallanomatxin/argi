@@ -25,6 +25,13 @@ pub const Lowerer = struct {
             .structural_choice => |shape| self.choiceType(shape.variants, shape.layout),
             .inferred_choice => |shape| self.choiceType(shape.variants, .regular),
             .generic => self.genericType(ty),
+            .virtual => blk: {
+                var fields = [_]c.LLVMTypeRef{
+                    c.LLVMPointerType(c.LLVMInt8Type(), 0),
+                    c.LLVMPointerType(c.LLVMInt8Type(), 0),
+                };
+                break :blk c.LLVMStructType(&fields, fields.len, 0);
+            },
             .nullable, .inferred_errable => Error.InvalidType,
         };
     }
@@ -144,10 +151,23 @@ pub const Lowerer = struct {
     pub fn encodeType(self: *Lowerer, buffer: *std.array_list.Managed(u8), ty: graph_mod.GlobalTypeId) !void {
         switch (self.graph.types.items[@intFromEnum(ty)]) {
             .builtin => |builtin| try buffer.appendSlice(switch (builtin) {
-                .Void => "void", .Int8 => "i8", .Int16 => "i16", .Int32 => "i32", .Int64 => "i64",
-                .UIntNative => "unative", .UInt8 => "u8", .UInt16 => "u16", .UInt32 => "u32", .UInt64 => "u64",
-                .Float16 => "f16", .Float32 => "f32", .Float64 => "f64", .Char => "char", .Bool => "bool",
-                .Type => "type", .Any => "any",
+                .Void => "void",
+                .Int8 => "i8",
+                .Int16 => "i16",
+                .Int32 => "i32",
+                .Int64 => "i64",
+                .UIntNative => "unative",
+                .UInt8 => "u8",
+                .UInt16 => "u16",
+                .UInt32 => "u32",
+                .UInt64 => "u64",
+                .Float16 => "f16",
+                .Float32 => "f32",
+                .Float64 => "f64",
+                .Char => "char",
+                .Bool => "bool",
+                .Type => "type",
+                .Any => "any",
             }),
             .pointer => |pointer| {
                 try buffer.appendSlice(if (pointer.mutability == .read_only) "pro_" else "prw_");
@@ -183,6 +203,10 @@ pub const Lowerer = struct {
                     },
                     .comptime_int => |value| try self.appendPrint(buffer, "_n{d}", .{value}),
                 };
+            },
+            .virtual => |abstract_type| {
+                try buffer.appendSlice("virtual_");
+                try self.encodeType(buffer, abstract_type);
             },
             .nullable, .inferred_errable => return Error.InvalidType,
         }

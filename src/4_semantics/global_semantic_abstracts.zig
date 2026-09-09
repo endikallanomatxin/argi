@@ -68,9 +68,13 @@ pub const Resolver = struct {
 
         for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |actual| {
             const actual_ty = self.graph.nodes.items[@intFromEnum(actual.value)].ty orelse continue;
-            const abstract_ty = switch (self.graph.types.items[@intFromEnum(actual_ty)]) {
+            const pointee = switch (self.graph.types.items[@intFromEnum(actual_ty)]) {
                 .pointer => |pointer| pointer.child,
                 else => continue,
+            };
+            const abstract_ty = switch (self.graph.types.items[@intFromEnum(pointee)]) {
+                .virtual => |abstract_type| abstract_type,
+                else => pointee,
             };
             const abstract_decl = switch (self.graph.types.items[@intFromEnum(abstract_ty)]) {
                 .declared => |declaration| declaration,
