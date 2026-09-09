@@ -42,26 +42,34 @@ pub const Hover = struct { range: Range, contents: []const u8 };
 pub const Definition = struct {
     path: []u8,
     range: Range,
-    pub fn deinit(self: Definition, allocator: std.mem.Allocator) void { allocator.free(self.path); }
+    pub fn deinit(self: Definition, allocator: std.mem.Allocator) void {
+        allocator.free(self.path);
+    }
 };
 
 pub const PrepareRename = struct {
     range: Range,
     placeholder: []u8,
-    pub fn deinit(self: PrepareRename, allocator: std.mem.Allocator) void { allocator.free(self.placeholder); }
+    pub fn deinit(self: PrepareRename, allocator: std.mem.Allocator) void {
+        allocator.free(self.placeholder);
+    }
 };
 
 pub const Location = struct {
     path: []u8,
     range: Range,
-    pub fn deinit(self: Location, allocator: std.mem.Allocator) void { allocator.free(self.path); }
+    pub fn deinit(self: Location, allocator: std.mem.Allocator) void {
+        allocator.free(self.path);
+    }
 };
 
 pub const LocationsResult = struct {
     allocator: std.mem.Allocator,
     items: []Location,
     owned: bool,
-    pub fn empty(allocator: std.mem.Allocator) LocationsResult { return .{ .allocator = allocator, .items = &.{}, .owned = false }; }
+    pub fn empty(allocator: std.mem.Allocator) LocationsResult {
+        return .{ .allocator = allocator, .items = &.{}, .owned = false };
+    }
     pub fn deinit(self: LocationsResult) void {
         if (!self.owned) return;
         for (self.items) |item| item.deinit(self.allocator);
@@ -83,7 +91,9 @@ pub const TextEditsResult = struct {
     allocator: std.mem.Allocator,
     items: []TextEdit,
     owned: bool,
-    pub fn empty(allocator: std.mem.Allocator) TextEditsResult { return .{ .allocator = allocator, .items = &.{}, .owned = false }; }
+    pub fn empty(allocator: std.mem.Allocator) TextEditsResult {
+        return .{ .allocator = allocator, .items = &.{}, .owned = false };
+    }
     pub fn deinit(self: TextEditsResult) void {
         if (!self.owned) return;
         for (self.items) |item| item.deinit(self.allocator);
@@ -95,7 +105,9 @@ pub const DiagnosticsResult = struct {
     allocator: std.mem.Allocator,
     items: []Diagnostic,
     owned: bool,
-    pub fn empty(allocator: std.mem.Allocator) DiagnosticsResult { return .{ .allocator = allocator, .items = &.{}, .owned = false }; }
+    pub fn empty(allocator: std.mem.Allocator) DiagnosticsResult {
+        return .{ .allocator = allocator, .items = &.{}, .owned = false };
+    }
     pub fn deinit(self: DiagnosticsResult) void {
         if (!self.owned) return;
         for (self.items) |item| self.allocator.free(item.message);
@@ -107,7 +119,9 @@ pub const InlayHintsResult = struct {
     allocator: std.mem.Allocator,
     items: []InlayHint,
     owned: bool,
-    pub fn empty(allocator: std.mem.Allocator) InlayHintsResult { return .{ .allocator = allocator, .items = &.{}, .owned = false }; }
+    pub fn empty(allocator: std.mem.Allocator) InlayHintsResult {
+        return .{ .allocator = allocator, .items = &.{}, .owned = false };
+    }
     pub fn deinit(self: InlayHintsResult) void {
         if (!self.owned) return;
         for (self.items) |item| self.allocator.free(item.label);
@@ -346,7 +360,10 @@ pub const LanguageService = struct {
             output.deinit();
         }
         for (analysis.graph.nodes.items) |node| {
-            const call = switch (node.content) { .function_call => |value| value, else => continue };
+            const call = switch (node.content) {
+                .function_call => |value| value,
+                else => continue,
+            };
             if (!editor_index.sourcePathEquals(&analysis.graph, &analysis.source_db, node.source, doc.path)) continue;
             const literal = switch (analysis.graph.nodes.items[@intFromEnum(call.input)].content) {
                 .struct_value_literal => |value| value,
@@ -661,6 +678,11 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
             }
             try writer.writeAll(")");
         },
+        .virtual => |abstract_type| {
+            try writer.writeAll("Virtual#(.abstract: ");
+            try writeType(writer, graph, abstract_type);
+            try writer.writeAll(")");
+        },
     }
 }
 
@@ -688,11 +710,8 @@ fn classifyToken(content: token.Content) ?TokenClass {
             .bool_literal => .{ .type_index = TOKEN_INDEX.keyword },
             else => .{ .type_index = TOKEN_INDEX.number },
         },
-        .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in,
-        .keyword_while, .keyword_break, .keyword_continue, .keyword_once, .keyword_test,
-        .keyword_and, .keyword_or => .{ .type_index = TOKEN_INDEX.keyword },
-        .binary_operator, .comparison_operator, .equal, .arrow, .pipe, .tilde, .bang, .double_bang,
-        .question_mark, .ampersand, .dollar, .colon, .double_colon => .{ .type_index = TOKEN_INDEX.operator },
+        .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once, .keyword_test, .keyword_and, .keyword_or => .{ .type_index = TOKEN_INDEX.keyword },
+        .binary_operator, .comparison_operator, .equal, .arrow, .pipe, .tilde, .bang, .double_bang, .question_mark, .ampersand, .dollar, .colon, .double_colon => .{ .type_index = TOKEN_INDEX.operator },
         else => null,
     };
 }
@@ -704,14 +723,26 @@ fn tokenLength(content: token.Content, source: []const u8, offset: u32) u32 {
             .bool_literal => |value| if (value) 4 else 5,
             .char_literal => scanQuoted(source, offset, '\''),
             .string_literal => scanQuoted(source, offset, '"'),
-            .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal,
-            .regular_float_literal, .scientific_float_literal => |range| range.len,
+            .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal, .regular_float_literal, .scientific_float_literal => |range| range.len,
         },
-        .keyword_return => 6, .keyword_if => 2, .keyword_else => 4, .keyword_match => 5,
-        .keyword_for => 3, .keyword_in => 2, .keyword_while => 5, .keyword_break => 5,
-        .keyword_continue => 8, .keyword_once => 4, .keyword_test => 4, .keyword_and => 3, .keyword_or => 2,
+        .keyword_return => 6,
+        .keyword_if => 2,
+        .keyword_else => 4,
+        .keyword_match => 5,
+        .keyword_for => 3,
+        .keyword_in => 2,
+        .keyword_while => 5,
+        .keyword_break => 5,
+        .keyword_continue => 8,
+        .keyword_once => 4,
+        .keyword_test => 4,
+        .keyword_and => 3,
+        .keyword_or => 2,
         .double_colon, .arrow, .double_bang => 2,
-        .comparison_operator => |operator| switch (operator) { .not_equal, .less_than_or_equal, .greater_than_or_equal, .equal => 2, else => 1 },
+        .comparison_operator => |operator| switch (operator) {
+            .not_equal, .less_than_or_equal, .greater_than_or_equal, .equal => 2,
+            else => 1,
+        },
         .binary_operator, .equal, .pipe, .tilde, .bang, .question_mark, .ampersand, .dollar, .colon => 1,
         else => 0,
     };

@@ -63,6 +63,7 @@ pub fn semanticType(comptime Ids: type, value: primitives.SemanticType(Ids), bou
             try require(verify.idFits(item.base, bounds.declarations));
             try require(verify.rangeFits(item.arguments, bounds.generic_arguments));
         },
+        .virtual => |abstract_type| try require(verify.idFits(abstract_type, bounds.types)),
     }
 }
 

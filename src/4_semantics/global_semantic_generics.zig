@@ -311,6 +311,7 @@ pub const Resolver = struct {
                 const id = try self.internType(.{ .generic = .{ .base = base, .arguments = args } });
                 break :blk id;
             },
+            .virtual => |abstract_type| self.internType(.{ .virtual = try self.instantiateTemplateType(module_index, abstract_type, bindings, self_type) }),
         };
     }
 
@@ -465,6 +466,7 @@ fn sameShallowType(a: global_sg.GlobalType, b: global_sg.GlobalType) bool {
         .nullable => |value| value == b.nullable,
         .inferred_errable => |value| value == b.inferred_errable,
         .generic => |value| value.base == b.generic.base and value.arguments.start == b.generic.arguments.start and value.arguments.len == b.generic.arguments.len,
+        .virtual => |value| value == b.virtual,
         .inferred_choice, .structural, .structural_choice => false,
     };
 }
