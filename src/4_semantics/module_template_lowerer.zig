@@ -288,6 +288,7 @@ pub const Context = struct {
                 .name = try self.writer.addString(if (field.inferred_result) "result" else self.tree.tokenTextFromSource(self.source, field.name_token)),
                 .ty = try self.lowerType(type_node, allow_self),
                 .source = self.sourceRef(field_node),
+                .default_value = if (field.default_value) |value| try self.lowerBodyNode(value) else null,
             });
         }
         const start: u32 = @intCast(self.graph.semantic.templates.ir.fields.items.len);
@@ -410,6 +411,41 @@ pub const Context = struct {
     fn lowerBodyNode(self: *Context, node: syn.NodeIndex) anyerror!ir.TemplateNodeId {
         if (self.tree.tag(node) == .expression_statement)
             return self.lowerBodyNode(self.tree.unaryOperand(node).?);
+        if (self.tree.matchStatement(node)) |statement| {
+            const value = try self.lowerBodyNode(statement.value);
+            var cases: std.ArrayList(ir.MatchCase) = .empty;
+            defer cases.deinit(self.allocator);
+            for (statement.cases) |case_node| {
+                const case = self.tree.matchCase(case_node) orelse return error.InvalidTemplateMatchCase;
+                const binding_mark = self.bindings.items.len;
+                defer self.bindings.shrinkRetainingCapacity(binding_mark);
+                const payload_binding: ?ir.TemplateBindingId = if (case.payload_name) |token| blk: {
+                    const name = self.tree.tokenTextFromSource(self.source, token);
+                    const binding: ir.TemplateBindingId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.templates.ir.bindings.items.len)));
+                    try self.graph.semantic.templates.ir.bindings.append(self.allocator, .{
+                        .name = try self.writer.addString(name),
+                        .source = self.sourceRef(case_node),
+                        .ty = try self.templateBuiltin(.Any),
+                        .mutability = .constant,
+                    });
+                    try self.bindings.append(.{ .name = name, .id = binding });
+                    break :blk binding;
+                } else null;
+                try cases.append(self.allocator, .{
+                    .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, case.variant_token)),
+                    .payload_binding = payload_binding,
+                    .body = try self.lowerBlock(case.body),
+                    .mode = case.mode,
+                    .source = self.sourceRef(case_node),
+                });
+            }
+            const start: u32 = @intCast(self.graph.semantic.templates.ir.match_cases.items.len);
+            try self.graph.semantic.templates.ir.match_cases.appendSlice(self.allocator, cases.items);
+            const id = try self.addPending(node, .match, &.{value}, null, null, 0);
+            const pending_id = self.graph.semantic.templates.ir.nodes.items[@intFromEnum(id)].pending;
+            self.graph.semantic.templates.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.match_cases = .{ .start = start, .len = @intCast(cases.items.len) };
+            return id;
+        }
         if (self.tree.functionCall(node)) |call| {
             const input = try self.lowerBodyNode(call.input);
             var arguments: std.ArrayList(ir.GenericArgument) = .empty;
@@ -524,6 +560,7 @@ pub const Context = struct {
             .function_call => if (self.tree.functionCall(node)) |call| try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)) else null,
             .struct_field_access => if (self.tree.structFieldAccess(node)) |access| try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.field_token)) else null,
             .choice_payload_access => if (self.tree.choicePayloadAccess(node)) |access| try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.variant_token)) else null,
+            .choice_literal, .choice_some_literal => if (self.tree.choiceLiteral(node)) |literal| try self.writer.addString(self.tree.tokenTextFromSource(self.source, literal.name_token)) else null,
             .keep_statement => if (self.tree.keepStatement(node)) |keep| try self.writer.addString(self.tree.tokenTextFromSource(self.source, keep.name_token)) else null,
             else => null,
         };

@@ -309,6 +309,7 @@ pub const Resolver = struct {
                 const base = try self.resolveTemplateDeclaration(module_index, generic.base);
                 const args = try self.instantiateTemplateArguments(module_index, generic.arguments, bindings, self_type);
                 const id = try self.internType(.{ .generic = .{ .base = base, .arguments = args } });
+                _ = try self.ensureGenericInstance(id);
                 break :blk id;
             },
             .virtual => |abstract_type| self.internType(.{ .virtual = try self.instantiateTemplateType(module_index, abstract_type, bindings, self_type) }),
