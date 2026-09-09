@@ -70,6 +70,25 @@ pub const Resolver = struct {
         return changed;
     }
 
+    pub fn materializeAddresses(self: *Resolver) !bool {
+        var changed = false;
+        for (self.graph.nodes.items) |*node| switch (node.content) {
+            .address_of => |value| {
+                const child = self.graph.nodes.items[@intFromEnum(value)].ty orelse continue;
+                const mutability = if (node.ty) |old| switch (self.graph.types.items[@intFromEnum(old)]) {
+                    .pointer => |pointer| pointer.mutability,
+                    else => continue,
+                } else continue;
+                const pointer_type = try self.pointerType(child, mutability);
+                if (node.ty != null and types.equal(self.graph, node.ty.?, pointer_type)) continue;
+                node.ty = pointer_type;
+                changed = true;
+            },
+            else => {},
+        };
+        return changed;
+    }
+
     pub fn materializeBindingTypes(self: *Resolver) bool {
         var changed = false;
         for (self.graph.bindings.items) |*binding| {
@@ -519,6 +538,17 @@ pub const Resolver = struct {
         };
         const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
         try self.graph.types.append(self.allocator, .{ .builtin = builtin_type });
+        return id;
+    }
+
+    fn pointerType(self: *Resolver, child: global_sg.GlobalTypeId, mutability: @import("../3_syntax/syntax_tree.zig").PointerMutability) !global_sg.GlobalTypeId {
+        for (self.graph.types.items, 0..) |ty, raw| switch (ty) {
+            .pointer => |pointer| if (pointer.mutability == mutability and types.equal(self.graph, pointer.child, child))
+                return @enumFromInt(@as(u32, @intCast(raw))),
+            else => {},
+        };
+        const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
+        try self.graph.types.append(self.allocator, .{ .pointer = .{ .child = child, .mutability = mutability } });
         return id;
     }
 
