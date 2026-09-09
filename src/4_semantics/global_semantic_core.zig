@@ -109,7 +109,6 @@ pub const Resolver = struct {
         else
             null;
         const name = self.modules[current_module].text(reference.name);
-        const input_ty = self.graph.nodes.items[@intFromEnum(input_node)].ty;
         var best: ?global_sg.GlobalFunctionId = null;
         var best_score: u32 = 0;
         var tied = false;
@@ -117,7 +116,7 @@ pub const Resolver = struct {
             const decl = self.graph.declarations.items[@intFromEnum(function.declaration)];
             if (!std.mem.eql(u8, self.graph.text(decl.name), name)) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
-            const score = self.callScore(function, input_ty) orelse continue;
+            const score = self.callScore(function, input_node) orelse continue;
             if (best == null or score > best_score) {
                 best = @enumFromInt(@as(u32, @intCast(raw)));
                 best_score = score;
@@ -181,6 +180,16 @@ pub const Resolver = struct {
         return self.structType(function.output);
     }
 
+    pub fn isUnpackedOutputField(self: *const Resolver, node: global_sg.GlobalNodeId, name: []const u8) bool {
+        const function_id = switch (self.graph.nodes.items[@intFromEnum(node)].content) {
+            .function_call => |call| call.callee,
+            else => return false,
+        };
+        const output = self.graph.functions.items[@intFromEnum(function_id)].output;
+        if (output.len != 1) return false;
+        return std.mem.eql(u8, self.graph.text(self.graph.fields.items[output.start].name), name);
+    }
+
     pub fn makeCallInput(self: *Resolver, function_id: global_sg.GlobalFunctionId, nodes: []const global_sg.GlobalNodeId) !global_sg.GlobalNodeId {
         const function = self.graph.functions.items[@intFromEnum(function_id)];
         if (nodes.len != function.input.len) return error.InvalidCallInputArity;
@@ -213,6 +222,7 @@ pub const Resolver = struct {
         if (reference.generic_arguments != null) return false;
         const input = globalizer.globalNode(o, value.input);
         const function = self.resolveFunctionByName(module_index, reference, input) catch return false;
+        if (!try self.completeCallInput(function, input)) return false;
         const output = try self.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -227,8 +237,14 @@ pub const Resolver = struct {
     fn resolveField(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !bool {
         const source = globalizer.globalNode(o, value.value);
         const source_ty = self.graph.nodes.items[@intFromEnum(source)].ty orelse return false;
-        const hit = types.findField(self.graph, source_ty, module.text(value.field_name)) orelse return false;
         const target = globalizer.globalNode(o, value.node);
+        const field_name = module.text(value.field_name);
+        if (self.isUnpackedOutputField(source, field_name)) {
+            self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(source)];
+            self.stats.fields += 1;
+            return true;
+        }
+        const hit = types.findField(self.graph, source_ty, field_name) orelse return false;
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = self.graph.nodes.items[@intFromEnum(source)].source,
             .ty = hit.field.ty,
@@ -245,8 +261,9 @@ pub const Resolver = struct {
     fn resolveBinary(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !bool {
         const left = globalizer.globalNode(o, value.left);
         const right = globalizer.globalNode(o, value.right);
-        const left_ty = self.graph.nodes.items[@intFromEnum(left)].ty orelse return false;
-        const right_ty = self.graph.nodes.items[@intFromEnum(right)].ty orelse return false;
+        var left_ty = self.graph.nodes.items[@intFromEnum(left)].ty orelse return false;
+        var right_ty = self.graph.nodes.items[@intFromEnum(right)].ty orelse return false;
+        self.coerceIntegerPair(left, &left_ty, right, &right_ty);
         const target = globalizer.globalNode(o, value.node);
         if (self.isBuiltinArithmetic(left_ty, right_ty)) {
             self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -272,8 +289,9 @@ pub const Resolver = struct {
     fn resolveComparison(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !bool {
         const left = globalizer.globalNode(o, value.left);
         const right = globalizer.globalNode(o, value.right);
-        const left_ty = self.graph.nodes.items[@intFromEnum(left)].ty orelse return false;
-        const right_ty = self.graph.nodes.items[@intFromEnum(right)].ty orelse return false;
+        var left_ty = self.graph.nodes.items[@intFromEnum(left)].ty orelse return false;
+        var right_ty = self.graph.nodes.items[@intFromEnum(right)].ty orelse return false;
+        self.coerceIntegerPair(left, &left_ty, right, &right_ty);
         const bool_ty = try self.builtin(.Bool);
         const target = globalizer.globalNode(o, value.node);
         if (self.isBuiltinComparable(left_ty, right_ty)) {
@@ -353,19 +371,57 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn callScore(self: *Resolver, function: global_sg.Function, input_type: ?global_sg.GlobalTypeId) ?u32 {
-        if (input_type == null) return if (function.input.len == 0) 1 else null;
-        const actual_fields = types.fields(self.graph, input_type.?) orelse return if (function.input.len == 1) 1 else null;
-        if (actual_fields.len != function.input.len) return null;
+    fn callScore(self: *Resolver, function: global_sg.Function, input_node: global_sg.GlobalNodeId) ?u32 {
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input_node)].content) {
+            .struct_value_literal => |value| value,
+            else => return null,
+        };
+        if (literal.fields.len > function.input.len) return null;
         var score: u32 = 0;
-        for (0..actual_fields.len) |i| {
-            const actual = self.graph.fields.items[actual_fields.start + @as(u32, @intCast(i))].ty;
-            const expected = self.graph.fields.items[function.input.start + @as(u32, @intCast(i))].ty;
-            if (types.equal(self.graph, actual, expected)) score += 4
-            else if (types.isBuiltin(self.graph, expected, .Any)) score += 1
-            else return null;
+        for (0..function.input.len) |expected_offset| {
+            const expected = self.graph.fields.items[function.input.start + @as(u32, @intCast(expected_offset))];
+            const supplied = self.callArgument(literal, expected_offset, expected.name);
+            if (supplied) |node| {
+                const actual = self.graph.nodes.items[@intFromEnum(node)].ty orelse return null;
+                if (types.equal(self.graph, actual, expected.ty)) score += 4
+                else if (types.isBuiltin(self.graph, expected.ty, .Any)) score += 1
+                else if (self.contextualLiteralFits(node, expected.ty)) score += 3
+                else return null;
+            } else if (expected.default_value == null) return null;
         }
         return score;
+    }
+
+    fn callArgument(self: *const Resolver, literal: anytype, expected_offset: usize, expected_name: primitives.StringRange) ?global_sg.GlobalNodeId {
+        for (0..literal.fields.len) |supplied_offset| {
+            const supplied = self.graph.value_fields.items[literal.fields.start + @as(u32, @intCast(supplied_offset))];
+            if (supplied_offset < literal.dispatch_prefix_positional_count or self.graph.text(supplied.name).len == 0) {
+                if (supplied_offset == expected_offset) return supplied.value;
+            } else if (std.mem.eql(u8, self.graph.text(supplied.name), self.graph.text(expected_name))) return supplied.value;
+        }
+        return null;
+    }
+
+    fn completeCallInput(self: *Resolver, function_id: global_sg.GlobalFunctionId, input_node: global_sg.GlobalNodeId) !bool {
+        const function = self.graph.functions.items[@intFromEnum(function_id)];
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input_node)].content) {
+            .struct_value_literal => |value| value,
+            else => return false,
+        };
+        const start: u32 = @intCast(self.graph.value_fields.items.len);
+        for (0..function.input.len) |offset| {
+            const expected = self.graph.fields.items[function.input.start + @as(u32, @intCast(offset))];
+            const node = self.callArgument(literal, offset, expected.name) orelse expected.default_value orelse return false;
+            _ = self.coerceContextualLiteral(node, expected.ty);
+            try self.graph.value_fields.append(self.allocator, .{ .name = expected.name, .value = node });
+        }
+        const ty = try self.structType(function.input);
+        self.graph.nodes.items[@intFromEnum(input_node)].ty = ty;
+        self.graph.nodes.items[@intFromEnum(input_node)].content.struct_value_literal = .{
+            .fields = .{ .start = start, .len = function.input.len },
+            .ty = ty,
+        };
+        return true;
     }
 
     fn structType(self: *Resolver, fields: global_sg.FieldRange) !global_sg.GlobalTypeId {
@@ -399,6 +455,65 @@ pub const Resolver = struct {
             },
             else => false,
         };
+    }
+
+    fn coerceIntegerPair(
+        self: *Resolver,
+        left: global_sg.GlobalNodeId,
+        left_ty: *global_sg.GlobalTypeId,
+        right: global_sg.GlobalNodeId,
+        right_ty: *global_sg.GlobalTypeId,
+    ) void {
+        if (types.equal(self.graph, left_ty.*, right_ty.*)) return;
+        if (self.coerceIntegerLiteral(left, right_ty.*)) {
+            left_ty.* = right_ty.*;
+        } else if (self.coerceIntegerLiteral(right, left_ty.*)) {
+            right_ty.* = left_ty.*;
+        }
+    }
+
+    fn coerceIntegerLiteral(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+        if (!self.integerLiteralFits(node, target)) return false;
+        self.graph.nodes.items[@intFromEnum(node)].ty = target;
+        return true;
+    }
+
+    fn contextualLiteralFits(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+        if (self.integerLiteralFits(node, target)) return true;
+        if (self.graph.nodes.items[@intFromEnum(node)].content != .string_literal) return false;
+        return switch (self.graph.types.items[@intFromEnum(target)]) {
+            .pointer => |pointer| pointer.mutability == .read_only and types.isBuiltin(self.graph, pointer.child, .Char),
+            else => false,
+        };
+    }
+
+    fn coerceContextualLiteral(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+        if (!self.contextualLiteralFits(node, target)) return false;
+        self.graph.nodes.items[@intFromEnum(node)].ty = target;
+        return true;
+    }
+
+    fn integerLiteralFits(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+        const value = switch (self.graph.nodes.items[@intFromEnum(node)].content) {
+            .int_literal => |number| number,
+            else => return false,
+        };
+        const fits = switch (self.graph.types.items[@intFromEnum(target)]) {
+            .builtin => |builtin_type| switch (builtin_type) {
+                .Int8 => value >= std.math.minInt(i8) and value <= std.math.maxInt(i8),
+                .Int16 => value >= std.math.minInt(i16) and value <= std.math.maxInt(i16),
+                .Int32 => value >= std.math.minInt(i32) and value <= std.math.maxInt(i32),
+                .Int64 => true,
+                .UIntNative => value >= 0,
+                .UInt8 => value >= 0 and value <= std.math.maxInt(u8),
+                .UInt16 => value >= 0 and value <= std.math.maxInt(u16),
+                .UInt32 => value >= 0 and value <= std.math.maxInt(u32),
+                .UInt64 => value >= 0,
+                else => false,
+            },
+            else => false,
+        };
+        return fits;
     }
 
     fn isBuiltinComparable(self: *Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {

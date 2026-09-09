@@ -408,6 +408,8 @@ pub const Context = struct {
     }
 
     fn lowerBodyNode(self: *Context, node: syn.NodeIndex) anyerror!ir.TemplateNodeId {
+        if (self.tree.tag(node) == .expression_statement)
+            return self.lowerBodyNode(self.tree.unaryOperand(node).?);
         if (self.tree.functionCall(node)) |call| {
             const input = try self.lowerBodyNode(call.input);
             var arguments: std.ArrayList(ir.GenericArgument) = .empty;
@@ -742,6 +744,7 @@ fn templateKindForTag(tag: syn.Node.Tag) ir.PendingExpressionKind {
         .address_of, .address_of_mut => .address_of,
         .dereference => .dereference,
         .pointer_assignment => .pointer_store,
+        .move_expression => .move_value,
         .struct_value_literal => .struct_value,
         .list_literal => .list_value,
         .return_statement => .return_statement,
