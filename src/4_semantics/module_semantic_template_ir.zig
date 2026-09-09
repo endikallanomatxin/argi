@@ -162,6 +162,7 @@ pub const PendingExpressionKind = enum(u8) {
     address_of,
     dereference,
     pointer_store,
+    move_value,
     struct_value,
     list_value,
     return_statement,

@@ -379,6 +379,7 @@ pub const Resolver = struct {
                     .bool_literal => |value| .{ .bool_literal = value },
                     .string_literal => |value| .{ .string_literal = try self.copyString(value) },
                     .type_literal => |value| .{ .type_literal = try self.resolver.generics.instantiateTemplateType(self.module_index, value, self.substitutions, null) },
+                    .move_value => |value| .{ .move_value = try self.instantiateNode(value) },
                     .break_statement => .break_statement,
                     .continue_statement => .continue_statement,
                     else => return error.UnsupportedResolvedTemplateNode,
@@ -469,6 +470,7 @@ pub const Resolver = struct {
                 .address_of => self.resolveAddress(operands.items, value.source, value.aux),
                 .dereference => self.resolveDereference(operands.items, value.source),
                 .pointer_store => self.resolvePointerStore(operands.items, value.source),
+                .move_value => self.resolveMove(operands.items, value.source),
                 .pipe => if (operands.items.len != 0) self.resolver.graph.nodes.items[@intFromEnum(operands.items[operands.items.len - 1])] else error.InvalidTemplatePipe,
                 .struct_value,
                 .list_value,
@@ -600,12 +602,24 @@ pub const Resolver = struct {
         fn resolveField(self: *InstanceContext, value: global_sg.GlobalNodeId, field_name: primitives.StringRange, source: primitives.SourceRef) !global_sg.Node {
             const ty = self.resolver.graph.nodes.items[@intFromEnum(value)].ty orelse return error.TemplateFieldOnUntypedValue;
             const name = self.resolver.modules[self.module_index].text(field_name);
+            if (self.resolver.core.isUnpackedOutputField(value, name))
+                return self.resolver.graph.nodes.items[@intFromEnum(value)];
             _ = try self.resolver.generics.ensureGenericInstance(ty);
             const hit = global_types.findField(self.resolver.graph, ty, name) orelse return error.UnknownTemplateField;
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = hit.field.ty,
                 .content = .{ .struct_field_access = .{ .value = value, .field_name = try self.copyString(field_name), .field_index = hit.index } },
+            };
+        }
+
+        fn resolveMove(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {
+            if (operands.len != 1) return error.InvalidTemplateMove;
+            const value = operands[0];
+            return .{
+                .source = self.resolver.sourceFor(self.module_index, source),
+                .ty = self.resolver.graph.nodes.items[@intFromEnum(value)].ty,
+                .content = .{ .move_value = value },
             };
         }
 

@@ -194,6 +194,42 @@ const Context = struct {
             });
             stats.field_defaults += 1;
         }
+        for (self.graph.declarations.items) |declaration| {
+            self.selectFile(declaration.module_file_index);
+            switch (declaration.kind) {
+                .type => if (declaration.struct_fields) |range| {
+                    const type_declaration = self.tree.typeDeclaration(declaration.syntax_node) orelse continue;
+                    try self.lowerDeferredDefaults(range.start, range.len, type_declaration.value, stats);
+                },
+                .function, .test_function => if (declaration.function_id) |function_id| {
+                    const syntax_function = if (declaration.kind == .test_function)
+                        self.tree.testDeclaration(declaration.syntax_node).?.function
+                    else
+                        self.tree.functionDeclaration(declaration.syntax_node).?;
+                    const function = self.graph.functions.items[@intFromEnum(function_id)];
+                    try self.lowerDeferredDefaults(function.input.start, function.input.len, syntax_function.input, stats);
+                    try self.lowerDeferredDefaults(function.output.start, function.output.len, syntax_function.output, stats);
+                },
+                else => {},
+            }
+        }
+    }
+
+    fn lowerDeferredDefaults(self: *Context, range_start: u32, range_len: u32, struct_node: syn.NodeIndex, stats: *Stats) !void {
+        const semantic_field_base = self.graph.fields.items.len + self.graph.structural_fields.items.len;
+        if (range_start < semantic_field_base) return;
+        const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;
+        if (literal.fields.len != range_len) return error.InterfaceFieldCountMismatch;
+        for (literal.fields, 0..) |field_node, offset| {
+            const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
+            const default_node = field.default_value orelse continue;
+            const field_id: entities.ModuleFieldId = @enumFromInt(range_start + @as(u32, @intCast(offset)));
+            const semantic_field = try views.fieldView(self.graph, field_id);
+            const value = try self.lowerExpr(default_node, semantic_field.ty);
+            const semantic_index = @intFromEnum(field_id) - semantic_field_base;
+            self.graph.semantic.fields.items[semantic_index].default_value = value.node;
+            stats.field_defaults += 1;
+        }
     }
 
     fn lowerExpr(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) anyerror!Lowered {
