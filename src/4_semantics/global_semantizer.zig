@@ -132,6 +132,7 @@ pub fn semantize(
         }
         if (core.materializeBindingTypes()) changed = true;
         if (core.materializeDereferences()) changed = true;
+        if (try core.materializeAddresses()) changed = true;
         if (try generics.materializeKnownTypes()) changed = true;
         try control.materializeSugarTypes();
     }

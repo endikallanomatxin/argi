@@ -195,11 +195,14 @@ pub const Resolver = struct {
         position: usize,
     ) ?global_sg.GenericArgument {
         const wanted = module.text(parameter_name);
+        var has_named = false;
         for (0..arguments.len) |offset| {
             const argument = self.graph.generic_arguments.items[arguments.start + @as(u32, @intCast(offset))];
             const name = self.graph.text(argument.name);
+            if (name.len != 0) has_named = true;
             if (name.len != 0 and std.mem.eql(u8, name, wanted)) return argument;
         }
+        if (has_named) return null;
         if (position < arguments.len)
             return self.graph.generic_arguments.items[arguments.start + @as(u32, @intCast(position))];
         return null;

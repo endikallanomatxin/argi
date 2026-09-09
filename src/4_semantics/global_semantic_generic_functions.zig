@@ -184,9 +184,9 @@ pub const Resolver = struct {
             self.stats.calls += 1;
             return true;
         }
-        const declaration = self.core.resolveDeclaration(module_index, reference, &.{.function}) catch return false;
         const args = try self.generics.relocateModuleArguments(module_index, local_args);
-        const function = try self.instantiate(declaration, args);
+        const function = self.resolveExplicitGenericFunction(module_index, module, reference, args, input) catch return false;
+        if (!try self.core.completeCallInputFields(self.graph.functions.items[@intFromEnum(function)].input, input)) return false;
         const output_ty = try self.core.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -196,6 +196,45 @@ pub const Resolver = struct {
         };
         self.stats.calls += 1;
         return true;
+    }
+
+    fn resolveExplicitGenericFunction(
+        self: *Resolver,
+        current_module: usize,
+        module: *const module_sg.ModuleSemanticGraph,
+        reference: module_entities.ExternalRef,
+        arguments: primitives.Range(global_sg.GlobalGenericArgId),
+        input: global_sg.GlobalNodeId,
+    ) !global_sg.GlobalFunctionId {
+        if (reference.module_path != null) {
+            const declaration = try self.core.resolveDeclaration(current_module, reference, &.{.function});
+            return self.instantiate(declaration, arguments);
+        }
+        if (self.core.resolveDeclaration(current_module, reference, &.{.function})) |declaration|
+            return self.instantiate(declaration, arguments)
+        else |_| {}
+        const name = module.text(reference.name);
+        var best: ?global_sg.GlobalFunctionId = null;
+        var best_score: u32 = 0;
+        var tied = false;
+        for (self.modules, 0..) |*candidate_module, candidate_module_index| {
+            for (candidate_module.semantic.templates.generic_function_templates.items) |template| {
+                const declaration = globalizer.globalDecl(self.offsets[candidate_module_index], template.declaration);
+                const declaration_record = self.graph.declarations.items[@intFromEnum(declaration)];
+                if (!std.mem.eql(u8, self.graph.text(declaration_record.name), name)) continue;
+                if (!self.core.declarationVisible(current_module, declaration, null)) continue;
+                const function = self.instantiate(declaration, arguments) catch continue;
+                const score = self.core.scoreCallInput(self.graph.functions.items[@intFromEnum(function)].input, input) orelse continue;
+                if (best == null or score > best_score) {
+                    best = function;
+                    best_score = score;
+                    tied = false;
+                } else if (score == best_score and function != best.?) tied = true;
+            }
+        }
+        if (best == null) return error.NoMatchingGenericFunction;
+        if (tied) return error.AmbiguousGenericFunction;
+        return best.?;
     }
 
     fn makeExplicitCast(
