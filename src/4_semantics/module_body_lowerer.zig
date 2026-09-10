@@ -11,7 +11,11 @@ const type_lowerer = @import("module_type_lowerer.zig");
 
 pub const Stats = struct { lowered_functions: u32 = 0 };
 
-const NamedBinding = struct { name: primitives.StringRange, id: entities.ModuleBindingId };
+const NamedBinding = struct {
+    name: primitives.StringRange,
+    id: entities.ModuleBindingId,
+    ty: ?entities.ModuleTypeId,
+};
 const Lowered = struct { node: entities.ModuleNodeId, ty: ?entities.ModuleTypeId };
 
 pub fn lowerMissingFunctions(
@@ -106,7 +110,7 @@ const Context = struct {
                 .mutability = mutability,
             });
             try result.append(id);
-            try self.bindings.append(.{ .name = field.name, .id = id });
+            try self.bindings.append(.{ .name = field.name, .id = id, .ty = field.ty });
         }
     }
 
@@ -193,41 +197,40 @@ const Context = struct {
 
     fn lowerIdentifier(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
-        if (self.lookupBinding(text)) |binding| {
-            const record = self.graph.semantic.bindings.items[@intFromEnum(binding)];
-            return self.resolved(node, record.ty, .{ .binding_use = binding });
-        }
+        if (self.lookupBinding(text)) |binding|
+            return self.resolved(node, binding.ty, .{ .binding_use = binding.id });
         return self.pendingLeaf(node, .unknown_identifier, try self.writer.addString(text), expected);
     }
 
     fn lowerBinding(self: *Context, node: syn.NodeIndex) !Lowered {
         const declaration = self.tree.symbolDeclaration(node).?;
         const value = if (declaration.value) |value_node| try self.lowerNode(value_node, null) else null;
-        const ty = if (declaration.type_node) |type_node|
+        const semantic_ty: ?entities.ModuleTypeId = if (declaration.type_node) |type_node|
             try self.lowerType(type_node)
         else if (value) |item|
-            try self.compatibilityType(item.ty)
+            item.ty
         else
-            try self.builtin(.Any);
+            null;
+        const stored_ty = try self.compatibilityType(semantic_ty);
         const name_text = self.tree.tokenTextFromSource(self.source, declaration.name_token);
         const binding = try self.writer.addBinding(.{
             .name = try self.writer.addString(name_text),
             .source = self.sourceRef(node),
-            .ty = ty,
+            .ty = stored_ty,
             .initialization = if (value) |item| item.node else null,
             .mutability = declaration.mutability,
         });
-        try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(binding)].name, .id = binding });
-        return self.resolved(node, ty, .{ .binding_declaration = binding });
+        const name = self.graph.semantic.bindings.items[@intFromEnum(binding)].name;
+        try self.bindings.append(.{ .name = name, .id = binding, .ty = semantic_ty });
+        return self.resolved(node, semantic_ty, .{ .binding_declaration = binding });
     }
 
     fn lowerAssignment(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const assignment = self.tree.assignment(node).?;
         const name_text = self.tree.tokenTextFromSource(self.source, assignment.name_token);
         if (self.lookupBinding(name_text)) |binding| {
-            const ty = self.graph.semantic.bindings.items[@intFromEnum(binding)].ty;
-            const value = try self.lowerNode(assignment.value, ty);
-            return self.resolved(node, ty, .{ .assignment = .{ .binding = binding, .value = value.node } });
+            const value = try self.lowerNode(assignment.value, binding.ty);
+            return self.resolved(node, binding.ty, .{ .assignment = .{ .binding = binding.id, .value = value.node } });
         }
         const value = try self.lowerNode(assignment.value, expected);
         const ops = try self.writer.appendNodeRefs(&.{value.node});
@@ -509,7 +512,8 @@ const Context = struct {
             .mutability = if (statement.mode == .mut_borrow) .variable else .constant,
         });
         try self.pushScope();
-        try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(binding)].name, .id = binding });
+        const name = self.graph.semantic.bindings.items[@intFromEnum(binding)].name;
+        try self.bindings.append(.{ .name = name, .id = binding, .ty = null });
         const body = try self.lowerBlock(statement.body);
         self.popScope();
         return self.pending(node, .{ .resolve_for_each = .{
@@ -546,7 +550,8 @@ const Context = struct {
                     .mutability = if (case.mode == .mut_borrow) .variable else .constant,
                 });
                 payload_binding = id;
-                try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(id)].name, .id = id });
+                const name = self.graph.semantic.bindings.items[@intFromEnum(id)].name;
+                try self.bindings.append(.{ .name = name, .id = id, .ty = null });
             }
             const body = try self.lowerBlock(case.body);
             self.popScope();
@@ -577,7 +582,7 @@ const Context = struct {
         const keep = self.tree.keepStatement(node).?;
         const name = self.tree.tokenTextFromSource(self.source, keep.name_token);
         if (self.lookupBinding(name)) |binding|
-            return self.pending(node, .{ .resolve_keep = .{ .node = self.nextNodeId(), .binding = binding } }, try self.builtin(.Void));
+            return self.pending(node, .{ .resolve_keep = .{ .node = self.nextNodeId(), .binding = binding.id } }, try self.builtin(.Void));
         return self.pendingLeaf(node, .unknown_identifier, try self.writer.addString(name), try self.builtin(.Void));
     }
 
@@ -661,7 +666,7 @@ const Context = struct {
         return .{ .node = id, .ty = ty };
     }
 
-    fn resolved(self: *Context, node: syn.NodeIndex, ty: entities.ModuleTypeId, content: entities.ResolvedNode.Content) !Lowered {
+    fn resolved(self: *Context, node: syn.NodeIndex, ty: ?entities.ModuleTypeId, content: entities.ResolvedNode.Content) !Lowered {
         return .{ .node = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = ty, .content = content }), .ty = ty };
     }
 
@@ -717,11 +722,11 @@ const Context = struct {
         const mark = self.scope_marks.pop().?;
         self.bindings.shrinkRetainingCapacity(mark);
     }
-    fn lookupBinding(self: *const Context, name: []const u8) ?entities.ModuleBindingId {
+    fn lookupBinding(self: *const Context, name: []const u8) ?NamedBinding {
         var index = self.bindings.items.len;
         while (index != 0) {
             index -= 1;
-            if (std.mem.eql(u8, self.graph.text(self.bindings.items[index].name), name)) return self.bindings.items[index].id;
+            if (std.mem.eql(u8, self.graph.text(self.bindings.items[index].name), name)) return self.bindings.items[index];
         }
         return null;
     }
