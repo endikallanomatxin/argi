@@ -32,7 +32,7 @@ fn makeScalarModule(allocator: std.mem.Allocator, dir: []const u8, type_name_tex
         .syntax_node = @enumFromInt(0),
         .type_id = @enumFromInt(0),
     });
-    try module.semantic.resolved_types.append(allocator, .{ .declared = @enumFromInt(0) });
+    try module.semantic.types.append(allocator, .{ .resolved = .{ .declared = @enumFromInt(0) } });
     try module.symbol_declarations.append(allocator, @enumFromInt(0));
     try module.symbols.append(allocator, .{
         .name = type_name,
@@ -100,11 +100,11 @@ fn makeInferredChoiceModule(allocator: std.mem.Allocator) !module_sg.ModuleSeman
         .source = .{ .file_index = 0, .offset = 6 },
         .value = 0,
     });
-    try module.semantic.resolved_types.append(allocator, .{ .inferred_choice = .{
+    try module.semantic.types.append(allocator, .{ .resolved = .{ .inferred_choice = .{
         .identity = 17,
         .kind = .reasons,
         .variants = .{ .start = 0, .len = 1 },
-    } });
+    } } });
     try module.symbol_declarations.append(allocator, @enumFromInt(0));
     try module.symbols.append(allocator, .{ .name = type_name, .declarations = .{ .start = 0, .len = 1 } });
     module.semantic.local_semantics_complete = true;
@@ -140,15 +140,15 @@ fn makeGenericArrayModule(allocator: std.mem.Allocator) !module_sg.ModuleSemanti
     try module.symbol_declarations.append(allocator, @enumFromInt(0));
     try module.symbols.append(allocator, .{ .name = type_name, .declarations = .{ .start = 0, .len = 1 } });
 
-    try module.semantic.resolved_types.append(allocator, .{ .builtin = .Int32 });
+    try module.semantic.types.append(allocator, .{ .resolved = .{ .builtin = .Int32 } });
     try module.semantic.generic_arguments.append(allocator, .{
         .name = argument_name,
         .value = .{ .type = @enumFromInt(0) },
     });
-    try module.semantic.resolved_types.append(allocator, .{ .generic = .{
+    try module.semantic.types.append(allocator, .{ .resolved = .{ .generic = .{
         .base = @enumFromInt(0),
         .arguments = .{ .start = 0, .len = 1 },
-    } });
+    } } });
     try module.semantic.generic_instances.append(allocator, .{
         .type_id = @enumFromInt(1),
         .shape = .{ .array = .{
