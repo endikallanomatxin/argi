@@ -1,5 +1,5 @@
 const std = @import("std");
-const primitives = @import("semantic_primitives.zig");
+const primitives = @import("primitives/schema.zig");
 
 pub fn idFits(id: anytype, len: usize) bool {
     return @intFromEnum(id) < len;

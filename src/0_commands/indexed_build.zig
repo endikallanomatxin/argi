@@ -6,9 +6,9 @@ const diag = @import("../1_base/diagnostic.zig");
 const link = @import("../5_codegen/link.zig");
 const frontend = @import("frontend_pipeline.zig");
 const codegen = @import("../5_codegen/global_codegen.zig");
-const graph_mod = @import("../4_semantics/global_semantic_graph.zig");
-const types = @import("../4_semantics/global_semantic_types.zig");
-const graph_print = @import("../4_semantics/global_semantic_print.zig");
+const graph_mod = @import("../4_semantics/global/graph.zig");
+const types = @import("../4_semantics/global/types.zig");
+const graph_print = @import("../4_semantics/global/print.zig");
 const planning = @import("build_plan.zig");
 
 pub const BuildFlags = planning.BuildFlags;

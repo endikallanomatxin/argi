@@ -1,9 +1,9 @@
 const std = @import("std");
 const llvm = @import("llvm.zig");
 const c = llvm.c;
-const graph_mod = @import("../4_semantics/global_semantic_graph.zig");
-const types = @import("../4_semantics/global_semantic_types.zig");
-const primitives = @import("../4_semantics/semantic_primitives.zig");
+const graph_mod = @import("../4_semantics/global/graph.zig");
+const types = @import("../4_semantics/global/types.zig");
+const primitives = @import("../4_semantics/primitives/schema.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 const tok = @import("../2_tokens/token.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
@@ -240,7 +240,10 @@ pub const CodeGenerator = struct {
     fn predeclareGlobalBindings(self: *CodeGenerator) !void {
         for (self.graph.roots.items) |node_id| {
             const node = self.graph.nodes.items[@intFromEnum(node_id)];
-            const binding = switch (node.content) { .binding_declaration => |id| id, else => continue };
+            const binding = switch (node.content) {
+                .binding_declaration => |id| id,
+                else => continue,
+            };
             if (self.global_bindings.contains(binding)) continue;
             const record = self.graph.bindings.items[@intFromEnum(binding)];
             const type_ref = try self.toLLVMType(record.ty);
@@ -289,7 +292,10 @@ pub const CodeGenerator = struct {
             },
             .address_of => |target| blk: {
                 const target_node = self.graph.nodes.items[@intFromEnum(target)];
-                const binding = switch (target_node.content) { .binding_use => |id| id, else => return CodegenError.InvalidType };
+                const binding = switch (target_node.content) {
+                    .binding_use => |id| id,
+                    else => return CodegenError.InvalidType,
+                };
                 try self.ensureGlobalInitialized(binding);
                 const storage = self.bindings.get(binding) orelse return CodegenError.SymbolNotFound;
                 break :blk .{ .value_ref = storage.ref, .type_ref = c.LLVMPointerType(storage.type_ref, 0), .ty = node.ty };
@@ -400,7 +406,10 @@ pub const CodeGenerator = struct {
                 if (self.dropStateForNode(value)) |drop| self.storeDropState(drop, false);
                 break :blk result;
             },
-            .auto_deinit_binding => |auto| blk: { try self.genAutoDeinit(auto); break :blk null; },
+            .auto_deinit_binding => |auto| blk: {
+                try self.genAutoDeinit(auto);
+                break :blk null;
+            },
             .function_call => |call| try self.genFunctionCall(call),
             .virtualize, .virtual_call => CodegenError.NotYetImplemented,
             .code_block => |block| try self.genBlock(block),
@@ -414,21 +423,51 @@ pub const CodeGenerator = struct {
             .testing_expect_error, .error_propagation, .error_context => CodegenError.NotYetImplemented,
             .array_literal => |literal| try self.arrayLiteral(literal),
             .array_index => |access| try self.arrayIndex(access),
-            .array_store => |store| blk: { try self.arrayStore(store); break :blk null; },
-            .struct_field_store => |store| blk: { try self.structFieldStore(store); break :blk null; },
+            .array_store => |store| blk: {
+                try self.arrayStore(store);
+                break :blk null;
+            },
+            .struct_field_store => |store| blk: {
+                try self.structFieldStore(store);
+                break :blk null;
+            },
             .binary_operation => |operation| try self.binary(operation),
             .comparison => |comparison| try self.emitComparison(comparison),
             .logical_operation => |operation| try self.logical(operation),
-            .return_statement => |ret| blk: { try self.genReturn(ret); break :blk null; },
-            .if_statement => |statement| blk: { try self.genIf(statement); break :blk null; },
-            .while_statement => |statement| blk: { try self.genWhile(statement); break :blk null; },
-            .for_statement => |statement| blk: { try self.genFor(statement); break :blk null; },
-            .switch_statement => |switch_id| blk: { try self.genSwitch(switch_id); break :blk null; },
-            .break_statement => blk: { try self.genBreak(node.source); break :blk null; },
-            .continue_statement => blk: { try self.genContinue(node.source); break :blk null; },
+            .return_statement => |ret| blk: {
+                try self.genReturn(ret);
+                break :blk null;
+            },
+            .if_statement => |statement| blk: {
+                try self.genIf(statement);
+                break :blk null;
+            },
+            .while_statement => |statement| blk: {
+                try self.genWhile(statement);
+                break :blk null;
+            },
+            .for_statement => |statement| blk: {
+                try self.genFor(statement);
+                break :blk null;
+            },
+            .switch_statement => |switch_id| blk: {
+                try self.genSwitch(switch_id);
+                break :blk null;
+            },
+            .break_statement => blk: {
+                try self.genBreak(node.source);
+                break :blk null;
+            },
+            .continue_statement => blk: {
+                try self.genContinue(node.source);
+                break :blk null;
+            },
             .address_of => |target| try self.addressOf(node_id, target),
             .dereference => |deref| try self.dereference(deref),
-            .pointer_assignment => |assignment| blk: { try self.pointerAssignment(assignment); break :blk null; },
+            .pointer_assignment => |assignment| blk: {
+                try self.pointerAssignment(assignment);
+                break :blk null;
+            },
             .type_initializer => |initializer| try self.typeInitializer(initializer),
             .explicit_cast => |cast| try self.explicitCast(cast),
         };
@@ -963,7 +1002,10 @@ pub const CodeGenerator = struct {
     }
 
     fn opaqueStore(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId) !?TypedValue {
-        const input = switch (self.graph.nodes.items[@intFromEnum(input_id)].content) { .struct_value_literal => |literal| literal, else => return CodegenError.InvalidType };
+        const input = switch (self.graph.nodes.items[@intFromEnum(input_id)].content) {
+            .struct_value_literal => |literal| literal,
+            else => return CodegenError.InvalidType,
+        };
         const fields = self.graph.value_fields.items[input.fields.start..][0..input.fields.len];
         if (fields.len != 2 and fields.len != 3) return CodegenError.InvalidType;
         const destination_index: usize = if (fields.len == 3) 1 else 0;
@@ -975,13 +1017,19 @@ pub const CodeGenerator = struct {
     }
 
     fn opaqueTake(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId) !?TypedValue {
-        const input = switch (self.graph.nodes.items[@intFromEnum(input_id)].content) { .struct_value_literal => |literal| literal, else => return CodegenError.InvalidType };
+        const input = switch (self.graph.nodes.items[@intFromEnum(input_id)].content) {
+            .struct_value_literal => |literal| literal,
+            else => return CodegenError.InvalidType,
+        };
         const fields = self.graph.value_fields.items[input.fields.start..][0..input.fields.len];
         if (fields.len != 2) return CodegenError.InvalidType;
         _ = try self.visitNode(fields[0].value);
         const slot = (try self.visitNode(fields[1].value)) orelse return CodegenError.ValueNotFound;
         const pointer_ty = self.graph.nodes.items[@intFromEnum(fields[1].value)].ty orelse return CodegenError.InvalidType;
-        const child = switch (self.graph.types.items[@intFromEnum(pointer_ty)]) { .pointer => |pointer| pointer.child, else => return CodegenError.InvalidType };
+        const child = switch (self.graph.types.items[@intFromEnum(pointer_ty)]) {
+            .pointer => |pointer| pointer.child,
+            else => return CodegenError.InvalidType,
+        };
         const type_ref = try self.toLLVMType(child);
         return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, slot.value_ref, "opaque.take"), .type_ref = type_ref, .ty = child };
     }
@@ -1137,7 +1185,10 @@ pub const CodeGenerator = struct {
         return switch (self.graph.types.items[@intFromEnum(ty)]) {
             .declared => |decl| self.graph.declarations.items[@intFromEnum(decl)].choice_layout == .c_enum,
             .structural_choice => |shape| shape.layout == .c_enum,
-            .generic => if (types.genericInstance(self.graph, ty)) |instance| switch (instance.shape) { .choice => |shape| shape.layout == .c_enum, else => false } else false,
+            .generic => if (types.genericInstance(self.graph, ty)) |instance| switch (instance.shape) {
+                .choice => |shape| shape.layout == .c_enum,
+                else => false,
+            } else false,
             else => false,
         };
     }
@@ -1146,7 +1197,10 @@ pub const CodeGenerator = struct {
         return switch (self.graph.types.items[@intFromEnum(ty)]) {
             .declared => |decl| self.graph.declarations.items[@intFromEnum(decl)].struct_layout == .c_union,
             .structural => |shape| shape.layout == .c_union,
-            .generic => if (types.genericInstance(self.graph, ty)) |instance| switch (instance.shape) { .structure => |shape| shape.layout == .c_union, else => false } else false,
+            .generic => if (types.genericInstance(self.graph, ty)) |instance| switch (instance.shape) {
+                .structure => |shape| shape.layout == .c_union,
+                else => false,
+            } else false,
             else => false,
         };
     }
@@ -1156,11 +1210,20 @@ pub const CodeGenerator = struct {
     }
 
     fn isFloat(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) bool {
-        return switch (self.graph.types.items[@intFromEnum(ty)]) { .builtin => |builtin| builtin == .Float16 or builtin == .Float32 or builtin == .Float64, else => false };
+        return switch (self.graph.types.items[@intFromEnum(ty)]) {
+            .builtin => |builtin| builtin == .Float16 or builtin == .Float32 or builtin == .Float64,
+            else => false,
+        };
     }
 
     fn isUnsigned(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) bool {
-        return switch (self.graph.types.items[@intFromEnum(ty)]) { .builtin => |builtin| switch (builtin) { .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64 => true, else => false }, else => false };
+        return switch (self.graph.types.items[@intFromEnum(ty)]) {
+            .builtin => |builtin| switch (builtin) {
+                .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64 => true,
+                else => false,
+            },
+            else => false,
+        };
     }
 
     fn isStringView(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) bool {
@@ -1169,7 +1232,10 @@ pub const CodeGenerator = struct {
         const data = self.graph.fields.items[range.start];
         const length = self.graph.fields.items[range.start + 1];
         if (!std.mem.eql(u8, self.graph.text(data.name), "data") or !std.mem.eql(u8, self.graph.text(length.name), "length")) return false;
-        const pointer = switch (self.graph.types.items[@intFromEnum(data.ty)]) { .pointer => |value| value, else => return false };
+        const pointer = switch (self.graph.types.items[@intFromEnum(data.ty)]) {
+            .pointer => |value| value,
+            else => return false,
+        };
         return types.isBuiltin(self.graph, pointer.child, .UInt8) and types.isBuiltin(self.graph, length.ty, .UIntNative);
     }
 
@@ -1178,7 +1244,11 @@ pub const CodeGenerator = struct {
             .builtin => |builtin| if (builtin == .UIntNative) return self.toLLVMType(@enumFromInt(@as(u32, @intCast(raw)))),
             else => {},
         };
-        return switch (types.pointer_size_bytes) { 4 => c.LLVMInt32Type(), 8 => c.LLVMInt64Type(), else => CodegenError.InvalidType };
+        return switch (types.pointer_size_bytes) {
+            4 => c.LLVMInt32Type(),
+            8 => c.LLVMInt64Type(),
+            else => CodegenError.InvalidType,
+        };
     }
 
     fn emitStringLiteralPointer(self: *CodeGenerator, text: []const u8) !llvm.c.LLVMValueRef {

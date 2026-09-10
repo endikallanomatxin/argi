@@ -5,10 +5,10 @@ const source_db = @import("../1_base/source_db.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const token = @import("../2_tokens/token.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
-const graph_mod = @import("../4_semantics/global_semantic_graph.zig");
-const global_types = @import("../4_semantics/global_semantic_types.zig");
-const editor_index = @import("../4_semantics/global_lsp_index.zig");
-const primitives = @import("../4_semantics/semantic_primitives.zig");
+const graph_mod = @import("../4_semantics/global/graph.zig");
+const global_types = @import("../4_semantics/global/types.zig");
+const editor_index = @import("../4_semantics/lsp/index.zig");
+const primitives = @import("../4_semantics/primitives/schema.zig");
 const frontend = @import("frontend_pipeline.zig");
 
 const log = std.log.scoped(.indexed_lsp_service);

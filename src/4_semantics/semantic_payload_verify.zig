@@ -1,5 +1,5 @@
 const std = @import("std");
-const primitives = @import("semantic_primitives.zig");
+const primitives = @import("primitives/schema.zig");
 const verify = @import("semantic_verify.zig");
 
 pub const Bounds = struct {
