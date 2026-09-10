@@ -4,13 +4,9 @@ const module_entities = @import("module_semantic_entities.zig");
 const global_sg = @import("global_semantic_graph.zig");
 const globalizer = @import("semantic_globalizer.zig");
 
-/// Construction-only binding type state owned by GlobalSema.
-///
-/// `Binding.ty` is deliberately non-optional in the durable semantic schema,
-/// but a few local constructs (`for` items and match payloads) only acquire a
-/// type once their pending control operation is resolved globally. This table
-/// makes that state explicit so the temporary compatibility payload stored in
-/// `Binding.ty` cannot masquerade as semantic information.
+/// Temporary construction state for globally-dependent binding types.
+/// The pending control operation is the single source of truth; this helper is
+/// removed once binding partiality is represented directly in the semantic IR.
 pub const State = struct {
     unresolved: []bool,
 
@@ -39,9 +35,6 @@ pub const State = struct {
         return raw < self.unresolved.len and self.unresolved[raw];
     }
 
-    /// Called only after the PendingOperation itself has successfully resolved.
-    /// The operation, rather than the current value of `Binding.ty`, is the
-    /// authority: a legitimate final element/payload type may itself be `Any`.
     pub fn operationResolved(
         self: *State,
         module: *const module_sg.ModuleSemanticGraph,
@@ -67,16 +60,6 @@ pub const State = struct {
         if (modules.len != offsets.len) return error.InvalidGlobalBindingResolutionOffsets;
         for (modules, 0..) |*module, module_index| {
             const o = offsets[module_index];
-
-            // Explicit local construction metadata takes precedence as ModuleSema
-            // adopts it. Pending control operations are also inspected so old
-            // producers are safe during the migration.
-            for (module.semantic.unresolved_binding_types.items) |binding| {
-                if (@intFromEnum(binding) >= module.semantic.bindings.items.len)
-                    return error.InvalidUnresolvedModuleBinding;
-                try self.markUnresolved(globalizer.globalBinding(o, binding));
-            }
-
             for (module.semantic.pending_operations.items) |operation| switch (operation) {
                 .resolve_for_each => |value| try self.markUnresolved(globalizer.globalBinding(o, value.binding)),
                 .resolve_match_case => |value| if (value.payload_binding) |binding|
@@ -87,10 +70,6 @@ pub const State = struct {
     }
 
     fn hideProvisionalNodeTypes(self: *const State, graph: *global_sg.GlobalSemanticGraph) void {
-        // ModuleSema may have emitted a compatibility type before it knew that a
-        // binding's real type was globally dependent. Remove that information
-        // from nodes that expose the binding so earlier GlobalSema phases wait
-        // instead of treating the compatibility payload as a real `Any`.
         var changed = true;
         while (changed) {
             changed = false;
