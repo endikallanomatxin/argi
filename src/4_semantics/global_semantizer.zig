@@ -126,14 +126,20 @@ pub fn semantize(
             const o = relocation.offsets.items[module_index];
             for (module.semantic.pending_operations.items) |operation| {
                 if (!resolved[flat]) {
-                    var done = (try core.tryResolve(module_index, module, o, operation)) orelse false;
-                    if (!done) done = (try expressions.tryResolve(module_index, module, o, operation)) orelse false;
-                    if (!done) done = (try generics.tryResolve(module_index, module, o, operation)) orelse false;
-                    if (!done) done = (try generic_functions.tryResolve(module_index, module, o, operation)) orelse false;
-                    if (!done) done = (try abstracts.tryResolve(module_index, module, o, operation)) orelse false;
-                    if (!done) done = (try control.tryResolve(module_index, module, o, operation)) orelse false;
-                    if (!done) done = (try errors.tryResolve(module_index, module, o, operation)) orelse false;
-                    if (!done) done = (try ownership.tryResolve(module_index, module, o, operation)) orelse false;
+                    const done = try resolvePendingOperation(
+                        &core,
+                        &expressions,
+                        &control,
+                        &generics,
+                        &generic_functions,
+                        &abstracts,
+                        &errors,
+                        &ownership,
+                        module_index,
+                        module,
+                        o,
+                        operation,
+                    );
                     if (done) {
                         resolved[flat] = true;
                         changed = true;
@@ -193,6 +199,64 @@ pub fn semantize(
     try global_verify.verifyGlobal(&relocation.graph);
     stats.remaining = 0;
     return .{ .graph = relocation.takeGraph(allocator), .stats = stats };
+}
+
+/// Route each pending semantic operation only to the subsystem(s) that own it.
+/// A small number of operations deliberately have a staged fallback because
+/// their final category cannot be known in ModuleSema (for example an ordinary,
+/// generic, virtual or intrinsic-looking call). Keeping those chains explicit
+/// makes resolver precedence part of the architecture instead of an accidental
+/// consequence of trying every resolver in sequence.
+fn resolvePendingOperation(
+    core: *core_mod.Resolver,
+    expressions: *expression_mod.Resolver,
+    control: *control_mod.Resolver,
+    generics: *generic_mod.Resolver,
+    generic_functions: *generic_functions_mod.Resolver,
+    abstracts: *abstract_mod.Resolver,
+    errors: *error_mod.Resolver,
+    ownership: *ownership_mod.Resolver,
+    module_index: usize,
+    module: *const module_sg.ModuleSemanticGraph,
+    o: globalizer.Offsets,
+    operation: module_entities.PendingOperation,
+) !bool {
+    return switch (operation) {
+        .resolve_type => blk: {
+            if ((try core.tryResolve(module_index, module, o, operation)) orelse false) break :blk true;
+            break :blk (try generics.tryResolve(module_index, module, o, operation)) orelse false;
+        },
+        .resolve_call => blk: {
+            if ((try core.tryResolve(module_index, module, o, operation)) orelse false) break :blk true;
+            if ((try generic_functions.tryResolve(module_index, module, o, operation)) orelse false) break :blk true;
+            if ((try abstracts.tryResolve(module_index, module, o, operation)) orelse false) break :blk true;
+            break :blk (try control.tryResolve(module_index, module, o, operation)) orelse false;
+        },
+        .resolve_index => blk: {
+            if ((try core.tryResolve(module_index, module, o, operation)) orelse false) break :blk true;
+            break :blk (try generic_functions.tryResolve(module_index, module, o, operation)) orelse false;
+        },
+        .resolve_field,
+        .resolve_binary,
+        .resolve_comparison,
+        => (try core.tryResolve(module_index, module, o, operation)) orelse false,
+        .resolve_expression => (try expressions.tryResolve(module_index, module, o, operation)) orelse false,
+        .resolve_choice_literal,
+        .resolve_choice_payload,
+        .resolve_nullable_unwrap,
+        .resolve_nullable_test,
+        .resolve_for_each,
+        .resolve_match,
+        .resolve_match_case,
+        => (try control.tryResolve(module_index, module, o, operation)) orelse false,
+        .resolve_abstract => (try abstracts.tryResolve(module_index, module, o, operation)) orelse false,
+        .resolve_error_propagation => (try errors.tryResolve(module_index, module, o, operation)) orelse false,
+        .resolve_defer,
+        .resolve_keep,
+        .resolve_copy,
+        .resolve_deinit,
+        => (try ownership.tryResolve(module_index, module, o, operation)) orelse false,
+    };
 }
 
 fn markUnresolvedTypeSlots(
