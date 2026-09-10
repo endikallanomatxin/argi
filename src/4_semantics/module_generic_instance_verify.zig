@@ -49,9 +49,9 @@ test "complete generic materialization requires one shape per generic type" {
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
     defer graph.deinit(allocator);
 
-    try graph.semantic.resolved_types.append(allocator, .{ .generic = .{
+    try graph.semantic.types.append(allocator, .{ .resolved = .{ .generic = .{
         .base = @enumFromInt(0),
         .arguments = .{ .start = 0, .len = 0 },
-    } });
+    } } });
     try std.testing.expectError(error.IncompleteGenericMaterialization, verifyGenericInstances(&graph, true));
 }
