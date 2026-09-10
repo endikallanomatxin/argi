@@ -33,6 +33,22 @@ pub const Result = struct {
     stats: Stats,
 };
 
+const PendingPhase = enum {
+    types_and_generics,
+    expressions_and_calls,
+    control_and_abstracts,
+    errors,
+    ownership,
+};
+
+const pending_phases = [_]PendingPhase{
+    .types_and_generics,
+    .expressions_and_calls,
+    .control_and_abstracts,
+    .errors,
+    .ownership,
+};
+
 pub fn semantize(
     allocator: std.mem.Allocator,
     modules: []const module_sg.ModuleSemanticGraph,
@@ -118,36 +134,33 @@ pub fn semantize(
     defer allocator.free(resolved);
     @memset(resolved, false);
 
+    // GlobalSema is intentionally staged by semantic domain. We still retain
+    // one outer fixed point while the migration is incomplete because a later
+    // phase can currently expose information consumed by an earlier one. The
+    // phase boundary is therefore architectural rather than a new failure
+    // boundary: each phase owns a disjoint family of PendingOperation values,
+    // and the outer loop is the temporary compatibility net that lets us make
+    // those dependencies explicit one at a time.
     var changed = true;
     while (changed) {
         changed = false;
-        var flat: usize = 0;
-        for (modules, 0..) |*module, module_index| {
-            const o = relocation.offsets.items[module_index];
-            for (module.semantic.pending_operations.items) |operation| {
-                if (!resolved[flat]) {
-                    const done = try resolvePendingOperation(
-                        &core,
-                        &expressions,
-                        &control,
-                        &generics,
-                        &generic_functions,
-                        &abstracts,
-                        &errors,
-                        &ownership,
-                        module_index,
-                        module,
-                        o,
-                        operation,
-                    );
-                    if (done) {
-                        resolved[flat] = true;
-                        changed = true;
-                    }
-                }
-                flat += 1;
-            }
+        for (pending_phases) |phase| {
+            if (try resolvePendingPhase(
+                &core,
+                &expressions,
+                &control,
+                &generics,
+                &generic_functions,
+                &abstracts,
+                &errors,
+                &ownership,
+                modules,
+                relocation.offsets.items,
+                resolved,
+                phase,
+            )) changed = true;
         }
+
         if (relocation.graph.reconcileTypeResolution()) changed = true;
         if (core.materializeBindingTypes()) changed = true;
         if (core.materializeDereferences()) changed = true;
@@ -199,6 +212,78 @@ pub fn semantize(
     try global_verify.verifyGlobal(&relocation.graph);
     stats.remaining = 0;
     return .{ .graph = relocation.takeGraph(allocator), .stats = stats };
+}
+
+fn resolvePendingPhase(
+    core: *core_mod.Resolver,
+    expressions: *expression_mod.Resolver,
+    control: *control_mod.Resolver,
+    generics: *generic_mod.Resolver,
+    generic_functions: *generic_functions_mod.Resolver,
+    abstracts: *abstract_mod.Resolver,
+    errors: *error_mod.Resolver,
+    ownership: *ownership_mod.Resolver,
+    modules: []const module_sg.ModuleSemanticGraph,
+    offsets: []const globalizer.Offsets,
+    resolved: []bool,
+    phase: PendingPhase,
+) !bool {
+    var changed = false;
+    var flat: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        const o = offsets[module_index];
+        for (module.semantic.pending_operations.items) |operation| {
+            if (!resolved[flat] and pendingPhase(operation) == phase) {
+                if (try resolvePendingOperation(
+                    core,
+                    expressions,
+                    control,
+                    generics,
+                    generic_functions,
+                    abstracts,
+                    errors,
+                    ownership,
+                    module_index,
+                    module,
+                    o,
+                    operation,
+                )) {
+                    resolved[flat] = true;
+                    changed = true;
+                }
+            }
+            flat += 1;
+        }
+    }
+    return changed;
+}
+
+fn pendingPhase(operation: module_entities.PendingOperation) PendingPhase {
+    return switch (operation) {
+        .resolve_type => .types_and_generics,
+        .resolve_call,
+        .resolve_field,
+        .resolve_binary,
+        .resolve_comparison,
+        .resolve_index,
+        .resolve_expression,
+        => .expressions_and_calls,
+        .resolve_choice_literal,
+        .resolve_choice_payload,
+        .resolve_nullable_unwrap,
+        .resolve_nullable_test,
+        .resolve_for_each,
+        .resolve_match,
+        .resolve_match_case,
+        .resolve_abstract,
+        => .control_and_abstracts,
+        .resolve_error_propagation => .errors,
+        .resolve_defer,
+        .resolve_keep,
+        .resolve_copy,
+        .resolve_deinit,
+        => .ownership,
+    };
 }
 
 /// Route each pending semantic operation only to the subsystem(s) that own it.
