@@ -139,9 +139,6 @@ pub const Resolver = struct {
         return null;
     }
 
-    /// Generic substitutions are shared by type and function monomorphization.
-    /// They are intentionally indexed by TemplateParameterId so nested template
-    /// expressions can reuse the same substitution environment without maps.
     pub const Bindings = struct {
         types: []?global_sg.GlobalTypeId,
         ints: []?i64,
@@ -444,9 +441,7 @@ pub const Resolver = struct {
     }
 
     pub fn internType(self: *Resolver, value: global_sg.GlobalType) !global_sg.GlobalTypeId {
-        for (self.graph.types.items, 0..) |candidate, raw| {
-            if (sameShallowType(candidate, value)) return @enumFromInt(@as(u32, @intCast(raw)));
-        }
+        if (findEquivalentType(self.graph, value)) |id| return id;
         const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
         try self.graph.types.append(self.allocator, value);
         return id;
@@ -457,7 +452,14 @@ pub const Resolver = struct {
     }
 };
 
-fn sameShallowType(a: global_sg.GlobalType, b: global_sg.GlobalType) bool {
+fn findEquivalentType(graph: *const global_sg.GlobalSemanticGraph, value: global_sg.GlobalType) ?global_sg.GlobalTypeId {
+    for (graph.types.items, 0..) |candidate, raw| {
+        if (sameShallowType(graph, candidate, value)) return @enumFromInt(@as(u32, @intCast(raw)));
+    }
+    return null;
+}
+
+fn sameShallowType(graph: *const global_sg.GlobalSemanticGraph, a: global_sg.GlobalType, b: global_sg.GlobalType) bool {
     if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
     return switch (a) {
         .builtin => |value| value == b.builtin,
@@ -466,10 +468,57 @@ fn sameShallowType(a: global_sg.GlobalType, b: global_sg.GlobalType) bool {
         .array => |value| value.length == b.array.length and value.element == b.array.element,
         .nullable => |value| value == b.nullable,
         .inferred_errable => |value| value == b.inferred_errable,
-        .generic => |value| value.base == b.generic.base and value.arguments.start == b.generic.arguments.start and value.arguments.len == b.generic.arguments.len,
+        .generic => |value| value.base == b.generic.base and genericArgumentsEqual(graph, value.arguments, b.generic.arguments),
         .virtual => |value| value == b.virtual,
         .inferred_choice, .structural, .structural_choice => false,
     };
+}
+
+fn genericArgumentsEqual(
+    graph: *const global_sg.GlobalSemanticGraph,
+    a: primitives.Range(global_sg.GlobalGenericArgId),
+    b: primitives.Range(global_sg.GlobalGenericArgId),
+) bool {
+    if (a.len != b.len) return false;
+    for (0..a.len) |offset| {
+        const left = graph.generic_arguments.items[a.start + @as(u32, @intCast(offset))];
+        const right = graph.generic_arguments.items[b.start + @as(u32, @intCast(offset))];
+        if (!std.mem.eql(u8, graph.text(left.name), graph.text(right.name))) return false;
+        switch (left.value) {
+            .type => |left_type| switch (right.value) {
+                .type => |right_type| if (!global_types.equal(graph, left_type, right_type)) return false,
+                else => return false,
+            },
+            .comptime_int => |left_int| switch (right.value) {
+                .comptime_int => |right_int| if (left_int != right_int) return false,
+                else => return false,
+            },
+        }
+    }
+    return true;
+}
+
+test "generic type identity is independent of argument pool position" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    const name = try graph.addString(allocator, "t");
+    try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
+    try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
+
+    const base: global_sg.GlobalDeclId = @enumFromInt(7);
+    try graph.types.append(allocator, .{ .generic = .{
+        .base = base,
+        .arguments = .{ .start = 0, .len = 1 },
+    } });
+
+    const equivalent = findEquivalentType(&graph, .{ .generic = .{
+        .base = base,
+        .arguments = .{ .start = 1, .len = 1 },
+    } }) orelse return error.ExpectedEquivalentGenericType;
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(equivalent));
 }
 
 test "generic type materialization has a dedicated resolver" {
