@@ -206,6 +206,10 @@ fn dumpUnresolved(modules: []const module_sg.ModuleSemanticGraph, resolved: []co
                             .{ module_index, module.module_dir, module.text(reference.name), reference.source.offset, choice.payload, choice.expected_type },
                         );
                     },
+                    .resolve_field => |field| std.debug.print(
+                        "global sema unresolved: module={d} dir={s} op=resolve_field name={s} node={d}\n",
+                        .{ module_index, module.module_dir, module.text(field.field_name), @intFromEnum(field.node) },
+                    ),
                     else => std.debug.print(
                         "global sema unresolved: module={d} dir={s} op={s}\n",
                         .{ module_index, module.module_dir, @tagName(operation) },

@@ -109,6 +109,21 @@ pub const Resolver = struct {
                 node.ty = inferred;
                 changed = true;
             },
+            .move_value => |value| {
+                const inferred = self.graph.nodes.items[@intFromEnum(value)].ty orelse continue;
+                if (node.ty != null and types.equal(self.graph, node.ty.?, inferred)) continue;
+                node.ty = inferred;
+                changed = true;
+            },
+            .binary_operation => |operation| {
+                var left_ty = self.graph.nodes.items[@intFromEnum(operation.left)].ty orelse continue;
+                var right_ty = self.graph.nodes.items[@intFromEnum(operation.right)].ty orelse continue;
+                self.coerceIntegerPair(operation.left, &left_ty, operation.right, &right_ty);
+                if (!self.isBuiltinArithmetic(left_ty, right_ty)) continue;
+                if (node.ty != null and types.equal(self.graph, node.ty.?, left_ty)) continue;
+                node.ty = left_ty;
+                changed = true;
+            },
             else => {},
         };
         return changed;
@@ -299,6 +314,12 @@ pub const Resolver = struct {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
         if (reference.generic_arguments != null) return false;
         const input = globalizer.globalNode(o, value.input);
+        if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "size_of")) {
+            const node = (try self.makeSizeOf(input, self.sourceFor(reference.source, o))) orelse return false;
+            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            self.stats.calls += 1;
+            return true;
+        }
         if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "Void")) {
             const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
                 .struct_value_literal => |item| item,
@@ -329,6 +350,28 @@ pub const Resolver = struct {
         };
         self.stats.calls += 1;
         return true;
+    }
+
+    fn makeSizeOf(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef) !?global_sg.Node {
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |value| value,
+            else => return null,
+        };
+        var measured: ?global_sg.GlobalTypeId = null;
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
+            if (!std.mem.eql(u8, self.graph.text(field.name), "type")) continue;
+            measured = switch (self.graph.nodes.items[@intFromEnum(field.value)].content) {
+                .type_literal => |ty| ty,
+                else => return null,
+            };
+            break;
+        }
+        const size = types.sizeOf(self.graph, measured orelse return null) catch return null;
+        return .{
+            .source = source,
+            .ty = try self.builtin(.UIntNative),
+            .content = .{ .int_literal = std.math.cast(i64, size) orelse return error.TypeSizeOverflow },
+        };
     }
 
     fn resolveField(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !bool {
@@ -609,11 +652,31 @@ pub const Resolver = struct {
 
     fn contextualLiteralFits(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
         if (self.integerLiteralFits(node, target)) return true;
-        if (self.graph.nodes.items[@intFromEnum(node)].content != .string_literal) return false;
-        return switch (self.graph.types.items[@intFromEnum(target)]) {
-            .pointer => |pointer| pointer.mutability == .read_only and types.isBuiltin(self.graph, pointer.child, .Char),
-            else => false,
-        };
+        switch (self.graph.nodes.items[@intFromEnum(node)].content) {
+            .string_literal => return switch (self.graph.types.items[@intFromEnum(target)]) {
+                .pointer => |pointer| pointer.mutability == .read_only and types.isBuiltin(self.graph, pointer.child, .Char),
+                else => false,
+            },
+            .struct_value_literal => |literal| return self.contextualStructLiteralFits(literal, target),
+            else => return false,
+        }
+    }
+
+    fn contextualStructLiteralFits(self: *const Resolver, literal: anytype, target: global_sg.GlobalTypeId) bool {
+        const expected_fields = types.fields(self.graph, target) orelse return false;
+        if (literal.fields.len > expected_fields.len) return false;
+        for (0..expected_fields.len) |offset| {
+            const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(offset))];
+            const supplied = self.callArgument(literal, offset, expected.name) orelse {
+                if (expected.default_value == null) return false;
+                continue;
+            };
+            const actual = self.graph.nodes.items[@intFromEnum(supplied)].ty orelse return false;
+            if (types.equal(self.graph, actual, expected.ty) or self.callTypesCompatible(actual, expected.ty) or
+                self.contextualLiteralFits(supplied, expected.ty)) continue;
+            return false;
+        }
+        return true;
     }
 
     fn coerceContextualLiteral(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
