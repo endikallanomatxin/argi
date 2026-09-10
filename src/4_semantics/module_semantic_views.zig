@@ -3,11 +3,6 @@ const graph_mod = @import("module_semantic_graph.zig");
 const entities = @import("module_semantic_entities.zig");
 
 pub fn typeCount(graph: *const graph_mod.ModuleSemanticGraph) usize {
-    // These two arrays were temporary semantic prefixes. Keeping them outside
-    // the logical domain makes every new semantic type live in one canonical
-    // `ModuleType` table and prevents another source of ID rebasing.
-    std.debug.assert(graph.semantic.resolved_types.items.len == 0);
-    std.debug.assert(graph.semantic.external_types.items.len == 0);
     return graph.types.items.len + graph.semantic.types.items.len;
 }
 

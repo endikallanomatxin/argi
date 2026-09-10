@@ -28,13 +28,11 @@ pub const Storage = struct {
     field_semantics: std.ArrayList(entities.FieldSemantic) = .empty,
     variant_semantics: std.ArrayList(entities.VariantSemantic) = .empty,
 
-    /// Migration prefixes retained while the old module builder is removed.
-    resolved_types: std.ArrayList(entities.ResolvedType) = .empty,
+    /// Canonical semantic tails appended after the remaining builder-era
+    /// prefixes owned by ModuleSemanticGraph itself.
     fields: std.ArrayList(entities.Field) = .empty,
     variants: std.ArrayList(entities.ChoiceVariant) = .empty,
     generic_arguments: std.ArrayList(entities.GenericArgument) = .empty,
-
-    external_types: std.ArrayList(entities.ExternalRefId) = .empty,
     types: std.ArrayList(entities.ModuleType) = .empty,
 
     generic_instances: std.ArrayList(type_shapes.GenericInstance(entities.Ids)) = .empty,
@@ -78,11 +76,9 @@ pub const Storage = struct {
         self.function_operators.deinit(allocator);
         self.field_semantics.deinit(allocator);
         self.variant_semantics.deinit(allocator);
-        self.resolved_types.deinit(allocator);
         self.fields.deinit(allocator);
         self.variants.deinit(allocator);
         self.generic_arguments.deinit(allocator);
-        self.external_types.deinit(allocator);
         self.types.deinit(allocator);
         self.generic_instances.deinit(allocator);
         self.bindings.deinit(allocator);
@@ -124,11 +120,9 @@ pub const Storage = struct {
             self.function_operators.items.len * @sizeOf(?callable.OperatorKind) +
             self.field_semantics.items.len * @sizeOf(entities.FieldSemantic) +
             self.variant_semantics.items.len * @sizeOf(entities.VariantSemantic) +
-            self.resolved_types.items.len * @sizeOf(entities.ResolvedType) +
             self.fields.items.len * @sizeOf(entities.Field) +
             self.variants.items.len * @sizeOf(entities.ChoiceVariant) +
             self.generic_arguments.items.len * @sizeOf(entities.GenericArgument) +
-            self.external_types.items.len * @sizeOf(entities.ExternalRefId) +
             self.types.items.len * @sizeOf(entities.ModuleType) +
             self.generic_instances.items.len * @sizeOf(type_shapes.GenericInstance(entities.Ids)) +
             self.bindings.items.len * @sizeOf(entities.Binding) +
