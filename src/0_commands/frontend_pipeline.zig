@@ -7,11 +7,11 @@ const token = @import("../2_tokens/token.zig");
 const tokenizer = @import("../2_tokens/tokenizer.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
 const syntaxer = @import("../3_syntax/syntaxer.zig");
-const module_sg = @import("../4_semantics/module_semantic_graph.zig");
-const module_semantizer = @import("../4_semantics/module_semantizer.zig");
-const global_sg = @import("../4_semantics/global_semantic_graph.zig");
-const global_semantizer = @import("../4_semantics/global_semantizer.zig");
-const global_safety_checker = @import("../4_semantics/global_safety_checker.zig");
+const module_sg = @import("../4_semantics/module/graph.zig");
+const module_semantizer = @import("../4_semantics/module/semantizer.zig");
+const global_sg = @import("../4_semantics/global/graph.zig");
+const global_semantizer = @import("../4_semantics/global/semantizer.zig");
+const global_safety_checker = @import("../4_semantics/safety/checker.zig");
 
 pub const FrontendPipeline = struct {
     /// Indexed-frontend command options. The `semantizer` field name is kept

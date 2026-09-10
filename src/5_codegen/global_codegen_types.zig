@@ -1,9 +1,9 @@
 const std = @import("std");
 const llvm = @import("llvm.zig");
 const c = llvm.c;
-const graph_mod = @import("../4_semantics/global_semantic_graph.zig");
-const types = @import("../4_semantics/global_semantic_types.zig");
-const primitives = @import("../4_semantics/semantic_primitives.zig");
+const graph_mod = @import("../4_semantics/global/graph.zig");
+const types = @import("../4_semantics/global/types.zig");
+const primitives = @import("../4_semantics/primitives/schema.zig");
 
 pub const Error = error{ InvalidType, OutOfMemory };
 

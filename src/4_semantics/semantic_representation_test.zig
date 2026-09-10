@@ -1,11 +1,11 @@
 const std = @import("std");
-const module_sg = @import("module_semantic_graph.zig");
-const module_entities = @import("module_semantic_entities.zig");
-const module_verify = @import("module_semantic_complete_verify.zig");
-const global_verify = @import("global_semantic_verify.zig");
-const globalizer = @import("semantic_globalizer.zig");
-const primitives = @import("semantic_primitives.zig");
-const strings = @import("semantic_strings.zig");
+const module_sg = @import("module/graph.zig");
+const module_entities = @import("module/entities.zig");
+const module_verify = @import("module/complete_verify.zig");
+const global_verify = @import("global/verify.zig");
+const globalizer = @import("global/globalizer.zig");
+const primitives = @import("primitives/schema.zig");
+const strings = @import("primitives/strings.zig");
 
 fn makeScalarModule(allocator: std.mem.Allocator, dir: []const u8, type_name_text: []const u8, literal: i64) !module_sg.ModuleSemanticGraph {
     var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, dir) };
@@ -196,7 +196,7 @@ test "module semantic ids relocate independently into the global graph" {
     try std.testing.expectEqual(@as(u32, 1), inferred.variants.len);
 
     // Globalization copies and relocates; it does not mutate module-local IDs.
-    try std.testing.expectEqual(@as(u32, 0), @intFromEnum((try @import("module_semantic_views.zig").typeView(&right, @enumFromInt(0))).resolved.declared));
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum((try @import("module/views.zig").typeView(&right, @enumFromInt(0))).resolved.declared));
 }
 
 test "generic identities and materialized shapes relocate together" {
