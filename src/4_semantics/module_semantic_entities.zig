@@ -168,7 +168,6 @@ pub const PendingExpression = struct {
     operands: NodeRange = .{ .start = 0, .len = 0 },
     name: ?primitives.StringRange = null,
     expected_type: ?ModuleTypeId = null,
-    aux: u32 = 0,
 };
 
 pub const PendingOperation = union(enum) {
