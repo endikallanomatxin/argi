@@ -196,8 +196,8 @@ fn dumpUnresolved(modules: []const module_sg.ModuleSemanticGraph, resolved: []co
                         );
                     },
                     .resolve_expression => |expression| std.debug.print(
-                        "global sema unresolved: module={d} dir={s} op=resolve_expression kind={s} node={d}\n",
-                        .{ module_index, module.module_dir, @tagName(expression.kind), @intFromEnum(expression.node) },
+                        "global sema unresolved: module={d} dir={s} op=resolve_expression kind={s} name={s} node={d}\n",
+                        .{ module_index, module.module_dir, @tagName(expression.kind), if (expression.name) |name| module.text(name) else "", @intFromEnum(expression.node) },
                     ),
                     .resolve_choice_literal => |choice| {
                         const reference = module.semantic.external_refs.items[@intFromEnum(choice.option)];
