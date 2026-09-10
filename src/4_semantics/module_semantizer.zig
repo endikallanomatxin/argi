@@ -1,6 +1,6 @@
 const std = @import("std");
 const module_sg = @import("module_semantic_graph.zig");
-const fallback_lowerer = @import("module_fallback_lowerer.zig");
+const body_lowerer = @import("module_body_lowerer.zig");
 const initializer_lowerer = @import("module_initializer_lowerer.zig");
 const global_roots_lowerer = @import("module_global_roots_lowerer.zig");
 const template_lowerer = @import("module_template_lowerer.zig");
@@ -45,14 +45,11 @@ pub fn build(
     try lowerOperatorMetadata(allocator, &graph, files);
     const global_roots = try global_roots_lowerer.lower(allocator, &graph);
 
-    // Body lowering must have one producer. The previous pipeline first ran the
-    // precise lowerer, rolled every semantic table back when it hit an
-    // unsupported construct, and then walked the same function again with the
-    // fallback lowerer. Besides duplicating language rules, that made semantic
-    // state depend on a hand-maintained rollback checkpoint. Until the precise
-    // lowerer can represent unresolved constructs as pending operations in the
-    // same traversal, use the pending-capable lowerer as the single authority.
-    const bodies = try fallback_lowerer.lowerMissingFunctions(allocator, &graph, files);
+    // Body lowering has one authority. Constructs that need whole-program
+    // information are emitted as explicit pending operations during the same
+    // traversal instead of rolling semantic tables back and walking the
+    // function again with a second implementation.
+    const bodies = try body_lowerer.lowerMissingFunctions(allocator, &graph, files);
 
     const template_stats = try template_lowerer.lower(allocator, &graph, files);
     const generic_operators = try generic_operator_lowerer.lower(&graph, files);
