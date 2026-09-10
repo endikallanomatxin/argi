@@ -574,7 +574,7 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .for_statement => |value| .{ .for_statement = .{
                 .init = if (value.init) |id| globalNode(o, id) else null,
                 .condition = globalNode(o, value.condition),
-                .increment = if (value.increment) |id| globalNode(o, value.increment) else null,
+                .increment = if (value.increment) |id| globalNode(o, id) else null,
                 .body = globalBlock(o, value.body),
             } },
             .switch_statement => |id| .{ .switch_statement = globalSwitch(o, id) },
