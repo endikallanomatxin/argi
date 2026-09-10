@@ -12,7 +12,7 @@ const type_lowerer = @import("module_type_lowerer.zig");
 pub const Stats = struct { lowered_functions: u32 = 0 };
 
 const NamedBinding = struct { name: primitives.StringRange, id: entities.ModuleBindingId };
-const Lowered = struct { node: entities.ModuleNodeId, ty: entities.ModuleTypeId };
+const Lowered = struct { node: entities.ModuleNodeId, ty: ?entities.ModuleTypeId };
 
 pub fn lowerMissingFunctions(
     allocator: std.mem.Allocator,
@@ -203,7 +203,12 @@ const Context = struct {
     fn lowerBinding(self: *Context, node: syn.NodeIndex) !Lowered {
         const declaration = self.tree.symbolDeclaration(node).?;
         const value = if (declaration.value) |value_node| try self.lowerNode(value_node, null) else null;
-        const ty = if (declaration.type_node) |type_node| try self.lowerType(type_node) else if (value) |item| item.ty else try self.builtin(.Any);
+        const ty = if (declaration.type_node) |type_node|
+            try self.lowerType(type_node)
+        else if (value) |item|
+            try self.compatibilityType(item.ty)
+        else
+            try self.builtin(.Any);
         const name_text = self.tree.tokenTextFromSource(self.source, declaration.name_token);
         const binding = try self.writer.addBinding(.{
             .name = try self.writer.addString(name_text),
@@ -274,7 +279,7 @@ const Context = struct {
             .callee = external,
             .input = input.node,
             .expected_type = expected,
-        } }, expected orelse try self.builtin(.Any));
+        } }, expected);
     }
 
     fn lowerBlockNode(self: *Context, node: syn.NodeIndex) !Lowered {
@@ -291,7 +296,7 @@ const Context = struct {
         for (list.elements) |child| {
             const value = try self.lowerNode(child, null);
             try nodes.append(value.node);
-            try types.append(value.ty);
+            try types.append(try self.compatibilityType(value.ty));
         }
         return self.resolved(node, try self.builtin(.Any), .{ .list_literal = .{
             .elements = try self.writer.appendNodeRefs(nodes.items),
@@ -337,7 +342,7 @@ const Context = struct {
             .option = option,
             .payload = payload,
             .expected_type = expected,
-        } }, expected orelse try self.builtin(.Any));
+        } }, expected);
     }
 
     fn lowerField(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
@@ -347,7 +352,7 @@ const Context = struct {
             .node = self.nextNodeId(),
             .value = value.node,
             .field_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.field_token)),
-        } }, expected orelse try self.builtin(.Any));
+        } }, expected);
     }
 
     fn lowerChoicePayload(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
@@ -357,7 +362,7 @@ const Context = struct {
             .node = self.nextNodeId(),
             .value = value.node,
             .option_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.variant_token)),
-        } }, expected orelse try self.builtin(.Any));
+        } }, expected);
     }
 
     fn lowerErrorPropagation(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId, context: ?entities.ModuleNodeId) !Lowered {
@@ -366,7 +371,7 @@ const Context = struct {
             .node = self.nextNodeId(),
             .errable_value = child.node,
             .context = context,
-        } }, expected orelse try self.builtin(.Any));
+        } }, expected);
     }
 
     fn lowerErrorContext(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
@@ -377,7 +382,7 @@ const Context = struct {
             .node = self.nextNodeId(),
             .errable_value = value.node,
             .context = context.node,
-        } }, expected orelse try self.builtin(.Any));
+        } }, expected);
     }
 
     fn lowerNullableTest(self: *Context, node: syn.NodeIndex) !Lowered {
@@ -394,7 +399,7 @@ const Context = struct {
             .value = value.node,
             .index = index.node,
             .store_value = store,
-        } }, expected orelse try self.builtin(.Any));
+        } }, expected);
     }
 
     fn lowerIndexAssignment(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
@@ -417,7 +422,7 @@ const Context = struct {
     fn lowerReturn(self: *Context, node: syn.NodeIndex) !Lowered {
         const ret = self.tree.returnStatement(node).?;
         const value = if (ret.value) |child| try self.lowerNode(child, null) else null;
-        const ty = if (value) |item| item.ty else try self.builtin(.Void);
+        const ty = if (value) |item| try self.compatibilityType(item.ty) else try self.builtin(.Void);
         return self.resolved(node, ty, .{ .return_statement = .{
             .expression = if (value) |item| item.node else null,
             .cleanup = .{ .start = @intCast(self.graph.semantic.node_refs.items.len), .len = 0 },
@@ -602,14 +607,17 @@ const Context = struct {
     fn lowerAddress(self: *Context, node: syn.NodeIndex) !Lowered {
         const address = self.tree.addressOf(node).?;
         const value = try self.lowerNode(address.value, null);
-        const ty = try self.writer.addResolvedType(.{ .pointer = .{ .child = value.ty, .mutability = address.mutability } });
+        const child_ty = try self.compatibilityType(value.ty);
+        const ty = try self.writer.addResolvedType(.{ .pointer = .{ .child = child_ty, .mutability = address.mutability } });
         return self.resolved(node, ty, .{ .address_of = value.node });
     }
 
     fn lowerDereference(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const value = try self.lowerNode(self.tree.unaryOperand(node).?, null);
-        const ty = (try self.pointerChild(value.ty)) orelse expected orelse try self.builtin(.Any);
-        return self.resolved(node, ty, .{ .dereference = .{ .pointer = value.node, .ty = ty, .pointer_type = value.ty } });
+        const pointer_ty = try self.compatibilityType(value.ty);
+        const child_ty = if (value.ty) |known| try self.pointerChild(known) else null;
+        const ty = child_ty orelse expected orelse try self.builtin(.Any);
+        return self.resolved(node, ty, .{ .dereference = .{ .pointer = value.node, .ty = ty, .pointer_type = pointer_ty } });
     }
 
     fn pointerChild(self: *Context, ty: entities.ModuleTypeId) !?entities.ModuleTypeId {
@@ -626,7 +634,8 @@ const Context = struct {
         const assignment = self.tree.pointerAssignment(node).?;
         const pointer = try self.lowerNode(assignment.target, null);
         const value = try self.lowerNode(assignment.value, expected);
-        return self.resolved(node, expected orelse value.ty, .{ .pointer_assignment = .{ .pointer = pointer.node, .value = value.node } });
+        const ty = expected orelse try self.compatibilityType(value.ty);
+        return self.resolved(node, ty, .{ .pointer_assignment = .{ .pointer = pointer.node, .value = value.node } });
     }
 
     fn lowerTypeLiteral(self: *Context, node: syn.NodeIndex) !Lowered {
@@ -636,7 +645,8 @@ const Context = struct {
 
     fn wrapUnary(self: *Context, node: syn.NodeIndex, comptime tag: anytype, expected: ?entities.ModuleTypeId) !Lowered {
         const value = try self.lowerNode(self.tree.unaryOperand(node).?, expected);
-        return self.resolved(node, value.ty, @unionInit(entities.ResolvedNode.Content, @tagName(tag), value.node));
+        const ty = try self.compatibilityType(value.ty);
+        return self.resolved(node, ty, @unionInit(entities.ResolvedNode.Content, @tagName(tag), value.node));
     }
 
     fn pendingLeaf(self: *Context, node: syn.NodeIndex, kind: entities.PendingExpressionKind, name: ?primitives.StringRange, expected: ?entities.ModuleTypeId) !Lowered {
@@ -645,7 +655,7 @@ const Context = struct {
             .kind = kind,
             .name = name,
             .expected_type = expected,
-        } }, expected orelse try self.builtin(.Any));
+        } }, expected);
     }
 
     fn pendingFallback(self: *Context, node: syn.NodeIndex, kind: entities.PendingExpressionKind, operands: []const entities.ModuleNodeId, name: ?primitives.StringRange, expected: ?entities.ModuleTypeId) !Lowered {
@@ -655,10 +665,10 @@ const Context = struct {
             .operands = try self.writer.appendNodeRefs(operands),
             .name = name,
             .expected_type = expected,
-        } }, expected orelse try self.builtin(.Any));
+        } }, expected);
     }
 
-    fn pending(self: *Context, node: syn.NodeIndex, operation: entities.PendingOperation, ty: entities.ModuleTypeId) !Lowered {
+    fn pending(self: *Context, node: syn.NodeIndex, operation: entities.PendingOperation, ty: ?entities.ModuleTypeId) !Lowered {
         _ = node;
         const id = try self.writer.addPendingNode(operation);
         return .{ .node = id, .ty = ty };
@@ -670,6 +680,14 @@ const Context = struct {
 
     fn resolvedVoid(self: *Context, node: syn.NodeIndex, content: entities.ResolvedNode.Content) !Lowered {
         return self.resolved(node, try self.builtin(.Void), content);
+    }
+
+    /// Temporary boundary for semantic payloads that still require a concrete
+    /// ModuleTypeId during local lowering. Unknown expression types themselves
+    /// are represented as `null`; every remaining `Any` introduced here is a
+    /// compatibility bridge to be removed as those payloads become pending-aware.
+    fn compatibilityType(self: *Context, ty: ?entities.ModuleTypeId) !entities.ModuleTypeId {
+        return ty orelse self.builtin(.Any);
     }
 
     fn lowerType(self: *Context, node: syn.NodeIndex) !entities.ModuleTypeId {
@@ -727,6 +745,7 @@ fn hasFunctionSemantic(graph: *const graph_mod.ModuleSemanticGraph, id: entities
     return false;
 }
 
-test "module fallback lowerer owns only semantic state" {
+test "module body lowerer keeps unresolved expression types explicit" {
     try std.testing.expect(@sizeOf(entities.PendingExpression) < 48);
+    try std.testing.expect(@sizeOf(Lowered) <= 12);
 }
