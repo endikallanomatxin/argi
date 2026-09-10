@@ -12,11 +12,6 @@ pub const Writer = struct {
     compatibility_bases: storage.CompatibilityBases,
 
     pub fn init(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph) Writer {
-        // `semantic.resolved_types` and `semantic.external_types` were temporary
-        // migration prefixes. Canonical ModuleTypeIds now have exactly one
-        // semantic tail: `semantic.types`.
-        std.debug.assert(graph.semantic.resolved_types.items.len == 0);
-        std.debug.assert(graph.semantic.external_types.items.len == 0);
         const bases = graph.semantic.compatibility_bases orelse blk: {
             const value = storage.CompatibilityBases{
                 .types = @intCast(graph.types.items.len),
@@ -36,9 +31,7 @@ pub const Writer = struct {
 
     fn ensureCompatibilityPrefixesStable(self: *const Writer) !void {
         const bases = self.compatibility_bases;
-        if (self.graph.semantic.resolved_types.items.len != 0 or
-            self.graph.semantic.external_types.items.len != 0 or
-            self.graph.types.items.len != @as(usize, bases.types) or
+        if (self.graph.types.items.len != @as(usize, bases.types) or
             self.graph.fields.items.len + self.graph.structural_fields.items.len != @as(usize, bases.fields) or
             self.graph.choice_variant_entries.items.len + self.graph.structural_choice_variants.items.len != @as(usize, bases.variants) or
             self.graph.generic_type_arguments.items.len != @as(usize, bases.generic_arguments))
