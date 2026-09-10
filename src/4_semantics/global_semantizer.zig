@@ -1,5 +1,7 @@
 const std = @import("std");
 const module_sg = @import("module_semantic_graph.zig");
+const module_entities = @import("module_semantic_entities.zig");
+const module_views = @import("module_semantic_views.zig");
 const global_sg = @import("global_semantic_graph.zig");
 const globalizer = @import("semantic_globalizer.zig");
 const global_verify = @import("global_semantic_verify.zig");
@@ -37,6 +39,11 @@ pub fn semantize(
 ) !Result {
     var relocation = try globalizer.relocate(allocator, modules, .allow_holes);
     errdefer relocation.deinit(allocator);
+
+    // The globalizer preallocates stable GlobalTypeId slots. Record which of
+    // those slots are genuinely unresolved before any resolver can inspect
+    // them; unresolved is construction state, not the language type `Any`.
+    try markUnresolvedTypeSlots(allocator, &relocation.graph, modules, relocation.offsets.items);
 
     var core = core_mod.Resolver{
         .allocator = allocator,
@@ -102,6 +109,7 @@ pub fn semantize(
 
     try core.resolveExternalTypes();
     try generics.resolveExternalTypes();
+    _ = relocation.graph.reconcileTypeResolution();
     _ = try generics.materializeKnownTypes();
     try control.materializeSugarTypes();
 
@@ -134,6 +142,7 @@ pub fn semantize(
                 flat += 1;
             }
         }
+        if (relocation.graph.reconcileTypeResolution()) changed = true;
         if (core.materializeBindingTypes()) changed = true;
         if (core.materializeDereferences()) changed = true;
         if (try core.materializeAddresses()) changed = true;
@@ -153,10 +162,15 @@ pub fn semantize(
         dumpUnresolved(modules, resolved);
         return error.UnsupportedGlobalSemantic;
     }
-    if (hasUnresolvedExternalTypes(modules, core.stats.external_types + generics.stats.type_holes)) {
-        std.debug.print("global sema unresolved external types: resolved={d}\n", .{core.stats.external_types + generics.stats.type_holes});
+    _ = relocation.graph.reconcileTypeResolution();
+    if (relocation.graph.hasUnresolvedTypes()) {
+        std.debug.print("global sema unresolved global type slots remain\n", .{});
         return error.UnsupportedGlobalSemantic;
     }
+
+    // Construction-only resolution metadata must disappear before the graph is
+    // exposed to Safety, Codegen or editor consumers.
+    try relocation.graph.finishTypeResolution(allocator);
 
     // Cleanup is finalized only after all calls/types/abstract dispatch decisions
     // are stable. Safety and Codegen consume these explicit cleanup edges.
@@ -179,6 +193,23 @@ pub fn semantize(
     try global_verify.verifyGlobal(&relocation.graph);
     stats.remaining = 0;
     return .{ .graph = relocation.takeGraph(allocator), .stats = stats };
+}
+
+fn markUnresolvedTypeSlots(
+    allocator: std.mem.Allocator,
+    graph: *global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    offsets: []const globalizer.Offsets,
+) !void {
+    for (modules, 0..) |*module, module_index| {
+        for (0..module_views.typeCount(module)) |raw| {
+            const local: module_entities.ModuleTypeId = @enumFromInt(@as(u32, @intCast(raw)));
+            switch (try module_views.typeView(module, local)) {
+                .resolved => {},
+                .external => try graph.markTypeUnresolved(allocator, globalizer.globalType(offsets[module_index], local)),
+            }
+        }
+    }
 }
 
 fn dumpUnresolved(modules: []const module_sg.ModuleSemanticGraph, resolved: []const bool) void {
@@ -229,22 +260,11 @@ fn totalPending(modules: []const module_sg.ModuleSemanticGraph) usize {
     return total;
 }
 
-fn hasUnresolvedExternalTypes(modules: []const module_sg.ModuleSemanticGraph, resolved_count: u32) bool {
-    var external_count: usize = 0;
-    for (modules) |module| {
-        external_count += module.semantic.external_types.items.len;
-        for (module.semantic.types.items) |ty| switch (ty) {
-            .external => external_count += 1,
-            .resolved => {},
-        };
-    }
-    return external_count > resolved_count;
-}
-
 test "global semantizer accepts an empty program" {
     const allocator = std.testing.allocator;
     var result = try semantize(allocator, &.{});
     defer result.graph.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), result.graph.nodes.items.len);
     try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
+    try std.testing.expectEqual(@as(usize, 0), result.graph.type_resolution.items.len);
 }

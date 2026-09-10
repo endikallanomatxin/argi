@@ -116,6 +116,17 @@ pub const GenericFunctionInstance = struct {
     arguments: primitives.Range(GlobalGenericArgId),
 };
 
+/// Construction-only state for slots whose final GlobalTypeId is already
+/// allocated but whose semantic payload is not resolved yet. This state is
+/// deliberately separate from `GlobalType`: unresolved is not a language type
+/// and therefore must never be encoded as `Any` (or any other valid type).
+pub const TypeResolutionState = enum(u8) {
+    resolved,
+    unresolved,
+};
+
+const unresolved_type_poison_decl: GlobalDeclId = @enumFromInt(std.math.maxInt(u32));
+
 pub const GlobalSemanticGraph = struct {
     modules: std.ArrayList(Module) = .empty,
     files: std.ArrayList(File) = .empty,
@@ -123,6 +134,9 @@ pub const GlobalSemanticGraph = struct {
     symbols: std.ArrayList(Symbol) = .empty,
     symbol_declarations: std.ArrayList(GlobalDeclId) = .empty,
     types: std.ArrayList(GlobalType) = .empty,
+    /// Present only while GlobalSema is resolving preallocated type slots.
+    /// Final GlobalSemanticGraph values have this list empty.
+    type_resolution: std.ArrayList(TypeResolutionState) = .empty,
     generic_instances: std.ArrayList(GenericInstance) = .empty,
     functions: std.ArrayList(Function) = .empty,
     function_operators: std.ArrayList(?callable.OperatorKind) = .empty,
@@ -161,10 +175,10 @@ pub const GlobalSemanticGraph = struct {
     pub fn deinit(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
         inline for (.{
             &self.modules, &self.files, &self.declarations, &self.symbols,
-            &self.symbol_declarations, &self.types, &self.generic_instances,
-            &self.functions, &self.function_operators, &self.generic_function_instances,
-            &self.bindings, &self.nodes, &self.blocks,
-            &self.fields, &self.variants, &self.generic_arguments,
+            &self.symbol_declarations, &self.types, &self.type_resolution,
+            &self.generic_instances, &self.functions, &self.function_operators,
+            &self.generic_function_instances, &self.bindings, &self.nodes,
+            &self.blocks, &self.fields, &self.variants, &self.generic_arguments,
             &self.value_fields, &self.switch_cases, &self.switches,
             &self.auto_deinit_fields, &self.auto_deinits,
             &self.virtual_registries, &self.virtualizes, &self.virtual_calls,
@@ -187,6 +201,64 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn semanticType(self: *const GlobalSemanticGraph, id: GlobalTypeId) GlobalType {
         return self.types.items[@intFromEnum(id)];
+    }
+
+    /// Returns null while a preallocated global type slot is unresolved. Code
+    /// that participates in GlobalSema should prefer this over reading `types`
+    /// directly; final consumers see no unresolved slots.
+    pub fn resolvedSemanticType(self: *const GlobalSemanticGraph, id: GlobalTypeId) ?GlobalType {
+        if (self.isTypeUnresolved(id)) return null;
+        return self.types.items[@intFromEnum(id)];
+    }
+
+    pub fn isTypeUnresolved(self: *const GlobalSemanticGraph, id: GlobalTypeId) bool {
+        const raw: usize = @intFromEnum(id);
+        return raw < self.type_resolution.items.len and self.type_resolution.items[raw] == .unresolved;
+    }
+
+    /// Mark a preallocated slot as unresolved and replace the old semantic
+    /// sentinel with a deliberately invalid payload. Resolution state, rather
+    /// than the payload, is authoritative while GlobalSema is running.
+    pub fn markTypeUnresolved(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalTypeId) !void {
+        const raw: usize = @intFromEnum(id);
+        if (raw >= self.types.items.len) return error.InvalidGlobalTypeId;
+        try self.ensureTypeResolutionCovers(allocator, self.types.items.len);
+        self.type_resolution.items[raw] = .unresolved;
+        self.types.items[raw] = .{ .declared = unresolved_type_poison_decl };
+    }
+
+    /// Existing resolvers still patch preallocated slots directly. Until those
+    /// writes all go through one mutation API, reconcile construction state by
+    /// observing that the poison payload has been replaced.
+    pub fn reconcileTypeResolution(self: *GlobalSemanticGraph) bool {
+        var changed = false;
+        const limit = @min(self.type_resolution.items.len, self.types.items.len);
+        for (self.type_resolution.items[0..limit], 0..) |*state, raw| {
+            if (state.* != .unresolved or isUnresolvedTypePoison(self.types.items[raw])) continue;
+            state.* = .resolved;
+            changed = true;
+        }
+        return changed;
+    }
+
+    pub fn hasUnresolvedTypes(self: *const GlobalSemanticGraph) bool {
+        for (self.type_resolution.items) |state| if (state == .unresolved) return true;
+        return false;
+    }
+
+    /// Construction metadata is not part of the durable GlobalSG. Calling this
+    /// before every slot is resolved is an error rather than silently exposing
+    /// a provisional graph to Safety, Codegen or the LSP.
+    pub fn finishTypeResolution(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) !void {
+        if (self.hasUnresolvedTypes()) return error.UnresolvedGlobalTypeSlots;
+        self.type_resolution.deinit(allocator);
+        self.type_resolution = .empty;
+    }
+
+    fn ensureTypeResolutionCovers(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, count: usize) !void {
+        if (self.type_resolution.items.len >= count) return;
+        try self.type_resolution.ensureTotalCapacity(allocator, count);
+        while (self.type_resolution.items.len < count) self.type_resolution.appendAssumeCapacity(.resolved);
     }
 
     pub fn function(self: *const GlobalSemanticGraph, id: GlobalFunctionId) Function {
@@ -232,6 +304,7 @@ pub const GlobalSemanticGraph = struct {
             self.symbols.items.len * @sizeOf(Symbol) +
             self.symbol_declarations.items.len * @sizeOf(GlobalDeclId) +
             self.types.items.len * @sizeOf(GlobalType) +
+            self.type_resolution.items.len * @sizeOf(TypeResolutionState) +
             self.generic_instances.items.len * @sizeOf(GenericInstance) +
             self.functions.items.len * @sizeOf(Function) +
             self.function_operators.items.len * @sizeOf(?callable.OperatorKind) +
@@ -266,6 +339,13 @@ pub const GlobalSemanticGraph = struct {
     }
 };
 
+fn isUnresolvedTypePoison(value: GlobalType) bool {
+    return switch (value) {
+        .declared => |decl| decl == unresolved_type_poison_decl,
+        else => false,
+    };
+}
+
 test "global semantic graph derives symbol module ownership from declarations" {
     const allocator = std.testing.allocator;
     var graph: GlobalSemanticGraph = .{};
@@ -296,4 +376,22 @@ test "global semantic graph derives symbol module ownership from declarations" {
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(graph.moduleForSymbol(symbol).?));
     try std.testing.expectEqualStrings("Thing", graph.text(type_name));
     try std.testing.expectEqual(callable.OperatorKind.add, graph.functionOperator(@enumFromInt(0)).?);
+}
+
+test "unresolved global type slots are construction state, not Any" {
+    const allocator = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+
+    try graph.types.append(allocator, .{ .builtin = .Any });
+    try graph.markTypeUnresolved(allocator, @enumFromInt(0));
+    try std.testing.expect(graph.isTypeUnresolved(@enumFromInt(0)));
+    try std.testing.expect(graph.resolvedSemanticType(@enumFromInt(0)) == null);
+    try std.testing.expectError(error.UnresolvedGlobalTypeSlots, graph.finishTypeResolution(allocator));
+
+    graph.types.items[0] = .{ .builtin = .Int32 };
+    try std.testing.expect(graph.reconcileTypeResolution());
+    try std.testing.expect(!graph.hasUnresolvedTypes());
+    try graph.finishTypeResolution(allocator);
+    try std.testing.expectEqual(@as(usize, 0), graph.type_resolution.items.len);
 }

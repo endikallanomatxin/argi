@@ -29,7 +29,8 @@ pub const LayoutError = error{
 };
 
 pub fn fields(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.FieldRange {
-    return switch (graph.types.items[@intFromEnum(ty)]) {
+    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    return switch (semantic) {
         .structural => |shape| shape.fields,
         .declared => |decl| graph.declarations.items[@intFromEnum(decl)].struct_fields,
         .generic => genericFields(graph, ty),
@@ -38,7 +39,8 @@ pub fn fields(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalT
 }
 
 pub fn variants(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.VariantRange {
-    return switch (graph.types.items[@intFromEnum(ty)]) {
+    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    return switch (semantic) {
         .structural_choice => |shape| shape.variants,
         .inferred_choice => |shape| shape.variants,
         .declared => |decl| graph.declarations.items[@intFromEnum(decl)].choice_variants,
@@ -48,7 +50,8 @@ pub fn variants(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Globa
 }
 
 pub fn arrayElement(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalTypeId {
-    return switch (graph.types.items[@intFromEnum(ty)]) {
+    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    return switch (semantic) {
         .array => |array| array.element,
         .generic => blk: {
             const instance = genericInstance(graph, ty) orelse break :blk null;
@@ -63,7 +66,8 @@ pub fn arrayElement(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.G
 }
 
 pub fn arrayLength(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?u64 {
-    return switch (graph.types.items[@intFromEnum(ty)]) {
+    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    return switch (semantic) {
         .array => |array| array.length,
         .generic => blk: {
             const instance = genericInstance(graph, ty) orelse break :blk null;
@@ -108,6 +112,7 @@ pub fn findVariant(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
 }
 
 pub fn genericInstance(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GenericInstance {
+    if (graph.isTypeUnresolved(ty)) return null;
     for (graph.generic_instances.items) |instance| if (instance.type_id == ty) return instance;
     return null;
 }
@@ -121,13 +126,15 @@ pub fn effectiveFieldType(field: graph_mod.Field) graph_mod.GlobalTypeId {
 }
 
 pub fn isBuiltin(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, builtin: primitives.BuiltinType) bool {
-    return switch (graph.types.items[@intFromEnum(ty)]) {
+    const semantic = graph.resolvedSemanticType(ty) orelse return false;
+    return switch (semantic) {
         .builtin => |value| value == builtin,
         else => false,
     };
 }
 
 pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTypeId, b: graph_mod.GlobalTypeId) bool {
+    if (graph.isTypeUnresolved(a) or graph.isTypeUnresolved(b)) return false;
     if (a == b) return true;
     const left = graph.types.items[@intFromEnum(a)];
     const right = graph.types.items[@intFromEnum(b)];
@@ -180,10 +187,11 @@ pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTyp
 }
 
 /// Runtime layout of a fully resolved GlobalTypeId. Compact ModuleSema sugar
-/// (`nullable`/`inferred_errable`) is rejected because GlobalSema must
-/// materialize it before Safety/Codegen.
+/// (`nullable`/`inferred_errable`) and construction-time holes are rejected
+/// because GlobalSema must materialize them before Safety/Codegen.
 pub fn layoutOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) LayoutError!Layout {
-    return switch (graph.types.items[@intFromEnum(ty)]) {
+    const semantic = graph.resolvedSemanticType(ty) orelse return error.UnmaterializedGlobalType;
+    return switch (semantic) {
         .builtin => |builtin| builtinLayout(builtin),
         .pointer => .{ .size = pointer_size_bytes, .alignment = pointer_alignment_bytes },
         .array => |array| blk: {
@@ -221,7 +229,9 @@ fn builtinLayout(builtin: primitives.BuiltinType) Layout {
 }
 
 fn declaredLayout(graph: *const graph_mod.GlobalSemanticGraph, decl_id: graph_mod.GlobalDeclId) LayoutError!Layout {
-    const decl = graph.declarations.items[@intFromEnum(decl_id)];
+    const raw: usize = @intFromEnum(decl_id);
+    if (raw >= graph.declarations.items.len) return error.UnmaterializedGlobalType;
+    const decl = graph.declarations.items[raw];
     if (decl.struct_fields) |range| return structLayout(graph, range, decl.struct_layout);
     if (decl.choice_variants) |range| return choiceLayout(graph, range, decl.choice_layout);
     return error.TypeHasNoRuntimeLayout;
@@ -363,4 +373,16 @@ test "global semantic types expose structural fields and variants" {
     try std.testing.expectEqual(@as(u32, 0), findVariant(&graph, @enumFromInt(2), "some").?.index);
     try std.testing.expectEqual(@as(u64, 4), try sizeOf(&graph, @enumFromInt(1)));
     try std.testing.expect((try sizeOf(&graph, @enumFromInt(2))) >= 8);
+}
+
+test "type helpers reject construction-time unresolved slots" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Any });
+    try graph.markTypeUnresolved(allocator, @enumFromInt(0));
+
+    try std.testing.expect(!isBuiltin(&graph, @enumFromInt(0), .Any));
+    try std.testing.expect(!equal(&graph, @enumFromInt(0), @enumFromInt(0)));
+    try std.testing.expectError(error.UnmaterializedGlobalType, layoutOf(&graph, @enumFromInt(0)));
 }
