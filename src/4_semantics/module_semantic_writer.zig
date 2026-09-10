@@ -104,16 +104,6 @@ pub const Writer = struct {
         return id;
     }
 
-    pub fn markBindingTypeUnresolved(self: *Writer, id: entities.ModuleBindingId) !void {
-        for (self.graph.semantic.unresolved_binding_types.items) |existing| if (existing == id) return;
-        try self.graph.semantic.unresolved_binding_types.append(self.allocator, id);
-    }
-
-    pub fn bindingTypeIsUnresolved(self: *const Writer, id: entities.ModuleBindingId) bool {
-        for (self.graph.semantic.unresolved_binding_types.items) |candidate| if (candidate == id) return true;
-        return false;
-    }
-
     pub fn addNode(self: *Writer, node: entities.ModuleNode) !entities.ModuleNodeId {
         const id = try directId(entities.ModuleNodeId, self.graph.semantic.nodes.items.len);
         try self.graph.semantic.nodes.append(self.allocator, node);
@@ -241,24 +231,4 @@ test "module semantic writer rejects compatibility prefix growth after canonical
         error.ModuleSemanticCompatibilityPrefixMutated,
         writer.addResolvedType(.{ .builtin = .Float32 }),
     );
-}
-
-test "module semantic writer tracks unresolved binding types separately" {
-    const allocator = std.testing.allocator;
-    var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
-    defer graph.deinit(allocator);
-    var writer = Writer.init(allocator, &graph);
-
-    const any = try writer.addResolvedType(.{ .builtin = .Any });
-    const binding = try writer.addBinding(.{
-        .name = .{ .start = 0, .len = 0 },
-        .source = .{ .file_index = 0, .offset = 0 },
-        .ty = any,
-        .mutability = .constant,
-    });
-    try writer.markBindingTypeUnresolved(binding);
-    try writer.markBindingTypeUnresolved(binding);
-
-    try std.testing.expect(writer.bindingTypeIsUnresolved(binding));
-    try std.testing.expectEqual(@as(usize, 1), graph.semantic.unresolved_binding_types.items.len);
 }
