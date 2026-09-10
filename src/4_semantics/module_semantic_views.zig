@@ -3,10 +3,12 @@ const graph_mod = @import("module_semantic_graph.zig");
 const entities = @import("module_semantic_entities.zig");
 
 pub fn typeCount(graph: *const graph_mod.ModuleSemanticGraph) usize {
-    return graph.types.items.len +
-        graph.semantic.resolved_types.items.len +
-        graph.semantic.external_types.items.len +
-        graph.semantic.types.items.len;
+    // These two arrays were temporary semantic prefixes. Keeping them outside
+    // the logical domain makes every new semantic type live in one canonical
+    // `ModuleType` table and prevents another source of ID rebasing.
+    std.debug.assert(graph.semantic.resolved_types.items.len == 0);
+    std.debug.assert(graph.semantic.external_types.items.len == 0);
+    return graph.types.items.len + graph.semantic.types.items.len;
 }
 
 pub fn fieldCount(graph: *const graph_mod.ModuleSemanticGraph) usize {
@@ -69,14 +71,6 @@ pub fn typeView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.Module
         return .{ .resolved = resolved };
     }
     raw -= graph.types.items.len;
-
-    if (raw < graph.semantic.resolved_types.items.len)
-        return .{ .resolved = graph.semantic.resolved_types.items[raw] };
-    raw -= graph.semantic.resolved_types.items.len;
-
-    if (raw < graph.semantic.external_types.items.len)
-        return .{ .external = graph.semantic.external_types.items[raw] };
-    raw -= graph.semantic.external_types.items.len;
 
     if (raw < graph.semantic.types.items.len)
         return graph.semantic.types.items[raw];
@@ -187,24 +181,24 @@ fn findVariantSemantic(graph: *const graph_mod.ModuleSemanticGraph, id: entities
     return null;
 }
 
-test "module views expose compatibility, migration and mixed canonical type tails" {
+test "module views expose compatibility types followed by one canonical type tail" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
     defer graph.deinit(allocator);
 
     try graph.types.append(allocator, .{ .builtin = .Int32 });
-    try graph.semantic.resolved_types.append(allocator, .{ .inferred_choice = .{
-        .identity = 4,
-        .kind = .reasons,
-        .variants = .{ .start = 0, .len = 0 },
-    } });
     try graph.semantic.external_refs.append(allocator, .{
         .kind = .type,
         .module_path = null,
         .name = .{ .start = 0, .len = 0 },
         .source = .{ .file_index = 0, .offset = 0 },
     });
-    try graph.semantic.external_types.append(allocator, @enumFromInt(0));
+    try graph.semantic.types.append(allocator, .{ .resolved = .{ .inferred_choice = .{
+        .identity = 4,
+        .kind = .reasons,
+        .variants = .{ .start = 0, .len = 0 },
+    } } });
+    try graph.semantic.types.append(allocator, .{ .external = @enumFromInt(0) });
     try graph.semantic.types.append(allocator, .{ .resolved = .{ .pointer = .{
         .child = @enumFromInt(2),
         .mutability = .read_only,
