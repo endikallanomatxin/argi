@@ -1,6 +1,7 @@
 const std = @import("std");
 const module_sg = @import("module_semantic_graph.zig");
 const body_lowerer = @import("module_body_lowerer.zig");
+const binding_resolution = @import("module_binding_resolution.zig");
 const initializer_lowerer = @import("module_initializer_lowerer.zig");
 const global_roots_lowerer = @import("module_global_roots_lowerer.zig");
 const template_lowerer = @import("module_template_lowerer.zig");
@@ -50,6 +51,7 @@ pub fn build(
     // traversal instead of rolling semantic tables back and walking the
     // function again with a second implementation.
     const bodies = try body_lowerer.lowerMissingFunctions(allocator, &graph, files);
+    _ = try binding_resolution.collect(allocator, &graph);
 
     const template_stats = try template_lowerer.lower(allocator, &graph, files);
     const generic_operators = try generic_operator_lowerer.lower(&graph, files);
