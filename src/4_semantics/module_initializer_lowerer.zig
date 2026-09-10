@@ -248,7 +248,7 @@ const Context = struct {
             .dereference => self.lowerDereference(node, expected),
             .reach_directive => self.lowerReach(node),
             .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .generic_type_instantiation, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
-            else => self.pendingFallback(node, expected),
+            else => error.UnsupportedInitializerExpression,
         };
     }
 
@@ -452,16 +452,6 @@ const Context = struct {
     fn lowerTypeLiteral(self: *Context, node: syn.NodeIndex) !Lowered {
         const value = try self.lowerType(node);
         return self.resolved(node, try self.builtin(.Type), .{ .type_literal = value });
-    }
-
-    fn pendingFallback(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
-        const pending_expression = entities.PendingExpression{
-            .node = self.nextNodeId(),
-            .kind = .other,
-            .expected_type = expected,
-            .aux = @intFromEnum(self.tree.tag(node)),
-        };
-        return self.pending(.{ .resolve_expression = pending_expression }, expected orelse try self.builtin(.Any));
     }
 
     fn pendingNamed(self: *Context, node: syn.NodeIndex, kind: entities.PendingExpressionKind, text: []const u8, expected: ?entities.ModuleTypeId) !Lowered {
