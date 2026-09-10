@@ -96,7 +96,7 @@ pub const finalizeResolvedModules = globalize;
 fn requireFinalizable(module: *const module_sg.ModuleSemanticGraph) !void {
     const semantic = &module.semantic;
     if (!semantic.local_semantics_complete) return error.ModuleLocalSemanticsIncomplete;
-    if (semantic.external_refs.items.len != 0 or semantic.external_types.items.len != 0 or semantic.pending_operations.items.len != 0)
+    if (semantic.external_refs.items.len != 0 or semantic.pending_operations.items.len != 0)
         return error.UnresolvedModuleSemantics;
     if (semantic.templates.storageBytes() != 0) return error.ModuleTemplatesNotConsumed;
     for (semantic.types.items) |ty| switch (ty) {
