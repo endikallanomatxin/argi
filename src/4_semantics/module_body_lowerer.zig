@@ -129,7 +129,7 @@ const Context = struct {
         return switch (self.tree.tag(node)) {
             .literal => self.lowerLiteral(node),
             .identifier => self.lowerIdentifier(node, expected),
-            .pipe_placeholder => self.pipe_value orelse self.pendingLeaf(node, .other, null, expected),
+            .pipe_placeholder => self.pipe_value orelse return error.PipePlaceholderOutsidePipe,
             .symbol_declaration_constant, .symbol_declaration_variable => self.lowerBinding(node),
             .assignment => self.lowerAssignment(node, expected),
             .expression_statement => self.lowerNode(self.tree.unaryOperand(node).?, expected),
@@ -166,7 +166,7 @@ const Context = struct {
             .pointer_assignment => self.lowerPointerAssignment(node, expected),
             .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .generic_type_instantiation, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
             .import_statement => self.pendingLeaf(node, .import_value, null, expected),
-            else => self.pendingLeaf(node, .other, null, expected),
+            else => return error.UnexpectedBodySyntaxNode,
         };
     }
 
@@ -404,10 +404,7 @@ const Context = struct {
 
     fn lowerIndexAssignment(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const assignment = self.tree.indexAssignment(node).?;
-        const target = self.tree.indexAccess(assignment.target) orelse {
-            const value = try self.lowerNode(assignment.value, expected);
-            return self.pendingFallback(node, .other, &.{value.node}, null, expected);
-        };
+        const target = self.tree.indexAccess(assignment.target) orelse return error.InvalidIndexAssignmentTarget;
         const collection = try self.lowerNode(target.value, null);
         const index = try self.lowerNode(target.index, try self.builtin(.Int32));
         const value = try self.lowerNode(assignment.value, expected);
@@ -653,16 +650,6 @@ const Context = struct {
         return self.pending(node, .{ .resolve_expression = .{
             .node = self.nextNodeId(),
             .kind = kind,
-            .name = name,
-            .expected_type = expected,
-        } }, expected);
-    }
-
-    fn pendingFallback(self: *Context, node: syn.NodeIndex, kind: entities.PendingExpressionKind, operands: []const entities.ModuleNodeId, name: ?primitives.StringRange, expected: ?entities.ModuleTypeId) !Lowered {
-        return self.pending(node, .{ .resolve_expression = .{
-            .node = self.nextNodeId(),
-            .kind = kind,
-            .operands = try self.writer.appendNodeRefs(operands),
             .name = name,
             .expected_type = expected,
         } }, expected);

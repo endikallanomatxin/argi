@@ -164,7 +164,6 @@ pub const PendingExpressionKind = enum(u8) {
     generic_call,
     type_initializer,
     explicit_cast,
-    other,
 };
 
 pub const PendingExpression = struct {
