@@ -72,27 +72,25 @@ env ZIG_LOCAL_CACHE_DIR=$PWD/.zig-cache ZIG_GLOBAL_CACHE_DIR=$PWD/.zig-global-ca
 
 ## Observed remaining blockers, in suggested order
 
-1. **Finish allocator generic bodies.** Maps `init`, arena `init`,
-   `ensure_capacity`, contextual choice literals, matches and ordinary `is`
-   tests now resolve. The first allocator failure is `deinit` (input 124): its
-   selected `DynamicArray` body currently fails at the nested implicit
-   `trusted_opaque_drop(.slot, .allocator)` call. Recheck the following
-   `Allocation.deinit` after fixing that inference. `push_assume_capacity`
-   (input 408) also remains. Template field defaults are
-   lowered, but instantiated generic fields still currently discard their
-   default values in `instantiateFields`; preserve those when a failing call
-   actually needs them.
+1. **Finish ordinary system initializers.** Allocator and strings now resolve
+   completely. Trusted drops of a type without an explicit destructor lower to
+   a no-op, matching the retired semantizer. Contextual structural literals
+   participate in overload scoring, and deferred `move`/arithmetic nodes refine
+   after their bindings become concrete. The next group is `core/system`:
+   `size_of(.type = UIntNative)` still contains an unresolved type identifier in
+   a value expression, and ordinary `CAllocator()`, `Terminal(...)`,
+   `Arguments()` and related type initializers need the non-template
+   initialization path.
 2. **Complete virtual codegen.** All three allocator `to_virtual` calls now
    resolve by validating every abstract requirement and recording one concrete
    function per vtable slot. The semantic graph contains real method and safety
    registries. `src/5_codegen/global_codegen.zig` still returns
    `NotYetImplemented` for both `virtualize` and `virtual_call`; semantizing
    alone will not finish this.
-3. **Continue past the allocator.** Once its five direct failures are gone, the
-   next visible group is in `core/strings`: unresolved fields around
-   `mutable_reference_offset`. Re-run the fixed point after each allocator fix,
-   since these are currently downstream and may disappear once input types are
-   concrete.
+3. **Core formatting correction.** `format_unsigned_decimal_into_u64` and
+   `format_signed_decimal_into_i64` incorrectly called their 32-bit helper
+   names. They now select the existing overloaded 64-bit helper, avoiding an
+   unsafe implicit narrowing conversion in semantizing.
 4. **Inference coverage.** This checkpoint handles type parameters, pointers,
    and named generic container arguments. It does not implement inference of
    comptime integers, dependent array lengths, or all other template type forms.

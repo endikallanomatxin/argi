@@ -1057,6 +1057,9 @@ pub const Resolver = struct {
                                 return node;
                         }
                     }
+                    if (module_path == null and std.mem.eql(u8, name, "deinit") and
+                        self.template.safety_primitive == .trusted_opaque_drop)
+                        return self.emptyValue(try self.resolver.generics.internType(.{ .builtin = .Void }), source);
                     return err;
                 };
             if (!try self.resolver.core.completeCallInputFields(self.resolver.graph.functions.items[@intFromEnum(function)].input, input)) return error.IncompleteTemplateCallInput;
