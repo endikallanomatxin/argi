@@ -21,9 +21,10 @@ pub const State = struct {
         offsets: []const globalizer.Offsets,
     ) !State {
         const unresolved = try allocator.alloc(bool, graph.bindings.items.len);
+        errdefer allocator.free(unresolved);
         @memset(unresolved, false);
         var result = State{ .unresolved = unresolved };
-        result.markModuleBindings(modules, offsets);
+        try result.markModuleBindings(modules, offsets);
         result.hideProvisionalNodeTypes(graph);
         return result;
     }
@@ -62,20 +63,24 @@ pub const State = struct {
         self: *State,
         modules: []const module_sg.ModuleSemanticGraph,
         offsets: []const globalizer.Offsets,
-    ) void {
+    ) !void {
+        if (modules.len != offsets.len) return error.InvalidGlobalBindingResolutionOffsets;
         for (modules, 0..) |*module, module_index| {
             const o = offsets[module_index];
 
             // Explicit local construction metadata takes precedence as ModuleSema
             // adopts it. Pending control operations are also inspected so old
             // producers are safe during the migration.
-            for (module.semantic.unresolved_binding_types.items) |binding|
-                self.markUnresolved(globalizer.globalBinding(o, binding));
+            for (module.semantic.unresolved_binding_types.items) |binding| {
+                if (@intFromEnum(binding) >= module.semantic.bindings.items.len)
+                    return error.InvalidUnresolvedModuleBinding;
+                try self.markUnresolved(globalizer.globalBinding(o, binding));
+            }
 
             for (module.semantic.pending_operations.items) |operation| switch (operation) {
-                .resolve_for_each => |value| self.markUnresolved(globalizer.globalBinding(o, value.binding)),
+                .resolve_for_each => |value| try self.markUnresolved(globalizer.globalBinding(o, value.binding)),
                 .resolve_match_case => |value| if (value.payload_binding) |binding|
-                    self.markUnresolved(globalizer.globalBinding(o, binding)),
+                    try self.markUnresolved(globalizer.globalBinding(o, binding)),
                 else => {},
             };
         }
@@ -119,14 +124,16 @@ pub const State = struct {
         };
     }
 
-    fn markUnresolved(self: *State, binding: global_sg.GlobalBindingId) void {
+    fn markUnresolved(self: *State, binding: global_sg.GlobalBindingId) !void {
         const raw: usize = @intFromEnum(binding);
-        if (raw < self.unresolved.len) self.unresolved[raw] = true;
+        if (raw >= self.unresolved.len) return error.InvalidUnresolvedGlobalBinding;
+        self.unresolved[raw] = true;
     }
 
     fn markResolved(self: *State, binding: global_sg.GlobalBindingId) void {
         const raw: usize = @intFromEnum(binding);
-        if (raw < self.unresolved.len) self.unresolved[raw] = false;
+        std.debug.assert(raw < self.unresolved.len);
+        self.unresolved[raw] = false;
     }
 };
 
