@@ -1,22 +1,22 @@
-const template_lowerer = @import("module_template_lowerer.zig");
+const parameterized_lowerer = @import("module_parameterized_lowerer.zig");
 const std = @import("std");
 const syn = @import("../3_syntax/syntax_tree.zig");
 const graph_mod = @import("module_semantic_graph.zig");
 const entities = @import("module_semantic_entities.zig");
-const templates = @import("module_semantic_templates.zig");
-const ir = @import("module_semantic_template_ir.zig");
+const parameterized_storage = @import("module_parameterized_storage.zig");
+const ir = @import("module_parameterized_ir.zig");
 const writer_mod = @import("module_semantic_writer.zig");
 const type_lowerer = @import("module_type_lowerer.zig");
 const primitives = @import("semantic_primitives.zig");
 
 pub const Stats = struct {
     implementations: u32 = 0,
-    implementation_templates: u32 = 0,
+    implementation_parameterized_forms: u32 = 0,
     defaults: u32 = 0,
-    default_templates: u32 = 0,
+    default_parameterized_forms: u32 = 0,
 };
 
-const Param = template_lowerer.ParameterBinding;
+const Param = parameterized_lowerer.ParameterBinding;
 
 pub fn lower(
     allocator: std.mem.Allocator,
@@ -54,8 +54,8 @@ const Context = struct {
                 .abstract_implements => {
                     const relation = self.tree.abstractImplements(node).?;
                     if (hasParams(relation.generic_params, relation.generic_params_struct)) {
-                        try self.lowerImplementationTemplate(node, relation);
-                        stats.implementation_templates += 1;
+                        try self.lowerImplementationParameterized(node, relation);
+                        stats.implementation_parameterized_forms += 1;
                     } else {
                         try self.lowerImplementation(node, relation);
                         stats.implementations += 1;
@@ -64,8 +64,8 @@ const Context = struct {
                 .abstract_defaultsto => {
                     const relation = self.tree.abstractDefaultsTo(node).?;
                     if (hasParams(relation.generic_params, relation.generic_params_struct)) {
-                        try self.lowerDefaultTemplate(node, relation);
-                        stats.default_templates += 1;
+                        try self.lowerDefaultParameterized(node, relation);
+                        stats.default_parameterized_forms += 1;
                     } else {
                         try self.lowerDefault(node, relation);
                         stats.defaults += 1;
@@ -81,10 +81,10 @@ const Context = struct {
         const concrete_name = self.tree.tokenTextFromSource(self.source, relation.concrete_name_token);
         const concrete = try self.moduleTypeFromName(node, concrete_name, null);
         const parsed = try self.abstractReference(relation.abstract_type, false);
-        const arg_start: u32 = @intCast(self.graph.semantic.templates.abstract_arguments.items.len);
-        for (parsed.module_arguments) |argument| try self.graph.semantic.templates.abstract_arguments.append(self.allocator, argument);
+        const arg_start: u32 = @intCast(self.graph.semantic.parameterized_storage.abstract_arguments.items.len);
+        for (parsed.module_arguments) |argument| try self.graph.semantic.parameterized_storage.abstract_arguments.append(self.allocator, argument);
         defer self.allocator.free(parsed.module_arguments);
-        try self.graph.semantic.templates.abstract_implementations.append(self.allocator, .{
+        try self.graph.semantic.parameterized_storage.abstract_implementations.append(self.allocator, .{
             .abstract_ref = parsed.reference,
             .ty = concrete,
             .arguments = .{ .start = arg_start, .len = @intCast(parsed.module_arguments.len) },
@@ -92,18 +92,18 @@ const Context = struct {
         });
     }
 
-    fn lowerImplementationTemplate(self: *Context, node: syn.NodeIndex, relation: syn.AbstractImplements) !void {
+    fn lowerImplementationParameterized(self: *Context, node: syn.NodeIndex, relation: syn.AbstractImplements) !void {
         self.params.clearRetainingCapacity();
         const params = try self.lowerParams(relation.generic_params, relation.generic_params_struct);
         const parsed = try self.abstractReference(relation.abstract_type, true);
         defer self.allocator.free(parsed.module_arguments);
         const concrete_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, relation.concrete_name_token));
-        try self.graph.semantic.templates.abstract_implementation_templates.append(self.allocator, .{
+        try self.graph.semantic.parameterized_storage.parameterized_abstract_implementations.append(self.allocator, .{
             .abstract_ref = parsed.reference,
             .parameters = params,
             .concrete_name = concrete_name,
             .concrete_parameter_count = params.len,
-            .arguments = parsed.template_arguments,
+            .arguments = parsed.parameterized_arguments,
             .source = self.sourceRef(node),
         });
     }
@@ -112,20 +112,20 @@ const Context = struct {
         const abstract_name = self.tree.tokenTextFromSource(self.source, relation.name_token);
         const abstract_ref = try self.declarationRef(node, abstract_name, .abstract);
         const ty = try self.lowerModuleType(relation.type_node);
-        try self.graph.semantic.templates.abstract_defaults.append(self.allocator, .{
+        try self.graph.semantic.parameterized_storage.abstract_defaults.append(self.allocator, .{
             .abstract_ref = abstract_ref,
             .ty = ty,
             .source = self.sourceRef(node),
         });
     }
 
-    fn lowerDefaultTemplate(self: *Context, node: syn.NodeIndex, relation: syn.AbstractDefaultsTo) !void {
+    fn lowerDefaultParameterized(self: *Context, node: syn.NodeIndex, relation: syn.AbstractDefaultsTo) !void {
         self.params.clearRetainingCapacity();
         const params = try self.lowerParams(relation.generic_params, relation.generic_params_struct);
         const abstract_name = self.tree.tokenTextFromSource(self.source, relation.name_token);
         const abstract_ref = try self.declarationRef(node, abstract_name, .abstract);
-        const ty = try self.lowerTemplateType(relation.type_node);
-        try self.graph.semantic.templates.abstract_default_templates.append(self.allocator, .{
+        const ty = try self.lowerParameterizedType(relation.type_node);
+        try self.graph.semantic.parameterized_storage.parameterized_abstract_defaults.append(self.allocator, .{
             .abstract_ref = abstract_ref,
             .parameters = params,
             .ty = ty,
@@ -135,11 +135,11 @@ const Context = struct {
 
     const ParsedAbstract = struct {
         reference: ir.DeclarationRef,
-        module_arguments: []templates.AbstractArgument,
-        template_arguments: primitives.Range(ir.TemplateGenericArgId),
+        module_arguments: []parameterized_storage.AbstractArgument,
+        parameterized_arguments: primitives.Range(ir.ParameterizedGenericArgId),
     };
 
-    fn abstractReference(self: *Context, node: syn.NodeIndex, template_mode: bool) !ParsedAbstract {
+    fn abstractReference(self: *Context, node: syn.NodeIndex, parameterized_mode: bool) !ParsedAbstract {
         const syntax_type = self.tree.syntaxType(node) orelse return error.ExpectedAbstractType;
         var base_node = node;
         var arguments_node: ?syn.NodeIndex = null;
@@ -154,25 +154,25 @@ const Context = struct {
         const base = self.tree.syntaxType(base_node).?.name;
         const name = self.tree.tokenTextFromSource(self.source, base.name_token);
         const reference = try self.declarationRef(base_node, name, .abstract);
-        var module_args: std.ArrayList(templates.AbstractArgument) = .empty;
+        var module_args: std.ArrayList(parameterized_storage.AbstractArgument) = .empty;
         errdefer module_args.deinit(self.allocator);
-        var template_args: std.ArrayList(ir.GenericArgument) = .empty;
-        defer template_args.deinit(self.allocator);
+        var parameterized_args: std.ArrayList(ir.GenericArgument) = .empty;
+        defer parameterized_args.deinit(self.allocator);
         if (arguments_node) |args_node| {
             const literal = self.tree.structTypeLiteral(args_node) orelse return error.InvalidAbstractArguments;
             for (literal.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node) orelse return error.InvalidAbstractArgument;
                 const arg_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token));
-                if (template_mode) {
+                if (parameterized_mode) {
                     if (field.type_node) |type_node| {
-                        try template_args.append(self.allocator, .{
+                        try parameterized_args.append(self.allocator, .{
                             .name = arg_name,
-                            .value = .{ .type = try self.lowerTemplateType(type_node) },
+                            .value = .{ .type = try self.lowerParameterizedType(type_node) },
                         });
                     } else if (field.default_value) |value_node| {
-                        var lowerer = self.templateContext();
+                        var lowerer = self.parameterizedContext();
                         defer lowerer.bindings.deinit();
-                        try template_args.append(self.allocator, .{
+                        try parameterized_args.append(self.allocator, .{
                             .name = arg_name,
                             .value = try lowerer.lowerGenericValue(value_node, false),
                         });
@@ -187,30 +187,31 @@ const Context = struct {
                 }
             }
         }
-        const template_start: u32 = @intCast(self.graph.semantic.templates.ir.generic_arguments.items.len);
-        try self.graph.semantic.templates.ir.generic_arguments.appendSlice(self.allocator, template_args.items);
+        const parameterized_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.generic_arguments.items.len);
+        try self.graph.semantic.parameterized_storage.ir.generic_arguments.appendSlice(self.allocator, parameterized_args.items);
         return .{
             .reference = reference,
             .module_arguments = try module_args.toOwnedSlice(self.allocator),
-            .template_arguments = .{
-                .start = template_start,
-                .len = @intCast(template_args.items.len),
+            .parameterized_arguments = .{
+                .start = parameterized_start,
+                .len = @intCast(parameterized_args.items.len),
             },
         };
     }
 
-    fn lowerParams(self: *Context, params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex) !primitives.Range(ir.TemplateParameterId) {
-        const start: u32 = @intCast(self.graph.semantic.templates.generic_parameters.items.len);
+    fn lowerParams(self: *Context, params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex) !primitives.Range(ir.ComptimeParameterId) {
+        const start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
         if (params_struct) |node| {
             const literal = self.tree.structTypeLiteral(node) orelse return error.InvalidGenericParameters;
             for (literal.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
                 const name_text = self.tree.tokenTextFromSource(self.source, field.name_token);
-                const kind: templates.GenericParameterKind = if (field.type_node) |type_node|
+                const kind: parameterized_storage.ComptimeParameterKind = if (field.type_node) |type_node|
                     if (isTypeName(self.tree, self.source, type_node, "Type")) .type else .comptime_int
-                else .type;
-                const id: ir.TemplateParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.templates.generic_parameters.items.len)));
-                try self.graph.semantic.templates.generic_parameters.append(self.allocator, .{
+                else
+                    .type;
+                const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
+                try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
                     .name = try self.writer.addString(name_text),
                     .kind = kind,
                 });
@@ -219,23 +220,24 @@ const Context = struct {
         } else {
             for (params) |param| {
                 const name_text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(param));
-                const id: ir.TemplateParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.templates.generic_parameters.items.len)));
-                try self.graph.semantic.templates.generic_parameters.append(self.allocator, .{
-                    .name = try self.writer.addString(name_text), .kind = .type,
+                const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
+                try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
+                    .name = try self.writer.addString(name_text),
+                    .kind = .type,
                 });
                 try self.params.append(.{ .name = name_text, .id = id, .kind = .type });
             }
         }
-        return .{ .start = start, .len = @intCast(self.graph.semantic.templates.generic_parameters.items.len - start) };
+        return .{ .start = start, .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - start) };
     }
 
-    fn lowerTemplateType(self: *Context, node: syn.NodeIndex) !ir.TemplateTypeId {
-        var lowerer = self.templateContext();
+    fn lowerParameterizedType(self: *Context, node: syn.NodeIndex) !ir.ParameterizedTypeId {
+        var lowerer = self.parameterizedContext();
         defer lowerer.bindings.deinit();
         return lowerer.lowerType(node, false);
     }
 
-    fn templateContext(self: *Context) template_lowerer.Context {
+    fn parameterizedContext(self: *Context) parameterized_lowerer.Context {
         return .{
             .allocator = self.allocator,
             .graph = self.graph,
@@ -251,8 +253,11 @@ const Context = struct {
 
     fn lowerModuleType(self: *Context, node: syn.NodeIndex) !entities.ModuleTypeId {
         var lowerer = type_lowerer.Context{
-            .graph = self.graph, .writer = &self.writer, .file_index = self.file_index,
-            .tree = self.tree, .source = self.source,
+            .graph = self.graph,
+            .writer = &self.writer,
+            .file_index = self.file_index,
+            .tree = self.tree,
+            .source = self.source,
         };
         return lowerer.lower(node);
     }
@@ -262,7 +267,8 @@ const Context = struct {
         const external = try self.writer.addExternalRef(.{
             .kind = .type,
             .module_path = if (qualifier) |text| try self.writer.addString(text) else null,
-            .name = try self.writer.addString(name), .source = self.sourceRef(node),
+            .name = try self.writer.addString(name),
+            .source = self.sourceRef(node),
         });
         return self.writer.addExternalType(external);
     }
@@ -282,7 +288,7 @@ const Context = struct {
         return .{ .external = external };
     }
 
-    fn lowerTemplateInt(self: *Context, node: syn.NodeIndex) anyerror!ir.TemplateIntExprId {
+    fn lowerParameterizedInt(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedIntExprId {
         if (self.tree.literal(node)) |literal| {
             var value = std.fmt.parseInt(i64, self.tree.tokenTextFromSource(self.source, literal.token), 0) catch return error.InvalidComptimeInt;
             if (literal.negative) value = -value;
@@ -295,15 +301,21 @@ const Context = struct {
         }
         const op = self.tree.binaryOperation(node) orelse return error.InvalidComptimeInt;
         const operator: ir.IntBinaryOperator = switch (self.tree.tag(node)) {
-            .binary_add => .add, .binary_subtract => .subtract, .binary_multiply => .multiply,
-            .binary_divide => .divide, .binary_modulo => .modulo, else => return error.InvalidComptimeInt,
+            .binary_add => .add,
+            .binary_subtract => .subtract,
+            .binary_multiply => .multiply,
+            .binary_divide => .divide,
+            .binary_modulo => .modulo,
+            else => return error.InvalidComptimeInt,
         };
         return self.addInt(.{ .binary = .{
-            .operator = operator, .left = try self.lowerTemplateInt(op.lhs), .right = try self.lowerTemplateInt(op.rhs),
+            .operator = operator,
+            .left = try self.lowerParameterizedInt(op.lhs),
+            .right = try self.lowerParameterizedInt(op.rhs),
         } });
     }
 
-    fn lowerTemplateIntFromToken(self: *Context, token: syn.TokenIndex) !ir.TemplateIntExprId {
+    fn lowerParameterizedIntFromToken(self: *Context, token: syn.TokenIndex) !ir.ParameterizedIntExprId {
         const text = self.tree.tokenTextFromSource(self.source, token);
         for (self.params.items) |param| if (param.kind == .comptime_int and std.mem.eql(u8, param.name, text))
             return self.addInt(.{ .parameter = param.id });
@@ -329,15 +341,15 @@ const Context = struct {
         };
     }
 
-    fn addTemplateType(self: *Context, value: ir.Type) !ir.TemplateTypeId {
-        const id: ir.TemplateTypeId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.templates.ir.types.items.len)));
-        try self.graph.semantic.templates.ir.types.append(self.allocator, value);
+    fn addParameterizedType(self: *Context, value: ir.Type) !ir.ParameterizedTypeId {
+        const id: ir.ParameterizedTypeId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.types.items.len)));
+        try self.graph.semantic.parameterized_storage.ir.types.append(self.allocator, value);
         return id;
     }
 
-    fn addInt(self: *Context, value: ir.IntExpression) !ir.TemplateIntExprId {
-        const id: ir.TemplateIntExprId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.templates.ir.int_expressions.items.len)));
-        try self.graph.semantic.templates.ir.int_expressions.append(self.allocator, value);
+    fn addInt(self: *Context, value: ir.IntExpression) !ir.ParameterizedIntExprId {
+        const id: ir.ParameterizedIntExprId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.int_expressions.items.len)));
+        try self.graph.semantic.parameterized_storage.ir.int_expressions.append(self.allocator, value);
         return id;
     }
 
@@ -377,6 +389,6 @@ fn builtinFromName(name: []const u8) ?primitives.BuiltinType {
     return null;
 }
 
-test "abstract relation lowering owns both concrete and template forms" {
-    try std.testing.expect(@sizeOf(templates.AbstractDefaultTemplate) <= 32);
+test "abstract relation lowering owns both concrete and parameterized forms" {
+    try std.testing.expect(@sizeOf(parameterized_storage.ParameterizedAbstractDefault) <= 32);
 }

@@ -1,47 +1,47 @@
 const std = @import("std");
 const entities = @import("module_semantic_entities.zig");
-const ir = @import("module_semantic_template_ir.zig");
+const ir = @import("module_parameterized_ir.zig");
 const primitives = @import("semantic_primitives.zig");
 const callable = @import("semantic_callable.zig");
 
-pub const GenericParameterId = ir.TemplateParameterId;
+pub const ComptimeParameterId = ir.ComptimeParameterId;
 pub const AbstractConstraintId = enum(u32) { _ };
-pub const GenericFunctionTemplateId = enum(u32) { _ };
-pub const GenericTypeTemplateId = enum(u32) { _ };
+pub const ParameterizedFunctionDefinitionId = enum(u32) { _ };
+pub const ParameterizedTypeDefinitionId = enum(u32) { _ };
 pub const AbstractRequirementId = enum(u32) { _ };
 pub const AbstractDefinitionId = enum(u32) { _ };
 pub const AbstractArgumentId = enum(u32) { _ };
 pub const AbstractImplementationId = enum(u32) { _ };
-pub const AbstractImplementationTemplateId = enum(u32) { _ };
+pub const ParameterizedAbstractImplementationId = enum(u32) { _ };
 pub const AbstractDefaultId = enum(u32) { _ };
-pub const AbstractDefaultTemplateId = enum(u32) { _ };
+pub const ParameterizedAbstractDefaultId = enum(u32) { _ };
 
 pub const DeclarationRef = ir.DeclarationRef;
 
-pub const GenericParameterKind = enum(u8) { type, comptime_int };
+pub const ComptimeParameterKind = enum(u8) { type, comptime_int };
 pub const GenericDispatchKind = enum(u8) { regular, abstract_contract };
 
-pub const GenericParameter = struct {
+pub const ComptimeParameter = struct {
     name: primitives.StringRange,
-    kind: GenericParameterKind,
-    value_type: ?ir.TemplateTypeId = null,
+    kind: ComptimeParameterKind,
+    value_type: ?ir.ParameterizedTypeId = null,
     constraint: ?AbstractConstraintId = null,
 };
 
 pub const AbstractConstraint = struct {
     abstract_ref: DeclarationRef,
-    arguments: primitives.Range(ir.TemplateGenericArgId) = .{ .start = 0, .len = 0 },
+    arguments: primitives.Range(ir.ParameterizedGenericArgId) = .{ .start = 0, .len = 0 },
     source: primitives.SourceRef,
 };
 
-pub const GenericFunctionTemplate = struct {
+pub const ParameterizedFunction = struct {
     declaration: entities.ModuleDeclId,
-    parameters: primitives.Range(GenericParameterId),
-    input: ir.TemplateTypeId,
-    output: ir.TemplateTypeId,
-    input_bindings: primitives.Range(ir.TemplateBindingId) = .{ .start = 0, .len = 0 },
-    output_bindings: primitives.Range(ir.TemplateBindingId) = .{ .start = 0, .len = 0 },
-    body: ?ir.TemplateBlockId,
+    parameters: primitives.Range(ComptimeParameterId),
+    input: ir.ParameterizedTypeId,
+    output: ir.ParameterizedTypeId,
+    input_bindings: primitives.Range(ir.ParameterizedBindingId) = .{ .start = 0, .len = 0 },
+    output_bindings: primitives.Range(ir.ParameterizedBindingId) = .{ .start = 0, .len = 0 },
+    body: ?ir.ParameterizedBlockId,
     dispatch_kind: GenericDispatchKind = .regular,
     operator: ?callable.OperatorKind = null,
     /// Destructor identity is resolved once while FileST is available. Global
@@ -50,22 +50,22 @@ pub const GenericFunctionTemplate = struct {
     safety_primitive: primitives.SafetyPrimitive = .none,
 };
 
-pub const GenericTypeTemplate = struct {
+pub const ParameterizedType = struct {
     declaration: entities.ModuleDeclId,
-    parameters: primitives.Range(GenericParameterId),
-    body: ir.TemplateTypeId,
+    parameters: primitives.Range(ComptimeParameterId),
+    body: ir.ParameterizedTypeId,
 };
 
 pub const AbstractRequirement = struct {
     name: primitives.StringRange,
-    input: ir.TemplateTypeId,
-    output: ir.TemplateTypeId,
-    parameters: primitives.Range(GenericParameterId) = .{ .start = 0, .len = 0 },
+    input: ir.ParameterizedTypeId,
+    output: ir.ParameterizedTypeId,
+    parameters: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
 };
 
 pub const AbstractDefinition = struct {
     declaration: entities.ModuleDeclId,
-    parameters: primitives.Range(GenericParameterId),
+    parameters: primitives.Range(ComptimeParameterId),
     requirements: primitives.Range(AbstractRequirementId),
 };
 
@@ -78,13 +78,13 @@ pub const AbstractImplementation = struct {
     source: primitives.SourceRef,
 };
 
-pub const AbstractImplementationTemplate = struct {
+pub const ParameterizedAbstractImplementation = struct {
     abstract_ref: DeclarationRef,
-    parameters: primitives.Range(GenericParameterId),
-    concrete_type_pattern: ?ir.TemplateTypeId = null,
+    parameters: primitives.Range(ComptimeParameterId),
+    concrete_type_pattern: ?ir.ParameterizedTypeId = null,
     concrete_name: ?primitives.StringRange = null,
     concrete_parameter_count: u32 = 0,
-    arguments: primitives.Range(ir.TemplateGenericArgId) = .{ .start = 0, .len = 0 },
+    arguments: primitives.Range(ir.ParameterizedGenericArgId) = .{ .start = 0, .len = 0 },
     source: primitives.SourceRef,
 };
 
@@ -94,74 +94,77 @@ pub const AbstractDefault = struct {
     source: primitives.SourceRef,
 };
 
-pub const AbstractDefaultTemplate = struct {
+pub const ParameterizedAbstractDefault = struct {
     abstract_ref: DeclarationRef,
-    parameters: primitives.Range(GenericParameterId),
-    ty: ir.TemplateTypeId,
+    parameters: primitives.Range(ComptimeParameterId),
+    ty: ir.ParameterizedTypeId,
     source: primitives.SourceRef,
 };
 
 pub const Storage = struct {
     ir: ir.Storage = .{},
-    generic_parameters: std.ArrayList(GenericParameter) = .empty,
+    comptime_parameters: std.ArrayList(ComptimeParameter) = .empty,
     abstract_constraints: std.ArrayList(AbstractConstraint) = .empty,
-    generic_function_templates: std.ArrayList(GenericFunctionTemplate) = .empty,
-    generic_type_templates: std.ArrayList(GenericTypeTemplate) = .empty,
+    parameterized_functions: std.ArrayList(ParameterizedFunction) = .empty,
+    parameterized_types: std.ArrayList(ParameterizedType) = .empty,
     abstract_requirements: std.ArrayList(AbstractRequirement) = .empty,
     abstract_definitions: std.ArrayList(AbstractDefinition) = .empty,
     abstract_arguments: std.ArrayList(AbstractArgument) = .empty,
     abstract_implementations: std.ArrayList(AbstractImplementation) = .empty,
-    abstract_implementation_templates: std.ArrayList(AbstractImplementationTemplate) = .empty,
+    parameterized_abstract_implementations: std.ArrayList(ParameterizedAbstractImplementation) = .empty,
     abstract_defaults: std.ArrayList(AbstractDefault) = .empty,
-    abstract_default_templates: std.ArrayList(AbstractDefaultTemplate) = .empty,
+    parameterized_abstract_defaults: std.ArrayList(ParameterizedAbstractDefault) = .empty,
 
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         self.ir.deinit(allocator);
-        self.generic_parameters.deinit(allocator);
+        self.comptime_parameters.deinit(allocator);
         self.abstract_constraints.deinit(allocator);
-        self.generic_function_templates.deinit(allocator);
-        self.generic_type_templates.deinit(allocator);
+        self.parameterized_functions.deinit(allocator);
+        self.parameterized_types.deinit(allocator);
         self.abstract_requirements.deinit(allocator);
         self.abstract_definitions.deinit(allocator);
         self.abstract_arguments.deinit(allocator);
         self.abstract_implementations.deinit(allocator);
-        self.abstract_implementation_templates.deinit(allocator);
+        self.parameterized_abstract_implementations.deinit(allocator);
         self.abstract_defaults.deinit(allocator);
-        self.abstract_default_templates.deinit(allocator);
+        self.parameterized_abstract_defaults.deinit(allocator);
         self.* = .{};
     }
 
     pub fn storageBytes(self: *const Storage) usize {
         return self.ir.storageBytes() +
-            self.generic_parameters.items.len * @sizeOf(GenericParameter) +
+            self.comptime_parameters.items.len * @sizeOf(ComptimeParameter) +
             self.abstract_constraints.items.len * @sizeOf(AbstractConstraint) +
-            self.generic_function_templates.items.len * @sizeOf(GenericFunctionTemplate) +
-            self.generic_type_templates.items.len * @sizeOf(GenericTypeTemplate) +
+            self.parameterized_functions.items.len * @sizeOf(ParameterizedFunction) +
+            self.parameterized_types.items.len * @sizeOf(ParameterizedType) +
             self.abstract_requirements.items.len * @sizeOf(AbstractRequirement) +
             self.abstract_definitions.items.len * @sizeOf(AbstractDefinition) +
             self.abstract_arguments.items.len * @sizeOf(AbstractArgument) +
             self.abstract_implementations.items.len * @sizeOf(AbstractImplementation) +
-            self.abstract_implementation_templates.items.len * @sizeOf(AbstractImplementationTemplate) +
+            self.parameterized_abstract_implementations.items.len * @sizeOf(ParameterizedAbstractImplementation) +
             self.abstract_defaults.items.len * @sizeOf(AbstractDefault) +
-            self.abstract_default_templates.items.len * @sizeOf(AbstractDefaultTemplate);
+            self.parameterized_abstract_defaults.items.len * @sizeOf(ParameterizedAbstractDefault);
     }
 };
 
-test "module template storage owns lowered template IR" {
+test "module parameterized storage owns lowered parameterized IR" {
     const allocator = std.testing.allocator;
     var storage: Storage = .{};
     defer storage.deinit(allocator);
-    try storage.generic_parameters.append(allocator, .{ .name = .{ .start = 0, .len = 1 }, .kind = .type });
+    try storage.comptime_parameters.append(allocator, .{ .name = .{ .start = 0, .len = 1 }, .kind = .type });
     try storage.ir.types.append(allocator, .{ .parameter = @enumFromInt(0) });
-    try storage.generic_function_templates.append(allocator, .{
+    try storage.parameterized_functions.append(allocator, .{
         .declaration = @enumFromInt(0),
         .parameters = .{ .start = 0, .len = 1 },
-        .input = @enumFromInt(0), .output = @enumFromInt(0),
+        .input = @enumFromInt(0),
+        .output = @enumFromInt(0),
         .input_bindings = .{ .start = 0, .len = 1 },
         .output_bindings = .{ .start = 1, .len = 1 },
-        .body = null, .operator = .add, .is_deinit = true,
+        .body = null,
+        .operator = .add,
+        .is_deinit = true,
     });
-    try std.testing.expectEqual(@as(u32, 1), storage.generic_function_templates.items[0].input_bindings.len);
-    try std.testing.expectEqual(callable.OperatorKind.add, storage.generic_function_templates.items[0].operator.?);
-    try std.testing.expect(storage.generic_function_templates.items[0].is_deinit);
+    try std.testing.expectEqual(@as(u32, 1), storage.parameterized_functions.items[0].input_bindings.len);
+    try std.testing.expectEqual(callable.OperatorKind.add, storage.parameterized_functions.items[0].operator.?);
+    try std.testing.expect(storage.parameterized_functions.items[0].is_deinit);
 }

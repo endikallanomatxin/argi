@@ -3,8 +3,8 @@ const syn = @import("../3_syntax/syntax_tree.zig");
 const tok = @import("../2_tokens/token.zig");
 const module_sg = @import("module_semantic_graph.zig");
 const module_entities = @import("module_semantic_entities.zig");
-const templates = @import("module_semantic_templates.zig");
-const ir = @import("module_semantic_template_ir.zig");
+const parameterized_storage = @import("module_parameterized_storage.zig");
+const ir = @import("module_parameterized_ir.zig");
 const global_sg = @import("global_semantic_graph.zig");
 const globalizer = @import("semantic_globalizer.zig");
 const core_mod = @import("global_semantic_core.zig");
@@ -58,14 +58,14 @@ pub const Resolver = struct {
         const operator: @import("semantic_callable.zig").OperatorKind = if (value.store_value == null) .get else .set;
 
         // A generic container operator uses the container's parameters. This
-        // covers value indexing without rebuilding template unification in the
-        // ordinary-operation resolver; templates with a different parameter
+        // covers value indexing without rebuilding parameterized unification in the
+        // ordinary-operation resolver; parameterized_storage with a different parameter
         // list are rejected by instantiation or by the final operand match.
         for (self.modules, 0..) |*candidate_module, candidate_module_index| {
-            for (candidate_module.semantic.templates.generic_function_templates.items) |template| {
-                if (template.operator != operator or template.parameters.len != identity.arguments.len) continue;
-                if (!self.templateIndexesBase(candidate_module_index, template, identity.base)) continue;
-                const declaration = globalizer.globalDecl(self.offsets[candidate_module_index], template.declaration);
+            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                if (parameterized.operator != operator or parameterized.parameters.len != identity.arguments.len) continue;
+                if (!self.parameterizedIndexesBase(candidate_module_index, parameterized, identity.base)) continue;
+                const declaration = globalizer.globalDecl(self.offsets[candidate_module_index], parameterized.declaration);
                 _ = self.instantiate(declaration, identity.arguments) catch continue;
             }
         }
@@ -128,15 +128,15 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn templateIndexesBase(
+    fn parameterizedIndexesBase(
         self: *Resolver,
         module_index: usize,
-        template: templates.GenericFunctionTemplate,
+        parameterized: parameterized_storage.ParameterizedFunction,
         base: global_sg.GlobalDeclId,
     ) bool {
         const module = &self.modules[module_index];
-        const storage = &module.semantic.templates.ir;
-        const input = switch (storage.types.items[@intFromEnum(template.input)]) {
+        const storage = &module.semantic.parameterized_storage.ir;
+        const input = switch (storage.types.items[@intFromEnum(parameterized.input)]) {
             .resolved => |ty| switch (ty) {
                 .structural => |shape| shape,
                 else => return false,
@@ -152,14 +152,14 @@ pub const Resolver = struct {
             },
             else => return false,
         };
-        const template_base = switch (storage.types.items[@intFromEnum(child)]) {
+        const parameterized_base = switch (storage.types.items[@intFromEnum(child)]) {
             .resolved => |ty| switch (ty) {
                 .generic => |generic| generic.base,
                 else => return false,
             },
             else => return false,
         };
-        return (self.generics.resolveTemplateDeclaration(module_index, template_base) catch return false) == base;
+        return (self.generics.resolveParameterizedDeclaration(module_index, parameterized_base) catch return false) == base;
     }
 
     fn resolveModuleGenericCall(
@@ -219,14 +219,14 @@ pub const Resolver = struct {
         var best_score: u32 = 0;
         var tied = false;
         for (self.modules, 0..) |*candidate_module, candidate_index| {
-            for (candidate_module.semantic.templates.generic_function_templates.items) |template| {
-                const declaration = globalizer.globalDecl(self.offsets[candidate_index], template.declaration);
+            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
                 if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
                 if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
-                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.templates.generic_parameters.items.len);
+                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.allocator);
-                self.generics.bindGlobalArguments(candidate_index, template.parameters, arguments, &bindings) catch continue;
-                const score = self.scoreTemplateInput(candidate_index, template.input, &bindings, input) orelse continue;
+                self.generics.bindGlobalArguments(candidate_index, parameterized.parameters, arguments, &bindings) catch continue;
+                const score = self.scoreParameterizedInput(candidate_index, parameterized.input, &bindings, input) orelse continue;
                 if (best == null or score > best_score) {
                     best = declaration;
                     best_score = score;
@@ -258,14 +258,14 @@ pub const Resolver = struct {
         var best_score: u32 = 0;
         var tied = false;
         for (self.modules, 0..) |*candidate_module, candidate_index| {
-            for (candidate_module.semantic.templates.generic_function_templates.items) |template| {
-                const declaration = globalizer.globalDecl(self.offsets[candidate_index], template.declaration);
+            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
                 if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), module.text(reference.name))) continue;
                 if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
-                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.templates.generic_parameters.items.len);
+                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.allocator);
-                const storage = &candidate_module.semantic.templates.ir;
-                const shape = switch (storage.types.items[@intFromEnum(template.input)]) {
+                const storage = &candidate_module.semantic.parameterized_storage.ir;
+                const shape = switch (storage.types.items[@intFromEnum(parameterized.input)]) {
                     .resolved => |ty| switch (ty) {
                         .structural => |shape| shape,
                         else => continue,
@@ -289,18 +289,18 @@ pub const Resolver = struct {
                 if (!matches) continue;
                 var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
                 defer arguments.deinit(self.allocator);
-                for (template.parameters.start..template.parameters.start + template.parameters.len) |raw| {
-                    const parameter = candidate_module.semantic.templates.generic_parameters.items[raw];
+                for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
+                    const parameter = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw];
                     const argument: global_sg.GenericArgument.Value = switch (parameter.kind) {
                         .type => .{ .type = bindings.types[raw] orelse break },
                         .comptime_int => .{ .comptime_int = bindings.ints[raw] orelse break },
                     };
                     try arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, candidate_module.text(parameter.name)), .value = argument });
                 }
-                if (arguments.items.len != template.parameters.len) continue;
+                if (arguments.items.len != parameterized.parameters.len) continue;
                 const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };
                 try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
-                const score = self.scoreTemplateInput(candidate_index, template.input, &bindings, input) orelse continue;
+                const score = self.scoreParameterizedInput(candidate_index, parameterized.input, &bindings, input) orelse continue;
                 if (best == null or score > best_score) {
                     best = declaration;
                     best_arguments = range;
@@ -313,7 +313,7 @@ pub const Resolver = struct {
         return self.instantiate(best orelse return error.NoMatchingGenericFunction, best_arguments);
     }
 
-    fn scoreTemplateInput(self: *Resolver, module_index: usize, pattern: ir.TemplateTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) ?u32 {
+    fn scoreParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) ?u32 {
         // Signature probing must not create persistent generic identities on
         // each deferred retry, which would prevent the fixed point from closing.
         const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
@@ -324,7 +324,7 @@ pub const Resolver = struct {
             inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
             self.generics.stats = saved_stats;
         }
-        const ty = self.generics.instantiateTemplateType(module_index, pattern, bindings, null) catch return null;
+        const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return null;
         const fields = self.interfaceFields(ty) catch return null;
         return self.core.scoreCallInput(fields, input);
     }
@@ -334,12 +334,12 @@ pub const Resolver = struct {
     fn inferInputType(
         self: *Resolver,
         module_index: usize,
-        pattern: ir.TemplateTypeId,
+        pattern: ir.ParameterizedTypeId,
         actual: global_sg.GlobalTypeId,
         bindings: *generic_mod.Resolver.Bindings,
     ) anyerror!bool {
         const module = &self.modules[module_index];
-        const storage = &module.semantic.templates.ir;
+        const storage = &module.semantic.parameterized_storage.ir;
         switch (storage.types.items[@intFromEnum(pattern)]) {
             .parameter => |parameter| {
                 const slot = &bindings.types[@intFromEnum(parameter)];
@@ -355,7 +355,7 @@ pub const Resolver = struct {
                     };
                     if (pointer.mutability == .read_write and value.mutability != .read_write) return false;
                     if (try self.inferInputType(module_index, pointer.child, value.child, bindings)) return true;
-                    const expected = self.generics.instantiateTemplateType(module_index, pattern, bindings, null) catch return false;
+                    const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return false;
                     return self.core.callTypesCompatible(actual, expected);
                 },
                 .structural => |shape| {
@@ -374,7 +374,7 @@ pub const Resolver = struct {
                         .generic => |value| value,
                         else => return false,
                     };
-                    if (try self.generics.resolveTemplateDeclaration(module_index, generic.base) != value.base) return false;
+                    if (try self.generics.resolveParameterizedDeclaration(module_index, generic.base) != value.base) return false;
                     if (generic.arguments.len != value.arguments.len) return false;
                     for (storage.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| {
                         var matched = false;
@@ -398,7 +398,7 @@ pub const Resolver = struct {
             },
             else => {},
         }
-        const expected = self.generics.instantiateTemplateType(module_index, pattern, bindings, null) catch return false;
+        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return false;
         return global_types.equal(self.graph, expected, actual);
     }
 
@@ -484,23 +484,23 @@ pub const Resolver = struct {
             self.stats = saved_stats;
             self.generics.stats = saved_generic_stats;
         }
-        const located = self.findTemplate(declaration) orelse return error.GenericFunctionTemplateNotFound;
+        const located = self.findParameterized(declaration) orelse return error.GenericFunctionParameterizedNotFound;
         const module = &self.modules[located.module_index];
-        const storage = &module.semantic.templates;
+        const storage = &module.semantic.parameterized_storage;
 
-        var substitutions = try generic_mod.Resolver.Bindings.init(self.allocator, storage.generic_parameters.items.len);
+        var substitutions = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer substitutions.deinit(self.allocator);
-        try self.generics.bindGlobalArguments(located.module_index, located.template.parameters, arguments, &substitutions);
+        try self.generics.bindGlobalArguments(located.module_index, located.parameterized.parameters, arguments, &substitutions);
 
-        const input_ty = try self.generics.instantiateTemplateType(located.module_index, located.template.input, &substitutions, null);
-        const output_ty = try self.generics.instantiateTemplateType(located.module_index, located.template.output, &substitutions, null);
+        const input_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions, null);
+        const output_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions, null);
         const input_fields = try self.interfaceFields(input_ty);
         const output_fields = try self.interfaceFields(output_ty);
 
-        var context = try InstanceContext.init(self, located.module_index, located.template, &substitutions);
+        var context = try InstanceContext.init(self, located.module_index, located.parameterized, &substitutions);
         defer context.deinit();
-        const input_bindings = try context.instantiateBindingRange(located.template.input_bindings);
-        const output_bindings = try context.instantiateBindingRange(located.template.output_bindings);
+        const input_bindings = try context.instantiateBindingRange(located.parameterized.input_bindings);
+        const output_bindings = try context.instantiateBindingRange(located.parameterized.output_bindings);
 
         // Reserve the function and identity before its body. Recursive generic
         // calls can now discover this exact monomorphization while the body is
@@ -513,23 +513,23 @@ pub const Resolver = struct {
             .body = null,
             .input_bindings = input_bindings,
             .output_bindings = output_bindings,
-            .safety_primitive = located.template.safety_primitive,
+            .safety_primitive = located.parameterized.safety_primitive,
             .flags = .{
-                .is_deinit = located.template.is_deinit,
-                .has_declared_body = located.template.body != null,
+                .is_deinit = located.parameterized.is_deinit,
+                .has_declared_body = located.parameterized.body != null,
                 .is_generic_instantiation = true,
-                .is_abstract_dispatch = located.template.dispatch_kind == .abstract_contract,
+                .is_abstract_dispatch = located.parameterized.dispatch_kind == .abstract_contract,
             },
         });
-        try self.graph.function_operators.append(self.allocator, located.template.operator);
+        try self.graph.function_operators.append(self.allocator, located.parameterized.operator);
         try self.graph.generic_function_instances.append(self.allocator, .{
             .function = function_id,
-            .template_declaration = declaration,
+            .parameterized_declaration = declaration,
             .arguments = arguments,
         });
 
         context.function = function_id;
-        if (located.template.body) |body| {
+        if (located.parameterized.body) |body| {
             const instantiated_body = try context.instantiateBlock(body);
             self.graph.functions.items[@intFromEnum(function_id)].body = instantiated_body;
         }
@@ -537,20 +537,20 @@ pub const Resolver = struct {
         return function_id;
     }
 
-    const LocatedTemplate = struct {
+    const LocatedParameterized = struct {
         module_index: usize,
-        template: templates.GenericFunctionTemplate,
+        parameterized: parameterized_storage.ParameterizedFunction,
     };
 
-    fn findTemplate(self: *Resolver, declaration: global_sg.GlobalDeclId) ?LocatedTemplate {
+    fn findParameterized(self: *Resolver, declaration: global_sg.GlobalDeclId) ?LocatedParameterized {
         const owner = self.graph.moduleForDeclaration(declaration) orelse return null;
         const module_index: usize = @intFromEnum(owner);
         const base = self.offsets[module_index].declaration_base;
         const raw = @intFromEnum(declaration);
         if (raw < base) return null;
         const local: module_entities.ModuleDeclId = @enumFromInt(raw - base);
-        for (self.modules[module_index].semantic.templates.generic_function_templates.items) |template| {
-            if (template.declaration == local) return .{ .module_index = module_index, .template = template };
+        for (self.modules[module_index].semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+            if (parameterized.declaration == local) return .{ .module_index = module_index, .parameterized = parameterized };
         }
         return null;
     }
@@ -561,7 +561,7 @@ pub const Resolver = struct {
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
     ) ?global_sg.GlobalFunctionId {
         for (self.graph.generic_function_instances.items) |instance| {
-            if (instance.template_declaration != declaration) continue;
+            if (instance.parameterized_declaration != declaration) continue;
             if (argumentRangesEqual(self.graph, instance.arguments, arguments)) return instance.function;
         }
         return null;
@@ -586,7 +586,7 @@ pub const Resolver = struct {
     const InstanceContext = struct {
         resolver: *Resolver,
         module_index: usize,
-        template: templates.GenericFunctionTemplate,
+        parameterized: parameterized_storage.ParameterizedFunction,
         substitutions: *generic_mod.Resolver.Bindings,
         binding_map: []?global_sg.GlobalBindingId,
         node_map: []?global_sg.GlobalNodeId,
@@ -596,10 +596,10 @@ pub const Resolver = struct {
         fn init(
             resolver: *Resolver,
             module_index: usize,
-            template: templates.GenericFunctionTemplate,
+            parameterized: parameterized_storage.ParameterizedFunction,
             substitutions: *generic_mod.Resolver.Bindings,
         ) !InstanceContext {
-            const storage = &resolver.modules[module_index].semantic.templates.ir;
+            const storage = &resolver.modules[module_index].semantic.parameterized_storage.ir;
             const bindings = try resolver.allocator.alloc(?global_sg.GlobalBindingId, storage.bindings.items.len);
             errdefer resolver.allocator.free(bindings);
             const nodes = try resolver.allocator.alloc(?global_sg.GlobalNodeId, storage.nodes.items.len);
@@ -611,7 +611,7 @@ pub const Resolver = struct {
             return .{
                 .resolver = resolver,
                 .module_index = module_index,
-                .template = template,
+                .parameterized = parameterized,
                 .substitutions = substitutions,
                 .binding_map = bindings,
                 .node_map = nodes,
@@ -625,25 +625,25 @@ pub const Resolver = struct {
             self.resolver.allocator.free(self.block_map);
         }
 
-        fn instantiateBindingRange(self: *InstanceContext, range: primitives.Range(ir.TemplateBindingId)) !global_sg.BindingRange {
+        fn instantiateBindingRange(self: *InstanceContext, range: primitives.Range(ir.ParameterizedBindingId)) !global_sg.BindingRange {
             const start: u32 = @intCast(self.resolver.graph.binding_refs.items.len);
             for (0..range.len) |offset| {
-                const local: ir.TemplateBindingId = @enumFromInt(range.start + @as(u32, @intCast(offset)));
+                const local: ir.ParameterizedBindingId = @enumFromInt(range.start + @as(u32, @intCast(offset)));
                 const global = try self.instantiateBinding(local);
                 try self.resolver.graph.binding_refs.append(self.resolver.allocator, global);
             }
             return .{ .start = start, .len = range.len };
         }
 
-        fn instantiateBinding(self: *InstanceContext, id: ir.TemplateBindingId) !global_sg.GlobalBindingId {
+        fn instantiateBinding(self: *InstanceContext, id: ir.ParameterizedBindingId) !global_sg.GlobalBindingId {
             if (self.binding_map[@intFromEnum(id)]) |existing| return existing;
             const module = &self.resolver.modules[self.module_index];
-            const source = module.semantic.templates.ir.bindings.items[@intFromEnum(id)];
+            const source = module.semantic.parameterized_storage.ir.bindings.items[@intFromEnum(id)];
             const global: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.bindings.items.len)));
             try self.resolver.graph.bindings.append(self.resolver.allocator, .{
                 .name = try self.resolver.graph.addString(self.resolver.allocator, module.text(source.name)),
                 .source = self.resolver.sourceFor(self.module_index, source.source),
-                .ty = try self.resolver.generics.instantiateTemplateType(self.module_index, source.ty, self.substitutions, null),
+                .ty = try self.resolver.generics.instantiateParameterizedType(self.module_index, source.ty, self.substitutions, null),
                 .initialization = null,
                 .mutability = source.mutability,
             });
@@ -659,15 +659,15 @@ pub const Resolver = struct {
             return global;
         }
 
-        fn instantiateBlock(self: *InstanceContext, id: ir.TemplateBlockId) anyerror!global_sg.GlobalBlockId {
+        fn instantiateBlock(self: *InstanceContext, id: ir.ParameterizedBlockId) anyerror!global_sg.GlobalBlockId {
             if (self.block_map[@intFromEnum(id)]) |existing| return existing;
-            const local = self.resolver.modules[self.module_index].semantic.templates.ir.blocks.items[@intFromEnum(id)];
+            const local = self.resolver.modules[self.module_index].semantic.parameterized_storage.ir.blocks.items[@intFromEnum(id)];
             const global: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.blocks.items.len)));
             // Reserve to support nested/self-referential block graphs.
             try self.resolver.graph.blocks.append(self.resolver.allocator, .{ .nodes = .{ .start = 0, .len = 0 }, .ret_val = null });
             self.block_map[@intFromEnum(id)] = global;
 
-            const storage = &self.resolver.modules[self.module_index].semantic.templates.ir;
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             var nodes: std.ArrayList(global_sg.GlobalNodeId) = .empty;
             defer nodes.deinit(self.resolver.allocator);
             for (storage.node_refs.items[local.nodes.start..][0..local.nodes.len]) |node| {
@@ -683,9 +683,9 @@ pub const Resolver = struct {
             return global;
         }
 
-        fn instantiateNode(self: *InstanceContext, id: ir.TemplateNodeId) anyerror!global_sg.GlobalNodeId {
+        fn instantiateNode(self: *InstanceContext, id: ir.ParameterizedNodeId) anyerror!global_sg.GlobalNodeId {
             if (self.node_map[@intFromEnum(id)]) |existing| return existing;
-            const storage = &self.resolver.modules[self.module_index].semantic.templates.ir;
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             const local = storage.nodes.items[@intFromEnum(id)];
             const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.nodes.items.len)));
             // Reserve the slot first so recursive expression graphs remain stable.
@@ -704,13 +704,13 @@ pub const Resolver = struct {
             return global;
         }
 
-        fn instantiateNodeAs(self: *InstanceContext, id: ir.TemplateNodeId, expected_template: ir.TemplateTypeId) anyerror!global_sg.GlobalNodeId {
-            const expected = try self.resolver.generics.instantiateTemplateType(self.module_index, expected_template, self.substitutions, null);
+        fn instantiateNodeAs(self: *InstanceContext, id: ir.ParameterizedNodeId, expected_parameterized: ir.ParameterizedTypeId) anyerror!global_sg.GlobalNodeId {
+            const expected = try self.resolver.generics.instantiateParameterizedType(self.module_index, expected_parameterized, self.substitutions, null);
             return self.instantiateNodeWithExpected(id, expected);
         }
 
-        fn instantiateNodeWithExpected(self: *InstanceContext, id: ir.TemplateNodeId, expected: global_sg.GlobalTypeId) anyerror!global_sg.GlobalNodeId {
-            const storage = &self.resolver.modules[self.module_index].semantic.templates.ir;
+        fn instantiateNodeWithExpected(self: *InstanceContext, id: ir.ParameterizedNodeId, expected: global_sg.GlobalTypeId) anyerror!global_sg.GlobalNodeId {
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             const local = storage.nodes.items[@intFromEnum(id)];
             if (local == .pending) {
                 const pending = storage.pending.items[@intFromEnum(local.pending)];
@@ -729,13 +729,13 @@ pub const Resolver = struct {
             return self.instantiateNode(id);
         }
 
-        fn instantiateStructValueWithExpected(self: *InstanceContext, id: ir.TemplateNodeId, node: ir.ResolvedNode, expected: global_sg.GlobalTypeId) !global_sg.GlobalNodeId {
+        fn instantiateStructValueWithExpected(self: *InstanceContext, id: ir.ParameterizedNodeId, node: ir.ResolvedNode, expected: global_sg.GlobalTypeId) !global_sg.GlobalNodeId {
             if (self.node_map[@intFromEnum(id)]) |existing| return existing;
             const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.nodes.items.len)));
             try self.resolver.graph.nodes.append(self.resolver.allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .break_statement });
             self.node_map[@intFromEnum(id)] = global;
-            const storage = &self.resolver.modules[self.module_index].semantic.templates.ir;
-            const expected_fields = global_types.fields(self.resolver.graph, expected) orelse return error.TemplateStructExpectedNonStruct;
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
+            const expected_fields = global_types.fields(self.resolver.graph, expected) orelse return error.ParameterizedStructExpectedNonStruct;
             const local_fields = node.content.struct_value_literal.fields;
             var values: std.ArrayList(global_sg.ValueField) = .empty;
             defer values.deinit(self.resolver.allocator);
@@ -747,7 +747,7 @@ pub const Resolver = struct {
                         break;
                     }
                 }
-                const field_type = expected_field orelse return error.UnknownTemplateStructField;
+                const field_type = expected_field orelse return error.UnknownParameterizedStructField;
                 try values.append(self.resolver.allocator, .{
                     .name = field_type.name,
                     .value = try self.instantiateNodeWithExpected(field.value, field_type.ty),
@@ -775,7 +775,7 @@ pub const Resolver = struct {
                     .content = if (declaration) .{ .binding_declaration = binding } else .{ .binding_use = binding },
                 };
             }
-            const ty = if (node.ty) |value| try self.resolver.generics.instantiateTemplateType(self.module_index, value, self.substitutions, null) else null;
+            const ty = if (node.ty) |value| try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions, null) else null;
             return .{
                 .source = self.resolver.sourceFor(self.module_index, node.source),
                 .ty = ty,
@@ -784,7 +784,7 @@ pub const Resolver = struct {
                     .binding_declaration => |binding| .{ .binding_declaration = try self.instantiateBinding(binding) },
                     .assignment => |assignment| .{ .assignment = .{
                         .binding = try self.instantiateBinding(assignment.binding),
-                        .value = try self.instantiateNodeAs(assignment.value, self.resolver.modules[self.module_index].semantic.templates.ir.bindings.items[@intFromEnum(assignment.binding)].ty),
+                        .value = try self.instantiateNodeAs(assignment.value, self.resolver.modules[self.module_index].semantic.parameterized_storage.ir.bindings.items[@intFromEnum(assignment.binding)].ty),
                     } },
                     .code_block => |block| .{ .code_block = try self.instantiateBlock(block) },
                     .int_literal => |value| .{ .int_literal = value },
@@ -792,17 +792,17 @@ pub const Resolver = struct {
                     .char_literal => |value| .{ .char_literal = value },
                     .bool_literal => |value| .{ .bool_literal = value },
                     .string_literal => |value| .{ .string_literal = try self.copyString(value) },
-                    .type_literal => |value| .{ .type_literal = try self.resolver.generics.instantiateTemplateType(self.module_index, value, self.substitutions, null) },
+                    .type_literal => |value| .{ .type_literal = try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions, null) },
                     .move_value => |value| .{ .move_value = try self.instantiateNode(value) },
                     .break_statement => .break_statement,
                     .continue_statement => .continue_statement,
-                    else => return error.UnsupportedResolvedTemplateNode,
+                    else => return error.UnsupportedResolvedParameterizedNode,
                 },
             };
         }
 
         fn instantiateStructValue(self: *InstanceContext, node: ir.ResolvedNode) !global_sg.Node {
-            const storage = &self.resolver.modules[self.module_index].semantic.templates.ir;
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             const range = node.content.struct_value_literal.fields;
             var values: std.ArrayList(global_sg.ValueField) = .empty;
             defer values.deinit(self.resolver.allocator);
@@ -827,7 +827,7 @@ pub const Resolver = struct {
                 try values.append(self.resolver.allocator, .{ .name = name, .value = value });
                 try fields.append(self.resolver.allocator, .{
                     .name = name,
-                    .ty = self.resolver.graph.nodes.items[@intFromEnum(value)].ty orelse return error.MissingTemplateValueType,
+                    .ty = self.resolver.graph.nodes.items[@intFromEnum(value)].ty orelse return error.MissingParameterizedValueType,
                     .source = self.resolver.sourceFor(self.module_index, node.source),
                 });
             }
@@ -844,20 +844,20 @@ pub const Resolver = struct {
             } };
         }
 
-        fn instantiateChoiceTag(self: *InstanceContext, id: ir.TemplateNodeId, choice_type: global_sg.GlobalTypeId) !global_sg.GlobalNodeId {
+        fn instantiateChoiceTag(self: *InstanceContext, id: ir.ParameterizedNodeId, choice_type: global_sg.GlobalTypeId) !global_sg.GlobalNodeId {
             if (self.node_map[@intFromEnum(id)]) |existing| return existing;
-            const storage = &self.resolver.modules[self.module_index].semantic.templates.ir;
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             const local = storage.nodes.items[@intFromEnum(id)];
             const pending = switch (local) {
                 .pending => |pending_id| storage.pending.items[@intFromEnum(pending_id)],
-                else => return error.TemplateChoiceTagExpected,
+                else => return error.ParameterizedChoiceTagExpected,
             };
             const expression = switch (pending) {
                 .resolve_expression => |value| value,
-                else => return error.TemplateChoiceTagExpected,
+                else => return error.ParameterizedChoiceTagExpected,
             };
-            const name = self.resolver.modules[self.module_index].text(expression.name orelse return error.TemplateChoiceLiteralWithoutName);
-            const variant = global_types.findVariant(self.resolver.graph, choice_type, name) orelse return error.UnknownTemplateChoiceVariant;
+            const name = self.resolver.modules[self.module_index].text(expression.name orelse return error.ParameterizedChoiceLiteralWithoutName);
+            const variant = global_types.findVariant(self.resolver.graph, choice_type, name) orelse return error.UnknownParameterizedChoiceVariant;
             const ty = try self.resolver.generics.internType(.{ .builtin = .Int32 });
             const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.nodes.items.len)));
             try self.resolver.graph.nodes.append(self.resolver.allocator, .{
@@ -874,9 +874,9 @@ pub const Resolver = struct {
             return switch (pending) {
                 .resolve_name => |value| self.resolveName(value),
                 .resolve_call => |value| self.resolveLegacyCall(value),
-                .resolve_field => |value| self.resolveTemplateField(value.value, value.field_name, value.source),
+                .resolve_field => |value| self.resolveParameterizedField(value.value, value.field_name, value.source),
                 .resolve_expression => |value| self.resolveExpression(value),
-                .resolve_copy, .resolve_deinit => error.TemplateOwnershipPending,
+                .resolve_copy, .resolve_deinit => error.ParameterizedOwnershipPending,
             };
         }
 
@@ -886,7 +886,7 @@ pub const Resolver = struct {
                 const record = self.resolver.graph.bindings.items[@intFromEnum(binding)];
                 return .{ .source = self.resolver.sourceFor(self.module_index, value.source), .ty = record.ty, .content = .{ .binding_use = binding } };
             }
-            return error.UnknownTemplateName;
+            return error.UnknownParameterizedName;
         }
 
         fn resolveLegacyCall(self: *InstanceContext, value: anytype) !global_sg.Node {
@@ -895,18 +895,18 @@ pub const Resolver = struct {
         }
 
         fn resolveExpression(self: *InstanceContext, value: ir.PendingExpression) anyerror!global_sg.Node {
-            const storage = &self.resolver.modules[self.module_index].semantic.templates.ir;
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             var operands = std.array_list.Managed(global_sg.GlobalNodeId).init(self.resolver.allocator);
             defer operands.deinit();
             for (storage.node_refs.items[value.operands.start..][0..value.operands.len]) |operand|
                 try operands.append(try self.instantiateNode(operand));
 
             return switch (value.kind) {
-                .unknown_identifier => if (value.name) |name| self.resolveName(.{ .name = name, .source = value.source }) else error.UnknownTemplateName,
+                .unknown_identifier => if (value.name) |name| self.resolveName(.{ .name = name, .source = value.source }) else error.UnknownParameterizedName,
                 .generic_call => blk: {
-                    const name = value.name orelse return error.GenericTemplateCallWithoutName;
-                    const args = try self.resolver.generics.instantiateTemplateArguments(self.module_index, value.generic_arguments, self.substitutions, null);
-                    const input = if (operands.items.len != 0) operands.items[0] else return error.GenericTemplateCallWithoutInput;
+                    const name = value.name orelse return error.GenericParameterizedCallWithoutName;
+                    const args = try self.resolver.generics.instantiateParameterizedArguments(self.module_index, value.generic_arguments, self.substitutions, null);
+                    const input = if (operands.items.len != 0) operands.items[0] else return error.GenericParameterizedCallWithoutInput;
                     break :blk try self.makeNamedCall(name, value.module_path, args, input, value.source);
                 },
                 .binary => self.resolveBinary(operands.items, value.source, value.aux),
@@ -914,17 +914,17 @@ pub const Resolver = struct {
                 .logical => self.resolveLogical(operands.items, value.source, value.aux),
                 .index => self.resolveIndex(operands.items, value.source, false),
                 .index_store => self.resolveIndex(operands.items, value.source, true),
-                .field_access => if (value.name) |name| self.resolveField(operands.items[0], name, value.source) else error.InvalidTemplateFieldAccess,
-                .choice_payload => if (value.name) |name| self.resolveField(operands.items[0], name, value.source) else error.InvalidTemplateChoicePayload,
+                .field_access => if (value.name) |name| self.resolveField(operands.items[0], name, value.source) else error.InvalidParameterizedFieldAccess,
+                .choice_payload => if (value.name) |name| self.resolveField(operands.items[0], name, value.source) else error.InvalidParameterizedChoicePayload,
                 .return_statement => self.resolveReturn(operands.items, value.source),
                 .if_statement => self.resolveIf(operands.items, value.source),
                 .while_statement => self.resolveWhile(operands.items, value.source),
-                .match => if (operands.items.len == 1) self.resolveMatch(value, operands.items[0]) else error.InvalidTemplateMatch,
+                .match => if (operands.items.len == 1) self.resolveMatch(value, operands.items[0]) else error.InvalidParameterizedMatch,
                 .address_of => self.resolveAddress(operands.items, value.source, value.aux),
                 .dereference => self.resolveDereference(operands.items, value.source),
                 .pointer_store => self.resolvePointerStore(operands.items, value.source),
                 .move_value => self.resolveMove(operands.items, value.source),
-                .pipe => if (operands.items.len != 0) self.resolver.graph.nodes.items[@intFromEnum(operands.items[operands.items.len - 1])] else error.InvalidTemplatePipe,
+                .pipe => if (operands.items.len != 0) self.resolver.graph.nodes.items[@intFromEnum(operands.items[operands.items.len - 1])] else error.InvalidParameterizedPipe,
                 .struct_value,
                 .list_value,
                 .choice_literal,
@@ -940,15 +940,15 @@ pub const Resolver = struct {
                 .type_initializer,
                 .explicit_cast,
                 .other,
-                => error.TemplateExpressionRequiresGlobalResolver,
+                => error.ParameterizedExpressionRequiresGlobalResolver,
             };
         }
 
         fn resolveChoiceLiteral(self: *InstanceContext, value: ir.PendingExpression, expected: global_sg.GlobalTypeId) !global_sg.Node {
-            const name_range = value.name orelse return error.TemplateChoiceLiteralWithoutName;
+            const name_range = value.name orelse return error.ParameterizedChoiceLiteralWithoutName;
             const name = self.resolver.modules[self.module_index].text(name_range);
-            const variant = global_types.findVariant(self.resolver.graph, expected, name) orelse return error.UnknownTemplateChoiceVariant;
-            const storage = &self.resolver.modules[self.module_index].semantic.templates.ir;
+            const variant = global_types.findVariant(self.resolver.graph, expected, name) orelse return error.UnknownParameterizedChoiceVariant;
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             const payload = if (value.operands.len == 0)
                 null
             else if (value.operands.len == 1)
@@ -957,11 +957,11 @@ pub const Resolver = struct {
                 else
                     try self.instantiateNode(storage.node_refs.items[value.operands.start])
             else
-                return error.InvalidTemplateChoicePayload;
-            if ((variant.variant.payload_type == null) != (payload == null)) return error.TemplateChoicePayloadMismatch;
+                return error.InvalidParameterizedChoicePayload;
+            if ((variant.variant.payload_type == null) != (payload == null)) return error.ParameterizedChoicePayloadMismatch;
             if (payload) |node| {
-                const actual = self.resolver.graph.nodes.items[@intFromEnum(node)].ty orelse return error.UntypedTemplateChoicePayload;
-                if (!global_types.equal(self.resolver.graph, actual, variant.variant.payload_type.?)) return error.TemplateChoicePayloadMismatch;
+                const actual = self.resolver.graph.nodes.items[@intFromEnum(node)].ty orelse return error.UntypedParameterizedChoicePayload;
+                if (!global_types.equal(self.resolver.graph, actual, variant.variant.payload_type.?)) return error.ParameterizedChoicePayloadMismatch;
             }
             return .{
                 .source = self.resolver.sourceFor(self.module_index, value.source),
@@ -971,20 +971,20 @@ pub const Resolver = struct {
         }
 
         fn resolveMatch(self: *InstanceContext, value: ir.PendingExpression, expression: global_sg.GlobalNodeId) !global_sg.Node {
-            const choice_type = self.resolver.graph.nodes.items[@intFromEnum(expression)].ty orelse return error.UntypedTemplateMatch;
-            const variants = global_types.variants(self.resolver.graph, choice_type) orelse return error.TemplateMatchRequiresChoice;
-            const storage = &self.resolver.modules[self.module_index].semantic.templates.ir;
+            const choice_type = self.resolver.graph.nodes.items[@intFromEnum(expression)].ty orelse return error.UntypedParameterizedMatch;
+            const variants = global_types.variants(self.resolver.graph, choice_type) orelse return error.ParameterizedMatchRequiresChoice;
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             var cases: std.ArrayList(global_sg.SwitchCase) = .empty;
             defer cases.deinit(self.resolver.allocator);
             var seen: std.ArrayList(global_sg.GlobalVariantId) = .empty;
             defer seen.deinit(self.resolver.allocator);
             for (storage.match_cases.items[value.match_cases.start..][0..value.match_cases.len]) |case| {
                 const name = self.resolver.modules[self.module_index].text(case.name);
-                const variant = global_types.findVariant(self.resolver.graph, choice_type, name) orelse return error.UnknownTemplateMatchVariant;
-                for (seen.items) |previous| if (previous == variant.id) return error.DuplicateTemplateMatchCase;
+                const variant = global_types.findVariant(self.resolver.graph, choice_type, name) orelse return error.UnknownParameterizedMatchVariant;
+                for (seen.items) |previous| if (previous == variant.id) return error.DuplicateParameterizedMatchCase;
                 try seen.append(self.resolver.allocator, variant.id);
                 if (case.payload_binding) |local_binding| {
-                    const payload = variant.variant.payload_type orelse return error.TemplateMatchPayloadOnPayloadlessVariant;
+                    const payload = variant.variant.payload_type orelse return error.ParameterizedMatchPayloadOnPayloadlessVariant;
                     const binding = try self.instantiateBinding(local_binding);
                     self.resolver.graph.bindings.items[@intFromEnum(binding)].ty = try self.matchBindingType(payload, case.mode);
                 }
@@ -1058,11 +1058,11 @@ pub const Resolver = struct {
                         }
                     }
                     if (module_path == null and std.mem.eql(u8, name, "deinit") and
-                        self.template.safety_primitive == .trusted_opaque_drop)
+                        self.parameterized.safety_primitive == .trusted_opaque_drop)
                         return self.emptyValue(try self.resolver.generics.internType(.{ .builtin = .Void }), source);
                     return err;
                 };
-            if (!try self.resolver.core.completeCallInputFields(self.resolver.graph.functions.items[@intFromEnum(function)].input, input)) return error.IncompleteTemplateCallInput;
+            if (!try self.resolver.core.completeCallInputFields(self.resolver.graph.functions.items[@intFromEnum(function)].input, input)) return error.IncompleteParameterizedCallInput;
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = try self.resolver.core.functionOutputType(function),
@@ -1115,7 +1115,7 @@ pub const Resolver = struct {
         }
 
         fn resolveBinary(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, aux: u32) !global_sg.Node {
-            if (operands.len != 2) return error.InvalidTemplateBinary;
+            if (operands.len != 2) return error.InvalidParameterizedBinary;
             const tag: syn.Node.Tag = @enumFromInt(aux);
             const operator: tok.BinaryOperator = switch (tag) {
                 .binary_add => .addition,
@@ -1123,7 +1123,7 @@ pub const Resolver = struct {
                 .binary_multiply => .multiplication,
                 .binary_divide => .division,
                 .binary_modulo => .modulo,
-                else => return error.InvalidTemplateBinary,
+                else => return error.InvalidParameterizedBinary,
             };
             const ty = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty;
             return .{
@@ -1134,7 +1134,7 @@ pub const Resolver = struct {
         }
 
         fn resolveComparison(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, aux: u32) !global_sg.Node {
-            if (operands.len != 2) return error.InvalidTemplateComparison;
+            if (operands.len != 2) return error.InvalidParameterizedComparison;
             const tag: syn.Node.Tag = @enumFromInt(aux);
             const operator: tok.ComparisonOperator = switch (tag) {
                 .compare_equal => .equal,
@@ -1143,7 +1143,7 @@ pub const Resolver = struct {
                 .compare_greater => .greater_than,
                 .compare_less_equal => .less_than_or_equal,
                 .compare_greater_equal => .greater_than_or_equal,
-                else => return error.InvalidTemplateComparison,
+                else => return error.InvalidParameterizedComparison,
             };
             const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });
             return .{
@@ -1154,24 +1154,24 @@ pub const Resolver = struct {
         }
 
         fn resolveLogical(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, aux: u32) !global_sg.Node {
-            if (operands.len != 2) return error.InvalidTemplateLogical;
+            if (operands.len != 2) return error.InvalidParameterizedLogical;
             const tag: syn.Node.Tag = @enumFromInt(aux);
-            const operator: primitives.LogicalOperator = if (tag == .logical_and) .and_ else if (tag == .logical_or) .or_ else return error.InvalidTemplateLogical;
+            const operator: primitives.LogicalOperator = if (tag == .logical_and) .and_ else if (tag == .logical_or) .or_ else return error.InvalidParameterizedLogical;
             const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });
             return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = bool_ty, .content = .{ .logical_operation = .{ .operator = operator, .left = operands[0], .right = operands[1] } } };
         }
 
-        fn resolveTemplateField(self: *InstanceContext, value: ir.TemplateNodeId, field_name: primitives.StringRange, source: primitives.SourceRef) !global_sg.Node {
+        fn resolveParameterizedField(self: *InstanceContext, value: ir.ParameterizedNodeId, field_name: primitives.StringRange, source: primitives.SourceRef) !global_sg.Node {
             return self.resolveField(try self.instantiateNode(value), field_name, source);
         }
 
         fn resolveField(self: *InstanceContext, value: global_sg.GlobalNodeId, field_name: primitives.StringRange, source: primitives.SourceRef) !global_sg.Node {
-            const ty = self.resolver.graph.nodes.items[@intFromEnum(value)].ty orelse return error.TemplateFieldOnUntypedValue;
+            const ty = self.resolver.graph.nodes.items[@intFromEnum(value)].ty orelse return error.ParameterizedFieldOnUntypedValue;
             const name = self.resolver.modules[self.module_index].text(field_name);
             if (self.resolver.core.isUnpackedOutputField(value, name))
                 return self.resolver.graph.nodes.items[@intFromEnum(value)];
             _ = try self.resolver.generics.ensureGenericInstance(ty);
-            const hit = global_types.findField(self.resolver.graph, ty, name) orelse return error.UnknownTemplateField;
+            const hit = global_types.findField(self.resolver.graph, ty, name) orelse return error.UnknownParameterizedField;
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = hit.field.ty,
@@ -1180,7 +1180,7 @@ pub const Resolver = struct {
         }
 
         fn resolveMove(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {
-            if (operands.len != 1) return error.InvalidTemplateMove;
+            if (operands.len != 1) return error.InvalidParameterizedMove;
             const value = operands[0];
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
@@ -1190,9 +1190,9 @@ pub const Resolver = struct {
         }
 
         fn resolveIndex(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, store: bool) !global_sg.Node {
-            if (operands.len < 2) return error.InvalidTemplateIndex;
-            const collection_ty = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.TemplateIndexUntyped;
-            const element = global_types.arrayElement(self.resolver.graph, collection_ty) orelse return error.TemplateIndexRequiresDispatch;
+            if (operands.len < 2) return error.InvalidParameterizedIndex;
+            const collection_ty = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedIndexUntyped;
+            const element = global_types.arrayElement(self.resolver.graph, collection_ty) orelse return error.ParameterizedIndexRequiresDispatch;
             return if (store) .{
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = element,
@@ -1214,14 +1214,14 @@ pub const Resolver = struct {
         }
 
         fn resolveIf(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {
-            if (operands.len < 2) return error.InvalidTemplateIf;
+            if (operands.len < 2) return error.InvalidParameterizedIf;
             const then_block = switch (self.resolver.graph.nodes.items[@intFromEnum(operands[1])].content) {
                 .code_block => |block| block,
-                else => return error.TemplateIfBlockExpected,
+                else => return error.ParameterizedIfBlockExpected,
             };
             const else_block = if (operands.len > 2) switch (self.resolver.graph.nodes.items[@intFromEnum(operands[2])].content) {
                 .code_block => |block| block,
-                else => return error.TemplateIfBlockExpected,
+                else => return error.ParameterizedIfBlockExpected,
             } else null;
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
@@ -1231,10 +1231,10 @@ pub const Resolver = struct {
         }
 
         fn resolveWhile(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {
-            if (operands.len != 2) return error.InvalidTemplateWhile;
+            if (operands.len != 2) return error.InvalidParameterizedWhile;
             const body = switch (self.resolver.graph.nodes.items[@intFromEnum(operands[1])].content) {
                 .code_block => |block| block,
-                else => return error.TemplateWhileBlockExpected,
+                else => return error.ParameterizedWhileBlockExpected,
             };
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
@@ -1244,25 +1244,25 @@ pub const Resolver = struct {
         }
 
         fn resolveAddress(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, aux: u32) !global_sg.Node {
-            if (operands.len != 1) return error.InvalidTemplateAddressOf;
-            const child = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.TemplateAddressUntyped;
+            if (operands.len != 1) return error.InvalidParameterizedAddressOf;
+            const child = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedAddressUntyped;
             const tag: syn.Node.Tag = @enumFromInt(aux);
             const pointer = try self.resolver.generics.internType(.{ .pointer = .{ .child = child, .mutability = if (tag == .address_of_mut) .read_write else .read_only } });
             return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = pointer, .content = .{ .address_of = operands[0] } };
         }
 
         fn resolveDereference(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {
-            if (operands.len != 1) return error.InvalidTemplateDereference;
-            const pointer_ty = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.TemplateDereferenceUntyped;
+            if (operands.len != 1) return error.InvalidParameterizedDereference;
+            const pointer_ty = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedDereferenceUntyped;
             const child = switch (self.resolver.graph.types.items[@intFromEnum(pointer_ty)]) {
                 .pointer => |pointer| pointer.child,
-                else => return error.TemplateDereferenceNonPointer,
+                else => return error.ParameterizedDereferenceNonPointer,
             };
             return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = child, .content = .{ .dereference = .{ .pointer = operands[0], .ty = child, .pointer_type = pointer_ty } } };
         }
 
         fn resolvePointerStore(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {
-            if (operands.len != 2) return error.InvalidTemplatePointerStore;
+            if (operands.len != 2) return error.InvalidParameterizedPointerStore;
             return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = self.resolver.graph.nodes.items[@intFromEnum(operands[1])].ty, .content = .{ .pointer_assignment = .{ .pointer = operands[0], .value = operands[1] } } };
         }
 

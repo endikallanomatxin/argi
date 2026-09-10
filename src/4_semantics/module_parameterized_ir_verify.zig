@@ -1,16 +1,16 @@
 const graph_mod = @import("module_semantic_graph.zig");
-const ir = @import("module_semantic_template_ir.zig");
+const ir = @import("module_parameterized_ir.zig");
 const payload = @import("semantic_payload_verify.zig");
 const verify = @import("semantic_verify.zig");
 const views = @import("module_semantic_views.zig");
 
 pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
-    const storage = &graph.semantic.templates.ir;
+    const storage = &graph.semantic.parameterized_storage.ir;
     const bounds = makeBounds(graph);
 
     for (storage.int_expressions.items) |expression| switch (expression) {
         .literal => {},
-        .parameter => |id| try require(verify.idFits(id, graph.semantic.templates.generic_parameters.items.len)),
+        .parameter => |id| try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len)),
         .binary => |value| {
             try require(verify.idFits(value.left, storage.int_expressions.items.len));
             try require(verify.idFits(value.right, storage.int_expressions.items.len));
@@ -19,7 +19,7 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
 
     for (storage.types.items) |ty| switch (ty) {
         .concrete => |id| try require(verify.idFits(id, views.typeCount(graph))),
-        .parameter => |id| try require(verify.idFits(id, graph.semantic.templates.generic_parameters.items.len)),
+        .parameter => |id| try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len)),
         .abstract_self => {},
         .external => |id| try require(verify.idFits(id, graph.semantic.external_refs.items.len)),
         .array => |value| {
@@ -88,7 +88,7 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
 }
 
 fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, pending: ir.Pending) !void {
-    const storage = &graph.semantic.templates.ir;
+    const storage = &graph.semantic.parameterized_storage.ir;
     switch (pending) {
         .resolve_name => |value| {
             try require(verify.stringFits(value.name, graph.strings.items));
@@ -126,7 +126,7 @@ fn declarationRef(graph: *const graph_mod.ModuleSemanticGraph, ref: ir.Declarati
 }
 
 fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
-    const storage = &graph.semantic.templates.ir;
+    const storage = &graph.semantic.parameterized_storage.ir;
     return .{
         .files = graph.file_offsets.items.len,
         .declarations = storage.declarations.items.len,
@@ -163,10 +163,10 @@ fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
 }
 
 fn require(ok: bool) !void {
-    if (!ok) return error.InvalidModuleTemplateIR;
+    if (!ok) return error.InvalidModuleParameterizedIR;
 }
 
-test "template IR verifier accepts semantic variants and qualified generic calls" {
+test "parameterized IR verifier accepts semantic variants and qualified generic calls" {
     const std = @import("std");
     const allocator = std.testing.allocator;
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
@@ -181,21 +181,21 @@ test "template IR verifier accepts semantic variants and qualified generic calls
         .import_reference_base = 0,
         .import_reference_count = 0,
     });
-    try graph.semantic.templates.generic_parameters.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .kind = .comptime_int });
-    try graph.semantic.templates.ir.int_expressions.append(allocator, .{ .parameter = @enumFromInt(0) });
-    try graph.semantic.templates.ir.types.append(allocator, .abstract_self);
-    try graph.semantic.templates.ir.variants.append(allocator, .{ .semantic = .{
+    try graph.semantic.parameterized_storage.comptime_parameters.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .kind = .comptime_int });
+    try graph.semantic.parameterized_storage.ir.int_expressions.append(allocator, .{ .parameter = @enumFromInt(0) });
+    try graph.semantic.parameterized_storage.ir.types.append(allocator, .abstract_self);
+    try graph.semantic.parameterized_storage.ir.variants.append(allocator, .{ .semantic = .{
         .name = .{ .start = 0, .len = 0 },
         .payload_type = @enumFromInt(0),
         .source = .{ .file_index = 0, .offset = 0 },
         .value = 0,
     } });
-    try graph.semantic.templates.ir.pending.append(allocator, .{ .resolve_expression = .{
+    try graph.semantic.parameterized_storage.ir.pending.append(allocator, .{ .resolve_expression = .{
         .kind = .generic_call,
         .module_path = .{ .start = 0, .len = 0 },
         .generic_arguments = .{ .start = 0, .len = 0 },
         .source = .{ .file_index = 0, .offset = 0 },
     } });
-    try graph.semantic.templates.ir.nodes.append(allocator, .{ .pending = @enumFromInt(0) });
+    try graph.semantic.parameterized_storage.ir.nodes.append(allocator, .{ .pending = @enumFromInt(0) });
     try verifyIR(&graph);
 }

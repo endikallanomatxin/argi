@@ -7,7 +7,7 @@ const syntaxer = @import("../3_syntax/syntaxer.zig");
 const tokenizer = @import("../2_tokens/tokenizer.zig");
 const module_graph = @import("module_semantic_graph.zig");
 const initializer_lowerer = @import("module_initializer_lowerer.zig");
-const template_lowerer = @import("module_template_lowerer.zig");
+const parameterized_lowerer = @import("module_parameterized_lowerer.zig");
 
 test "deferred struct definitions retain fields with external generic types" {
     const allocator = std.testing.allocator;
@@ -57,25 +57,25 @@ test "constrained generic parameters remain type parameters" {
     var graph = try module_graph.build(allocator, "box", &inputs);
     defer graph.deinit(allocator);
 
-    _ = try template_lowerer.lower(allocator, &graph, &inputs);
-    const template = graph.semantic.templates.generic_type_templates.items[0];
-    try std.testing.expectEqual(.type, graph.semantic.templates.generic_parameters.items[template.parameters.start].kind);
+    _ = try parameterized_lowerer.lower(allocator, &graph, &inputs);
+    const parameterized = graph.semantic.parameterized_storage.parameterized_types.items[0];
+    try std.testing.expectEqual(.type, graph.semantic.parameterized_storage.comptime_parameters.items[parameterized.parameters.start].kind);
 }
 
-test "template pools retain immediate children across recursive lowering" {
+test "parameterized pools retain immediate children across recursive lowering" {
     const allocator = std.testing.allocator;
     const source =
         "Box#(.t: Type): Type = (.value: t)\n" ++
         "Nested#(.t: Type): Type = (.first: (.inner: t), .second: Box#(.t: Box#(.t = t)), .third: (..outer (..inner t)))\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    const inputs = [_]module_graph.FileInput{.{ .path = "templates/main.rg", .tree = &tree, .source = source }};
-    var graph = try module_graph.build(allocator, "templates", &inputs);
+    const inputs = [_]module_graph.FileInput{.{ .path = "parameterized_storage/main.rg", .tree = &tree, .source = source }};
+    var graph = try module_graph.build(allocator, "parameterized_storage", &inputs);
     defer graph.deinit(allocator);
-    _ = try template_lowerer.lower(allocator, &graph, &inputs);
-    const templates = &graph.semantic.templates;
-    const ir = &templates.ir;
-    const body = templates.generic_type_templates.items[1].body;
+    _ = try parameterized_lowerer.lower(allocator, &graph, &inputs);
+    const parameterized_storage = &graph.semantic.parameterized_storage;
+    const ir = &parameterized_storage.ir;
+    const body = parameterized_storage.parameterized_types.items[1].body;
     const fields = ir.types.items[@intFromEnum(body)].resolved.structural.fields;
     try std.testing.expectEqual(@as(u32, 3), fields.len);
     try std.testing.expectEqualStrings("first", graph.text(ir.fields.items[fields.start].name));
@@ -97,12 +97,12 @@ test "template pools retain immediate children across recursive lowering" {
     defer relocation.deinit(allocator);
     var core_resolver: core.Resolver = .{ .allocator = allocator, .graph = &relocation.graph, .modules = &.{graph}, .offsets = relocation.offsets.items };
     var resolver: generics.Resolver = .{ .allocator = allocator, .graph = &relocation.graph, .modules = &.{graph}, .offsets = relocation.offsets.items, .core = &core_resolver };
-    var substitutions = try generics.Resolver.Bindings.init(allocator, templates.generic_parameters.items.len);
+    var substitutions = try generics.Resolver.Bindings.init(allocator, parameterized_storage.comptime_parameters.items.len);
     defer substitutions.deinit(allocator);
     const int_type: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(relocation.graph.types.items.len)));
     try relocation.graph.types.append(allocator, .{ .builtin = .Int32 });
-    substitutions.types[templates.generic_type_templates.items[1].parameters.start] = int_type;
-    const instantiated = try resolver.instantiateTemplateType(0, body, &substitutions, null);
+    substitutions.types[parameterized_storage.parameterized_types.items[1].parameters.start] = int_type;
+    const instantiated = try resolver.instantiateParameterizedType(0, body, &substitutions, null);
     const global_fields = relocation.graph.types.items[@intFromEnum(instantiated)].structural.fields;
     try std.testing.expectEqualStrings("first", relocation.graph.text(relocation.graph.fields.items[global_fields.start].name));
     try std.testing.expectEqualStrings("second", relocation.graph.text(relocation.graph.fields.items[global_fields.start + 1].name));
@@ -114,7 +114,7 @@ test "template pools retain immediate children across recursive lowering" {
     try std.testing.expectEqualStrings("outer", relocation.graph.text(relocation.graph.variants.items[global_choice.variants.start].name));
 }
 
-test "template bodies own call metadata and binding ranges during lowering" {
+test "parameterized bodies own call metadata and binding ranges during lowering" {
     const allocator = std.testing.allocator;
     const source =
         "first#(.t: Type)(.value: t) -> (.result: t) := {\n" ++
@@ -122,27 +122,27 @@ test "template bodies own call metadata and binding ranges during lowering" {
         "second#(.t: Type)(.value: t) -> (.result: t) := { result = value }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    const inputs = [_]module_graph.FileInput{.{ .path = "templates/main.rg", .tree = &tree, .source = source }};
-    var graph = try module_graph.build(allocator, "templates", &inputs);
+    const inputs = [_]module_graph.FileInput{.{ .path = "parameterized_storage/main.rg", .tree = &tree, .source = source }};
+    var graph = try module_graph.build(allocator, "parameterized_storage", &inputs);
     defer graph.deinit(allocator);
-    _ = try template_lowerer.lower(allocator, &graph, &inputs);
-    const templates = &graph.semantic.templates;
-    const first = templates.generic_function_templates.items[0];
-    const second = templates.generic_function_templates.items[1];
+    _ = try parameterized_lowerer.lower(allocator, &graph, &inputs);
+    const parameterized_storage = &graph.semantic.parameterized_storage;
+    const first = parameterized_storage.parameterized_functions.items[0];
+    const second = parameterized_storage.parameterized_functions.items[1];
     try std.testing.expectEqual(@as(u32, 0), first.input_bindings.start);
     try std.testing.expectEqual(@as(u32, 1), first.output_bindings.start);
     try std.testing.expectEqual(@as(u32, 3), second.input_bindings.start);
-    const body = templates.ir.blocks.items[@intFromEnum(first.body.?)];
+    const body = parameterized_storage.ir.blocks.items[@intFromEnum(first.body.?)];
     try std.testing.expectEqual(@as(u32, 3), body.nodes.len);
-    const statements = templates.ir.node_refs.items[body.nodes.start..][0..body.nodes.len];
-    try std.testing.expect(templates.ir.nodes.items[@intFromEnum(statements[0])].resolved.content == .binding_declaration);
-    const assignment = templates.ir.nodes.items[@intFromEnum(statements[2])].resolved.content.assignment;
-    const pending = templates.ir.nodes.items[@intFromEnum(assignment.value)].pending;
-    const call = templates.ir.pending.items[@intFromEnum(pending)].resolve_expression;
+    const statements = parameterized_storage.ir.node_refs.items[body.nodes.start..][0..body.nodes.len];
+    try std.testing.expect(parameterized_storage.ir.nodes.items[@intFromEnum(statements[0])].resolved.content == .binding_declaration);
+    const assignment = parameterized_storage.ir.nodes.items[@intFromEnum(statements[2])].resolved.content.assignment;
+    const pending = parameterized_storage.ir.nodes.items[@intFromEnum(assignment.value)].pending;
+    const call = parameterized_storage.ir.pending.items[@intFromEnum(pending)].resolve_expression;
     try std.testing.expectEqualStrings("second", graph.text(call.name.?));
     try std.testing.expectEqual(@as(u32, 1), call.generic_arguments.len);
-    const argument = templates.ir.generic_arguments.items[call.generic_arguments.start].value.type;
-    try std.testing.expect(templates.ir.types.items[@intFromEnum(argument)] == .parameter);
+    const argument = parameterized_storage.ir.generic_arguments.items[call.generic_arguments.start].value.type;
+    try std.testing.expect(parameterized_storage.ir.types.items[@intFromEnum(argument)] == .parameter);
 }
 
 fn parseSource(allocator: std.mem.Allocator, source: []const u8, file_id: source_db.FileId) !syn.FileSyntaxTree {
@@ -494,7 +494,7 @@ test "failed generic bodies do not publish reusable instances" {
     const name = try relocation.graph.addString(allocator, "t");
     const arguments = @import("semantic_primitives.zig").Range(@import("global_semantic_graph.zig").GlobalGenericArgId){ .start = @intCast(relocation.graph.generic_arguments.items.len), .len = 1 };
     try relocation.graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = ty } });
-    const declaration = @import("semantic_globalizer.zig").globalDecl(relocation.offsets.items[0], module.graph.semantic.templates.generic_function_templates.items[0].declaration);
+    const declaration = @import("semantic_globalizer.zig").globalDecl(relocation.offsets.items[0], module.graph.semantic.parameterized_storage.parameterized_functions.items[0].declaration);
     const function_count = relocation.graph.functions.items.len;
     const node_count = relocation.graph.nodes.items.len;
     for (0..2) |_| {

@@ -32,19 +32,19 @@ fn initLibrary(allocator: std.mem.Allocator, io: std.Io, root_path: []const u8) 
 
     const readme_path = try std.fs.path.join(allocator, &.{ root_path, "README.md" });
     defer allocator.free(readme_path);
-    const readme = try libraryReadmeTemplate(allocator, package_name);
+    const readme = try libraryReadmeParameterized(allocator, package_name);
     defer allocator.free(readme);
     try writeFileIfMissing(io, readme_path, readme);
 
     const manifest_path = try std.fs.path.join(allocator, &.{ root_path, "argi.toml" });
     defer allocator.free(manifest_path);
-    const manifest = try moduleManifestTemplate(allocator, package_name);
+    const manifest = try moduleManifestParameterized(allocator, package_name);
     defer allocator.free(manifest);
     try writeFileIfMissing(io, manifest_path, manifest);
 
     const gitignore_path = try std.fs.path.join(allocator, &.{ root_path, ".gitignore" });
     defer allocator.free(gitignore_path);
-    try writeFileIfMissing(io, gitignore_path, gitignoreTemplate);
+    try writeFileIfMissing(io, gitignore_path, gitignoreParameterized);
 }
 
 fn initExecutable(allocator: std.mem.Allocator, io: std.Io, root_path: []const u8) !void {
@@ -58,23 +58,23 @@ fn initExecutable(allocator: std.mem.Allocator, io: std.Io, root_path: []const u
 
     const readme_path = try std.fs.path.join(allocator, &.{ root_path, "README.md" });
     defer allocator.free(readme_path);
-    const readme = try executableReadmeTemplate(allocator, package_name);
+    const readme = try executableReadmeParameterized(allocator, package_name);
     defer allocator.free(readme);
     try writeFileIfMissing(io, readme_path, readme);
 
     const manifest_path = try std.fs.path.join(allocator, &.{ root_path, "argi.toml" });
     defer allocator.free(manifest_path);
-    const manifest = try executableManifestTemplate(allocator, package_name);
+    const manifest = try executableManifestParameterized(allocator, package_name);
     defer allocator.free(manifest);
     try writeFileIfMissing(io, manifest_path, manifest);
 
     const entry_main_path = try std.fs.path.join(allocator, &.{ root_path, "source", "entrypoints", package_name, "main.rg" });
     defer allocator.free(entry_main_path);
-    try writeFileIfMissing(io, entry_main_path, moduleMainTemplate);
+    try writeFileIfMissing(io, entry_main_path, moduleMainParameterized);
 
     const gitignore_path = try std.fs.path.join(allocator, &.{ root_path, ".gitignore" });
     defer allocator.free(gitignore_path);
-    try writeFileIfMissing(io, gitignore_path, gitignoreTemplate);
+    try writeFileIfMissing(io, gitignore_path, gitignoreParameterized);
 }
 
 fn writeFileIfMissing(io: std.Io, path: []const u8, contents: []const u8) !void {
@@ -88,13 +88,13 @@ fn writeFileIfMissing(io: std.Io, path: []const u8, contents: []const u8) !void 
     };
 }
 
-const moduleMainTemplate =
+const moduleMainParameterized =
     \\main(.system: System = System()) -> (.status_code: Int32 = 0) := {
     \\}
     \\
 ;
 
-const gitignoreTemplate =
+const gitignoreParameterized =
     \\.argi-cache/
     \\build/
     \\**/build/
@@ -118,7 +118,7 @@ fn packageNameFromPath(allocator: std.mem.Allocator, root_path: []const u8, fall
     return try out.toOwnedSlice();
 }
 
-fn moduleManifestTemplate(allocator: std.mem.Allocator, package_name: []const u8) ![]u8 {
+fn moduleManifestParameterized(allocator: std.mem.Allocator, package_name: []const u8) ![]u8 {
     return std.fmt.allocPrint(
         allocator,
         \\name = "{s}"
@@ -130,7 +130,7 @@ fn moduleManifestTemplate(allocator: std.mem.Allocator, package_name: []const u8
     );
 }
 
-fn executableManifestTemplate(allocator: std.mem.Allocator, package_name: []const u8) ![]u8 {
+fn executableManifestParameterized(allocator: std.mem.Allocator, package_name: []const u8) ![]u8 {
     return std.fmt.allocPrint(
         allocator,
         \\name = "{s}"
@@ -148,7 +148,7 @@ fn executableManifestTemplate(allocator: std.mem.Allocator, package_name: []cons
     );
 }
 
-fn libraryReadmeTemplate(allocator: std.mem.Allocator, package_name: []const u8) ![]u8 {
+fn libraryReadmeParameterized(allocator: std.mem.Allocator, package_name: []const u8) ![]u8 {
     return std.fmt.allocPrint(
         allocator,
         \\# {s}
@@ -163,7 +163,7 @@ fn libraryReadmeTemplate(allocator: std.mem.Allocator, package_name: []const u8)
     );
 }
 
-fn executableReadmeTemplate(allocator: std.mem.Allocator, package_name: []const u8) ![]u8 {
+fn executableReadmeParameterized(allocator: std.mem.Allocator, package_name: []const u8) ![]u8 {
     return std.fmt.allocPrint(
         allocator,
         \\# {s}

@@ -200,8 +200,8 @@ const Builder = struct {
 
     fn function(self: *Builder, node: syn.NodeIndex, declaration: syn.FunctionDeclaration) Error!void {
         // Generic values take precedence over runtime bindings in GlobalSema.
-        // Until template parameter identities are lowered here, retain the
-        // complete template rather than selecting a runtime binding by name.
+        // Until parameterized parameter identities are lowered here, retain the
+        // complete parameterized rather than selecting a runtime binding by name.
         if (declaration.generic_params.len != 0 or declaration.generic_params_struct != null)
             return self.deferNode(node);
         const current = try self.scope(.none, node);

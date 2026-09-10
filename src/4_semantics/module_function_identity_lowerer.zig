@@ -27,12 +27,12 @@ pub fn lower(
         }
     }
 
-    for (graph.semantic.templates.generic_function_templates.items) |*template| {
-        const declaration = graph.declarations.items[@intFromEnum(template.declaration)];
+    for (graph.semantic.parameterized_storage.parameterized_functions.items) |*parameterized| {
+        const declaration = graph.declarations.items[@intFromEnum(parameterized.declaration)];
         const file = files[declaration.module_file_index];
-        if (file.is_bundled_core) template.safety_primitive = safetyPrimitiveForBundledDeclaration(graph.text(declaration.name), file.path);
+        if (file.is_bundled_core) parameterized.safety_primitive = safetyPrimitiveForBundledDeclaration(graph.text(declaration.name), file.path);
         if (isDeinit(file, declaration.syntax_node)) {
-            template.is_deinit = true;
+            parameterized.is_deinit = true;
             stats.generic_deinit_functions += 1;
         }
     }

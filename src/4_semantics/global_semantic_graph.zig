@@ -112,7 +112,7 @@ pub const Symbol = struct {
 /// with identical runtime signatures from being merged accidentally.
 pub const GenericFunctionInstance = struct {
     function: GlobalFunctionId,
-    template_declaration: GlobalDeclId,
+    parameterized_declaration: GlobalDeclId,
     arguments: primitives.Range(GlobalGenericArgId),
 };
 
@@ -174,19 +174,16 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn deinit(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
         inline for (.{
-            &self.modules, &self.files, &self.declarations, &self.symbols,
-            &self.symbol_declarations, &self.types, &self.type_resolution,
-            &self.generic_instances, &self.functions, &self.function_operators,
-            &self.generic_function_instances, &self.bindings, &self.nodes,
-            &self.blocks, &self.fields, &self.variants, &self.generic_arguments,
-            &self.value_fields, &self.switch_cases, &self.switches,
-            &self.auto_deinit_fields, &self.auto_deinits,
-            &self.virtual_registries, &self.virtualizes, &self.virtual_calls,
-            &self.reach_segments, &self.reach_alternatives, &self.reaches,
-            &self.nullable_unwraps, &self.testing_expect_errors,
-            &self.error_propagations, &self.error_contexts, &self.node_refs,
-            &self.type_refs, &self.binding_refs, &self.function_refs,
-            &self.virtual_registry_refs, &self.strings, &self.roots,
+            &self.modules,               &self.files,                 &self.declarations,               &self.symbols,
+            &self.symbol_declarations,   &self.types,                 &self.type_resolution,            &self.generic_instances,
+            &self.functions,             &self.function_operators,    &self.generic_function_instances, &self.bindings,
+            &self.nodes,                 &self.blocks,                &self.fields,                     &self.variants,
+            &self.generic_arguments,     &self.value_fields,          &self.switch_cases,               &self.switches,
+            &self.auto_deinit_fields,    &self.auto_deinits,          &self.virtual_registries,         &self.virtualizes,
+            &self.virtual_calls,         &self.reach_segments,        &self.reach_alternatives,         &self.reaches,
+            &self.nullable_unwraps,      &self.testing_expect_errors, &self.error_propagations,         &self.error_contexts,
+            &self.node_refs,             &self.type_refs,             &self.binding_refs,               &self.function_refs,
+            &self.virtual_registry_refs, &self.strings,               &self.roots,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -369,7 +366,9 @@ test "global semantic graph derives symbol module ownership from declarations" {
     const symbol = Symbol{ .name = type_name, .declarations = .{ .start = 0, .len = 1 } };
     try graph.symbols.append(allocator, symbol);
     try graph.functions.append(allocator, .{
-        .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 },
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
     });
     try graph.function_operators.append(allocator, .add);
 

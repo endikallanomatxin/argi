@@ -94,13 +94,13 @@ fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
 fn verifyGenericFunctionInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.generic_function_instances.items, 0..) |instance, index| {
         try require(verify.idFits(instance.function, graph.functions.items.len));
-        try require(verify.idFits(instance.template_declaration, graph.declarations.items.len));
+        try require(verify.idFits(instance.parameterized_declaration, graph.declarations.items.len));
         try require(verify.rangeFits(instance.arguments, graph.generic_arguments.items.len));
         const function = graph.functions.items[@intFromEnum(instance.function)];
         try require(function.flags.is_generic_instantiation);
-        try require(function.declaration == instance.template_declaration);
+        try require(function.declaration == instance.parameterized_declaration);
         for (graph.generic_function_instances.items[0..index]) |previous| {
-            if (previous.template_declaration != instance.template_declaration) continue;
+            if (previous.parameterized_declaration != instance.parameterized_declaration) continue;
             try require(!genericArgumentRangesEqual(graph, previous.arguments, instance.arguments));
         }
     }
@@ -117,8 +117,14 @@ fn genericArgumentRangesEqual(
         const right = graph.generic_arguments.items[b.start + @as(u32, @intCast(offset))];
         if (!std.mem.eql(u8, graph.text(left.name), graph.text(right.name))) return false;
         switch (left.value) {
-            .type => |left_ty| switch (right.value) { .type => |right_ty| if (left_ty != right_ty) return false, else => return false },
-            .comptime_int => |left_int| switch (right.value) { .comptime_int => |right_int| if (left_int != right_int) return false, else => return false },
+            .type => |left_ty| switch (right.value) {
+                .type => |right_ty| if (left_ty != right_ty) return false,
+                else => return false,
+            },
+            .comptime_int => |left_int| switch (right.value) {
+                .comptime_int => |right_int| if (left_int != right_int) return false,
+                else => return false,
+            },
         }
     }
     return true;
