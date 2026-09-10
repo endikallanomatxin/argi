@@ -130,7 +130,7 @@ pub fn semantize(
     try control.materializeSugarTypes();
 
     const total = totalPending(modules);
-    var resolved = try allocator.alloc(bool, total);
+    const resolved = try allocator.alloc(bool, total);
     defer allocator.free(resolved);
     @memset(resolved, false);
 
