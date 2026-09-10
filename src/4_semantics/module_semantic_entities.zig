@@ -154,16 +154,12 @@ pub const ExternalRef = struct {
     source: primitives.SourceRef,
 };
 
+/// Name lookups are the only expression-shaped operation still deferred as a
+/// generic expression. All other globally-dependent constructs have dedicated
+/// PendingOperation variants that encode their semantic intent explicitly.
 pub const PendingExpressionKind = enum(u8) {
     unknown_identifier,
-    pipe,
-    unwrap_or,
-    unwrap_or_do,
-    nullable_test,
     import_value,
-    generic_call,
-    type_initializer,
-    explicit_cast,
 };
 
 pub const PendingExpression = struct {
