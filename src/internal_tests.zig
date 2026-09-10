@@ -20,7 +20,6 @@ const module_semantic_views = @import("4_semantics/module_semantic_views.zig");
 const module_semantic_writer = @import("4_semantics/module_semantic_writer.zig");
 const module_type_lowerer = @import("4_semantics/module_type_lowerer.zig");
 const module_body_lowerer = @import("4_semantics/module_body_lowerer.zig");
-const module_fallback_lowerer = @import("4_semantics/module_fallback_lowerer.zig");
 const module_initializer_lowerer = @import("4_semantics/module_initializer_lowerer.zig");
 const module_global_roots_lowerer = @import("4_semantics/module_global_roots_lowerer.zig");
 const module_template_lowerer = @import("4_semantics/module_template_lowerer.zig");
@@ -79,7 +78,6 @@ test {
     _ = module_semantic_writer;
     _ = module_type_lowerer;
     _ = module_body_lowerer;
-    _ = module_fallback_lowerer;
     _ = module_initializer_lowerer;
     _ = module_global_roots_lowerer;
     _ = module_template_lowerer;
