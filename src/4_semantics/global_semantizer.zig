@@ -5,7 +5,6 @@ const module_views = @import("module_semantic_views.zig");
 const global_sg = @import("global_semantic_graph.zig");
 const globalizer = @import("semantic_globalizer.zig");
 const global_verify = @import("global_semantic_verify.zig");
-const binding_resolution_mod = @import("global_binding_resolution.zig");
 const core_mod = @import("global_semantic_core.zig");
 const expression_mod = @import("global_semantic_expressions.zig");
 const control_mod = @import("global_semantic_control.zig");
@@ -61,18 +60,6 @@ pub fn semantize(
     // those slots are genuinely unresolved before any resolver can inspect
     // them; unresolved is construction state, not the language type `Any`.
     try markUnresolvedTypeSlots(allocator, &relocation.graph, modules, relocation.offsets.items);
-
-    // Binding types that depend on control semantics use the same principle:
-    // their compact durable payload stays non-optional, while construction
-    // state lives beside the graph and hides provisional node types from all
-    // earlier semantic phases.
-    var binding_resolution = try binding_resolution_mod.State.init(
-        allocator,
-        &relocation.graph,
-        modules,
-        relocation.offsets.items,
-    );
-    defer binding_resolution.deinit(allocator);
 
     var core = core_mod.Resolver{
         .allocator = allocator,
@@ -147,13 +134,9 @@ pub fn semantize(
     defer allocator.free(resolved);
     @memset(resolved, false);
 
-    // GlobalSema is intentionally staged by semantic domain. We still retain
-    // one outer fixed point while the migration is incomplete because a later
-    // phase can currently expose information consumed by an earlier one. The
-    // phase boundary is therefore architectural rather than a new failure
-    // boundary: each phase owns a disjoint family of PendingOperation values,
-    // and the outer loop is the temporary compatibility net that lets us make
-    // those dependencies explicit one at a time.
+    // GlobalSema is staged by semantic domain. The outer fixed point remains
+    // while dependencies between phases are still being made explicit; within
+    // a pass every PendingOperation has a single owning phase.
     var changed = true;
     while (changed) {
         changed = false;
@@ -167,7 +150,6 @@ pub fn semantize(
                 &abstracts,
                 &errors,
                 &ownership,
-                &binding_resolution,
                 modules,
                 relocation.offsets.items,
                 resolved,
@@ -195,7 +177,6 @@ pub fn semantize(
         dumpUnresolved(modules, resolved);
         return error.UnsupportedGlobalSemantic;
     }
-    try binding_resolution.finish();
     _ = relocation.graph.reconcileTypeResolution();
     if (relocation.graph.hasUnresolvedTypes()) {
         std.debug.print("global sema unresolved global type slots remain\n", .{});
@@ -238,7 +219,6 @@ fn resolvePendingPhase(
     abstracts: *abstract_mod.Resolver,
     errors: *error_mod.Resolver,
     ownership: *ownership_mod.Resolver,
-    binding_resolution: *binding_resolution_mod.State,
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     resolved: []bool,
@@ -265,7 +245,6 @@ fn resolvePendingPhase(
                     operation,
                 )) {
                     resolved[flat] = true;
-                    binding_resolution.operationResolved(module, o, operation);
                     changed = true;
                 }
             }
