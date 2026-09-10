@@ -3,7 +3,7 @@ const module_sg = @import("module_semantic_graph.zig");
 const body_lowerer = @import("module_body_lowerer.zig");
 const initializer_lowerer = @import("module_initializer_lowerer.zig");
 const global_roots_lowerer = @import("module_global_roots_lowerer.zig");
-const template_lowerer = @import("module_template_lowerer.zig");
+const parameterized_lowerer = @import("module_parameterized_lowerer.zig");
 const generic_operator_lowerer = @import("module_generic_operator_lowerer.zig");
 const function_identity_lowerer = @import("module_function_identity_lowerer.zig");
 const abstract_relation_lowerer = @import("module_abstract_relation_lowerer.zig");
@@ -51,7 +51,7 @@ pub fn build(
     // function again with a second implementation.
     const bodies = try body_lowerer.lowerMissingFunctions(allocator, &graph, files);
 
-    const template_stats = try template_lowerer.lower(allocator, &graph, files);
+    const parameterized_stats = try parameterized_lowerer.lower(allocator, &graph, files);
     const generic_operators = try generic_operator_lowerer.lower(&graph, files);
     const identity_stats = function_identity_lowerer.lower(&graph, files);
     const relation_stats = try abstract_relation_lowerer.lower(allocator, &graph, files);
@@ -68,13 +68,13 @@ pub fn build(
             .global_bindings = initializers.global_bindings,
             .global_roots = global_roots,
             .field_defaults = initializers.field_defaults,
-            .generic_types = template_stats.generic_types,
-            .generic_functions = template_stats.generic_functions,
+            .generic_types = parameterized_stats.generic_types,
+            .generic_functions = parameterized_stats.generic_functions,
             .generic_operators = generic_operators,
             .deinit_functions = identity_stats.deinit_functions,
             .generic_deinit_functions = identity_stats.generic_deinit_functions,
-            .abstract_definitions = template_stats.abstract_definitions,
-            .abstract_relations = relation_stats.implementations + relation_stats.implementation_templates + relation_stats.defaults + relation_stats.default_templates,
+            .abstract_definitions = parameterized_stats.abstract_definitions,
+            .abstract_relations = relation_stats.implementations + relation_stats.implementation_parameterized_forms + relation_stats.defaults + relation_stats.default_parameterized_forms,
             .generic_calls = generic_calls.generic_calls,
             .local_semantics_complete = true,
         },

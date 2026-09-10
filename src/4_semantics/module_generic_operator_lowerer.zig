@@ -7,19 +7,19 @@ pub fn lower(
     files: []const graph_mod.FileInput,
 ) !u32 {
     var count: u32 = 0;
-    for (graph.semantic.templates.generic_function_templates.items) |*template| {
-        const declaration = graph.declarations.items[@intFromEnum(template.declaration)];
+    for (graph.semantic.parameterized_storage.parameterized_functions.items) |*parameterized| {
+        const declaration = graph.declarations.items[@intFromEnum(parameterized.declaration)];
         const file = files[declaration.module_file_index];
         const name = file.tree.functionNameFromSource(file.source, declaration.syntax_node) orelse continue;
-        template.operator = switch (name) {
+        parameterized.operator = switch (name) {
             .operator => |value| callable.fromSyntax(value),
             .identifier => null,
         };
-        if (template.operator != null) count += 1;
+        if (parameterized.operator != null) count += 1;
     }
     return count;
 }
 
-test "generic operator metadata is cold template state" {
+test "generic operator metadata is cold parameterized state" {
     try std.testing.expect(@sizeOf(?callable.OperatorKind) <= 2);
 }

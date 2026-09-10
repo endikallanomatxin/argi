@@ -2,8 +2,8 @@ const std = @import("std");
 const syn = @import("../3_syntax/syntax_tree.zig");
 const module_sg = @import("module_semantic_graph.zig");
 const module_entities = @import("module_semantic_entities.zig");
-const templates = @import("module_semantic_templates.zig");
-const ir = @import("module_semantic_template_ir.zig");
+const parameterized_storage = @import("module_parameterized_storage.zig");
+const ir = @import("module_parameterized_ir.zig");
 const global_sg = @import("global_semantic_graph.zig");
 const globalizer = @import("semantic_globalizer.zig");
 const core_mod = @import("global_semantic_core.zig");
@@ -14,7 +14,7 @@ const primitives = @import("semantic_primitives.zig");
 pub const Stats = struct {
     checks: u32 = 0,
     concrete_hits: u32 = 0,
-    template_hits: u32 = 0,
+    parameterized_hits: u32 = 0,
     defaults: u32 = 0,
 };
 
@@ -113,7 +113,7 @@ pub const Resolver = struct {
 
         var methods: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
         defer methods.deinit(self.allocator);
-        const storage = &self.modules[located.module_index].semantic.templates;
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
             const instance = try self.requirementInstance(abstract_decl, concrete, located, requirement, @intCast(method_index));
             const implementation = self.findConcreteMethod(self.modules[located.module_index].text(requirement.name), instance.input) orelse return null;
@@ -219,8 +219,8 @@ pub const Resolver = struct {
             };
             const located = self.findAbstractDefinition(abstract_decl) orelse continue;
             if (located.definition.parameters.len != 0) continue;
-            const templates_storage = &self.modules[located.module_index].semantic.templates;
-            for (templates_storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
+            const parameterized_forms_storage = &self.modules[located.module_index].semantic.parameterized_storage;
+            for (parameterized_forms_storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
                 if (!std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), method_name)) continue;
                 const instance = try self.requirementInstance(abstract_decl, abstract_ty, located, requirement, @intCast(method_index));
                 const input_ty = instance.input;
@@ -273,7 +273,7 @@ pub const Resolver = struct {
 
     const LocatedAbstractDefinition = struct {
         module_index: usize,
-        definition: templates.AbstractDefinition,
+        definition: parameterized_storage.AbstractDefinition,
     };
 
     const RequirementInstance = struct {
@@ -288,17 +288,17 @@ pub const Resolver = struct {
         declaration: global_sg.GlobalDeclId,
         self_type: global_sg.GlobalTypeId,
         located: LocatedAbstractDefinition,
-        requirement: templates.AbstractRequirement,
+        requirement: parameterized_storage.AbstractRequirement,
         method_index: u32,
     ) !RequirementInstance {
-        const storage = &self.modules[located.module_index].semantic.templates;
-        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.generic_parameters.items.len);
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
         const instance = RequirementInstance{
             .declaration = declaration,
             .method_index = method_index,
-            .input = try self.generics.instantiateTemplateType(located.module_index, requirement.input, &bindings, self_type),
-            .output = try self.generics.instantiateTemplateType(located.module_index, requirement.output, &bindings, self_type),
+            .input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings, self_type),
+            .output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings, self_type),
         };
         return instance;
     }
@@ -310,7 +310,7 @@ pub const Resolver = struct {
         const raw = @intFromEnum(declaration);
         if (raw < base) return null;
         const local: module_entities.ModuleDeclId = @enumFromInt(raw - base);
-        for (self.modules[module_index].semantic.templates.abstract_definitions.items) |definition|
+        for (self.modules[module_index].semantic.parameterized_storage.abstract_definitions.items) |definition|
             if (definition.declaration == local) return .{ .module_index = module_index, .definition = definition };
         return null;
     }
@@ -322,7 +322,7 @@ pub const Resolver = struct {
     ) !bool {
         self.stats.checks += 1;
         for (self.modules, 0..) |*module, module_index| {
-            for (module.semantic.templates.abstract_implementations.items) |implementation| {
+            for (module.semantic.parameterized_storage.abstract_implementations.items) |implementation| {
                 const candidate_abstract = try self.resolveDeclarationRef(module_index, implementation.abstract_ref, .abstract_type);
                 if (candidate_abstract != abstract_decl) continue;
                 const candidate_type = globalizer.globalType(self.offsets[module_index], implementation.ty);
@@ -331,11 +331,11 @@ pub const Resolver = struct {
                     return true;
                 }
             }
-            for (module.semantic.templates.abstract_implementation_templates.items) |template| {
-                const candidate_abstract = try self.resolveDeclarationRef(module_index, template.abstract_ref, .abstract_type);
+            for (module.semantic.parameterized_storage.parameterized_abstract_implementations.items) |parameterized| {
+                const candidate_abstract = try self.resolveDeclarationRef(module_index, parameterized.abstract_ref, .abstract_type);
                 if (candidate_abstract != abstract_decl) continue;
-                if (try self.matchesImplementationTemplate(module_index, concrete, template)) {
-                    self.stats.template_hits += 1;
+                if (try self.matchesImplementationParameterized(module_index, concrete, parameterized)) {
+                    self.stats.parameterized_hits += 1;
                     return true;
                 }
             }
@@ -349,20 +349,20 @@ pub const Resolver = struct {
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
     ) !?global_sg.GlobalTypeId {
         for (self.modules, 0..) |*module, module_index| {
-            for (module.semantic.templates.abstract_defaults.items) |default| {
+            for (module.semantic.parameterized_storage.abstract_defaults.items) |default| {
                 const candidate = try self.resolveDeclarationRef(module_index, default.abstract_ref, .abstract_type);
                 if (candidate != abstract_decl) continue;
                 self.stats.defaults += 1;
                 return globalizer.globalType(self.offsets[module_index], default.ty);
             }
-            for (module.semantic.templates.abstract_default_templates.items) |default| {
+            for (module.semantic.parameterized_storage.parameterized_abstract_defaults.items) |default| {
                 const candidate = try self.resolveDeclarationRef(module_index, default.abstract_ref, .abstract_type);
                 if (candidate != abstract_decl) continue;
-                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.templates.generic_parameters.items.len);
+                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.allocator);
                 try self.generics.bindGlobalArguments(module_index, default.parameters, arguments, &bindings);
                 self.stats.defaults += 1;
-                return try self.generics.instantiateTemplateType(module_index, default.ty, &bindings, null);
+                return try self.generics.instantiateParameterizedType(module_index, default.ty, &bindings, null);
             }
         }
         return null;
@@ -374,19 +374,19 @@ pub const Resolver = struct {
     /// GlobalSema as a final graph.
     pub fn validateGenericFunctionInstances(self: *Resolver) !void {
         for (self.graph.generic_function_instances.items) |instance| {
-            const owner = self.graph.moduleForDeclaration(instance.template_declaration) orelse return error.InvalidGenericFunctionOwner;
+            const owner = self.graph.moduleForDeclaration(instance.parameterized_declaration) orelse return error.InvalidGenericFunctionOwner;
             const module_index: usize = @intFromEnum(owner);
-            const template = self.findFunctionTemplate(module_index, instance.template_declaration) orelse continue;
+            const parameterized = self.findFunctionParameterized(module_index, instance.parameterized_declaration) orelse continue;
             const module = &self.modules[module_index];
-            var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.templates.generic_parameters.items.len);
+            var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
             defer bindings.deinit(self.allocator);
-            try self.generics.bindGlobalArguments(module_index, template.parameters, instance.arguments, &bindings);
+            try self.generics.bindGlobalArguments(module_index, parameterized.parameters, instance.arguments, &bindings);
 
-            for (0..template.parameters.len) |offset| {
-                const param_raw = template.parameters.start + @as(u32, @intCast(offset));
-                const parameter = module.semantic.templates.generic_parameters.items[param_raw];
+            for (0..parameterized.parameters.len) |offset| {
+                const param_raw = parameterized.parameters.start + @as(u32, @intCast(offset));
+                const parameter = module.semantic.parameterized_storage.comptime_parameters.items[param_raw];
                 const constraint_id = parameter.constraint orelse continue;
-                const constraint = module.semantic.templates.abstract_constraints.items[@intFromEnum(constraint_id)];
+                const constraint = module.semantic.parameterized_storage.abstract_constraints.items[@intFromEnum(constraint_id)];
                 const abstract_decl = try self.resolveDeclarationRef(module_index, constraint.abstract_ref, .abstract_type);
                 const concrete = bindings.types[param_raw] orelse return error.AbstractConstraintRequiresTypeParameter;
                 if (!try self.implements(concrete, abstract_decl)) return error.GenericAbstractConstraintNotSatisfied;
@@ -394,32 +394,32 @@ pub const Resolver = struct {
         }
     }
 
-    fn matchesImplementationTemplate(
+    fn matchesImplementationParameterized(
         self: *Resolver,
         module_index: usize,
         concrete: global_sg.GlobalTypeId,
-        template: templates.AbstractImplementationTemplate,
+        parameterized: parameterized_storage.ParameterizedAbstractImplementation,
     ) !bool {
         const module = &self.modules[module_index];
-        const concrete_name = template.concrete_name orelse return false;
+        const concrete_name = parameterized.concrete_name orelse return false;
         const wanted = module.text(concrete_name);
 
         const identity = switch (self.graph.types.items[@intFromEnum(concrete)]) {
             .generic => |value| value,
             .declared => |decl| {
                 if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(decl)].name), wanted)) return false;
-                return template.parameters.len == 0;
+                return parameterized.parameters.len == 0;
             },
             else => return false,
         };
         if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(identity.base)].name), wanted)) return false;
-        if (identity.arguments.len != template.concrete_parameter_count) return false;
+        if (identity.arguments.len != parameterized.concrete_parameter_count) return false;
 
-        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.templates.generic_parameters.items.len);
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
-        try self.generics.bindGlobalArguments(module_index, template.parameters, identity.arguments, &bindings);
-        if (template.concrete_type_pattern) |pattern| {
-            const expected = try self.generics.instantiateTemplateType(module_index, pattern, &bindings, concrete);
+        try self.generics.bindGlobalArguments(module_index, parameterized.parameters, identity.arguments, &bindings);
+        if (parameterized.concrete_type_pattern) |pattern| {
+            const expected = try self.generics.instantiateParameterizedType(module_index, pattern, &bindings, concrete);
             if (!global_types.equal(self.graph, expected, concrete)) return false;
         }
         return true;
@@ -450,17 +450,17 @@ pub const Resolver = struct {
         return .{ .file_index = self.offsets[module_index].file_base + source.file_index, .offset = source.offset };
     }
 
-    fn findFunctionTemplate(
+    fn findFunctionParameterized(
         self: *Resolver,
         module_index: usize,
         declaration: global_sg.GlobalDeclId,
-    ) ?templates.GenericFunctionTemplate {
+    ) ?parameterized_storage.ParameterizedFunction {
         const base = self.offsets[module_index].declaration_base;
         const raw = @intFromEnum(declaration);
         if (raw < base) return null;
         const local: module_entities.ModuleDeclId = @enumFromInt(raw - base);
-        for (self.modules[module_index].semantic.templates.generic_function_templates.items) |template|
-            if (template.declaration == local) return template;
+        for (self.modules[module_index].semantic.parameterized_storage.parameterized_functions.items) |parameterized|
+            if (parameterized.declaration == local) return parameterized;
         return null;
     }
 };

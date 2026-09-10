@@ -39,7 +39,7 @@ pub const Resolver = struct {
                 };
                 const reference = module.semantic.external_refs.items[@intFromEnum(external)];
                 if (reference.kind != .type) continue;
-                // Generic external references need template substitution and are
+                // Generic external references need parameterized substitution and are
                 // intentionally claimed by the generic resolver instead.
                 if (reference.generic_arguments != null) continue;
                 const target = self.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch continue;

@@ -3,60 +3,60 @@ const syn = @import("../3_syntax/syntax_tree.zig");
 const entities = @import("module_semantic_entities.zig");
 const primitives = @import("semantic_primitives.zig");
 
-pub const TemplateParameterId = enum(u32) { _ };
-pub const TemplateIntExprId = enum(u32) { _ };
-pub const TemplateTypeId = enum(u32) { _ };
-pub const TemplateDeclId = enum(u32) { _ };
-pub const TemplateFunctionId = enum(u32) { _ };
-pub const TemplateBindingId = enum(u32) { _ };
-pub const TemplateNodeId = enum(u32) { _ };
-pub const TemplateBlockId = enum(u32) { _ };
-pub const TemplateFieldId = enum(u32) { _ };
-pub const TemplateVariantId = enum(u32) { _ };
-pub const TemplateGenericArgId = enum(u32) { _ };
-pub const TemplateValueFieldId = enum(u32) { _ };
-pub const TemplateSwitchCaseId = enum(u32) { _ };
-pub const TemplateSwitchId = enum(u32) { _ };
-pub const TemplateAutoDeinitFieldId = enum(u32) { _ };
-pub const TemplateAutoDeinitId = enum(u32) { _ };
-pub const TemplateVirtualRegistryId = enum(u32) { _ };
-pub const TemplateVirtualizeId = enum(u32) { _ };
-pub const TemplateVirtualCallId = enum(u32) { _ };
-pub const TemplateReachSegmentId = enum(u32) { _ };
-pub const TemplateReachAlternativeId = enum(u32) { _ };
-pub const TemplateReachId = enum(u32) { _ };
-pub const TemplateNullableUnwrapId = enum(u32) { _ };
-pub const TemplateTestingExpectErrorId = enum(u32) { _ };
-pub const TemplateErrorPropagationId = enum(u32) { _ };
-pub const TemplateErrorContextId = enum(u32) { _ };
-pub const TemplatePendingId = enum(u32) { _ };
-pub const TemplateMatchCaseId = enum(u32) { _ };
+pub const ComptimeParameterId = enum(u32) { _ };
+pub const ParameterizedIntExprId = enum(u32) { _ };
+pub const ParameterizedTypeId = enum(u32) { _ };
+pub const ParameterizedDeclId = enum(u32) { _ };
+pub const ParameterizedFunctionId = enum(u32) { _ };
+pub const ParameterizedBindingId = enum(u32) { _ };
+pub const ParameterizedNodeId = enum(u32) { _ };
+pub const ParameterizedBlockId = enum(u32) { _ };
+pub const ParameterizedFieldId = enum(u32) { _ };
+pub const ParameterizedVariantId = enum(u32) { _ };
+pub const ParameterizedGenericArgId = enum(u32) { _ };
+pub const ParameterizedValueFieldId = enum(u32) { _ };
+pub const ParameterizedSwitchCaseId = enum(u32) { _ };
+pub const ParameterizedSwitchId = enum(u32) { _ };
+pub const ParameterizedAutoDeinitFieldId = enum(u32) { _ };
+pub const ParameterizedAutoDeinitId = enum(u32) { _ };
+pub const ParameterizedVirtualRegistryId = enum(u32) { _ };
+pub const ParameterizedVirtualizeId = enum(u32) { _ };
+pub const ParameterizedVirtualCallId = enum(u32) { _ };
+pub const ParameterizedReachSegmentId = enum(u32) { _ };
+pub const ParameterizedReachAlternativeId = enum(u32) { _ };
+pub const ParameterizedReachId = enum(u32) { _ };
+pub const ParameterizedNullableUnwrapId = enum(u32) { _ };
+pub const ParameterizedTestingExpectErrorId = enum(u32) { _ };
+pub const ParameterizedErrorPropagationId = enum(u32) { _ };
+pub const ParameterizedErrorContextId = enum(u32) { _ };
+pub const ParameterizedPendingId = enum(u32) { _ };
+pub const ParameterizedMatchCaseId = enum(u32) { _ };
 
 pub const Ids = struct {
-    pub const DeclId = TemplateDeclId;
-    pub const TypeId = TemplateTypeId;
-    pub const FunctionId = TemplateFunctionId;
-    pub const BindingId = TemplateBindingId;
-    pub const NodeId = TemplateNodeId;
-    pub const BlockId = TemplateBlockId;
-    pub const FieldId = TemplateFieldId;
-    pub const VariantId = TemplateVariantId;
-    pub const GenericArgId = TemplateGenericArgId;
-    pub const ValueFieldId = TemplateValueFieldId;
-    pub const SwitchCaseId = TemplateSwitchCaseId;
-    pub const SwitchId = TemplateSwitchId;
-    pub const AutoDeinitFieldId = TemplateAutoDeinitFieldId;
-    pub const AutoDeinitId = TemplateAutoDeinitId;
-    pub const VirtualRegistryId = TemplateVirtualRegistryId;
-    pub const VirtualizeId = TemplateVirtualizeId;
-    pub const VirtualCallId = TemplateVirtualCallId;
-    pub const ReachSegmentId = TemplateReachSegmentId;
-    pub const ReachAlternativeId = TemplateReachAlternativeId;
-    pub const ReachId = TemplateReachId;
-    pub const NullableUnwrapId = TemplateNullableUnwrapId;
-    pub const TestingExpectErrorId = TemplateTestingExpectErrorId;
-    pub const ErrorPropagationId = TemplateErrorPropagationId;
-    pub const ErrorContextId = TemplateErrorContextId;
+    pub const DeclId = ParameterizedDeclId;
+    pub const TypeId = ParameterizedTypeId;
+    pub const FunctionId = ParameterizedFunctionId;
+    pub const BindingId = ParameterizedBindingId;
+    pub const NodeId = ParameterizedNodeId;
+    pub const BlockId = ParameterizedBlockId;
+    pub const FieldId = ParameterizedFieldId;
+    pub const VariantId = ParameterizedVariantId;
+    pub const GenericArgId = ParameterizedGenericArgId;
+    pub const ValueFieldId = ParameterizedValueFieldId;
+    pub const SwitchCaseId = ParameterizedSwitchCaseId;
+    pub const SwitchId = ParameterizedSwitchId;
+    pub const AutoDeinitFieldId = ParameterizedAutoDeinitFieldId;
+    pub const AutoDeinitId = ParameterizedAutoDeinitId;
+    pub const VirtualRegistryId = ParameterizedVirtualRegistryId;
+    pub const VirtualizeId = ParameterizedVirtualizeId;
+    pub const VirtualCallId = ParameterizedVirtualCallId;
+    pub const ReachSegmentId = ParameterizedReachSegmentId;
+    pub const ReachAlternativeId = ParameterizedReachAlternativeId;
+    pub const ReachId = ParameterizedReachId;
+    pub const NullableUnwrapId = ParameterizedNullableUnwrapId;
+    pub const TestingExpectErrorId = ParameterizedTestingExpectErrorId;
+    pub const ErrorPropagationId = ParameterizedErrorPropagationId;
+    pub const ErrorContextId = ParameterizedErrorContextId;
 };
 
 pub const DeclarationRef = union(enum) {
@@ -78,22 +78,22 @@ pub const IntBinaryOperator = enum(u8) { add, subtract, multiply, divide, modulo
 
 pub const IntExpression = union(enum) {
     literal: i64,
-    parameter: TemplateParameterId,
+    parameter: ComptimeParameterId,
     binary: struct {
         operator: IntBinaryOperator,
-        left: TemplateIntExprId,
-        right: TemplateIntExprId,
+        left: ParameterizedIntExprId,
+        right: ParameterizedIntExprId,
     },
 };
 
 pub const Type = union(enum) {
     concrete: entities.ModuleTypeId,
-    parameter: TemplateParameterId,
+    parameter: ComptimeParameterId,
     abstract_self,
     external: entities.ExternalRefId,
     array: struct {
-        length: TemplateIntExprId,
-        element: TemplateTypeId,
+        length: ParameterizedIntExprId,
+        element: ParameterizedTypeId,
     },
     resolved: primitives.SemanticType(Ids),
 };
@@ -110,8 +110,8 @@ pub const GenericArgument = struct {
     value: Value,
 
     pub const Value = union(enum) {
-        type: TemplateTypeId,
-        comptime_int: TemplateIntExprId,
+        type: ParameterizedTypeId,
+        comptime_int: ParameterizedIntExprId,
     };
 };
 
@@ -173,20 +173,20 @@ pub const PendingExpressionKind = enum(u8) {
 
 pub const PendingExpression = struct {
     kind: PendingExpressionKind,
-    operands: primitives.Range(TemplateNodeId) = .{ .start = 0, .len = 0 },
+    operands: primitives.Range(ParameterizedNodeId) = .{ .start = 0, .len = 0 },
     name: ?primitives.StringRange = null,
     module_path: ?primitives.StringRange = null,
-    generic_arguments: primitives.Range(TemplateGenericArgId) = .{ .start = 0, .len = 0 },
-    expected_type: ?TemplateTypeId = null,
-    match_cases: primitives.Range(TemplateMatchCaseId) = .{ .start = 0, .len = 0 },
+    generic_arguments: primitives.Range(ParameterizedGenericArgId) = .{ .start = 0, .len = 0 },
+    expected_type: ?ParameterizedTypeId = null,
+    match_cases: primitives.Range(ParameterizedMatchCaseId) = .{ .start = 0, .len = 0 },
     source: primitives.SourceRef,
     aux: u32 = 0,
 };
 
 pub const MatchCase = struct {
     name: primitives.StringRange,
-    payload_binding: ?TemplateBindingId,
-    body: TemplateBlockId,
+    payload_binding: ?ParameterizedBindingId,
+    body: ParameterizedBlockId,
     mode: syn.MatchCaseMode,
     source: primitives.SourceRef,
 };
@@ -198,22 +198,22 @@ pub const Pending = union(enum) {
     },
     resolve_call: struct {
         name: primitives.StringRange,
-        input: TemplateNodeId,
+        input: ParameterizedNodeId,
         source: primitives.SourceRef,
     },
     resolve_field: struct {
-        value: TemplateNodeId,
+        value: ParameterizedNodeId,
         field_name: primitives.StringRange,
         source: primitives.SourceRef,
     },
     resolve_expression: PendingExpression,
-    resolve_copy: struct { value: TemplateNodeId },
-    resolve_deinit: struct { binding: TemplateBindingId },
+    resolve_copy: struct { value: ParameterizedNodeId },
+    resolve_deinit: struct { binding: ParameterizedBindingId },
 };
 
 pub const Node = union(enum) {
     resolved: ResolvedNode,
-    pending: TemplatePendingId,
+    pending: ParameterizedPendingId,
 };
 
 pub const Storage = struct {
@@ -245,11 +245,11 @@ pub const Storage = struct {
     pending: std.ArrayList(Pending) = .empty,
     match_cases: std.ArrayList(MatchCase) = .empty,
 
-    node_refs: std.ArrayList(TemplateNodeId) = .empty,
-    type_refs: std.ArrayList(TemplateTypeId) = .empty,
-    binding_refs: std.ArrayList(TemplateBindingId) = .empty,
-    function_refs: std.ArrayList(TemplateFunctionId) = .empty,
-    virtual_registry_refs: std.ArrayList(TemplateVirtualRegistryId) = .empty,
+    node_refs: std.ArrayList(ParameterizedNodeId) = .empty,
+    type_refs: std.ArrayList(ParameterizedTypeId) = .empty,
+    binding_refs: std.ArrayList(ParameterizedBindingId) = .empty,
+    function_refs: std.ArrayList(ParameterizedFunctionId) = .empty,
+    virtual_registry_refs: std.ArrayList(ParameterizedVirtualRegistryId) = .empty,
 
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         inline for (.{
@@ -293,15 +293,15 @@ pub const Storage = struct {
             self.error_contexts.items.len * @sizeOf(ErrorContext) +
             self.pending.items.len * @sizeOf(Pending) +
             self.match_cases.items.len * @sizeOf(MatchCase) +
-            self.node_refs.items.len * @sizeOf(TemplateNodeId) +
-            self.type_refs.items.len * @sizeOf(TemplateTypeId) +
-            self.binding_refs.items.len * @sizeOf(TemplateBindingId) +
-            self.function_refs.items.len * @sizeOf(TemplateFunctionId) +
-            self.virtual_registry_refs.items.len * @sizeOf(TemplateVirtualRegistryId);
+            self.node_refs.items.len * @sizeOf(ParameterizedNodeId) +
+            self.type_refs.items.len * @sizeOf(ParameterizedTypeId) +
+            self.binding_refs.items.len * @sizeOf(ParameterizedBindingId) +
+            self.function_refs.items.len * @sizeOf(ParameterizedFunctionId) +
+            self.virtual_registry_refs.items.len * @sizeOf(ParameterizedVirtualRegistryId);
     }
 };
 
-test "template IR represents dependent type state without syntax refs" {
+test "parameterized IR represents dependent type state without syntax refs" {
     const allocator = std.testing.allocator;
     var storage: Storage = .{};
     defer storage.deinit(allocator);

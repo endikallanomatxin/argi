@@ -1,6 +1,6 @@
 const std = @import("std");
 const entities = @import("module_semantic_entities.zig");
-const templates = @import("module_semantic_templates.zig");
+const parameterized_storage = @import("module_parameterized_storage.zig");
 const primitives = @import("semantic_primitives.zig");
 const callable = @import("semantic_callable.zig");
 const type_shapes = @import("semantic_type_shapes.zig");
@@ -56,7 +56,7 @@ pub const Storage = struct {
     error_propagations: std.ArrayList(entities.ErrorPropagation) = .empty,
     error_contexts: std.ArrayList(entities.ErrorContext) = .empty,
 
-    templates: templates.Storage = .{},
+    parameterized_storage: parameterized_storage.Storage = .{},
 
     scopes: std.ArrayList(entities.Scope) = .empty,
     external_refs: std.ArrayList(entities.ExternalRef) = .empty,
@@ -99,7 +99,7 @@ pub const Storage = struct {
         self.testing_expect_errors.deinit(allocator);
         self.error_propagations.deinit(allocator);
         self.error_contexts.deinit(allocator);
-        self.templates.deinit(allocator);
+        self.parameterized_storage.deinit(allocator);
         self.scopes.deinit(allocator);
         self.external_refs.deinit(allocator);
         self.pending_operations.deinit(allocator);
@@ -143,7 +143,7 @@ pub const Storage = struct {
             self.testing_expect_errors.items.len * @sizeOf(entities.TestingExpectError) +
             self.error_propagations.items.len * @sizeOf(entities.ErrorPropagation) +
             self.error_contexts.items.len * @sizeOf(entities.ErrorContext) +
-            self.templates.storageBytes() +
+            self.parameterized_storage.storageBytes() +
             self.scopes.items.len * @sizeOf(entities.Scope) +
             self.external_refs.items.len * @sizeOf(entities.ExternalRef) +
             self.pending_operations.items.len * @sizeOf(entities.PendingOperation) +
@@ -166,7 +166,8 @@ test "module semantic storage owns cold declaration binding links" {
     try storage.types.append(allocator, .{ .resolved = .{ .builtin = .Int32 } });
     try storage.types.append(allocator, .{ .external = @enumFromInt(0) });
     try storage.types.append(allocator, .{ .resolved = .{ .pointer = .{
-        .child = @enumFromInt(1), .mutability = .read_only,
+        .child = @enumFromInt(1),
+        .mutability = .read_only,
     } } });
     try std.testing.expectEqual(@as(u32, 2), @intFromEnum(storage.declaration_bindings.items[0].binding));
     try std.testing.expectEqual(@as(usize, 3), storage.types.items.len);

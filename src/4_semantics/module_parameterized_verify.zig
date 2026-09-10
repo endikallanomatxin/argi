@@ -1,16 +1,16 @@
 const std = @import("std");
 const graph_mod = @import("module_semantic_graph.zig");
-const templates = @import("module_semantic_templates.zig");
-const ir = @import("module_semantic_template_ir.zig");
-const ir_verify = @import("module_semantic_template_ir_verify.zig");
+const parameterized_storage = @import("module_parameterized_storage.zig");
+const ir = @import("module_parameterized_ir.zig");
+const ir_verify = @import("module_parameterized_ir_verify.zig");
 const views = @import("module_semantic_views.zig");
 const verify = @import("semantic_verify.zig");
 
-pub fn verifyTemplates(graph: *const graph_mod.ModuleSemanticGraph) !void {
-    const storage = &graph.semantic.templates;
+pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !void {
+    const storage = &graph.semantic.parameterized_storage;
     try ir_verify.verifyIR(graph);
 
-    for (storage.generic_parameters.items) |parameter| {
+    for (storage.comptime_parameters.items) |parameter| {
         try require(verify.stringFits(parameter.name, graph.strings.items));
         try require(verify.optionalIdFits(parameter.value_type, storage.ir.types.items.len));
         try require(verify.optionalIdFits(parameter.constraint, storage.abstract_constraints.items.len));
@@ -22,30 +22,30 @@ pub fn verifyTemplates(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try require(verify.sourceFits(constraint.source, graph.file_offsets.items.len));
     }
 
-    for (storage.generic_function_templates.items) |template| {
-        try require(verify.idFits(template.declaration, graph.declarations.items.len));
-        try require(verify.rangeFits(template.parameters, storage.generic_parameters.items.len));
-        try require(verify.idFits(template.input, storage.ir.types.items.len));
-        try require(verify.idFits(template.output, storage.ir.types.items.len));
-        try require(verify.optionalIdFits(template.body, storage.ir.blocks.items.len));
+    for (storage.parameterized_functions.items) |parameterized| {
+        try require(verify.idFits(parameterized.declaration, graph.declarations.items.len));
+        try require(verify.rangeFits(parameterized.parameters, storage.comptime_parameters.items.len));
+        try require(verify.idFits(parameterized.input, storage.ir.types.items.len));
+        try require(verify.idFits(parameterized.output, storage.ir.types.items.len));
+        try require(verify.optionalIdFits(parameterized.body, storage.ir.blocks.items.len));
     }
 
-    for (storage.generic_type_templates.items) |template| {
-        try require(verify.idFits(template.declaration, graph.declarations.items.len));
-        try require(verify.rangeFits(template.parameters, storage.generic_parameters.items.len));
-        try require(verify.idFits(template.body, storage.ir.types.items.len));
+    for (storage.parameterized_types.items) |parameterized| {
+        try require(verify.idFits(parameterized.declaration, graph.declarations.items.len));
+        try require(verify.rangeFits(parameterized.parameters, storage.comptime_parameters.items.len));
+        try require(verify.idFits(parameterized.body, storage.ir.types.items.len));
     }
 
     for (storage.abstract_requirements.items) |requirement| {
         try require(verify.stringFits(requirement.name, graph.strings.items));
         try require(verify.idFits(requirement.input, storage.ir.types.items.len));
         try require(verify.idFits(requirement.output, storage.ir.types.items.len));
-        try require(verify.rangeFits(requirement.parameters, storage.generic_parameters.items.len));
+        try require(verify.rangeFits(requirement.parameters, storage.comptime_parameters.items.len));
     }
 
     for (storage.abstract_definitions.items) |definition| {
         try require(verify.idFits(definition.declaration, graph.declarations.items.len));
-        try require(verify.rangeFits(definition.parameters, storage.generic_parameters.items.len));
+        try require(verify.rangeFits(definition.parameters, storage.comptime_parameters.items.len));
         try require(verify.rangeFits(definition.requirements, storage.abstract_requirements.items.len));
     }
 
@@ -61,13 +61,13 @@ pub fn verifyTemplates(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try require(verify.sourceFits(implementation.source, graph.file_offsets.items.len));
     }
 
-    for (storage.abstract_implementation_templates.items) |template| {
-        try declarationRef(graph, template.abstract_ref);
-        try require(verify.rangeFits(template.parameters, storage.generic_parameters.items.len));
-        try require(verify.optionalIdFits(template.concrete_type_pattern, storage.ir.types.items.len));
-        if (template.concrete_name) |name| try require(verify.stringFits(name, graph.strings.items));
-        try require(verify.rangeFits(template.arguments, storage.ir.generic_arguments.items.len));
-        try require(verify.sourceFits(template.source, graph.file_offsets.items.len));
+    for (storage.parameterized_abstract_implementations.items) |parameterized| {
+        try declarationRef(graph, parameterized.abstract_ref);
+        try require(verify.rangeFits(parameterized.parameters, storage.comptime_parameters.items.len));
+        try require(verify.optionalIdFits(parameterized.concrete_type_pattern, storage.ir.types.items.len));
+        if (parameterized.concrete_name) |name| try require(verify.stringFits(name, graph.strings.items));
+        try require(verify.rangeFits(parameterized.arguments, storage.ir.generic_arguments.items.len));
+        try require(verify.sourceFits(parameterized.source, graph.file_offsets.items.len));
     }
 
     for (storage.abstract_defaults.items) |default| {
@@ -76,15 +76,15 @@ pub fn verifyTemplates(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try require(verify.sourceFits(default.source, graph.file_offsets.items.len));
     }
 
-    for (storage.abstract_default_templates.items) |default| {
+    for (storage.parameterized_abstract_defaults.items) |default| {
         try declarationRef(graph, default.abstract_ref);
-        try require(verify.rangeFits(default.parameters, storage.generic_parameters.items.len));
+        try require(verify.rangeFits(default.parameters, storage.comptime_parameters.items.len));
         try require(verify.idFits(default.ty, storage.ir.types.items.len));
         try require(verify.sourceFits(default.source, graph.file_offsets.items.len));
     }
 }
 
-fn declarationRef(graph: *const graph_mod.ModuleSemanticGraph, ref: templates.DeclarationRef) !void {
+fn declarationRef(graph: *const graph_mod.ModuleSemanticGraph, ref: parameterized_storage.DeclarationRef) !void {
     switch (ref) {
         .module => |id| try require(verify.idFits(id, graph.declarations.items.len)),
         .external => |id| try require(verify.idFits(id, graph.semantic.external_refs.items.len)),
@@ -92,10 +92,10 @@ fn declarationRef(graph: *const graph_mod.ModuleSemanticGraph, ref: templates.De
 }
 
 fn require(ok: bool) !void {
-    if (!ok) return error.InvalidModuleSemanticTemplateState;
+    if (!ok) return error.InvalidModuleSemanticParameterizedState;
 }
 
-test "template verifier accepts self contained semantic IR" {
+test "parameterized verifier accepts self contained semantic IR" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
     defer graph.deinit(allocator);
@@ -118,24 +118,24 @@ test "template verifier accepts self contained semantic IR" {
         .module_file_index = 0,
         .syntax_node = @enumFromInt(1),
     });
-    try graph.semantic.templates.generic_parameters.append(allocator, .{
+    try graph.semantic.parameterized_storage.comptime_parameters.append(allocator, .{
         .name = name,
         .kind = .type,
     });
-    try graph.semantic.templates.ir.types.append(allocator, .{ .parameter = @enumFromInt(0) });
-    try graph.semantic.templates.generic_function_templates.append(allocator, .{
+    try graph.semantic.parameterized_storage.ir.types.append(allocator, .{ .parameter = @enumFromInt(0) });
+    try graph.semantic.parameterized_storage.parameterized_functions.append(allocator, .{
         .declaration = @enumFromInt(0),
         .parameters = .{ .start = 0, .len = 1 },
         .input = @enumFromInt(0),
         .output = @enumFromInt(0),
         .body = null,
     });
-    try graph.semantic.templates.abstract_default_templates.append(allocator, .{
+    try graph.semantic.parameterized_storage.parameterized_abstract_defaults.append(allocator, .{
         .abstract_ref = .{ .module = @enumFromInt(0) },
         .parameters = .{ .start = 0, .len = 1 },
         .ty = @enumFromInt(0),
         .source = .{ .file_index = 0, .offset = 0 },
     });
 
-    try verifyTemplates(&graph);
+    try verifyParameterizedForms(&graph);
 }

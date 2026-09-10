@@ -2,7 +2,7 @@ const primitives = @import("semantic_primitives.zig");
 
 /// Materialized representation of a generic identity. `SemanticType.generic`
 /// keeps canonical identity (`base + arguments`); this table records the shape
-/// consumers need without re-instantiating the template.
+/// consumers need without re-instantiating the parameterized.
 pub fn GenericInstanceShape(comptime Ids: type) type {
     return union(enum) {
         structure: struct {

@@ -98,7 +98,7 @@ fn requireFinalizable(module: *const module_sg.ModuleSemanticGraph) !void {
     if (!semantic.local_semantics_complete) return error.ModuleLocalSemanticsIncomplete;
     if (semantic.external_refs.items.len != 0 or semantic.pending_operations.items.len != 0)
         return error.UnresolvedModuleSemantics;
-    if (semantic.templates.storageBytes() != 0) return error.ModuleTemplatesNotConsumed;
+    if (semantic.parameterized_storage.storageBytes() != 0) return error.ModuleParameterizedSemanticsNotConsumed;
     for (semantic.types.items) |ty| switch (ty) {
         .resolved => {},
         .external => return error.UnresolvedModuleSemantics,
