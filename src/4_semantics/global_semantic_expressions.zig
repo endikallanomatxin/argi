@@ -53,7 +53,8 @@ pub const Resolver = struct {
             if (found != null) return false;
             found = binding;
         }
-        return self.patchBindingExpression(module_index, o, expression, found orelse return false);
+        if (found) |binding| return self.patchBindingExpression(module_index, o, expression, binding);
+        return self.patchTypeExpression(module_index, o, expression, name);
     }
 
     fn bindingNamedInModule(self: *const Resolver, module_index: usize, name: []const u8) ?global_sg.GlobalBindingId {
@@ -100,6 +101,40 @@ pub const Resolver = struct {
             .content = .{ .assignment = .{ .binding = binding, .value = value } },
         };
         self.stats.binding_assignments += 1;
+        return true;
+    }
+
+    fn patchTypeExpression(self: *Resolver, module_index: usize, o: globalizer.Offsets, expression: module_entities.PendingExpression, name: []const u8) bool {
+        var found: ?global_sg.GlobalTypeId = null;
+        for (self.graph.types.items, 0..) |item, raw| switch (item) {
+            .builtin => |builtin| if (std.mem.eql(u8, name, @tagName(builtin))) {
+                if (found != null) return false;
+                found = @enumFromInt(@as(u32, @intCast(raw)));
+            },
+            else => {},
+        };
+        for (self.graph.declarations.items, 0..) |declaration, raw| {
+            if (declaration.kind != .type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
+            const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
+            const owner = self.graph.moduleForDeclaration(id) orelse continue;
+            if (@intFromEnum(owner) != module_index and !self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) continue;
+            if (found != null) return false;
+            found = declaration.type_id orelse continue;
+        }
+        const ty = found orelse return false;
+        var meta: ?global_sg.GlobalTypeId = null;
+        for (self.graph.types.items, 0..) |item, raw| switch (item) {
+            .builtin => |builtin| {
+                if (builtin == .Type) meta = @enumFromInt(@as(u32, @intCast(raw)));
+            },
+            else => {},
+        };
+        const target: global_sg.GlobalNodeId = @enumFromInt(o.node_base + @intFromEnum(expression.node));
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = self.graph.nodes.items[@intFromEnum(target)].source,
+            .ty = meta orelse return false,
+            .content = .{ .type_literal = ty },
+        };
         return true;
     }
 };
