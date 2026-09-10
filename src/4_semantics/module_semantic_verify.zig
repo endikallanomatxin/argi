@@ -83,10 +83,6 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
             try require(verify.rangeFits(arguments, views.genericArgumentCount(graph)));
         try require(verify.sourceFits(reference.source, graph.file_offsets.items.len));
     }
-    for (semantic.external_types.items) |external| {
-        try require(verify.idFits(external, semantic.external_refs.items.len));
-        try require(semantic.external_refs.items[@intFromEnum(external)].kind == .type);
-    }
     for (semantic.pending_operations.items) |operation| try verifyPending(graph, operation);
 
     for (semantic.nodes.items) |node| switch (node) {
@@ -365,7 +361,7 @@ test "module verifier accepts a well formed external type hole" {
         .name = name,
         .source = .{ .file_index = 0, .offset = 1 },
     });
-    try graph.semantic.external_types.append(allocator, @enumFromInt(0));
+    try graph.semantic.types.append(allocator, .{ .external = @enumFromInt(0) });
     try verifyModule(&graph);
 }
 
