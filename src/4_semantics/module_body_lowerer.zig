@@ -1,7 +1,7 @@
 const std = @import("std");
 const literals = @import("semantic_literals.zig");
-const tok = @import("../2_tokens/token.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
+const tok = @import("../2_tokens/token.zig");
 const graph_mod = @import("module_semantic_graph.zig");
 const entities = @import("module_semantic_entities.zig");
 const primitives = @import("semantic_primitives.zig");
@@ -9,94 +9,17 @@ const views = @import("module_semantic_views.zig");
 const writer_mod = @import("module_semantic_writer.zig");
 const type_lowerer = @import("module_type_lowerer.zig");
 
-pub const Result = struct {
-    lowered_functions: u32 = 0,
-    deferred_functions: u32 = 0,
-};
+pub const Stats = struct { lowered_functions: u32 = 0 };
 
-const NamedBinding = struct {
-    name: []const u8,
-    id: entities.ModuleBindingId,
-};
+const NamedBinding = struct { name: primitives.StringRange, id: entities.ModuleBindingId };
+const Lowered = struct { node: entities.ModuleNodeId, ty: entities.ModuleTypeId };
 
-const Lowered = struct {
-    node: entities.ModuleNodeId,
-    ty: ?entities.ModuleTypeId,
-};
-
-const Checkpoint = struct {
-    bindings: usize,
-    nodes: usize,
-    blocks: usize,
-    value_fields: usize,
-    switches: usize,
-    switch_cases: usize,
-    node_refs: usize,
-    type_refs: usize,
-    binding_refs: usize,
-    pending: usize,
-    external_refs: usize,
-    canonical_types: usize,
-    canonical_fields: usize,
-    canonical_variants: usize,
-    canonical_generic_args: usize,
-    function_semantics: usize,
-    scopes: usize,
-    roots: usize,
-
-    fn capture(graph: *const graph_mod.ModuleSemanticGraph) Checkpoint {
-        const s = &graph.semantic;
-        return .{
-            .bindings = s.bindings.items.len,
-            .nodes = s.nodes.items.len,
-            .blocks = s.blocks.items.len,
-            .value_fields = s.value_fields.items.len,
-            .switches = s.switches.items.len,
-            .switch_cases = s.switch_cases.items.len,
-            .node_refs = s.node_refs.items.len,
-            .type_refs = s.type_refs.items.len,
-            .binding_refs = s.binding_refs.items.len,
-            .pending = s.pending_operations.items.len,
-            .external_refs = s.external_refs.items.len,
-            .canonical_types = s.types.items.len,
-            .canonical_fields = s.fields.items.len,
-            .canonical_variants = s.variants.items.len,
-            .canonical_generic_args = s.generic_arguments.items.len,
-            .function_semantics = s.function_semantics.items.len,
-            .scopes = s.scopes.items.len,
-            .roots = s.roots.items.len,
-        };
-    }
-
-    fn restore(self: Checkpoint, graph: *graph_mod.ModuleSemanticGraph) void {
-        const s = &graph.semantic;
-        s.bindings.shrinkRetainingCapacity(self.bindings);
-        s.nodes.shrinkRetainingCapacity(self.nodes);
-        s.blocks.shrinkRetainingCapacity(self.blocks);
-        s.value_fields.shrinkRetainingCapacity(self.value_fields);
-        s.switches.shrinkRetainingCapacity(self.switches);
-        s.switch_cases.shrinkRetainingCapacity(self.switch_cases);
-        s.node_refs.shrinkRetainingCapacity(self.node_refs);
-        s.type_refs.shrinkRetainingCapacity(self.type_refs);
-        s.binding_refs.shrinkRetainingCapacity(self.binding_refs);
-        s.pending_operations.shrinkRetainingCapacity(self.pending);
-        s.external_refs.shrinkRetainingCapacity(self.external_refs);
-        s.types.shrinkRetainingCapacity(self.canonical_types);
-        s.fields.shrinkRetainingCapacity(self.canonical_fields);
-        s.variants.shrinkRetainingCapacity(self.canonical_variants);
-        s.generic_arguments.shrinkRetainingCapacity(self.canonical_generic_args);
-        s.function_semantics.shrinkRetainingCapacity(self.function_semantics);
-        s.scopes.shrinkRetainingCapacity(self.scopes);
-        s.roots.shrinkRetainingCapacity(self.roots);
-    }
-};
-
-pub fn lower(
+pub fn lowerMissingFunctions(
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
-) !Result {
-    var ctx = Context{
+) !Stats {
+    var context = Context{
         .allocator = allocator,
         .graph = graph,
         .files = files,
@@ -104,9 +27,9 @@ pub fn lower(
         .bindings = std.array_list.Managed(NamedBinding).init(allocator),
         .scope_marks = std.array_list.Managed(usize).init(allocator),
     };
-    defer ctx.bindings.deinit();
-    defer ctx.scope_marks.deinit();
-    return ctx.lowerFunctions();
+    defer context.bindings.deinit();
+    defer context.scope_marks.deinit();
+    return context.lowerFunctions();
 }
 
 const Context = struct {
@@ -119,312 +42,392 @@ const Context = struct {
     file_index: u32 = 0,
     tree: *const syn.FileSyntaxTree = undefined,
     source: []const u8 = &.{},
+    pipe_value: ?Lowered = null,
 
-    fn lowerFunctions(self: *Context) !Result {
-        var result: Result = .{};
-        for (self.graph.functions.items, 0..) |interface, raw_function_index| {
-            const function_id: entities.ModuleFunctionId = @enumFromInt(@as(u32, @intCast(raw_function_index)));
+    fn lowerFunctions(self: *Context) !Stats {
+        var stats: Stats = .{};
+        for (self.graph.functions.items, 0..) |interface, raw_index| {
+            const function_id: entities.ModuleFunctionId = @enumFromInt(@as(u32, @intCast(raw_index)));
             if (hasFunctionSemantic(self.graph, function_id)) continue;
-            const declaration = self.graph.declarations.items[@intFromEnum(interface.declaration)];
-            self.file_index = declaration.module_file_index;
-            const input = self.files[@intCast(self.file_index)];
-            self.tree = input.tree;
-            self.source = input.source;
-            const function = switch (declaration.kind) {
-                .function => self.tree.functionDeclaration(declaration.syntax_node) orelse continue,
-                .test_function => (self.tree.testDeclaration(declaration.syntax_node) orelse continue).function,
+            const legacy_decl = self.graph.declarations.items[@intFromEnum(interface.declaration)];
+            self.file_index = legacy_decl.module_file_index;
+            const file = self.files[@intCast(self.file_index)];
+            self.tree = file.tree;
+            self.source = file.source;
+            const declaration = switch (legacy_decl.kind) {
+                .function => self.tree.functionDeclaration(legacy_decl.syntax_node) orelse continue,
+                .test_function => (self.tree.testDeclaration(legacy_decl.syntax_node) orelse continue).function,
                 else => continue,
             };
-            if (function.generic_params.len != 0 or function.generic_params_struct != null) continue;
+            if (declaration.generic_params.len != 0 or declaration.generic_params_struct != null) continue;
 
-            const checkpoint = Checkpoint.capture(self.graph);
             self.bindings.clearRetainingCapacity();
             self.scope_marks.clearRetainingCapacity();
             try self.pushScope();
-            self.lowerOneFunction(function_id, interface, function, declaration.kind == .test_function) catch |err| switch (err) {
-                error.UnsupportedLocalSemantic,
-                error.UnresolvedLocalType,
-                error.CannotInferLocalType,
-                => {
-                    checkpoint.restore(self.graph);
-                    result.deferred_functions += 1;
-                    continue;
+            var inputs = std.array_list.Managed(entities.ModuleBindingId).init(self.allocator);
+            defer inputs.deinit();
+            var outputs = std.array_list.Managed(entities.ModuleBindingId).init(self.allocator);
+            defer outputs.deinit();
+            try self.bindInterface(interface.input, .constant, &inputs);
+            try self.bindInterface(interface.output, .variable, &outputs);
+            const input_range = try self.writer.appendBindingRefs(inputs.items);
+            const output_range = try self.writer.appendBindingRefs(outputs.items);
+            const body = if (declaration.body) |body_node| try self.lowerBlock(body_node) else null;
+            try self.graph.semantic.function_semantics.append(self.allocator, .{
+                .function = function_id,
+                .body = body,
+                .input_bindings = input_range,
+                .output_bindings = output_range,
+                .flags = .{
+                    .is_once = declaration.is_once,
+                    .is_test = legacy_decl.kind == .test_function,
+                    .has_declared_body = declaration.body != null,
                 },
-                else => return err,
-            };
+            });
             self.popScope();
-            result.lowered_functions += 1;
+            stats.lowered_functions += 1;
         }
-        return result;
+        return stats;
     }
 
-    fn lowerOneFunction(
-        self: *Context,
-        function_id: entities.ModuleFunctionId,
-        interface: graph_mod.FunctionInterface,
-        declaration: syn.FunctionDeclaration,
-        is_test: bool,
-    ) !void {
-        var input_ids = std.array_list.Managed(entities.ModuleBindingId).init(self.allocator);
-        defer input_ids.deinit();
-        var output_ids = std.array_list.Managed(entities.ModuleBindingId).init(self.allocator);
-        defer output_ids.deinit();
-
-        try self.bindInterfaceFields(interface.input, .constant, &input_ids);
-        try self.bindInterfaceFields(interface.output, .variable, &output_ids);
-        const input_range = try self.writer.appendBindingRefs(input_ids.items);
-        const output_range = try self.writer.appendBindingRefs(output_ids.items);
-
-        const body = if (declaration.body) |body_node| try self.lowerBlock(body_node) else null;
-        var scope_ids = std.array_list.Managed(entities.ModuleBindingId).init(self.allocator);
-        defer scope_ids.deinit();
-        for (self.bindings.items) |binding| try scope_ids.append(binding.id);
-        const scope_bindings = try self.writer.appendBindingRefs(scope_ids.items);
-        try self.graph.semantic.scopes.append(self.allocator, .{
-            .parent = .none,
-            .bindings = scope_bindings,
-        });
-        try self.graph.semantic.function_semantics.append(self.allocator, .{
-            .function = function_id,
-            .body = body,
-            .input_bindings = input_range,
-            .output_bindings = output_range,
-            .flags = .{
-                .is_once = declaration.is_once,
-                .is_test = is_test,
-                .has_declared_body = declaration.body != null,
-            },
-        });
-    }
-
-    fn bindInterfaceFields(
+    fn bindInterface(
         self: *Context,
         range: graph_mod.FieldRange,
         mutability: syn.Mutability,
-        ids: *std.array_list.Managed(entities.ModuleBindingId),
+        result: *std.array_list.Managed(entities.ModuleBindingId),
     ) !void {
-        const start: usize = range.start;
-        const count: usize = range.len;
-        for (self.graph.fields.items[start..][0..count]) |field| {
+        for (0..range.len) |offset| {
+            const field_id: entities.ModuleFieldId = @enumFromInt(range.start + @as(u32, @intCast(offset)));
+            const field = try views.fieldView(self.graph, field_id);
             const id = try self.writer.addBinding(.{
                 .name = field.name,
-                .source = .{ .file_index = field.module_file_index, .offset = field.source_offset },
+                .source = field.source,
                 .ty = field.ty,
                 .mutability = mutability,
             });
-            try ids.append(id);
-            try self.bindings.append(.{ .name = self.graph.text(field.name), .id = id });
+            try result.append(id);
+            try self.bindings.append(.{ .name = field.name, .id = id });
         }
     }
 
     fn lowerBlock(self: *Context, node: syn.NodeIndex) anyerror!entities.ModuleBlockId {
-        const block = self.tree.codeBlock(node) orelse return error.UnsupportedLocalSemantic;
+        const block = self.tree.codeBlock(node) orelse return error.ExpectedCodeBlock;
         try self.pushScope();
         defer self.popScope();
-
         var nodes = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
         defer nodes.deinit();
         var ret_val: ?entities.ModuleNodeId = null;
         for (block.statements) |statement| {
-            const lowered = try self.lowerNode(statement, null);
-            try nodes.append(lowered.node);
-            ret_val = lowered.node;
+            const value = try self.lowerNode(statement, null);
+            try nodes.append(value.node);
+            ret_val = value.node;
         }
-        const range = try self.writer.appendNodeRefs(nodes.items);
-        return self.writer.addBlock(.{ .nodes = range, .ret_val = ret_val });
+        return self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(nodes.items), .ret_val = ret_val });
     }
 
     fn lowerNode(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) anyerror!Lowered {
         return switch (self.tree.tag(node)) {
             .literal => self.lowerLiteral(node),
-            .identifier => self.lowerIdentifier(node),
-            .symbol_declaration_constant, .symbol_declaration_variable => self.lowerBindingDeclaration(node),
-            .assignment => self.lowerAssignment(node),
+            .identifier => self.lowerIdentifier(node, expected),
+            .pipe_placeholder => self.pipe_value orelse self.pendingLeaf(node, .other, null, expected),
+            .symbol_declaration_constant, .symbol_declaration_variable => self.lowerBinding(node),
+            .assignment => self.lowerAssignment(node, expected),
             .expression_statement => self.lowerNode(self.tree.unaryOperand(node).?, expected),
-            .move_expression => self.lowerMove(node, expected),
-            .code_block => blk: {
-                const block = try self.lowerBlock(node);
-                const id = try self.writer.addResolvedNode(.{
-                    .source = self.sourceRef(node),
-                    .ty = null,
-                    .content = .{ .code_block = block },
-                });
-                break :blk .{ .node = id, .ty = null };
-            },
+            .move_expression => self.wrapUnary(node, .move_value, expected),
+            .pipe_expression => self.lowerPipe(node, expected),
+            .unwrap_or, .unwrap_or_do => self.lowerUnwrap(node, expected),
+            .function_call => self.lowerCall(node, expected),
+            .code_block => self.lowerBlockNode(node),
+            .list_literal => self.lowerList(node),
+            .struct_value_literal => self.lowerStructValue(node),
+            .choice_literal, .choice_some_literal => self.lowerChoiceLiteral(node, expected),
+            .struct_field_access => self.lowerField(node, expected),
+            .choice_payload_access => self.lowerChoicePayload(node, expected),
+            .error_propagation => self.lowerErrorPropagation(node, expected, null),
+            .error_context => self.lowerErrorContext(node, expected),
+            .nullable_test => self.lowerNullableTest(node),
+            .index_access => self.lowerIndex(node, expected, null),
             .return_statement => self.lowerReturn(node),
-            .if_statement => self.lowerIf(node),
-            .while_statement => self.lowerWhile(node),
-            .break_statement => self.simpleStatement(node, .break_statement),
-            .continue_statement => self.simpleStatement(node, .continue_statement),
-            .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo => self.lowerBinary(node),
+            .break_statement => self.resolvedVoid(node, .break_statement),
+            .continue_statement => self.resolvedVoid(node, .continue_statement),
+            .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo => self.lowerBinary(node, expected),
             .compare_equal, .compare_not_equal, .compare_less, .compare_greater, .compare_less_equal, .compare_greater_equal => self.lowerComparison(node),
             .logical_and, .logical_or => self.lowerLogical(node),
-            .function_call => self.lowerCall(node),
-            .struct_value_literal => self.lowerStructValue(node),
-            .list_literal => self.lowerList(node),
-            .struct_field_access => self.lowerFieldAccess(node),
-            .address_of, .address_of_mut => self.lowerAddressOf(node),
-            .dereference => self.lowerDereference(node),
-            .pointer_assignment => self.lowerPointerAssignment(node),
-            .index_access => self.lowerIndexAccess(node),
-            .index_assignment => self.lowerIndexAssignment(node),
-            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .generic_type_instantiation => self.lowerTypeLiteral(node),
-            else => error.UnsupportedLocalSemantic,
+            .if_statement => self.lowerIf(node),
+            .for_value, .for_borrow, .for_mut_borrow => self.lowerFor(node),
+            .while_statement => self.lowerWhile(node),
+            .match_statement => self.lowerMatch(node),
+            .defer_statement => self.lowerDefer(node),
+            .keep_statement => self.lowerKeep(node),
+            .reach_directive => self.lowerReach(node),
+            .index_assignment => self.lowerIndexAssignment(node, expected),
+            .address_of, .address_of_mut => self.lowerAddress(node),
+            .dereference => self.lowerDereference(node, expected),
+            .pointer_assignment => self.lowerPointerAssignment(node, expected),
+            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .generic_type_instantiation, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
+            .import_statement => self.pendingLeaf(node, .import_value, null, expected),
+            else => self.pendingLeaf(node, .other, null, expected),
         };
     }
 
     fn lowerLiteral(self: *Context, node: syn.NodeIndex) !Lowered {
-        const literal = self.tree.literal(node) orelse return error.UnsupportedLocalSemantic;
-        const content = self.tree.tokenContent(literal.token).literal;
-        return switch (content) {
+        const literal = self.tree.literal(node).?;
+        const value = self.tree.tokenContent(literal.token).literal;
+        return switch (value) {
             .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => blk: {
-                const value = try literals.integer(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
-                const ty = try self.builtinType(.Int32);
-                const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = ty, .content = .{ .int_literal = value } });
-                break :blk .{ .node = id, .ty = ty };
+                const parsed = try literals.integer(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
+                break :blk try self.resolved(node, try self.builtin(.Int32), .{ .int_literal = parsed });
             },
             .regular_float_literal, .scientific_float_literal => blk: {
-                const value = try literals.float(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
-                const ty = try self.builtinType(.Float32);
-                const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = ty, .content = .{ .float_literal = value } });
-                break :blk .{ .node = id, .ty = ty };
+                const parsed = try literals.float(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
+                break :blk try self.resolved(node, try self.builtin(.Float32), .{ .float_literal = parsed });
             },
-            .bool_literal => |value| blk: {
-                const ty = try self.builtinType(.Bool);
-                const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = ty, .content = .{ .bool_literal = value } });
-                break :blk .{ .node = id, .ty = ty };
-            },
-            .char_literal => |value| blk: {
-                const ty = try self.builtinType(.Char);
-                const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = ty, .content = .{ .char_literal = value } });
-                break :blk .{ .node = id, .ty = ty };
-            },
+            .bool_literal => |item| self.resolved(node, try self.builtin(.Bool), .{ .bool_literal = item }),
+            .char_literal => |item| self.resolved(node, try self.builtin(.Char), .{ .char_literal = item }),
             .string_literal => blk: {
                 const text = try self.writer.addString(self.tree.tokenTextFromSource(self.source, literal.token));
-                const type_name = try self.writer.addString("StringView");
-                const external = try self.writer.addExternalRef(.{
-                    .kind = .type,
-                    .module_path = null,
-                    .name = type_name,
-                    .source = self.sourceRef(node),
-                });
-                const ty = try self.writer.addExternalType(external);
-                const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = ty, .content = .{ .string_literal = text } });
-                break :blk .{ .node = id, .ty = ty };
+                break :blk try self.resolved(node, try self.builtin(.Any), .{ .string_literal = text });
             },
         };
     }
 
-    fn lowerIdentifier(self: *Context, node: syn.NodeIndex) !Lowered {
-        const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
-        const binding = self.lookupBinding(name) orelse return error.UnsupportedLocalSemantic;
-        const record = self.graph.semantic.bindings.items[@intFromEnum(binding)];
-        const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = record.ty, .content = .{ .binding_use = binding } });
-        return .{ .node = id, .ty = record.ty };
+    fn lowerIdentifier(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
+        if (self.lookupBinding(text)) |binding| {
+            const record = self.graph.semantic.bindings.items[@intFromEnum(binding)];
+            return self.resolved(node, record.ty, .{ .binding_use = binding });
+        }
+        return self.pendingLeaf(node, .unknown_identifier, try self.writer.addString(text), expected);
     }
 
-    fn lowerBindingDeclaration(self: *Context, node: syn.NodeIndex) !Lowered {
-        const declaration = self.tree.symbolDeclaration(node) orelse return error.UnsupportedLocalSemantic;
+    fn lowerBinding(self: *Context, node: syn.NodeIndex) !Lowered {
+        const declaration = self.tree.symbolDeclaration(node).?;
         const value = if (declaration.value) |value_node| try self.lowerNode(value_node, null) else null;
-        const ty = if (declaration.type_node) |type_node|
-            try self.lowerType(type_node)
-        else if (value) |resolved|
-            resolved.ty orelse return error.CannotInferLocalType
-        else
-            return error.CannotInferLocalType;
+        const ty = if (declaration.type_node) |type_node| try self.lowerType(type_node) else if (value) |item| item.ty else try self.builtin(.Any);
         const name_text = self.tree.tokenTextFromSource(self.source, declaration.name_token);
-        const name = try self.writer.addString(name_text);
         const binding = try self.writer.addBinding(.{
-            .name = name,
+            .name = try self.writer.addString(name_text),
             .source = self.sourceRef(node),
             .ty = ty,
-            .initialization = if (value) |resolved| resolved.node else null,
+            .initialization = if (value) |item| item.node else null,
             .mutability = declaration.mutability,
         });
-        try self.bindings.append(.{ .name = name_text, .id = binding });
-        const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = ty, .content = .{ .binding_declaration = binding } });
-        return .{ .node = id, .ty = ty };
+        try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(binding)].name, .id = binding });
+        return self.resolved(node, ty, .{ .binding_declaration = binding });
     }
 
-    fn lowerAssignment(self: *Context, node: syn.NodeIndex) !Lowered {
-        const assignment = self.tree.assignment(node) orelse return error.UnsupportedLocalSemantic;
-        const name = self.tree.tokenTextFromSource(self.source, assignment.name_token);
-        const binding = self.lookupBinding(name) orelse return error.UnsupportedLocalSemantic;
-        const binding_ty = self.graph.semantic.bindings.items[@intFromEnum(binding)].ty;
-        const value = try self.lowerNode(assignment.value, binding_ty);
-        const id = try self.writer.addResolvedNode(.{
+    fn lowerAssignment(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const assignment = self.tree.assignment(node).?;
+        const name_text = self.tree.tokenTextFromSource(self.source, assignment.name_token);
+        if (self.lookupBinding(name_text)) |binding| {
+            const ty = self.graph.semantic.bindings.items[@intFromEnum(binding)].ty;
+            const value = try self.lowerNode(assignment.value, ty);
+            return self.resolved(node, ty, .{ .assignment = .{ .binding = binding, .value = value.node } });
+        }
+        const value = try self.lowerNode(assignment.value, expected);
+        const ops = try self.writer.appendNodeRefs(&.{value.node});
+        return self.pending(node, .{ .resolve_expression = .{
+            .node = self.nextNodeId(),
+            .kind = .unknown_identifier,
+            .operands = ops,
+            .name = try self.writer.addString(name_text),
+            .expected_type = expected,
+        } }, expected orelse value.ty);
+    }
+
+    fn lowerPipe(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const op = self.tree.binaryOperation(node).?;
+        const lhs = try self.lowerNode(op.lhs, null);
+        const previous = self.pipe_value;
+        self.pipe_value = lhs;
+        defer self.pipe_value = previous;
+        return self.lowerNode(op.rhs, expected);
+    }
+
+    fn lowerUnwrap(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const op = self.tree.binaryOperation(node).?;
+        const value = try self.lowerNode(op.lhs, null);
+        const fallback = try self.lowerNode(op.rhs, expected);
+        return self.pending(node, .{ .resolve_nullable_unwrap = .{
+            .node = self.nextNodeId(),
+            .nullable_value = value.node,
+            .fallback_value = fallback.node,
+        } }, expected orelse fallback.ty);
+    }
+
+    fn lowerCall(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const call = self.tree.functionCall(node).?;
+        const input = try self.lowerNode(call.input, null);
+        const name_text = self.tree.tokenTextFromSource(self.source, call.callee_token);
+        const module_path = if (call.module_qualifier) |token_index|
+            try self.writer.addString(self.tree.tokenTextFromSource(self.source, token_index))
+        else
+            null;
+        const external = try self.writer.addExternalRef(.{
+            .kind = .function,
+            .module_path = module_path,
+            .name = try self.writer.addString(name_text),
             .source = self.sourceRef(node),
-            .ty = binding_ty,
-            .content = .{ .assignment = .{ .binding = binding, .value = value.node } },
         });
-        return .{ .node = id, .ty = binding_ty };
+        return self.pending(node, .{ .resolve_call = .{
+            .node = self.nextNodeId(),
+            .callee = external,
+            .input = input.node,
+            .expected_type = expected,
+        } }, expected orelse try self.builtin(.Any));
     }
 
-    fn lowerMove(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
-        const child = try self.lowerNode(self.tree.unaryOperand(node).?, expected);
-        const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = child.ty, .content = .{ .move_value = child.node } });
-        return .{ .node = id, .ty = child.ty };
+    fn lowerBlockNode(self: *Context, node: syn.NodeIndex) !Lowered {
+        const block = try self.lowerBlock(node);
+        return self.resolved(node, try self.builtin(.Any), .{ .code_block = block });
+    }
+
+    fn lowerList(self: *Context, node: syn.NodeIndex) !Lowered {
+        const list = self.tree.listLiteral(node).?;
+        var nodes = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
+        defer nodes.deinit();
+        var types = std.array_list.Managed(entities.ModuleTypeId).init(self.allocator);
+        defer types.deinit();
+        for (list.elements) |child| {
+            const value = try self.lowerNode(child, null);
+            try nodes.append(value.node);
+            try types.append(value.ty);
+        }
+        return self.resolved(node, try self.builtin(.Any), .{ .list_literal = .{
+            .elements = try self.writer.appendNodeRefs(nodes.items),
+            .element_types = try self.writer.appendTypeRefs(types.items),
+        } });
+    }
+
+    fn lowerStructValue(self: *Context, node: syn.NodeIndex) !Lowered {
+        const literal = self.tree.structValueLiteral(node).?;
+        var values: std.ArrayList(entities.ValueField) = .empty;
+        defer values.deinit(self.allocator);
+        for (literal.fields) |field_node| {
+            const field = self.tree.valueField(field_node).?;
+            const value = try self.lowerNode(field.value, null);
+            const name = if (field.name_token) |token_index|
+                try self.writer.addString(self.tree.tokenTextFromSource(self.source, token_index))
+            else
+                try self.writer.addString("");
+            try values.append(self.allocator, .{ .name = name, .value = value.node });
+        }
+        const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
+        try self.graph.semantic.value_fields.appendSlice(self.allocator, values.items);
+        const ty = try self.builtin(.Any);
+        return self.resolved(node, ty, .{ .struct_value_literal = .{
+            .fields = .{ .start = start, .len = @intCast(literal.fields.len) },
+            .ty = ty,
+            .dispatch_prefix_positional_count = literal.positional_prefix_count,
+        } });
+    }
+
+    fn lowerChoiceLiteral(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const literal = self.tree.choiceLiteral(node).?;
+        const payload = if (literal.payload) |payload_node| (try self.lowerNode(payload_node, null)).node else null;
+        const name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, literal.name_token));
+        const option = try self.writer.addExternalRef(.{
+            .kind = .choice_option,
+            .module_path = null,
+            .name = name,
+            .source = self.sourceRef(node),
+        });
+        return self.pending(node, .{ .resolve_choice_literal = .{
+            .node = self.nextNodeId(),
+            .option = option,
+            .payload = payload,
+            .expected_type = expected,
+        } }, expected orelse try self.builtin(.Any));
+    }
+
+    fn lowerField(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const access = self.tree.structFieldAccess(node).?;
+        const value = try self.lowerNode(access.value, null);
+        return self.pending(node, .{ .resolve_field = .{
+            .node = self.nextNodeId(),
+            .value = value.node,
+            .field_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.field_token)),
+        } }, expected orelse try self.builtin(.Any));
+    }
+
+    fn lowerChoicePayload(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const access = self.tree.choicePayloadAccess(node).?;
+        const value = try self.lowerNode(access.value, null);
+        return self.pending(node, .{ .resolve_choice_payload = .{
+            .node = self.nextNodeId(),
+            .value = value.node,
+            .option_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.variant_token)),
+        } }, expected orelse try self.builtin(.Any));
+    }
+
+    fn lowerErrorPropagation(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId, context: ?entities.ModuleNodeId) !Lowered {
+        const child = try self.lowerNode(self.tree.unaryOperand(node).?, null);
+        return self.pending(node, .{ .resolve_error_propagation = .{
+            .node = self.nextNodeId(),
+            .errable_value = child.node,
+            .context = context,
+        } }, expected orelse try self.builtin(.Any));
+    }
+
+    fn lowerErrorContext(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const op = self.tree.binaryOperation(node).?;
+        const value = try self.lowerNode(op.lhs, null);
+        const context = try self.lowerNode(op.rhs, null);
+        return self.pending(node, .{ .resolve_error_propagation = .{
+            .node = self.nextNodeId(),
+            .errable_value = value.node,
+            .context = context.node,
+        } }, expected orelse try self.builtin(.Any));
+    }
+
+    fn lowerNullableTest(self: *Context, node: syn.NodeIndex) !Lowered {
+        const value = try self.lowerNode(self.tree.unaryOperand(node).?, null);
+        return self.pending(node, .{ .resolve_nullable_test = .{ .node = self.nextNodeId(), .value = value.node } }, try self.builtin(.Bool));
+    }
+
+    fn lowerIndex(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId, store: ?entities.ModuleNodeId) !Lowered {
+        const access = self.tree.indexAccess(node).?;
+        const value = try self.lowerNode(access.value, null);
+        const index = try self.lowerNode(access.index, try self.builtin(.Int32));
+        return self.pending(node, .{ .resolve_index = .{
+            .node = self.nextNodeId(),
+            .value = value.node,
+            .index = index.node,
+            .store_value = store,
+        } }, expected orelse try self.builtin(.Any));
+    }
+
+    fn lowerIndexAssignment(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const assignment = self.tree.indexAssignment(node).?;
+        const target = self.tree.indexAccess(assignment.target) orelse {
+            const value = try self.lowerNode(assignment.value, expected);
+            return self.pendingFallback(node, .other, &.{value.node}, null, expected);
+        };
+        const collection = try self.lowerNode(target.value, null);
+        const index = try self.lowerNode(target.index, try self.builtin(.Int32));
+        const value = try self.lowerNode(assignment.value, expected);
+        return self.pending(node, .{ .resolve_index = .{
+            .node = self.nextNodeId(),
+            .value = collection.node,
+            .index = index.node,
+            .store_value = value.node,
+        } }, expected orelse value.ty);
     }
 
     fn lowerReturn(self: *Context, node: syn.NodeIndex) !Lowered {
-        const ret = self.tree.returnStatement(node) orelse return error.UnsupportedLocalSemantic;
-        const value = if (ret.value) |value_node| try self.lowerNode(value_node, null) else null;
-        const void_ty = try self.builtinType(.Void);
-        const result_ty: ?entities.ModuleTypeId = if (value) |resolved| resolved.ty else void_ty;
-        const id = try self.writer.addResolvedNode(.{
-            .source = self.sourceRef(node),
-            .ty = result_ty,
-            .content = .{ .return_statement = .{
-                .expression = if (value) |resolved| resolved.node else null,
-                .cleanup = .{ .start = @intCast(self.graph.semantic.node_refs.items.len), .len = 0 },
-            } },
-        });
-        return .{ .node = id, .ty = result_ty };
+        const ret = self.tree.returnStatement(node).?;
+        const value = if (ret.value) |child| try self.lowerNode(child, null) else null;
+        const ty = if (value) |item| item.ty else try self.builtin(.Void);
+        return self.resolved(node, ty, .{ .return_statement = .{
+            .expression = if (value) |item| item.node else null,
+            .cleanup = .{ .start = @intCast(self.graph.semantic.node_refs.items.len), .len = 0 },
+        } });
     }
 
-    fn lowerIf(self: *Context, node: syn.NodeIndex) !Lowered {
-        const statement = self.tree.ifStatement(node) orelse return error.UnsupportedLocalSemantic;
-        const bool_ty = try self.builtinType(.Bool);
-        const condition = try self.lowerNode(statement.condition, bool_ty);
-        const then_block = try self.lowerBlock(statement.then_block);
-        const else_block = if (statement.else_block) |else_node| try self.lowerBlock(else_node) else null;
-        const void_ty = try self.builtinType(.Void);
-        const id = try self.writer.addResolvedNode(.{
-            .source = self.sourceRef(node),
-            .ty = void_ty,
-            .content = .{ .if_statement = .{
-                .condition = condition.node,
-                .then_block = then_block,
-                .else_block = else_block,
-            } },
-        });
-        return .{ .node = id, .ty = void_ty };
-    }
-
-    fn lowerWhile(self: *Context, node: syn.NodeIndex) !Lowered {
-        const statement = self.tree.whileStatement(node) orelse return error.UnsupportedLocalSemantic;
-        const condition = try self.lowerNode(statement.condition, try self.builtinType(.Bool));
-        const body = try self.lowerBlock(statement.body);
-        const void_ty = try self.builtinType(.Void);
-        const id = try self.writer.addResolvedNode(.{
-            .source = self.sourceRef(node),
-            .ty = void_ty,
-            .content = .{ .while_statement = .{ .condition = condition.node, .body = body } },
-        });
-        return .{ .node = id, .ty = void_ty };
-    }
-
-    fn simpleStatement(self: *Context, node: syn.NodeIndex, content: entities.ResolvedNode.Content) !Lowered {
-        const ty = try self.builtinType(.Void);
-        const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = ty, .content = content });
-        return .{ .node = id, .ty = ty };
-    }
-
-    fn lowerBinary(self: *Context, node: syn.NodeIndex) !Lowered {
-        const operation = self.tree.binaryOperation(node) orelse return error.UnsupportedLocalSemantic;
-        const lhs = try self.lowerNode(operation.lhs, null);
-        const rhs = try self.lowerNode(operation.rhs, lhs.ty);
-        const ty = lhs.ty orelse rhs.ty orelse return error.CannotInferLocalType;
+    fn lowerBinary(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const op = self.tree.binaryOperation(node).?;
+        const lhs = try self.lowerNode(op.lhs, null);
+        const rhs = try self.lowerNode(op.rhs, lhs.ty);
         const operator: tok.BinaryOperator = switch (self.tree.tag(node)) {
             .binary_add => .addition,
             .binary_subtract => .subtraction,
@@ -433,14 +436,18 @@ const Context = struct {
             .binary_modulo => .modulo,
             else => unreachable,
         };
-        const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = ty, .content = .{ .binary_operation = .{ .operator = operator, .left = lhs.node, .right = rhs.node } } });
-        return .{ .node = id, .ty = ty };
+        return self.pending(node, .{ .resolve_binary = .{
+            .node = self.nextNodeId(),
+            .operator = operator,
+            .left = lhs.node,
+            .right = rhs.node,
+        } }, expected orelse lhs.ty);
     }
 
     fn lowerComparison(self: *Context, node: syn.NodeIndex) !Lowered {
-        const operation = self.tree.binaryOperation(node) orelse return error.UnsupportedLocalSemantic;
-        const lhs = try self.lowerNode(operation.lhs, null);
-        const rhs = try self.lowerNode(operation.rhs, lhs.ty);
+        const op = self.tree.binaryOperation(node).?;
+        const lhs = try self.lowerNode(op.lhs, null);
+        const rhs = try self.lowerNode(op.rhs, lhs.ty);
         const operator: tok.ComparisonOperator = switch (self.tree.tag(node)) {
             .compare_equal => .equal,
             .compare_not_equal => .not_equal,
@@ -450,228 +457,219 @@ const Context = struct {
             .compare_greater_equal => .greater_than_or_equal,
             else => unreachable,
         };
-        const ty = try self.builtinType(.Bool);
-        const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = ty, .content = .{ .comparison = .{ .operator = operator, .left = lhs.node, .right = rhs.node } } });
-        return .{ .node = id, .ty = ty };
+        return self.pending(node, .{ .resolve_comparison = .{
+            .node = self.nextNodeId(),
+            .operator = operator,
+            .left = lhs.node,
+            .right = rhs.node,
+        } }, try self.builtin(.Bool));
     }
 
     fn lowerLogical(self: *Context, node: syn.NodeIndex) !Lowered {
-        const operation = self.tree.binaryOperation(node) orelse return error.UnsupportedLocalSemantic;
-        const ty = try self.builtinType(.Bool);
-        const lhs = try self.lowerNode(operation.lhs, ty);
-        const rhs = try self.lowerNode(operation.rhs, ty);
-        const operator: primitives.LogicalOperator = if (self.tree.tag(node) == .logical_and) .and_ else .or_;
-        const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = ty, .content = .{ .logical_operation = .{ .operator = operator, .left = lhs.node, .right = rhs.node } } });
-        return .{ .node = id, .ty = ty };
-    }
-
-    fn lowerCall(self: *Context, node: syn.NodeIndex) !Lowered {
-        const call = self.tree.functionCall(node) orelse return error.UnsupportedLocalSemantic;
-        const input = try self.lowerNode(call.input, null);
-        const name_text = self.tree.tokenTextFromSource(self.source, call.callee_token);
-        if (call.module_qualifier == null) {
-            var found: ?entities.ModuleFunctionId = null;
-            var ambiguous = false;
-            for (self.graph.declarationsNamed(name_text)) |decl_id| {
-                const declaration = self.graph.declarations.items[@intFromEnum(decl_id)];
-                const function = declaration.function_id orelse continue;
-                if (found != null) {
-                    ambiguous = true;
-                    break;
-                }
-                found = function;
-            }
-            if (found != null and !ambiguous) {
-                const function = try views.functionView(self.graph, found.?);
-                const result_ty = try self.functionOutputType(function);
-                const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = result_ty, .content = .{ .function_call = .{ .callee = found.?, .input = input.node } } });
-                return .{ .node = id, .ty = result_ty };
-            }
-        }
-        return self.lowerPendingCall(node, call, input, name_text);
-    }
-
-    fn lowerPendingCall(self: *Context, node: syn.NodeIndex, call: syn.FunctionCall, input: Lowered, name_text: []const u8) !Lowered {
-        const name = try self.writer.addString(name_text);
-        const module_path = if (call.module_qualifier) |qualifier|
-            try self.writer.addString(self.tree.tokenTextFromSource(self.source, qualifier))
-        else
-            null;
-        const external = try self.writer.addExternalRef(.{
-            .kind = .function,
-            .module_path = module_path,
-            .name = name,
-            .source = self.sourceRef(node),
-        });
-        const node_id: entities.ModuleNodeId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.nodes.items.len)));
-        const pending_id: entities.PendingOperationId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.pending_operations.items.len)));
-        try self.graph.semantic.nodes.append(self.allocator, .{ .pending = pending_id });
-        try self.graph.semantic.pending_operations.append(self.allocator, .{ .resolve_call = .{ .node = node_id, .callee = external, .input = input.node } });
-        return .{ .node = node_id, .ty = null };
-    }
-
-    fn lowerStructValue(self: *Context, node: syn.NodeIndex) !Lowered {
-        const literal = self.tree.structValueLiteral(node) orelse return error.UnsupportedLocalSemantic;
-        var values: std.ArrayList(entities.ValueField) = .empty;
-        defer values.deinit(self.allocator);
-        var fields: std.ArrayList(entities.Field) = .empty;
-        defer fields.deinit(self.allocator);
-        var type_first: ?entities.ModuleFieldId = null;
-        for (literal.fields) |field_node| {
-            const field = self.tree.valueField(field_node) orelse return error.UnsupportedLocalSemantic;
-            const value = try self.lowerNode(field.value, null);
-            const ty = value.ty orelse return error.CannotInferLocalType;
-            const name_text = if (field.name_token) |name_token|
-                self.tree.tokenTextFromSource(self.source, name_token)
-            else
-                "";
-            const name = try self.writer.addString(name_text);
-            try values.append(self.allocator, .{ .name = name, .value = value.node });
-            try fields.append(self.allocator, .{ .name = name, .ty = ty, .source = self.sourceRef(field_node) });
-        }
-        const value_start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
-        try self.graph.semantic.value_fields.appendSlice(self.allocator, values.items);
-        for (fields.items) |field| {
-            const type_field = try self.writer.addField(field);
-            if (type_first == null) type_first = type_field;
-        }
-        const field_count: u32 = @intCast(fields.items.len);
-        const structural_ty = try self.writer.addResolvedType(.{ .structural = .{
-            .fields = .{ .start = if (type_first) |id| @intFromEnum(id) else @intCast(views.fieldCount(self.graph)), .len = field_count },
-            .layout = .regular,
+        const op = self.tree.binaryOperation(node).?;
+        const bool_ty = try self.builtin(.Bool);
+        const lhs = try self.lowerNode(op.lhs, bool_ty);
+        const rhs = try self.lowerNode(op.rhs, bool_ty);
+        return self.resolved(node, bool_ty, .{ .logical_operation = .{
+            .operator = if (self.tree.tag(node) == .logical_and) .and_ else .or_,
+            .left = lhs.node,
+            .right = rhs.node,
         } });
-        const id = try self.writer.addResolvedNode(.{
-            .source = self.sourceRef(node),
-            .ty = structural_ty,
-            .content = .{ .struct_value_literal = .{
-                .fields = .{ .start = value_start, .len = field_count },
-                .ty = structural_ty,
-                .dispatch_prefix_positional_count = literal.positional_prefix_count,
-            } },
-        });
-        return .{ .node = id, .ty = structural_ty };
     }
 
-    fn lowerList(self: *Context, node: syn.NodeIndex) !Lowered {
-        const literal = self.tree.listLiteral(node) orelse return error.UnsupportedLocalSemantic;
-        var node_ids = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
-        defer node_ids.deinit();
-        var type_ids = std.array_list.Managed(entities.ModuleTypeId).init(self.allocator);
-        defer type_ids.deinit();
-        for (literal.elements) |element_node| {
-            const element = try self.lowerNode(element_node, null);
-            try node_ids.append(element.node);
-            try type_ids.append(element.ty orelse return error.CannotInferLocalType);
-        }
-        const element_range = try self.writer.appendNodeRefs(node_ids.items);
-        const type_start: u32 = @intCast(self.graph.semantic.type_refs.items.len);
-        try self.graph.semantic.type_refs.appendSlice(self.allocator, type_ids.items);
-        const id = try self.writer.addResolvedNode(.{
-            .source = self.sourceRef(node),
-            .ty = null,
-            .content = .{ .list_literal = .{
-                .elements = element_range,
-                .element_types = .{ .start = type_start, .len = @intCast(type_ids.items.len) },
-            } },
-        });
-        return .{ .node = id, .ty = null };
+    fn lowerIf(self: *Context, node: syn.NodeIndex) !Lowered {
+        const statement = self.tree.ifStatement(node).?;
+        const condition = try self.lowerNode(statement.condition, try self.builtin(.Bool));
+        const then_block = try self.lowerBlock(statement.then_block);
+        const else_block = if (statement.else_block) |child| try self.lowerBlock(child) else null;
+        return self.resolved(node, try self.builtin(.Void), .{ .if_statement = .{
+            .condition = condition.node,
+            .then_block = then_block,
+            .else_block = else_block,
+        } });
     }
 
-    fn lowerFieldAccess(self: *Context, node: syn.NodeIndex) !Lowered {
-        const access = self.tree.structFieldAccess(node) orelse return error.UnsupportedLocalSemantic;
-        const value = try self.lowerNode(access.value, null);
-        const value_ty = value.ty orelse return self.pendingField(node, value, access.field_token);
-        const field_name = self.tree.tokenTextFromSource(self.source, access.field_token);
-        if (try self.findField(value_ty, field_name)) |field| {
-            const id = try self.writer.addResolvedNode(.{
-                .source = self.sourceRef(node),
-                .ty = field.ty,
-                .content = .{ .struct_field_access = .{
-                    .value = value.node,
-                    .field_name = try self.writer.addString(field_name),
-                    .field_index = field.index,
-                } },
+    fn lowerWhile(self: *Context, node: syn.NodeIndex) !Lowered {
+        const statement = self.tree.whileStatement(node).?;
+        const condition = try self.lowerNode(statement.condition, try self.builtin(.Bool));
+        const body = try self.lowerBlock(statement.body);
+        return self.resolved(node, try self.builtin(.Void), .{ .while_statement = .{ .condition = condition.node, .body = body } });
+    }
+
+    fn lowerFor(self: *Context, node: syn.NodeIndex) !Lowered {
+        const statement = self.tree.forStatement(node).?;
+        const iterable = try self.lowerNode(statement.iterable, null);
+        const name_text = self.tree.tokenTextFromSource(self.source, statement.name_token);
+        const binding = try self.writer.addBinding(.{
+            .name = try self.writer.addString(name_text),
+            .source = self.sourceRef(node),
+            .ty = try self.builtin(.Any),
+            .mutability = if (statement.mode == .mut_borrow) .variable else .constant,
+        });
+        try self.pushScope();
+        try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(binding)].name, .id = binding });
+        const body = try self.lowerBlock(statement.body);
+        self.popScope();
+        return self.pending(node, .{ .resolve_for_each = .{
+            .node = self.nextNodeId(),
+            .binding = binding,
+            .iterable = iterable.node,
+            .body = body,
+            .mode = statement.mode,
+        } }, try self.builtin(.Void));
+    }
+
+    fn lowerMatch(self: *Context, node: syn.NodeIndex) !Lowered {
+        const statement = self.tree.matchStatement(node).?;
+        const value = try self.lowerNode(statement.value, null);
+        var case_nodes = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
+        defer case_nodes.deinit();
+        for (statement.cases) |case_node| {
+            const case = self.tree.matchCase(case_node).?;
+            const option_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, case.variant_token));
+            const option = try self.writer.addExternalRef(.{
+                .kind = .choice_option,
+                .module_path = null,
+                .name = option_name,
+                .source = self.sourceRef(case_node),
             });
-            return .{ .node = id, .ty = field.ty };
+            var payload_binding: ?entities.ModuleBindingId = null;
+            try self.pushScope();
+            if (case.payload_name) |token_index| {
+                const text = self.tree.tokenTextFromSource(self.source, token_index);
+                const id = try self.writer.addBinding(.{
+                    .name = try self.writer.addString(text),
+                    .source = self.sourceRef(case_node),
+                    .ty = try self.builtin(.Any),
+                    .mutability = if (case.mode == .mut_borrow) .variable else .constant,
+                });
+                payload_binding = id;
+                try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(id)].name, .id = id });
+            }
+            const body = try self.lowerBlock(case.body);
+            self.popScope();
+            const case_id = self.nextNodeId();
+            const pending_id = try self.writer.addPendingOperation(.{ .resolve_match_case = .{
+                .node = case_id,
+                .option = option,
+                .payload_binding = payload_binding,
+                .body = body,
+                .mode = case.mode,
+            } });
+            const stored = try self.writer.addNode(.{ .pending = pending_id });
+            try case_nodes.append(stored);
         }
-        return self.pendingField(node, value, access.field_token);
+        return self.pending(node, .{ .resolve_match = .{
+            .node = self.nextNodeId(),
+            .value = value.node,
+            .cases = try self.writer.appendNodeRefs(case_nodes.items),
+        } }, try self.builtin(.Void));
     }
 
-    fn pendingField(self: *Context, _: syn.NodeIndex, value: Lowered, field_token: syn.TokenIndex) !Lowered {
-        const field_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field_token));
-        const node_id: entities.ModuleNodeId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.nodes.items.len)));
-        const pending_id: entities.PendingOperationId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.pending_operations.items.len)));
-        try self.graph.semantic.nodes.append(self.allocator, .{ .pending = pending_id });
-        try self.graph.semantic.pending_operations.append(self.allocator, .{ .resolve_field = .{ .node = node_id, .value = value.node, .field_name = field_name } });
-        return .{ .node = node_id, .ty = null };
+    fn lowerDefer(self: *Context, node: syn.NodeIndex) !Lowered {
+        const value = try self.lowerNode(self.tree.unaryOperand(node).?, null);
+        return self.pending(node, .{ .resolve_defer = .{ .node = self.nextNodeId(), .value = value.node } }, try self.builtin(.Void));
     }
 
-    fn lowerAddressOf(self: *Context, node: syn.NodeIndex) !Lowered {
-        const address = self.tree.addressOf(node) orelse return error.UnsupportedLocalSemantic;
+    fn lowerKeep(self: *Context, node: syn.NodeIndex) !Lowered {
+        const keep = self.tree.keepStatement(node).?;
+        const name = self.tree.tokenTextFromSource(self.source, keep.name_token);
+        if (self.lookupBinding(name)) |binding|
+            return self.pending(node, .{ .resolve_keep = .{ .node = self.nextNodeId(), .binding = binding } }, try self.builtin(.Void));
+        return self.pendingLeaf(node, .unknown_identifier, try self.writer.addString(name), try self.builtin(.Void));
+    }
+
+    fn lowerReach(self: *Context, node: syn.NodeIndex) !Lowered {
+        const directive = self.tree.reachDirective(node).?;
+        const alt_start: u32 = @intCast(self.graph.semantic.reach_alternatives.items.len);
+        for (directive.alternatives) |alt_node| {
+            const alt = self.tree.reachAlternative(alt_node).?;
+            const seg_start: u32 = @intCast(self.graph.semantic.reach_segments.items.len);
+            for (alt.segments) |segment| {
+                try self.graph.semantic.reach_segments.append(self.allocator, try self.writer.addString(self.tree.tokenTextFromSource(self.source, self.tree.mainToken(segment))));
+            }
+            try self.graph.semantic.reach_alternatives.append(self.allocator, .{
+                .segments = .{ .start = seg_start, .len = @intCast(alt.segments.len) },
+            });
+        }
+        const reach_id: entities.ModuleReachId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.reaches.items.len)));
+        try self.graph.semantic.reaches.append(self.allocator, .{
+            .alternatives = .{ .start = alt_start, .len = @intCast(directive.alternatives.len) },
+        });
+        return self.resolved(node, try self.builtin(.Void), .{ .reach_directive = reach_id });
+    }
+
+    fn lowerAddress(self: *Context, node: syn.NodeIndex) !Lowered {
+        const address = self.tree.addressOf(node).?;
         const value = try self.lowerNode(address.value, null);
-        const child_ty = value.ty orelse return error.CannotInferLocalType;
-        const pointer_ty = try self.writer.addResolvedType(.{ .pointer = .{ .child = child_ty, .mutability = address.mutability } });
-        const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = pointer_ty, .content = .{ .address_of = value.node } });
-        return .{ .node = id, .ty = pointer_ty };
+        const ty = try self.writer.addResolvedType(.{ .pointer = .{ .child = value.ty, .mutability = address.mutability } });
+        return self.resolved(node, ty, .{ .address_of = value.node });
     }
 
-    fn lowerDereference(self: *Context, node: syn.NodeIndex) !Lowered {
-        const pointer = try self.lowerNode(self.tree.unaryOperand(node).?, null);
-        const pointer_ty = pointer.ty orelse return error.CannotInferLocalType;
-        const child_ty = (try self.pointerChild(pointer_ty)) orelse return error.UnresolvedLocalType;
-        const id = try self.writer.addResolvedNode(.{
-            .source = self.sourceRef(node),
-            .ty = child_ty,
-            .content = .{ .dereference = .{ .pointer = pointer.node, .ty = child_ty, .pointer_type = pointer_ty } },
-        });
-        return .{ .node = id, .ty = child_ty };
+    fn lowerDereference(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const value = try self.lowerNode(self.tree.unaryOperand(node).?, null);
+        const ty = (try self.pointerChild(value.ty)) orelse expected orelse try self.builtin(.Any);
+        return self.resolved(node, ty, .{ .dereference = .{ .pointer = value.node, .ty = ty, .pointer_type = value.ty } });
     }
 
-    fn lowerPointerAssignment(self: *Context, node: syn.NodeIndex) !Lowered {
-        const assignment = self.tree.pointerAssignment(node) orelse return error.UnsupportedLocalSemantic;
+    fn pointerChild(self: *Context, ty: entities.ModuleTypeId) !?entities.ModuleTypeId {
+        return switch (try views.typeView(self.graph, ty)) {
+            .external => null,
+            .resolved => |semantic_type| switch (semantic_type) {
+                .pointer => |pointer| pointer.child,
+                else => null,
+            },
+        };
+    }
+
+    fn lowerPointerAssignment(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const assignment = self.tree.pointerAssignment(node).?;
         const pointer = try self.lowerNode(assignment.target, null);
-        const pointer_ty = pointer.ty orelse return error.CannotInferLocalType;
-        const child_ty = (try self.pointerChild(pointer_ty)) orelse return error.UnresolvedLocalType;
-        const value = try self.lowerNode(assignment.value, child_ty);
-        const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = child_ty, .content = .{ .pointer_assignment = .{ .pointer = pointer.node, .value = value.node } } });
-        return .{ .node = id, .ty = child_ty };
-    }
-
-    fn lowerIndexAccess(self: *Context, node: syn.NodeIndex) !Lowered {
-        const access = self.tree.indexAccess(node) orelse return error.UnsupportedLocalSemantic;
-        const value = try self.lowerNode(access.value, null);
-        const index = try self.lowerNode(access.index, try self.builtinType(.Int32));
-        const array_ty = value.ty orelse return error.CannotInferLocalType;
-        const element_ty = (try self.arrayElement(array_ty)) orelse return error.UnresolvedLocalType;
-        const id = try self.writer.addResolvedNode(.{
-            .source = self.sourceRef(node),
-            .ty = element_ty,
-            .content = .{ .array_index = .{ .array_ptr = value.node, .index = index.node, .element_type = element_ty, .array_type = array_ty } },
-        });
-        return .{ .node = id, .ty = element_ty };
-    }
-
-    fn lowerIndexAssignment(self: *Context, node: syn.NodeIndex) !Lowered {
-        const assignment = self.tree.indexAssignment(node) orelse return error.UnsupportedLocalSemantic;
-        const access = self.tree.indexAccess(assignment.target) orelse return error.UnsupportedLocalSemantic;
-        const array = try self.lowerNode(access.value, null);
-        const index = try self.lowerNode(access.index, try self.builtinType(.Int32));
-        const array_ty = array.ty orelse return error.CannotInferLocalType;
-        const element_ty = (try self.arrayElement(array_ty)) orelse return error.UnresolvedLocalType;
-        const value = try self.lowerNode(assignment.value, element_ty);
-        const id = try self.writer.addResolvedNode(.{
-            .source = self.sourceRef(node),
-            .ty = element_ty,
-            .content = .{ .array_store = .{ .array_ptr = array.node, .index = index.node, .value = value.node, .element_type = element_ty, .array_type = array_ty } },
-        });
-        return .{ .node = id, .ty = element_ty };
+        const value = try self.lowerNode(assignment.value, expected);
+        return self.resolved(node, expected orelse value.ty, .{ .pointer_assignment = .{ .pointer = pointer.node, .value = value.node } });
     }
 
     fn lowerTypeLiteral(self: *Context, node: syn.NodeIndex) !Lowered {
-        const ty = try self.lowerType(node);
-        const type_type = try self.builtinType(.Type);
-        const id = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = type_type, .content = .{ .type_literal = ty } });
-        return .{ .node = id, .ty = type_type };
+        const value = try self.lowerType(node);
+        return self.resolved(node, try self.builtin(.Type), .{ .type_literal = value });
+    }
+
+    fn wrapUnary(self: *Context, node: syn.NodeIndex, comptime tag: anytype, expected: ?entities.ModuleTypeId) !Lowered {
+        const value = try self.lowerNode(self.tree.unaryOperand(node).?, expected);
+        return self.resolved(node, value.ty, @unionInit(entities.ResolvedNode.Content, @tagName(tag), value.node));
+    }
+
+    fn pendingLeaf(self: *Context, node: syn.NodeIndex, kind: entities.PendingExpressionKind, name: ?primitives.StringRange, expected: ?entities.ModuleTypeId) !Lowered {
+        return self.pending(node, .{ .resolve_expression = .{
+            .node = self.nextNodeId(),
+            .kind = kind,
+            .name = name,
+            .expected_type = expected,
+        } }, expected orelse try self.builtin(.Any));
+    }
+
+    fn pendingFallback(self: *Context, node: syn.NodeIndex, kind: entities.PendingExpressionKind, operands: []const entities.ModuleNodeId, name: ?primitives.StringRange, expected: ?entities.ModuleTypeId) !Lowered {
+        return self.pending(node, .{ .resolve_expression = .{
+            .node = self.nextNodeId(),
+            .kind = kind,
+            .operands = try self.writer.appendNodeRefs(operands),
+            .name = name,
+            .expected_type = expected,
+        } }, expected orelse try self.builtin(.Any));
+    }
+
+    fn pending(self: *Context, node: syn.NodeIndex, operation: entities.PendingOperation, ty: entities.ModuleTypeId) !Lowered {
+        _ = node;
+        const id = try self.writer.addPendingNode(operation);
+        return .{ .node = id, .ty = ty };
+    }
+
+    fn resolved(self: *Context, node: syn.NodeIndex, ty: entities.ModuleTypeId, content: entities.ResolvedNode.Content) !Lowered {
+        return .{ .node = try self.writer.addResolvedNode(.{ .source = self.sourceRef(node), .ty = ty, .content = content }), .ty = ty };
+    }
+
+    fn resolvedVoid(self: *Context, node: syn.NodeIndex, content: entities.ResolvedNode.Content) !Lowered {
+        return self.resolved(node, try self.builtin(.Void), content);
     }
 
     fn lowerType(self: *Context, node: syn.NodeIndex) !entities.ModuleTypeId {
@@ -685,115 +683,40 @@ const Context = struct {
         return lowerer.lower(node);
     }
 
-    fn functionOutputType(self: *Context, function: entities.Function) !?entities.ModuleTypeId {
-        if (function.output.len == 0) return try self.builtinType(.Void);
-        if (function.output.len == 1) return (try views.fieldView(self.graph, @enumFromInt(function.output.start))).ty;
-        return null;
-    }
-
-    const FieldLookup = struct { index: u32, ty: entities.ModuleTypeId };
-
-    fn findField(self: *Context, ty: entities.ModuleTypeId, name: []const u8) !?FieldLookup {
-        const fields = (try self.fieldsOf(ty)) orelse return null;
-        for (0..fields.len) |offset| {
-            const field_id: entities.ModuleFieldId = @enumFromInt(fields.start + @as(u32, @intCast(offset)));
-            const field = try views.fieldView(self.graph, field_id);
-            if (std.mem.eql(u8, self.graph.text(field.name), name)) return .{ .index = @intCast(offset), .ty = field.ty };
-        }
-        return null;
-    }
-
-    fn fieldsOf(self: *Context, ty: entities.ModuleTypeId) !?entities.FieldRange {
-        const value = try views.typeView(self.graph, ty);
-        return switch (value) {
-            .external => null,
-            .resolved => |resolved| switch (resolved) {
-                .structural => |shape| shape.fields,
-                .declared => |decl| blk: {
-                    const declaration = try views.declarationView(self.graph, decl);
-                    break :blk declaration.struct_fields;
-                },
-                .generic => blk: {
-                    for (self.graph.semantic.generic_instances.items) |instance| {
-                        if (instance.type_id != ty) continue;
-                        break :blk switch (instance.shape) {
-                            .structure => |shape| shape.fields,
-                            else => null,
-                        };
-                    }
-                    break :blk null;
-                },
-                else => null,
-            },
-        };
-    }
-
-    fn pointerChild(self: *Context, ty: entities.ModuleTypeId) !?entities.ModuleTypeId {
-        const value = try views.typeView(self.graph, ty);
-        return switch (value) {
-            .external => null,
-            .resolved => |resolved| switch (resolved) {
-                .pointer => |pointer| pointer.child,
-                else => null,
-            },
-        };
-    }
-
-    fn arrayElement(self: *Context, ty: entities.ModuleTypeId) !?entities.ModuleTypeId {
-        const value = try views.typeView(self.graph, ty);
-        return switch (value) {
-            .external => null,
-            .resolved => |resolved| switch (resolved) {
-                .array => |array| array.element,
-                .generic => blk: {
-                    for (self.graph.semantic.generic_instances.items) |instance| {
-                        if (instance.type_id != ty) continue;
-                        break :blk switch (instance.shape) {
-                            .array => |array| array.element,
-                            else => null,
-                        };
-                    }
-                    break :blk null;
-                },
-                else => null,
-            },
-        };
-    }
-
-    fn builtinType(self: *Context, builtin: primitives.BuiltinType) !entities.ModuleTypeId {
+    fn builtin(self: *Context, value: primitives.BuiltinType) !entities.ModuleTypeId {
         for (0..views.typeCount(self.graph)) |index| {
             const id: entities.ModuleTypeId = @enumFromInt(@as(u32, @intCast(index)));
-            const value = try views.typeView(self.graph, id);
-            switch (value) {
-                .resolved => |resolved| switch (resolved) {
-                    .builtin => |candidate| if (candidate == builtin) return id,
+            switch (try views.typeView(self.graph, id)) {
+                .resolved => |candidate| switch (candidate) {
+                    .builtin => |builtin_value| if (builtin_value == value) return id,
                     else => {},
                 },
                 .external => {},
             }
         }
-        return self.writer.addResolvedType(.{ .builtin = builtin });
+        return self.writer.addResolvedType(.{ .builtin = value });
     }
 
     fn sourceRef(self: *const Context, node: syn.NodeIndex) primitives.SourceRef {
         return .{ .file_index = self.file_index, .offset = self.tree.location(node).offset };
     }
 
+    fn nextNodeId(self: *const Context) entities.ModuleNodeId {
+        return @enumFromInt(@as(u32, @intCast(self.graph.semantic.nodes.items.len)));
+    }
+
     fn pushScope(self: *Context) !void {
         try self.scope_marks.append(self.bindings.items.len);
     }
-
     fn popScope(self: *Context) void {
         const mark = self.scope_marks.pop().?;
         self.bindings.shrinkRetainingCapacity(mark);
     }
-
     fn lookupBinding(self: *const Context, name: []const u8) ?entities.ModuleBindingId {
         var index = self.bindings.items.len;
-        while (index > 0) {
+        while (index != 0) {
             index -= 1;
-            const binding = self.bindings.items[index];
-            if (std.mem.eql(u8, binding.name, name)) return binding.id;
+            if (std.mem.eql(u8, self.graph.text(self.bindings.items[index].name), name)) return self.bindings.items[index].id;
         }
         return null;
     }
@@ -804,21 +727,6 @@ fn hasFunctionSemantic(graph: *const graph_mod.ModuleSemanticGraph, id: entities
     return false;
 }
 
-test "module body lowerer checkpoints are transactional" {
-    const allocator = std.testing.allocator;
-    var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
-    defer graph.deinit(allocator);
-    try graph.semantic.nodes.append(allocator, .{ .resolved = .{
-        .source = .{ .file_index = 0, .offset = 0 },
-        .ty = null,
-        .content = .break_statement,
-    } });
-    const checkpoint = Checkpoint.capture(&graph);
-    try graph.semantic.nodes.append(allocator, .{ .resolved = .{
-        .source = .{ .file_index = 0, .offset = 1 },
-        .ty = null,
-        .content = .continue_statement,
-    } });
-    checkpoint.restore(&graph);
-    try std.testing.expectEqual(@as(usize, 1), graph.semantic.nodes.items.len);
+test "module fallback lowerer owns only semantic state" {
+    try std.testing.expect(@sizeOf(entities.PendingExpression) < 48);
 }
