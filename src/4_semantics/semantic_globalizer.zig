@@ -574,7 +574,7 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .for_statement => |value| .{ .for_statement = .{
                 .init = if (value.init) |id| globalNode(o, id) else null,
                 .condition = globalNode(o, value.condition),
-                .increment = if (value.increment) |id| globalNode(o, id) else null,
+                .increment = if (value.increment) |id| globalNode(o, value.increment) else null,
                 .body = globalBlock(o, value.body),
             } },
             .switch_statement => |id| .{ .switch_statement = globalSwitch(o, id) },
@@ -698,7 +698,7 @@ test "globalizer preserves hole identity for GlobalSema" {
     try module.semantic.nodes.append(allocator, .{ .pending = @enumFromInt(0) });
     try module.semantic.pending_operations.append(allocator, .{ .resolve_expression = .{
         .node = @enumFromInt(0),
-        .kind = .other,
+        .kind = .unknown_identifier,
     } });
     var result = try relocate(allocator, &.{module}, .allow_holes);
     defer result.deinit(allocator);
