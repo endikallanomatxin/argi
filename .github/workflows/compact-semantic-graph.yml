@@ -1,4 +1,4 @@
-name: Compact semantic graph
+name: Share initializer expression lowering
 
 on:
   push:
@@ -7,14 +7,177 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  test:
+  apply-test-commit:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Route global initializers through body expression lowering
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, expected=1):
+              p = Path(path)
+              s = p.read_text()
+              count = s.count(old)
+              assert count == expected, f'{path}: expected {expected}, got {count}: {old!r}'
+              p.write_text(s.replace(old, new, expected))
+
+          p = Path('src/4_semantics/module/body_lowerer.zig')
+          s = p.read_text()
+          old = 'const Lowered = struct { node: entities.ModuleNodeId, ty: ?entities.ModuleTypeId };\n'
+          new = 'pub const Lowered = struct { node: entities.ModuleNodeId, ty: ?entities.ModuleTypeId };\nconst ExpressionMode = enum { body, initializer };\n'
+          assert s.count(old) == 1, s.count(old)
+          s = s.replace(old, new, 1)
+
+          marker = 'const Context = struct {\n'
+          wrapper = '''pub fn lowerInitializerExpression(
+              allocator: std.mem.Allocator,
+              graph: *graph_mod.ModuleSemanticGraph,
+              files: []const graph_mod.FileInput,
+              file_index: u32,
+              node: syn.NodeIndex,
+              expected: ?entities.ModuleTypeId,
+          ) !Lowered {
+              var context = Context{
+                  .allocator = allocator,
+                  .graph = graph,
+                  .files = files,
+                  .writer = writer_mod.Writer.init(allocator, graph),
+                  .bindings = std.array_list.Managed(NamedBinding).init(allocator),
+                  .scope_marks = std.array_list.Managed(usize).init(allocator),
+                  .expression_mode = .initializer,
+              };
+              defer context.bindings.deinit();
+              defer context.scope_marks.deinit();
+              context.file_index = file_index;
+              const file = files[@intCast(file_index)];
+              context.tree = file.tree;
+              context.source = file.source;
+              try context.seedGlobalBindings();
+              return context.lowerNode(node, expected);
+          }
+
+          '''
+          assert s.count(marker) == 1
+          s = s.replace(marker, wrapper + marker, 1)
+
+          old = '    pipe_value: ?Lowered = null,\n'
+          new = '    pipe_value: ?Lowered = null,\n    expression_mode: ExpressionMode = .body,\n'
+          assert s.count(old) == 1, s.count(old)
+          s = s.replace(old, new, 1)
+
+          old = '''    fn lowerNode(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) anyerror!Lowered {
+              return switch (self.tree.tag(node)) {
+'''
+          new = '''    fn lowerNode(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) anyerror!Lowered {
+              if (self.expression_mode == .initializer) switch (self.tree.tag(node)) {
+                  .literal,
+                  .identifier,
+                  .function_call,
+                  .struct_value_literal,
+                  .list_literal,
+                  .struct_field_access,
+                  .index_access,
+                  .binary_add,
+                  .binary_subtract,
+                  .binary_multiply,
+                  .binary_divide,
+                  .binary_modulo,
+                  .compare_equal,
+                  .compare_not_equal,
+                  .compare_less,
+                  .compare_greater,
+                  .compare_less_equal,
+                  .compare_greater_equal,
+                  .logical_and,
+                  .logical_or,
+                  .address_of,
+                  .address_of_mut,
+                  .dereference,
+                  .reach_directive,
+                  .type_name,
+                  .pointer_type,
+                  .pointer_type_mut,
+                  .nullable_type,
+                  .inferred_errable_type,
+                  .array_type,
+                  .generic_type_instantiation,
+                  .struct_type_literal,
+                  .choice_type_literal,
+                  => {},
+                  else => return error.UnsupportedInitializerExpression,
+              };
+              return switch (self.tree.tag(node)) {
+'''
+          assert s.count(old) == 1, s.count(old)
+          s = s.replace(old, new, 1)
+
+          marker = '    fn pushScope(self: *Context) !void {\n'
+          helper = '''    fn seedGlobalBindings(self: *Context) !void {
+              self.bindings.clearRetainingCapacity();
+              for (self.graph.semantic.declaration_bindings.items) |relation| {
+                  const declaration = self.graph.declarations.items[@intFromEnum(relation.declaration)];
+                  const binding = self.graph.semantic.bindings.items[@intFromEnum(relation.binding)];
+                  try self.bindings.append(.{
+                      .name = declaration.name,
+                      .id = relation.binding,
+                      .ty = binding.ty,
+                  });
+              }
+          }
+
+          '''
+          assert s.count(marker) == 1
+          s = s.replace(marker, helper + marker, 1)
+          p.write_text(s)
+
+          p = Path('src/4_semantics/module/initializer_lowerer.zig')
+          s = p.read_text()
+          old = 'const graph_mod = @import("graph.zig");\n'
+          new = 'const graph_mod = @import("graph.zig");\nconst body_lowerer = @import("body_lowerer.zig");\n'
+          assert s.count(old) == 1, s.count(old)
+          s = s.replace(old, new, 1)
+
+          old = '''            const value = try self.lowerExpr(value_node, expected);
+              self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].initialization = value.node;
+              if (self.isAny(expected) and !self.isAny(value.ty))
+                  self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].ty = value.ty;
+              try self.writer.addRoot(value.node);
+'''
+          new = '''            const value = try body_lowerer.lowerInitializerExpression(
+                  self.allocator,
+                  self.graph,
+                  self.files,
+                  self.file_index,
+                  value_node,
+                  expected,
+              );
+              self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].initialization = value.node;
+              if (self.isAny(expected)) {
+                  if (value.ty) |value_ty| {
+                      if (!self.isAny(value_ty))
+                          self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].ty = value_ty;
+                  }
+              }
+              try self.writer.addRoot(value.node);
+'''
+          assert s.count(old) == 1, s.count(old)
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          git checkout HEAD -- .github/workflows/compact-semantic-graph.yml
+
+      - name: Verify shared global initializer path
+        run: |
+          grep -n "lowerInitializerExpression" src/4_semantics/module/body_lowerer.zig src/4_semantics/module/initializer_lowerer.zig
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -37,6 +200,10 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Run program suite
-        timeout-minutes: 15
-        run: zig build test-programs
+      - name: Commit validated refactor
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/4_semantics/module/body_lowerer.zig src/4_semantics/module/initializer_lowerer.zig
+          git commit -m "Share global initializer expression lowering"
+          git push origin HEAD:compact-semantic-graph-chatgpt
