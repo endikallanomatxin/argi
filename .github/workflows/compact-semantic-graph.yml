@@ -1,4 +1,4 @@
-name: Compact semantic graph deferred choice trace
+name: Compact semantic graph stabilization probe
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Apply deferred choice lowering and unresolved type trace
+      - name: Apply deferred choice and builtin external probes
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -31,10 +31,10 @@ jobs:
           assert s.count(marker) == 1, s.count(marker)
           p.write_text(s.replace(old_calls, new_calls, 1).replace(marker, helper + marker, 1))
 
-          p = Path("src/4_semantics/global/semantizer.zig")
+          p = Path("src/4_semantics/global/core.zig")
           s = p.read_text()
-          old = '''    if (relocation.graph.hasUnresolvedTypes()) {\n        std.debug.print("global sema unresolved global type slots remain\\n", .{});\n        return error.UnsupportedGlobalSemantic;\n    }'''
-          new = '''    if (relocation.graph.hasUnresolvedTypes()) {\n        std.debug.print("global sema unresolved global type slots remain\\n", .{});\n        for (relocation.graph.type_resolution.items, 0..) |state, raw| {\n            if (state != .unresolved) continue;\n            for (modules, 0..) |*module, module_index| {\n                const base: usize = relocation.offsets.items[module_index].type_base;\n                const count = module_views.typeCount(module);\n                if (raw < base or raw >= base + count) continue;\n                const local: module_entities.ModuleTypeId = @enumFromInt(@as(u32, @intCast(raw - base)));\n                switch (try module_views.typeView(module, local)) {\n                    .external => |external| {\n                        const reference = module.semantic.external_refs.items[@intFromEnum(external)];\n                        std.debug.print("  unresolved type global={d} module={s} local={d} name={s} qualified={any} generic={any}\\n", .{\n                            raw, module.module_dir, @intFromEnum(local), module.text(reference.name), reference.module_path != null, reference.generic_arguments != null,\n                        });\n                    },\n                    .resolved => std.debug.print("  unresolved type global={d} module={s} local={d} was-resolved-locally\\n", .{ raw, module.module_dir, @intFromEnum(local) }),\n                }\n            }\n        }\n        return error.UnsupportedGlobalSemantic;\n    }'''
+          old = '''                const reference = module.semantic.external_refs.items[@intFromEnum(external)];\n                if (reference.kind != .type) continue;\n                // Generic external references need parameterized substitution and are\n                // intentionally claimed by the generic resolver instead.\n                if (reference.generic_arguments != null) continue;\n                const target = self.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch continue;'''
+          new = '''                const reference = module.semantic.external_refs.items[@intFromEnum(external)];\n                if (reference.kind != .type) continue;\n                // Some transitional ModuleSema paths can still surface an unqualified\n                // builtin as an external type slot. Normalize it before nominal lookup.\n                if (reference.module_path == null and reference.generic_arguments == null) {\n                    const name = module.text(reference.name);\n                    var resolved_builtin: ?primitives.BuiltinType = null;\n                    inline for (@typeInfo(primitives.BuiltinType).@\"enum\".fields) |field| {\n                        if (std.mem.eql(u8, name, field.name)) {\n                            resolved_builtin = @enumFromInt(field.value);\n                            break;\n                        }\n                    }\n                    if (resolved_builtin) |builtin_type| {\n                        self.graph.types.items[@intFromEnum(globalizer.globalType(o, local_id))] = .{ .builtin = builtin_type };\n                        self.stats.external_types += 1;\n                        continue;\n                    }\n                }\n                // Generic external references need parameterized substitution and are\n                // intentionally claimed by the generic resolver instead.\n                if (reference.generic_arguments != null) continue;\n                const target = self.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch continue;'''
           assert s.count(old) == 1, s.count(old)
           p.write_text(s.replace(old, new, 1))
           PY
@@ -52,6 +52,8 @@ jobs:
           chmod +x llvm.sh
           sudo ./llvm.sh 21
           sudo apt-get install -y llvm-21-dev clang-21
+          zig version
+          llvm-config-21 --version
 
       - name: Build compiler
         run: zig build
@@ -59,3 +61,7 @@ jobs:
       - name: Run internal tests
         timeout-minutes: 5
         run: zig build test-internal
+
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
