@@ -321,7 +321,7 @@ test "anonymous structural types retain module-local default provenance" {
     const shape = graph.types.items[@intFromEnum(input.ty)].structural;
     const number = graph.structural_fields.items[shape.start];
     try std.testing.expect(number.has_default);
-    try std.testing.expect(number.default_value != null);
+    try std.testing.expectEqual(@as(u32, @intCast(std.mem.indexOf(u8, source, "number").?)), number.source_offset);
     try std.testing.expectEqual(@as(u32, 0), number.module_file_index);
 }
 

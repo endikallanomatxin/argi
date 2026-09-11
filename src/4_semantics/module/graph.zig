@@ -50,8 +50,6 @@ pub const Field = struct {
     ty: ModuleTypeId,
     source_offset: u32,
     has_default: bool,
-    // Expression lowering has not moved into the module graph yet.
-    default_value: ?syn.NodeIndex = null,
     module_file_index: u32 = 0,
 };
 pub const FunctionInterface = struct { declaration: ModuleDeclId, input: FieldRange, output: FieldRange };
@@ -87,7 +85,7 @@ pub const Symbol = struct {
 };
 
 /// Compact semantic storage owned by one module directory. Source-file indices
-/// and syntax nodes in the compatibility tables are provenance only. Durable
+/// and source offsets in compatibility tables are provenance only. Durable
 /// bodies and semantic identities live in `semantic` using Module* IDs.
 pub const ModuleSemanticGraph = struct {
     module_dir: []const u8 = "",
@@ -403,7 +401,6 @@ fn appendFields(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
             .ty = ty,
             .source_offset = input.tree.tokenLocation(field.name_token).offset,
             .has_default = field.default_value != null,
-            .default_value = field.default_value,
             .module_file_index = module_file_index,
         });
     }
@@ -660,7 +657,6 @@ fn lowerStructuralType(
             .ty = ty,
             .source_offset = tree.tokenLocation(field.name_token).offset,
             .has_default = field.default_value != null,
-            .default_value = field.default_value,
             .module_file_index = module_file_index,
         });
     } else {
