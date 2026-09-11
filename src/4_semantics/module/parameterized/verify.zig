@@ -114,7 +114,6 @@ test "parameterized verifier accepts self contained semantic IR" {
         .name = name,
         .source_offset = 0,
         .module_file_index = 0,
-        .syntax_node = @enumFromInt(1),
     });
     try graph.semantic.parameterized_storage.comptime_parameters.append(allocator, .{
         .name = name,

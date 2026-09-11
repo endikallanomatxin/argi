@@ -66,7 +66,6 @@ pub const Declaration = struct {
     source_offset: u32,
     module_file_index: u32,
     // Temporary syntax provenance bridge while expression lowering is migrated.
-    syntax_node: syn.NodeIndex,
     type_id: ?ModuleTypeId = null,
     function_id: ?ModuleFunctionId = null,
     struct_fields: ?FieldRange = null,
@@ -762,7 +761,6 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
             .name = range,
             .source_offset = tree.location(node).offset,
             .module_file_index = module_file_index,
-            .syntax_node = node,
             .generic_parameter_count = genericParameterCount(tree, node),
         });
     }

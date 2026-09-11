@@ -27,7 +27,6 @@ fn makeScalarModule(allocator: std.mem.Allocator, dir: []const u8, type_name_tex
         .name = type_name,
         .source_offset = 1,
         .module_file_index = 0,
-        .syntax_node = @enumFromInt(0),
         .type_id = @enumFromInt(0),
     });
     try module.semantic.types.append(allocator, .{ .resolved = .{ .declared = @enumFromInt(0) } });
@@ -87,7 +86,6 @@ fn makeInferredChoiceModule(allocator: std.mem.Allocator) !module_sg.ModuleSeman
         .name = type_name,
         .source_offset = 2,
         .module_file_index = 0,
-        .syntax_node = @enumFromInt(0),
         .type_id = @enumFromInt(0),
     });
     try module.semantic.variants.append(allocator, .{
@@ -127,7 +125,6 @@ fn makeGenericArrayModule(allocator: std.mem.Allocator) !module_sg.ModuleSemanti
         .name = type_name,
         .source_offset = 1,
         .module_file_index = 0,
-        .syntax_node = @enumFromInt(0),
         .type_id = @enumFromInt(1),
         .generic_parameter_count = 1,
     });
