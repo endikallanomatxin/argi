@@ -1,6 +1,5 @@
 const std = @import("std");
 const tok = @import("../../2_tokens/token.zig");
-const syn = @import("../../3_syntax/syntax_tree.zig");
 const primitives = @import("../primitives/schema.zig");
 
 pub const ModuleDeclId = enum(u32) { _ };
@@ -226,7 +225,7 @@ pub const PendingOperation = union(enum) {
         binding: ModuleBindingId,
         iterable: ModuleNodeId,
         body: ModuleBlockId,
-        mode: syn.ForMode,
+        mode: primitives.ForMode,
     },
     resolve_match: struct {
         node: ModuleNodeId,
@@ -238,7 +237,7 @@ pub const PendingOperation = union(enum) {
         option: ExternalRefId,
         payload_binding: ?ModuleBindingId,
         body: ModuleBlockId,
-        mode: syn.MatchCaseMode,
+        mode: primitives.MatchCaseMode,
     },
     resolve_defer: struct {
         node: ModuleNodeId,

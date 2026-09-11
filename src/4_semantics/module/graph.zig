@@ -194,6 +194,30 @@ pub fn pointerMutabilityFromSyntax(value: syn.PointerMutability) primitives.Poin
     };
 }
 
+pub fn mutabilityFromSyntax(value: syn.Mutability) primitives.Mutability {
+    return switch (value) {
+        .constant => .constant,
+        .variable => .variable,
+    };
+}
+
+pub fn forModeFromSyntax(value: syn.ForMode) primitives.ForMode {
+    return switch (value) {
+        .value => .value,
+        .borrow => .borrow,
+        .mut_borrow => .mut_borrow,
+    };
+}
+
+pub fn matchCaseModeFromSyntax(value: syn.MatchCaseMode) primitives.MatchCaseMode {
+    return switch (value) {
+        .value => .value,
+        .borrow => .borrow,
+        .mut_borrow => .mut_borrow,
+        .move => .move,
+    };
+}
+
 pub const ModuleSemanticGraphBuilder = struct {
     allocator: std.mem.Allocator,
     graph: ModuleSemanticGraph,

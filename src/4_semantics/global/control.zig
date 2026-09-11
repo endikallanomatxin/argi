@@ -1,5 +1,4 @@
 const std = @import("std");
-const syn = @import("../../3_syntax/syntax_tree.zig");
 const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const global_sg = @import("graph.zig");
@@ -503,7 +502,7 @@ pub const Resolver = struct {
         return types.equal(self.graph, expected.?, actual.?);
     }
 
-    fn matchBindingType(self: *Resolver, payload: global_sg.GlobalTypeId, mode: syn.MatchCaseMode) !global_sg.GlobalTypeId {
+    fn matchBindingType(self: *Resolver, payload: global_sg.GlobalTypeId, mode: primitives.MatchCaseMode) !global_sg.GlobalTypeId {
         return switch (mode) {
             .value, .move => payload,
             .borrow => self.pointer(payload, .read_only),
@@ -511,7 +510,7 @@ pub const Resolver = struct {
         };
     }
 
-    fn forBindingType(self: *Resolver, payload: global_sg.GlobalTypeId, mode: syn.ForMode) !global_sg.GlobalTypeId {
+    fn forBindingType(self: *Resolver, payload: global_sg.GlobalTypeId, mode: primitives.ForMode) !global_sg.GlobalTypeId {
         return switch (mode) {
             .value => payload,
             .borrow => self.pointer(payload, .read_only),

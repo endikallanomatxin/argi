@@ -127,7 +127,7 @@ const Context = struct {
     fn bindInterface(
         self: *Context,
         range: graph_mod.FieldRange,
-        mutability: syn.Mutability,
+        mutability: primitives.Mutability,
         result: *std.array_list.Managed(entities.ModuleBindingId),
     ) !void {
         for (0..range.len) |offset| {
@@ -288,7 +288,7 @@ const Context = struct {
             .source = self.sourceRef(node),
             .ty = stored_ty,
             .initialization = if (value) |item| item.node else null,
-            .mutability = declaration.mutability,
+            .mutability = graph_mod.mutabilityFromSyntax(declaration.mutability),
         });
         const name = self.graph.semantic.bindings.items[@intFromEnum(binding)].name;
         try self.bindings.append(.{ .name = name, .id = binding, .ty = semantic_ty });
@@ -588,7 +588,7 @@ const Context = struct {
             .binding = binding,
             .iterable = iterable.node,
             .body = body,
-            .mode = statement.mode,
+            .mode = graph_mod.forModeFromSyntax(statement.mode),
         } }, try self.builtin(.Void));
     }
 
@@ -628,7 +628,7 @@ const Context = struct {
                 .option = option,
                 .payload_binding = payload_binding,
                 .body = body,
-                .mode = case.mode,
+                .mode = graph_mod.matchCaseModeFromSyntax(case.mode),
             } });
             const stored = try self.writer.addNode(.{ .pending = pending_id });
             try case_nodes.append(stored);

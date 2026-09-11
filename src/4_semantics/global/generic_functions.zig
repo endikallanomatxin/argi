@@ -1014,7 +1014,7 @@ pub const Resolver = struct {
             };
         }
 
-        fn matchBindingType(self: *InstanceContext, payload: global_sg.GlobalTypeId, mode: syn.MatchCaseMode) !global_sg.GlobalTypeId {
+        fn matchBindingType(self: *InstanceContext, payload: global_sg.GlobalTypeId, mode: primitives.MatchCaseMode) !global_sg.GlobalTypeId {
             return switch (mode) {
                 .value, .move => payload,
                 .borrow => self.resolver.generics.internType(.{ .pointer = .{ .child = payload, .mutability = .read_only } }),

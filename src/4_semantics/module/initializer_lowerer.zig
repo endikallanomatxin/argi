@@ -190,7 +190,7 @@ const Context = struct {
                 .name = decl.name,
                 .source = self.sourceRef(declaration_node),
                 .ty = declared_ty,
-                .mutability = syntax_decl.mutability,
+                .mutability = graph_mod.mutabilityFromSyntax(syntax_decl.mutability),
             });
             const decl_id: entities.ModuleDeclId = @enumFromInt(@as(u32, @intCast(raw)));
             try self.graph.semantic.declaration_bindings.append(self.allocator, .{
