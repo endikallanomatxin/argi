@@ -110,6 +110,14 @@ pub const DeclarationBinding = struct {
     binding: ModuleBindingId,
 };
 
+/// Durable semantic relation for a named module import. Syntax is consumed in
+/// ModuleSema; global consumers link this path once to a GlobalModuleId.
+pub const ModuleAlias = struct {
+    declaration: ModuleDeclId,
+    path: primitives.StringRange,
+    source: primitives.SourceRef,
+};
+
 pub const FunctionSemantic = struct {
     function: ModuleFunctionId,
     body: ?ModuleBlockId = null,

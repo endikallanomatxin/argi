@@ -2,6 +2,7 @@ const std = @import("std");
 const module_sg = @import("graph.zig");
 const body_lowerer = @import("body_lowerer.zig");
 const initializer_lowerer = @import("initializer_lowerer.zig");
+const module_alias_lowerer = @import("module_alias_lowerer.zig");
 const global_roots_lowerer = @import("global_roots_lowerer.zig");
 const parameterized_lowerer = @import("parameterized/lowerer.zig");
 const generic_operator_lowerer = @import("generic_operator_lowerer.zig");
@@ -15,6 +16,7 @@ pub const BuildStats = struct {
     lowered_functions: u32 = 0,
     fallback_functions: u32 = 0,
     global_bindings: u32 = 0,
+    module_aliases: u32 = 0,
     global_roots: u32 = 0,
     field_defaults: u32 = 0,
     generic_types: u32 = 0,
@@ -41,6 +43,7 @@ pub fn build(
     var graph = try module_sg.build(allocator, module_dir, files);
     errdefer graph.deinit(allocator);
 
+    const module_aliases = try module_alias_lowerer.lower(allocator, &graph, files);
     const initializers = try initializer_lowerer.lower(allocator, &graph, files);
     try lowerOperatorMetadata(allocator, &graph, files);
     const global_roots = try global_roots_lowerer.lower(allocator, &graph);
@@ -66,6 +69,7 @@ pub fn build(
             .lowered_functions = bodies.lowered_functions,
             .fallback_functions = 0,
             .global_bindings = initializers.global_bindings,
+            .module_aliases = module_aliases,
             .global_roots = global_roots,
             .field_defaults = initializers.field_defaults,
             .generic_types = parameterized_stats.generic_types,

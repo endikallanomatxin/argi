@@ -4,6 +4,7 @@ const module_entities = @import("../module/entities.zig");
 const module_views = @import("../module/views.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
+const module_linker = @import("module_linker.zig");
 const global_verify = @import("verify.zig");
 const core_mod = @import("core.zig");
 const expression_mod = @import("expressions.zig");
@@ -56,6 +57,7 @@ pub fn semantize(
 ) !Result {
     var relocation = try globalizer.relocate(allocator, modules, .allow_holes);
     errdefer relocation.deinit(allocator);
+    try module_linker.link(allocator, &relocation.graph, modules, relocation.offsets.items);
 
     // The globalizer preallocates stable GlobalTypeId slots. Record which of
     // those slots are genuinely unresolved before any resolver can inspect
