@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -15,15 +15,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Restore lost semicolon
-        run: |
-          python3 -c 'from pathlib import Path; p=Path("src/4_semantics/global/generic_functions.zig"); s=p.read_text(); old="if (input_literal) |literal| if (literal.fields.len == 0) {\n                if (try self.resolveEmptyTypeInitializer(name, source)) |node| return node;\n            }\n            const reference"; new="if (input_literal) |literal| if (literal.fields.len == 0) {\n                if (try self.resolveEmptyTypeInitializer(name, source)) |node| return node;\n            };\n            const reference"; assert s.count(old)==1, s.count(old); p.write_text(s.replace(old,new,1))'
-          git config user.name "Endika Llano Matxin"
-          git config user.email "119845498+endikallanomatxin@users.noreply.github.com"
-          git add src/4_semantics/global/generic_functions.zig
-          git commit -m "Restore generic call initializer terminator" -m "Tests: CI"
-          git push origin HEAD:compact-semantic-graph-chatgpt
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
