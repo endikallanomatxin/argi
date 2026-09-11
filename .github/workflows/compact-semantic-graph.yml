@@ -16,7 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Apply deferred choice and builtin external probes
+      - name: Apply semantic stabilization probes
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -35,6 +35,13 @@ jobs:
           s = p.read_text()
           old = '''                const reference = module.semantic.external_refs.items[@intFromEnum(external)];\n                if (reference.kind != .type) continue;\n                // Generic external references need parameterized substitution and are\n                // intentionally claimed by the generic resolver instead.\n                if (reference.generic_arguments != null) continue;\n                const target = self.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch continue;'''
           new = '''                const reference = module.semantic.external_refs.items[@intFromEnum(external)];\n                if (reference.kind != .type) continue;\n                // Some transitional ModuleSema paths can still surface an unqualified\n                // builtin as an external type slot. Normalize it before nominal lookup.\n                if (reference.module_path == null and reference.generic_arguments == null) {\n                    const name = module.text(reference.name);\n                    var resolved_builtin: ?primitives.BuiltinType = null;\n                    inline for (@typeInfo(primitives.BuiltinType).@\"enum\".fields) |field| {\n                        if (std.mem.eql(u8, name, field.name)) {\n                            resolved_builtin = @enumFromInt(field.value);\n                            break;\n                        }\n                    }\n                    if (resolved_builtin) |builtin_type| {\n                        self.graph.types.items[@intFromEnum(globalizer.globalType(o, local_id))] = .{ .builtin = builtin_type };\n                        self.stats.external_types += 1;\n                        continue;\n                    }\n                }\n                // Generic external references need parameterized substitution and are\n                // intentionally claimed by the generic resolver instead.\n                if (reference.generic_arguments != null) continue;\n                const target = self.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch continue;'''
+          assert s.count(old) == 1, s.count(old)
+          p.write_text(s.replace(old, new, 1))
+
+          p = Path("src/4_semantics/global/ownership.zig")
+          s = p.read_text()
+          old = '''        const nodes = self.graph.node_refs.items[original.nodes.start..][0..original.nodes.len];\n        for (nodes) |node_id| {'''
+          new = '''        // Recursive finalization appends cleanup edges to graph.node_refs and\n        // may reallocate it. Keep a stable copy of this block's original node IDs.\n        const nodes = try self.allocator.dupe(global_sg.GlobalNodeId, self.graph.node_refs.items[original.nodes.start..][0..original.nodes.len]);\n        defer self.allocator.free(nodes);\n        for (nodes) |node_id| {'''
           assert s.count(old) == 1, s.count(old)
           p.write_text(s.replace(old, new, 1))
           PY
