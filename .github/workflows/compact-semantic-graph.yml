@@ -1,4 +1,4 @@
-name: Compact semantic graph choice trace
+name: Compact semantic graph deferred choice probe
 
 on:
   push:
@@ -16,16 +16,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Trace nested choices
+      - name: Apply deferred choice lowering probe
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path("src/4_semantics/global/control.zig")
+          p = Path("src/4_semantics/module/initializer_lowerer.zig")
           s = p.read_text()
-          old = '''        const expected = if (value.expected_type) |id| globalizer.globalType(o, id) else self.graph.nodes.items[@intFromEnum(target)].ty;\n\n        // An explicit contextual type is authoritative.'''
-          new = '''        const expected = if (value.expected_type) |id| globalizer.globalType(o, id) else self.graph.nodes.items[@intFromEnum(target)].ty;\n        if (std.mem.eql(u8, module.module_dir, "core/system") and (reference.source.offset == 5235 or reference.source.offset == 6202)) {\n            std.debug.print("CHOICE source={d} node={d} expected_local={any} expected_global={any} target_ty={any} payload={any}\\n", .{ reference.source.offset, @intFromEnum(value.node), value.expected_type, expected, self.graph.nodes.items[@intFromEnum(target)].ty, payload });\n            if (expected) |expected_ty| {\n                std.debug.print("  expected id={d} tag={s} unresolved={any} variants={any}\\n", .{ @intFromEnum(expected_ty), @tagName(self.graph.types.items[@intFromEnum(expected_ty)]), self.graph.isTypeUnresolved(expected_ty), types.variants(self.graph, expected_ty) });\n                std.debug.print("  expected ok={any}\\n", .{types.findVariant(self.graph, expected_ty, name)});\n            }\n            if (payload) |payload_node| {\n                const payload_record = self.graph.nodes.items[@intFromEnum(payload_node)];\n                std.debug.print("  payload node={d} ty={any} content={s}\\n", .{ @intFromEnum(payload_node), payload_record.ty, @tagName(payload_record.content) });\n            }\n        }\n\n        // An explicit contextual type is authoritative.'''
-          assert s.count(old) == 1, s.count(old)
-          p.write_text(s.replace(old, new, 1))
+          old_calls = '''    try ctx.lowerDeferredStructDefinitions();\n    try ctx.lowerDeferredFunctionInterfaces();'''
+          new_calls = '''    try ctx.lowerDeferredStructDefinitions();\n    try ctx.lowerDeferredChoiceDefinitions();\n    try ctx.lowerDeferredFunctionInterfaces();'''
+          marker = '''    fn lowerDeferredFunctionInterfaces(self: *Context) !void {'''
+          helper = '''    /// Finish non-generic choice declarations whose payload types could not\n    /// be represented by the compatibility builder because they cross a\n    /// module boundary. Canonical ModuleSema can retain those types as\n    /// ExternalRef-backed slots, so the declared choice shape stays complete.\n    fn lowerDeferredChoiceDefinitions(self: *Context) !void {\n        for (self.graph.declarations.items, 0..) |declaration, raw| {\n            if (declaration.kind != .type or declaration.choice_variants != null) continue;\n            self.selectFile(declaration.module_file_index);\n            const type_declaration = self.tree.typeDeclaration(declaration.syntax_node) orelse continue;\n            if (type_declaration.generic_params.len != 0 or type_declaration.generic_params_struct != null) continue;\n            const literal = self.tree.choiceTypeLiteral(type_declaration.value) orelse continue;\n\n            const start: u32 = @intCast(views.variantCount(self.graph));\n            for (literal.variants, 0..) |variant_node, index| {\n                const variant = self.tree.choiceTypeVariant(variant_node) orelse return error.InvalidChoiceVariant;\n                const name_text = self.tree.tokenTextFromSource(self.source, variant.name_token);\n                var option_decl: ?entities.ModuleDeclId = null;\n                if (variant.module_qualifier == null) {\n                    for (self.graph.declarationsNamed(name_text)) |candidate| {\n                        if (self.graph.declarations.items[@intFromEnum(candidate)].kind != .choice_option) continue;\n                        option_decl = candidate;\n                        break;\n                    }\n                }\n                _ = try self.writer.addVariant(.{\n                    .name = try self.writer.addString(name_text),\n                    .payload_type = if (variant.payload_type) |payload| try self.lowerType(payload) else null,\n                    .option_decl = option_decl,\n                    .source = self.sourceRef(variant_node),\n                    .value = @intCast(index),\n                });\n            }\n            self.graph.declarations.items[raw].choice_variants = .{\n                .start = start,\n                .len = @intCast(literal.variants.len),\n            };\n        }\n    }\n\n'''
+          assert s.count(old_calls) == 1, s.count(old_calls)
+          assert s.count(marker) == 1, s.count(marker)
+          s = s.replace(old_calls, new_calls, 1).replace(marker, helper + marker, 1)
+          p.write_text(s)
           PY
 
       - name: Install Zig
@@ -48,3 +52,7 @@ jobs:
       - name: Run internal tests
         timeout-minutes: 5
         run: zig build test-internal
+
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
