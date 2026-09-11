@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - compact-semantic-graph-chatgpt
+      - compact-semantic-graph-chatgpt-parity
   workflow_dispatch:
 
 permissions:
