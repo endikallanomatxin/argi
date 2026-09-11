@@ -108,8 +108,6 @@ test "parameterized verifier accepts self contained semantic IR" {
         .declaration_count = 1,
         .type_reference_base = 0,
         .type_reference_count = 0,
-        .import_reference_base = 0,
-        .import_reference_count = 0,
     });
     try graph.declarations.append(allocator, .{
         .kind = .function,
