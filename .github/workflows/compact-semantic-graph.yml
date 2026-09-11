@@ -22,162 +22,57 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import base64
 
-          def replace(path, old, new, expected=1):
+          def d(value):
+              return base64.b64decode(value).decode()
+
+          def replace(path, old64, new64, expected=1):
               p = Path(path)
               s = p.read_text()
+              old = d(old64)
+              new = d(new64)
               count = s.count(old)
-              assert count == expected, f'{path}: expected {expected}, got {count}: {old!r}'
+              assert count == expected, f'{path}: expected {expected}, got {count}'
               p.write_text(s.replace(old, new, expected))
 
-          p = Path('src/4_semantics/module/body_lowerer.zig')
+          body = 'src/4_semantics/module/body_lowerer.zig'
+          init = 'src/4_semantics/module/initializer_lowerer.zig'
+
+          replace(body,
+              'Y29uc3QgTG93ZXJlZCA9IHN0cnVjdCB7IG5vZGU6IGVudGl0aWVzLk1vZHVsZU5vZGVJZCwgdHk6ID9lbnRpdGllcy5Nb2R1bGVUeXBlSWQgfTsK',
+              'cHViIGNvbnN0IExvd2VyZWQgPSBzdHJ1Y3QgeyBub2RlOiBlbnRpdGllcy5Nb2R1bGVOb2RlSWQsIHR5OiA/ZW50aXRpZXMuTW9kdWxlVHlwZUlkIH07CmNvbnN0IEV4cHJlc3Npb25Nb2RlID0gZW51bSB7IGJvZHksIGluaXRpYWxpemVyIH07Cg==')
+
+          p = Path(body)
           s = p.read_text()
-          old = 'const Lowered = struct { node: entities.ModuleNodeId, ty: ?entities.ModuleTypeId };\n'
-          new = 'pub const Lowered = struct { node: entities.ModuleNodeId, ty: ?entities.ModuleTypeId };\nconst ExpressionMode = enum { body, initializer };\n'
-          assert s.count(old) == 1, s.count(old)
-          s = s.replace(old, new, 1)
-
-          marker = 'const Context = struct {\n'
-          wrapper = '''pub fn lowerInitializerExpression(
-              allocator: std.mem.Allocator,
-              graph: *graph_mod.ModuleSemanticGraph,
-              files: []const graph_mod.FileInput,
-              file_index: u32,
-              node: syn.NodeIndex,
-              expected: ?entities.ModuleTypeId,
-          ) !Lowered {
-              var context = Context{
-                  .allocator = allocator,
-                  .graph = graph,
-                  .files = files,
-                  .writer = writer_mod.Writer.init(allocator, graph),
-                  .bindings = std.array_list.Managed(NamedBinding).init(allocator),
-                  .scope_marks = std.array_list.Managed(usize).init(allocator),
-                  .expression_mode = .initializer,
-              };
-              defer context.bindings.deinit();
-              defer context.scope_marks.deinit();
-              context.file_index = file_index;
-              const file = files[@intCast(file_index)];
-              context.tree = file.tree;
-              context.source = file.source;
-              try context.seedGlobalBindings();
-              return context.lowerNode(node, expected);
-          }
-
-          '''
+          marker = d('Y29uc3QgQ29udGV4dCA9IHN0cnVjdCB7Cg==')
+          wrapper = d('cHViIGZuIGxvd2VySW5pdGlhbGl6ZXJFeHByZXNzaW9uKAogICAgYWxsb2NhdG9yOiBzdGQubWVtLkFsbG9jYXRvciwKICAgIGdyYXBoOiAqZ3JhcGhfbW9kLk1vZHVsZVNlbWFudGljR3JhcGgsCiAgICBmaWxlczogW11jb25zdCBncmFwaF9tb2QuRmlsZUlucHV0LAogICAgZmlsZV9pbmRleDogdTMyLAogICAgbm9kZTogc3luLk5vZGVJbmRleCwKICAgIGV4cGVjdGVkOiA/ZW50aXRpZXMuTW9kdWxlVHlwZUlkLAopICFMb3dlcmVkIHsKICAgIHZhciBjb250ZXh0ID0gQ29udGV4dHsKICAgICAgICAuYWxsb2NhdG9yID0gYWxsb2NhdG9yLAogICAgICAgIC5ncmFwaCA9IGdyYXBoLAogICAgICAgIC5maWxlcyA9IGZpbGVzLAogICAgICAgIC53cml0ZXIgPSB3cml0ZXJfbW9kLldyaXRlci5pbml0KGFsbG9jYXRvciwgZ3JhcGgpLAogICAgICAgIC5iaW5kaW5ncyA9IHN0ZC5hcnJheV9saXN0Lk1hbmFnZWQoTmFtZWRCaW5kaW5nKS5pbml0KGFsbG9jYXRvciksCiAgICAgICAgLnNjb3BlX21hcmtzID0gc3RkLmFycmF5X2xpc3QuTWFuYWdlZCh1c2l6ZSkuaW5pdChhbGxvY2F0b3IpLAogICAgICAgIC5leHByZXNzaW9uX21vZGUgPSAuaW5pdGlhbGl6ZXIsCiAgICB9OwogICAgZGVmZXIgY29udGV4dC5iaW5kaW5ncy5kZWluaXQoKTsKICAgIGRlZmVyIGNvbnRleHQuc2NvcGVfbWFya3MuZGVpbml0KCk7CiAgICBjb250ZXh0LmZpbGVfaW5kZXggPSBmaWxlX2luZGV4OwogICAgY29uc3QgZmlsZSA9IGZpbGVzW0BpbnRDYXN0KGZpbGVfaW5kZXgpXTsKICAgIGNvbnRleHQudHJlZSA9IGZpbGUudHJlZTsKICAgIGNvbnRleHQuc291cmNlID0gZmlsZS5zb3VyY2U7CiAgICB0cnkgY29udGV4dC5zZWVkR2xvYmFsQmluZGluZ3MoKTsKICAgIHJldHVybiBjb250ZXh0Lmxvd2VyTm9kZShub2RlLCBleHBlY3RlZCk7Cn0KCg==')
           assert s.count(marker) == 1
           s = s.replace(marker, wrapper + marker, 1)
+          p.write_text(s)
 
-          old = '    pipe_value: ?Lowered = null,\n'
-          new = '    pipe_value: ?Lowered = null,\n    expression_mode: ExpressionMode = .body,\n'
-          assert s.count(old) == 1, s.count(old)
-          s = s.replace(old, new, 1)
+          replace(body,
+              'ICAgIHBpcGVfdmFsdWU6ID9Mb3dlcmVkID0gbnVsbCwK',
+              'ICAgIHBpcGVfdmFsdWU6ID9Mb3dlcmVkID0gbnVsbCwKICAgIGV4cHJlc3Npb25fbW9kZTogRXhwcmVzc2lvbk1vZGUgPSAuYm9keSwK')
+          replace(body,
+              'ICAgIGZuIGxvd2VyTm9kZShzZWxmOiAqQ29udGV4dCwgbm9kZTogc3luLk5vZGVJbmRleCwgZXhwZWN0ZWQ6ID9lbnRpdGllcy5Nb2R1bGVUeXBlSWQpIGFueWVycm9yIUxvd2VyZWQgewogICAgICAgIHJldHVybiBzd2l0Y2ggKHNlbGYudHJlZS50YWcobm9kZSkpIHsK',
+              'ICAgIGZuIGxvd2VyTm9kZShzZWxmOiAqQ29udGV4dCwgbm9kZTogc3luLk5vZGVJbmRleCwgZXhwZWN0ZWQ6ID9lbnRpdGllcy5Nb2R1bGVUeXBlSWQpIGFueWVycm9yIUxvd2VyZWQgewogICAgICAgIGlmIChzZWxmLmV4cHJlc3Npb25fbW9kZSA9PSAuaW5pdGlhbGl6ZXIpIHN3aXRjaCAoc2VsZi50cmVlLnRhZyhub2RlKSkgewogICAgICAgICAgICAubGl0ZXJhbCwKICAgICAgICAgICAgLmlkZW50aWZpZXIsCiAgICAgICAgICAgIC5mdW5jdGlvbl9jYWxsLAogICAgICAgICAgICAuc3RydWN0X3ZhbHVlX2xpdGVyYWwsCiAgICAgICAgICAgIC5saXN0X2xpdGVyYWwsCiAgICAgICAgICAgIC5zdHJ1Y3RfZmllbGRfYWNjZXNzLAogICAgICAgICAgICAuaW5kZXhfYWNjZXNzLAogICAgICAgICAgICAuYmluYXJ5X2FkZCwKICAgICAgICAgICAgLmJpbmFyeV9zdWJ0cmFjdCwKICAgICAgICAgICAgLmJpbmFyeV9tdWx0aXBseSwKICAgICAgICAgICAgLmJpbmFyeV9kaXZpZGUsCiAgICAgICAgICAgIC5iaW5hcnlfbW9kdWxvLAogICAgICAgICAgICAuY29tcGFyZV9lcXVhbCwKICAgICAgICAgICAgLmNvbXBhcmVfbm90X2VxdWFsLAogICAgICAgICAgICAuY29tcGFyZV9sZXNzLAogICAgICAgICAgICAuY29tcGFyZV9ncmVhdGVyLAogICAgICAgICAgICAuY29tcGFyZV9sZXNzX2VxdWFsLAogICAgICAgICAgICAuY29tcGFyZV9ncmVhdGVyX2VxdWFsLAogICAgICAgICAgICAubG9naWNhbF9hbmQsCiAgICAgICAgICAgIC5sb2dpY2FsX29yLAogICAgICAgICAgICAuYWRkcmVzc19vZiwKICAgICAgICAgICAgLmFkZHJlc3Nfb2ZfbXV0LAogICAgICAgICAgICAuZGVyZWZlcmVuY2UsCiAgICAgICAgICAgIC5yZWFjaF9kaXJlY3RpdmUsCiAgICAgICAgICAgIC50eXBlX25hbWUsCiAgICAgICAgICAgIC5wb2ludGVyX3R5cGUsCiAgICAgICAgICAgIC5wb2ludGVyX3R5cGVfbXV0LAogICAgICAgICAgICAubnVsbGFibGVfdHlwZSwKICAgICAgICAgICAgLmluZmVycmVkX2VycmFibGVfdHlwZSwKICAgICAgICAgICAgLmFycmF5X3R5cGUsCiAgICAgICAgICAgIC5nZW5lcmljX3R5cGVfaW5zdGFudGlhdGlvbiwKICAgICAgICAgICAgLnN0cnVjdF90eXBlX2xpdGVyYWwsCiAgICAgICAgICAgIC5jaG9pY2VfdHlwZV9saXRlcmFsLAogICAgICAgICAgICA9PiB7fSwKICAgICAgICAgICAgZWxzZSA9PiByZXR1cm4gZXJyb3IuVW5zdXBwb3J0ZWRJbml0aWFsaXplckV4cHJlc3Npb24sCiAgICAgICAgfTsKICAgICAgICByZXR1cm4gc3dpdGNoIChzZWxmLnRyZWUudGFnKG5vZGUpKSB7Cg==')
 
-          old = '''    fn lowerNode(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) anyerror!Lowered {
-              return switch (self.tree.tag(node)) {
-'''
-          new = '''    fn lowerNode(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) anyerror!Lowered {
-              if (self.expression_mode == .initializer) switch (self.tree.tag(node)) {
-                  .literal,
-                  .identifier,
-                  .function_call,
-                  .struct_value_literal,
-                  .list_literal,
-                  .struct_field_access,
-                  .index_access,
-                  .binary_add,
-                  .binary_subtract,
-                  .binary_multiply,
-                  .binary_divide,
-                  .binary_modulo,
-                  .compare_equal,
-                  .compare_not_equal,
-                  .compare_less,
-                  .compare_greater,
-                  .compare_less_equal,
-                  .compare_greater_equal,
-                  .logical_and,
-                  .logical_or,
-                  .address_of,
-                  .address_of_mut,
-                  .dereference,
-                  .reach_directive,
-                  .type_name,
-                  .pointer_type,
-                  .pointer_type_mut,
-                  .nullable_type,
-                  .inferred_errable_type,
-                  .array_type,
-                  .generic_type_instantiation,
-                  .struct_type_literal,
-                  .choice_type_literal,
-                  => {},
-                  else => return error.UnsupportedInitializerExpression,
-              };
-              return switch (self.tree.tag(node)) {
-'''
-          assert s.count(old) == 1, s.count(old)
-          s = s.replace(old, new, 1)
-
-          marker = '    fn pushScope(self: *Context) !void {\n'
-          helper = '''    fn seedGlobalBindings(self: *Context) !void {
-              self.bindings.clearRetainingCapacity();
-              for (self.graph.semantic.declaration_bindings.items) |relation| {
-                  const declaration = self.graph.declarations.items[@intFromEnum(relation.declaration)];
-                  const binding = self.graph.semantic.bindings.items[@intFromEnum(relation.binding)];
-                  try self.bindings.append(.{
-                      .name = declaration.name,
-                      .id = relation.binding,
-                      .ty = binding.ty,
-                  });
-              }
-          }
-
-          '''
+          p = Path(body)
+          s = p.read_text()
+          marker = d('ICAgIGZuIHB1c2hTY29wZShzZWxmOiAqQ29udGV4dCkgIXZvaWQgewo=')
+          helper = d('ICAgIGZuIHNlZWRHbG9iYWxCaW5kaW5ncyhzZWxmOiAqQ29udGV4dCkgIXZvaWQgewogICAgICAgIHNlbGYuYmluZGluZ3MuY2xlYXJSZXRhaW5pbmdDYXBhY2l0eSgpOwogICAgICAgIGZvciAoc2VsZi5ncmFwaC5zZW1hbnRpYy5kZWNsYXJhdGlvbl9iaW5kaW5ncy5pdGVtcykgfHJlbGF0aW9ufCB7CiAgICAgICAgICAgIGNvbnN0IGRlY2xhcmF0aW9uID0gc2VsZi5ncmFwaC5kZWNsYXJhdGlvbnMuaXRlbXNbQGludEZyb21FbnVtKHJlbGF0aW9uLmRlY2xhcmF0aW9uKV07CiAgICAgICAgICAgIGNvbnN0IGJpbmRpbmcgPSBzZWxmLmdyYXBoLnNlbWFudGljLmJpbmRpbmdzLml0ZW1zW0BpbnRGcm9tRW51bShyZWxhdGlvbi5iaW5kaW5nKV07CiAgICAgICAgICAgIHRyeSBzZWxmLmJpbmRpbmdzLmFwcGVuZCguewogICAgICAgICAgICAgICAgLm5hbWUgPSBkZWNsYXJhdGlvbi5uYW1lLAogICAgICAgICAgICAgICAgLmlkID0gcmVsYXRpb24uYmluZGluZywKICAgICAgICAgICAgICAgIC50eSA9IGJpbmRpbmcudHksCiAgICAgICAgICAgIH0pOwogICAgICAgIH0KICAgIH0KCg==')
           assert s.count(marker) == 1
           s = s.replace(marker, helper + marker, 1)
           p.write_text(s)
 
-          p = Path('src/4_semantics/module/initializer_lowerer.zig')
-          s = p.read_text()
-          old = 'const graph_mod = @import("graph.zig");\n'
-          new = 'const graph_mod = @import("graph.zig");\nconst body_lowerer = @import("body_lowerer.zig");\n'
-          assert s.count(old) == 1, s.count(old)
-          s = s.replace(old, new, 1)
-
-          old = '''            const value = try self.lowerExpr(value_node, expected);
-              self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].initialization = value.node;
-              if (self.isAny(expected) and !self.isAny(value.ty))
-                  self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].ty = value.ty;
-              try self.writer.addRoot(value.node);
-'''
-          new = '''            const value = try body_lowerer.lowerInitializerExpression(
-                  self.allocator,
-                  self.graph,
-                  self.files,
-                  self.file_index,
-                  value_node,
-                  expected,
-              );
-              self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].initialization = value.node;
-              if (self.isAny(expected)) {
-                  if (value.ty) |value_ty| {
-                      if (!self.isAny(value_ty))
-                          self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].ty = value_ty;
-                  }
-              }
-              try self.writer.addRoot(value.node);
-'''
-          assert s.count(old) == 1, s.count(old)
-          s = s.replace(old, new, 1)
-          p.write_text(s)
+          replace(init,
+              'Y29uc3QgZ3JhcGhfbW9kID0gQGltcG9ydCgiZ3JhcGguemlnIik7Cg==',
+              'Y29uc3QgZ3JhcGhfbW9kID0gQGltcG9ydCgiZ3JhcGguemlnIik7CmNvbnN0IGJvZHlfbG93ZXJlciA9IEBpbXBvcnQoImJvZHlfbG93ZXJlci56aWciKTsK')
+          replace(init,
+              'ICAgICAgICAgICAgY29uc3QgdmFsdWUgPSB0cnkgc2VsZi5sb3dlckV4cHIodmFsdWVfbm9kZSwgZXhwZWN0ZWQpOwogICAgICAgICAgICBzZWxmLmdyYXBoLnNlbWFudGljLmJpbmRpbmdzLml0ZW1zW0BpbnRGcm9tRW51bShyZWxhdGlvbi5iaW5kaW5nKV0uaW5pdGlhbGl6YXRpb24gPSB2YWx1ZS5ub2RlOwogICAgICAgICAgICBpZiAoc2VsZi5pc0FueShleHBlY3RlZCkgYW5kICFzZWxmLmlzQW55KHZhbHVlLnR5KSkKICAgICAgICAgICAgICAgIHNlbGYuZ3JhcGguc2VtYW50aWMuYmluZGluZ3MuaXRlbXNbQGludEZyb21FbnVtKHJlbGF0aW9uLmJpbmRpbmcpXS50eSA9IHZhbHVlLnR5OwogICAgICAgICAgICB0cnkgc2VsZi53cml0ZXIuYWRkUm9vdCh2YWx1ZS5ub2RlKTsK',
+              'ICAgICAgICAgICAgY29uc3QgdmFsdWUgPSB0cnkgYm9keV9sb3dlcmVyLmxvd2VySW5pdGlhbGl6ZXJFeHByZXNzaW9uKAogICAgICAgICAgICAgICAgc2VsZi5hbGxvY2F0b3IsCiAgICAgICAgICAgICAgICBzZWxmLmdyYXBoLAogICAgICAgICAgICAgICAgc2VsZi5maWxlcywKICAgICAgICAgICAgICAgIHNlbGYuZmlsZV9pbmRleCwKICAgICAgICAgICAgICAgIHZhbHVlX25vZGUsCiAgICAgICAgICAgICAgICBleHBlY3RlZCwKICAgICAgICAgICAgKTsKICAgICAgICAgICAgc2VsZi5ncmFwaC5zZW1hbnRpYy5iaW5kaW5ncy5pdGVtc1tAaW50RnJvbUVudW0ocmVsYXRpb24uYmluZGluZyldLmluaXRpYWxpemF0aW9uID0gdmFsdWUubm9kZTsKICAgICAgICAgICAgaWYgKHNlbGYuaXNBbnkoZXhwZWN0ZWQpKSB7CiAgICAgICAgICAgICAgICBpZiAodmFsdWUudHkpIHx2YWx1ZV90eXwgewogICAgICAgICAgICAgICAgICAgIGlmICghc2VsZi5pc0FueSh2YWx1ZV90eSkpCiAgICAgICAgICAgICAgICAgICAgICAgIHNlbGYuZ3JhcGguc2VtYW50aWMuYmluZGluZ3MuaXRlbXNbQGludEZyb21FbnVtKHJlbGF0aW9uLmJpbmRpbmcpXS50eSA9IHZhbHVlX3R5OwogICAgICAgICAgICAgICAgfQogICAgICAgICAgICB9CiAgICAgICAgICAgIHRyeSBzZWxmLndyaXRlci5hZGRSb290KHZhbHVlLm5vZGUpOwo=')
           PY
-          git checkout HEAD -- .github/workflows/compact-semantic-graph.yml
-
-      - name: Verify shared global initializer path
-        run: |
-          grep -n "lowerInitializerExpression" src/4_semantics/module/body_lowerer.zig src/4_semantics/module/initializer_lowerer.zig
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
