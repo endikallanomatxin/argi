@@ -82,8 +82,11 @@ pub const Resolver = struct {
         var found: ?global_sg.GlobalTypeId = null;
         for (self.graph.types.items, 0..) |item, raw| switch (item) {
             .builtin => |builtin| if (std.mem.eql(u8, name, @tagName(builtin))) {
-                if (found != null) return false;
-                found = @enumFromInt(@as(u32, @intCast(raw)));
+                // Globalization preserves module-local type identities, so the
+                // same language builtin can legitimately occupy several global
+                // slots. Those slots are semantically identical and must not be
+                // mistaken for an ambiguous source-level type declaration.
+                if (found == null) found = @enumFromInt(@as(u32, @intCast(raw)));
             },
             else => {},
         };
@@ -160,6 +163,33 @@ test "expression resolver preserves global binding reads and assignments" {
     try std.testing.expect((try resolver.tryResolve(0, &app, offsets[0], assignment)).?);
     try std.testing.expectEqual(@as(global_sg.GlobalBindingId, @enumFromInt(0)), graph.nodes.items[0].content.assignment.binding);
     try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(1)), graph.nodes.items[0].content.assignment.value);
+}
+
+test "expression resolver accepts duplicated global builtin storage" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "app") };
+    defer module.deinit(allocator);
+
+    try module.strings.appendSlice(allocator, "UIntNative");
+    const name: module_sg.StringRange = .{ .start = 0, .len = 10 };
+    try graph.types.append(allocator, .{ .builtin = .UIntNative });
+    try graph.types.append(allocator, .{ .builtin = .UIntNative });
+    try graph.types.append(allocator, .{ .builtin = .Type });
+    try graph.types.append(allocator, .{ .builtin = .Type });
+    try graph.nodes.append(allocator, .{ .source = .{ .file_index = 0, .offset = 3 }, .ty = null, .content = .{ .bool_literal = false } });
+
+    const offsets = [_]globalizer.Offsets{emptyOffsets(0, 0)};
+    var resolver: Resolver = .{ .graph = &graph, .modules = &.{module}, .offsets = &offsets };
+    const operation = module_entities.PendingOperation{ .resolve_name_use = .{
+        .node = @enumFromInt(0),
+        .name = name,
+    } };
+
+    try std.testing.expect((try resolver.tryResolve(0, &module, offsets[0], operation)).?);
+    try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(0)), graph.nodes.items[0].content.type_literal);
+    try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(3)), graph.nodes.items[0].ty.?);
 }
 
 fn emptyOffsets(binding_base: u32, node_base: u32) globalizer.Offsets {
