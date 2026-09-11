@@ -93,10 +93,16 @@ pub fn build(b: *std.Build) void {
     });
     const run_internal_tests = b.addRunArtifact(internal_tests);
 
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_exe_tests.step);
-    test_step.dependOn(&run_internal_tests.step);
-    test_step.dependOn(b.getInstallStep());
+    const internal_test_step = b.step("test-internal", "Run compiler unit tests");
+    internal_test_step.dependOn(&run_internal_tests.step);
+
+    const program_test_step = b.step("test-programs", "Run Argi program tests");
+    program_test_step.dependOn(&run_exe_tests.step);
+    program_test_step.dependOn(b.getInstallStep());
+
+    const test_step = b.step("test", "Run all tests");
+    test_step.dependOn(internal_test_step);
+    test_step.dependOn(program_test_step);
 }
 
 fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, []const u8 } {
