@@ -45,23 +45,15 @@ jobs:
           assert s.count(old) == 1
           p.write_text(s.replace(old, new, 1))
 
-          p = Path("src/4_semantics/global/verify.zig")
+          p = Path("src/4_semantics/global/abstracts.zig")
           s = p.read_text()
-          replacements = {
-              '    for (graph.virtual_registries.items) |value| try payload.virtualRegistry(graph_mod.Ids, value, bounds);': '''    for (graph.virtual_registries.items, 0..) |value, index| { payload.virtualRegistry(graph_mod.Ids, value, bounds) catch |err| { std.debug.print("GVFAIL virtual_registry {d} impl_start={d} impl_len={d} function_refs={d}\\n", .{ index, value.implementations.start, value.implementations.len, bounds.function_refs }); return err; }; }''',
-              '    for (graph.virtualizes.items) |value| try payload.virtualize(graph_mod.Ids, value, bounds);': '''    for (graph.virtualizes.items, 0..) |value, index| { payload.virtualize(graph_mod.Ids, value, bounds) catch |err| { std.debug.print("GVFAIL virtualize {d}\\n", .{index}); return err; }; }''',
-              '    for (graph.virtual_calls.items) |value| try payload.virtualCall(graph_mod.Ids, value, bounds);': '''    for (graph.virtual_calls.items, 0..) |value, index| { payload.virtualCall(graph_mod.Ids, value, bounds) catch |err| { std.debug.print("GVFAIL virtual_call {d}\\n", .{index}); return err; }; }''',
-              '    for (graph.reach_alternatives.items) |value| try payload.reachAlternative(graph_mod.Ids, value, bounds);': '''    for (graph.reach_alternatives.items, 0..) |value, index| { payload.reachAlternative(graph_mod.Ids, value, bounds) catch |err| { std.debug.print("GVFAIL reach_alternative {d}\\n", .{index}); return err; }; }''',
-              '    for (graph.reaches.items) |value| try payload.reach(graph_mod.Ids, value, bounds);': '''    for (graph.reaches.items, 0..) |value, index| { payload.reach(graph_mod.Ids, value, bounds) catch |err| { std.debug.print("GVFAIL reach {d}\\n", .{index}); return err; }; }''',
-              '    for (graph.nullable_unwraps.items) |value| try payload.nullableUnwrap(graph_mod.Ids, value, bounds);': '''    for (graph.nullable_unwraps.items, 0..) |value, index| { payload.nullableUnwrap(graph_mod.Ids, value, bounds) catch |err| { std.debug.print("GVFAIL nullable_unwrap {d}\\n", .{index}); return err; }; }''',
-              '    for (graph.testing_expect_errors.items) |value| try payload.testingExpectError(graph_mod.Ids, value, bounds);': '''    for (graph.testing_expect_errors.items, 0..) |value, index| { payload.testingExpectError(graph_mod.Ids, value, bounds) catch |err| { std.debug.print("GVFAIL testing_expect_error {d}\\n", .{index}); return err; }; }''',
-              '    for (graph.error_propagations.items) |value| try payload.errorPropagation(graph_mod.Ids, value, bounds);': '''    for (graph.error_propagations.items, 0..) |value, index| { payload.errorPropagation(graph_mod.Ids, value, bounds) catch |err| { std.debug.print("GVFAIL error_propagation {d} cleanup_start={d} cleanup_len={d} node_refs={d}\\n", .{ index, value.cleanup_nodes.start, value.cleanup_nodes.len, bounds.node_refs }); return err; }; }''',
-              '    for (graph.error_contexts.items) |value| try payload.errorContext(graph_mod.Ids, value, bounds);': '''    for (graph.error_contexts.items, 0..) |value, index| { payload.errorContext(graph_mod.Ids, value, bounds) catch |err| { std.debug.print("GVFAIL error_context {d} cleanup_start={d} cleanup_len={d} node_refs={d}\\n", .{ index, value.cleanup_nodes.start, value.cleanup_nodes.len, bounds.node_refs }); return err; }; }''',
-          }
-          for old, new in replacements.items():
-              assert s.count(old) == 1, old
-              s = s.replace(old, new, 1)
-          p.write_text(s)
+          old = '''        const registry_start: u32 = @intCast(self.graph.virtual_registries.items.len);\n        for (methods.items, 0..) |_, index| try self.graph.virtual_registries.append(self.allocator, .{\n            .implementations = .{ .start = method_start + @as(u32, @intCast(index)), .len = 1 },\n        });\n        const virtual_ty = try self.generics.internType(.{ .virtual = abstract_ty });'''
+          new = '''        // Virtualize.safety_methods is a range into virtual_registry_refs, not\n        // directly into virtual_registries. Keep the indirection explicit so\n        // later registries can be non-contiguous without corrupting the range.\n        const safety_start: u32 = @intCast(self.graph.virtual_registry_refs.items.len);\n        for (methods.items, 0..) |_, index| {\n            const registry: global_sg.GlobalVirtualRegistryId = @enumFromInt(@as(u32, @intCast(self.graph.virtual_registries.items.len)));\n            try self.graph.virtual_registries.append(self.allocator, .{\n                .implementations = .{ .start = method_start + @as(u32, @intCast(index)), .len = 1 },\n            });\n            try self.graph.virtual_registry_refs.append(self.allocator, registry);\n        }\n        const virtual_ty = try self.generics.internType(.{ .virtual = abstract_ty });'''
+          old_range = '''            .safety_methods = .{ .start = registry_start, .len = @intCast(methods.items.len) },'''
+          new_range = '''            .safety_methods = .{ .start = safety_start, .len = @intCast(methods.items.len) },'''
+          assert s.count(old) == 1
+          assert s.count(old_range) == 1
+          p.write_text(s.replace(old, new, 1).replace(old_range, new_range, 1))
           PY
 
       - name: Install Zig
@@ -84,3 +76,7 @@ jobs:
       - name: Run internal tests
         timeout-minutes: 5
         run: zig build test-internal
+
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
