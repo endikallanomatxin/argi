@@ -18,7 +18,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Move callable syntax conversion into module sema
+      - name: Seal syntax boundary before global sema
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -79,6 +79,17 @@ jobs:
 
           replace('src/4_semantics/global/abstracts.zig', 'const syn = @import("../../3_syntax/syntax_tree.zig");\n', '')
 
+          old_validate = Path('src/4_semantics/global/test_validate.zig')
+          new_validate = Path('src/4_semantics/module/test_validate.zig')
+          assert old_validate.exists() and not new_validate.exists()
+          old_validate.rename(new_validate)
+          replace('src/0_commands/frontend_pipeline.zig',
+              'const global_test_validate = @import("../4_semantics/global/test_validate.zig");',
+              'const module_test_validate = @import("../4_semantics/module/test_validate.zig");')
+          replace('src/0_commands/frontend_pipeline.zig',
+              'try global_test_validate.validate(',
+              'try module_test_validate.validate(')
+
           violations = []
           for directory in [Path('src/4_semantics/primitives'), Path('src/4_semantics/global')]:
               for path in directory.glob('*.zig'):
@@ -114,6 +125,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/primitives/callable.zig src/4_semantics/module/semantizer.zig src/4_semantics/global/abstracts.zig
+          git add -A src/4_semantics/primitives/callable.zig src/4_semantics/module/semantizer.zig src/4_semantics/global/abstracts.zig src/4_semantics/global/test_validate.zig src/4_semantics/module/test_validate.zig src/0_commands/frontend_pipeline.zig
           git commit -m "Seal syntax boundary before global sema"
           git push origin HEAD:compact-semantic-graph-chatgpt
