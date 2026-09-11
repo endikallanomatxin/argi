@@ -915,7 +915,7 @@ pub const Resolver = struct {
                 .index => self.resolveIndex(operands.items, value.source, false),
                 .index_store => self.resolveIndex(operands.items, value.source, true),
                 .field_access => if (value.name) |name| self.resolveField(operands.items[0], name, value.source) else error.InvalidParameterizedFieldAccess,
-                .choice_payload => if (value.name) |name| self.resolveField(operands.items[0], name, value.source) else error.InvalidParameterizedChoicePayload,
+                .choice_payload => if (value.name) |name| self.resolveChoicePayload(operands.items[0], name, value.source) else error.InvalidParameterizedChoicePayload,
                 .return_statement => self.resolveReturn(operands.items, value.source),
                 .if_statement => self.resolveIf(operands.items, value.source),
                 .while_statement => self.resolveWhile(operands.items, value.source),
@@ -1044,7 +1044,7 @@ pub const Resolver = struct {
             };
             if (input_literal) |literal| if (literal.fields.len == 0) {
                 if (try self.resolveEmptyTypeInitializer(name, source)) |node| return node;
-            };
+            }
             const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = module_path, .name = name_range, .source = source };
             const function = if (arguments.len != 0)
                 try self.resolver.resolveExplicitGenericFunction(self.module_index, module, reference, arguments, input)
@@ -1176,6 +1176,23 @@ pub const Resolver = struct {
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = hit.field.ty,
                 .content = .{ .struct_field_access = .{ .value = value, .field_name = try self.copyString(field_name), .field_index = hit.index } },
+            };
+        }
+
+        fn resolveChoicePayload(self: *InstanceContext, value: global_sg.GlobalNodeId, variant_name: primitives.StringRange, source: primitives.SourceRef) !global_sg.Node {
+            const choice_ty = self.resolver.graph.nodes.items[@intFromEnum(value)].ty orelse return error.ParameterizedChoicePayloadOnUntypedValue;
+            _ = try self.resolver.generics.ensureGenericInstance(choice_ty);
+            const name = self.resolver.modules[self.module_index].text(variant_name);
+            const hit = global_types.findVariant(self.resolver.graph, choice_ty, name) orelse return error.UnknownParameterizedChoiceVariant;
+            const payload_ty = hit.variant.payload_type orelse return error.ParameterizedChoiceVariantWithoutPayload;
+            return .{
+                .source = self.resolver.sourceFor(self.module_index, source),
+                .ty = payload_ty,
+                .content = .{ .choice_payload_access = .{
+                    .value = value,
+                    .variant = hit.id,
+                    .payload_type = payload_ty,
+                } },
             };
         }
 
