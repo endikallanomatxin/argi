@@ -170,6 +170,14 @@ pub const PendingExpressionKind = enum(u8) {
     other,
 };
 
+pub const PendingExpressionDetail = union(enum(u8)) {
+    none,
+    binary: primitives.BinaryOperator,
+    comparison: primitives.ComparisonOperator,
+    logical: primitives.LogicalOperator,
+    pointer_mutability: primitives.PointerMutability,
+};
+
 pub const PendingExpression = struct {
     kind: PendingExpressionKind,
     operands: primitives.Range(ParameterizedNodeId) = .{ .start = 0, .len = 0 },
@@ -179,7 +187,7 @@ pub const PendingExpression = struct {
     expected_type: ?ParameterizedTypeId = null,
     match_cases: primitives.Range(ParameterizedMatchCaseId) = .{ .start = 0, .len = 0 },
     source: primitives.SourceRef,
-    aux: u32 = 0,
+    detail: PendingExpressionDetail = .none,
 };
 
 pub const MatchCase = struct {
