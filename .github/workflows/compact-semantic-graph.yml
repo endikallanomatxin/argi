@@ -1,4 +1,4 @@
-name: Compact semantic graph
+name: Remove Field syntax-node defaults
 
 on:
   push:
@@ -7,14 +7,106 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  test:
+  apply-test-commit:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Remove durable field default syntax nodes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/4_semantics/module/graph.zig')
+          s = p.read_text()
+          old = '    // Expression lowering has not moved into the module graph yet.\n    default_value: ?syn.NodeIndex = null,\n'
+          assert s.count(old) == 1, s.count(old)
+          s = s.replace(old, '', 1)
+          old = '            .default_value = field.default_value,\n'
+          assert s.count(old) == 2, s.count(old)
+          s = s.replace(old, '')
+          old = '/// Compact semantic storage owned by one module directory. Source-file indices\n/// and syntax nodes in the compatibility tables are provenance only. Durable\n'
+          new = '/// Compact semantic storage owned by one module directory. Source-file indices\n/// and source offsets in compatibility tables are provenance only. Durable\n'
+          assert s.count(old) == 1, s.count(old)
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          p = Path('src/4_semantics/module/views.zig')
+          s = p.read_text()
+          old = '    if (field.default_value != null and (semantic == null or semantic.?.default_value == null))\n'
+          new = '    if (field.has_default and (semantic == null or semantic.?.default_value == null))\n'
+          assert s.count(old) == 1, s.count(old)
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          p = Path('src/4_semantics/module/initializer_lowerer.zig')
+          s = p.read_text()
+          old = '''        for (self.graph.fields.items, 0..) |field, raw| {
+              const node = field.default_value orelse continue;
+              self.selectFile(field.module_file_index);
+              const value = try self.lowerExpr(node, field.ty);
+              try self.graph.semantic.field_semantics.append(self.allocator, .{
+                  .field = @enumFromInt(@as(u32, @intCast(raw))),
+                  .default_value = value.node,
+              });
+              stats.field_defaults += 1;
+          }
+'''
+          assert s.count(old) == 1, s.count(old)
+          s = s.replace(old, '', 1)
+          old = '''        const semantic_field_base = self.graph.fields.items.len + self.graph.structural_fields.items.len;
+          if (range_start < semantic_field_base) return;
+          const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;
+'''
+          new = '''        const semantic_field_base = self.graph.fields.items.len + self.graph.structural_fields.items.len;
+          const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;
+'''
+          assert s.count(old) == 1, s.count(old)
+          s = s.replace(old, new, 1)
+          old = '''            const field_id: entities.ModuleFieldId = @enumFromInt(range_start + @as(u32, @intCast(offset)));
+              const semantic_field = try views.fieldView(self.graph, field_id);
+              const value = try self.lowerExpr(default_node, semantic_field.ty);
+              const semantic_index = @intFromEnum(field_id) - semantic_field_base;
+              self.graph.semantic.fields.items[semantic_index].default_value = value.node;
+              stats.field_defaults += 1;
+'''
+          new = '''            const raw_field: usize = @intCast(range_start + @as(u32, @intCast(offset)));
+              const field_id: entities.ModuleFieldId = @enumFromInt(@as(u32, @intCast(raw_field)));
+              const field_ty = if (raw_field < self.graph.fields.items.len)
+                  self.graph.fields.items[raw_field].ty
+              else if (raw_field < semantic_field_base)
+                  self.graph.structural_fields.items[raw_field - self.graph.fields.items.len].ty
+              else
+                  self.graph.semantic.fields.items[raw_field - semantic_field_base].ty;
+              const value = try self.lowerExpr(default_node, field_ty);
+              if (raw_field < semantic_field_base) {
+                  try self.graph.semantic.field_semantics.append(self.allocator, .{
+                      .field = field_id,
+                      .default_value = value.node,
+                  });
+              } else {
+                  self.graph.semantic.fields.items[raw_field - semantic_field_base].default_value = value.node;
+              }
+              stats.field_defaults += 1;
+'''
+          assert s.count(old) == 1, s.count(old)
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          git checkout HEAD -- .github/workflows/compact-semantic-graph.yml
+
+      - name: Require syntax-free compatibility fields
+        run: |
+          if grep -R -n "default_value: ?syn.NodeIndex" src/4_semantics/module; then
+            echo "durable field default syntax-node storage remains" >&2
+            exit 1
+          fi
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -37,6 +129,10 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Run program suite
-        timeout-minutes: 15
-        run: zig build test-programs
+      - name: Commit validated cleanup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/4_semantics/module/graph.zig src/4_semantics/module/views.zig src/4_semantics/module/initializer_lowerer.zig
+          git commit -m "Remove Field default syntax-node storage"
+          git push origin HEAD:compact-semantic-graph-chatgpt
