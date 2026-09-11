@@ -35,6 +35,10 @@ jobs:
       - name: Build compiler
         run: zig build
 
-      - name: Run test suite
+      - name: Run internal tests
+        timeout-minutes: 5
+        run: zig build test-internal
+
+      - name: Run program suite
         timeout-minutes: 15
-        run: zig build test
+        run: zig build test-programs
