@@ -36,7 +36,7 @@ jobs:
           removals = {
               'src/4_semantics/module/parameterized/verify.zig': ('        .syntax_node = @enumFromInt(1),\n', 1),
               'src/4_semantics/global/expressions.zig': (' .syntax_node = @enumFromInt(0)', 2),
-              'src/4_semantics/semantic_representation_test.zig': ('        .syntax_node = @enumFromInt(0),\n', 1),
+              'src/4_semantics/semantic_representation_test.zig': ('        .syntax_node = @enumFromInt(0),\n', 3),
           }
           for path, (old, expected) in removals.items():
               p = Path(path)
