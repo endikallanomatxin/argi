@@ -1,4 +1,4 @@
-name: Decouple semantic operators
+name: Compact semantic graph
 
 on:
   push:
@@ -7,62 +7,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-test-commit:
+  test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Move durable operators into semantic primitives
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          def replace(path, old, new, expected=1):
-              p = Path(path)
-              s = p.read_text()
-              count = s.count(old)
-              assert count == expected, f"{path}: expected {expected}, got {count}: {old!r}"
-              p.write_text(s.replace(old, new, expected))
-
-          replace('src/4_semantics/primitives/schema.zig', 'const tok = @import("../../2_tokens/token.zig");\n', '')
-          replace('src/4_semantics/primitives/schema.zig',
-              'pub const MatchCaseMode = enum(u8) { value, borrow, mut_borrow, move };\n',
-              'pub const MatchCaseMode = enum(u8) { value, borrow, mut_borrow, move };\n'
-              'pub const BinaryOperator = enum(u8) { addition, subtraction, multiplication, division, modulo };\n'
-              'pub const ComparisonOperator = enum(u8) { equal, not_equal, less_than, greater_than, less_than_or_equal, greater_than_or_equal };\n')
-          replace('src/4_semantics/primitives/schema.zig', 'operator: tok.BinaryOperator', 'operator: BinaryOperator')
-          replace('src/4_semantics/primitives/schema.zig', 'operator: tok.ComparisonOperator', 'operator: ComparisonOperator')
-
-          replace('src/4_semantics/module/entities.zig', 'const tok = @import("../../2_tokens/token.zig");\n', '')
-          replace('src/4_semantics/module/entities.zig', 'operator: tok.BinaryOperator,', 'operator: primitives.BinaryOperator,')
-          replace('src/4_semantics/module/entities.zig', 'operator: tok.ComparisonOperator,', 'operator: primitives.ComparisonOperator,')
-          replace('src/4_semantics/module/entities.zig', 'try std.testing.expectEqual(tok.BinaryOperator.addition, pending.resolve_binary.operator);', 'try std.testing.expectEqual(primitives.BinaryOperator.addition, pending.resolve_binary.operator);')
-
-          replace('src/4_semantics/module/body_lowerer.zig', 'const tok = @import("../../2_tokens/token.zig");\n', '')
-          replace('src/4_semantics/module/body_lowerer.zig', 'const operator: tok.BinaryOperator = switch', 'const operator: primitives.BinaryOperator = switch')
-          replace('src/4_semantics/module/body_lowerer.zig', 'const operator: tok.ComparisonOperator = switch', 'const operator: primitives.ComparisonOperator = switch')
-
-          replace('src/4_semantics/global/generic_functions.zig', 'const tok = @import("../../2_tokens/token.zig");\n', '')
-          replace('src/4_semantics/global/generic_functions.zig', 'const operator: tok.BinaryOperator = switch', 'const operator: primitives.BinaryOperator = switch')
-          replace('src/4_semantics/global/generic_functions.zig', 'const operator: tok.ComparisonOperator = switch', 'const operator: primitives.ComparisonOperator = switch')
-
-          occurrences = []
-          for path in Path('src/4_semantics').rglob('*.zig'):
-              for line_no, line in enumerate(path.read_text().splitlines(), 1):
-                  if 'tok.BinaryOperator' in line or 'tok.ComparisonOperator' in line:
-                      occurrences.append((str(path), line_no, line.strip()))
-          assert not occurrences, occurrences
-
-          for path in [Path('src/4_semantics/primitives/schema.zig'), Path('src/4_semantics/module/entities.zig')]:
-              assert '2_tokens/token.zig' not in path.read_text(), path
-          print('semantic operator schemas no longer depend on token enums')
-          PY
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -85,10 +37,6 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Commit validated boundary
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/primitives/schema.zig src/4_semantics/module/entities.zig src/4_semantics/module/body_lowerer.zig src/4_semantics/global/generic_functions.zig
-          git commit -m "Decouple semantic operators from token schema"
-          git push origin HEAD:compact-semantic-graph-chatgpt
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
