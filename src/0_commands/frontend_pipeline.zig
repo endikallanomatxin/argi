@@ -11,6 +11,7 @@ const module_sg = @import("../4_semantics/module/graph.zig");
 const module_semantizer = @import("../4_semantics/module/semantizer.zig");
 const global_sg = @import("../4_semantics/global/graph.zig");
 const global_semantizer = @import("../4_semantics/global/semantizer.zig");
+const global_once_verify = @import("../4_semantics/global/once_verify.zig");
 const global_safety_checker = @import("../4_semantics/safety/checker.zig");
 
 pub const FrontendPipeline = struct {
@@ -220,6 +221,12 @@ pub const FrontendPipeline = struct {
         const result = try global_semantizer.semantize(self.allocator, self.module_graphs.items);
         self.global_graph = result.graph;
         self.global_stats = result.stats;
+        try global_once_verify.verify(
+            self.allocator,
+            &self.global_graph.?,
+            self.diagnostics,
+            self.options.semantizer.selected_test_name,
+        );
         self.global_semantic_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - global_start);
     }
 
