@@ -274,7 +274,14 @@ const Context = struct {
                 self.graph.structural_fields.items[raw_field - self.graph.fields.items.len].ty
             else
                 self.graph.semantic.fields.items[raw_field - semantic_field_base].ty;
-            const value = try self.lowerExpr(default_node, field_ty);
+            const value = try body_lowerer.lowerInitializerExpression(
+                self.allocator,
+                self.graph,
+                self.files,
+                self.file_index,
+                default_node,
+                field_ty,
+            );
             if (raw_field < semantic_field_base) {
                 try self.graph.semantic.field_semantics.append(self.allocator, .{
                     .field = field_id,
