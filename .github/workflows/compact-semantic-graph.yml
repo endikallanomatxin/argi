@@ -103,6 +103,14 @@ jobs:
           assert s.count(old) == 1, s.count(old)
           s = s.replace(old, new, 1)
           p.write_text(s)
+
+          p = Path('src/4_semantics/module/graph_test.zig')
+          s = p.read_text()
+          old = '    try std.testing.expect(number.default_value != null);\n'
+          new = '    try std.testing.expectEqual(@as(u32, @intCast(std.mem.indexOf(u8, source, "number").?)), number.source_offset);\n'
+          assert s.count(old) == 1, s.count(old)
+          s = s.replace(old, new, 1)
+          p.write_text(s)
           PY
           git checkout HEAD -- .github/workflows/compact-semantic-graph.yml
 
@@ -138,6 +146,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/module/graph.zig src/4_semantics/module/views.zig src/4_semantics/module/initializer_lowerer.zig
+          git add src/4_semantics/module/graph.zig src/4_semantics/module/views.zig src/4_semantics/module/initializer_lowerer.zig src/4_semantics/module/graph_test.zig
           git commit -m "Remove Field default syntax-node storage"
           git push origin HEAD:compact-semantic-graph-chatgpt
