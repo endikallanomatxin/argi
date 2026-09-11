@@ -1,4 +1,4 @@
-name: Seal syntax semantic boundary
+name: Compact semantic graph
 
 on:
   push:
@@ -7,105 +7,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-test-commit:
+  test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Seal syntax boundary before global sema
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          def replace(path, old, new, expected=1):
-              p = Path(path)
-              s = p.read_text()
-              count = s.count(old)
-              assert count == expected, f"{path}: expected {expected}, got {count}: {old!r}"
-              p.write_text(s.replace(old, new, expected))
-
-          callable_path = 'src/4_semantics/primitives/callable.zig'
-          replace(callable_path, 'const syn = @import("../../3_syntax/syntax_tree.zig");\n', '')
-          replace(callable_path,
-              'pub fn fromSyntax(value: syn.OperatorName) OperatorKind {\n'
-              '    return switch (value) {\n'
-              '        .add => .add,\n'
-              '        .equal => .equal,\n'
-              '        .not_equal => .not_equal,\n'
-              '        .get => .get,\n'
-              '        .set => .set,\n'
-              '        .get_ro_pointer => .get_ro_pointer,\n'
-              '        .get_rw_pointer => .get_rw_pointer,\n'
-              '    };\n'
-              '}\n\n', '')
-          replace(callable_path,
-              'test "callable operator identity is compact and syntax-independent at use sites" {\n'
-              '    try std.testing.expectEqual(@as(usize, 1), @sizeOf(OperatorKind));\n'
-              '    try std.testing.expectEqual(OperatorKind.get, fromSyntax(.get));\n'
-              '}\n',
-              'test "callable operator identity is compact" {\n'
-              '    try std.testing.expectEqual(@as(usize, 1), @sizeOf(OperatorKind));\n'
-              '}\n')
-
-          graph = 'src/4_semantics/module/graph.zig'
-          replace(graph,
-              'const primitives = @import("../primitives/schema.zig");\n',
-              'const primitives = @import("../primitives/schema.zig");\nconst callable = @import("../primitives/callable.zig");\n')
-          p = Path(graph)
-          s = p.read_text()
-          marker = 'pub fn pointerMutabilityFromSyntax(value: syn.PointerMutability) primitives.PointerMutability {\n'
-          helper = (
-              'pub fn operatorKindFromSyntax(value: syn.OperatorName) callable.OperatorKind {\n'
-              '    return switch (value) {\n'
-              '        .add => .add,\n'
-              '        .equal => .equal,\n'
-              '        .not_equal => .not_equal,\n'
-              '        .get => .get,\n'
-              '        .set => .set,\n'
-              '        .get_ro_pointer => .get_ro_pointer,\n'
-              '        .get_rw_pointer => .get_rw_pointer,\n'
-              '    };\n'
-              '}\n\n'
-          )
-          assert s.count(marker) == 1, s.count(marker)
-          p.write_text(s.replace(marker, helper + marker, 1))
-
-          replace('src/4_semantics/module/semantizer.zig',
-              '.operator => |value| callable.fromSyntax(value),',
-              '.operator => |value| module_sg.operatorKindFromSyntax(value),')
-          replace('src/4_semantics/module/generic_operator_lowerer.zig',
-              '.operator => |value| callable.fromSyntax(value),',
-              '.operator => |value| graph_mod.operatorKindFromSyntax(value),')
-
-          replace('src/4_semantics/global/abstracts.zig', 'const syn = @import("../../3_syntax/syntax_tree.zig");\n', '')
-
-          old_validate = Path('src/4_semantics/global/test_validate.zig')
-          new_validate = Path('src/4_semantics/module/test_validate.zig')
-          assert old_validate.exists() and not new_validate.exists()
-          old_validate.rename(new_validate)
-          replace('src/0_commands/frontend_pipeline.zig',
-              'const global_test_validate = @import("../4_semantics/global/test_validate.zig");',
-              'const module_test_validate = @import("../4_semantics/module/test_validate.zig");')
-          replace('src/0_commands/frontend_pipeline.zig',
-              'try global_test_validate.validate(',
-              'try module_test_validate.validate(')
-
-          violations = []
-          for directory in [Path('src/4_semantics/primitives'), Path('src/4_semantics/global')]:
-              for path in directory.glob('*.zig'):
-                  for line_no, line in enumerate(path.read_text().splitlines(), 1):
-                      if '3_syntax' in line or 'syntax_tree.zig' in line:
-                          violations.append((str(path), line_no, line.strip()))
-          assert not violations, violations
-          assert 'fromSyntax' not in Path(callable_path).read_text()
-          print('primitives and global sema are syntax-independent')
-          PY
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -128,10 +37,6 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Commit validated boundary
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A src/4_semantics/primitives/callable.zig src/4_semantics/module/graph.zig src/4_semantics/module/semantizer.zig src/4_semantics/module/generic_operator_lowerer.zig src/4_semantics/global/abstracts.zig src/4_semantics/global/test_validate.zig src/4_semantics/module/test_validate.zig src/0_commands/frontend_pipeline.zig
-          git commit -m "Seal syntax boundary before global sema"
-          git push origin HEAD:compact-semantic-graph-chatgpt
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
