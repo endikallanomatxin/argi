@@ -84,73 +84,82 @@ jobs:
           p.write_text(s.replace(marker, helper + marker, 1))
 
           generic = 'src/4_semantics/global/generic_functions.zig'
-          replace(generic, 'const syn = @import("../../3_syntax/syntax_tree.zig");\n', '')
           replace(generic, '.binary => self.resolveBinary(operands.items, value.source, value.aux),', '.binary => self.resolveBinary(operands.items, value.source, value.detail),')
           replace(generic, '.comparison => self.resolveComparison(operands.items, value.source, value.aux),', '.comparison => self.resolveComparison(operands.items, value.source, value.detail),')
           replace(generic, '.logical => self.resolveLogical(operands.items, value.source, value.aux),', '.logical => self.resolveLogical(operands.items, value.source, value.detail),')
           replace(generic, '.address_of => self.resolveAddress(operands.items, value.source, value.aux),', '.address_of => self.resolveAddress(operands.items, value.source, value.detail),')
 
-          p = Path(generic)
-          s = p.read_text()
-          start = s.index('        fn resolveBinary(')
-          end = s.index('        fn resolveIndex(', start)
-          old = s[start:end]
-          new = (
-              '        fn resolveBinary(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {\n'
-              '            if (operands.len != 2) return error.InvalidParameterizedBinary;\n'
-              '            const operator = switch (detail) { .binary => |value| value, else => return error.InvalidParameterizedBinary };\n'
-              '            const left_ty = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedBinaryUntyped;\n'
-              '            const right_ty = self.resolver.graph.nodes.items[@intFromEnum(operands[1])].ty orelse return error.ParameterizedBinaryUntyped;\n'
-              '            const function = try self.resolver.core.resolveBinaryOperator(self.module_index, operator, left_ty, right_ty);\n'
-              '            const input = try self.resolver.core.makeCallInput(function, operands);\n'
-              '            return .{\n'
-              '                .source = self.resolver.sourceFor(self.module_index, source),\n'
-              '                .ty = try self.resolver.core.functionOutputType(function),\n'
-              '                .content = .{ .function_call = .{ .callee = function, .input = input } },\n'
-              '            };\n'
-              '        }\n\n'
-              '        fn resolveComparison(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {\n'
-              '            if (operands.len != 2) return error.InvalidParameterizedComparison;\n'
-              '            const operator = switch (detail) { .comparison => |value| value, else => return error.InvalidParameterizedComparison };\n'
-              '            const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });\n'
-              '            return .{\n'
-              '                .source = self.resolver.sourceFor(self.module_index, source),\n'
-              '                .ty = bool_ty,\n'
-              '                .content = .{ .comparison = .{ .operator = operator, .left = operands[0], .right = operands[1] } },\n'
-              '            };\n'
-              '        }\n\n'
-              '        fn resolveLogical(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {\n'
-              '            if (operands.len != 2) return error.InvalidParameterizedLogical;\n'
-              '            const operator = switch (detail) { .logical => |value| value, else => return error.InvalidParameterizedLogical };\n'
-              '            const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });\n'
-              '            return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = bool_ty, .content = .{ .logical_operation = .{ .operator = operator, .left = operands[0], .right = operands[1] } } };\n'
-              '        }\n\n'
-          )
-          assert 'syn.Node.Tag' in old, 'expected syntax-tag resolver block'
-          p.write_text(s[:start] + new + s[end:])
+          replace(generic,
+              'fn resolveBinary(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, aux: u32) !global_sg.Node {',
+              'fn resolveBinary(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {')
+          replace(generic,
+              '            const tag: syn.Node.Tag = @enumFromInt(aux);\n'
+              '            const operator: primitives.BinaryOperator = switch (tag) {\n'
+              '                .binary_add => .addition,\n'
+              '                .binary_subtract => .subtraction,\n'
+              '                .binary_multiply => .multiplication,\n'
+              '                .binary_divide => .division,\n'
+              '                .binary_modulo => .modulo,\n'
+              '                else => return error.InvalidParameterizedBinary,\n'
+              '            };\n',
+              '            const operator: primitives.BinaryOperator = switch (detail) {\n'
+              '                .binary => |value| value,\n'
+              '                else => return error.InvalidParameterizedBinary,\n'
+              '            };\n')
 
-          p = Path(generic)
-          s = p.read_text()
-          old_start = s.index('        fn resolveAddress(')
-          old_end = s.index('        fn resolveDereference(', old_start)
-          old = s[old_start:old_end]
-          new = (
-              '        fn resolveAddress(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {\n'
-              '            if (operands.len != 1) return error.InvalidParameterizedAddressOf;\n'
-              '            const child = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedAddressUntyped;\n'
-              '            const mutability = switch (detail) { .pointer_mutability => |value| value, else => return error.InvalidParameterizedAddressOf };\n'
-              '            const pointer = try self.resolver.generics.internType(.{ .pointer = .{ .child = child, .mutability = mutability } });\n'
-              '            return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = pointer, .content = .{ .address_of = operands[0] } };\n'
-              '        }\n\n'
-          )
-          assert 'syn.Node.Tag' in old, 'expected syntax-tag address resolver'
-          p.write_text(s[:old_start] + new + s[old_end:])
+          replace(generic,
+              'fn resolveComparison(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, aux: u32) !global_sg.Node {',
+              'fn resolveComparison(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {')
+          replace(generic,
+              '            const tag: syn.Node.Tag = @enumFromInt(aux);\n'
+              '            const operator: primitives.ComparisonOperator = switch (tag) {\n'
+              '                .compare_equal => .equal,\n'
+              '                .compare_not_equal => .not_equal,\n'
+              '                .compare_less => .less_than,\n'
+              '                .compare_greater => .greater_than,\n'
+              '                .compare_less_equal => .less_than_or_equal,\n'
+              '                .compare_greater_equal => .greater_than_or_equal,\n'
+              '                else => return error.InvalidParameterizedComparison,\n'
+              '            };\n',
+              '            const operator: primitives.ComparisonOperator = switch (detail) {\n'
+              '                .comparison => |value| value,\n'
+              '                else => return error.InvalidParameterizedComparison,\n'
+              '            };\n')
 
-          for path in [Path(ir), Path(generic)]:
+          replace(generic,
+              'fn resolveLogical(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, aux: u32) !global_sg.Node {',
+              'fn resolveLogical(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {')
+          replace(generic,
+              '            const tag: syn.Node.Tag = @enumFromInt(aux);\n'
+              '            const operator: primitives.LogicalOperator = if (tag == .logical_and) .and_ else if (tag == .logical_or) .or_ else return error.InvalidParameterizedLogical;\n',
+              '            const operator: primitives.LogicalOperator = switch (detail) {\n'
+              '                .logical => |value| value,\n'
+              '                else => return error.InvalidParameterizedLogical,\n'
+              '            };\n')
+
+          replace(generic,
+              'fn resolveAddress(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, aux: u32) !global_sg.Node {',
+              'fn resolveAddress(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {')
+          replace(generic,
+              '            const tag: syn.Node.Tag = @enumFromInt(aux);\n'
+              '            const pointer = try self.resolver.generics.internType(.{ .pointer = .{ .child = child, .mutability = if (tag == .address_of_mut) .read_write else .read_only } });\n',
+              '            const mutability: primitives.PointerMutability = switch (detail) {\n'
+              '                .pointer_mutability => |value| value,\n'
+              '                else => return error.InvalidParameterizedAddressOf,\n'
+              '            };\n'
+              '            const pointer = try self.resolver.generics.internType(.{ .pointer = .{ .child = child, .mutability = mutability } });\n')
+
+          replace(generic, 'const syn = @import("../../3_syntax/syntax_tree.zig");\n', '')
+
+          for path in [Path(ir), Path(lowerer), Path(generic)]:
               text = path.read_text()
               assert '.aux' not in text and 'aux:' not in text, path
-          assert '3_syntax' not in Path(generic).read_text(), 'global generic instantiation still imports Syntax'
-          assert 'syn.Node.Tag' not in Path(generic).read_text(), 'global generic instantiation still decodes AST tags'
+          text = Path(generic).read_text()
+          assert '3_syntax' not in text, 'global generic instantiation still imports Syntax'
+          assert 'syn.' not in text, 'global generic instantiation still consumes Syntax types'
+          assert 'resolveParameterizedField' in text, 'unrelated parameterized field resolver was lost'
+          assert 'resolveChoicePayload' in text, 'unrelated choice payload resolver was lost'
+          assert 'resolveMove' in text, 'unrelated move resolver was lost'
           print('parameterized pending detail is semantic and syntax-independent')
           PY
 
