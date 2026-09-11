@@ -99,11 +99,16 @@ jobs:
               'fn pointer(self: *Resolver, child: global_sg.GlobalTypeId, mutability: syn.PointerMutability) !global_sg.GlobalTypeId {',
               'fn pointer(self: *Resolver, child: global_sg.GlobalTypeId, mutability: primitives.PointerMutability) !global_sg.GlobalTypeId {',
           )
+          replace(
+              'src/4_semantics/global/core.zig',
+              'fn pointerType(self: *Resolver, child: global_sg.GlobalTypeId, mutability: @import("../../3_syntax/syntax_tree.zig").PointerMutability) !global_sg.GlobalTypeId {',
+              'fn pointerType(self: *Resolver, child: global_sg.GlobalTypeId, mutability: primitives.PointerMutability) !global_sg.GlobalTypeId {',
+          )
 
           occurrences = []
           for path in Path('src/4_semantics').rglob('*.zig'):
               for line_no, line in enumerate(path.read_text().splitlines(), 1):
-                  if 'syn.PointerMutability' in line:
+                  if 'syn.PointerMutability' in line or ('syntax_tree.zig' in line and 'PointerMutability' in line):
                       occurrences.append((str(path), line_no, line.strip()))
           assert len(occurrences) == 1, occurrences
           assert occurrences[0][0] == 'src/4_semantics/module/graph.zig', occurrences
@@ -137,6 +142,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/primitives/schema.zig src/4_semantics/module/graph.zig src/4_semantics/module/type_lowerer.zig src/4_semantics/module/body_lowerer.zig src/4_semantics/module/initializer_lowerer.zig src/4_semantics/module/parameterized/lowerer.zig src/4_semantics/global/abstracts.zig src/4_semantics/global/control.zig
+          git add src/4_semantics/primitives/schema.zig src/4_semantics/module/graph.zig src/4_semantics/module/type_lowerer.zig src/4_semantics/module/body_lowerer.zig src/4_semantics/module/initializer_lowerer.zig src/4_semantics/module/parameterized/lowerer.zig src/4_semantics/global/abstracts.zig src/4_semantics/global/control.zig src/4_semantics/global/core.zig
           git commit -m "Decouple semantic pointer mutability from syntax"
           git push origin HEAD:compact-semantic-graph-chatgpt
