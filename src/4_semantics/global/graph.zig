@@ -102,6 +102,15 @@ pub const Module = struct {
     declarations: DeclRange,
 };
 
+/// A source alias linked once to semantic module identity. `dir` remains
+/// loader metadata; lookup and dispatch consume `target`, never path strings.
+pub const ModuleAlias = struct {
+    owner: GlobalModuleId,
+    declaration: GlobalDeclId,
+    target: GlobalModuleId,
+    source: primitives.SourceRef,
+};
+
 pub const Symbol = struct {
     name: StringRange,
     declarations: DeclRange,
@@ -129,6 +138,7 @@ const unresolved_type_poison_decl: GlobalDeclId = @enumFromInt(std.math.maxInt(u
 
 pub const GlobalSemanticGraph = struct {
     modules: std.ArrayList(Module) = .empty,
+    module_aliases: std.ArrayList(ModuleAlias) = .empty,
     files: std.ArrayList(File) = .empty,
     declarations: std.ArrayList(Declaration) = .empty,
     symbols: std.ArrayList(Symbol) = .empty,
@@ -174,7 +184,8 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn deinit(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
         inline for (.{
-            &self.modules,               &self.files,                 &self.declarations,               &self.symbols,
+            &self.modules,               &self.module_aliases,        &self.files,                      &self.declarations,
+            &self.symbols,
             &self.symbol_declarations,   &self.types,                 &self.type_resolution,            &self.generic_instances,
             &self.functions,             &self.function_operators,    &self.generic_function_instances, &self.bindings,
             &self.nodes,                 &self.blocks,                &self.fields,                     &self.variants,
@@ -296,6 +307,7 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn storageBytes(self: *const GlobalSemanticGraph) usize {
         return self.modules.items.len * @sizeOf(Module) +
+            self.module_aliases.items.len * @sizeOf(ModuleAlias) +
             self.files.items.len * @sizeOf(File) +
             self.declarations.items.len * @sizeOf(Declaration) +
             self.symbols.items.len * @sizeOf(Symbol) +

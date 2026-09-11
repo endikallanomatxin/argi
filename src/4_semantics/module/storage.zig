@@ -21,6 +21,7 @@ pub const Storage = struct {
 
     declaration_semantics: std.ArrayList(entities.DeclarationSemantic) = .empty,
     declaration_bindings: std.ArrayList(entities.DeclarationBinding) = .empty,
+    module_aliases: std.ArrayList(entities.ModuleAlias) = .empty,
     function_semantics: std.ArrayList(entities.FunctionSemantic) = .empty,
     /// Aligned with ModuleSemanticGraph.functions. `null` is a normal named
     /// function; non-null is the semantic overload operator identity.
@@ -72,6 +73,7 @@ pub const Storage = struct {
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         self.declaration_semantics.deinit(allocator);
         self.declaration_bindings.deinit(allocator);
+        self.module_aliases.deinit(allocator);
         self.function_semantics.deinit(allocator);
         self.function_operators.deinit(allocator);
         self.field_semantics.deinit(allocator);
@@ -116,6 +118,7 @@ pub const Storage = struct {
         return @sizeOf(bool) + @sizeOf(?CompatibilityBases) +
             self.declaration_semantics.items.len * @sizeOf(entities.DeclarationSemantic) +
             self.declaration_bindings.items.len * @sizeOf(entities.DeclarationBinding) +
+            self.module_aliases.items.len * @sizeOf(entities.ModuleAlias) +
             self.function_semantics.items.len * @sizeOf(entities.FunctionSemantic) +
             self.function_operators.items.len * @sizeOf(?callable.OperatorKind) +
             self.field_semantics.items.len * @sizeOf(entities.FieldSemantic) +

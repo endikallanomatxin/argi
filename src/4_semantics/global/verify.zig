@@ -6,6 +6,14 @@ const verify = @import("../semantic_verify.zig");
 pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     const bounds = makeBounds(graph);
     try verifyModulePartitions(graph);
+    for (graph.module_aliases.items) |alias| {
+        try require(verify.idFits(alias.owner, graph.modules.items.len));
+        try require(verify.idFits(alias.target, graph.modules.items.len));
+        try require(verify.idFits(alias.declaration, graph.declarations.items.len));
+        try require(graph.moduleForDeclaration(alias.declaration) == alias.owner);
+        try require(alias.source.file_index < graph.files.items.len);
+        try require(graph.declarations.items[@intFromEnum(alias.declaration)].kind == .import_alias);
+    }
 
     for (graph.declarations.items) |declaration| try payload.declaration(graph_mod.Ids, declaration, bounds);
     try verifySymbols(graph);
