@@ -26,19 +26,7 @@ jobs:
           s = p.read_text()
 
           anchor = '\npub const ModuleSemanticGraphBuilder = struct {'
-          helper = '''
-
-/// Construction-only lookup from durable source provenance back into syntax.
-/// Completed ModuleSG declarations keep source identity, not AST identity.
-pub fn declarationSyntaxNode(files: []const FileInput, declaration: Declaration) ?syn.NodeIndex {
-    if (declaration.module_file_index >= files.len) return null;
-    const tree = files[declaration.module_file_index].tree;
-    for (tree.roots) |node| {
-        if (tree.location(node).offset == declaration.source_offset) return node;
-    }
-    return null;
-}
-'''
+          helper = '\n\n/// Construction-only lookup from durable source provenance back into syntax.\n/// Completed ModuleSG declarations keep source identity, not AST identity.\npub fn declarationSyntaxNode(files: []const FileInput, declaration: Declaration) ?syn.NodeIndex {\n    if (declaration.module_file_index >= files.len) return null;\n    const tree = files[declaration.module_file_index].tree;\n    for (tree.roots) |node| {\n        if (tree.location(node).offset == declaration.source_offset) return node;\n    }\n    return null;\n}\n'
           assert s.count(anchor) == 1
           s = s.replace(anchor, helper + anchor, 1)
 
