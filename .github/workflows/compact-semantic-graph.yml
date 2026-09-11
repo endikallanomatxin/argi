@@ -1,4 +1,4 @@
-name: Compact semantic graph offset trace
+name: Compact semantic graph
 
 on:
   push:
@@ -10,22 +10,35 @@ permissions:
   contents: read
 
 jobs:
-  trace:
+  test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show unresolved source offsets
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Install LLVM 21
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          s = Path("core/system/terminal.rg").read_text()
-          for offset in (5235, 6202):
-              line = s.count("\n", 0, offset) + 1
-              start = s.rfind("\n", 0, offset) + 1
-              end = s.find("\n", offset)
-              if end < 0: end = len(s)
-              print(f"offset={offset} line={line} column={offset-start+1}: {s[start:end]}")
-              print(repr(s[max(0, offset-80):min(len(s), offset+120)]))
-          PY
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+          sudo apt-get install -y llvm-21-dev clang-21
+          zig version
+          llvm-config-21 --version
+
+      - name: Build compiler
+        run: zig build
+
+      - name: Run internal tests
+        timeout-minutes: 5
+        run: zig build test-internal
+
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
