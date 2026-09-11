@@ -1,4 +1,4 @@
-name: Compact semantic graph
+name: Compact semantic graph choice trace
 
 on:
   push:
@@ -16,6 +16,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Trace nested choices
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("src/4_semantics/global/control.zig")
+          s = p.read_text()
+          old = '''        const expected = if (value.expected_type) |id| globalizer.globalType(o, id) else self.graph.nodes.items[@intFromEnum(target)].ty;\n\n        // An explicit contextual type is authoritative.'''
+          new = '''        const expected = if (value.expected_type) |id| globalizer.globalType(o, id) else self.graph.nodes.items[@intFromEnum(target)].ty;\n        if (std.mem.eql(u8, module.module_dir, "core/system") and (reference.source.offset == 5235 or reference.source.offset == 6202)) {\n            std.debug.print("CHOICE source={d} node={d} expected_local={any} expected_global={any} target_ty={any} payload={any}\\n", .{ reference.source.offset, @intFromEnum(value.node), value.expected_type, expected, self.graph.nodes.items[@intFromEnum(target)].ty, payload });\n            if (expected) |expected_ty| {\n                std.debug.print("  expected id={d} tag={s} unresolved={any} variants={any}\\n", .{ @intFromEnum(expected_ty), @tagName(self.graph.types.items[@intFromEnum(expected_ty)]), self.graph.isTypeUnresolved(expected_ty), types.variants(self.graph, expected_ty) });\n                std.debug.print("  expected ok={any}\\n", .{types.findVariant(self.graph, expected_ty, name)});\n            }\n            if (payload) |payload_node| {\n                const payload_record = self.graph.nodes.items[@intFromEnum(payload_node)];\n                std.debug.print("  payload node={d} ty={any} content={s}\\n", .{ @intFromEnum(payload_node), payload_record.ty, @tagName(payload_record.content) });\n            }\n        }\n\n        // An explicit contextual type is authoritative.'''
+          assert s.count(old) == 1, s.count(old)
+          p.write_text(s.replace(old, new, 1))
+          PY
+
       - name: Install Zig
         uses: mlugg/setup-zig@v2
         with:
@@ -29,8 +41,6 @@ jobs:
           chmod +x llvm.sh
           sudo ./llvm.sh 21
           sudo apt-get install -y llvm-21-dev clang-21
-          zig version
-          llvm-config-21 --version
 
       - name: Build compiler
         run: zig build
@@ -38,7 +48,3 @@ jobs:
       - name: Run internal tests
         timeout-minutes: 5
         run: zig build test-internal
-
-      - name: Run program suite
-        timeout-minutes: 15
-        run: zig build test-programs
