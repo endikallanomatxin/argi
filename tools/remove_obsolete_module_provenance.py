@@ -87,4 +87,17 @@ for old, new in replacements:
     s = s.replace(old, new, 1)
 p.write_text(s)
 
+# Internal tests construct FileOffsets directly. They should follow the compact
+# representation too rather than preserving fields that production no longer has.
+fixture = '''        .import_reference_base = 0,\n        .import_reference_count = 0,\n'''
+fixture_count = 0
+for zig in Path("src").rglob("*.zig"):
+    text = zig.read_text()
+    count = text.count(fixture)
+    if count:
+        zig.write_text(text.replace(fixture, ''))
+        fixture_count += count
+if fixture_count < 5:
+    raise RuntimeError(f"expected at least 5 obsolete FileOffsets fixtures, got {fixture_count}")
+
 Path(__file__).unlink()
