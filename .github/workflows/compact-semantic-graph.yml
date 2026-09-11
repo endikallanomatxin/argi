@@ -1,4 +1,4 @@
-name: Decouple semantic pointer mutability
+name: Compact semantic graph
 
 on:
   push:
@@ -7,115 +7,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-test-commit:
+  test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Move pointer mutability into semantic primitives
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          def replace(path, old, new, expected=1):
-              p = Path(path)
-              s = p.read_text()
-              count = s.count(old)
-              assert count == expected, f'{path}: expected {expected}, got {count}: {old!r}'
-              p.write_text(s.replace(old, new, expected))
-
-          replace(
-              'src/4_semantics/primitives/schema.zig',
-              'pub const DeclarationKind = enum {\n',
-              'pub const PointerMutability = enum(u8) { read_only, read_write };\n\npub const DeclarationKind = enum {\n',
-          )
-          replace(
-              'src/4_semantics/primitives/schema.zig',
-              'pointer: struct { child: Ids.TypeId, mutability: syn.PointerMutability },',
-              'pointer: struct { child: Ids.TypeId, mutability: PointerMutability },',
-          )
-          replace(
-              'src/4_semantics/primitives/schema.zig',
-              'self_permission: syn.PointerMutability,',
-              'self_permission: PointerMutability,',
-          )
-
-          replace(
-              'src/4_semantics/module/graph.zig',
-              'pointer: struct { child: ModuleTypeId, mutability: syn.PointerMutability },',
-              'pointer: struct { child: ModuleTypeId, mutability: primitives.PointerMutability },',
-          )
-          marker = 'pub const ModuleSemanticGraphBuilder = struct {\n'
-          helper = '''pub fn pointerMutabilityFromSyntax(value: syn.PointerMutability) primitives.PointerMutability {
-              return switch (value) {
-                  .read_only => .read_only,
-                  .read_write => .read_write,
-              };
-          }
-
-          '''
-          p = Path('src/4_semantics/module/graph.zig')
-          s = p.read_text()
-          assert s.count(marker) == 1
-          s = s.replace(marker, helper + marker, 1)
-          old = '.mutability = pointer.mutability } });'
-          assert s.count(old) == 1, s.count(old)
-          s = s.replace(old, '.mutability = pointerMutabilityFromSyntax(pointer.mutability) } });', 1)
-          p.write_text(s)
-
-          replace(
-              'src/4_semantics/module/type_lowerer.zig',
-              '.mutability = pointer.mutability,',
-              '.mutability = graph_mod.pointerMutabilityFromSyntax(pointer.mutability),',
-          )
-          replace(
-              'src/4_semantics/module/body_lowerer.zig',
-              '.mutability = address.mutability } });',
-              '.mutability = graph_mod.pointerMutabilityFromSyntax(address.mutability) } });',
-          )
-          replace(
-              'src/4_semantics/module/initializer_lowerer.zig',
-              '.mutability = address.mutability } });',
-              '.mutability = graph_mod.pointerMutabilityFromSyntax(address.mutability) } });',
-          )
-          replace(
-              'src/4_semantics/module/parameterized/lowerer.zig',
-              '.mutability = value.mutability } } });',
-              '.mutability = graph_mod.pointerMutabilityFromSyntax(value.mutability) } } });',
-          )
-          replace(
-              'src/4_semantics/global/abstracts.zig',
-              'var permission: syn.PointerMutability = .read_only;',
-              'var permission: primitives.PointerMutability = .read_only;',
-          )
-          replace(
-              'src/4_semantics/global/control.zig',
-              'fn pointer(self: *Resolver, child: global_sg.GlobalTypeId, mutability: syn.PointerMutability) !global_sg.GlobalTypeId {',
-              'fn pointer(self: *Resolver, child: global_sg.GlobalTypeId, mutability: primitives.PointerMutability) !global_sg.GlobalTypeId {',
-          )
-          replace(
-              'src/4_semantics/global/core.zig',
-              'fn pointerType(self: *Resolver, child: global_sg.GlobalTypeId, mutability: @import("../../3_syntax/syntax_tree.zig").PointerMutability) !global_sg.GlobalTypeId {',
-              'fn pointerType(self: *Resolver, child: global_sg.GlobalTypeId, mutability: primitives.PointerMutability) !global_sg.GlobalTypeId {',
-          )
-
-          occurrences = []
-          for path in Path('src/4_semantics').rglob('*.zig'):
-              for line_no, line in enumerate(path.read_text().splitlines(), 1):
-                  if 'syn.PointerMutability' in line or ('syntax_tree.zig' in line and 'PointerMutability' in line):
-                      occurrences.append((str(path), line_no, line.strip()))
-          assert len(occurrences) == 1, occurrences
-          assert occurrences[0][0] == 'src/4_semantics/module/graph.zig', occurrences
-          assert 'pointerMutabilityFromSyntax' in occurrences[0][2], occurrences
-          print('remaining syntax pointer mutability boundary:', occurrences[0])
-          PY
-          git checkout HEAD -- .github/workflows/compact-semantic-graph.yml
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -138,10 +37,6 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Commit validated cleanup
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/primitives/schema.zig src/4_semantics/module/graph.zig src/4_semantics/module/type_lowerer.zig src/4_semantics/module/body_lowerer.zig src/4_semantics/module/initializer_lowerer.zig src/4_semantics/module/parameterized/lowerer.zig src/4_semantics/global/abstracts.zig src/4_semantics/global/control.zig src/4_semantics/global/core.zig
-          git commit -m "Decouple semantic pointer mutability from syntax"
-          git push origin HEAD:compact-semantic-graph-chatgpt
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
