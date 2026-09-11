@@ -21,7 +21,6 @@ pub const TypeReference = struct {
     name: StringRange,
     qualifier: ?StringRange,
     source_offset: u32,
-    syntax_node: syn.NodeIndex,
     resolution: TypeReferenceResolution = .external,
     resolved_type: ?ModuleTypeId = null,
 };
@@ -404,7 +403,7 @@ fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *c
             if (name.qualifier_token != null) break :blk null;
             const spelling = tree.tokenTextFromSource(source, name.name_token);
             if (builtinFromName(spelling)) |builtin| break :blk try appendType(allocator, graph, .{ .builtin = builtin });
-            const reference = findTypeReference(graph, module_file_index, node) orelse break :blk null;
+            const reference = findTypeReference(graph, module_file_index, tree.tokenLocation(name.name_token).offset) orelse break :blk null;
             break :blk switch (reference.resolution) {
                 .builtin => |builtin| try appendType(allocator, graph, .{ .builtin = builtin }),
                 .module => reference.resolved_type,
@@ -449,7 +448,7 @@ fn lowerGenericType(
     if (std.mem.eql(u8, base_name, "Array")) return lowerArrayGeneric(allocator, graph, tree, source, module_file_index, literal);
     if (std.mem.eql(u8, base_name, "choice_union")) return lowerChoiceUnion(allocator, graph, tree, source, module_file_index, literal);
     if (std.mem.eql(u8, base_name, "Virtual")) return null;
-    const reference = findTypeReference(graph, module_file_index, generic.base) orelse return null;
+    const reference = findTypeReference(graph, module_file_index, tree.tokenLocation(base.name.name_token).offset) orelse return null;
     const declaration_id = switch (reference.resolution) {
         .module => |id| id,
         else => return null,
@@ -692,9 +691,9 @@ fn moduleTypesEqual(lhs: ModuleType, rhs: ModuleType) bool {
     };
 }
 
-fn findTypeReference(graph: *const ModuleSemanticGraph, module_file_index: u32, node: syn.NodeIndex) ?TypeReference {
+fn findTypeReference(graph: *const ModuleSemanticGraph, module_file_index: u32, source_offset: u32) ?TypeReference {
     const file = graph.file_offsets.items[module_file_index];
-    for (graph.type_references.items[file.type_reference_base..][0..file.type_reference_count]) |reference| if (reference.syntax_node == node) return reference;
+    for (graph.type_references.items[file.type_reference_base..][0..file.type_reference_count]) |reference| if (reference.source_offset == source_offset) return reference;
     return null;
 }
 
@@ -767,7 +766,6 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
             .name = spelling,
             .qualifier = qualifier,
             .source_offset = tree.tokenLocation(name.qualifier_token orelse name.name_token).offset,
-            .syntax_node = node,
         });
     }
     var lexical = try file_bindings.build(allocator, tree, source, &graph.strings);
