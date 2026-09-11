@@ -614,7 +614,7 @@ const Context = struct {
         const address = self.tree.addressOf(node).?;
         const value = try self.lowerNode(address.value, null);
         const child_ty = try self.compatibilityType(value.ty);
-        const ty = try self.writer.addResolvedType(.{ .pointer = .{ .child = child_ty, .mutability = address.mutability } });
+        const ty = try self.writer.addResolvedType(.{ .pointer = .{ .child = child_ty, .mutability = graph_mod.pointerMutabilityFromSyntax(address.mutability) } });
         return self.resolved(node, ty, .{ .address_of = value.node });
     }
 

@@ -35,7 +35,7 @@ pub const BuiltinType = primitives.BuiltinType;
 pub const ModuleType = union(enum) {
     builtin: BuiltinType,
     declared: ModuleDeclId,
-    pointer: struct { child: ModuleTypeId, mutability: syn.PointerMutability },
+    pointer: struct { child: ModuleTypeId, mutability: primitives.PointerMutability },
     array: struct { length: u64, element: ModuleTypeId },
     nullable: ModuleTypeId,
     inferred_errable: ModuleTypeId,
@@ -185,6 +185,13 @@ pub fn declarationSyntaxNode(files: []const FileInput, declaration: Declaration)
         if (tree.location(node).offset == declaration.source_offset) return node;
     }
     return null;
+}
+
+pub fn pointerMutabilityFromSyntax(value: syn.PointerMutability) primitives.PointerMutability {
+    return switch (value) {
+        .read_only => .read_only,
+        .read_write => .read_write,
+    };
 }
 
 pub const ModuleSemanticGraphBuilder = struct {
@@ -423,7 +430,7 @@ fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *c
         },
         .pointer => |pointer| blk: {
             const child = try lowerType(allocator, graph, tree, source, module_file_index, pointer.child) orelse break :blk null;
-            break :blk try appendType(allocator, graph, .{ .pointer = .{ .child = child, .mutability = pointer.mutability } });
+            break :blk try appendType(allocator, graph, .{ .pointer = .{ .child = child, .mutability = pointerMutabilityFromSyntax(pointer.mutability) } });
         },
         .array => |array| blk: {
             const length = std.fmt.parseInt(u64, tree.tokenTextFromSource(source, array.length_token), 0) catch break :blk null;

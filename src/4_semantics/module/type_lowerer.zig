@@ -20,7 +20,7 @@ pub const Context = struct {
                 const child = try self.lower(pointer.child);
                 break :blk try self.writer.addResolvedType(.{ .pointer = .{
                     .child = child,
-                    .mutability = pointer.mutability,
+                    .mutability = graph_mod.pointerMutabilityFromSyntax(pointer.mutability),
                 } });
             },
             .array => |array| blk: {

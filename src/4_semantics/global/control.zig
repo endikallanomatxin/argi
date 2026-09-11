@@ -519,7 +519,7 @@ pub const Resolver = struct {
         };
     }
 
-    fn pointer(self: *Resolver, child: global_sg.GlobalTypeId, mutability: syn.PointerMutability) !global_sg.GlobalTypeId {
+    fn pointer(self: *Resolver, child: global_sg.GlobalTypeId, mutability: primitives.PointerMutability) !global_sg.GlobalTypeId {
         for (self.graph.types.items, 0..) |ty, raw| switch (ty) {
             .pointer => |value| if (value.child == child and value.mutability == mutability)
                 return @enumFromInt(@as(u32, @intCast(raw))),

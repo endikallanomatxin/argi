@@ -32,6 +32,8 @@ pub const BuiltinType = enum {
     Any,
 };
 
+pub const PointerMutability = enum(u8) { read_only, read_write };
+
 pub const DeclarationKind = enum {
     binding,
     import_alias,
@@ -111,7 +113,7 @@ pub fn SemanticType(comptime Ids: type) type {
     return union(enum) {
         builtin: BuiltinType,
         declared: Ids.DeclId,
-        pointer: struct { child: Ids.TypeId, mutability: syn.PointerMutability },
+        pointer: struct { child: Ids.TypeId, mutability: PointerMutability },
         array: struct { length: u64, element: Ids.TypeId },
         nullable: Ids.TypeId,
         inferred_errable: Ids.TypeId,
@@ -285,7 +287,7 @@ pub fn VirtualCall(comptime Ids: type) type {
         method_name: StringRange,
         input_type: Ids.TypeId,
         output_type: Ids.TypeId,
-        self_permission: syn.PointerMutability,
+        self_permission: PointerMutability,
         safety_methods: Ids.VirtualRegistryId,
         consumes_auto_deinit: ?Ids.NodeId = null,
     };
