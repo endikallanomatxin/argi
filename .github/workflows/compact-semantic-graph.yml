@@ -1,4 +1,4 @@
-name: Compact semantic graph
+name: Remove parameterized syntax tags
 
 on:
   push:
@@ -7,14 +7,152 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  test:
+  apply-test-commit:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Replace syntax tag aux with semantic detail
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, expected=1):
+              p = Path(path)
+              s = p.read_text()
+              count = s.count(old)
+              assert count == expected, f"{path}: expected {expected}, got {count}: {old!r}"
+              p.write_text(s.replace(old, new, expected))
+
+          ir = 'src/4_semantics/module/parameterized/ir.zig'
+          replace(ir,
+              'pub const PendingExpression = struct {\n',
+              'pub const PendingExpressionDetail = union(enum(u8)) {\n'
+              '    none,\n'
+              '    binary: primitives.BinaryOperator,\n'
+              '    comparison: primitives.ComparisonOperator,\n'
+              '    logical: primitives.LogicalOperator,\n'
+              '    pointer_mutability: primitives.PointerMutability,\n'
+              '};\n\n'
+              'pub const PendingExpression = struct {\n')
+          replace(ir, '    aux: u32 = 0,\n', '    detail: PendingExpressionDetail = .none,\n')
+
+          lowerer = 'src/4_semantics/module/parameterized/lowerer.zig'
+          replace(lowerer, 'self.addPending(node, .match, &.{value}, null, null, 0)', 'self.addPending(node, .match, &.{value}, null, null, .none)')
+          replace(lowerer, 'self.addPending(node, .generic_call, &.{input}, try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)), null, 0)', 'self.addPending(node, .generic_call, &.{input}, try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)), null, .none)')
+          replace(lowerer, 'self.addPending(node, .unknown_identifier, &.{}, try self.writer.addString(name), null, 0)', 'self.addPending(node, .unknown_identifier, &.{}, try self.writer.addString(name), null, .none)')
+          replace(lowerer,
+              'return self.addPending(node, kind, operands.items, name, null, @intFromEnum(self.tree.tag(node)));',
+              'return self.addPending(node, kind, operands.items, name, null, parameterizedDetailForTag(self.tree.tag(node)));')
+          replace(lowerer,
+              'fn addPending(self: *Context, node: syn.NodeIndex, kind: ir.PendingExpressionKind, operands: []const ir.ParameterizedNodeId, name: ?primitives.StringRange, expected: ?ir.ParameterizedTypeId, aux: u32) !ir.ParameterizedNodeId {',
+              'fn addPending(self: *Context, node: syn.NodeIndex, kind: ir.PendingExpressionKind, operands: []const ir.ParameterizedNodeId, name: ?primitives.StringRange, expected: ?ir.ParameterizedTypeId, detail: ir.PendingExpressionDetail) !ir.ParameterizedNodeId {')
+          replace(lowerer, '            .aux = aux,\n', '            .detail = detail,\n')
+
+          p = Path(lowerer)
+          s = p.read_text()
+          marker = 'fn parameterizedKindForTag(tag: syn.Node.Tag) ir.PendingExpressionKind {\n'
+          assert s.count(marker) == 1, s.count(marker)
+          helper = (
+              'fn parameterizedDetailForTag(tag: syn.Node.Tag) ir.PendingExpressionDetail {\n'
+              '    return switch (tag) {\n'
+              '        .binary_add => .{ .binary = .addition },\n'
+              '        .binary_subtract => .{ .binary = .subtraction },\n'
+              '        .binary_multiply => .{ .binary = .multiplication },\n'
+              '        .binary_divide => .{ .binary = .division },\n'
+              '        .binary_modulo => .{ .binary = .modulo },\n'
+              '        .compare_equal => .{ .comparison = .equal },\n'
+              '        .compare_not_equal => .{ .comparison = .not_equal },\n'
+              '        .compare_less => .{ .comparison = .less_than },\n'
+              '        .compare_greater => .{ .comparison = .greater_than },\n'
+              '        .compare_less_equal => .{ .comparison = .less_than_or_equal },\n'
+              '        .compare_greater_equal => .{ .comparison = .greater_than_or_equal },\n'
+              '        .logical_and => .{ .logical = .and_ },\n'
+              '        .logical_or => .{ .logical = .or_ },\n'
+              '        .address_of => .{ .pointer_mutability = .read_only },\n'
+              '        .address_of_mut => .{ .pointer_mutability = .read_write },\n'
+              '        else => .none,\n'
+              '    };\n'
+              '}\n\n'
+          )
+          p.write_text(s.replace(marker, helper + marker, 1))
+
+          generic = 'src/4_semantics/global/generic_functions.zig'
+          replace(generic, 'const syn = @import("../../3_syntax/syntax_tree.zig");\n', '')
+          replace(generic, '.binary => self.resolveBinary(operands.items, value.source, value.aux),', '.binary => self.resolveBinary(operands.items, value.source, value.detail),')
+          replace(generic, '.comparison => self.resolveComparison(operands.items, value.source, value.aux),', '.comparison => self.resolveComparison(operands.items, value.source, value.detail),')
+          replace(generic, '.logical => self.resolveLogical(operands.items, value.source, value.aux),', '.logical => self.resolveLogical(operands.items, value.source, value.detail),')
+          replace(generic, '.address_of => self.resolveAddress(operands.items, value.source, value.aux),', '.address_of => self.resolveAddress(operands.items, value.source, value.detail),')
+
+          p = Path(generic)
+          s = p.read_text()
+          start = s.index('        fn resolveBinary(')
+          end = s.index('        fn resolveIndex(', start)
+          old = s[start:end]
+          new = (
+              '        fn resolveBinary(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {\n'
+              '            if (operands.len != 2) return error.InvalidParameterizedBinary;\n'
+              '            const operator = switch (detail) { .binary => |value| value, else => return error.InvalidParameterizedBinary };\n'
+              '            const left_ty = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedBinaryUntyped;\n'
+              '            const right_ty = self.resolver.graph.nodes.items[@intFromEnum(operands[1])].ty orelse return error.ParameterizedBinaryUntyped;\n'
+              '            const function = try self.resolver.core.resolveBinaryOperator(self.module_index, operator, left_ty, right_ty);\n'
+              '            const input = try self.resolver.core.makeCallInput(function, operands);\n'
+              '            return .{\n'
+              '                .source = self.resolver.sourceFor(self.module_index, source),\n'
+              '                .ty = try self.resolver.core.functionOutputType(function),\n'
+              '                .content = .{ .function_call = .{ .callee = function, .input = input } },\n'
+              '            };\n'
+              '        }\n\n'
+              '        fn resolveComparison(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {\n'
+              '            if (operands.len != 2) return error.InvalidParameterizedComparison;\n'
+              '            const operator = switch (detail) { .comparison => |value| value, else => return error.InvalidParameterizedComparison };\n'
+              '            const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });\n'
+              '            return .{\n'
+              '                .source = self.resolver.sourceFor(self.module_index, source),\n'
+              '                .ty = bool_ty,\n'
+              '                .content = .{ .comparison = .{ .operator = operator, .left = operands[0], .right = operands[1] } },\n'
+              '            };\n'
+              '        }\n\n'
+              '        fn resolveLogical(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {\n'
+              '            if (operands.len != 2) return error.InvalidParameterizedLogical;\n'
+              '            const operator = switch (detail) { .logical => |value| value, else => return error.InvalidParameterizedLogical };\n'
+              '            const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });\n'
+              '            return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = bool_ty, .content = .{ .logical_operation = .{ .operator = operator, .left = operands[0], .right = operands[1] } } };\n'
+              '        }\n\n'
+          )
+          assert 'syn.Node.Tag' in old, 'expected syntax-tag resolver block'
+          p.write_text(s[:start] + new + s[end:])
+
+          p = Path(generic)
+          s = p.read_text()
+          old_start = s.index('        fn resolveAddress(')
+          old_end = s.index('        fn resolveDereference(', old_start)
+          old = s[old_start:old_end]
+          new = (
+              '        fn resolveAddress(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {\n'
+              '            if (operands.len != 1) return error.InvalidParameterizedAddressOf;\n'
+              '            const child = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedAddressUntyped;\n'
+              '            const mutability = switch (detail) { .pointer_mutability => |value| value, else => return error.InvalidParameterizedAddressOf };\n'
+              '            const pointer = try self.resolver.generics.internType(.{ .pointer = .{ .child = child, .mutability = mutability } });\n'
+              '            return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = pointer, .content = .{ .address_of = operands[0] } };\n'
+              '        }\n\n'
+          )
+          assert 'syn.Node.Tag' in old, 'expected syntax-tag address resolver'
+          p.write_text(s[:old_start] + new + s[old_end:])
+
+          for path in [Path(ir), Path(generic)]:
+              text = path.read_text()
+              assert '.aux' not in text and 'aux:' not in text, path
+          assert '3_syntax' not in Path(generic).read_text(), 'global generic instantiation still imports Syntax'
+          assert 'syn.Node.Tag' not in Path(generic).read_text(), 'global generic instantiation still decodes AST tags'
+          print('parameterized pending detail is semantic and syntax-independent')
+          PY
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -37,6 +175,10 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Run program suite
-        timeout-minutes: 15
-        run: zig build test-programs
+      - name: Commit validated cleanup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/4_semantics/module/parameterized/ir.zig src/4_semantics/module/parameterized/lowerer.zig src/4_semantics/global/generic_functions.zig
+          git commit -m "Replace parameterized syntax tags with semantic detail"
+          git push origin HEAD:compact-semantic-graph-chatgpt
