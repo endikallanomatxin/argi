@@ -3,6 +3,7 @@ const literals = @import("../semantic_literals.zig");
 const syn = @import("../../3_syntax/syntax_tree.zig");
 const tok = @import("../../2_tokens/token.zig");
 const graph_mod = @import("graph.zig");
+const body_lowerer = @import("body_lowerer.zig");
 const entities = @import("entities.zig");
 const writer_mod = @import("writer.zig");
 const type_lowerer = @import("type_lowerer.zig");
@@ -216,10 +217,21 @@ const Context = struct {
             const value_node = syntax_decl.value orelse continue;
             if (self.tree.tag(value_node) == .import_statement) continue;
             const expected = self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].ty;
-            const value = try self.lowerExpr(value_node, expected);
+            const value = try body_lowerer.lowerInitializerExpression(
+                self.allocator,
+                self.graph,
+                self.files,
+                self.file_index,
+                value_node,
+                expected,
+            );
             self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].initialization = value.node;
-            if (self.isAny(expected) and !self.isAny(value.ty))
-                self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].ty = value.ty;
+            if (self.isAny(expected)) {
+                if (value.ty) |value_ty| {
+                    if (!self.isAny(value_ty))
+                        self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].ty = value_ty;
+                }
+            }
             try self.writer.addRoot(value.node);
         }
     }

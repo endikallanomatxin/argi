@@ -16,7 +16,8 @@ const NamedBinding = struct {
     id: entities.ModuleBindingId,
     ty: ?entities.ModuleTypeId,
 };
-const Lowered = struct { node: entities.ModuleNodeId, ty: ?entities.ModuleTypeId };
+pub const Lowered = struct { node: entities.ModuleNodeId, ty: ?entities.ModuleTypeId };
+const ExpressionMode = enum { body, initializer };
 
 pub fn lowerMissingFunctions(
     allocator: std.mem.Allocator,
@@ -36,6 +37,33 @@ pub fn lowerMissingFunctions(
     return context.lowerFunctions();
 }
 
+pub fn lowerInitializerExpression(
+    allocator: std.mem.Allocator,
+    graph: *graph_mod.ModuleSemanticGraph,
+    files: []const graph_mod.FileInput,
+    file_index: u32,
+    node: syn.NodeIndex,
+    expected: ?entities.ModuleTypeId,
+) !Lowered {
+    var context = Context{
+        .allocator = allocator,
+        .graph = graph,
+        .files = files,
+        .writer = writer_mod.Writer.init(allocator, graph),
+        .bindings = std.array_list.Managed(NamedBinding).init(allocator),
+        .scope_marks = std.array_list.Managed(usize).init(allocator),
+        .expression_mode = .initializer,
+    };
+    defer context.bindings.deinit();
+    defer context.scope_marks.deinit();
+    context.file_index = file_index;
+    const file = files[@intCast(file_index)];
+    context.tree = file.tree;
+    context.source = file.source;
+    try context.seedGlobalBindings();
+    return context.lowerNode(node, expected);
+}
+
 const Context = struct {
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
@@ -47,6 +75,7 @@ const Context = struct {
     tree: *const syn.FileSyntaxTree = undefined,
     source: []const u8 = &.{},
     pipe_value: ?Lowered = null,
+    expression_mode: ExpressionMode = .body,
 
     fn lowerFunctions(self: *Context) !Stats {
         var stats: Stats = .{};
@@ -131,6 +160,43 @@ const Context = struct {
     }
 
     fn lowerNode(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) anyerror!Lowered {
+        if (self.expression_mode == .initializer) switch (self.tree.tag(node)) {
+            .literal,
+            .identifier,
+            .function_call,
+            .struct_value_literal,
+            .list_literal,
+            .struct_field_access,
+            .index_access,
+            .binary_add,
+            .binary_subtract,
+            .binary_multiply,
+            .binary_divide,
+            .binary_modulo,
+            .compare_equal,
+            .compare_not_equal,
+            .compare_less,
+            .compare_greater,
+            .compare_less_equal,
+            .compare_greater_equal,
+            .logical_and,
+            .logical_or,
+            .address_of,
+            .address_of_mut,
+            .dereference,
+            .reach_directive,
+            .type_name,
+            .pointer_type,
+            .pointer_type_mut,
+            .nullable_type,
+            .inferred_errable_type,
+            .array_type,
+            .generic_type_instantiation,
+            .struct_type_literal,
+            .choice_type_literal,
+            => {},
+            else => return error.UnsupportedInitializerExpression,
+        };
         return switch (self.tree.tag(node)) {
             .literal => self.lowerLiteral(node),
             .identifier => self.lowerIdentifier(node, expected),
@@ -717,6 +783,19 @@ const Context = struct {
 
     fn nextNodeId(self: *const Context) entities.ModuleNodeId {
         return @enumFromInt(@as(u32, @intCast(self.graph.semantic.nodes.items.len)));
+    }
+
+    fn seedGlobalBindings(self: *Context) !void {
+        self.bindings.clearRetainingCapacity();
+        for (self.graph.semantic.declaration_bindings.items) |relation| {
+            const declaration = self.graph.declarations.items[@intFromEnum(relation.declaration)];
+            const binding = self.graph.semantic.bindings.items[@intFromEnum(relation.binding)];
+            try self.bindings.append(.{
+                .name = declaration.name,
+                .id = relation.binding,
+                .ty = binding.ty,
+            });
+        }
     }
 
     fn pushScope(self: *Context) !void {
