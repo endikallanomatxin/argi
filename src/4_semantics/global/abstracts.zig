@@ -1,5 +1,4 @@
 const std = @import("std");
-const syn = @import("../../3_syntax/syntax_tree.zig");
 const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const parameterized_storage = @import("../module/parameterized/storage.zig");

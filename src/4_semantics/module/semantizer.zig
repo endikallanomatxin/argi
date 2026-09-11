@@ -103,7 +103,7 @@ fn lowerOperatorMetadata(
         };
         const operator: ?callable.OperatorKind = if (file.tree.functionNameFromSource(file.source, declaration_node)) |name|
             switch (name) {
-                .operator => |value| callable.fromSyntax(value),
+                .operator => |value| module_sg.operatorKindFromSyntax(value),
                 .identifier => null,
             }
         else
