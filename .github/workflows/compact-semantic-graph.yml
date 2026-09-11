@@ -58,6 +58,11 @@ jobs:
           replace('src/4_semantics/module/parameterized/lowerer.zig', '.mutability = declaration.mutability,', '.mutability = graph_mod.mutabilityFromSyntax(declaration.mutability),')
           replace('src/4_semantics/module/parameterized/lowerer.zig', '.mode = case.mode,', '.mode = graph_mod.matchCaseModeFromSyntax(case.mode),')
 
+          replace('src/4_semantics/global/control.zig', 'const syn = @import("../../3_syntax/syntax_tree.zig");\n', '')
+          replace('src/4_semantics/global/control.zig', 'mode: syn.MatchCaseMode)', 'mode: primitives.MatchCaseMode)')
+          replace('src/4_semantics/global/control.zig', 'mode: syn.ForMode)', 'mode: primitives.ForMode)')
+          replace('src/4_semantics/global/generic_functions.zig', 'mode: syn.MatchCaseMode)', 'mode: primitives.MatchCaseMode)')
+
           banned = ('syn.Mutability', 'syn.ForMode', 'syn.MatchCaseMode')
           occurrences = []
           for path in Path('src/4_semantics').rglob('*.zig'):
@@ -67,7 +72,7 @@ jobs:
           assert len(occurrences) == 3, occurrences
           assert all(path == 'src/4_semantics/module/graph.zig' for path, _, _ in occurrences), occurrences
           assert all('FromSyntax' in line for _, _, line in occurrences), occurrences
-          for path in [Path('src/4_semantics/primitives/schema.zig'), Path('src/4_semantics/module/entities.zig'), Path('src/4_semantics/module/parameterized/ir.zig')]:
+          for path in [Path('src/4_semantics/primitives/schema.zig'), Path('src/4_semantics/module/entities.zig'), Path('src/4_semantics/module/parameterized/ir.zig'), Path('src/4_semantics/global/control.zig')]:
               assert '3_syntax' not in path.read_text(), path
           print('syntax control-mode boundary:', occurrences)
           PY
@@ -97,6 +102,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/primitives/schema.zig src/4_semantics/module/entities.zig src/4_semantics/module/parameterized/ir.zig src/4_semantics/module/graph.zig src/4_semantics/module/body_lowerer.zig src/4_semantics/module/initializer_lowerer.zig src/4_semantics/module/parameterized/lowerer.zig
+          git add src/4_semantics/primitives/schema.zig src/4_semantics/module/entities.zig src/4_semantics/module/parameterized/ir.zig src/4_semantics/module/graph.zig src/4_semantics/module/body_lowerer.zig src/4_semantics/module/initializer_lowerer.zig src/4_semantics/module/parameterized/lowerer.zig src/4_semantics/global/control.zig src/4_semantics/global/generic_functions.zig
           git commit -m "Decouple semantic control modes from syntax"
           git push origin HEAD:compact-semantic-graph-chatgpt
