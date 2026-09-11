@@ -320,28 +320,28 @@ fn resolvePendingOperation(
 ) !bool {
     return switch (operation) {
         .resolve_type => blk: {
-            if ((try core.tryResolve(module_index, module, o, operation)) orelse false) break :blk true;
-            break :blk (try generics.tryResolve(module_index, module, o, operation)) orelse false;
+            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
+            break :blk (try generics.tryResolve(module_index, module, o, operation)).isResolved();
         },
         .resolve_call => blk: {
-            if ((try core.tryResolve(module_index, module, o, operation)) orelse false) break :blk true;
-            if ((try generic_functions.tryResolve(module_index, module, o, operation)) orelse false) break :blk true;
-            if ((try constructors.tryResolve(module_index, module, o, operation)) orelse false) break :blk true;
-            if ((try abstracts.tryResolve(module_index, module, o, operation)) orelse false) break :blk true;
-            break :blk (try control.tryResolve(module_index, module, o, operation)) orelse false;
+            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
+            if ((try generic_functions.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
+            if ((try constructors.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
+            if ((try abstracts.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
+            break :blk (try control.tryResolve(module_index, module, o, operation)).isResolved();
         },
         .resolve_index => blk: {
-            if ((try core.tryResolve(module_index, module, o, operation)) orelse false) break :blk true;
-            break :blk (try generic_functions.tryResolve(module_index, module, o, operation)) orelse false;
+            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
+            break :blk (try generic_functions.tryResolve(module_index, module, o, operation)).isResolved();
         },
         .resolve_field,
         .resolve_binary,
         .resolve_comparison,
-        => (try core.tryResolve(module_index, module, o, operation)) orelse false,
+        => (try core.tryResolve(module_index, module, o, operation)).isResolved(),
         .resolve_name_use,
         .resolve_name_assignment,
         .resolve_import,
-        => (try expressions.tryResolve(module_index, module, o, operation)) orelse false,
+        => (try expressions.tryResolve(module_index, module, o, operation)).isResolved(),
         .resolve_choice_literal,
         .resolve_choice_payload,
         .resolve_nullable_unwrap,
@@ -349,15 +349,15 @@ fn resolvePendingOperation(
         .resolve_for_each,
         .resolve_match,
         .resolve_match_case,
-        => (try control.tryResolve(module_index, module, o, operation)) orelse false,
-        .resolve_abstract => (try abstracts.tryResolve(module_index, module, o, operation)) orelse false,
-        .resolve_error_propagation => (try errors.tryResolve(module_index, module, o, operation)) orelse false,
+        => (try control.tryResolve(module_index, module, o, operation)).isResolved(),
+        .resolve_abstract => (try abstracts.tryResolve(module_index, module, o, operation)).isResolved(),
+        .resolve_error_propagation => (try errors.tryResolve(module_index, module, o, operation)).isResolved(),
         .resolve_defer,
         .resolve_keep,
         .resolve_keep_name,
         .resolve_copy,
         .resolve_deinit,
-        => (try ownership.tryResolve(module_index, module, o, operation)) orelse false,
+        => (try ownership.tryResolve(module_index, module, o, operation)).isResolved(),
     };
 }
 

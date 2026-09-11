@@ -4,6 +4,7 @@ const module_entities = @import("../module/entities.zig");
 const primitives = @import("../primitives/schema.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
+const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
 const generic_functions_mod = @import("generic_functions.zig");
@@ -34,11 +35,12 @@ pub const Resolver = struct {
         module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
-    ) !?bool {
-        return switch (operation) {
+    ) !resolution.Result {
+        const legacy: ?bool = switch (operation) {
             .resolve_call => |value| @as(?bool, try self.resolveCall(module_index, module, o, value)),
             else => null,
         };
+        return resolution.Result.fromOptionalBool(legacy);
     }
 
     fn resolveCall(
@@ -339,7 +341,7 @@ test "declared type call materializes a struct value without visible init" {
     var fixture = try Fixture.init(allocator, false);
     defer fixture.deinit();
 
-    try std.testing.expect((try fixture.resolve()).?);
+    try std.testing.expect((try fixture.resolve()).isResolved());
     const result = fixture.graph.nodes.items[1];
     try std.testing.expectEqual(fixture.declared_type, result.ty.?);
     try std.testing.expectEqual(fixture.declared_type, result.content.struct_value_literal.ty);
@@ -350,7 +352,7 @@ test "declared type call dispatches through visible init" {
     var fixture = try Fixture.init(allocator, true);
     defer fixture.deinit();
 
-    try std.testing.expect((try fixture.resolve()).?);
+    try std.testing.expect((try fixture.resolve()).isResolved());
     const result = fixture.graph.nodes.items[1];
     try std.testing.expectEqual(fixture.declared_type, result.ty.?);
     try std.testing.expectEqual(@as(global_sg.GlobalDeclId, @enumFromInt(0)), result.content.type_initializer.type_decl);
@@ -449,7 +451,7 @@ const Fixture = struct {
         self.module.deinit(self.allocator);
     }
 
-    fn resolve(self: *Fixture) !?bool {
+    fn resolve(self: *Fixture) !resolution.Result {
         var core = core_mod.Resolver{
             .allocator = self.allocator,
             .graph = &self.graph,

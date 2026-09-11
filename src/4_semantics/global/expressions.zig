@@ -3,6 +3,7 @@ const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
+const resolution = @import("resolution.zig");
 const name_lookup = @import("name_lookup.zig");
 
 pub const Stats = struct {
@@ -22,9 +23,9 @@ pub const Resolver = struct {
         module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
-    ) !?bool {
+    ) !resolution.Result {
         _ = module;
-        return switch (operation) {
+        const legacy: ?bool = switch (operation) {
             .resolve_name_use => |value| @as(?bool, self.resolveNameUse(module_index, o, value)),
             .resolve_name_assignment => |value| @as(?bool, self.resolveNameAssignment(module_index, o, value)),
             // Module values need a first-class representation before imports can
@@ -33,6 +34,7 @@ pub const Resolver = struct {
             .resolve_import => @as(?bool, false),
             else => null,
         };
+        return resolution.Result.fromOptionalBool(legacy);
     }
 
     fn resolveNameUse(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) bool {
@@ -151,7 +153,7 @@ test "expression resolver preserves global binding reads and assignments" {
         .node = @enumFromInt(0),
         .name = name,
     } };
-    try std.testing.expect((try resolver.tryResolve(0, &app, offsets[0], read)).?);
+    try std.testing.expect((try resolver.tryResolve(0, &app, offsets[0], read)).isResolved());
     try std.testing.expectEqual(@as(global_sg.GlobalBindingId, @enumFromInt(0)), graph.nodes.items[0].content.binding_use);
 
     graph.nodes.items[0] = .{ .source = .{ .file_index = 0, .offset = 9 }, .ty = null, .content = .{ .bool_literal = false } };
@@ -160,7 +162,7 @@ test "expression resolver preserves global binding reads and assignments" {
         .name = name,
         .value = @enumFromInt(1),
     } };
-    try std.testing.expect((try resolver.tryResolve(0, &app, offsets[0], assignment)).?);
+    try std.testing.expect((try resolver.tryResolve(0, &app, offsets[0], assignment)).isResolved());
     try std.testing.expectEqual(@as(global_sg.GlobalBindingId, @enumFromInt(0)), graph.nodes.items[0].content.assignment.binding);
     try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(1)), graph.nodes.items[0].content.assignment.value);
 }
@@ -187,7 +189,7 @@ test "expression resolver accepts duplicated global builtin storage" {
         .name = name,
     } };
 
-    try std.testing.expect((try resolver.tryResolve(0, &module, offsets[0], operation)).?);
+    try std.testing.expect((try resolver.tryResolve(0, &module, offsets[0], operation)).isResolved());
     try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(0)), graph.nodes.items[0].content.type_literal);
     try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(3)), graph.nodes.items[0].ty.?);
 }

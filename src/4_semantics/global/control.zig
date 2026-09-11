@@ -3,6 +3,7 @@ const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
+const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
@@ -42,8 +43,8 @@ pub const Resolver = struct {
         module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
-    ) !?bool {
-        return switch (operation) {
+    ) !resolution.Result {
+        const legacy: ?bool = switch (operation) {
             .resolve_call => |value| @as(?bool, try self.resolveChoiceTest(module, o, value)),
             .resolve_choice_literal => |value| @as(?bool, try self.resolveChoiceLiteral(module, o, value)),
             .resolve_choice_payload => |value| @as(?bool, try self.resolveChoicePayload(module, o, value)),
@@ -54,6 +55,7 @@ pub const Resolver = struct {
             .resolve_for_each => |value| @as(?bool, try self.resolveForEach(module_index, o, value)),
             else => null,
         };
+        return resolution.Result.fromOptionalBool(legacy);
     }
 
     pub fn annotateChoiceTests(self: *Resolver) void {
