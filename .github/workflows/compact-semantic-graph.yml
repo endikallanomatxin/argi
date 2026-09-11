@@ -47,54 +47,59 @@ jobs:
 
           p = Path('src/4_semantics/module/initializer_lowerer.zig')
           s = p.read_text()
-          old = '''        for (self.graph.fields.items, 0..) |field, raw| {
-              const node = field.default_value orelse continue;
-              self.selectFile(field.module_file_index);
-              const value = try self.lowerExpr(node, field.ty);
-              try self.graph.semantic.field_semantics.append(self.allocator, .{
-                  .field = @enumFromInt(@as(u32, @intCast(raw))),
-                  .default_value = value.node,
-              });
-              stats.field_defaults += 1;
-          }
-'''
+          old = (
+              '        for (self.graph.fields.items, 0..) |field, raw| {\n'
+              '            const node = field.default_value orelse continue;\n'
+              '            self.selectFile(field.module_file_index);\n'
+              '            const value = try self.lowerExpr(node, field.ty);\n'
+              '            try self.graph.semantic.field_semantics.append(self.allocator, .{\n'
+              '                .field = @enumFromInt(@as(u32, @intCast(raw))),\n'
+              '                .default_value = value.node,\n'
+              '            });\n'
+              '            stats.field_defaults += 1;\n'
+              '        }\n'
+          )
           assert s.count(old) == 1, s.count(old)
           s = s.replace(old, '', 1)
-          old = '''        const semantic_field_base = self.graph.fields.items.len + self.graph.structural_fields.items.len;
-          if (range_start < semantic_field_base) return;
-          const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;
-'''
-          new = '''        const semantic_field_base = self.graph.fields.items.len + self.graph.structural_fields.items.len;
-          const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;
-'''
+          old = (
+              '        const semantic_field_base = self.graph.fields.items.len + self.graph.structural_fields.items.len;\n'
+              '        if (range_start < semantic_field_base) return;\n'
+              '        const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;\n'
+          )
+          new = (
+              '        const semantic_field_base = self.graph.fields.items.len + self.graph.structural_fields.items.len;\n'
+              '        const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;\n'
+          )
           assert s.count(old) == 1, s.count(old)
           s = s.replace(old, new, 1)
-          old = '''            const field_id: entities.ModuleFieldId = @enumFromInt(range_start + @as(u32, @intCast(offset)));
-              const semantic_field = try views.fieldView(self.graph, field_id);
-              const value = try self.lowerExpr(default_node, semantic_field.ty);
-              const semantic_index = @intFromEnum(field_id) - semantic_field_base;
-              self.graph.semantic.fields.items[semantic_index].default_value = value.node;
-              stats.field_defaults += 1;
-'''
-          new = '''            const raw_field: usize = @intCast(range_start + @as(u32, @intCast(offset)));
-              const field_id: entities.ModuleFieldId = @enumFromInt(@as(u32, @intCast(raw_field)));
-              const field_ty = if (raw_field < self.graph.fields.items.len)
-                  self.graph.fields.items[raw_field].ty
-              else if (raw_field < semantic_field_base)
-                  self.graph.structural_fields.items[raw_field - self.graph.fields.items.len].ty
-              else
-                  self.graph.semantic.fields.items[raw_field - semantic_field_base].ty;
-              const value = try self.lowerExpr(default_node, field_ty);
-              if (raw_field < semantic_field_base) {
-                  try self.graph.semantic.field_semantics.append(self.allocator, .{
-                      .field = field_id,
-                      .default_value = value.node,
-                  });
-              } else {
-                  self.graph.semantic.fields.items[raw_field - semantic_field_base].default_value = value.node;
-              }
-              stats.field_defaults += 1;
-'''
+          old = (
+              '            const field_id: entities.ModuleFieldId = @enumFromInt(range_start + @as(u32, @intCast(offset)));\n'
+              '            const semantic_field = try views.fieldView(self.graph, field_id);\n'
+              '            const value = try self.lowerExpr(default_node, semantic_field.ty);\n'
+              '            const semantic_index = @intFromEnum(field_id) - semantic_field_base;\n'
+              '            self.graph.semantic.fields.items[semantic_index].default_value = value.node;\n'
+              '            stats.field_defaults += 1;\n'
+          )
+          new = (
+              '            const raw_field: usize = @intCast(range_start + @as(u32, @intCast(offset)));\n'
+              '            const field_id: entities.ModuleFieldId = @enumFromInt(@as(u32, @intCast(raw_field)));\n'
+              '            const field_ty = if (raw_field < self.graph.fields.items.len)\n'
+              '                self.graph.fields.items[raw_field].ty\n'
+              '            else if (raw_field < semantic_field_base)\n'
+              '                self.graph.structural_fields.items[raw_field - self.graph.fields.items.len].ty\n'
+              '            else\n'
+              '                self.graph.semantic.fields.items[raw_field - semantic_field_base].ty;\n'
+              '            const value = try self.lowerExpr(default_node, field_ty);\n'
+              '            if (raw_field < semantic_field_base) {\n'
+              '                try self.graph.semantic.field_semantics.append(self.allocator, .{\n'
+              '                    .field = field_id,\n'
+              '                    .default_value = value.node,\n'
+              '                });\n'
+              '            } else {\n'
+              '                self.graph.semantic.fields.items[raw_field - semantic_field_base].default_value = value.node;\n'
+              '            }\n'
+              '            stats.field_defaults += 1;\n'
+          )
           assert s.count(old) == 1, s.count(old)
           s = s.replace(old, new, 1)
           p.write_text(s)
