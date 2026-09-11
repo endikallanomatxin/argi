@@ -10,6 +10,7 @@ const function_identity_lowerer = @import("function_identity_lowerer.zig");
 const abstract_relation_lowerer = @import("abstract_relation_lowerer.zig");
 const generic_call_args_lowerer = @import("generic_call_args_lowerer.zig");
 const callable = @import("../primitives/callable.zig");
+const canonicalize_storage = @import("canonicalize_storage.zig");
 const complete_verify = @import("complete_verify.zig");
 
 pub const BuildStats = struct {
@@ -60,6 +61,7 @@ pub fn build(
     const relation_stats = try abstract_relation_lowerer.lower(allocator, &graph, files);
     const generic_calls = try generic_call_args_lowerer.lower(allocator, &graph, files);
 
+    try canonicalize_storage.run(allocator, &graph);
     graph.semantic.local_semantics_complete = true;
     try complete_verify.verifyModule(&graph);
 
