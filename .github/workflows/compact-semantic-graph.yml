@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test:
@@ -15,6 +15,45 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Apply parameterized choice payload fix
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("src/4_semantics/global/generic_functions.zig")
+          text = path.read_text()
+          old_dispatch = '.choice_payload => if (value.name) |name| self.resolveField(operands.items[0], name, value.source) else error.InvalidParameterizedChoicePayload,'
+          new_dispatch = '.choice_payload => if (value.name) |name| self.resolveChoicePayload(operands.items[0], name, value.source) else error.InvalidParameterizedChoicePayload,'
+          marker = '''        fn resolveMove(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {'''
+          helper = '''        fn resolveChoicePayload(self: *InstanceContext, value: global_sg.GlobalNodeId, variant_name: primitives.StringRange, source: primitives.SourceRef) !global_sg.Node {
+            const choice_ty = self.resolver.graph.nodes.items[@intFromEnum(value)].ty orelse return error.ParameterizedChoicePayloadOnUntypedValue;
+            _ = try self.resolver.generics.ensureGenericInstance(choice_ty);
+            const name = self.resolver.modules[self.module_index].text(variant_name);
+            const hit = global_types.findVariant(self.resolver.graph, choice_ty, name) orelse return error.UnknownParameterizedChoiceVariant;
+            const payload_ty = hit.variant.payload_type orelse return error.ParameterizedChoiceVariantWithoutPayload;
+            return .{
+                .source = self.resolver.sourceFor(self.module_index, source),
+                .ty = payload_ty,
+                .content = .{ .choice_payload_access = .{
+                    .value = value,
+                    .variant = hit.id,
+                    .payload_type = payload_ty,
+                } },
+            };
+        }
+
+'''
+          assert text.count(old_dispatch) == 1, text.count(old_dispatch)
+          assert text.count(marker) == 1, text.count(marker)
+          text = text.replace(old_dispatch, new_dispatch, 1)
+          text = text.replace(marker, helper + marker, 1)
+          path.write_text(text)
+          PY
+          git config user.name "Endika Llano Matxin"
+          git config user.email "119845498+endikallanomatxin@users.noreply.github.com"
+          git add src/4_semantics/global/generic_functions.zig
+          git commit -m "Resolve parameterized choice payloads" -m "Tests: CI"
+          git push origin HEAD:compact-semantic-graph-chatgpt
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
