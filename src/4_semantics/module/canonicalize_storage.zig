@@ -1,14 +1,4 @@
-from pathlib import Path
-
-
-def replace_once(path: str, old: str, new: str) -> None:
-    p = Path(path)
-    s = p.read_text()
-    if s.count(old) != 1:
-        raise RuntimeError(f"{path}: expected one occurrence, got {s.count(old)}")
-    p.write_text(s.replace(old, new, 1))
-
-Path("src/4_semantics/module/canonicalize_storage.zig").write_text(r'''const std = @import("std");
+const std = @import("std");
 const graph_mod = @import("graph.zig");
 const entities = @import("entities.zig");
 const views = @import("views.zig");
@@ -109,28 +99,3 @@ test "canonicalization preserves logical type IDs while draining prefixes" {
     try std.testing.expectEqual(@import("../primitives/schema.zig").BuiltinType.Int32, graph.semantic.types.items[0].resolved.builtin);
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(graph.semantic.types.items[1].resolved.pointer.child));
 }
-''')
-
-replace_once(
-    "src/4_semantics/module/semantizer.zig",
-    '''const complete_verify = @import("complete_verify.zig");''',
-    '''const canonicalize_storage = @import("canonicalize_storage.zig");\nconst complete_verify = @import("complete_verify.zig");''',
-)
-replace_once(
-    "src/4_semantics/module/semantizer.zig",
-    '''    const generic_calls = try generic_call_args_lowerer.lower(allocator, &graph, files);\n\n    graph.semantic.local_semantics_complete = true;''',
-    '''    const generic_calls = try generic_call_args_lowerer.lower(allocator, &graph, files);\n\n    try canonicalize_storage.run(allocator, &graph);\n    graph.semantic.local_semantics_complete = true;''',
-)
-
-replace_once(
-    "src/4_semantics/module/complete_verify.zig",
-    '''const generic_instances = @import("generic_instance_verify.zig");\nconst views = @import("views.zig");''',
-    '''const generic_instances = @import("generic_instance_verify.zig");\nconst canonicalize_storage = @import("canonicalize_storage.zig");\nconst views = @import("views.zig");''',
-)
-replace_once(
-    "src/4_semantics/module/complete_verify.zig",
-    '''    try core.verifyModule(graph);\n    try parameterized_state.verifyParameterizedForms(graph);''',
-    '''    try core.verifyModule(graph);\n    if (graph.semantic.local_semantics_complete and canonicalize_storage.hasCompatibilityPrefixes(graph))\n        return error.CompletedModuleRetainsCompatibilityStorage;\n    try parameterized_state.verifyParameterizedForms(graph);''',
-)
-
-Path(__file__).unlink()

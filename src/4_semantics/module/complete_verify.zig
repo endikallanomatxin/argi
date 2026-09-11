@@ -3,11 +3,14 @@ const graph_mod = @import("graph.zig");
 const core = @import("verify.zig");
 const parameterized_state = @import("parameterized/verify.zig");
 const generic_instances = @import("generic_instance_verify.zig");
+const canonicalize_storage = @import("canonicalize_storage.zig");
 const views = @import("views.zig");
 const verify = @import("../semantic_verify.zig");
 
 pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
     try core.verifyModule(graph);
+    if (graph.semantic.local_semantics_complete and canonicalize_storage.hasCompatibilityPrefixes(graph))
+        return error.CompletedModuleRetainsCompatibilityStorage;
     try parameterized_state.verifyParameterizedForms(graph);
     try generic_instances.verifyGenericInstances(graph, graph.semantic.local_semantics_complete);
     for (graph.semantic.external_refs.items) |reference| {
