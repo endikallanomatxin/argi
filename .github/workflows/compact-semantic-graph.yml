@@ -1,4 +1,4 @@
-name: Share field default expression lowering
+name: Compact semantic graph
 
 on:
   push:
@@ -7,37 +7,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-test-commit:
+  test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Route field defaults through body expression lowering
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('src/4_semantics/module/initializer_lowerer.zig')
-          s = p.read_text()
-          old = '            const value = try self.lowerExpr(default_node, field_ty);\n'
-          new = (
-              '            const value = try body_lowerer.lowerInitializerExpression(\n'
-              '                self.allocator,\n'
-              '                self.graph,\n'
-              '                self.files,\n'
-              '                self.file_index,\n'
-              '                default_node,\n'
-              '                field_ty,\n'
-              '            );\n'
-          )
-          assert s.count(old) == 1, s.count(old)
-          p.write_text(s.replace(old, new, 1))
-          PY
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -60,10 +37,6 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Commit validated refactor
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/module/initializer_lowerer.zig
-          git commit -m "Share field default expression lowering"
-          git push origin HEAD:compact-semantic-graph-chatgpt
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
