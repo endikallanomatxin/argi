@@ -45,24 +45,27 @@ jobs:
           assert s.count(old) == 1, s.count(old)
           p.write_text(s.replace(old, new, 1))
 
+          p = Path("src/0_commands/frontend_pipeline.zig")
+          s = p.read_text()
+          old_module = '''            const result = try module_semantizer.build(self.allocator, group.dir, group.files.items);'''
+          new_module = '''            const result = module_semantizer.build(self.allocator, group.dir, group.files.items) catch |err| {\n                std.debug.print("LSPPIPE module build error={s} dir={s} files={d}\\n", .{ @errorName(err), group.dir, group.files.items.len });\n                return err;\n            };'''
+          old_global = '''        const result = try global_semantizer.semantize(self.allocator, self.module_graphs.items);'''
+          new_global = '''        const result = global_semantizer.semantize(self.allocator, self.module_graphs.items) catch |err| {\n            std.debug.print("LSPPIPE global sema error={s} modules={d}\\n", .{ @errorName(err), self.module_graphs.items.len });\n            return err;\n        };'''
+          old_once = '''        try global_once_verify.verify(\n            self.allocator,\n            &self.global_graph.?,\n            self.diagnostics,\n            self.options.semantizer.selected_test_name,\n        );'''
+          new_once = '''        global_once_verify.verify(\n            self.allocator,\n            &self.global_graph.?,\n            self.diagnostics,\n            self.options.semantizer.selected_test_name,\n        ) catch |err| {\n            std.debug.print("LSPPIPE once verify error={s}\\n", .{@errorName(err)});\n            return err;\n        };'''
+          assert s.count(old_module) == 1, s.count(old_module)
+          assert s.count(old_global) == 1, s.count(old_global)
+          assert s.count(old_once) == 1, s.count(old_once)
+          s = s.replace(old_module, new_module, 1).replace(old_global, new_global, 1).replace(old_once, new_once, 1)
+          p.write_text(s)
+
           p = Path("src/0_commands/indexed_lsp_service.zig")
           s = p.read_text()
-          old_collect_files = '''        const files = self.collectFiles(allocator, doc) catch |err| {\n            log.debug("LSP module load failed for {s}: {s}", .{ doc.path, @errorName(err) });\n            return null;\n        };'''
-          new_collect_files = '''        const files = self.collectFiles(allocator, doc) catch |err| {\n            std.debug.print("LSPDEF collectFiles error={s} path={s}\\n", .{ @errorName(err), doc.path });\n            log.debug("LSP module load failed for {s}: {s}", .{ doc.path, @errorName(err) });\n            return null;\n        };'''
           old_semantize = '''        _ = pipeline.semantizeGlobalFiles(files) catch {\n            // Parsing/global semantic failures leave no graph. Safety failures,\n            // however, happen after GlobalSG is complete and should not disable\n            // editor navigation for otherwise-resolved symbols.\n            if (pipeline.global_graph == null) return null;\n        };'''
           new_semantize = '''        _ = pipeline.semantizeGlobalFiles(files) catch |err| {\n            std.debug.print("LSPDEF semantize error={s} graph_present={} modules={d}\\n", .{ @errorName(err), pipeline.global_graph != null, pipeline.module_graphs.items.len });\n            // Parsing/global semantic failures leave no graph. Safety failures,\n            // however, happen after GlobalSG is complete and should not disable\n            // editor navigation for otherwise-resolved symbols.\n            if (pipeline.global_graph == null) return null;\n        };'''
-          assert s.count(old_collect_files) == 1, s.count(old_collect_files)
           assert s.count(old_semantize) == 1, s.count(old_semantize)
-          s = s.replace(old_collect_files, new_collect_files, 1).replace(old_semantize, new_semantize, 1)
-
-          begin = s.index("    pub fn definition(")
-          end = s.index("    pub fn references(", begin)
-          block = s[begin:end]
-          old_analysis = '''        var analysis = (try self.collectAnalysis(&work, doc)) orelse return null;\n        defer analysis.deinit(work);'''
-          new_analysis = '''        var analysis = (try self.collectAnalysis(&work, doc)) orelse {\n            std.debug.print("LSPDEF analysis=null path={s}\\n", .{doc.path});\n            return null;\n        };\n        defer analysis.deinit(work);'''
-          assert block.count(old_analysis) == 1, block.count(old_analysis)
-          block = block.replace(old_analysis, new_analysis, 1)
-          p.write_text(s[:begin] + block + s[end:])
+          s = s.replace(old_semantize, new_semantize, 1)
+          p.write_text(s)
           PY
 
       - name: Install Zig
