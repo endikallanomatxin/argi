@@ -48,10 +48,10 @@ jobs:
           PY
           git checkout HEAD -- .github/workflows/compact-semantic-graph.yml
 
-      - name: Require syntax-free ModuleSG declarations
+      - name: Require syntax-free ModuleSema declarations
         run: |
-          if grep -R -n "\.syntax_node" src/4_semantics; then
-            echo "Declaration syntax-node use remains in semantics" >&2
+          if grep -R -n "syntax_node" src/4_semantics/module; then
+            echo "syntax-node storage remains in ModuleSema entities" >&2
             exit 1
           fi
 
