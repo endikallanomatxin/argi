@@ -1,4 +1,4 @@
-name: Migrate declaration provenance consumers
+name: Compact semantic graph
 
 on:
   push:
@@ -7,102 +7,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-test-commit:
+  test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Migrate declaration syntax consumers
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          def edit(path, edits):
-              p = Path(path)
-              s = p.read_text()
-              for old, new, expected in edits:
-                  count = s.count(old)
-                  assert count == expected, f'{path}: expected {expected} occurrences, got {count}: {old!r}'
-                  s = s.replace(old, new)
-              p.write_text(s)
-
-          edit('src/4_semantics/module/module_alias_lowerer.zig', [
-              ('        const symbol = file.tree.symbolDeclaration(declaration.syntax_node) orelse return error.InvalidImportAlias;',
-               '        const declaration_node = graph_mod.declarationSyntaxNode(files, declaration) orelse return error.InvalidImportAlias;\n        const symbol = file.tree.symbolDeclaration(declaration_node) orelse return error.InvalidImportAlias;', 1),
-          ])
-
-          edit('src/4_semantics/module/generic_operator_lowerer.zig', [
-              ('        const file = files[declaration.module_file_index];\n        const name = file.tree.functionNameFromSource(file.source, declaration.syntax_node) orelse continue;',
-               '        const file = files[declaration.module_file_index];\n        const declaration_node = graph_mod.declarationSyntaxNode(files, declaration) orelse continue;\n        const name = file.tree.functionNameFromSource(file.source, declaration_node) orelse continue;', 1),
-          ])
-
-          edit('src/4_semantics/module/function_identity_lowerer.zig', [
-              ('        const file = files[declaration.module_file_index];',
-               '        const file = files[declaration.module_file_index];\n        const declaration_node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;', 2),
-              ('isDeinit(file, declaration.syntax_node)', 'isDeinit(file, declaration_node)', 2),
-          ])
-
-          edit('src/4_semantics/module/body_lowerer.zig', [
-              ('            self.source = file.source;\n            const declaration = switch (legacy_decl.kind) {',
-               '            self.source = file.source;\n            const declaration_node = graph_mod.declarationSyntaxNode(self.files, legacy_decl) orelse continue;\n            const declaration = switch (legacy_decl.kind) {', 1),
-              ('legacy_decl.syntax_node', 'declaration_node', 2),
-          ])
-
-          edit('src/4_semantics/module/parameterized/lowerer.zig', [
-              ('            self.source = file.source;\n            const decl_id:',
-               '            self.source = file.source;\n            const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;\n            const decl_id:', 1),
-              ('declaration.syntax_node', 'declaration_node', 3),
-          ])
-
-          p = Path('src/4_semantics/module/initializer_lowerer.zig')
-          s = p.read_text()
-          replacements = [
-              ('            self.selectFile(declaration.module_file_index);\n            const type_declaration = switch',
-               '            self.selectFile(declaration.module_file_index);\n            const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;\n            const type_declaration = switch', 1),
-              ('            self.selectFile(declaration.module_file_index);\n            const type_declaration = self.tree.typeDeclaration',
-               '            self.selectFile(declaration.module_file_index);\n            const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;\n            const type_declaration = self.tree.typeDeclaration', 1),
-              ('            self.selectFile(declaration.module_file_index);\n            const function = if',
-               '            self.selectFile(declaration.module_file_index);\n            const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;\n            const function = if', 1),
-              ('            self.selectFile(decl.module_file_index);\n            const syntax_decl =',
-               '            self.selectFile(decl.module_file_index);\n            const declaration_node = graph_mod.declarationSyntaxNode(self.files, decl) orelse continue;\n            const syntax_decl =', 2),
-              ('        for (self.graph.declarations.items) |declaration| {\n            self.selectFile(declaration.module_file_index);\n            switch',
-               '        for (self.graph.declarations.items) |declaration| {\n            self.selectFile(declaration.module_file_index);\n            const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;\n            switch', 1),
-          ]
-          for old, new, expected in replacements:
-              count = s.count(old)
-              assert count == expected, f'initializer_lowerer: expected {expected}, got {count}: {old!r}'
-              s = s.replace(old, new)
-          assert s.count('declaration.syntax_node') == 9
-          assert s.count('decl.syntax_node') == 3
-          s = s.replace('declaration.syntax_node', 'declaration_node')
-          s = s.replace('decl.syntax_node', 'declaration_node')
-          p.write_text(s)
-
-          edit('src/4_semantics/module/semantizer.zig', [
-              ('        const file = files[declaration.module_file_index];\n        const operator:',
-               '        const file = files[declaration.module_file_index];\n        const declaration_node = module_sg.declarationSyntaxNode(files, declaration) orelse {\n            graph.semantic.function_operators.appendAssumeCapacity(null);\n            continue;\n        };\n        const operator:', 1),
-              ('file.tree.functionNameFromSource(file.source, declaration.syntax_node)',
-               'file.tree.functionNameFromSource(file.source, declaration_node)', 1),
-          ])
-
-          offenders = []
-          pattern = re.compile(r'\b(?:declaration|decl|legacy_decl)\.syntax_node')
-          for path in Path('src/4_semantics/module').rglob('*.zig'):
-              text = path.read_text()
-              if pattern.search(text): offenders.append(str(path))
-          assert not offenders, f'remaining declaration syntax consumers: {offenders}'
-          PY
-          git checkout HEAD -- .github/workflows/compact-semantic-graph.yml
-
-      - name: Show remaining syntax-node storage
-        run: grep -R -n "syntax_node" src/4_semantics/module || true
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -125,10 +37,6 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Commit validated migration
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/module/module_alias_lowerer.zig src/4_semantics/module/generic_operator_lowerer.zig src/4_semantics/module/function_identity_lowerer.zig src/4_semantics/module/body_lowerer.zig src/4_semantics/module/parameterized/lowerer.zig src/4_semantics/module/initializer_lowerer.zig src/4_semantics/module/semantizer.zig
-          git commit -m "Resolve ModuleSema declarations from source provenance"
-          git push origin HEAD:compact-semantic-graph-chatgpt
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
