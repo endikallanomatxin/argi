@@ -34,18 +34,16 @@ jobs:
           p.write_text(s)
 
           removals = {
-              'src/4_semantics/module/parameterized/verify.zig': '        .syntax_node = @enumFromInt(1),\n',
-              'src/4_semantics/global/expressions.zig': ' .syntax_node = @enumFromInt(0)',
-              'src/4_semantics/semantic_representation_test.zig': '        .syntax_node = @enumFromInt(0),\n',
+              'src/4_semantics/module/parameterized/verify.zig': ('        .syntax_node = @enumFromInt(1),\n', 1),
+              'src/4_semantics/global/expressions.zig': (' .syntax_node = @enumFromInt(0)', 2),
+              'src/4_semantics/semantic_representation_test.zig': ('        .syntax_node = @enumFromInt(0),\n', 1),
           }
-          for path, old in removals.items():
+          for path, (old, expected) in removals.items():
               p = Path(path)
               s = p.read_text()
-              assert s.count(old) == 1, f'{path}: expected one fixture occurrence, got {s.count(old)}'
-              if path.endswith('expressions.zig'):
-                  s = s.replace(old, '', 1)
-              else:
-                  s = s.replace(old, '', 1)
+              count = s.count(old)
+              assert count == expected, f'{path}: expected {expected} fixture occurrences, got {count}'
+              s = s.replace(old, '')
               p.write_text(s)
           PY
           git checkout HEAD -- .github/workflows/compact-semantic-graph.yml
