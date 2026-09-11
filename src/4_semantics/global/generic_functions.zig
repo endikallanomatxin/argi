@@ -1,6 +1,5 @@
 const std = @import("std");
 const syn = @import("../../3_syntax/syntax_tree.zig");
-const tok = @import("../../2_tokens/token.zig");
 const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const parameterized_storage = @import("../module/parameterized/storage.zig");
@@ -1117,7 +1116,7 @@ pub const Resolver = struct {
         fn resolveBinary(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, aux: u32) !global_sg.Node {
             if (operands.len != 2) return error.InvalidParameterizedBinary;
             const tag: syn.Node.Tag = @enumFromInt(aux);
-            const operator: tok.BinaryOperator = switch (tag) {
+            const operator: primitives.BinaryOperator = switch (tag) {
                 .binary_add => .addition,
                 .binary_subtract => .subtraction,
                 .binary_multiply => .multiplication,
@@ -1136,7 +1135,7 @@ pub const Resolver = struct {
         fn resolveComparison(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, aux: u32) !global_sg.Node {
             if (operands.len != 2) return error.InvalidParameterizedComparison;
             const tag: syn.Node.Tag = @enumFromInt(aux);
-            const operator: tok.ComparisonOperator = switch (tag) {
+            const operator: primitives.ComparisonOperator = switch (tag) {
                 .compare_equal => .equal,
                 .compare_not_equal => .not_equal,
                 .compare_less => .less_than,

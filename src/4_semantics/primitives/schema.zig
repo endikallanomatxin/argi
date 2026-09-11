@@ -1,5 +1,4 @@
 const std = @import("std");
-const tok = @import("../../2_tokens/token.zig");
 const semantic_strings = @import("strings.zig");
 
 pub const StringRange = semantic_strings.StringRange;
@@ -35,6 +34,8 @@ pub const PointerMutability = enum(u8) { read_only, read_write };
 pub const Mutability = enum(u8) { constant, variable };
 pub const ForMode = enum(u8) { value, borrow, mut_borrow };
 pub const MatchCaseMode = enum(u8) { value, borrow, mut_borrow, move };
+pub const BinaryOperator = enum(u8) { addition, subtraction, multiplication, division, modulo };
+pub const ComparisonOperator = enum(u8) { equal, not_equal, less_than, greater_than, less_than_or_equal, greater_than_or_equal };
 
 pub const DeclarationKind = enum {
     binding,
@@ -452,8 +453,8 @@ pub fn Node(comptime Ids: type) type {
                 field_type: Ids.TypeId,
                 value: Ids.NodeId,
             },
-            binary_operation: struct { operator: tok.BinaryOperator, left: Ids.NodeId, right: Ids.NodeId },
-            comparison: struct { operator: tok.ComparisonOperator, left: Ids.NodeId, right: Ids.NodeId },
+            binary_operation: struct { operator: BinaryOperator, left: Ids.NodeId, right: Ids.NodeId },
+            comparison: struct { operator: ComparisonOperator, left: Ids.NodeId, right: Ids.NodeId },
             logical_operation: struct { operator: LogicalOperator, left: Ids.NodeId, right: Ids.NodeId },
             return_statement: struct { expression: ?Ids.NodeId, cleanup: Range(Ids.NodeId) },
             if_statement: struct {

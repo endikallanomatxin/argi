@@ -1,5 +1,4 @@
 const std = @import("std");
-const tok = @import("../../2_tokens/token.zig");
 const primitives = @import("../primitives/schema.zig");
 
 pub const ModuleDeclId = enum(u32) { _ };
@@ -179,13 +178,13 @@ pub const PendingOperation = union(enum) {
     },
     resolve_binary: struct {
         node: ModuleNodeId,
-        operator: tok.BinaryOperator,
+        operator: primitives.BinaryOperator,
         left: ModuleNodeId,
         right: ModuleNodeId,
     },
     resolve_comparison: struct {
         node: ModuleNodeId,
-        operator: tok.ComparisonOperator,
+        operator: primitives.ComparisonOperator,
         left: ModuleNodeId,
         right: ModuleNodeId,
     },
@@ -307,5 +306,5 @@ test "module semantic identities instantiate the shared schema" {
         .left = @enumFromInt(0),
         .right = @enumFromInt(1),
     } };
-    try std.testing.expectEqual(tok.BinaryOperator.addition, pending.resolve_binary.operator);
+    try std.testing.expectEqual(primitives.BinaryOperator.addition, pending.resolve_binary.operator);
 }
