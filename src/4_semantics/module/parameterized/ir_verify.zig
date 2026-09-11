@@ -178,8 +178,6 @@ test "parameterized IR verifier accepts semantic variants and qualified generic 
         .declaration_count = 0,
         .type_reference_base = 0,
         .type_reference_count = 0,
-        .import_reference_base = 0,
-        .import_reference_count = 0,
     });
     try graph.semantic.parameterized_storage.comptime_parameters.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .kind = .comptime_int });
     try graph.semantic.parameterized_storage.ir.int_expressions.append(allocator, .{ .parameter = @enumFromInt(0) });

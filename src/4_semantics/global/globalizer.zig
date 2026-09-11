@@ -685,8 +685,6 @@ test "globalizer preserves hole identity for GlobalSema" {
         .declaration_count = 0,
         .type_reference_base = 0,
         .type_reference_count = 0,
-        .import_reference_base = 0,
-        .import_reference_count = 0,
     });
     try module.semantic.external_refs.append(allocator, .{
         .kind = .type,

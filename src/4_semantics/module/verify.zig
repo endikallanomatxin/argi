@@ -30,8 +30,6 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
             .module => |id| try require(verify.idFits(id, graph.declarations.items.len)),
         }
     }
-    for (graph.import_references.items) |reference| try require(verify.stringFits(reference.path, graph.strings.items));
-
     for (0..views.typeCount(graph)) |index| {
         const ty = try views.typeView(graph, @enumFromInt(@as(u32, @intCast(index))));
         switch (ty) {
@@ -115,24 +113,19 @@ fn requireLogicalDomainsFit(graph: *const graph_mod.ModuleSemanticGraph) !void {
 fn verifyFilePartitions(graph: *const graph_mod.ModuleSemanticGraph) !void {
     var declaration_cursor: usize = 0;
     var type_reference_cursor: usize = 0;
-    var import_reference_cursor: usize = 0;
 
     for (graph.file_offsets.items) |file| {
         try require(verify.stringFits(file.path, graph.strings.items));
         try require(file.declaration_base == declaration_cursor);
         try require(file.type_reference_base == type_reference_cursor);
-        try require(file.import_reference_base == import_reference_cursor);
         try require(rangeFitsRaw(file.declaration_base, file.declaration_count, graph.declarations.items.len));
         try require(rangeFitsRaw(file.type_reference_base, file.type_reference_count, graph.type_references.items.len));
-        try require(rangeFitsRaw(file.import_reference_base, file.import_reference_count, graph.import_references.items.len));
         declaration_cursor += file.declaration_count;
         type_reference_cursor += file.type_reference_count;
-        import_reference_cursor += file.import_reference_count;
     }
 
     try require(declaration_cursor == graph.declarations.items.len);
     try require(type_reference_cursor == graph.type_references.items.len);
-    try require(import_reference_cursor == graph.import_references.items.len);
 }
 
 fn verifyOverlays(graph: *const graph_mod.ModuleSemanticGraph) !void {
@@ -363,8 +356,6 @@ test "module verifier accepts a well formed external type hole" {
         .declaration_count = 0,
         .type_reference_base = 0,
         .type_reference_count = 0,
-        .import_reference_base = 0,
-        .import_reference_count = 0,
     });
     try graph.semantic.external_refs.append(allocator, .{
         .kind = .type,

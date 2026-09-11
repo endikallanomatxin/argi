@@ -21,8 +21,6 @@ fn makeScalarModule(allocator: std.mem.Allocator, dir: []const u8, type_name_tex
         .declaration_count = 1,
         .type_reference_base = 0,
         .type_reference_count = 0,
-        .import_reference_base = 0,
-        .import_reference_count = 0,
     });
     try module.declarations.append(allocator, .{
         .kind = .type,
@@ -83,8 +81,6 @@ fn makeInferredChoiceModule(allocator: std.mem.Allocator) !module_sg.ModuleSeman
         .declaration_count = 1,
         .type_reference_base = 0,
         .type_reference_count = 0,
-        .import_reference_base = 0,
-        .import_reference_count = 0,
     });
     try module.declarations.append(allocator, .{
         .kind = .type,
@@ -125,8 +121,6 @@ fn makeGenericArrayModule(allocator: std.mem.Allocator) !module_sg.ModuleSemanti
         .declaration_count = 1,
         .type_reference_base = 0,
         .type_reference_count = 0,
-        .import_reference_base = 0,
-        .import_reference_count = 0,
     });
     try module.declarations.append(allocator, .{
         .kind = .type,

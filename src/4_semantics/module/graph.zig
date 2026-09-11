@@ -15,13 +15,6 @@ pub const ModuleFunctionId = module_entities.ModuleFunctionId;
 pub const StringRange = semantic_strings.StringRange;
 pub const DeclarationRange = struct { start: u32, len: u32 };
 
-/// The spelling of an import is file-local; locating its module is global work.
-pub const ImportReference = struct {
-    path: StringRange,
-    source_offset: u32,
-    syntax_node: syn.NodeIndex,
-};
-
 /// A type lookup requirement, not a selected declaration or canonical type.
 /// Even a name declared in this file may participate in global resolution.
 pub const TypeReference = struct {
@@ -88,8 +81,6 @@ pub const FileOffsets = struct {
     declaration_count: u32,
     type_reference_base: u32,
     type_reference_count: u32,
-    import_reference_base: u32,
-    import_reference_count: u32,
 };
 
 pub const Symbol = struct {
@@ -116,7 +107,6 @@ pub const ModuleSemanticGraph = struct {
     strings: std.ArrayList(u8) = .empty,
     lexical: lexical_tables.LexicalTables = .{},
     type_references: std.ArrayList(TypeReference) = .empty,
-    import_references: std.ArrayList(ImportReference) = .empty,
     file_offsets: std.ArrayList(FileOffsets) = .empty,
     semantic: module_storage.Storage = .{},
 
@@ -135,7 +125,6 @@ pub const ModuleSemanticGraph = struct {
         self.strings.deinit(allocator);
         self.lexical.deinit(allocator);
         self.type_references.deinit(allocator);
-        self.import_references.deinit(allocator);
         self.file_offsets.deinit(allocator);
         self.semantic.deinit(allocator);
         self.* = .{};
@@ -174,7 +163,6 @@ pub const ModuleSemanticGraph = struct {
             self.generic_type_arguments.items.len * @sizeOf(GenericTypeArgument) +
             self.strings.items.len + lexical_bytes +
             self.type_references.items.len * @sizeOf(TypeReference) +
-            self.import_references.items.len * @sizeOf(ImportReference) +
             self.file_offsets.items.len * @sizeOf(FileOffsets) +
             self.semantic.storageBytes();
     }
@@ -210,7 +198,6 @@ pub const ModuleSemanticGraphBuilder = struct {
         for (files, 0..) |file, module_file_index| {
             const declaration_base: u32 = @intCast(self.graph.declarations.items.len);
             const type_reference_base: u32 = @intCast(self.graph.type_references.items.len);
-            const import_reference_base: u32 = @intCast(self.graph.import_references.items.len);
             try discoverFile(self.allocator, &self.graph, file, @intCast(module_file_index));
             self.graph.file_offsets.appendAssumeCapacity(.{
                 .path = try self.graph.addString(self.allocator, std.fs.path.basename(file.path)),
@@ -218,8 +205,6 @@ pub const ModuleSemanticGraphBuilder = struct {
                 .declaration_count = @intCast(self.graph.declarations.items.len - declaration_base),
                 .type_reference_base = type_reference_base,
                 .type_reference_count = @intCast(self.graph.type_references.items.len - type_reference_base),
-                .import_reference_base = import_reference_base,
-                .import_reference_count = @intCast(self.graph.import_references.items.len - import_reference_base),
             });
         }
         try buildSymbolIndex(self.allocator, &self.graph);
@@ -770,16 +755,6 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
     // Syntax-node order permits binary lookup during the global consumer
     // migration without retaining a dense map for every expression node.
     for (tree.nodes.items(.tag), 0..) |tag, index| {
-        if (tag == .import_statement) {
-            const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(index)));
-            const path_token = tree.importStatement(node).?.path_token;
-            const path = try graph.addString(allocator, tree.tokenTextFromSource(source, path_token));
-            try graph.import_references.append(allocator, .{
-                .path = path,
-                .source_offset = tree.tokenLocation(path_token).offset,
-                .syntax_node = node,
-            });
-        }
         if (tag != .type_name) continue;
         const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(index)));
         const name = tree.syntaxType(node).?.name;
