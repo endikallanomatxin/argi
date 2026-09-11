@@ -468,7 +468,7 @@ const Context = struct {
     fn lowerAddress(self: *Context, node: syn.NodeIndex) !Lowered {
         const address = self.tree.addressOf(node).?;
         const value = try self.lowerExpr(address.value, null);
-        const ty = try self.writer.addResolvedType(.{ .pointer = .{ .child = value.ty, .mutability = address.mutability } });
+        const ty = try self.writer.addResolvedType(.{ .pointer = .{ .child = value.ty, .mutability = graph_mod.pointerMutabilityFromSyntax(address.mutability) } });
         return self.resolved(node, ty, .{ .address_of = value.node });
     }
 

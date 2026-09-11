@@ -198,7 +198,7 @@ pub const Context = struct {
             .name => |name| self.lowerNamedType(node, name.name_token, name.qualifier_token, allow_self),
             .pointer => |value| blk: {
                 const child = try self.lowerType(value.child, allow_self);
-                break :blk try self.addType(.{ .resolved = .{ .pointer = .{ .child = child, .mutability = value.mutability } } });
+                break :blk try self.addType(.{ .resolved = .{ .pointer = .{ .child = child, .mutability = graph_mod.pointerMutabilityFromSyntax(value.mutability) } } });
             },
             .nullable => |child| try self.addType(.{ .resolved = .{ .nullable = try self.lowerType(child, allow_self) } }),
             .inferred_errable => |child| try self.addType(.{ .resolved = .{ .inferred_errable = try self.lowerType(child, allow_self) } }),

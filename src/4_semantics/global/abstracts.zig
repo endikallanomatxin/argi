@@ -238,7 +238,7 @@ pub const Resolver = struct {
                 if (!try self.core.completeCallInputFields(input_fields, input)) continue;
 
                 var self_index: ?u32 = null;
-                var permission: syn.PointerMutability = .read_only;
+                var permission: primitives.PointerMutability = .read_only;
                 for (0..input_fields.len) |field_index| {
                     const field = self.graph.fields.items[input_fields.start + @as(u32, @intCast(field_index))];
                     switch (self.graph.types.items[@intFromEnum(field.ty)]) {
