@@ -7,6 +7,7 @@ const globalizer = @import("globalizer.zig");
 const global_verify = @import("verify.zig");
 const core_mod = @import("core.zig");
 const expression_mod = @import("expressions.zig");
+const constructor_mod = @import("constructors.zig");
 const control_mod = @import("control.zig");
 const generic_mod = @import("generics.zig");
 const generic_functions_mod = @import("generic_functions.zig");
@@ -71,6 +72,12 @@ pub fn semantize(
         .graph = &relocation.graph,
         .modules = modules,
         .offsets = relocation.offsets.items,
+    };
+    var constructors = constructor_mod.Resolver{
+        .graph = &relocation.graph,
+        .modules = modules,
+        .offsets = relocation.offsets.items,
+        .core = &core,
     };
     var control = control_mod.Resolver{
         .allocator = allocator,
@@ -144,6 +151,7 @@ pub fn semantize(
             if (try resolvePendingPhase(
                 &core,
                 &expressions,
+                &constructors,
                 &control,
                 &generics,
                 &generic_functions,
@@ -213,6 +221,7 @@ pub fn semantize(
 fn resolvePendingPhase(
     core: *core_mod.Resolver,
     expressions: *expression_mod.Resolver,
+    constructors: *constructor_mod.Resolver,
     control: *control_mod.Resolver,
     generics: *generic_mod.Resolver,
     generic_functions: *generic_functions_mod.Resolver,
@@ -233,6 +242,7 @@ fn resolvePendingPhase(
                 if (try resolvePendingOperation(
                     core,
                     expressions,
+                    constructors,
                     control,
                     generics,
                     generic_functions,
@@ -294,6 +304,7 @@ fn pendingPhase(operation: module_entities.PendingOperation) PendingPhase {
 fn resolvePendingOperation(
     core: *core_mod.Resolver,
     expressions: *expression_mod.Resolver,
+    constructors: *constructor_mod.Resolver,
     control: *control_mod.Resolver,
     generics: *generic_mod.Resolver,
     generic_functions: *generic_functions_mod.Resolver,
@@ -313,6 +324,7 @@ fn resolvePendingOperation(
         .resolve_call => blk: {
             if ((try core.tryResolve(module_index, module, o, operation)) orelse false) break :blk true;
             if ((try generic_functions.tryResolve(module_index, module, o, operation)) orelse false) break :blk true;
+            if ((try constructors.tryResolve(module_index, module, o, operation)) orelse false) break :blk true;
             if ((try abstracts.tryResolve(module_index, module, o, operation)) orelse false) break :blk true;
             break :blk (try control.tryResolve(module_index, module, o, operation)) orelse false;
         },
