@@ -249,11 +249,22 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.idFits(value.binding, semantic.bindings.items.len));
         },
-        .resolve_expression => |value| {
+        .resolve_name_use => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
-            try require(verify.rangeFits(value.operands, semantic.node_refs.items.len));
-            if (value.name) |name| try require(verify.stringFits(name, graph.strings.items));
-            try require(verify.optionalIdFits(value.expected_type, views.typeCount(graph)));
+            try require(verify.stringFits(value.name, graph.strings.items));
+        },
+        .resolve_name_assignment => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.stringFits(value.name, graph.strings.items));
+            try require(verify.idFits(value.value, semantic.nodes.items.len));
+        },
+        .resolve_import => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.stringFits(value.path, graph.strings.items));
+        },
+        .resolve_keep_name => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.stringFits(value.name, graph.strings.items));
         },
         .resolve_abstract => |value| {
             try require(verify.idFits(value.declaration, graph.declarations.items.len));

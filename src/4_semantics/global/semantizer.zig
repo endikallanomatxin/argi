@@ -262,7 +262,9 @@ fn pendingPhase(operation: module_entities.PendingOperation) PendingPhase {
         .resolve_binary,
         .resolve_comparison,
         .resolve_index,
-        .resolve_expression,
+        .resolve_name_use,
+        .resolve_name_assignment,
+        .resolve_import,
         => .expressions_and_calls,
         .resolve_choice_literal,
         .resolve_choice_payload,
@@ -276,6 +278,7 @@ fn pendingPhase(operation: module_entities.PendingOperation) PendingPhase {
         .resolve_error_propagation => .errors,
         .resolve_defer,
         .resolve_keep,
+        .resolve_keep_name,
         .resolve_copy,
         .resolve_deinit,
         => .ownership,
@@ -321,7 +324,10 @@ fn resolvePendingOperation(
         .resolve_binary,
         .resolve_comparison,
         => (try core.tryResolve(module_index, module, o, operation)) orelse false,
-        .resolve_expression => (try expressions.tryResolve(module_index, module, o, operation)) orelse false,
+        .resolve_name_use,
+        .resolve_name_assignment,
+        .resolve_import,
+        => (try expressions.tryResolve(module_index, module, o, operation)) orelse false,
         .resolve_choice_literal,
         .resolve_choice_payload,
         .resolve_nullable_unwrap,
@@ -334,6 +340,7 @@ fn resolvePendingOperation(
         .resolve_error_propagation => (try errors.tryResolve(module_index, module, o, operation)) orelse false,
         .resolve_defer,
         .resolve_keep,
+        .resolve_keep_name,
         .resolve_copy,
         .resolve_deinit,
         => (try ownership.tryResolve(module_index, module, o, operation)) orelse false,
@@ -371,9 +378,21 @@ fn dumpUnresolved(modules: []const module_sg.ModuleSemanticGraph, resolved: []co
                             .{ module_index, module.module_dir, module.text(reference.name), reference.generic_arguments != null, @intFromEnum(call.input) },
                         );
                     },
-                    .resolve_expression => |expression| std.debug.print(
-                        "global sema unresolved: module={d} dir={s} op=resolve_expression kind={s} name={s} node={d}\n",
-                        .{ module_index, module.module_dir, @tagName(expression.kind), if (expression.name) |name| module.text(name) else "", @intFromEnum(expression.node) },
+                    .resolve_name_use => |value| std.debug.print(
+                        "global sema unresolved: module={d} dir={s} op=resolve_name_use name={s} node={d}\n",
+                        .{ module_index, module.module_dir, module.text(value.name), @intFromEnum(value.node) },
+                    ),
+                    .resolve_name_assignment => |value| std.debug.print(
+                        "global sema unresolved: module={d} dir={s} op=resolve_name_assignment name={s} node={d}\n",
+                        .{ module_index, module.module_dir, module.text(value.name), @intFromEnum(value.node) },
+                    ),
+                    .resolve_import => |value| std.debug.print(
+                        "global sema unresolved: module={d} dir={s} op=resolve_import path={s} node={d}\n",
+                        .{ module_index, module.module_dir, module.text(value.path), @intFromEnum(value.node) },
+                    ),
+                    .resolve_keep_name => |value| std.debug.print(
+                        "global sema unresolved: module={d} dir={s} op=resolve_keep_name name={s} node={d}\n",
+                        .{ module_index, module.module_dir, module.text(value.name), @intFromEnum(value.node) },
                     ),
                     .resolve_choice_literal => |choice| {
                         const reference = module.semantic.external_refs.items[@intFromEnum(choice.option)];

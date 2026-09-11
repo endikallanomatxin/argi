@@ -169,7 +169,7 @@ const Context = struct {
             .dereference => self.lowerDereference(node, expected),
             .pointer_assignment => self.lowerPointerAssignment(node, expected),
             .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .generic_type_instantiation, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
-            .import_statement => self.pendingLeaf(node, .import_value, null, expected),
+            .import_statement => self.lowerImport(node, expected),
             else => return error.UnexpectedBodySyntaxNode,
         };
     }
@@ -199,7 +199,10 @@ const Context = struct {
         const text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
         if (self.lookupBinding(text)) |binding|
             return self.resolved(node, binding.ty, .{ .binding_use = binding.id });
-        return self.pendingLeaf(node, .unknown_identifier, try self.writer.addString(text), expected);
+        return self.pending(node, .{ .resolve_name_use = .{
+            .node = self.nextNodeId(),
+            .name = try self.writer.addString(text),
+        } }, expected);
     }
 
     fn lowerBinding(self: *Context, node: syn.NodeIndex) !Lowered {
@@ -233,13 +236,10 @@ const Context = struct {
             return self.resolved(node, binding.ty, .{ .assignment = .{ .binding = binding.id, .value = value.node } });
         }
         const value = try self.lowerNode(assignment.value, expected);
-        const ops = try self.writer.appendNodeRefs(&.{value.node});
-        return self.pending(node, .{ .resolve_expression = .{
+        return self.pending(node, .{ .resolve_name_assignment = .{
             .node = self.nextNodeId(),
-            .kind = .unknown_identifier,
-            .operands = ops,
             .name = try self.writer.addString(name_text),
-            .expected_type = expected,
+            .value = value.node,
         } }, expected orelse value.ty);
     }
 
@@ -583,7 +583,10 @@ const Context = struct {
         const name = self.tree.tokenTextFromSource(self.source, keep.name_token);
         if (self.lookupBinding(name)) |binding|
             return self.pending(node, .{ .resolve_keep = .{ .node = self.nextNodeId(), .binding = binding.id } }, try self.builtin(.Void));
-        return self.pendingLeaf(node, .unknown_identifier, try self.writer.addString(name), try self.builtin(.Void));
+        return self.pending(node, .{ .resolve_keep_name = .{
+            .node = self.nextNodeId(),
+            .name = try self.writer.addString(name),
+        } }, try self.builtin(.Void));
     }
 
     fn lowerReach(self: *Context, node: syn.NodeIndex) !Lowered {
@@ -651,12 +654,12 @@ const Context = struct {
         return self.resolved(node, ty, @unionInit(entities.ResolvedNode.Content, @tagName(tag), value.node));
     }
 
-    fn pendingLeaf(self: *Context, node: syn.NodeIndex, kind: entities.PendingExpressionKind, name: ?primitives.StringRange, expected: ?entities.ModuleTypeId) !Lowered {
-        return self.pending(node, .{ .resolve_expression = .{
+    fn lowerImport(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const statement = self.tree.importStatement(node).?;
+        const path = self.tree.tokenTextFromSource(self.source, statement.path_token);
+        return self.pending(node, .{ .resolve_import = .{
             .node = self.nextNodeId(),
-            .kind = kind,
-            .name = name,
-            .expected_type = expected,
+            .path = try self.writer.addString(path),
         } }, expected);
     }
 
@@ -738,6 +741,5 @@ fn hasFunctionSemantic(graph: *const graph_mod.ModuleSemanticGraph, id: entities
 }
 
 test "module body lowerer keeps unresolved expression types explicit" {
-    try std.testing.expect(@sizeOf(entities.PendingExpression) < 48);
     try std.testing.expect(@sizeOf(Lowered) <= 12);
 }

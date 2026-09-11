@@ -3,6 +3,7 @@ const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
+const name_lookup = @import("name_lookup.zig");
 
 pub const Stats = struct {
     binding_uses: u32 = 0,
@@ -24,87 +25,60 @@ pub const Resolver = struct {
     ) !?bool {
         _ = module;
         return switch (operation) {
-            .resolve_expression => |expression| switch (expression.kind) {
-                .unknown_identifier => @as(?bool, self.resolveBindingExpression(module_index, o, expression)),
-                else => null,
-            },
+            .resolve_name_use => |value| @as(?bool, self.resolveNameUse(module_index, o, value)),
+            .resolve_name_assignment => |value| @as(?bool, self.resolveNameAssignment(module_index, o, value)),
+            // Module values need a first-class representation before imports can
+            // be materialized. The operation is nevertheless explicit now, so
+            // no unrelated resolver can accidentally reinterpret it as a name.
+            .resolve_import => @as(?bool, false),
             else => null,
         };
     }
 
-    fn resolveBindingExpression(
-        self: *Resolver,
-        module_index: usize,
-        o: globalizer.Offsets,
-        expression: module_entities.PendingExpression,
-    ) bool {
-        const local_name = expression.name orelse return false;
-        const name = self.modules[module_index].text(local_name);
-
-        // The calling module always wins over implicit bundled-core lookup.
-        if (self.bindingNamedInModule(module_index, name)) |binding|
-            return self.patchBindingExpression(module_index, o, expression, binding);
-
-        var found: ?global_sg.GlobalBindingId = null;
-        for (self.modules, 0..) |*candidate, candidate_index| {
-            if (candidate_index == module_index or !candidate.is_bundled_core) continue;
-            if (std.mem.startsWith(u8, name, "_")) continue;
-            const binding = self.bindingNamedInModule(candidate_index, name) orelse continue;
-            if (found != null) return false;
-            found = binding;
-        }
-        if (found) |binding| return self.patchBindingExpression(module_index, o, expression, binding);
-        return self.patchTypeExpression(module_index, o, expression, name);
+    fn resolveNameUse(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) bool {
+        const name = self.modules[module_index].text(value.name);
+        if (name_lookup.binding(self.modules, self.offsets, module_index, name)) |binding|
+            return self.patchNameUse(o, value.node, binding);
+        return self.patchTypeExpression(module_index, o, value.node, name);
     }
 
-    fn bindingNamedInModule(self: *const Resolver, module_index: usize, name: []const u8) ?global_sg.GlobalBindingId {
-        const module = &self.modules[module_index];
-        var found: ?global_sg.GlobalBindingId = null;
-        for (module.semantic.declaration_bindings.items) |relation| {
-            const declaration = module.declarations.items[@intFromEnum(relation.declaration)];
-            if (!std.mem.eql(u8, module.text(declaration.name), name)) continue;
-            if (found != null) return null;
-            found = @enumFromInt(self.offsets[module_index].binding_base + @intFromEnum(relation.binding));
-        }
-        return found;
-    }
-
-    fn patchBindingExpression(
-        self: *Resolver,
-        module_index: usize,
-        o: globalizer.Offsets,
-        expression: module_entities.PendingExpression,
-        binding: global_sg.GlobalBindingId,
-    ) bool {
-        const target: global_sg.GlobalNodeId = @enumFromInt(o.node_base + @intFromEnum(expression.node));
+    fn resolveNameAssignment(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) bool {
+        const name = self.modules[module_index].text(value.name);
+        const binding = name_lookup.binding(self.modules, self.offsets, module_index, name) orelse return false;
+        const target = globalizer.globalNode(o, value.node);
         const source = self.graph.nodes.items[@intFromEnum(target)].source;
         const ty = self.graph.bindings.items[@intFromEnum(binding)].ty;
-
-        if (expression.operands.len == 0) {
-            self.graph.nodes.items[@intFromEnum(target)] = .{
-                .source = source,
-                .ty = ty,
-                .content = .{ .binding_use = binding },
-            };
-            self.stats.binding_uses += 1;
-            return true;
-        }
-        if (expression.operands.len != 1) return false;
-        const module = &self.modules[module_index];
-        const operand_index: usize = @intCast(expression.operands.start);
-        if (operand_index >= module.semantic.node_refs.items.len) return false;
-        const local_value = module.semantic.node_refs.items[operand_index];
-        const value: global_sg.GlobalNodeId = @enumFromInt(o.node_base + @intFromEnum(local_value));
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = source,
             .ty = ty,
-            .content = .{ .assignment = .{ .binding = binding, .value = value } },
+            .content = .{ .assignment = .{
+                .binding = binding,
+                .value = globalizer.globalNode(o, value.value),
+            } },
         };
         self.stats.binding_assignments += 1;
         return true;
     }
 
-    fn patchTypeExpression(self: *Resolver, module_index: usize, o: globalizer.Offsets, expression: module_entities.PendingExpression, name: []const u8) bool {
+    fn patchNameUse(
+        self: *Resolver,
+        o: globalizer.Offsets,
+        node: module_entities.ModuleNodeId,
+        binding: global_sg.GlobalBindingId,
+    ) bool {
+        const target = globalizer.globalNode(o, node);
+        const source = self.graph.nodes.items[@intFromEnum(target)].source;
+        const ty = self.graph.bindings.items[@intFromEnum(binding)].ty;
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = source,
+            .ty = ty,
+            .content = .{ .binding_use = binding },
+        };
+        self.stats.binding_uses += 1;
+        return true;
+    }
+
+    fn patchTypeExpression(self: *Resolver, module_index: usize, o: globalizer.Offsets, node: module_entities.ModuleNodeId, name: []const u8) bool {
         var found: ?global_sg.GlobalTypeId = null;
         for (self.graph.types.items, 0..) |item, raw| switch (item) {
             .builtin => |builtin| if (std.mem.eql(u8, name, @tagName(builtin))) {
@@ -129,7 +103,7 @@ pub const Resolver = struct {
             },
             else => {},
         };
-        const target: global_sg.GlobalNodeId = @enumFromInt(o.node_base + @intFromEnum(expression.node));
+        const target = globalizer.globalNode(o, node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = self.graph.nodes.items[@intFromEnum(target)].source,
             .ty = meta orelse return false,
@@ -156,7 +130,6 @@ test "expression resolver preserves global binding reads and assignments" {
     try core.declarations.append(allocator, .{ .kind = .binding, .name = name, .source_offset = 0, .module_file_index = 0, .syntax_node = @enumFromInt(0) });
     try app.semantic.declaration_bindings.append(allocator, .{ .declaration = @enumFromInt(0), .binding = @enumFromInt(0) });
     try core.semantic.declaration_bindings.append(allocator, .{ .declaration = @enumFromInt(0), .binding = @enumFromInt(0) });
-    try app.semantic.node_refs.append(allocator, @enumFromInt(1));
 
     const int_ty: global_sg.GlobalTypeId = @enumFromInt(0);
     try graph.types.append(allocator, .{ .builtin = .Int32 });
@@ -171,18 +144,20 @@ test "expression resolver preserves global binding reads and assignments" {
     };
     var resolver: Resolver = .{ .graph = &graph, .modules = &.{ app, core }, .offsets = &offsets };
 
-    const read: module_entities.PendingExpression = .{ .node = @enumFromInt(0), .kind = .unknown_identifier, .name = name };
-    try std.testing.expect(resolver.resolveBindingExpression(0, offsets[0], read));
+    const read = module_entities.PendingOperation{ .resolve_name_use = .{
+        .node = @enumFromInt(0),
+        .name = name,
+    } };
+    try std.testing.expect((try resolver.tryResolve(0, &app, offsets[0], read)).?);
     try std.testing.expectEqual(@as(global_sg.GlobalBindingId, @enumFromInt(0)), graph.nodes.items[0].content.binding_use);
 
     graph.nodes.items[0] = .{ .source = .{ .file_index = 0, .offset = 9 }, .ty = null, .content = .{ .bool_literal = false } };
-    const assignment: module_entities.PendingExpression = .{
+    const assignment = module_entities.PendingOperation{ .resolve_name_assignment = .{
         .node = @enumFromInt(0),
-        .kind = .unknown_identifier,
         .name = name,
-        .operands = .{ .start = 0, .len = 1 },
-    };
-    try std.testing.expect(resolver.resolveBindingExpression(0, offsets[0], assignment));
+        .value = @enumFromInt(1),
+    } };
+    try std.testing.expect((try resolver.tryResolve(0, &app, offsets[0], assignment)).?);
     try std.testing.expectEqual(@as(global_sg.GlobalBindingId, @enumFromInt(0)), graph.nodes.items[0].content.assignment.binding);
     try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(1)), graph.nodes.items[0].content.assignment.value);
 }

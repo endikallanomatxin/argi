@@ -696,9 +696,9 @@ test "globalizer preserves hole identity for GlobalSema" {
     });
     try module.semantic.types.append(allocator, .{ .external = @enumFromInt(0) });
     try module.semantic.nodes.append(allocator, .{ .pending = @enumFromInt(0) });
-    try module.semantic.pending_operations.append(allocator, .{ .resolve_expression = .{
+    try module.semantic.pending_operations.append(allocator, .{ .resolve_name_use = .{
         .node = @enumFromInt(0),
-        .kind = .unknown_identifier,
+        .name = .{ .start = 0, .len = 0 },
     } });
     var result = try relocate(allocator, &.{module}, .allow_holes);
     defer result.deinit(allocator);
