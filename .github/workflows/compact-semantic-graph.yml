@@ -38,15 +38,13 @@ jobs:
           from pathlib import Path
           path = Path("src/4_semantics/global/generic_functions.zig")
           text = path.read_text()
-          old = '''        else
-            self.resolveImplicitGenericFunction(module_index, module, reference, input) catch return false;'''
-          new = '''        else
-            self.resolveImplicitGenericFunction(module_index, module, reference, input) catch |err| {
+          old = "self.resolveImplicitGenericFunction(module_index, module, reference, input) catch return false;"
+          new = '''self.resolveImplicitGenericFunction(module_index, module, reference, input) catch |err| {
                 if (std.mem.eql(u8, name, "deinit"))
                     std.debug.print("generic deinit resolution failed: {s}\\n", .{@errorName(err)});
                 return false;
             };'''
-          assert old in text
+          assert text.count(old) == 1, text.count(old)
           path.write_text(text.replace(old, new, 1))
           PY
 
