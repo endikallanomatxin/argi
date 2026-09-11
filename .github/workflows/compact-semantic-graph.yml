@@ -47,16 +47,21 @@ jobs:
 
           p = Path("src/0_commands/indexed_lsp_service.zig")
           s = p.read_text()
+          old_collect_files = '''        const files = self.collectFiles(allocator, doc) catch |err| {\n            log.debug("LSP module load failed for {s}: {s}", .{ doc.path, @errorName(err) });\n            return null;\n        };'''
+          new_collect_files = '''        const files = self.collectFiles(allocator, doc) catch |err| {\n            std.debug.print("LSPDEF collectFiles error={s} path={s}\\n", .{ @errorName(err), doc.path });\n            log.debug("LSP module load failed for {s}: {s}", .{ doc.path, @errorName(err) });\n            return null;\n        };'''
+          old_semantize = '''        _ = pipeline.semantizeGlobalFiles(files) catch {\n            // Parsing/global semantic failures leave no graph. Safety failures,\n            // however, happen after GlobalSG is complete and should not disable\n            // editor navigation for otherwise-resolved symbols.\n            if (pipeline.global_graph == null) return null;\n        };'''
+          new_semantize = '''        _ = pipeline.semantizeGlobalFiles(files) catch |err| {\n            std.debug.print("LSPDEF semantize error={s} graph_present={} modules={d}\\n", .{ @errorName(err), pipeline.global_graph != null, pipeline.module_graphs.items.len });\n            // Parsing/global semantic failures leave no graph. Safety failures,\n            // however, happen after GlobalSG is complete and should not disable\n            // editor navigation for otherwise-resolved symbols.\n            if (pipeline.global_graph == null) return null;\n        };'''
+          assert s.count(old_collect_files) == 1, s.count(old_collect_files)
+          assert s.count(old_semantize) == 1, s.count(old_semantize)
+          s = s.replace(old_collect_files, new_collect_files, 1).replace(old_semantize, new_semantize, 1)
+
           begin = s.index("    pub fn definition(")
           end = s.index("    pub fn references(", begin)
           block = s[begin:end]
           old_analysis = '''        var analysis = (try self.collectAnalysis(&work, doc)) orelse return null;\n        defer analysis.deinit(work);'''
-          new_analysis = '''        var analysis = (try self.collectAnalysis(&work, doc)) orelse {\n            std.debug.print("LSPDEF analysis=null path={s}\\n", .{doc.path});\n            return null;\n        };\n        defer analysis.deinit(work);\n\n        const requested_file = analysis.source_db.findPath(doc.path);\n        const requested_offset = if (requested_file) |file| editor_index.offsetForPosition(&analysis.source_db, file, position.line, position.character) else null;\n        std.debug.print("LSPDEF path={s} file={any} offset={any} occurrences={d}\\n", .{ doc.path, requested_file, requested_offset, analysis.index.occurrences.items.len });\n        for (analysis.index.occurrences.items) |candidate| {\n            const candidate_name = editor_index.Index.targetName(&analysis.graph, candidate.target);\n            if (!std.mem.eql(u8, candidate_name, "helper")) continue;\n            const mapped_file = editor_index.sourceFileId(&analysis.graph, &analysis.source_db, candidate.source);\n            std.debug.print("LSPDEF helper source_file={d} off={d} len={d} decl={} mapped={any}\\n", .{ candidate.source.file_index, candidate.source.offset, candidate.len, candidate.declaration, mapped_file });\n        }'''
-          old_occurrence = '''        const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;\n        const target = analysis.index.declarationOccurrence(occurrence.target) orelse return null;\n        return try self.definitionForOccurrence(&analysis, target);'''
-          new_occurrence = '''        const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse {\n            std.debug.print("LSPDEF occurrence=null\\n", .{});\n            return null;\n        };\n        std.debug.print("LSPDEF selected name={s} off={d} len={d} decl={}\\n", .{ editor_index.Index.targetName(&analysis.graph, occurrence.target), occurrence.source.offset, occurrence.len, occurrence.declaration });\n        const target = analysis.index.declarationOccurrence(occurrence.target) orelse {\n            std.debug.print("LSPDEF declaration=null target={s}\\n", .{editor_index.Index.targetName(&analysis.graph, occurrence.target)});\n            return null;\n        };\n        std.debug.print("LSPDEF declaration off={d} file={d} len={d}\\n", .{ target.source.offset, target.source.file_index, target.len });\n        const result = try self.definitionForOccurrence(&analysis, target);\n        if (result == null) std.debug.print("LSPDEF definitionForOccurrence=null\\n", .{});\n        return result;'''
+          new_analysis = '''        var analysis = (try self.collectAnalysis(&work, doc)) orelse {\n            std.debug.print("LSPDEF analysis=null path={s}\\n", .{doc.path});\n            return null;\n        };\n        defer analysis.deinit(work);'''
           assert block.count(old_analysis) == 1, block.count(old_analysis)
-          assert block.count(old_occurrence) == 1, block.count(old_occurrence)
-          block = block.replace(old_analysis, new_analysis, 1).replace(old_occurrence, new_occurrence, 1)
+          block = block.replace(old_analysis, new_analysis, 1)
           p.write_text(s[:begin] + block + s[end:])
           PY
 
@@ -73,8 +78,6 @@ jobs:
           chmod +x llvm.sh
           sudo ./llvm.sh 21
           sudo apt-get install -y llvm-21-dev clang-21
-          zig version
-          llvm-config-21 --version
 
       - name: Build compiler
         run: zig build
