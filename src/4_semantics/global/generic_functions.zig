@@ -1044,7 +1044,7 @@ pub const Resolver = struct {
             };
             if (input_literal) |literal| if (literal.fields.len == 0) {
                 if (try self.resolveEmptyTypeInitializer(name, source)) |node| return node;
-            }
+            };
             const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = module_path, .name = name_range, .source = source };
             const function = if (arguments.len != 0)
                 try self.resolver.resolveExplicitGenericFunction(self.module_index, module, reference, arguments, input)
