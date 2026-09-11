@@ -32,5 +32,9 @@ jobs:
           zig version
           llvm-config-21 --version
 
+      - name: Build compiler
+        run: zig build
+
       - name: Run test suite
+        timeout-minutes: 15
         run: zig build test
