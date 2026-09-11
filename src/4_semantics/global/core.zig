@@ -524,22 +524,36 @@ pub const Resolver = struct {
         return true;
     }
 
-    pub fn scoreCallInput(self: *Resolver, expected_fields: global_sg.FieldRange, input_node: global_sg.GlobalNodeId) ?u32 {
+    pub const CallInputMatch = union(enum) {
+        no_match,
+        deferred,
+        score: u32,
+    };
+
+    pub fn matchCallInput(self: *Resolver, expected_fields: global_sg.FieldRange, input_node: global_sg.GlobalNodeId) CallInputMatch {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input_node)].content) {
             .struct_value_literal => |value| value,
-            else => return null,
+            else => return .no_match,
         };
-        if (literal.fields.len > expected_fields.len) return null;
+        if (literal.fields.len > expected_fields.len) return .no_match;
         var score: u32 = 0;
         for (0..expected_fields.len) |expected_offset| {
             const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(expected_offset))];
             const supplied = self.callArgument(literal, expected_offset, expected.name);
             if (supplied) |node| {
-                const actual = self.graph.nodes.items[@intFromEnum(node)].ty orelse return null;
-                if (types.equal(self.graph, actual, expected.ty)) score += 4 else if (self.callTypesCompatible(actual, expected.ty)) score += 3 else if (types.isBuiltin(self.graph, expected.ty, .Any)) score += 1 else if (self.contextualLiteralFits(node, expected.ty)) score += 3 else return null;
-            } else if (expected.default_value == null) return null;
+                const actual = self.graph.nodes.items[@intFromEnum(node)].ty orelse return .deferred;
+                if (self.graph.isTypeUnresolved(actual) or self.graph.isTypeUnresolved(expected.ty)) return .deferred;
+                if (types.equal(self.graph, actual, expected.ty)) score += 4 else if (self.callTypesCompatible(actual, expected.ty)) score += 3 else if (types.isBuiltin(self.graph, expected.ty, .Any)) score += 1 else if (self.contextualLiteralFits(node, expected.ty)) score += 3 else return .no_match;
+            } else if (expected.default_value == null) return .no_match;
         }
-        return score;
+        return .{ .score = score };
+    }
+
+    pub fn scoreCallInput(self: *Resolver, expected_fields: global_sg.FieldRange, input_node: global_sg.GlobalNodeId) ?u32 {
+        return switch (self.matchCallInput(expected_fields, input_node)) {
+            .score => |score| score,
+            .no_match, .deferred => null,
+        };
     }
 
     pub fn callTypesCompatible(self: *const Resolver, actual: global_sg.GlobalTypeId, expected: global_sg.GlobalTypeId) bool {
@@ -807,6 +821,36 @@ fn pathEndsWith(path: []const u8, suffix: []const u8) bool {
     return boundary == '/' or boundary == '\\';
 }
 
+test "call input matching distinguishes deferred arguments from mismatches" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+
+    const int_ty: global_sg.GlobalTypeId = @enumFromInt(0);
+    const bool_ty: global_sg.GlobalTypeId = @enumFromInt(1);
+    const input_ty: global_sg.GlobalTypeId = @enumFromInt(2);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .builtin = .Bool });
+    const field_name = try graph.addString(allocator, "value");
+    try graph.fields.append(allocator, .{ .name = field_name, .ty = int_ty, .source = .{ .file_index = 0, .offset = 0 } });
+    try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } });
+    try graph.nodes.append(allocator, .{ .source = .{ .file_index = 0, .offset = 1 }, .ty = null, .content = .{ .bool_literal = false } });
+    try graph.value_fields.append(allocator, .{ .name = field_name, .value = @enumFromInt(0) });
+    try graph.nodes.append(allocator, .{
+        .source = .{ .file_index = 0, .offset = 2 },
+        .ty = input_ty,
+        .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 1 }, .ty = input_ty } },
+    });
+
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    const expected: global_sg.FieldRange = .{ .start = 0, .len = 1 };
+    try std.testing.expectEqual(Resolver.CallInputMatch.deferred, resolver.matchCallInput(expected, @enumFromInt(1)));
+    graph.nodes.items[0].ty = bool_ty;
+    try std.testing.expectEqual(Resolver.CallInputMatch.no_match, resolver.matchCallInput(expected, @enumFromInt(1)));
+    graph.nodes.items[0].ty = int_ty;
+    const matched = resolver.matchCallInput(expected, @enumFromInt(1));
+    try std.testing.expectEqual(@as(u32, 4), matched.score);
+}
 test "global core resolver is graph-only" {
     try std.testing.expect(@sizeOf(Resolver) <= 112);
 }
