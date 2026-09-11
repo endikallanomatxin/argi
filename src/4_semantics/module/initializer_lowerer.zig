@@ -225,16 +225,6 @@ const Context = struct {
     }
 
     fn lowerFieldDefaults(self: *Context, stats: *Stats) !void {
-        for (self.graph.fields.items, 0..) |field, raw| {
-            const node = field.default_value orelse continue;
-            self.selectFile(field.module_file_index);
-            const value = try self.lowerExpr(node, field.ty);
-            try self.graph.semantic.field_semantics.append(self.allocator, .{
-                .field = @enumFromInt(@as(u32, @intCast(raw))),
-                .default_value = value.node,
-            });
-            stats.field_defaults += 1;
-        }
         for (self.graph.declarations.items) |declaration| {
             self.selectFile(declaration.module_file_index);
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
@@ -259,17 +249,28 @@ const Context = struct {
 
     fn lowerDeferredDefaults(self: *Context, range_start: u32, range_len: u32, struct_node: syn.NodeIndex, stats: *Stats) !void {
         const semantic_field_base = self.graph.fields.items.len + self.graph.structural_fields.items.len;
-        if (range_start < semantic_field_base) return;
         const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;
         if (literal.fields.len != range_len) return error.InterfaceFieldCountMismatch;
         for (literal.fields, 0..) |field_node, offset| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
             const default_node = field.default_value orelse continue;
-            const field_id: entities.ModuleFieldId = @enumFromInt(range_start + @as(u32, @intCast(offset)));
-            const semantic_field = try views.fieldView(self.graph, field_id);
-            const value = try self.lowerExpr(default_node, semantic_field.ty);
-            const semantic_index = @intFromEnum(field_id) - semantic_field_base;
-            self.graph.semantic.fields.items[semantic_index].default_value = value.node;
+            const raw_field: usize = @intCast(range_start + @as(u32, @intCast(offset)));
+            const field_id: entities.ModuleFieldId = @enumFromInt(@as(u32, @intCast(raw_field)));
+            const field_ty = if (raw_field < self.graph.fields.items.len)
+                self.graph.fields.items[raw_field].ty
+            else if (raw_field < semantic_field_base)
+                self.graph.structural_fields.items[raw_field - self.graph.fields.items.len].ty
+            else
+                self.graph.semantic.fields.items[raw_field - semantic_field_base].ty;
+            const value = try self.lowerExpr(default_node, field_ty);
+            if (raw_field < semantic_field_base) {
+                try self.graph.semantic.field_semantics.append(self.allocator, .{
+                    .field = field_id,
+                    .default_value = value.node,
+                });
+            } else {
+                self.graph.semantic.fields.items[raw_field - semantic_field_base].default_value = value.node;
+            }
             stats.field_defaults += 1;
         }
     }
