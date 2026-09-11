@@ -442,7 +442,7 @@ pub const Context = struct {
             }
             const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.match_cases.items.len);
             try self.graph.semantic.parameterized_storage.ir.match_cases.appendSlice(self.allocator, cases.items);
-            const id = try self.addPending(node, .match, &.{value}, null, null, 0);
+            const id = try self.addPending(node, .match, &.{value}, null, null, .none);
             const pending_id = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(id)].pending;
             self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.match_cases = .{ .start = start, .len = @intCast(cases.items.len) };
             return id;
@@ -471,7 +471,7 @@ pub const Context = struct {
             }
             const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.generic_arguments.items.len);
             try self.graph.semantic.parameterized_storage.ir.generic_arguments.appendSlice(self.allocator, arguments.items);
-            const id = try self.addPending(node, .generic_call, &.{input}, try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)), null, 0);
+            const id = try self.addPending(node, .generic_call, &.{input}, try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)), null, .none);
             const pending_id = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(id)].pending;
             self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.generic_arguments = .{ .start = start, .len = @intCast(arguments.items.len) };
             self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.module_path = if (call.module_qualifier) |token| try self.writer.addString(self.tree.tokenTextFromSource(self.source, token)) else null;
@@ -550,7 +550,7 @@ pub const Context = struct {
                     return self.addResolvedNode(node, try self.parameterizedBuiltin(.Type), .{ .type_literal = value });
                 }
             }
-            return self.addPending(node, .unknown_identifier, &.{}, try self.writer.addString(name), null, 0);
+            return self.addPending(node, .unknown_identifier, &.{}, try self.writer.addString(name), null, .none);
         }
 
         var operands = std.array_list.Managed(ir.ParameterizedNodeId).init(self.allocator);
@@ -565,7 +565,7 @@ pub const Context = struct {
             .keep_statement => if (self.tree.keepStatement(node)) |keep| try self.writer.addString(self.tree.tokenTextFromSource(self.source, keep.name_token)) else null,
             else => null,
         };
-        return self.addPending(node, kind, operands.items, name, null, @intFromEnum(self.tree.tag(node)));
+        return self.addPending(node, kind, operands.items, name, null, parameterizedDetailForTag(self.tree.tag(node)));
     }
 
     fn collectBodyOperands(self: *Context, node: syn.NodeIndex, result: *std.array_list.Managed(ir.ParameterizedNodeId)) anyerror!void {
@@ -638,7 +638,7 @@ pub const Context = struct {
         return self.addResolvedNode(node, try self.parameterizedBuiltin(.Any), .{ .code_block = block });
     }
 
-    fn addPending(self: *Context, node: syn.NodeIndex, kind: ir.PendingExpressionKind, operands: []const ir.ParameterizedNodeId, name: ?primitives.StringRange, expected: ?ir.ParameterizedTypeId, aux: u32) !ir.ParameterizedNodeId {
+    fn addPending(self: *Context, node: syn.NodeIndex, kind: ir.PendingExpressionKind, operands: []const ir.ParameterizedNodeId, name: ?primitives.StringRange, expected: ?ir.ParameterizedTypeId, detail: ir.PendingExpressionDetail) !ir.ParameterizedNodeId {
         const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.node_refs.items.len);
         try self.graph.semantic.parameterized_storage.ir.node_refs.appendSlice(self.allocator, operands);
         const pending_id: ir.ParameterizedPendingId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.pending.items.len)));
@@ -648,7 +648,7 @@ pub const Context = struct {
             .name = name,
             .expected_type = expected,
             .source = self.sourceRef(node),
-            .aux = aux,
+            .detail = detail,
         } });
         const id: ir.ParameterizedNodeId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.nodes.items.len)));
         try self.graph.semantic.parameterized_storage.ir.nodes.append(self.allocator, .{ .pending = pending_id });
@@ -754,6 +754,27 @@ fn builtinFromName(name: []const u8) ?primitives.BuiltinType {
     inline for (@typeInfo(primitives.BuiltinType).@"enum".fields) |field|
         if (std.mem.eql(u8, name, field.name)) return @enumFromInt(field.value);
     return null;
+}
+
+fn parameterizedDetailForTag(tag: syn.Node.Tag) ir.PendingExpressionDetail {
+    return switch (tag) {
+        .binary_add => .{ .binary = .addition },
+        .binary_subtract => .{ .binary = .subtraction },
+        .binary_multiply => .{ .binary = .multiplication },
+        .binary_divide => .{ .binary = .division },
+        .binary_modulo => .{ .binary = .modulo },
+        .compare_equal => .{ .comparison = .equal },
+        .compare_not_equal => .{ .comparison = .not_equal },
+        .compare_less => .{ .comparison = .less_than },
+        .compare_greater => .{ .comparison = .greater_than },
+        .compare_less_equal => .{ .comparison = .less_than_or_equal },
+        .compare_greater_equal => .{ .comparison = .greater_than_or_equal },
+        .logical_and => .{ .logical = .and_ },
+        .logical_or => .{ .logical = .or_ },
+        .address_of => .{ .pointer_mutability = .read_only },
+        .address_of_mut => .{ .pointer_mutability = .read_write },
+        else => .none,
+    };
 }
 
 fn parameterizedKindForTag(tag: syn.Node.Tag) ir.PendingExpressionKind {

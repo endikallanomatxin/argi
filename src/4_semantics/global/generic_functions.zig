@@ -1,5 +1,4 @@
 const std = @import("std");
-const syn = @import("../../3_syntax/syntax_tree.zig");
 const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const parameterized_storage = @import("../module/parameterized/storage.zig");
@@ -908,9 +907,9 @@ pub const Resolver = struct {
                     const input = if (operands.items.len != 0) operands.items[0] else return error.GenericParameterizedCallWithoutInput;
                     break :blk try self.makeNamedCall(name, value.module_path, args, input, value.source);
                 },
-                .binary => self.resolveBinary(operands.items, value.source, value.aux),
-                .comparison => self.resolveComparison(operands.items, value.source, value.aux),
-                .logical => self.resolveLogical(operands.items, value.source, value.aux),
+                .binary => self.resolveBinary(operands.items, value.source, value.detail),
+                .comparison => self.resolveComparison(operands.items, value.source, value.detail),
+                .logical => self.resolveLogical(operands.items, value.source, value.detail),
                 .index => self.resolveIndex(operands.items, value.source, false),
                 .index_store => self.resolveIndex(operands.items, value.source, true),
                 .field_access => if (value.name) |name| self.resolveField(operands.items[0], name, value.source) else error.InvalidParameterizedFieldAccess,
@@ -919,7 +918,7 @@ pub const Resolver = struct {
                 .if_statement => self.resolveIf(operands.items, value.source),
                 .while_statement => self.resolveWhile(operands.items, value.source),
                 .match => if (operands.items.len == 1) self.resolveMatch(value, operands.items[0]) else error.InvalidParameterizedMatch,
-                .address_of => self.resolveAddress(operands.items, value.source, value.aux),
+                .address_of => self.resolveAddress(operands.items, value.source, value.detail),
                 .dereference => self.resolveDereference(operands.items, value.source),
                 .pointer_store => self.resolvePointerStore(operands.items, value.source),
                 .move_value => self.resolveMove(operands.items, value.source),
@@ -1113,15 +1112,10 @@ pub const Resolver = struct {
             };
         }
 
-        fn resolveBinary(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, aux: u32) !global_sg.Node {
+        fn resolveBinary(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {
             if (operands.len != 2) return error.InvalidParameterizedBinary;
-            const tag: syn.Node.Tag = @enumFromInt(aux);
-            const operator: primitives.BinaryOperator = switch (tag) {
-                .binary_add => .addition,
-                .binary_subtract => .subtraction,
-                .binary_multiply => .multiplication,
-                .binary_divide => .division,
-                .binary_modulo => .modulo,
+            const operator: primitives.BinaryOperator = switch (detail) {
+                .binary => |value| value,
                 else => return error.InvalidParameterizedBinary,
             };
             const ty = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty;
@@ -1132,16 +1126,10 @@ pub const Resolver = struct {
             };
         }
 
-        fn resolveComparison(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, aux: u32) !global_sg.Node {
+        fn resolveComparison(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {
             if (operands.len != 2) return error.InvalidParameterizedComparison;
-            const tag: syn.Node.Tag = @enumFromInt(aux);
-            const operator: primitives.ComparisonOperator = switch (tag) {
-                .compare_equal => .equal,
-                .compare_not_equal => .not_equal,
-                .compare_less => .less_than,
-                .compare_greater => .greater_than,
-                .compare_less_equal => .less_than_or_equal,
-                .compare_greater_equal => .greater_than_or_equal,
+            const operator: primitives.ComparisonOperator = switch (detail) {
+                .comparison => |value| value,
                 else => return error.InvalidParameterizedComparison,
             };
             const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });
@@ -1152,10 +1140,12 @@ pub const Resolver = struct {
             };
         }
 
-        fn resolveLogical(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, aux: u32) !global_sg.Node {
+        fn resolveLogical(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {
             if (operands.len != 2) return error.InvalidParameterizedLogical;
-            const tag: syn.Node.Tag = @enumFromInt(aux);
-            const operator: primitives.LogicalOperator = if (tag == .logical_and) .and_ else if (tag == .logical_or) .or_ else return error.InvalidParameterizedLogical;
+            const operator: primitives.LogicalOperator = switch (detail) {
+                .logical => |value| value,
+                else => return error.InvalidParameterizedLogical,
+            };
             const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });
             return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = bool_ty, .content = .{ .logical_operation = .{ .operator = operator, .left = operands[0], .right = operands[1] } } };
         }
@@ -1259,11 +1249,14 @@ pub const Resolver = struct {
             };
         }
 
-        fn resolveAddress(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, aux: u32) !global_sg.Node {
+        fn resolveAddress(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {
             if (operands.len != 1) return error.InvalidParameterizedAddressOf;
             const child = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedAddressUntyped;
-            const tag: syn.Node.Tag = @enumFromInt(aux);
-            const pointer = try self.resolver.generics.internType(.{ .pointer = .{ .child = child, .mutability = if (tag == .address_of_mut) .read_write else .read_only } });
+            const mutability: primitives.PointerMutability = switch (detail) {
+                .pointer_mutability => |value| value,
+                else => return error.InvalidParameterizedAddressOf,
+            };
+            const pointer = try self.resolver.generics.internType(.{ .pointer = .{ .child = child, .mutability = mutability } });
             return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = pointer, .content = .{ .address_of = operands[0] } };
         }
 
