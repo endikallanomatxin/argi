@@ -59,9 +59,9 @@ jobs:
           s = p.read_text()
           assert s.count(marker) == 1
           s = s.replace(marker, helper + marker, 1)
-          old = '.mutability = pointer.mutability,'
+          old = '.mutability = pointer.mutability } });'
           assert s.count(old) == 1, s.count(old)
-          s = s.replace(old, '.mutability = pointerMutabilityFromSyntax(pointer.mutability),', 1)
+          s = s.replace(old, '.mutability = pointerMutabilityFromSyntax(pointer.mutability) } });', 1)
           p.write_text(s)
 
           replace(
