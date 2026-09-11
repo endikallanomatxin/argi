@@ -68,7 +68,6 @@ jobs:
               segment = segment.replace(
                   '        return resolution.Result.fromOptionalBool(legacy);\n', '', 1,
               )
-              # All optional-bool casts in tryResolve are single-line adapters.
               lines = []
               for line in segment.splitlines(keepends=True):
                   if '@as(?bool,' in line:
@@ -80,13 +79,13 @@ jobs:
                   line = line.replace('else => null,', 'else => .not_applicable,')
                   lines.append(line)
               segment = ''.join(lines)
+              segment = segment.replace('resolution.Result.fromBool(false)', '.deferred')
+              segment = segment.replace('resolution.Result.fromBool(true)', '.resolved')
               assert '?bool' not in segment, (name, segment)
               assert 'fromOptionalBool' not in segment, name
               text = text[:start] + segment + text[end:]
               path.write_text(text)
 
-          # The abstract resolver has a labelled block; verify its false/true
-          # exits were converted rather than silently retaining legacy casts.
           abstracts = (root / 'abstracts.zig').read_text()
           assert 'break :blk .deferred' in abstracts
           assert 'break :blk resolution.Result.fromBool(try self.implements' in abstracts
