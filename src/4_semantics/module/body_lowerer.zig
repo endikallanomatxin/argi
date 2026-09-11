@@ -58,9 +58,10 @@ const Context = struct {
             const file = self.files[@intCast(self.file_index)];
             self.tree = file.tree;
             self.source = file.source;
+            const declaration_node = graph_mod.declarationSyntaxNode(self.files, legacy_decl) orelse continue;
             const declaration = switch (legacy_decl.kind) {
-                .function => self.tree.functionDeclaration(legacy_decl.syntax_node) orelse continue,
-                .test_function => (self.tree.testDeclaration(legacy_decl.syntax_node) orelse continue).function,
+                .function => self.tree.functionDeclaration(declaration_node) orelse continue,
+                .test_function => (self.tree.testDeclaration(declaration_node) orelse continue).function,
                 else => continue,
             };
             if (declaration.generic_params.len != 0 or declaration.generic_params_struct != null) continue;

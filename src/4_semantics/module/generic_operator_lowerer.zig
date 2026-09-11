@@ -10,7 +10,8 @@ pub fn lower(
     for (graph.semantic.parameterized_storage.parameterized_functions.items) |*parameterized| {
         const declaration = graph.declarations.items[@intFromEnum(parameterized.declaration)];
         const file = files[declaration.module_file_index];
-        const name = file.tree.functionNameFromSource(file.source, declaration.syntax_node) orelse continue;
+        const declaration_node = graph_mod.declarationSyntaxNode(files, declaration) orelse continue;
+        const name = file.tree.functionNameFromSource(file.source, declaration_node) orelse continue;
         parameterized.operator = switch (name) {
             .operator => |value| callable.fromSyntax(value),
             .identifier => null,

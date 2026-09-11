@@ -17,7 +17,8 @@ pub fn lower(
         if (declaration.kind != .import_alias) continue;
         if (declaration.module_file_index >= files.len) return error.InvalidModuleFileIndex;
         const file = files[declaration.module_file_index];
-        const symbol = file.tree.symbolDeclaration(declaration.syntax_node) orelse return error.InvalidImportAlias;
+        const declaration_node = graph_mod.declarationSyntaxNode(files, declaration) orelse return error.InvalidImportAlias;
+        const symbol = file.tree.symbolDeclaration(declaration_node) orelse return error.InvalidImportAlias;
         const value_node = symbol.value orelse return error.InvalidImportAlias;
         const import_statement = file.tree.importStatement(value_node) orelse return error.InvalidImportAlias;
         const path_text = file.tree.tokenTextFromSource(file.source, import_statement.path_token);
