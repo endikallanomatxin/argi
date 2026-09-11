@@ -46,7 +46,7 @@ const State = struct {
     active_functions: std.AutoHashMap(graph_mod.GlobalFunctionId, void),
     had_error: bool = false,
 
-    fn walkFunction(self: *State, function_id: graph_mod.GlobalFunctionId) !void {
+    fn walkFunction(self: *State, function_id: graph_mod.GlobalFunctionId) anyerror!void {
         if (self.active_functions.contains(function_id)) return;
         const function = self.graph.functions.items[@intFromEnum(function_id)];
         const body = function.body orelse return;
@@ -55,13 +55,13 @@ const State = struct {
         try self.walkBlock(body);
     }
 
-    fn walkBlock(self: *State, block_id: graph_mod.GlobalBlockId) !void {
+    fn walkBlock(self: *State, block_id: graph_mod.GlobalBlockId) anyerror!void {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id|
             try self.walkNode(node_id);
     }
 
-    fn walkNode(self: *State, node_id: graph_mod.GlobalNodeId) !void {
+    fn walkNode(self: *State, node_id: graph_mod.GlobalNodeId) anyerror!void {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
             .declaration,
@@ -214,13 +214,13 @@ const State = struct {
         }
     }
 
-    fn walkCall(self: *State, call_node: graph_mod.GlobalNodeId, callee: graph_mod.GlobalFunctionId) !void {
+    fn walkCall(self: *State, call_node: graph_mod.GlobalNodeId, callee: graph_mod.GlobalFunctionId) anyerror!void {
         const function = self.graph.functions.items[@intFromEnum(callee)];
         if (function.flags.is_once) try self.consumeOnce(call_node, callee);
         try self.walkFunction(callee);
     }
 
-    fn consumeOnce(self: *State, call_node: graph_mod.GlobalNodeId, callee: graph_mod.GlobalFunctionId) !void {
+    fn consumeOnce(self: *State, call_node: graph_mod.GlobalNodeId, callee: graph_mod.GlobalFunctionId) anyerror!void {
         const result = try self.seen_once.getOrPut(callee);
         if (!result.found_existing) {
             result.value_ptr.* = call_node;
@@ -248,7 +248,7 @@ const State = struct {
     }
 
     fn location(self: *const State, source: @import("../primitives/schema.zig").SourceRef) tok.Location {
-        if (source.file_index < self.graph.files.items.len) {
+        if (@as(usize, source.file_index) < self.graph.files.items.len) {
             const graph_file = self.graph.files.items[source.file_index];
             const module = self.graph.modules.items[@intFromEnum(graph_file.module)];
             const wanted_dir = self.graph.text(module.dir);
