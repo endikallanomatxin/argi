@@ -12,6 +12,7 @@ const module_semantizer = @import("../4_semantics/module/semantizer.zig");
 const global_sg = @import("../4_semantics/global/graph.zig");
 const global_semantizer = @import("../4_semantics/global/semantizer.zig");
 const global_once_verify = @import("../4_semantics/global/once_verify.zig");
+const global_test_validate = @import("../4_semantics/global/test_validate.zig");
 const global_safety_checker = @import("../4_semantics/safety/checker.zig");
 
 pub const FrontendPipeline = struct {
@@ -156,6 +157,13 @@ pub const FrontendPipeline = struct {
     /// sole semantic output API of the frontend.
     pub fn semantizeGlobalFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !*const global_sg.GlobalSemanticGraph {
         _ = try self.parseFiles(files);
+        try global_test_validate.validate(
+            self.syntax_files.items,
+            self.source_db,
+            self.diagnostics,
+            self.options.semantizer.include_tests,
+            self.options.semantizer.selected_test_name,
+        );
         try self.buildGlobalGraph();
         try self.analyzeGlobalSafety();
         return &self.global_graph.?;
