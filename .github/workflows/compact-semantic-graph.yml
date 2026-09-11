@@ -1,4 +1,4 @@
-name: Migrate declaration syntax provenance
+name: Compact semantic graph
 
 on:
   push:
@@ -7,59 +7,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-test-commit:
+  test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Migrate graph-local declaration lookup
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('src/4_semantics/module/graph.zig')
-          s = p.read_text()
-
-          anchor = '\npub const ModuleSemanticGraphBuilder = struct {'
-          helper = '\n\n/// Construction-only lookup from durable source provenance back into syntax.\n/// Completed ModuleSG declarations keep source identity, not AST identity.\npub fn declarationSyntaxNode(files: []const FileInput, declaration: Declaration) ?syn.NodeIndex {\n    if (declaration.module_file_index >= files.len) return null;\n    const tree = files[declaration.module_file_index].tree;\n    for (tree.roots) |node| {\n        if (tree.location(node).offset == declaration.source_offset) return node;\n    }\n    return null;\n}\n'
-          assert s.count(anchor) == 1
-          s = s.replace(anchor, helper + anchor, 1)
-
-          old = '        const file_input = files[declaration.module_file_index];\n        const function ='
-          new = '        const file_input = files[declaration.module_file_index];\n        const declaration_node = declarationSyntaxNode(files, declaration.*) orelse continue;\n        const function ='
-          assert s.count(old) == 1
-          s = s.replace(old, new, 1)
-
-          old = '        const input = files[declaration.module_file_index];\n        const type_declaration ='
-          new = '        const input = files[declaration.module_file_index];\n        const declaration_node = declarationSyntaxNode(files, declaration.*) orelse continue;\n        const type_declaration ='
-          assert s.count(old) == 1
-          s = s.replace(old, new, 1)
-
-          old = '        const input = files[declaration.module_file_index];\n        const generic_params, const generic_params_struct, const value ='
-          new = '        const input = files[declaration.module_file_index];\n        const declaration_node = declarationSyntaxNode(files, declaration.*) orelse continue;\n        const generic_params, const generic_params_struct, const value ='
-          assert s.count(old) == 1
-          s = s.replace(old, new, 1)
-
-          count = s.count('declaration.syntax_node')
-          assert count == 8, f'expected 8 graph-local declaration syntax uses, got {count}'
-          s = s.replace('declaration.syntax_node', 'declaration_node')
-          p.write_text(s)
-          PY
-          git checkout HEAD -- .github/workflows/compact-semantic-graph.yml
-
-      - name: Verify graph consumers use source provenance
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          s = Path('src/4_semantics/module/graph.zig').read_text()
-          assert 'declaration.syntax_node' not in s
-          assert 'pub fn declarationSyntaxNode' in s
-          PY
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -82,10 +37,6 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Commit validated migration
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/module/graph.zig
-          git commit -m "Resolve declaration syntax from source provenance"
-          git push origin HEAD:compact-semantic-graph-chatgpt
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
