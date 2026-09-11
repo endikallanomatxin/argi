@@ -44,18 +44,17 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
-        const legacy: ?bool = switch (operation) {
-            .resolve_call => |value| @as(?bool, try self.resolveChoiceTest(module, o, value)),
-            .resolve_choice_literal => |value| @as(?bool, try self.resolveChoiceLiteral(module, o, value)),
-            .resolve_choice_payload => |value| @as(?bool, try self.resolveChoicePayload(module, o, value)),
-            .resolve_nullable_unwrap => |value| @as(?bool, try self.resolveNullableUnwrap(o, value)),
-            .resolve_nullable_test => |value| @as(?bool, try self.resolveNullableTest(o, value)),
-            .resolve_match => |value| @as(?bool, try self.resolveMatch(module, o, value)),
-            .resolve_match_case => |value| @as(?bool, self.matchCaseAlreadyResolved(o, value)),
-            .resolve_for_each => |value| @as(?bool, try self.resolveForEach(module_index, o, value)),
-            else => null,
+        return switch (operation) {
+            .resolve_call => |value| resolution.Result.fromBool(try self.resolveChoiceTest(module, o, value)),
+            .resolve_choice_literal => |value| resolution.Result.fromBool(try self.resolveChoiceLiteral(module, o, value)),
+            .resolve_choice_payload => |value| resolution.Result.fromBool(try self.resolveChoicePayload(module, o, value)),
+            .resolve_nullable_unwrap => |value| resolution.Result.fromBool(try self.resolveNullableUnwrap(o, value)),
+            .resolve_nullable_test => |value| resolution.Result.fromBool(try self.resolveNullableTest(o, value)),
+            .resolve_match => |value| resolution.Result.fromBool(try self.resolveMatch(module, o, value)),
+            .resolve_match_case => |value| resolution.Result.fromBool(self.matchCaseAlreadyResolved(o, value)),
+            .resolve_for_each => |value| resolution.Result.fromBool(try self.resolveForEach(module_index, o, value)),
+            else => .not_applicable,
         };
-        return resolution.Result.fromOptionalBool(legacy);
     }
 
     pub fn annotateChoiceTests(self: *Resolver) void {

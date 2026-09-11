@@ -30,11 +30,10 @@ pub const Resolver = struct {
     ) !resolution.Result {
         _ = module_index;
         _ = module;
-        const legacy: ?bool = switch (operation) {
-            .resolve_error_propagation => |value| @as(?bool, try self.resolve(o, value)),
-            else => null,
+        return switch (operation) {
+            .resolve_error_propagation => |value| resolution.Result.fromBool(try self.resolve(o, value)),
+            else => .not_applicable,
         };
-        return resolution.Result.fromOptionalBool(legacy);
     }
 
     fn resolve(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {

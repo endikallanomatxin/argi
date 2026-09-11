@@ -47,15 +47,14 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
-        const legacy: ?bool = switch (operation) {
-            .resolve_defer => |value| @as(?bool, try self.resolveDefer(o, value)),
-            .resolve_keep => |value| @as(?bool, try self.resolveKeep(o, value)),
-            .resolve_keep_name => |value| @as(?bool, try self.resolveKeepName(module_index, module, o, value)),
-            .resolve_copy => |value| @as(?bool, try self.resolveCopy(o, value)),
-            .resolve_deinit => |value| @as(?bool, try self.resolveExplicitDeinit(o, value)),
-            else => null,
+        return switch (operation) {
+            .resolve_defer => |value| resolution.Result.fromBool(try self.resolveDefer(o, value)),
+            .resolve_keep => |value| resolution.Result.fromBool(try self.resolveKeep(o, value)),
+            .resolve_keep_name => |value| resolution.Result.fromBool(try self.resolveKeepName(module_index, module, o, value)),
+            .resolve_copy => |value| resolution.Result.fromBool(try self.resolveCopy(o, value)),
+            .resolve_deinit => |value| resolution.Result.fromBool(try self.resolveExplicitDeinit(o, value)),
+            else => .not_applicable,
         };
-        return resolution.Result.fromOptionalBool(legacy);
     }
 
     pub fn finalize(self: *Resolver) !void {

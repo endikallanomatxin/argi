@@ -36,11 +36,10 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
-        const legacy: ?bool = switch (operation) {
-            .resolve_call => |value| @as(?bool, try self.resolveCall(module_index, module, o, value)),
-            else => null,
+        return switch (operation) {
+            .resolve_call => |value| resolution.Result.fromBool(try self.resolveCall(module_index, module, o, value)),
+            else => .not_applicable,
         };
-        return resolution.Result.fromOptionalBool(legacy);
     }
 
     fn resolveCall(

@@ -3,11 +3,8 @@ pub const Result = enum(u2) {
     deferred,
     resolved,
 
-    pub fn fromOptionalBool(value: ?bool) Result {
-        return if (value) |done|
-            if (done) .resolved else .deferred
-        else
-            .not_applicable;
+    pub fn fromBool(value: bool) Result {
+        return if (value) .resolved else .deferred;
     }
 
     pub fn isResolved(self: Result) bool {
@@ -15,9 +12,9 @@ pub const Result = enum(u2) {
     }
 };
 
-test "resolution result preserves legacy states" {
+test "resolution result represents resolver ownership explicitly" {
     const std = @import("std");
-    try std.testing.expectEqual(Result.not_applicable, Result.fromOptionalBool(null));
-    try std.testing.expectEqual(Result.deferred, Result.fromOptionalBool(false));
-    try std.testing.expectEqual(Result.resolved, Result.fromOptionalBool(true));
+    try std.testing.expectEqual(Result.deferred, Result.fromBool(false));
+    try std.testing.expectEqual(Result.resolved, Result.fromBool(true));
+    try std.testing.expect(!Result.not_applicable.isResolved());
 }
