@@ -13,7 +13,7 @@ pub fn lower(
         const declaration_node = graph_mod.declarationSyntaxNode(files, declaration) orelse continue;
         const name = file.tree.functionNameFromSource(file.source, declaration_node) orelse continue;
         parameterized.operator = switch (name) {
-            .operator => |value| callable.fromSyntax(value),
+            .operator => |value| graph_mod.operatorKindFromSyntax(value),
             .identifier => null,
         };
         if (parameterized.operator != null) count += 1;

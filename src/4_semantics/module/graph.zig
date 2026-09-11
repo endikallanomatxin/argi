@@ -4,6 +4,7 @@ const file_bindings = @import("../lexical/file_bindings.zig");
 const lexical_tables = @import("../lexical/global.zig");
 const semantic_strings = @import("../primitives/strings.zig");
 const primitives = @import("../primitives/schema.zig");
+const callable = @import("../primitives/callable.zig");
 const module_entities = @import("entities.zig");
 const module_storage = @import("storage.zig");
 
@@ -185,6 +186,18 @@ pub fn declarationSyntaxNode(files: []const FileInput, declaration: Declaration)
         if (tree.location(node).offset == declaration.source_offset) return node;
     }
     return null;
+}
+
+pub fn operatorKindFromSyntax(value: syn.OperatorName) callable.OperatorKind {
+    return switch (value) {
+        .add => .add,
+        .equal => .equal,
+        .not_equal => .not_equal,
+        .get => .get,
+        .set => .set,
+        .get_ro_pointer => .get_ro_pointer,
+        .get_rw_pointer => .get_rw_pointer,
+    };
 }
 
 pub fn pointerMutabilityFromSyntax(value: syn.PointerMutability) primitives.PointerMutability {
