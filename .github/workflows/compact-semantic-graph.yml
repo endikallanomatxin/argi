@@ -1,4 +1,4 @@
-name: Remove duplicate initializer expression lowerer
+name: Compact semantic graph
 
 on:
   push:
@@ -7,60 +7,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-test-commit:
+  test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Remove duplicate expression engine
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('src/4_semantics/module/initializer_lowerer.zig')
-          s = p.read_text()
-
-          for old in [
-              'const literals = @import("../semantic_literals.zig");\n',
-              'const tok = @import("../../2_tokens/token.zig");\n',
-          ]:
-              assert s.count(old) == 1, (old, s.count(old))
-              s = s.replace(old, '', 1)
-
-          lowered = (
-              'const Lowered = struct {\n'
-              '    node: entities.ModuleNodeId,\n'
-              '    ty: entities.ModuleTypeId,\n'
-              '};\n\n'
-          )
-          assert s.count(lowered) == 1, s.count(lowered)
-          s = s.replace(lowered, '', 1)
-
-          start_marker = '    fn lowerExpr(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) anyerror!Lowered {\n'
-          end_marker = '    fn lowerType(self: *Context, node: syn.NodeIndex) !entities.ModuleTypeId {\n'
-          start = s.find(start_marker)
-          end = s.find(end_marker, start)
-          assert start != -1 and end != -1 and end > start, (start, end)
-          s = s[:start] + s[end:]
-
-          next_node = (
-              '    fn nextNodeId(self: *const Context) entities.ModuleNodeId {\n'
-              '        return @enumFromInt(@as(u32, @intCast(self.graph.semantic.nodes.items.len)));\n'
-              '    }\n'
-          )
-          assert s.count(next_node) == 1, s.count(next_node)
-          s = s.replace(next_node, '', 1)
-
-          assert 'fn lowerExpr(' not in s
-          assert 'self.lowerExpr(' not in s
-          assert 'const Lowered = struct' not in s
-          p.write_text(s)
-          PY
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -83,10 +37,6 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Commit validated cleanup
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/module/initializer_lowerer.zig
-          git commit -m "Remove duplicate initializer expression lowerer"
-          git push origin HEAD:compact-semantic-graph-chatgpt
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
