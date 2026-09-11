@@ -4,6 +4,8 @@ const module_entities = @import("../module/entities.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
 const core_mod = @import("core.zig");
+const generic_mod = @import("generics.zig");
+const generic_functions_mod = @import("generic_functions.zig");
 const types = @import("types.zig");
 
 /// Resolves call syntax whose callee is a declared type. A visible `init`
@@ -18,6 +20,11 @@ pub const Resolver = struct {
     const InitializerLookup = struct {
         function: ?global_sg.GlobalFunctionId = null,
         has_visible_initializer: bool = false,
+    };
+
+    const InitializerProbe = struct {
+        owns_type: bool = false,
+        score: ?u32 = null,
     };
 
     pub fn tryResolve(
@@ -41,7 +48,8 @@ pub const Resolver = struct {
         value: anytype,
     ) !bool {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
-        if (reference.generic_arguments != null) return false;
+        if (reference.generic_arguments) |arguments|
+            return self.resolveExplicitGenericCall(module_index, module, o, value, reference, arguments);
 
         const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch return false;
         const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
@@ -56,20 +64,7 @@ pub const Resolver = struct {
                 .len = function.input.len - 1,
             };
             if (!try self.core.completeCallInputFields(user_fields, input)) return false;
-            const target = globalizer.globalNode(o, value.node);
-            self.graph.nodes.items[@intFromEnum(target)] = .{
-                .source = .{
-                    .file_index = o.file_base + reference.source.file_index,
-                    .offset = reference.source.offset,
-                },
-                .ty = ty,
-                .content = .{ .type_initializer = .{
-                    .type_decl = declaration_id,
-                    .init_fn = function_id,
-                    .args = input,
-                } },
-            };
-            self.core.stats.calls += 1;
+            self.writeInitializer(o, value, reference, declaration_id, ty, function_id, input);
             return true;
         }
 
@@ -79,13 +74,120 @@ pub const Resolver = struct {
         // their `init` merely because overload resolution failed.
         if (initializer.has_visible_initializer) return false;
 
+        return self.writeStructuralConstruction(o, value, reference, ty, input);
+    }
+
+    fn resolveExplicitGenericCall(
+        self: *Resolver,
+        module_index: usize,
+        module: *const module_sg.ModuleSemanticGraph,
+        o: globalizer.Offsets,
+        value: anytype,
+        reference: module_entities.ExternalRef,
+        local_arguments: module_entities.GenericArgRange,
+    ) !bool {
+        // Generic construction can be retried by the global fixed point while
+        // dependencies in the initializer body are still unresolved. Keep the
+        // attempt transactional so failed retries do not accumulate generic
+        // identities, instantiated fields, functions or value-field tails.
+        const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
+        var lengths: [pools.len]usize = undefined;
+        inline for (pools, 0..) |pool, index| lengths[index] = @field(self.graph, pool.name).items.len;
+        var committed = false;
+        defer if (!committed) {
+            inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+        };
+
+        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch return false;
+        var generics = generic_mod.Resolver{
+            .allocator = self.core.allocator,
+            .graph = self.graph,
+            .modules = self.modules,
+            .offsets = self.offsets,
+            .core = self.core,
+        };
+        const arguments = try generics.relocateModuleArguments(module_index, local_arguments);
+        const ty = try generics.internType(.{ .generic = .{
+            .base = declaration_id,
+            .arguments = arguments,
+        } });
+        _ = generics.ensureGenericInstance(ty) catch return false;
+
+        var generic_functions = generic_functions_mod.Resolver{
+            .allocator = self.core.allocator,
+            .graph = self.graph,
+            .modules = self.modules,
+            .offsets = self.offsets,
+            .core = self.core,
+            .generics = &generics,
+        };
+        const input = globalizer.globalNode(o, value.input);
+        const initializer = try self.findGenericInitializer(
+            &generics,
+            &generic_functions,
+            module_index,
+            ty,
+            arguments,
+            input,
+        );
+        if (initializer.function) |function_id| {
+            const function = self.graph.functions.items[@intFromEnum(function_id)];
+            const user_fields = global_sg.FieldRange{
+                .start = function.input.start + 1,
+                .len = function.input.len - 1,
+            };
+            if (!try self.core.completeCallInputFields(user_fields, input)) return false;
+            self.writeInitializer(o, value, reference, declaration_id, ty, function_id, input);
+            committed = true;
+            return true;
+        }
+        if (initializer.has_visible_initializer) return false;
+
+        const resolved = try self.writeStructuralConstruction(o, value, reference, ty, input);
+        committed = resolved;
+        return resolved;
+    }
+
+    fn writeInitializer(
+        self: *Resolver,
+        o: globalizer.Offsets,
+        value: anytype,
+        reference: module_entities.ExternalRef,
+        declaration_id: global_sg.GlobalDeclId,
+        ty: global_sg.GlobalTypeId,
+        function_id: global_sg.GlobalFunctionId,
+        input: global_sg.GlobalNodeId,
+    ) void {
+        const target = globalizer.globalNode(o, value.node);
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = .{
+                .file_index = o.file_base + reference.source.file_index,
+                .offset = reference.source.offset,
+            },
+            .ty = ty,
+            .content = .{ .type_initializer = .{
+                .type_decl = declaration_id,
+                .init_fn = function_id,
+                .args = input,
+            } },
+        };
+        self.core.stats.calls += 1;
+    }
+
+    fn writeStructuralConstruction(
+        self: *Resolver,
+        o: globalizer.Offsets,
+        value: anytype,
+        reference: module_entities.ExternalRef,
+        ty: global_sg.GlobalTypeId,
+        input: global_sg.GlobalNodeId,
+    ) !bool {
         const fields = types.fields(self.graph, ty) orelse return false;
         if (self.core.scoreCallInput(fields, input) == null) return false;
         if (!try self.core.completeCallInputFields(fields, input)) return false;
 
         self.graph.nodes.items[@intFromEnum(input)].ty = ty;
         self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.ty = ty;
-
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(input)];
         self.graph.nodes.items[@intFromEnum(target)].source = .{
@@ -108,7 +210,7 @@ pub const Resolver = struct {
 
             const destination = self.graph.fields.items[function.input.start];
             const pointer = switch (self.graph.types.items[@intFromEnum(destination.ty)]) {
-                .pointer => |value| value,
+                .pointer => |pointer_value| pointer_value,
                 else => continue,
             };
             if (!types.equal(self.graph, pointer.child, constructed_ty)) continue;
@@ -131,6 +233,104 @@ pub const Resolver = struct {
         }
         if (tied) result.function = null;
         return result;
+    }
+
+    fn findGenericInitializer(
+        self: *Resolver,
+        generics: *generic_mod.Resolver,
+        generic_functions: *generic_functions_mod.Resolver,
+        module_index: usize,
+        constructed_ty: global_sg.GlobalTypeId,
+        arguments: global_sg.GenericArgRange,
+        input: global_sg.GlobalNodeId,
+    ) !InitializerLookup {
+        var result: InitializerLookup = .{};
+        var best_declaration: ?global_sg.GlobalDeclId = null;
+        var best_score: u32 = 0;
+        var tied = false;
+
+        for (self.modules, 0..) |*candidate_module, candidate_index| {
+            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                const declaration_id = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
+                const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
+                if (!std.mem.eql(u8, self.graph.text(declaration.name), "init")) continue;
+                if (!self.core.declarationVisible(module_index, declaration_id, null)) continue;
+
+                const probe = try self.probeGenericInitializer(
+                    generics,
+                    candidate_module,
+                    candidate_index,
+                    parameterized,
+                    constructed_ty,
+                    arguments,
+                    input,
+                );
+                if (!probe.owns_type) continue;
+                result.has_visible_initializer = true;
+                var score = probe.score orelse continue;
+                const owner = self.graph.moduleForDeclaration(declaration_id) orelse continue;
+                if (@intFromEnum(owner) == module_index) score += 1;
+                if (best_declaration == null or score > best_score) {
+                    best_declaration = declaration_id;
+                    best_score = score;
+                    tied = false;
+                } else if (score == best_score and declaration_id != best_declaration.?) {
+                    tied = true;
+                }
+            }
+        }
+
+        if (tied or best_declaration == null) return result;
+        result.function = generic_functions.instantiate(best_declaration.?, arguments) catch return result;
+        return result;
+    }
+
+    fn probeGenericInitializer(
+        self: *Resolver,
+        generics: *generic_mod.Resolver,
+        candidate_module: *const module_sg.ModuleSemanticGraph,
+        candidate_index: usize,
+        parameterized: anytype,
+        constructed_ty: global_sg.GlobalTypeId,
+        arguments: global_sg.GenericArgRange,
+        input: global_sg.GlobalNodeId,
+    ) !InitializerProbe {
+        // Probing a parameterized signature materializes temporary structural
+        // types and fields. Restore every graph pool afterwards so overload
+        // resolution itself is observationally pure across fixed-point retries.
+        const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
+        var lengths: [pools.len]usize = undefined;
+        inline for (pools, 0..) |pool, index| lengths[index] = @field(self.graph, pool.name).items.len;
+        const saved_stats = generics.stats;
+        defer {
+            inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            generics.stats = saved_stats;
+        }
+
+        var bindings = try generic_mod.Resolver.Bindings.init(
+            self.core.allocator,
+            candidate_module.semantic.parameterized_storage.comptime_parameters.items.len,
+        );
+        defer bindings.deinit(self.core.allocator);
+        generics.bindGlobalArguments(candidate_index, parameterized.parameters, arguments, &bindings) catch return .{};
+        const input_ty = generics.instantiateParameterizedType(candidate_index, parameterized.input, &bindings, null) catch return .{};
+        const fields = types.fields(self.graph, input_ty) orelse return .{};
+        if (fields.len == 0) return .{};
+
+        const destination = self.graph.fields.items[fields.start];
+        const pointer = switch (self.graph.types.items[@intFromEnum(destination.ty)]) {
+            .pointer => |pointer_value| pointer_value,
+            else => return .{},
+        };
+        if (!types.equal(self.graph, pointer.child, constructed_ty)) return .{};
+        const user_fields = global_sg.FieldRange{
+            .start = fields.start + 1,
+            .len = fields.len - 1,
+        };
+        return .{
+            .owns_type = true,
+            .score = self.core.scoreCallInput(user_fields, input),
+        };
     }
 };
 
