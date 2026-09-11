@@ -655,15 +655,40 @@ pub const SafetyChecker = struct {
     }
 
     fn joinState(self: *SafetyChecker, out: *FunctionState, left: *const FunctionState, right: *const FunctionState) !void {
-        _ = self;
-        // Root liveness is conservative: if either path ended it, joined state
-        // cannot claim definitely-alive.
-        const count = @min(left.tracker.roots.items.len, right.tracker.roots.items.len);
+        if (!left.reachable) return self.copyState(out, right);
+        if (!right.reachable) return self.copyState(out, left);
+
+        // Branches clone the same root namespace but may materialize additional
+        // roots independently. Rebuild the joined root table to the widest
+        // namespace instead of assuming the destination already has that size.
+        var roots = std.array_list.Managed(facts.ValidityRoot).init(self.allocator);
+        defer roots.deinit();
+        const count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);
         for (0..count) |index| {
-            const a = left.tracker.roots.items[index].state;
-            const b = right.tracker.roots.items[index].state;
-            out.tracker.roots.items[index].state = if (a == b) a else .maybe_alive;
+            const id: facts.ValidityRootId = @enumFromInt(index);
+            const left_state: @TypeOf(left.tracker.roots.items[0].state) = if (index < left.tracker.roots.items.len)
+                left.tracker.roots.items[index].state
+            else if (self.storageGenerationWasOnlyMaterializedIn(id, right, left))
+                .alive
+            else
+                .dead;
+            const right_state: @TypeOf(right.tracker.roots.items[0].state) = if (index < right.tracker.roots.items.len)
+                right.tracker.roots.items[index].state
+            else if (self.storageGenerationWasOnlyMaterializedIn(id, left, right))
+                .alive
+            else
+                .dead;
+            const left_owned = index < left.tracker.roots.items.len and left.tracker.roots.items[index].owned_resource;
+            const right_owned = index < right.tracker.roots.items.len and right.tracker.roots.items[index].owned_resource;
+            try roots.append(.{
+                .id = id,
+                .state = if (left_state == right_state) left_state else .maybe_alive,
+                .owned_resource = left_owned or right_owned,
+            });
         }
+        out.tracker.roots.clearRetainingCapacity();
+        try out.tracker.roots.appendSlice(roots.items);
+
         for (out.places.items) |*place| {
             const a = findPlaceConst(left, place.storage);
             const b = findPlaceConst(right, place.storage);
@@ -673,7 +698,34 @@ pub const SafetyChecker = struct {
             }
             if (a.?.initializedness != b.?.initializedness) place.initializedness = .maybe_initialized;
         }
-        out.reachable = left.reachable or right.reachable;
+        out.reachable = true;
+    }
+
+    /// Storage generations are created lazily when a Place first needs one. If
+    /// only one branch materialized that fact, the other branch still preserves
+    /// the same live storage generation while the Place itself is initialized.
+    fn storageGenerationWasOnlyMaterializedIn(
+        self: *SafetyChecker,
+        root: facts.ValidityRootId,
+        materialized: *const FunctionState,
+        other: *const FunctionState,
+    ) bool {
+        _ = self;
+        var storage: ?facts.Place = null;
+        for (materialized.storage_generations.items) |entry| if (entry.generation == root) {
+            storage = entry.storage;
+            break;
+        };
+        const target = storage orelse return false;
+        for (other.storage_generations.items) |entry| if (entry.storage.eql(target)) return false;
+
+        var projection_count = target.projections.len;
+        while (true) {
+            const prefix = facts.Place{ .root = target.root, .projections = target.projections[0..projection_count] };
+            if (findPlaceConst(other, prefix)) |stored| return stored.initializedness == .initialized;
+            if (projection_count == 0) return false;
+            projection_count -= 1;
+        }
     }
 
     fn copyState(self: *SafetyChecker, out: *FunctionState, source: *const FunctionState) !void {

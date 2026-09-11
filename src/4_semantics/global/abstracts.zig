@@ -121,10 +121,17 @@ pub const Resolver = struct {
         }
         const method_start: u32 = @intCast(self.graph.function_refs.items.len);
         try self.graph.function_refs.appendSlice(self.allocator, methods.items);
-        const registry_start: u32 = @intCast(self.graph.virtual_registries.items.len);
-        for (methods.items, 0..) |_, index| try self.graph.virtual_registries.append(self.allocator, .{
-            .implementations = .{ .start = method_start + @as(u32, @intCast(index)), .len = 1 },
-        });
+        // Virtualize.safety_methods is a range into virtual_registry_refs, not
+        // directly into virtual_registries. Keep the indirection explicit so
+        // later registries can be non-contiguous without corrupting the range.
+        const safety_start: u32 = @intCast(self.graph.virtual_registry_refs.items.len);
+        for (methods.items, 0..) |_, index| {
+            const registry: global_sg.GlobalVirtualRegistryId = @enumFromInt(@as(u32, @intCast(self.graph.virtual_registries.items.len)));
+            try self.graph.virtual_registries.append(self.allocator, .{
+                .implementations = .{ .start = method_start + @as(u32, @intCast(index)), .len = 1 },
+            });
+            try self.graph.virtual_registry_refs.append(self.allocator, registry);
+        }
         const virtual_ty = try self.generics.internType(.{ .virtual = abstract_ty });
         const virtualize: global_sg.GlobalVirtualizeId = @enumFromInt(@as(u32, @intCast(self.graph.virtualizes.items.len)));
         try self.graph.virtualizes.append(self.allocator, .{
@@ -133,7 +140,7 @@ pub const Resolver = struct {
             .abstract_decl = abstract_decl,
             .virtual_type = virtual_ty,
             .methods = .{ .start = method_start, .len = @intCast(methods.items.len) },
-            .safety_methods = .{ .start = registry_start, .len = @intCast(methods.items.len) },
+            .safety_methods = .{ .start = safety_start, .len = @intCast(methods.items.len) },
             .source = self.sourceFor(module_index, reference.source),
         });
         return .{
