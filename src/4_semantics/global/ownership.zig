@@ -145,7 +145,10 @@ pub const Resolver = struct {
 
         var rebuilt: std.ArrayList(global_sg.GlobalNodeId) = .empty;
         defer rebuilt.deinit(self.allocator);
-        const nodes = self.graph.node_refs.items[original.nodes.start..][0..original.nodes.len];
+        // Recursive finalization appends cleanup edges to graph.node_refs and
+        // may reallocate it. Keep a stable copy of this block's original node IDs.
+        const nodes = try self.allocator.dupe(global_sg.GlobalNodeId, self.graph.node_refs.items[original.nodes.start..][0..original.nodes.len]);
+        defer self.allocator.free(nodes);
         for (nodes) |node_id| {
             try rebuilt.append(self.allocator, node_id);
             const node = &self.graph.nodes.items[@intFromEnum(node_id)];

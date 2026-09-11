@@ -32,6 +32,7 @@ pub fn lower(
     };
     var stats: Stats = .{};
     try ctx.lowerDeferredStructDefinitions();
+    try ctx.lowerDeferredChoiceDefinitions();
     try ctx.lowerDeferredFunctionInterfaces();
     try ctx.predeclareGlobals(&stats);
     try ctx.lowerGlobalInitializers();
@@ -100,6 +101,41 @@ const Context = struct {
                 .start = start,
                 .len = @intCast(fields.items.len),
             };
+        }
+    }
+
+    /// Finish non-generic choice declarations whose payload types could not
+    /// be represented by the compatibility builder because they cross a
+    /// module boundary. Canonical ModuleSema can retain those types as
+    /// ExternalRef-backed slots, so the declared choice shape stays complete.
+    fn lowerDeferredChoiceDefinitions(self: *Context) !void {
+        for (self.graph.declarations.items, 0..) |declaration, raw| {
+            if (declaration.kind != .type or declaration.choice_variants != null) continue;
+            self.selectFile(declaration.module_file_index);
+            const type_declaration = self.tree.typeDeclaration(declaration.syntax_node) orelse continue;
+            if (type_declaration.generic_params.len != 0 or type_declaration.generic_params_struct != null) continue;
+            const literal = self.tree.choiceTypeLiteral(type_declaration.value) orelse continue;
+            const start: u32 = @intCast(views.variantCount(self.graph));
+            for (literal.variants, 0..) |variant_node, index| {
+                const variant = self.tree.choiceTypeVariant(variant_node) orelse return error.InvalidChoiceVariant;
+                const name_text = self.tree.tokenTextFromSource(self.source, variant.name_token);
+                var option_decl: ?entities.ModuleDeclId = null;
+                if (variant.module_qualifier == null) {
+                    for (self.graph.declarationsNamed(name_text)) |candidate| {
+                        if (self.graph.declarations.items[@intFromEnum(candidate)].kind != .choice_option) continue;
+                        option_decl = candidate;
+                        break;
+                    }
+                }
+                _ = try self.writer.addVariant(.{
+                    .name = try self.writer.addString(name_text),
+                    .payload_type = if (variant.payload_type) |payload| try self.lowerType(payload) else null,
+                    .option_decl = option_decl,
+                    .source = self.sourceRef(variant_node),
+                    .value = @intCast(index),
+                });
+            }
+            self.graph.declarations.items[raw].choice_variants = .{ .start = start, .len = @intCast(literal.variants.len) };
         }
     }
 
