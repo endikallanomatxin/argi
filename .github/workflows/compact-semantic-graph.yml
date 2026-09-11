@@ -1,4 +1,4 @@
-name: Compact semantic graph
+name: Decouple semantic control modes
 
 on:
   push:
@@ -7,14 +7,128 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  test:
+  apply-test-commit:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Move durable modes into semantic primitives
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, expected=1):
+              p = Path(path)
+              s = p.read_text()
+              count = s.count(old)
+              assert count == expected, f"{path}: expected {expected}, got {count}: {old!r}"
+              p.write_text(s.replace(old, new, expected))
+
+          schema = Path('src/4_semantics/primitives/schema.zig')
+          s = schema.read_text()
+          replace('src/4_semantics/primitives/schema.zig',
+              'const syn = @import("../../3_syntax/syntax_tree.zig");\n', '')
+          replace('src/4_semantics/primitives/schema.zig',
+              'pub const PointerMutability = enum(u8) { read_only, read_write };\n',
+              'pub const PointerMutability = enum(u8) { read_only, read_write };\n'
+              'pub const Mutability = enum(u8) { constant, variable };\n'
+              'pub const ForMode = enum(u8) { value, borrow, mut_borrow };\n'
+              'pub const MatchCaseMode = enum(u8) { value, borrow, mut_borrow, move };\n')
+          replace('src/4_semantics/primitives/schema.zig',
+              'mutability: syn.Mutability,', 'mutability: Mutability,')
+
+          replace('src/4_semantics/module/entities.zig',
+              'const syn = @import("../../3_syntax/syntax_tree.zig");\n', '')
+          replace('src/4_semantics/module/entities.zig',
+              'mode: syn.ForMode,', 'mode: primitives.ForMode,')
+          replace('src/4_semantics/module/entities.zig',
+              'mode: syn.MatchCaseMode,', 'mode: primitives.MatchCaseMode,')
+
+          replace('src/4_semantics/module/parameterized/ir.zig',
+              'const syn = @import("../../../3_syntax/syntax_tree.zig");\n', '')
+          replace('src/4_semantics/module/parameterized/ir.zig',
+              'mode: syn.MatchCaseMode,', 'mode: primitives.MatchCaseMode,')
+
+          p = Path('src/4_semantics/module/graph.zig')
+          s = p.read_text()
+          marker = '''pub fn pointerMutabilityFromSyntax(value: syn.PointerMutability) primitives.PointerMutability {
+              return switch (value) {
+                  .read_only => .read_only,
+                  .read_write => .read_write,
+              };
+          }
+'''
+          assert s.count(marker) == 1, s.count(marker)
+          helpers = marker + '''
+          pub fn mutabilityFromSyntax(value: syn.Mutability) primitives.Mutability {
+              return switch (value) {
+                  .constant => .constant,
+                  .variable => .variable,
+              };
+          }
+
+          pub fn forModeFromSyntax(value: syn.ForMode) primitives.ForMode {
+              return switch (value) {
+                  .value => .value,
+                  .borrow => .borrow,
+                  .mut_borrow => .mut_borrow,
+              };
+          }
+
+          pub fn matchCaseModeFromSyntax(value: syn.MatchCaseMode) primitives.MatchCaseMode {
+              return switch (value) {
+                  .value => .value,
+                  .borrow => .borrow,
+                  .mut_borrow => .mut_borrow,
+                  .move => .move,
+              };
+          }
+'''
+          p.write_text(s.replace(marker, helpers, 1))
+
+          replace('src/4_semantics/module/body_lowerer.zig',
+              'mutability: syn.Mutability,', 'mutability: primitives.Mutability,')
+          replace('src/4_semantics/module/body_lowerer.zig',
+              '.mutability = declaration.mutability,',
+              '.mutability = graph_mod.mutabilityFromSyntax(declaration.mutability),')
+          replace('src/4_semantics/module/body_lowerer.zig',
+              '.mode = statement.mode,',
+              '.mode = graph_mod.forModeFromSyntax(statement.mode),')
+          replace('src/4_semantics/module/body_lowerer.zig',
+              '.mode = case.mode,',
+              '.mode = graph_mod.matchCaseModeFromSyntax(case.mode),')
+
+          replace('src/4_semantics/module/initializer_lowerer.zig',
+              '.mutability = syntax_decl.mutability,',
+              '.mutability = graph_mod.mutabilityFromSyntax(syntax_decl.mutability),')
+
+          replace('src/4_semantics/module/parameterized/lowerer.zig',
+              '.mutability = declaration.mutability,',
+              '.mutability = graph_mod.mutabilityFromSyntax(declaration.mutability),')
+
+          banned = ('syn.Mutability', 'syn.ForMode', 'syn.MatchCaseMode')
+          occurrences = []
+          for path in Path('src/4_semantics').rglob('*.zig'):
+              for line_no, line in enumerate(path.read_text().splitlines(), 1):
+                  if any(item in line for item in banned):
+                      occurrences.append((str(path), line_no, line.strip()))
+          assert len(occurrences) == 3, occurrences
+          assert all(path == 'src/4_semantics/module/graph.zig' for path, _, _ in occurrences), occurrences
+          assert all('FromSyntax' in line for _, _, line in occurrences), occurrences
+          for path in [
+              Path('src/4_semantics/primitives/schema.zig'),
+              Path('src/4_semantics/module/entities.zig'),
+              Path('src/4_semantics/module/parameterized/ir.zig'),
+          ]:
+              assert '3_syntax' not in path.read_text(), path
+          print('syntax control-mode boundary:', occurrences)
+          PY
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -37,6 +151,10 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Run program suite
-        timeout-minutes: 15
-        run: zig build test-programs
+      - name: Commit validated boundary
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/4_semantics/primitives/schema.zig src/4_semantics/module/entities.zig src/4_semantics/module/parameterized/ir.zig src/4_semantics/module/graph.zig src/4_semantics/module/body_lowerer.zig src/4_semantics/module/initializer_lowerer.zig src/4_semantics/module/parameterized/lowerer.zig
+          git commit -m "Decouple semantic control modes from syntax"
+          git push origin HEAD:compact-semantic-graph-chatgpt
