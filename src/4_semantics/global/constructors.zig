@@ -1,6 +1,7 @@
 const std = @import("std");
 const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
+const primitives = @import("../primitives/schema.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
 const core_mod = @import("core.zig");
@@ -49,7 +50,7 @@ pub const Resolver = struct {
     ) !bool {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
         if (reference.generic_arguments) |arguments|
-            return self.resolveExplicitGenericCall(module_index, module, o, value, reference, arguments);
+            return self.resolveExplicitGenericCall(module_index, o, value, reference, arguments);
 
         const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch return false;
         const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
@@ -80,7 +81,6 @@ pub const Resolver = struct {
     fn resolveExplicitGenericCall(
         self: *Resolver,
         module_index: usize,
-        module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         value: anytype,
         reference: module_entities.ExternalRef,
@@ -241,7 +241,7 @@ pub const Resolver = struct {
         generic_functions: *generic_functions_mod.Resolver,
         module_index: usize,
         constructed_ty: global_sg.GlobalTypeId,
-        arguments: global_sg.GenericArgRange,
+        arguments: primitives.Range(global_sg.GlobalGenericArgId),
         input: global_sg.GlobalNodeId,
     ) !InitializerLookup {
         var result: InitializerLookup = .{};
@@ -292,7 +292,7 @@ pub const Resolver = struct {
         candidate_index: usize,
         parameterized: anytype,
         constructed_ty: global_sg.GlobalTypeId,
-        arguments: global_sg.GenericArgRange,
+        arguments: primitives.Range(global_sg.GlobalGenericArgId),
         input: global_sg.GlobalNodeId,
     ) !InitializerProbe {
         // Probing a parameterized signature materializes temporary structural
