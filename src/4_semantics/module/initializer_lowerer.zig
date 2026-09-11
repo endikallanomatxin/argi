@@ -64,10 +64,11 @@ const Context = struct {
         for (self.graph.declarations.items, 0..) |declaration, raw| {
             if (declaration.kind != .type or declaration.struct_fields != null) continue;
             self.selectFile(declaration.module_file_index);
-            const type_declaration = switch (self.tree.tag(declaration.syntax_node)) {
-                .type_declaration => self.tree.typeDeclaration(declaration.syntax_node).?,
+            const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
+            const type_declaration = switch (self.tree.tag(declaration_node)) {
+                .type_declaration => self.tree.typeDeclaration(declaration_node).?,
                 .c_union_declaration => blk: {
-                    const value = self.tree.cUnionDeclaration(declaration.syntax_node).?;
+                    const value = self.tree.cUnionDeclaration(declaration_node).?;
                     break :blk syn.TypeDeclaration{
                         .name_token = value.name_token,
                         .generic_params = value.generic_params,
@@ -112,7 +113,8 @@ const Context = struct {
         for (self.graph.declarations.items, 0..) |declaration, raw| {
             if (declaration.kind != .type or declaration.choice_variants != null) continue;
             self.selectFile(declaration.module_file_index);
-            const type_declaration = self.tree.typeDeclaration(declaration.syntax_node) orelse continue;
+            const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
+            const type_declaration = self.tree.typeDeclaration(declaration_node) orelse continue;
             if (type_declaration.generic_params.len != 0 or type_declaration.generic_params_struct != null) continue;
             const literal = self.tree.choiceTypeLiteral(type_declaration.value) orelse continue;
             const start: u32 = @intCast(views.variantCount(self.graph));
@@ -143,10 +145,11 @@ const Context = struct {
         for (self.graph.declarations.items, 0..) |declaration, raw| {
             if ((declaration.kind != .function and declaration.kind != .test_function) or declaration.function_id != null) continue;
             self.selectFile(declaration.module_file_index);
+            const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
             const function = if (declaration.kind == .test_function)
-                self.tree.testDeclaration(declaration.syntax_node).?.function
+                self.tree.testDeclaration(declaration_node).?.function
             else
-                self.tree.functionDeclaration(declaration.syntax_node).?;
+                self.tree.functionDeclaration(declaration_node).?;
             if (function.generic_params.len != 0 or function.generic_params_struct != null) continue;
 
             const input = try self.lowerInterfaceFields(function.input);
@@ -186,11 +189,12 @@ const Context = struct {
         for (self.graph.declarations.items, 0..) |decl, raw| {
             if (decl.kind != .binding) continue;
             self.selectFile(decl.module_file_index);
-            const syntax_decl = self.tree.symbolDeclaration(decl.syntax_node) orelse continue;
+            const declaration_node = graph_mod.declarationSyntaxNode(self.files, decl) orelse continue;
+            const syntax_decl = self.tree.symbolDeclaration(declaration_node) orelse continue;
             const declared_ty = if (syntax_decl.type_node) |node| try self.lowerType(node) else try self.builtin(.Any);
             const binding = try self.writer.addBinding(.{
                 .name = decl.name,
-                .source = self.sourceRef(decl.syntax_node),
+                .source = self.sourceRef(declaration_node),
                 .ty = declared_ty,
                 .mutability = syntax_decl.mutability,
             });
@@ -207,7 +211,8 @@ const Context = struct {
         for (self.graph.semantic.declaration_bindings.items) |relation| {
             const decl = self.graph.declarations.items[@intFromEnum(relation.declaration)];
             self.selectFile(decl.module_file_index);
-            const syntax_decl = self.tree.symbolDeclaration(decl.syntax_node) orelse continue;
+            const declaration_node = graph_mod.declarationSyntaxNode(self.files, decl) orelse continue;
+            const syntax_decl = self.tree.symbolDeclaration(declaration_node) orelse continue;
             const value_node = syntax_decl.value orelse continue;
             if (self.tree.tag(value_node) == .import_statement) continue;
             const expected = self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].ty;
@@ -232,16 +237,17 @@ const Context = struct {
         }
         for (self.graph.declarations.items) |declaration| {
             self.selectFile(declaration.module_file_index);
+            const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
             switch (declaration.kind) {
                 .type => if (declaration.struct_fields) |range| {
-                    const type_declaration = self.tree.typeDeclaration(declaration.syntax_node) orelse continue;
+                    const type_declaration = self.tree.typeDeclaration(declaration_node) orelse continue;
                     try self.lowerDeferredDefaults(range.start, range.len, type_declaration.value, stats);
                 },
                 .function, .test_function => if (declaration.function_id) |function_id| {
                     const syntax_function = if (declaration.kind == .test_function)
-                        self.tree.testDeclaration(declaration.syntax_node).?.function
+                        self.tree.testDeclaration(declaration_node).?.function
                     else
-                        self.tree.functionDeclaration(declaration.syntax_node).?;
+                        self.tree.functionDeclaration(declaration_node).?;
                     const function = self.graph.functions.items[@intFromEnum(function_id)];
                     try self.lowerDeferredDefaults(function.input.start, function.input.len, syntax_function.input, stats);
                     try self.lowerDeferredDefaults(function.output.start, function.output.len, syntax_function.output, stats);

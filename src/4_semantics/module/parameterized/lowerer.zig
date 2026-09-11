@@ -63,11 +63,12 @@ pub const Context = struct {
             const file = self.files[@intCast(self.file_index)];
             self.tree = file.tree;
             self.source = file.source;
+            const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
             const decl_id: entities.ModuleDeclId = @enumFromInt(@as(u32, @intCast(raw_decl)));
 
             switch (declaration.kind) {
                 .type => {
-                    const payload = self.genericTypePayload(declaration.syntax_node) orelse continue;
+                    const payload = self.genericTypePayload(declaration_node) orelse continue;
                     if (!hasGenericParameters(payload.params, payload.params_struct)) continue;
                     self.parameters.clearRetainingCapacity();
                     const params = try self.lowerParameters(payload.params, payload.params_struct);
@@ -80,7 +81,7 @@ pub const Context = struct {
                     stats.generic_types += 1;
                 },
                 .function => {
-                    const function = self.tree.functionDeclaration(declaration.syntax_node) orelse continue;
+                    const function = self.tree.functionDeclaration(declaration_node) orelse continue;
                     if (!hasGenericParameters(function.generic_params, function.generic_params_struct)) continue;
                     self.parameters.clearRetainingCapacity();
                     self.bindings.clearRetainingCapacity();
@@ -105,7 +106,7 @@ pub const Context = struct {
                     stats.generic_functions += 1;
                 },
                 .abstract_type => {
-                    const abstract = self.tree.abstractDeclaration(declaration.syntax_node) orelse continue;
+                    const abstract = self.tree.abstractDeclaration(declaration_node) orelse continue;
                     self.parameters.clearRetainingCapacity();
                     const params = try self.lowerParameters(abstract.generic_params, abstract.generic_params_struct);
                     const req_start: u32 = @intCast(self.graph.semantic.parameterized_storage.abstract_requirements.items.len);

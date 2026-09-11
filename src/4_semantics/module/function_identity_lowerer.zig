@@ -20,8 +20,9 @@ pub fn lower(
         const function = graph.functions.items[@intFromEnum(semantic.function)];
         const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
         const file = files[declaration.module_file_index];
+        const declaration_node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;
         if (file.is_bundled_core) semantic.safety_primitive = safetyPrimitiveForBundledDeclaration(graph.text(declaration.name), file.path);
-        if (isDeinit(file, declaration.syntax_node)) {
+        if (isDeinit(file, declaration_node)) {
             semantic.flags.is_deinit = true;
             stats.deinit_functions += 1;
         }
@@ -30,8 +31,9 @@ pub fn lower(
     for (graph.semantic.parameterized_storage.parameterized_functions.items) |*parameterized| {
         const declaration = graph.declarations.items[@intFromEnum(parameterized.declaration)];
         const file = files[declaration.module_file_index];
+        const declaration_node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;
         if (file.is_bundled_core) parameterized.safety_primitive = safetyPrimitiveForBundledDeclaration(graph.text(declaration.name), file.path);
-        if (isDeinit(file, declaration.syntax_node)) {
+        if (isDeinit(file, declaration_node)) {
             parameterized.is_deinit = true;
             stats.generic_deinit_functions += 1;
         }

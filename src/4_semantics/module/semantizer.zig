@@ -97,7 +97,11 @@ fn lowerOperatorMetadata(
     for (graph.functions.items) |function| {
         const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
         const file = files[declaration.module_file_index];
-        const operator: ?callable.OperatorKind = if (file.tree.functionNameFromSource(file.source, declaration.syntax_node)) |name|
+        const declaration_node = module_sg.declarationSyntaxNode(files, declaration) orelse {
+            graph.semantic.function_operators.appendAssumeCapacity(null);
+            continue;
+        };
+        const operator: ?callable.OperatorKind = if (file.tree.functionNameFromSource(file.source, declaration_node)) |name|
             switch (name) {
                 .operator => |value| callable.fromSyntax(value),
                 .identifier => null,
