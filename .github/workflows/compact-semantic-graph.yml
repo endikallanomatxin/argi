@@ -32,43 +32,6 @@ jobs:
           zig version
           llvm-config-21 --version
 
-      - name: Trace parameterized field misses
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path("src/4_semantics/global/generic_functions.zig")
-          text = path.read_text()
-          old_call = "self.resolveImplicitGenericFunction(module_index, module, reference, input) catch return false;"
-          new_call = '''self.resolveImplicitGenericFunction(module_index, module, reference, input) catch |err| {
-                if (std.mem.eql(u8, name, "deinit") and std.mem.eql(u8, module.module_dir, "core/system"))
-                    std.debug.print("system deinit generic failure: source={d} input={d} err={s}\\n", .{ reference.source.offset, @intFromEnum(input), @errorName(err) });
-                return false;
-            };'''
-          old_field = "const hit = global_types.findField(self.resolver.graph, ty, name) orelse return error.UnknownParameterizedField;"
-          new_field = '''const hit = global_types.findField(self.resolver.graph, ty, name) orelse {
-                const declaration = globalizer.globalDecl(self.resolver.offsets[self.module_index], self.parameterized.declaration);
-                const function_name = self.resolver.graph.text(self.resolver.graph.declarations.items[@intFromEnum(declaration)].name);
-                std.debug.print("parameterized field miss: module={s} fn={s} field={s} ty={d} tag={s}", .{
-                    self.resolver.modules[self.module_index].module_dir,
-                    function_name,
-                    name,
-                    @intFromEnum(ty),
-                    @tagName(self.resolver.graph.types.items[@intFromEnum(ty)]),
-                });
-                if (global_types.fields(self.resolver.graph, ty)) |range| {
-                    std.debug.print(" candidates=", .{});
-                    for (self.resolver.graph.fields.items[range.start..][0..range.len]) |field|
-                        std.debug.print("{s},", .{self.resolver.graph.text(field.name)});
-                }
-                std.debug.print("\\n", .{});
-                return error.UnknownParameterizedField;
-            };'''
-          assert text.count(old_call) == 1, text.count(old_call)
-          assert text.count(old_field) == 1, text.count(old_field)
-          text = text.replace(old_call, new_call, 1).replace(old_field, new_field, 1)
-          path.write_text(text)
-          PY
-
       - name: Build compiler
         run: zig build
 
