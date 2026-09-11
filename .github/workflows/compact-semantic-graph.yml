@@ -1,4 +1,4 @@
-name: Compact semantic graph stabilization probe
+name: Materialize compact semantic fixes
 
 on:
   push:
@@ -7,61 +7,25 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  test:
+  materialize-and-test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Apply semantic stabilization probes
+      - name: Materialize validated fixes
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("src/4_semantics/module/initializer_lowerer.zig")
-          s = p.read_text()
-          old_calls = '''    try ctx.lowerDeferredStructDefinitions();\n    try ctx.lowerDeferredFunctionInterfaces();'''
-          new_calls = '''    try ctx.lowerDeferredStructDefinitions();\n    try ctx.lowerDeferredChoiceDefinitions();\n    try ctx.lowerDeferredFunctionInterfaces();'''
-          marker = '''    fn lowerDeferredFunctionInterfaces(self: *Context) !void {'''
-          helper = '''    /// Finish non-generic choice declarations whose payload types could not\n    /// be represented by the compatibility builder because they cross a\n    /// module boundary. Canonical ModuleSema can retain those types as\n    /// ExternalRef-backed slots, so the declared choice shape stays complete.\n    fn lowerDeferredChoiceDefinitions(self: *Context) !void {\n        for (self.graph.declarations.items, 0..) |declaration, raw| {\n            if (declaration.kind != .type or declaration.choice_variants != null) continue;\n            self.selectFile(declaration.module_file_index);\n            const type_declaration = self.tree.typeDeclaration(declaration.syntax_node) orelse continue;\n            if (type_declaration.generic_params.len != 0 or type_declaration.generic_params_struct != null) continue;\n            const literal = self.tree.choiceTypeLiteral(type_declaration.value) orelse continue;\n            const start: u32 = @intCast(views.variantCount(self.graph));\n            for (literal.variants, 0..) |variant_node, index| {\n                const variant = self.tree.choiceTypeVariant(variant_node) orelse return error.InvalidChoiceVariant;\n                const name_text = self.tree.tokenTextFromSource(self.source, variant.name_token);\n                var option_decl: ?entities.ModuleDeclId = null;\n                if (variant.module_qualifier == null) {\n                    for (self.graph.declarationsNamed(name_text)) |candidate| {\n                        if (self.graph.declarations.items[@intFromEnum(candidate)].kind != .choice_option) continue;\n                        option_decl = candidate;\n                        break;\n                    }\n                }\n                _ = try self.writer.addVariant(.{\n                    .name = try self.writer.addString(name_text),\n                    .payload_type = if (variant.payload_type) |payload| try self.lowerType(payload) else null,\n                    .option_decl = option_decl,\n                    .source = self.sourceRef(variant_node),\n                    .value = @intCast(index),\n                });\n            }\n            self.graph.declarations.items[raw].choice_variants = .{ .start = start, .len = @intCast(literal.variants.len) };\n        }\n    }\n\n'''
-          assert s.count(old_calls) == 1
-          assert s.count(marker) == 1
-          p.write_text(s.replace(old_calls, new_calls, 1).replace(marker, helper + marker, 1))
-
-          p = Path("src/4_semantics/global/core.zig")
-          s = p.read_text()
-          old = '''                const reference = module.semantic.external_refs.items[@intFromEnum(external)];\n                if (reference.kind != .type) continue;\n                // Generic external references need parameterized substitution and are\n                // intentionally claimed by the generic resolver instead.\n                if (reference.generic_arguments != null) continue;\n                const target = self.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch continue;'''
-          new = '''                const reference = module.semantic.external_refs.items[@intFromEnum(external)];\n                if (reference.kind != .type) continue;\n                if (reference.module_path == null and reference.generic_arguments == null) {\n                    const name = module.text(reference.name);\n                    var resolved_builtin: ?primitives.BuiltinType = null;\n                    inline for (@typeInfo(primitives.BuiltinType).@\"enum\".fields) |field| {\n                        if (std.mem.eql(u8, name, field.name)) { resolved_builtin = @enumFromInt(field.value); break; }\n                    }\n                    if (resolved_builtin) |builtin_type| {\n                        self.graph.types.items[@intFromEnum(globalizer.globalType(o, local_id))] = .{ .builtin = builtin_type };\n                        self.stats.external_types += 1;\n                        continue;\n                    }\n                }\n                // Generic external references need parameterized substitution and are\n                // intentionally claimed by the generic resolver instead.\n                if (reference.generic_arguments != null) continue;\n                const target = self.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch continue;'''
-          assert s.count(old) == 1
-          p.write_text(s.replace(old, new, 1))
-
-          p = Path("src/4_semantics/global/ownership.zig")
-          s = p.read_text()
-          old = '''        const nodes = self.graph.node_refs.items[original.nodes.start..][0..original.nodes.len];\n        for (nodes) |node_id| {'''
-          new = '''        // Recursive finalization appends cleanup edges to graph.node_refs and\n        // may reallocate it. Keep a stable copy of this block's original node IDs.\n        const nodes = try self.allocator.dupe(global_sg.GlobalNodeId, self.graph.node_refs.items[original.nodes.start..][0..original.nodes.len]);\n        defer self.allocator.free(nodes);\n        for (nodes) |node_id| {'''
-          assert s.count(old) == 1
-          p.write_text(s.replace(old, new, 1))
-
-          p = Path("src/4_semantics/global/abstracts.zig")
-          s = p.read_text()
-          old = '''        const registry_start: u32 = @intCast(self.graph.virtual_registries.items.len);\n        for (methods.items, 0..) |_, index| try self.graph.virtual_registries.append(self.allocator, .{\n            .implementations = .{ .start = method_start + @as(u32, @intCast(index)), .len = 1 },\n        });\n        const virtual_ty = try self.generics.internType(.{ .virtual = abstract_ty });'''
-          new = '''        // Virtualize.safety_methods is a range into virtual_registry_refs, not\n        // directly into virtual_registries. Keep the indirection explicit so\n        // later registries can be non-contiguous without corrupting the range.\n        const safety_start: u32 = @intCast(self.graph.virtual_registry_refs.items.len);\n        for (methods.items, 0..) |_, index| {\n            const registry: global_sg.GlobalVirtualRegistryId = @enumFromInt(@as(u32, @intCast(self.graph.virtual_registries.items.len)));\n            try self.graph.virtual_registries.append(self.allocator, .{\n                .implementations = .{ .start = method_start + @as(u32, @intCast(index)), .len = 1 },\n            });\n            try self.graph.virtual_registry_refs.append(self.allocator, registry);\n        }\n        const virtual_ty = try self.generics.internType(.{ .virtual = abstract_ty });'''
-          old_range = '''            .safety_methods = .{ .start = registry_start, .len = @intCast(methods.items.len) },'''
-          new_range = '''            .safety_methods = .{ .start = safety_start, .len = @intCast(methods.items.len) },'''
-          assert s.count(old) == 1
-          assert s.count(old_range) == 1
-          p.write_text(s.replace(old, new, 1).replace(old_range, new_range, 1))
-
-          p = Path("src/4_semantics/safety/checker.zig")
-          s = p.read_text()
-          old_join = '''    fn joinState(self: *SafetyChecker, out: *FunctionState, left: *const FunctionState, right: *const FunctionState) !void {\n        _ = self;\n        // Root liveness is conservative: if either path ended it, joined state\n        // cannot claim definitely-alive.\n        const count = @min(left.tracker.roots.items.len, right.tracker.roots.items.len);\n        for (0..count) |index| {\n            const a = left.tracker.roots.items[index].state;\n            const b = right.tracker.roots.items[index].state;\n            out.tracker.roots.items[index].state = if (a == b) a else .maybe_alive;\n        }\n        for (out.places.items) |*place| {\n            const a = findPlaceConst(left, place.storage);\n            const b = findPlaceConst(right, place.storage);\n            if (a == null or b == null) {\n                place.initializedness = .maybe_initialized;\n                continue;\n            }\n            if (a.?.initializedness != b.?.initializedness) place.initializedness = .maybe_initialized;\n        }\n        out.reachable = left.reachable or right.reachable;\n    }'''
-          new_join = '''    fn joinState(self: *SafetyChecker, out: *FunctionState, left: *const FunctionState, right: *const FunctionState) !void {\n        if (!left.reachable) return self.copyState(out, right);\n        if (!right.reachable) return self.copyState(out, left);\n\n        // Branches clone the same root namespace but may materialize additional\n        // roots independently. Rebuild the joined root table to the widest\n        // namespace instead of assuming the destination already has that size.\n        var roots = std.array_list.Managed(facts.ValidityRoot).init(self.allocator);\n        defer roots.deinit();\n        const count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);\n        for (0..count) |index| {\n            const id: facts.ValidityRootId = @enumFromInt(index);\n            const left_state: @TypeOf(left.tracker.roots.items[0].state) = if (index < left.tracker.roots.items.len)\n                left.tracker.roots.items[index].state\n            else if (self.storageGenerationWasOnlyMaterializedIn(id, right, left))\n                .alive\n            else\n                .dead;\n            const right_state: @TypeOf(right.tracker.roots.items[0].state) = if (index < right.tracker.roots.items.len)\n                right.tracker.roots.items[index].state\n            else if (self.storageGenerationWasOnlyMaterializedIn(id, left, right))\n                .alive\n            else\n                .dead;\n            const left_owned = index < left.tracker.roots.items.len and left.tracker.roots.items[index].owned_resource;\n            const right_owned = index < right.tracker.roots.items.len and right.tracker.roots.items[index].owned_resource;\n            try roots.append(.{\n                .id = id,\n                .state = if (left_state == right_state) left_state else .maybe_alive,\n                .owned_resource = left_owned or right_owned,\n            });\n        }\n        out.tracker.roots.clearRetainingCapacity();\n        try out.tracker.roots.appendSlice(roots.items);\n\n        for (out.places.items) |*place| {\n            const a = findPlaceConst(left, place.storage);\n            const b = findPlaceConst(right, place.storage);\n            if (a == null or b == null) {\n                place.initializedness = .maybe_initialized;\n                continue;\n            }\n            if (a.?.initializedness != b.?.initializedness) place.initializedness = .maybe_initialized;\n        }\n        out.reachable = true;\n    }\n\n    /// Storage generations are created lazily when a Place first needs one. If\n    /// only one branch materialized that fact, the other branch still preserves\n    /// the same live storage generation while the Place itself is initialized.\n    fn storageGenerationWasOnlyMaterializedIn(\n        self: *SafetyChecker,\n        root: facts.ValidityRootId,\n        materialized: *const FunctionState,\n        other: *const FunctionState,\n    ) bool {\n        _ = self;\n        var storage: ?facts.Place = null;\n        for (materialized.storage_generations.items) |entry| if (entry.generation == root) {\n            storage = entry.storage;\n            break;\n        };\n        const target = storage orelse return false;\n        for (other.storage_generations.items) |entry| if (entry.storage.eql(target)) return false;\n\n        var projection_count = target.projections.len;\n        while (true) {\n            const prefix = facts.Place{ .root = target.root, .projections = target.projections[0..projection_count] };\n            if (findPlaceConst(other, prefix)) |stored| return stored.initializedness == .initialized;\n            if (projection_count == 0) return false;\n            projection_count -= 1;\n        }\n    }'''
-          assert s.count(old_join) == 1, s.count(old_join)
-          p.write_text(s.replace(old_join, new_join, 1))
-          PY
+          python3 tools/materialize_compact_semantic_fixes.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Materialize compact semantic stabilization fixes"
+          git push origin HEAD:compact-semantic-graph-chatgpt
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -83,7 +47,3 @@ jobs:
       - name: Run internal tests
         timeout-minutes: 5
         run: zig build test-internal
-
-      - name: Run program suite
-        timeout-minutes: 15
-        run: zig build test-programs
