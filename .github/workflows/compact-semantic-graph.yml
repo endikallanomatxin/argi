@@ -21,6 +21,7 @@ jobs:
       - name: Materialize validated fixes
         run: |
           python3 tools/materialize_compact_semantic_fixes.py
+          git checkout HEAD -- .github/workflows/compact-semantic-graph.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
