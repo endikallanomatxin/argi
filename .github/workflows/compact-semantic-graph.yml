@@ -22,40 +22,46 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
+
           p = Path('src/4_semantics/module/graph.zig')
           s = p.read_text()
-          replacements = [
-              ('''pub const TypeReference = struct {
-              name: StringRange,
-              qualifier: ?StringRange,
-              source_offset: u32,
-              syntax_node: syn.NodeIndex,
-              resolution: TypeReferenceResolution = .external,''', '''pub const TypeReference = struct {
-              name: StringRange,
-              qualifier: ?StringRange,
-              source_offset: u32,
-              resolution: TypeReferenceResolution = .external,'''),
-              ('''const reference = findTypeReference(graph, module_file_index, node) orelse break :blk null;''', '''const reference = findTypeReference(graph, module_file_index, tree.tokenLocation(name.name_token).offset) orelse break :blk null;'''),
-              ('''const reference = findTypeReference(graph, module_file_index, generic.base) orelse return null;''', '''const reference = findTypeReference(graph, module_file_index, tree.tokenLocation(base.name.name_token).offset) orelse return null;'''),
-              ('''fn findTypeReference(graph: *const ModuleSemanticGraph, module_file_index: u32, node: syn.NodeIndex) ?TypeReference {
-              const file = graph.file_offsets.items[module_file_index];
-              for (graph.type_references.items[file.type_reference_base..][0..file.type_reference_count]) |reference| if (reference.syntax_node == node) return reference;
-              return null;
-          }''', '''fn findTypeReference(graph: *const ModuleSemanticGraph, module_file_index: u32, source_offset: u32) ?TypeReference {
-              const file = graph.file_offsets.items[module_file_index];
-              for (graph.type_references.items[file.type_reference_base..][0..file.type_reference_count]) |reference| if (reference.source_offset == source_offset) return reference;
-              return null;
-          }'''),
-              ('''            .source_offset = tree.tokenLocation(name.qualifier_token orelse name.name_token).offset,
-              .syntax_node = node,
-          });''', '''            .source_offset = tree.tokenLocation(name.qualifier_token orelse name.name_token).offset,
-          });'''),
-          ]
-          for old, new in replacements:
-              count = s.count(old)
-              if count != 1:
-                  raise RuntimeError(f'expected one TypeReference fragment, got {count}')
-              s = s.replace(old, new, 1)
+
+          s, n = re.subn(
+              r'(pub const TypeReference = struct \{\n(?:.*\n)*?    source_offset: u32,\n)    syntax_node: syn\.NodeIndex,\n',
+              r'\1',
+              s,
+              count=1,
+          )
+          assert n == 1, f'TypeReference field removal matched {n}'
+
+          old = 'const reference = findTypeReference(graph, module_file_index, node) orelse break :blk null;'
+          new = 'const reference = findTypeReference(graph, module_file_index, tree.tokenLocation(name.name_token).offset) orelse break :blk null;'
+          assert s.count(old) == 1
+          s = s.replace(old, new, 1)
+
+          old = 'const reference = findTypeReference(graph, module_file_index, generic.base) orelse return null;'
+          new = 'const reference = findTypeReference(graph, module_file_index, tree.tokenLocation(base.name.name_token).offset) orelse return null;'
+          assert s.count(old) == 1
+          s = s.replace(old, new, 1)
+
+          old = 'fn findTypeReference(graph: *const ModuleSemanticGraph, module_file_index: u32, node: syn.NodeIndex) ?TypeReference {'
+          new = 'fn findTypeReference(graph: *const ModuleSemanticGraph, module_file_index: u32, source_offset: u32) ?TypeReference {'
+          assert s.count(old) == 1
+          s = s.replace(old, new, 1)
+          old = 'if (reference.syntax_node == node) return reference;'
+          new = 'if (reference.source_offset == source_offset) return reference;'
+          assert s.count(old) == 1
+          s = s.replace(old, new, 1)
+
+          marker = 'try graph.type_references.append(allocator, .{'
+          start = s.index(marker)
+          end = s.index('        });', start) + len('        });')
+          block = s[start:end]
+          assert block.count('.syntax_node = node,') == 1
+          block = block.replace('            .syntax_node = node,\n', '', 1)
+          s = s[:start] + block + s[end:]
+
           p.write_text(s)
           PY
           git checkout HEAD -- .github/workflows/compact-semantic-graph.yml
@@ -67,6 +73,7 @@ jobs:
           s = Path('src/4_semantics/module/graph.zig').read_text()
           block = s[s.index('pub const TypeReference = struct'):s.index('pub const TypeReferenceResolution')]
           assert 'syntax_node' not in block
+          assert 'reference.syntax_node' not in s
           PY
 
       - name: Install Zig
