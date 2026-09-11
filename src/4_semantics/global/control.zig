@@ -161,7 +161,27 @@ pub const Resolver = struct {
         const target = globalizer.globalNode(o, value.node);
         if (self.graph.nodes.items[@intFromEnum(target)].content == .int_literal) return true;
         const expected = if (value.expected_type) |id| globalizer.globalType(o, id) else self.graph.nodes.items[@intFromEnum(target)].ty;
-        const choice_ty = self.findChoiceType(expected, name, payload_ty) orelse return false;
+
+        // An explicit contextual type is authoritative. Coerce the payload to
+        // that variant before asking the global fallback to disambiguate choice
+        // families; otherwise a contextual literal can make its own expected
+        // choice invisible during lookup.
+        const choice_ty = blk: {
+            if (expected) |expected_ty| {
+                if (!types.isBuiltin(self.graph, expected_ty, .Any)) {
+                    if (types.findVariant(self.graph, expected_ty, name)) |hit| {
+                        if (payload) |payload_node| if (hit.variant.payload_type) |expected_payload| {
+                            if (self.core) |core| _ = core.coerceContextualValue(payload_node, expected_payload);
+                            payload_ty = self.graph.nodes.items[@intFromEnum(payload_node)].ty;
+                        };
+                        if (!self.payloadCompatible(hit.variant.payload_type, payload_ty)) return false;
+                        break :blk expected_ty;
+                    }
+                }
+            }
+            break :blk self.findChoiceType(expected, name, payload_ty) orelse return false;
+        };
+
         const variant = types.findVariant(self.graph, choice_ty, name) orelse return false;
         if (payload) |payload_node| if (variant.variant.payload_type) |expected_payload| {
             if (self.core) |core| _ = core.coerceContextualValue(payload_node, expected_payload);
