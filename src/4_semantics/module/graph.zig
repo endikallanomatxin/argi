@@ -178,6 +178,18 @@ pub const FileInput = struct {
     is_bundled_core: bool = false,
 };
 
+
+/// Construction-only lookup from durable source provenance back into syntax.
+/// Completed ModuleSG declarations keep source identity, not AST identity.
+pub fn declarationSyntaxNode(files: []const FileInput, declaration: Declaration) ?syn.NodeIndex {
+    if (declaration.module_file_index >= files.len) return null;
+    const tree = files[declaration.module_file_index].tree;
+    for (tree.roots) |node| {
+        if (tree.location(node).offset == declaration.source_offset) return node;
+    }
+    return null;
+}
+
 pub const ModuleSemanticGraphBuilder = struct {
     allocator: std.mem.Allocator,
     graph: ModuleSemanticGraph,
@@ -284,10 +296,11 @@ fn buildFunctionInterfaces(allocator: std.mem.Allocator, graph: *ModuleSemanticG
     for (graph.declarations.items, 0..) |*declaration, declaration_index| {
         if (declaration.kind != .function and declaration.kind != .test_function) continue;
         const file_input = files[declaration.module_file_index];
+        const declaration_node = declarationSyntaxNode(files, declaration.*) orelse continue;
         const function = if (declaration.kind == .test_function)
-            file_input.tree.testDeclaration(declaration.syntax_node).?.function
+            file_input.tree.testDeclaration(declaration_node).?.function
         else
-            file_input.tree.functionDeclaration(declaration.syntax_node).?;
+            file_input.tree.functionDeclaration(declaration_node).?;
         if (function.generic_params.len != 0 or function.generic_params_struct != null) continue;
         const field_start = graph.fields.items.len;
         if (!try appendFields(allocator, graph, file_input, @intCast(declaration.module_file_index), function.input) or
@@ -312,10 +325,11 @@ fn buildStructDefinitions(allocator: std.mem.Allocator, graph: *ModuleSemanticGr
     for (graph.declarations.items) |*declaration| {
         if (declaration.kind != .type) continue;
         const input = files[declaration.module_file_index];
-        const type_declaration = switch (input.tree.tag(declaration.syntax_node)) {
-            .type_declaration => input.tree.typeDeclaration(declaration.syntax_node).?,
+        const declaration_node = declarationSyntaxNode(files, declaration.*) orelse continue;
+        const type_declaration = switch (input.tree.tag(declaration_node)) {
+            .type_declaration => input.tree.typeDeclaration(declaration_node).?,
             .c_union_declaration => blk: {
-                const value = input.tree.cUnionDeclaration(declaration.syntax_node).?;
+                const value = input.tree.cUnionDeclaration(declaration_node).?;
                 break :blk syn.TypeDeclaration{ .name_token = value.name_token, .generic_params = value.generic_params, .generic_params_struct = value.generic_params_struct, .value = value.value };
             },
             else => continue,
@@ -334,13 +348,14 @@ fn buildChoiceDefinitions(allocator: std.mem.Allocator, graph: *ModuleSemanticGr
     for (graph.declarations.items) |*declaration| {
         if (declaration.kind != .type) continue;
         const input = files[declaration.module_file_index];
-        const generic_params, const generic_params_struct, const value = switch (input.tree.tag(declaration.syntax_node)) {
+        const declaration_node = declarationSyntaxNode(files, declaration.*) orelse continue;
+        const generic_params, const generic_params_struct, const value = switch (input.tree.tag(declaration_node)) {
             .type_declaration => blk: {
-                const item = input.tree.typeDeclaration(declaration.syntax_node).?;
+                const item = input.tree.typeDeclaration(declaration_node).?;
                 break :blk .{ item.generic_params, item.generic_params_struct, item.value };
             },
             .c_enum_declaration => blk: {
-                const item = input.tree.cEnumDeclaration(declaration.syntax_node).?;
+                const item = input.tree.cEnumDeclaration(declaration_node).?;
                 break :blk .{ item.generic_params, item.generic_params_struct, item.value };
             },
             else => continue,
