@@ -129,8 +129,8 @@ test "expression resolver preserves global binding reads and assignments" {
     try app.strings.appendSlice(allocator, "value");
     try core.strings.appendSlice(allocator, "value");
     const name: module_sg.StringRange = .{ .start = 0, .len = 5 };
-    try app.declarations.append(allocator, .{ .kind = .binding, .name = name, .source_offset = 0, .module_file_index = 0, .syntax_node = @enumFromInt(0) });
-    try core.declarations.append(allocator, .{ .kind = .binding, .name = name, .source_offset = 0, .module_file_index = 0, .syntax_node = @enumFromInt(0) });
+    try app.declarations.append(allocator, .{ .kind = .binding, .name = name, .source_offset = 0, .module_file_index = 0, });
+    try core.declarations.append(allocator, .{ .kind = .binding, .name = name, .source_offset = 0, .module_file_index = 0, });
     try app.semantic.declaration_bindings.append(allocator, .{ .declaration = @enumFromInt(0), .binding = @enumFromInt(0) });
     try core.semantic.declaration_bindings.append(allocator, .{ .declaration = @enumFromInt(0), .binding = @enumFromInt(0) });
 
