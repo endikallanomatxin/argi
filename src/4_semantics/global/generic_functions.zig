@@ -5,6 +5,7 @@ const parameterized_storage = @import("../module/parameterized/storage.zig");
 const ir = @import("../module/parameterized/ir.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
+const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
 const global_types = @import("types.zig");
@@ -33,12 +34,13 @@ pub const Resolver = struct {
         module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
-    ) !?bool {
-        return switch (operation) {
+    ) !resolution.Result {
+        const legacy: ?bool = switch (operation) {
             .resolve_call => |value| @as(?bool, try self.resolveModuleGenericCall(module_index, module, o, value)),
             .resolve_index => |value| @as(?bool, try self.resolveGenericIndex(module_index, o, value)),
             else => null,
         };
+        return resolution.Result.fromOptionalBool(legacy);
     }
 
     fn resolveGenericIndex(

@@ -3,6 +3,7 @@ const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
+const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
@@ -26,13 +27,14 @@ pub const Resolver = struct {
         module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
-    ) !?bool {
+    ) !resolution.Result {
         _ = module_index;
         _ = module;
-        return switch (operation) {
+        const legacy: ?bool = switch (operation) {
             .resolve_error_propagation => |value| @as(?bool, try self.resolve(o, value)),
             else => null,
         };
+        return resolution.Result.fromOptionalBool(legacy);
     }
 
     fn resolve(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
