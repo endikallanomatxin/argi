@@ -279,7 +279,11 @@ const Context = struct {
             const binding = self.graph.semantic.bindings.items[@intFromEnum(relation.binding)];
             return self.resolved(node, binding.ty, .{ .binding_use = relation.binding });
         }
-        return self.pendingNamed(node, .unknown_identifier, text, expected);
+        const ty = expected orelse try self.builtin(.Any);
+        return self.pending(.{ .resolve_name_use = .{
+            .node = self.nextNodeId(),
+            .name = try self.writer.addString(text),
+        } }, ty);
     }
 
     fn lowerCall(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
@@ -452,16 +456,6 @@ const Context = struct {
     fn lowerTypeLiteral(self: *Context, node: syn.NodeIndex) !Lowered {
         const value = try self.lowerType(node);
         return self.resolved(node, try self.builtin(.Type), .{ .type_literal = value });
-    }
-
-    fn pendingNamed(self: *Context, node: syn.NodeIndex, kind: entities.PendingExpressionKind, text: []const u8, expected: ?entities.ModuleTypeId) !Lowered {
-        _ = node;
-        return self.pending(.{ .resolve_expression = .{
-            .node = self.nextNodeId(),
-            .kind = kind,
-            .name = try self.writer.addString(text),
-            .expected_type = expected,
-        } }, expected orelse try self.builtin(.Any));
     }
 
     fn pending(self: *Context, operation: entities.PendingOperation, ty: entities.ModuleTypeId) !Lowered {

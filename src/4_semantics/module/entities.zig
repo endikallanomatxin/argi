@@ -154,22 +154,6 @@ pub const ExternalRef = struct {
     source: primitives.SourceRef,
 };
 
-/// Name lookups are the only expression-shaped operation still deferred as a
-/// generic expression. All other globally-dependent constructs have dedicated
-/// PendingOperation variants that encode their semantic intent explicitly.
-pub const PendingExpressionKind = enum(u8) {
-    unknown_identifier,
-    import_value,
-};
-
-pub const PendingExpression = struct {
-    node: ModuleNodeId,
-    kind: PendingExpressionKind,
-    operands: NodeRange = .{ .start = 0, .len = 0 },
-    name: ?primitives.StringRange = null,
-    expected_type: ?ModuleTypeId = null,
-};
-
 pub const PendingOperation = union(enum) {
     resolve_type: struct {
         external: ExternalRefId,
@@ -256,7 +240,23 @@ pub const PendingOperation = union(enum) {
         node: ModuleNodeId,
         binding: ModuleBindingId,
     },
-    resolve_expression: PendingExpression,
+    resolve_keep_name: struct {
+        node: ModuleNodeId,
+        name: primitives.StringRange,
+    },
+    resolve_name_use: struct {
+        node: ModuleNodeId,
+        name: primitives.StringRange,
+    },
+    resolve_name_assignment: struct {
+        node: ModuleNodeId,
+        name: primitives.StringRange,
+        value: ModuleNodeId,
+    },
+    resolve_import: struct {
+        node: ModuleNodeId,
+        path: primitives.StringRange,
+    },
     resolve_abstract: struct {
         declaration: ModuleDeclId,
         abstract_ref: ExternalRefId,

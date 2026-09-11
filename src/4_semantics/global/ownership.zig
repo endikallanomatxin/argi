@@ -3,6 +3,7 @@ const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
+const name_lookup = @import("name_lookup.zig");
 const core_mod = @import("core.zig");
 const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
@@ -45,11 +46,10 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
     ) !?bool {
-        _ = module_index;
-        _ = module;
         return switch (operation) {
             .resolve_defer => |value| @as(?bool, try self.resolveDefer(o, value)),
             .resolve_keep => |value| @as(?bool, try self.resolveKeep(o, value)),
+            .resolve_keep_name => |value| @as(?bool, try self.resolveKeepName(module_index, module, o, value)),
             .resolve_copy => |value| @as(?bool, try self.resolveCopy(o, value)),
             .resolve_deinit => |value| @as(?bool, try self.resolveExplicitDeinit(o, value)),
             else => null,
@@ -78,8 +78,21 @@ pub const Resolver = struct {
     }
 
     fn resolveKeep(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
-        const marker = globalizer.globalNode(o, value.node);
-        const binding = globalizer.globalBinding(o, value.binding);
+        return self.registerKeep(globalizer.globalNode(o, value.node), globalizer.globalBinding(o, value.binding));
+    }
+
+    fn resolveKeepName(
+        self: *Resolver,
+        module_index: usize,
+        module: *const module_sg.ModuleSemanticGraph,
+        o: globalizer.Offsets,
+        value: anytype,
+    ) !bool {
+        const binding = name_lookup.binding(self.modules, self.offsets, module_index, module.text(value.name)) orelse return false;
+        return self.registerKeep(globalizer.globalNode(o, value.node), binding);
+    }
+
+    fn registerKeep(self: *Resolver, marker: global_sg.GlobalNodeId, binding: global_sg.GlobalBindingId) !bool {
         try self.kept.append(self.allocator, .{ .marker = marker, .binding = binding });
         try self.makeNoop(marker, self.graph.bindings.items[@intFromEnum(binding)].source);
         self.stats.keeps += 1;
