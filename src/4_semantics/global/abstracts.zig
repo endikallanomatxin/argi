@@ -37,17 +37,16 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
-        const legacy: ?bool = switch (operation) {
-            .resolve_call => |value| @as(?bool, try self.resolveVirtualCall(module_index, module, o, value)),
+        return switch (operation) {
+            .resolve_call => |value| resolution.Result.fromBool(try self.resolveVirtualCall(module_index, module, o, value)),
             .resolve_abstract => |value| blk: {
                 const declaration = globalizer.globalDecl(o, value.declaration);
-                const ty = self.graph.declarations.items[@intFromEnum(declaration)].type_id orelse break :blk @as(?bool, false);
+                const ty = self.graph.declarations.items[@intFromEnum(declaration)].type_id orelse break :blk .deferred;
                 const abstract_decl = try self.resolveExternalAbstract(module_index, value.abstract_ref);
-                break :blk @as(?bool, try self.implements(ty, abstract_decl));
+                break :blk resolution.Result.fromBool(try self.implements(ty, abstract_decl));
             },
-            else => null,
+            else => .not_applicable,
         };
-        return resolution.Result.fromOptionalBool(legacy);
     }
 
     fn resolveVirtualCall(

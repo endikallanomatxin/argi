@@ -25,16 +25,15 @@ pub const Resolver = struct {
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
         _ = module;
-        const legacy: ?bool = switch (operation) {
-            .resolve_name_use => |value| @as(?bool, self.resolveNameUse(module_index, o, value)),
-            .resolve_name_assignment => |value| @as(?bool, self.resolveNameAssignment(module_index, o, value)),
+        return switch (operation) {
+            .resolve_name_use => |value| resolution.Result.fromBool(self.resolveNameUse(module_index, o, value)),
+            .resolve_name_assignment => |value| resolution.Result.fromBool(self.resolveNameAssignment(module_index, o, value)),
             // Module values need a first-class representation before imports can
             // be materialized. The operation is nevertheless explicit now, so
             // no unrelated resolver can accidentally reinterpret it as a name.
-            .resolve_import => @as(?bool, false),
-            else => null,
+            .resolve_import => .deferred,
+            else => .not_applicable,
         };
-        return resolution.Result.fromOptionalBool(legacy);
     }
 
     fn resolveNameUse(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) bool {
