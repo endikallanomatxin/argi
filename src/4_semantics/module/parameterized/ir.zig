@@ -1,5 +1,4 @@
 const std = @import("std");
-const syn = @import("../../../3_syntax/syntax_tree.zig");
 const entities = @import("../entities.zig");
 const primitives = @import("../../primitives/schema.zig");
 
@@ -187,7 +186,7 @@ pub const MatchCase = struct {
     name: primitives.StringRange,
     payload_binding: ?ParameterizedBindingId,
     body: ParameterizedBlockId,
-    mode: syn.MatchCaseMode,
+    mode: primitives.MatchCaseMode,
     source: primitives.SourceRef,
 };
 

@@ -436,7 +436,7 @@ pub const Context = struct {
                     .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, case.variant_token)),
                     .payload_binding = payload_binding,
                     .body = try self.lowerBlock(case.body),
-                    .mode = case.mode,
+                    .mode = graph_mod.matchCaseModeFromSyntax(case.mode),
                     .source = self.sourceRef(case_node),
                 });
             }
@@ -487,7 +487,7 @@ pub const Context = struct {
                 .source = self.sourceRef(node),
                 .ty = ty,
                 .initialization = initialization,
-                .mutability = declaration.mutability,
+                .mutability = graph_mod.mutabilityFromSyntax(declaration.mutability),
             });
             try self.bindings.append(.{ .name = name, .id = binding });
             return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .{ .binding_declaration = binding });

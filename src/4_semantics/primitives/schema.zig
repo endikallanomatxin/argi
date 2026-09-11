@@ -1,6 +1,5 @@
 const std = @import("std");
 const tok = @import("../../2_tokens/token.zig");
-const syn = @import("../../3_syntax/syntax_tree.zig");
 const semantic_strings = @import("strings.zig");
 
 pub const StringRange = semantic_strings.StringRange;
@@ -33,6 +32,9 @@ pub const BuiltinType = enum {
 };
 
 pub const PointerMutability = enum(u8) { read_only, read_write };
+pub const Mutability = enum(u8) { constant, variable };
+pub const ForMode = enum(u8) { value, borrow, mut_borrow };
+pub const MatchCaseMode = enum(u8) { value, borrow, mut_borrow, move };
 
 pub const DeclarationKind = enum {
     binding,
@@ -195,7 +197,7 @@ pub fn Binding(comptime Ids: type) type {
         source: SourceRef,
         ty: Ids.TypeId,
         initialization: ?Ids.NodeId = null,
-        mutability: syn.Mutability,
+        mutability: Mutability,
     };
 }
 
