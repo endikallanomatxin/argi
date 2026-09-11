@@ -1,4 +1,4 @@
-name: Direct structured resolver states
+name: Compact semantic graph
 
 on:
   push:
@@ -7,100 +7,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-test-commit:
+  test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Remove optional bool compatibility inside resolvers
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          root = Path('src/4_semantics/global')
-          resolution = root / 'resolution.zig'
-          resolution.write_text('''pub const Result = enum(u2) {
-              not_applicable,
-              deferred,
-              resolved,
-
-              pub fn fromBool(value: bool) Result {
-                  return if (value) .resolved else .deferred;
-              }
-
-              pub fn isResolved(self: Result) bool {
-                  return self == .resolved;
-              }
-          };
-
-          test "resolution result represents resolver ownership explicitly" {
-              const std = @import("std");
-              try std.testing.expectEqual(Result.deferred, Result.fromBool(false));
-              try std.testing.expectEqual(Result.resolved, Result.fromBool(true));
-              try std.testing.expect(!Result.not_applicable.isResolved());
-          }
-          ''')
-
-          resolver_files = [
-              'core.zig', 'constructors.zig', 'control.zig', 'expressions.zig',
-              'generics.zig', 'generic_functions.zig', 'abstracts.zig',
-              'errors.zig', 'ownership.zig',
-          ]
-          for name in resolver_files:
-              path = root / name
-              text = path.read_text()
-              start = text.index('    pub fn tryResolve(')
-              end = text.index('\n    }\n\n', start) + len('\n    }')
-              segment = text[start:end]
-              assert 'const legacy: ?bool = switch (operation) {' in segment, name
-              assert 'return resolution.Result.fromOptionalBool(legacy);' in segment, name
-              segment = segment.replace(
-                  '        const legacy: ?bool = switch (operation) {',
-                  '        return switch (operation) {', 1,
-              )
-              segment = segment.replace(
-                  '        return resolution.Result.fromOptionalBool(legacy);\n', '', 1,
-              )
-              lines = []
-              for line in segment.splitlines(keepends=True):
-                  if '@as(?bool,' in line:
-                      line = re.sub(
-                          r'@as\(\?bool, (.*)\)([,;])',
-                          r'resolution.Result.fromBool(\1)\2',
-                          line,
-                      )
-                  line = line.replace('else => null,', 'else => .not_applicable,')
-                  lines.append(line)
-              segment = ''.join(lines)
-              segment = segment.replace('resolution.Result.fromBool(false)', '.deferred')
-              segment = segment.replace('resolution.Result.fromBool(true)', '.resolved')
-              assert '?bool' not in segment, (name, segment)
-              assert 'fromOptionalBool' not in segment, name
-              text = text[:start] + segment + text[end:]
-              path.write_text(text)
-
-          abstracts = (root / 'abstracts.zig').read_text()
-          assert 'break :blk .deferred' in abstracts
-          assert 'break :blk resolution.Result.fromBool(try self.implements' in abstracts
-
-          violations = []
-          for name in resolver_files:
-              text = (root / name).read_text()
-              start = text.index('    pub fn tryResolve(')
-              end = text.index('\n    }\n\n', start)
-              segment = text[start:end]
-              if '?bool' in segment or 'fromOptionalBool' in segment or 'else => null' in segment:
-                  violations.append(name)
-          assert not violations, violations
-          print('tryResolve implementations now return structured states directly')
-          PY
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -123,10 +37,6 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Commit validated protocol cleanup
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/global
-          git commit -m "Return structured resolution states directly"
-          git push origin HEAD:compact-semantic-graph-chatgpt
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
