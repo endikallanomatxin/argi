@@ -38,7 +38,7 @@ pub const Resolver = struct {
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
         return switch (operation) {
-            .resolve_call => |value| resolution.Result.fromBool(try self.resolveVirtualCall(module_index, module, o, value)),
+            .resolve_call => |value| try self.resolveVirtualCall(module_index, module, o, value),
             .resolve_abstract => |value| blk: {
                 const declaration = globalizer.globalDecl(o, value.declaration);
                 const ty = self.graph.declarations.items[@intFromEnum(declaration)].type_id orelse break :blk .deferred;
@@ -55,22 +55,61 @@ pub const Resolver = struct {
         module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         value: anytype,
-    ) !bool {
+    ) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
         const input = globalizer.globalNode(o, value.input);
         if (std.mem.eql(u8, module.text(reference.name), "to_virtual")) {
-            const node = (try self.makeVirtualize(module_index, reference, input)) orelse return false;
+            const node = (try self.makeVirtualize(module_index, reference, input)) orelse return .deferred;
             self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
-            return true;
+            return .resolved;
         }
+        if (!self.ownsVirtualCall(module_index, module, reference, input)) return .not_applicable;
         const node = (try self.makeVirtualCall(
             module_index,
             reference,
             input,
             .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset },
-        )) orelse return false;
+        )) orelse return .deferred;
         self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
-        return true;
+        return .resolved;
+    }
+
+    fn ownsVirtualCall(
+        self: *const Resolver,
+        module_index: usize,
+        module: *const module_sg.ModuleSemanticGraph,
+        reference: module_entities.ExternalRef,
+        input: global_sg.GlobalNodeId,
+    ) bool {
+        if (reference.module_path != null or reference.generic_arguments != null) return false;
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |item| item,
+            else => return false,
+        };
+        const method_name = module.text(reference.name);
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |actual| {
+            const actual_ty = self.graph.nodes.items[@intFromEnum(actual.value)].ty orelse continue;
+            const pointee = switch (self.graph.types.items[@intFromEnum(actual_ty)]) {
+                .pointer => |pointer| pointer.child,
+                else => continue,
+            };
+            const abstract_ty = switch (self.graph.types.items[@intFromEnum(pointee)]) {
+                .virtual => |abstract_type| abstract_type,
+                else => pointee,
+            };
+            const abstract_decl = switch (self.graph.types.items[@intFromEnum(abstract_ty)]) {
+                .declared => |declaration| declaration,
+                else => continue,
+            };
+            const located = self.findAbstractDefinition(abstract_decl) orelse continue;
+            if (located.definition.parameters.len != 0) continue;
+            const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+            for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
+                if (std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), method_name)) return true;
+            }
+        }
+        _ = module_index;
+        return false;
     }
 
     fn makeVirtualize(
