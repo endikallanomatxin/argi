@@ -150,7 +150,7 @@ pub const Resolver = struct {
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
         return switch (operation) {
-            .resolve_type => |value| resolution.Result.fromBool(try self.resolveTypeHole(module_index, module, o, value)),
+            .resolve_type => |value| try self.resolveTypeHole(module_index, module, o, value),
             .resolve_call => |value| try self.resolveCall(module_index, module, o, value),
             .resolve_field => |value| resolution.Result.fromBool(try self.resolveField(module, o, value)),
             .resolve_binary => |value| resolution.Result.fromBool(try self.resolveBinary(module_index, o, value)),
@@ -344,13 +344,13 @@ pub const Resolver = struct {
         } });
     }
 
-    fn resolveTypeHole(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !bool {
+    fn resolveTypeHole(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
-        if (reference.generic_arguments != null) return false;
-        const target = self.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch return false;
+        if (reference.generic_arguments != null) return .not_applicable;
+        const target = self.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch return .deferred;
         self.graph.types.items[@intFromEnum(globalizer.globalType(o, value.destination))] = .{ .declared = target };
         self.stats.external_types += 1;
-        return true;
+        return .resolved;
     }
 
     fn resolveCall(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {

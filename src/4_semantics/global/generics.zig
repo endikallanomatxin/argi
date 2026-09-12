@@ -69,7 +69,7 @@ pub const Resolver = struct {
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
         return switch (operation) {
-            .resolve_type => |value| resolution.Result.fromBool(try self.resolveGenericTypeHole(module_index, module, o, value)),
+            .resolve_type => |value| try self.resolveGenericTypeHole(module_index, module, o, value),
             else => .not_applicable,
         };
     }
@@ -80,16 +80,16 @@ pub const Resolver = struct {
         module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         value: anytype,
-    ) !bool {
+    ) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
-        const args = reference.generic_arguments orelse return false;
-        const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch return false;
+        const args = reference.generic_arguments orelse return .not_applicable;
+        const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch return .deferred;
         const global_args = try self.relocateModuleArguments(module_index, args);
         const destination = globalizer.globalType(o, value.destination);
         self.graph.types.items[@intFromEnum(destination)] = .{ .generic = .{ .base = base, .arguments = global_args } };
         _ = try self.ensureGenericInstance(destination);
         self.stats.type_holes += 1;
-        return true;
+        return .resolved;
     }
 
     pub fn ensureGenericInstance(self: *Resolver, ty: global_sg.GlobalTypeId) !bool {
