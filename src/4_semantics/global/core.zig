@@ -159,6 +159,7 @@ pub const Resolver = struct {
             .resolve_comparison => |value| resolution.Result.fromBool(try self.resolveComparison(module_index, o, value)),
             .resolve_index => |value| try self.resolveIndex(module_index, o, value),
             .resolve_dereference => |value| try self.resolveDereference(o, value),
+            .resolve_address => |value| try self.resolveAddress(o, value),
             else => .not_applicable,
         };
     }
@@ -469,6 +470,20 @@ pub const Resolver = struct {
             } },
         };
         self.stats.dereferences += 1;
+        return .resolved;
+    }
+
+    fn resolveAddress(self: *Resolver, o: globalizer.Offsets, value: anytype) !resolution.Result {
+        const child_node = globalizer.globalNode(o, value.value);
+        const child = self.graph.nodes.items[@intFromEnum(child_node)].ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(child)) return .deferred;
+        const pointer_type = try self.pointerType(child, value.mutability);
+        const target = globalizer.globalNode(o, value.node);
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = self.graph.nodes.items[@intFromEnum(child_node)].source,
+            .ty = pointer_type,
+            .content = .{ .address_of = child_node },
+        };
         return .resolved;
     }
 
