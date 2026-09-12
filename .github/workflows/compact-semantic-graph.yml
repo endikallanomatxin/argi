@@ -1,4 +1,4 @@
-name: Materialize binding type state
+name: One-shot semantic cleanup
 
 on:
   push:
@@ -9,20 +9,14 @@ permissions:
   contents: write
 
 jobs:
-  migrate:
+  cleanup:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply migration
-        run: |
-          python3 .github/scripts/materialize_binding_type_state.py
-          python3 .github/scripts/allow_untyped_binding_uses.py
-          python3 .github/scripts/remove_optional_any_bridges.py
-          python3 .github/scripts/pending_dereference.py
-          python3 .github/scripts/debug_binding_resolution.py
-          python3 .github/scripts/remove_binding_debug.py
+      - name: Remove temporary diagnostics
+        run: python3 .github/scripts/remove_binding_debug.py
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
@@ -39,7 +33,7 @@ jobs:
       - name: Run internal tests
         timeout-minutes: 5
         run: zig build test-internal
-      - name: Commit source migration
+      - name: Commit cleanup
         run: |
           if git diff --quiet -- src/4_semantics; then
             echo "No source changes to commit"
