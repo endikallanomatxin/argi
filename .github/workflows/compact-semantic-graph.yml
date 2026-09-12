@@ -16,7 +16,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Apply migration
-        run: python3 .github/scripts/materialize_binding_type_state.py
+        run: |
+          python3 .github/scripts/materialize_binding_type_state.py
+          python3 .github/scripts/allow_untyped_binding_uses.py
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
