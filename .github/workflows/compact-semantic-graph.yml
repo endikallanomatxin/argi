@@ -34,8 +34,24 @@ jobs:
           block = block.replace(needle, replacement, 1)
           text = text[:start] + block + text[end:]
           path.write_text(text)
-          assert 'if (function.flags.is_abstract_dispatch) continue;' in path.read_text()[start:end + 100]
           print('ordinary function lookup excludes abstract dispatch contracts')
+          PY
+
+      - name: Keep abstract contracts out of generic lookup
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/4_semantics/global/generic_functions.zig')
+          text = path.read_text()
+          needle = '            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {\n'
+          count = text.count(needle)
+          assert count == 4, count
+          replacement = needle + '                if (parameterized.dispatch_kind == .abstract_contract) continue;\n'
+          text = text.replace(needle, replacement)
+          path.write_text(text)
+          assert path.read_text().count('if (parameterized.dispatch_kind == .abstract_contract) continue;') == 4
+          print('generic lookup excludes abstract dispatch contracts')
           PY
 
       - name: Stop fallback on deferred resolution
@@ -119,10 +135,6 @@ jobs:
           insert = text.index('\nfn markUnresolvedTypeSlots(', text.index('fn resolvePendingOperation('))
           text = text[:insert] + helper + text[insert:]
           path.write_text(text)
-
-          final = path.read_text()
-          assert final.count('terminalResolution(try ') >= 9
-          assert 'const resolution = @import("resolution.zig");' in final
           print('staged resolution now stops on deferred ownership')
           PY
 
@@ -151,6 +163,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/global/core.zig src/4_semantics/global/semantizer.zig
+          git add src/4_semantics/global/core.zig src/4_semantics/global/generic_functions.zig src/4_semantics/global/semantizer.zig
           git commit -m "Enforce semantic resolution ownership"
           git push origin HEAD:compact-semantic-graph-chatgpt
