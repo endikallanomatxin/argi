@@ -45,7 +45,7 @@ pub const Resolver = struct {
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
         return switch (operation) {
-            .resolve_call => |value| resolution.Result.fromBool(try self.resolveChoiceTest(module, o, value)),
+            .resolve_call => |value| try self.resolveChoiceTest(module, o, value),
             .resolve_choice_literal => |value| resolution.Result.fromBool(try self.resolveChoiceLiteral(module, o, value)),
             .resolve_choice_payload => |value| resolution.Result.fromBool(try self.resolveChoicePayload(module, o, value)),
             .resolve_nullable_unwrap => |value| resolution.Result.fromBool(try self.resolveNullableUnwrap(o, value)),
@@ -201,14 +201,14 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn resolveChoiceTest(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !bool {
+    fn resolveChoiceTest(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
         if (reference.module_path != null or reference.generic_arguments != null or
-            !std.mem.eql(u8, module.text(reference.name), "is")) return false;
+            !std.mem.eql(u8, module.text(reference.name), "is")) return .not_applicable;
         const input = globalizer.globalNode(o, value.input);
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |item| item,
-            else => return false,
+            else => return .deferred,
         };
         var choice_value: ?global_sg.GlobalNodeId = null;
         var tag_node: ?global_sg.GlobalNodeId = null;
@@ -216,9 +216,9 @@ pub const Resolver = struct {
             if (std.mem.eql(u8, self.graph.text(field.name), "value")) choice_value = field.value;
             if (std.mem.eql(u8, self.graph.text(field.name), "variant")) tag_node = field.value;
         }
-        const choice = choice_value orelse return false;
-        const choice_ty = self.graph.nodes.items[@intFromEnum(choice)].ty orelse return false;
-        const tag = tag_node orelse return false;
+        const choice = choice_value orelse return .deferred;
+        const choice_ty = self.graph.nodes.items[@intFromEnum(choice)].ty orelse return .deferred;
+        const tag = tag_node orelse return .deferred;
         var option_name: ?[]const u8 = null;
         var option_source: ?primitives.SourceRef = null;
         for (module.semantic.pending_operations.items) |pending| switch (pending) {
@@ -230,9 +230,9 @@ pub const Resolver = struct {
             },
             else => {},
         };
-        const variant = types.findVariant(self.graph, choice_ty, option_name orelse return false) orelse return false;
+        const variant = types.findVariant(self.graph, choice_ty, option_name orelse return .deferred) orelse return .deferred;
         self.graph.nodes.items[@intFromEnum(tag)] = .{
-            .source = option_source.?,
+            .source = option_source orelse return .deferred,
             .ty = try self.builtin(.Int32),
             .content = .{ .int_literal = variant.variant.value },
         };
@@ -242,7 +242,7 @@ pub const Resolver = struct {
             .ty = try self.builtin(.Bool),
             .content = .{ .comparison = .{ .operator = .equal, .left = choice, .right = tag } },
         };
-        return true;
+        return .resolved;
     }
 
     fn resolveChoicePayload(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !bool {
