@@ -37,7 +37,7 @@ pub const Resolver = struct {
     ) !resolution.Result {
         return switch (operation) {
             .resolve_call => |value| try self.resolveModuleGenericCall(module_index, module, o, value),
-            .resolve_index => |value| resolution.Result.fromBool(try self.resolveGenericIndex(module_index, o, value)),
+            .resolve_index => |value| try self.resolveGenericIndex(module_index, o, value),
             else => .not_applicable,
         };
     }
@@ -47,12 +47,12 @@ pub const Resolver = struct {
         module_index: usize,
         o: globalizer.Offsets,
         value: anytype,
-    ) !bool {
+    ) !resolution.Result {
         const collection = globalizer.globalNode(o, value.value);
-        const collection_ty = self.graph.nodes.items[@intFromEnum(collection)].ty orelse return false;
+        const collection_ty = self.graph.nodes.items[@intFromEnum(collection)].ty orelse return .deferred;
         const identity = switch (self.graph.types.items[@intFromEnum(collection_ty)]) {
             .generic => |generic| generic,
-            else => return false,
+            else => return .not_applicable,
         };
         const operator: @import("../primitives/callable.zig").OperatorKind = if (value.store_value == null) .get else .set;
 
@@ -80,7 +80,7 @@ pub const Resolver = struct {
         }
         var operand_types: [3]global_sg.GlobalTypeId = undefined;
         for (operands[0..count], 0..) |node, i|
-            operand_types[i] = self.graph.nodes.items[@intFromEnum(node)].ty orelse return false;
+            operand_types[i] = self.graph.nodes.items[@intFromEnum(node)].ty orelse return .deferred;
         var function = self.core.resolveOperator(module_index, operator, operand_types[0..count]) catch null;
         if (function == null) {
             var addressed_function: ?global_sg.GlobalFunctionId = null;
@@ -103,11 +103,11 @@ pub const Resolver = struct {
                     }
                 }
                 if (!matches) continue;
-                if (addressed_function != null) return false;
+                if (addressed_function != null) return .deferred;
                 addressed_function = @enumFromInt(@as(u32, @intCast(raw)));
                 addressed_type = expected_self;
             }
-            function = addressed_function orelse return false;
+            function = addressed_function orelse return .deferred;
             const address: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
             try self.graph.nodes.append(self.allocator, .{
                 .source = self.graph.nodes.items[@intFromEnum(collection)].source,
@@ -124,7 +124,7 @@ pub const Resolver = struct {
             .content = .{ .function_call = .{ .callee = function.?, .input = input } },
         };
         self.stats.calls += 1;
-        return true;
+        return .resolved;
     }
 
     fn parameterizedIndexesBase(
