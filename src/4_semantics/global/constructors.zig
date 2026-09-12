@@ -37,7 +37,7 @@ pub const Resolver = struct {
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
         return switch (operation) {
-            .resolve_call => |value| resolution.Result.fromBool(try self.resolveCall(module_index, module, o, value)),
+            .resolve_call => |value| try self.resolveCall(module_index, module, o, value),
             else => .not_applicable,
         };
     }
@@ -48,14 +48,17 @@ pub const Resolver = struct {
         module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         value: anytype,
-    ) !bool {
+    ) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
         if (reference.generic_arguments) |arguments|
             return self.resolveExplicitGenericCall(module_index, o, value, reference, arguments);
 
-        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch return false;
+        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {
+            error.UnknownGlobalDeclaration => return .not_applicable,
+            else => return err,
+        };
         const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
-        const ty = declaration.type_id orelse return false;
+        const ty = declaration.type_id orelse return .deferred;
         const input = globalizer.globalNode(o, value.input);
 
         const initializer = self.findInitializer(module_index, ty, input);
@@ -65,16 +68,16 @@ pub const Resolver = struct {
                 .start = function.input.start + 1,
                 .len = function.input.len - 1,
             };
-            if (!try self.core.completeCallInputFields(user_fields, input)) return false;
+            if (!try self.core.completeCallInputFields(user_fields, input)) return .deferred;
             self.writeInitializer(o, value, reference, declaration_id, ty, function_id, input);
-            return true;
+            return .resolved;
         }
 
         // A visible initializer blocks field-wise construction even when the
         // provided arguments do not match it. That preserves the language's
         // encapsulation rule: private/invariant-bearing structs cannot bypass
         // their `init` merely because overload resolution failed.
-        if (initializer.has_visible_initializer) return false;
+        if (initializer.has_visible_initializer) return .deferred;
 
         return self.writeStructuralConstruction(o, value, reference, ty, input);
     }
@@ -86,7 +89,7 @@ pub const Resolver = struct {
         value: anytype,
         reference: module_entities.ExternalRef,
         local_arguments: module_entities.GenericArgRange,
-    ) !bool {
+    ) !resolution.Result {
         // Generic construction can be retried by the global fixed point while
         // dependencies in the initializer body are still unresolved. Keep the
         // attempt transactional so failed retries do not accumulate generic
@@ -99,7 +102,10 @@ pub const Resolver = struct {
             inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
         };
 
-        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch return false;
+        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {
+            error.UnknownGlobalDeclaration => return .not_applicable,
+            else => return err,
+        };
         var generics = generic_mod.Resolver{
             .allocator = self.core.allocator,
             .graph = self.graph,
@@ -112,7 +118,7 @@ pub const Resolver = struct {
             .base = declaration_id,
             .arguments = arguments,
         } });
-        _ = generics.ensureGenericInstance(ty) catch return false;
+        _ = generics.ensureGenericInstance(ty) catch return .deferred;
 
         var generic_functions = generic_functions_mod.Resolver{
             .allocator = self.core.allocator,
@@ -137,16 +143,16 @@ pub const Resolver = struct {
                 .start = function.input.start + 1,
                 .len = function.input.len - 1,
             };
-            if (!try self.core.completeCallInputFields(user_fields, input)) return false;
+            if (!try self.core.completeCallInputFields(user_fields, input)) return .deferred;
             self.writeInitializer(o, value, reference, declaration_id, ty, function_id, input);
             committed = true;
-            return true;
+            return .resolved;
         }
-        if (initializer.has_visible_initializer) return false;
+        if (initializer.has_visible_initializer) return .deferred;
 
-        const resolved = try self.writeStructuralConstruction(o, value, reference, ty, input);
-        committed = resolved;
-        return resolved;
+        const result = try self.writeStructuralConstruction(o, value, reference, ty, input);
+        committed = result == .resolved;
+        return result;
     }
 
     fn writeInitializer(
@@ -182,10 +188,13 @@ pub const Resolver = struct {
         reference: module_entities.ExternalRef,
         ty: global_sg.GlobalTypeId,
         input: global_sg.GlobalNodeId,
-    ) !bool {
-        const fields = types.fields(self.graph, ty) orelse return false;
-        if (self.core.scoreCallInput(fields, input) == null) return false;
-        if (!try self.core.completeCallInputFields(fields, input)) return false;
+    ) !resolution.Result {
+        const fields = types.fields(self.graph, ty) orelse return .deferred;
+        switch (self.core.matchCallInput(fields, input)) {
+            .score => {},
+            .no_match, .deferred => return .deferred,
+        }
+        if (!try self.core.completeCallInputFields(fields, input)) return .deferred;
 
         self.graph.nodes.items[@intFromEnum(input)].ty = ty;
         self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.ty = ty;
@@ -196,7 +205,7 @@ pub const Resolver = struct {
             .offset = reference.source.offset,
         };
         self.core.stats.calls += 1;
-        return true;
+        return .resolved;
     }
 
     fn findInitializer(self: *Resolver, module_index: usize, constructed_ty: global_sg.GlobalTypeId, input: global_sg.GlobalNodeId) InitializerLookup {
