@@ -41,18 +41,16 @@ jobs:
               '!std.mem.eql(u8, module.text(reference.name), "is")) return .not_applicable;',
               1,
           )
-          # Once `is` has been recognized, every old false is a retryable
-          # dependency/shape failure owned by this intrinsic.
           new = new.replace('return false;', 'return .deferred;')
+          new = new.replace('return false,', 'return .deferred,')
           new = new.replace('return true;', 'return .resolved;')
           new = new.replace('option_name orelse return false', 'option_name orelse return .deferred')
-          # The previous force unwrap was safe only because option_name/source
-          # were populated together. Make the dependency explicit now.
           new = new.replace('.source = option_source.?,', '.source = option_source orelse return .deferred,')
           text = text[:start] + new + text[end:]
           path.write_text(text)
 
           updated = path.read_text()[start:start + len(new) + 100]
+          assert 'return false' not in updated
           assert 'return .not_applicable;' in updated
           assert 'return .deferred;' in updated
           assert 'return .resolved;' in updated
