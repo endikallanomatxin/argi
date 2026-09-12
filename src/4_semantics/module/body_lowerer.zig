@@ -684,9 +684,16 @@ const Context = struct {
     fn lowerAddress(self: *Context, node: syn.NodeIndex) !Lowered {
         const address = self.tree.addressOf(node).?;
         const value = try self.lowerNode(address.value, null);
-        const child_ty = try self.compatibilityType(value.ty);
-        const ty = try self.writer.addResolvedType(.{ .pointer = .{ .child = child_ty, .mutability = graph_mod.pointerMutabilityFromSyntax(address.mutability) } });
-        return self.resolved(node, ty, .{ .address_of = value.node });
+        const mutability = graph_mod.pointerMutabilityFromSyntax(address.mutability);
+        if (value.ty) |child_ty| {
+            const ty = try self.writer.addResolvedType(.{ .pointer = .{ .child = child_ty, .mutability = mutability } });
+            return self.resolved(node, ty, .{ .address_of = value.node });
+        }
+        return self.pending(node, .{ .resolve_address = .{
+            .node = self.nextNodeId(),
+            .value = value.node,
+            .mutability = mutability,
+        } }, null);
     }
 
     fn lowerDereference(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
