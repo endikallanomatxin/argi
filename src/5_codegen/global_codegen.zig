@@ -508,16 +508,19 @@ pub const CodeGenerator = struct {
     }
 
     fn listLiteral(self: *CodeGenerator, literal: anytype, ty: ?graph_mod.GlobalTypeId) !TypedValue {
-        const element_types = self.graph.type_refs.items[literal.element_types.start..][0..literal.element_types.len];
-        const llvm_fields = try self.allocator.alloc(llvm.c.LLVMTypeRef, element_types.len);
+        const elements = self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len];
+        const values = try self.allocator.alloc(TypedValue, elements.len);
+        defer self.allocator.free(values);
+        const llvm_fields = try self.allocator.alloc(llvm.c.LLVMTypeRef, elements.len);
         defer self.allocator.free(llvm_fields);
-        for (element_types, 0..) |element, index| llvm_fields[index] = try self.toLLVMType(element);
+        for (elements, 0..) |node, index| {
+            values[index] = (try self.visitNode(node)) orelse return CodegenError.ValueNotFound;
+            llvm_fields[index] = values[index].type_ref;
+        }
         const type_ref = c.LLVMStructType(if (llvm_fields.len == 0) null else llvm_fields.ptr, @intCast(llvm_fields.len), 0);
         var aggregate = c.LLVMGetUndef(type_ref);
-        for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len], 0..) |node, index| {
-            const value = (try self.visitNode(node)) orelse return CodegenError.ValueNotFound;
+        for (values, 0..) |value, index|
             aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value.value_ref, @intCast(index), "list.elem");
-        }
         return .{ .value_ref = aggregate, .type_ref = type_ref, .ty = ty };
     }
 

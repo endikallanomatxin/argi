@@ -366,16 +366,12 @@ const Context = struct {
         const list = self.tree.listLiteral(node).?;
         var nodes = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
         defer nodes.deinit();
-        var types = std.array_list.Managed(entities.ModuleTypeId).init(self.allocator);
-        defer types.deinit();
         for (list.elements) |child| {
             const value = try self.lowerNode(child, null);
             try nodes.append(value.node);
-            try types.append(try self.compatibilityType(value.ty));
         }
-        return self.resolved(node, try self.builtin(.Any), .{ .list_literal = .{
+        return self.resolved(node, null, .{ .list_literal = .{
             .elements = try self.writer.appendNodeRefs(nodes.items),
-            .element_types = try self.writer.appendTypeRefs(types.items),
         } });
     }
 
@@ -762,14 +758,6 @@ const Context = struct {
 
     fn resolvedVoid(self: *Context, node: syn.NodeIndex, content: entities.ResolvedNode.Content) !Lowered {
         return self.resolved(node, try self.builtin(.Void), content);
-    }
-
-    /// Temporary boundary for semantic payloads that still require a concrete
-    /// ModuleTypeId during local lowering. Unknown expression types themselves
-    /// are represented as `null`; every remaining `Any` introduced here is a
-    /// compatibility bridge to be removed as those payloads become pending-aware.
-    fn compatibilityType(self: *Context, ty: ?entities.ModuleTypeId) !entities.ModuleTypeId {
-        return ty orelse self.builtin(.Any);
     }
 
     fn lowerType(self: *Context, node: syn.NodeIndex) !entities.ModuleTypeId {

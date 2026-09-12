@@ -402,7 +402,6 @@ pub fn Node(comptime Ids: type) type {
             bool_literal: bool,
             list_literal: struct {
                 elements: Range(Ids.NodeId),
-                element_types: Range(Ids.TypeId),
             },
             struct_value_literal: struct {
                 fields: Range(Ids.ValueFieldId),

@@ -246,7 +246,6 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
         .string_literal => |text| try require(verify.stringFits(text, bounds.strings)),
         .list_literal => |item| {
             try require(verify.rangeFits(item.elements, bounds.node_refs));
-            try require(verify.rangeFits(item.element_types, bounds.type_refs));
         },
         .struct_value_literal => |item| {
             try require(verify.rangeFits(item.fields, bounds.value_fields));
