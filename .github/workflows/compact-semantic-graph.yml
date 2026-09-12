@@ -16,7 +16,16 @@ jobs:
         with:
           fetch-depth: 0
       - name: Apply migration
-        run: python3 .github/scripts/authoritative_struct_literal_type.py
+        run: |
+          python3 .github/scripts/authoritative_struct_literal_type.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/4_semantics/global/core.zig')
+          text = p.read_text()
+          stale = '        self.graph.nodes.items[@intFromEnum(node)].content.struct_value_literal.ty = target;\n'
+          if stale in text:
+              p.write_text(text.replace(stale, '', 1))
+          PY
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
