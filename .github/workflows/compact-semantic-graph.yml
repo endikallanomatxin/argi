@@ -1,4 +1,4 @@
-name: Pending address migration
+name: Contextual string literals
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Apply migration
-        run: python3 .github/scripts/pending_address.py
+        run: python3 .github/scripts/contextual_string_literals.py
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
@@ -42,5 +42,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/4_semantics
-          git commit -m "Represent unresolved address expressions explicitly"
+          git commit -m "Represent string literals as contextual values"
           git push origin HEAD:compact-semantic-graph-chatgpt
