@@ -620,9 +620,20 @@ pub const Resolver = struct {
             const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(expected_offset))];
             const supplied = self.callArgument(literal, expected_offset, expected.name);
             if (supplied) |node| {
-                const actual = self.graph.nodes.items[@intFromEnum(node)].ty orelse return .deferred;
-                if (self.graph.isTypeUnresolved(actual) or self.graph.isTypeUnresolved(expected.ty)) return .deferred;
-                if (types.equal(self.graph, actual, expected.ty)) score += 4 else if (self.callTypesCompatible(actual, expected.ty)) score += 3 else if (types.isBuiltin(self.graph, expected.ty, .Any)) score += 1 else if (self.contextualLiteralFits(node, expected.ty)) score += 3 else return .no_match;
+                if (self.graph.isTypeUnresolved(expected.ty)) return .deferred;
+                const supplied_node = self.graph.nodes.items[@intFromEnum(node)];
+                if (supplied_node.ty) |actual| {
+                    if (self.graph.isTypeUnresolved(actual)) return .deferred;
+                    if (types.equal(self.graph, actual, expected.ty)) score += 4 else if (self.callTypesCompatible(actual, expected.ty)) score += 3 else if (types.isBuiltin(self.graph, expected.ty, .Any)) score += 1 else if (self.contextualLiteralFits(node, expected.ty)) score += 3 else return .no_match;
+                } else switch (supplied_node.content) {
+                    .string_literal => {
+                        if (self.contextualLiteralFits(node, expected.ty))
+                            score += 3
+                        else
+                            return .no_match;
+                    },
+                    else => return .deferred,
+                }
             } else if (expected.default_value == null) return .no_match;
         }
         return .{ .score = score };
@@ -777,9 +788,11 @@ pub const Resolver = struct {
                 if (expected.default_value == null) return false;
                 continue;
             };
-            const actual = self.graph.nodes.items[@intFromEnum(supplied)].ty orelse return false;
-            if (types.equal(self.graph, actual, expected.ty) or self.callTypesCompatible(actual, expected.ty) or
-                self.contextualLiteralFits(supplied, expected.ty)) continue;
+            const supplied_node = self.graph.nodes.items[@intFromEnum(supplied)];
+            if (supplied_node.ty) |actual| {
+                if (types.equal(self.graph, actual, expected.ty) or self.callTypesCompatible(actual, expected.ty) or
+                    self.contextualLiteralFits(supplied, expected.ty)) continue;
+            } else if (self.contextualLiteralFits(supplied, expected.ty)) continue;
             return false;
         }
         return true;
