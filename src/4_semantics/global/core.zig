@@ -199,12 +199,18 @@ pub const Resolver = struct {
         return found orelse error.UnknownGlobalDeclaration;
     }
 
-    pub fn resolveFunctionByName(
+    pub const FunctionMatch = union(enum) {
+        no_match,
+        deferred,
+        function: global_sg.GlobalFunctionId,
+    };
+
+    pub fn matchFunctionByName(
         self: *Resolver,
         current_module: usize,
         reference: module_entities.ExternalRef,
         input_node: global_sg.GlobalNodeId,
-    ) !global_sg.GlobalFunctionId {
+    ) !FunctionMatch {
         const module_filter = if (reference.module_path) |path|
             try self.findModuleForQualifier(current_module, self.modules[current_module].text(path))
         else
@@ -213,20 +219,44 @@ pub const Resolver = struct {
         var best: ?global_sg.GlobalFunctionId = null;
         var best_score: u32 = 0;
         var tied = false;
+        var saw_deferred = false;
         for (self.graph.functions.items, 0..) |function, raw| {
             const decl = self.graph.declarations.items[@intFromEnum(function.declaration)];
             if (!std.mem.eql(u8, self.graph.text(decl.name), name)) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
-            const score = self.scoreCallInput(function.input, input_node) orelse continue;
+            const score = switch (self.matchCallInput(function.input, input_node)) {
+                .no_match => continue,
+                .deferred => {
+                    saw_deferred = true;
+                    continue;
+                },
+                .score => |score| score,
+            };
             if (best == null or score > best_score) {
                 best = @enumFromInt(@as(u32, @intCast(raw)));
                 best_score = score;
                 tied = false;
             } else if (score == best_score) tied = true;
         }
-        if (best == null) return error.NoMatchingGlobalFunction;
-        if (tied) return error.AmbiguousGlobalFunction;
-        return best.?;
+        if (best) |function| {
+            if (tied) return error.AmbiguousGlobalFunction;
+            return .{ .function = function };
+        }
+        if (saw_deferred) return .deferred;
+        return .no_match;
+    }
+
+    pub fn resolveFunctionByName(
+        self: *Resolver,
+        current_module: usize,
+        reference: module_entities.ExternalRef,
+        input_node: global_sg.GlobalNodeId,
+    ) !global_sg.GlobalFunctionId {
+        return switch (try self.matchFunctionByName(current_module, reference, input_node)) {
+            .function => |function| function,
+            .no_match => error.NoMatchingGlobalFunction,
+            .deferred => error.DeferredGlobalFunction,
+        };
     }
 
     pub fn resolveOperator(
