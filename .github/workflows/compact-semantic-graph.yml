@@ -1,4 +1,4 @@
-name: Constructor call resolution ownership
+name: Compact semantic graph
 
 on:
   push:
@@ -7,115 +7,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-test-commit:
+  test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Classify constructor call ownership
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path('src/4_semantics/global/constructors.zig')
-          text = path.read_text()
-          text = text.replace(
-              '.resolve_call => |value| resolution.Result.fromBool(try self.resolveCall(module_index, module, o, value)),',
-              '.resolve_call => |value| try self.resolveCall(module_index, module, o, value),',
-              1,
-          )
-
-          # Ordinary constructor dispatcher.
-          start = text.index('    fn resolveCall(')
-          end = text.index('\n    fn resolveExplicitGenericCall(', start)
-          old = text[start:end]
-          assert ') !bool {' in old
-          old_decl = '        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch return false;'
-          assert old_decl in old
-          new = old.replace(') !bool {', ') !resolution.Result {', 1)
-          new = new.replace(
-              '            return self.resolveExplicitGenericCall(module_index, o, value, reference, arguments);',
-              '            return self.resolveExplicitGenericCall(module_index, o, value, reference, arguments);',
-              1,
-          )
-          new = new.replace(
-              old_decl,
-              '        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {\n'
-              '            error.UnknownGlobalDeclaration => return .not_applicable,\n'
-              '            else => return err,\n'
-              '        };',
-              1,
-          )
-          new = new.replace('const ty = declaration.type_id orelse return false;', 'const ty = declaration.type_id orelse return .deferred;', 1)
-          new = new.replace('if (!try self.core.completeCallInputFields(user_fields, input)) return false;', 'if (!try self.core.completeCallInputFields(user_fields, input)) return .deferred;', 1)
-          new = new.replace('return true;', 'return .resolved;', 1)
-          new = new.replace('if (initializer.has_visible_initializer) return false;', 'if (initializer.has_visible_initializer) return .deferred;', 1)
-          new = new.replace('return self.writeStructuralConstruction(o, value, reference, ty, input);', 'return self.writeStructuralConstruction(o, value, reference, ty, input);', 1)
-          text = text[:start] + new + text[end:]
-
-          # Explicit generic constructor is transactional and owns the call only
-          # after the callee is known to be a type.
-          start = text.index('    fn resolveExplicitGenericCall(')
-          end = text.index('\n    fn writeInitializer(', start)
-          old = text[start:end]
-          assert ') !bool {' in old
-          assert old_decl in old
-          new = old.replace(') !bool {', ') !resolution.Result {', 1)
-          new = new.replace(
-              old_decl,
-              '        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {\n'
-              '            error.UnknownGlobalDeclaration => return .not_applicable,\n'
-              '            else => return err,\n'
-              '        };',
-              1,
-          )
-          new = new.replace('_ = generics.ensureGenericInstance(ty) catch return false;', '_ = generics.ensureGenericInstance(ty) catch return .deferred;', 1)
-          new = new.replace('if (!try self.core.completeCallInputFields(user_fields, input)) return false;', 'if (!try self.core.completeCallInputFields(user_fields, input)) return .deferred;', 1)
-          new = new.replace('            return true;', '            return .resolved;', 1)
-          new = new.replace('if (initializer.has_visible_initializer) return false;', 'if (initializer.has_visible_initializer) return .deferred;', 1)
-          old_tail = '        const resolved = try self.writeStructuralConstruction(o, value, reference, ty, input);\n        committed = resolved;\n        return resolved;'
-          new_tail = '        const result = try self.writeStructuralConstruction(o, value, reference, ty, input);\n        committed = result == .resolved;\n        return result;'
-          assert old_tail in new
-          new = new.replace(old_tail, new_tail, 1)
-          text = text[:start] + new + text[end:]
-
-          # Direct structural construction owns a known type even when its input
-          # is incomplete or mismatched; those cases remain unresolved rather
-          # than falling through to another call domain.
-          start = text.index('    fn writeStructuralConstruction(')
-          end = text.index('\n    fn findInitializer(', start)
-          old = text[start:end]
-          assert ') !bool {' in old
-          new = old.replace(') !bool {', ') !resolution.Result {', 1)
-          new = new.replace('const fields = types.fields(self.graph, ty) orelse return false;', 'const fields = types.fields(self.graph, ty) orelse return .deferred;', 1)
-          old_score = 'if (self.core.scoreCallInput(fields, input) == null) return false;'
-          assert old_score in new
-          new = new.replace(
-              old_score,
-              'switch (self.core.matchCallInput(fields, input)) {\n'
-              '            .score => {},\n'
-              '            .no_match, .deferred => return .deferred,\n'
-              '        }',
-              1,
-          )
-          new = new.replace('if (!try self.core.completeCallInputFields(fields, input)) return false;', 'if (!try self.core.completeCallInputFields(fields, input)) return .deferred;', 1)
-          new = new.replace('return true;', 'return .resolved;', 1)
-          text = text[:start] + new + text[end:]
-
-          path.write_text(text)
-          updated = path.read_text()
-          assert 'fn resolveCall' in updated and '!resolution.Result {' in updated
-          assert 'error.UnknownGlobalDeclaration => return .not_applicable' in updated
-          assert 'committed = result == .resolved;' in updated
-          assert 'switch (self.core.matchCallInput(fields, input))' in updated
-          print('constructor calls now classify ownership explicitly')
-          PY
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -130,6 +29,8 @@ jobs:
           chmod +x llvm.sh
           sudo ./llvm.sh 21
           sudo apt-get install -y llvm-21-dev clang-21
+          zig version
+          llvm-config-21 --version
 
       - name: Build compiler
         run: zig build
@@ -138,10 +39,6 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Commit validated constructor call states
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/global/constructors.zig
-          git commit -m "Classify constructor call resolution states"
-          git push origin HEAD:compact-semantic-graph-chatgpt
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
