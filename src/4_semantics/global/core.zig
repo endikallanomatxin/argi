@@ -151,7 +151,7 @@ pub const Resolver = struct {
     ) !resolution.Result {
         return switch (operation) {
             .resolve_type => |value| resolution.Result.fromBool(try self.resolveTypeHole(module_index, module, o, value)),
-            .resolve_call => |value| resolution.Result.fromBool(try self.resolveCall(module_index, module, o, value)),
+            .resolve_call => |value| try self.resolveCall(module_index, module, o, value),
             .resolve_field => |value| resolution.Result.fromBool(try self.resolveField(module, o, value)),
             .resolve_binary => |value| resolution.Result.fromBool(try self.resolveBinary(module_index, o, value)),
             .resolve_comparison => |value| resolution.Result.fromBool(try self.resolveComparison(module_index, o, value)),
@@ -353,22 +353,22 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn resolveCall(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !bool {
+    fn resolveCall(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
-        if (reference.generic_arguments != null) return false;
+        if (reference.generic_arguments != null) return .not_applicable;
         const input = globalizer.globalNode(o, value.input);
         if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "size_of")) {
-            const node = (try self.makeSizeOf(input, self.sourceFor(reference.source, o))) orelse return false;
+            const node = (try self.makeSizeOf(input, self.sourceFor(reference.source, o))) orelse return .deferred;
             self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
             self.stats.calls += 1;
-            return true;
+            return .resolved;
         }
         if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "Void")) {
             const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
                 .struct_value_literal => |item| item,
-                else => return false,
+                else => return .deferred,
             };
-            if (literal.fields.len != 0) return false;
+            if (literal.fields.len != 0) return .deferred;
             const void_ty = try self.builtin(.Void);
             const target = globalizer.globalNode(o, value.node);
             self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -380,10 +380,14 @@ pub const Resolver = struct {
                 } },
             };
             self.stats.calls += 1;
-            return true;
+            return .resolved;
         }
-        const function = self.resolveFunctionByName(module_index, reference, input) catch return false;
-        if (!try self.completeCallInput(function, input)) return false;
+        const function = switch (try self.matchFunctionByName(module_index, reference, input)) {
+            .no_match => return .not_applicable,
+            .deferred => return .deferred,
+            .function => |function| function,
+        };
+        if (!try self.completeCallInput(function, input)) return .deferred;
         const output = try self.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -392,7 +396,7 @@ pub const Resolver = struct {
             .content = .{ .function_call = .{ .callee = function, .input = input } },
         };
         self.stats.calls += 1;
-        return true;
+        return .resolved;
     }
 
     fn makeSizeOf(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef) !?global_sg.Node {
