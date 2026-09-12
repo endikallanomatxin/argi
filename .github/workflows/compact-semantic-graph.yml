@@ -1,4 +1,4 @@
-name: Contextual string literals
+name: Compact list literals
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Apply migration
-        run: python3 .github/scripts/contextual_string_literals.py
+        run: python3 .github/scripts/compact_list_literals.py
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
@@ -35,12 +35,12 @@ jobs:
         run: zig build test-internal
       - name: Commit source migration
         run: |
-          if git diff --quiet -- src/4_semantics; then
+          if git diff --quiet -- src/4_semantics src/5_codegen; then
             echo "No source changes to commit"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics
-          git commit -m "Represent string literals as contextual values"
+          git add src/4_semantics src/5_codegen
+          git commit -m "Compact contextual list literal storage"
           git push origin HEAD:compact-semantic-graph-chatgpt
