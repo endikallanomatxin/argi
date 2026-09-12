@@ -1,4 +1,4 @@
-name: Materialize generic routing fix
+name: Materialize binding type state
 
 on:
   push:
@@ -16,9 +16,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Apply migration
-        run: |
-          sed -i "s/continue;') == 4/continue;') == 3/" .github/scripts/materialize_generic_routing.py
-          python3 .github/scripts/materialize_generic_routing.py
+        run: python3 .github/scripts/materialize_binding_type_state.py
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
@@ -37,12 +35,12 @@ jobs:
         run: zig build test-internal
       - name: Commit source migration
         run: |
-          if git diff --quiet -- src/4_semantics/global/core.zig src/4_semantics/global/generic_functions.zig; then
+          if git diff --quiet -- src/4_semantics; then
             echo "No source changes to commit"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/global/core.zig src/4_semantics/global/generic_functions.zig
-          git commit -m "Make generic resolution ownership signature-aware"
+          git add src/4_semantics
+          git commit -m "Represent unresolved binding types explicitly"
           git push origin HEAD:compact-semantic-graph-chatgpt
