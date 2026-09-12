@@ -1,4 +1,4 @@
-name: Trace semantic resolution ownership
+name: Validate strict semantic routing
 
 on:
   push:
@@ -7,21 +7,23 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  trace:
+  apply-test-commit:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Apply ownership fixes under test
+      - name: Make generic ownership match-aware
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          # Ordinary concrete lookup must never claim abstract dispatch contracts.
+          # Ordinary concrete lookup must not consume abstract dispatch contracts.
           path = Path('src/4_semantics/global/core.zig')
           text = path.read_text()
           start = text.index('    pub fn matchFunctionByName(')
@@ -33,16 +35,151 @@ jobs:
           text = text[:start] + block + text[end:]
           path.write_text(text)
 
-          # Generic lookup must not claim abstract contract parameterized functions.
           path = Path('src/4_semantics/global/generic_functions.zig')
           text = path.read_text()
-          needle = '            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {\n'
-          assert text.count(needle) == 4
-          text = text.replace(needle, needle + '                if (parameterized.dispatch_kind == .abstract_contract) continue;\n')
-          path.write_text(text)
 
-          # Strict staged routing: deferred stops fallback, only not_applicable falls through.
+          # Abstract requirements are owned exclusively by the abstract resolver.
+          loop = '            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {\n'
+          assert text.count(loop) == 4
+          text = text.replace(loop, loop + '                if (parameterized.dispatch_kind == .abstract_contract) continue;\n')
+
+          # Name visibility alone is not ownership. Selection below decides whether
+          # there is a matching, deferred, or absent generic candidate.
+          visible_check = '        if (!try self.hasVisibleGenericCandidate(module_index, module, reference)) return .not_applicable;\n'
+          assert text.count(visible_check) == 1
+          text = text.replace(visible_check, '', 1)
+          helper_start = text.index('    fn hasVisibleGenericCandidate(')
+          helper_end = text.index('\n    fn resolveExplicitGenericFunction(', helper_start)
+          text = text[:helper_start] + text[helper_end + 1:]
+
+          old_dispatch = '''        const function = if (local_args) |args|
+            self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input) catch return .deferred
+        else
+            self.resolveImplicitGenericFunction(module_index, module, reference, input) catch return .deferred;'''
+          new_dispatch = '''        const function = if (local_args) |args|
+            self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input) catch |err| switch (err) {
+                error.NoMatchingGenericFunction => return .not_applicable,
+                error.DeferredGenericFunction => return .deferred,
+                error.AmbiguousGenericFunction => return err,
+                else => return .deferred,
+            }
+        else
+            self.resolveImplicitGenericFunction(module_index, module, reference, input) catch |err| switch (err) {
+                error.NoMatchingGenericFunction => return .not_applicable,
+                error.DeferredGenericFunction => return .deferred,
+                error.AmbiguousGenericFunction => return err,
+                else => return .deferred,
+            };'''
+          assert old_dispatch in text
+          text = text.replace(old_dispatch, new_dispatch, 1)
+
+          # Explicit generic overload selection preserves pending signature state.
+          start = text.index('    fn resolveExplicitGenericFunction(')
+          end = text.index('\n    fn resolveImplicitGenericFunction(', start)
+          block = text[start:end]
+          assert block.count('var tied = false;') == 1
+          block = block.replace('        var tied = false;\n', '        var tied = false;\n        var saw_deferred = false;\n', 1)
+          old_score = '''                const score = self.scoreParameterizedInput(candidate_index, parameterized.input, &bindings, input) orelse continue;
+                if (best == null or score > best_score) {
+                    best = declaration;
+                    best_score = score;
+                    tied = false;
+                } else if (score == best_score and declaration != best.?) tied = true;'''
+          new_score = '''                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+                    .no_match => continue,
+                    .deferred => {
+                        saw_deferred = true;
+                        continue;
+                    },
+                    .score => |score| score,
+                };
+                if (best == null or score > best_score) {
+                    best = declaration;
+                    best_score = score;
+                    tied = false;
+                } else if (score == best_score and declaration != best.?) tied = true;'''
+          assert old_score in block
+          block = block.replace(old_score, new_score, 1)
+          old_tail = '''        if (tied) return error.AmbiguousGenericFunction;
+        return self.instantiate(best orelse return error.NoMatchingGenericFunction, arguments);'''
+          new_tail = '''        if (tied) return error.AmbiguousGenericFunction;
+        const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else error.NoMatchingGenericFunction;
+        return self.instantiate(declaration, arguments);'''
+          assert old_tail in block
+          block = block.replace(old_tail, new_tail, 1)
+          text = text[:start] + block + text[end:]
+
+          # Implicit inference distinguishes an unknown actual type from a true mismatch.
+          start = text.index('    fn resolveImplicitGenericFunction(')
+          end = text.index('\n    fn scoreParameterizedInput(', start)
+          block = text[start:end]
+          assert block.count('var tied = false;') == 1
+          block = block.replace('        var tied = false;\n', '        var tied = false;\n        var saw_deferred = false;\n', 1)
+          assert block.count('                var matches = true;') == 1
+          block = block.replace('                var matches = true;\n', '                var matches = true;\n                var candidate_deferred = false;\n', 1)
+          old_actual = '''                        const actual = self.graph.nodes.items[@intFromEnum(value.value)].ty orelse {
+                            matches = false;
+                            break;
+                        };
+                        if (!try self.inferInputType(candidate_index, field.ty, actual, &bindings)) matches = false;'''
+          new_actual = '''                        const actual = self.graph.nodes.items[@intFromEnum(value.value)].ty orelse {
+                            candidate_deferred = true;
+                            matches = false;
+                            break;
+                        };
+                        const inferred = self.inferInputType(candidate_index, field.ty, actual, &bindings) catch {
+                            candidate_deferred = true;
+                            matches = false;
+                            break;
+                        };
+                        if (!inferred) matches = false;'''
+          assert old_actual in block
+          block = block.replace(old_actual, new_actual, 1)
+          assert block.count('                if (!matches) continue;') == 1
+          block = block.replace('                if (!matches) continue;\n', '                if (!matches) {\n                    if (candidate_deferred) saw_deferred = true;\n                    continue;\n                }\n', 1)
+          old_implicit_score = '                const score = self.scoreParameterizedInput(candidate_index, parameterized.input, &bindings, input) orelse continue;'
+          new_implicit_score = '''                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+                    .no_match => continue,
+                    .deferred => {
+                        saw_deferred = true;
+                        continue;
+                    },
+                    .score => |score| score,
+                };'''
+          assert old_implicit_score in block
+          block = block.replace(old_implicit_score, new_implicit_score, 1)
+          assert old_tail.replace('arguments', 'best_arguments') in block
+          block = block.replace(old_tail.replace('arguments', 'best_arguments'), '''        if (tied) return error.AmbiguousGenericFunction;
+        const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else error.NoMatchingGenericFunction;
+        return self.instantiate(declaration, best_arguments);''', 1)
+          text = text[:start] + block + text[end:]
+
+          # Signature probing now returns the same tri-state matcher used by concrete calls.
+          start = text.index('    fn scoreParameterizedInput(')
+          end = text.index('\n    // Infer from named input fields', start)
+          block = text[start:end]
+          block = block.replace('    fn scoreParameterizedInput(', '    fn matchParameterizedInput(', 1)
+          block = block.replace(') ?u32 {', ') core_mod.Resolver.CallInputMatch {', 1)
+          block = block.replace('catch return null;', 'catch return .deferred;')
+          block = block.replace('        return self.core.scoreCallInput(fields, input);', '        return self.core.matchCallInput(fields, input);', 1)
+          text = text[:start] + block + text[end:]
+
+          path.write_text(text)
+          final = path.read_text()
+          assert 'fn hasVisibleGenericCandidate(' not in final
+          assert 'fn scoreParameterizedInput(' not in final
+          assert 'fn matchParameterizedInput(' in final
+          assert 'error.DeferredGenericFunction' in final
+          assert final.count('if (parameterized.dispatch_kind == .abstract_contract) continue;') == 4
+          print('generic call ownership is now signature-aware')
+          PY
+
+      - name: Enforce strict staged routing
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
           def lines(*items): return '\n'.join(items)
+
           path = Path('src/4_semantics/global/semantizer.zig')
           text = path.read_text()
           anchor = 'const ownership_mod = @import("ownership.zig");\n'
@@ -51,10 +188,11 @@ jobs:
           start = text.index('fn resolvePendingOperation(')
           end = text.index('\nfn markUnresolvedTypeSlots(', start)
           old = text[start:end]
+
           type_old = lines('        .resolve_type => blk: {','            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;','            break :blk (try generics.tryResolve(module_index, module, o, operation)).isResolved();','        },')
           type_new = lines('        .resolve_type => blk: {','            if (terminalResolution(try core.tryResolve(module_index, module, o, operation))) |done| break :blk done;','            if (terminalResolution(try generics.tryResolve(module_index, module, o, operation))) |done| break :blk done;','            break :blk false;','        },')
           call_old = lines('        .resolve_call => blk: {','            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;','            if ((try generic_functions.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;','            if ((try constructors.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;','            if ((try abstracts.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;','            break :blk (try control.tryResolve(module_index, module, o, operation)).isResolved();','        },')
-          call_new = lines('        .resolve_call => |value| blk: {','            const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];','            const trace = std.mem.eql(u8, module.text(reference.name), "write_byte");','            const core_result = try core.tryResolve(module_index, module, o, operation);','            if (trace) std.debug.print("ROUTE write_byte core={s}\\n", .{@tagName(core_result)});','            if (terminalResolution(core_result)) |done| break :blk done;','            const generic_result = try generic_functions.tryResolve(module_index, module, o, operation);','            if (trace) std.debug.print("ROUTE write_byte generic={s}\\n", .{@tagName(generic_result)});','            if (terminalResolution(generic_result)) |done| break :blk done;','            const constructor_result = try constructors.tryResolve(module_index, module, o, operation);','            if (trace) std.debug.print("ROUTE write_byte constructor={s}\\n", .{@tagName(constructor_result)});','            if (terminalResolution(constructor_result)) |done| break :blk done;','            const abstract_result = try abstracts.tryResolve(module_index, module, o, operation);','            if (trace) std.debug.print("ROUTE write_byte abstract={s}\\n", .{@tagName(abstract_result)});','            if (terminalResolution(abstract_result)) |done| break :blk done;','            const control_result = try control.tryResolve(module_index, module, o, operation);','            if (trace) std.debug.print("ROUTE write_byte control={s}\\n", .{@tagName(control_result)});','            if (terminalResolution(control_result)) |done| break :blk done;','            break :blk false;','        },')
+          call_new = lines('        .resolve_call => blk: {','            if (terminalResolution(try core.tryResolve(module_index, module, o, operation))) |done| break :blk done;','            if (terminalResolution(try generic_functions.tryResolve(module_index, module, o, operation))) |done| break :blk done;','            if (terminalResolution(try constructors.tryResolve(module_index, module, o, operation))) |done| break :blk done;','            if (terminalResolution(try abstracts.tryResolve(module_index, module, o, operation))) |done| break :blk done;','            if (terminalResolution(try control.tryResolve(module_index, module, o, operation))) |done| break :blk done;','            break :blk false;','        },')
           index_old = lines('        .resolve_index => blk: {','            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;','            break :blk (try generic_functions.tryResolve(module_index, module, o, operation)).isResolved();','        },')
           index_new = lines('        .resolve_index => blk: {','            if (terminalResolution(try core.tryResolve(module_index, module, o, operation))) |done| break :blk done;','            if (terminalResolution(try generic_functions.tryResolve(module_index, module, o, operation))) |done| break :blk done;','            break :blk false;','        },')
           assert type_old in old and call_old in old and index_old in old
@@ -64,6 +202,7 @@ jobs:
           insert = text.index('\nfn markUnresolvedTypeSlots(', text.index('fn resolvePendingOperation('))
           text = text[:insert] + helper + text[insert:]
           path.write_text(text)
+          print('strict staged routing enabled')
           PY
 
       - name: Install Zig
@@ -83,6 +222,14 @@ jobs:
       - name: Build compiler
         run: zig build
 
-      - name: Trace internal tests
+      - name: Run internal tests
         timeout-minutes: 5
         run: zig build test-internal
+
+      - name: Commit validated routing architecture
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/4_semantics/global/core.zig src/4_semantics/global/generic_functions.zig src/4_semantics/global/semantizer.zig
+          git commit -m "Enforce semantic resolution ownership"
+          git push origin HEAD:compact-semantic-graph-chatgpt
