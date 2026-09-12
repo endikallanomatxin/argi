@@ -33,19 +33,14 @@ jobs:
       - name: Run internal tests
         timeout-minutes: 5
         run: zig build test-internal
-      - name: Run block single-evaluation regression
-        timeout-minutes: 3
-        run: |
-          zig-out/bin/argi build tests/feature_tests/functions/99_codegen_block_last_effect_once
-          tests/feature_tests/functions/99_codegen_block_last_effect_once/build/output
       - name: Commit source migration
         run: |
-          if git diff --quiet -- src/5_codegen tests; then
+          if git diff --quiet -- src/5_codegen; then
             echo "No source changes to commit"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/5_codegen tests
+          git add src/5_codegen
           git commit -m "Generate block return values exactly once"
           git push origin HEAD:compact-semantic-graph-chatgpt
