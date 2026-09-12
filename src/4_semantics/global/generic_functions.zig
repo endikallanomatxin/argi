@@ -36,7 +36,7 @@ pub const Resolver = struct {
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
         return switch (operation) {
-            .resolve_call => |value| resolution.Result.fromBool(try self.resolveModuleGenericCall(module_index, module, o, value)),
+            .resolve_call => |value| try self.resolveModuleGenericCall(module_index, module, o, value),
             .resolve_index => |value| resolution.Result.fromBool(try self.resolveGenericIndex(module_index, o, value)),
             else => .not_applicable,
         };
@@ -167,29 +167,30 @@ pub const Resolver = struct {
         module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         value: anytype,
-    ) !bool {
+    ) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
         const local_args = reference.generic_arguments;
         const name = module.text(reference.name);
         const input = globalizer.globalNode(o, value.input);
         if (local_args != null and reference.module_path == null and std.mem.eql(u8, name, "cast")) {
             const args = try self.generics.relocateModuleArguments(module_index, local_args.?);
-            const node = (try self.makeExplicitCast(args, input, self.sourceFor(module_index, reference.source))) orelse return false;
+            const node = (try self.makeExplicitCast(args, input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
             self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
             self.stats.calls += 1;
-            return true;
+            return .resolved;
         }
         if (reference.module_path == null and std.mem.eql(u8, name, "size_of")) {
-            const node = (try self.makeSizeOf(input, self.sourceFor(module_index, reference.source))) orelse return false;
+            const node = (try self.makeSizeOf(input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
             self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
             self.stats.calls += 1;
-            return true;
+            return .resolved;
         }
+        if (!try self.hasVisibleGenericCandidate(module_index, module, reference)) return .not_applicable;
         const function = if (local_args) |args|
-            self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input) catch return false
+            self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input) catch return .deferred
         else
-            self.resolveImplicitGenericFunction(module_index, module, reference, input) catch return false;
-        if (!try self.core.completeCallInputFields(self.graph.functions.items[@intFromEnum(function)].input, input)) return false;
+            self.resolveImplicitGenericFunction(module_index, module, reference, input) catch return .deferred;
+        if (!try self.core.completeCallInputFields(self.graph.functions.items[@intFromEnum(function)].input, input)) return .deferred;
         const output_ty = try self.core.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -198,7 +199,30 @@ pub const Resolver = struct {
             .content = .{ .function_call = .{ .callee = function, .input = input } },
         };
         self.stats.calls += 1;
-        return true;
+        return .resolved;
+    }
+
+    fn hasVisibleGenericCandidate(
+        self: *Resolver,
+        current_module: usize,
+        module: *const module_sg.ModuleSemanticGraph,
+        reference: module_entities.ExternalRef,
+    ) !bool {
+        const module_filter = if (reference.module_path) |path|
+            try self.core.findModuleForQualifier(current_module, module.text(path))
+        else
+            null;
+        const name = module.text(reference.name);
+        for (self.modules, 0..) |*candidate_module, candidate_index| {
+            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
+                const decl = self.graph.declarations.items[@intFromEnum(declaration)];
+                if (!std.mem.eql(u8, self.graph.text(decl.name), name)) continue;
+                if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
+                return true;
+            }
+        }
+        return false;
     }
 
     fn resolveExplicitGenericFunction(
