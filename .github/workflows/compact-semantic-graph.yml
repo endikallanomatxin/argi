@@ -1,4 +1,4 @@
-name: Compact list literals
+name: Authoritative struct literal typing
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Apply migration
-        run: python3 .github/scripts/compact_list_literals.py
+        run: python3 .github/scripts/authoritative_struct_literal_type.py
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
@@ -42,5 +42,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/4_semantics src/5_codegen
-          git commit -m "Compact contextual list literal storage"
+          git commit -m "Make node type authoritative for struct literals"
           git push origin HEAD:compact-semantic-graph-chatgpt
