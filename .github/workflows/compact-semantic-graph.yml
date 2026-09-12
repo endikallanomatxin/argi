@@ -40,7 +40,7 @@ jobs:
           marker = '        const function = if (local_args) |args|\n'
           assert marker in block
           block = block.replace(marker, '        if (!try self.hasVisibleGenericCandidate(module_index, module, reference)) return .not_applicable;\n' + marker, 1)
-          block = block.replace(' catch return false\n', ' catch return .deferred\n', 2)
+          block = block.replace(' catch return false;', ' catch return .deferred;', 2)
           block = block.replace('if (!try self.core.completeCallInputFields(self.graph.functions.items[@intFromEnum(function)].input, input)) return false;', 'if (!try self.core.completeCallInputFields(self.graph.functions.items[@intFromEnum(function)].input, input)) return .deferred;', 1)
           block = block.replace('        return true;\n', '        return .resolved;\n', 1)
           text = text[:start] + block + text[end:]
