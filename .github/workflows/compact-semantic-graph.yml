@@ -1,4 +1,4 @@
-name: Index resolution ownership
+name: Enforce semantic resolution ownership
 
 on:
   push:
@@ -18,55 +18,66 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Classify index resolution ownership
+      - name: Stop fallback on deferred resolution
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path('src/4_semantics/global/core.zig')
+          path = Path('src/4_semantics/global/semantizer.zig')
           text = path.read_text()
-          old = '.resolve_index => |value| resolution.Result.fromBool(try self.resolveIndex(module_index, o, value)),'
-          assert text.count(old) == 1
-          text = text.replace(old, '.resolve_index => |value| try self.resolveIndex(module_index, o, value),', 1)
-          start = text.index('    fn resolveIndex(')
-          end = text.index('\n    pub const CallInputMatch', start)
-          block = text[start:end]
-          assert ') !bool {' in block
-          block = block.replace(') !bool {', ') !resolution.Result {', 1)
-          block = block.replace('const collection_ty = self.graph.nodes.items[@intFromEnum(collection)].ty orelse return false;', 'const collection_ty = self.graph.nodes.items[@intFromEnum(collection)].ty orelse return .deferred;', 1)
-          block = block.replace('            return true;', '            return .resolved;', 1)
-          block = block.replace('operand_types[i] = self.graph.nodes.items[@intFromEnum(node)].ty orelse return false;', 'operand_types[i] = self.graph.nodes.items[@intFromEnum(node)].ty orelse return .deferred;', 1)
-          old_function = '        const function = self.resolveOperator(module_index, operator, operand_types[0..count]) catch return false;'
-          assert old_function in block
-          new_function = '        const function = self.resolveOperator(module_index, operator, operand_types[0..count]) catch switch (self.graph.types.items[@intFromEnum(collection_ty)]) {\n            .generic => return .not_applicable,\n            else => return .deferred,\n        };'
-          block = block.replace(old_function, new_function, 1)
-          block = block.replace('        return true;\n', '        return .resolved;\n', 1)
-          text = text[:start] + block + text[end:]
+          anchor = 'const ownership_mod = @import("ownership.zig");\n'
+          assert anchor in text
+          text = text.replace(anchor, anchor + 'const resolution = @import("resolution.zig");\n', 1)
+
+          start = text.index('fn resolvePendingOperation(')
+          end = text.index('\nfn markUnresolvedTypeSlots(', start)
+          old = text[start:end]
+          type_old = '''        .resolve_type => blk: {
+            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
+            break :blk (try generics.tryResolve(module_index, module, o, operation)).isResolved();
+        },'''
+          call_old = '''        .resolve_call => blk: {
+            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
+            if ((try generic_functions.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
+            if ((try constructors.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
+            if ((try abstracts.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
+            break :blk (try control.tryResolve(module_index, module, o, operation)).isResolved();
+        },'''
+          index_old = '''        .resolve_index => blk: {
+            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
+            break :blk (try generic_functions.tryResolve(module_index, module, o, operation)).isResolved();
+        },'''
+          assert type_old in old and call_old in old and index_old in old
+          type_new = '''        .resolve_type => blk: {
+            if (terminalResolution(try core.tryResolve(module_index, module, o, operation))) |done| break :blk done;
+            if (terminalResolution(try generics.tryResolve(module_index, module, o, operation))) |done| break :blk done;
+            break :blk false;
+        },'''
+          call_new = '''        .resolve_call => blk: {
+            if (terminalResolution(try core.tryResolve(module_index, module, o, operation))) |done| break :blk done;
+            if (terminalResolution(try generic_functions.tryResolve(module_index, module, o, operation))) |done| break :blk done;
+            if (terminalResolution(try constructors.tryResolve(module_index, module, o, operation))) |done| break :blk done;
+            if (terminalResolution(try abstracts.tryResolve(module_index, module, o, operation))) |done| break :blk done;
+            if (terminalResolution(try control.tryResolve(module_index, module, o, operation))) |done| break :blk done;
+            break :blk false;
+        },'''
+          index_new = '''        .resolve_index => blk: {
+            if (terminalResolution(try core.tryResolve(module_index, module, o, operation))) |done| break :blk done;
+            if (terminalResolution(try generic_functions.tryResolve(module_index, module, o, operation))) |done| break :blk done;
+            break :blk false;
+        },'''
+          updated = old.replace(type_old, type_new, 1).replace(call_old, call_new, 1).replace(index_old, index_new, 1)
+          text = text[:start] + updated + text[end:]
+
+          helper = '\nfn terminalResolution(result: resolution.Result) ?bool {\n    return switch (result) {\n        .resolved => true,\n        .deferred => false,\n        .not_applicable => null,\n    };\n}\n'
+          insert = text.index('\nfn markUnresolvedTypeSlots(', text.index('fn resolvePendingOperation('))
+          text = text[:insert] + helper + text[insert:]
           path.write_text(text)
 
-          path = Path('src/4_semantics/global/generic_functions.zig')
-          text = path.read_text()
-          old = '.resolve_index => |value| resolution.Result.fromBool(try self.resolveGenericIndex(module_index, o, value)),'
-          assert text.count(old) == 1
-          text = text.replace(old, '.resolve_index => |value| try self.resolveGenericIndex(module_index, o, value),', 1)
-          start = text.index('    fn resolveGenericIndex(')
-          end = text.index('\n    fn parameterizedIndexesBase(', start)
-          block = text[start:end]
-          assert ') !bool {' in block
-          block = block.replace(') !bool {', ') !resolution.Result {', 1)
-          block = block.replace('const collection_ty = self.graph.nodes.items[@intFromEnum(collection)].ty orelse return false;', 'const collection_ty = self.graph.nodes.items[@intFromEnum(collection)].ty orelse return .deferred;', 1)
-          block = block.replace('            else => return false,', '            else => return .not_applicable,', 1)
-          block = block.replace('operand_types[i] = self.graph.nodes.items[@intFromEnum(node)].ty orelse return false;', 'operand_types[i] = self.graph.nodes.items[@intFromEnum(node)].ty orelse return .deferred;', 1)
-          block = block.replace('if (addressed_function != null) return false;', 'if (addressed_function != null) return .deferred;', 1)
-          block = block.replace('function = addressed_function orelse return false;', 'function = addressed_function orelse return .deferred;', 1)
-          block = block.replace('        return true;', '        return .resolved;', 1)
-          assert 'return false' not in block
-          text = text[:start] + block + text[end:]
-          path.write_text(text)
-
-          assert '.resolve_index => |value| try self.resolveIndex' in Path('src/4_semantics/global/core.zig').read_text()
-          assert '.resolve_index => |value| try self.resolveGenericIndex' in Path('src/4_semantics/global/generic_functions.zig').read_text()
-          print('index resolution ownership classified explicitly')
+          final = path.read_text()
+          assert final.count('terminalResolution(try ') >= 9
+          assert 'const resolution = @import("resolution.zig");' in final
+          print('staged resolution now stops on deferred ownership')
           PY
 
       - name: Install Zig
@@ -90,10 +101,10 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Commit validated index states
+      - name: Commit validated routing semantics
         run: |
-          git config user.name "github-actions[bot]]"
+          git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/global/core.zig src/4_semantics/global/generic_functions.zig
-          git commit -m "Classify index resolution states"
+          git add src/4_semantics/global/semantizer.zig
+          git commit -m "Enforce semantic resolution ownership"
           git push origin HEAD:compact-semantic-graph-chatgpt
