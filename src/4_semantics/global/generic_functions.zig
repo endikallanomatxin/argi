@@ -62,6 +62,7 @@ pub const Resolver = struct {
         // list are rejected by instantiation or by the final operand match.
         for (self.modules, 0..) |*candidate_module, candidate_module_index| {
             for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                if (parameterized.dispatch_kind == .abstract_contract) continue;
                 if (parameterized.operator != operator or parameterized.parameters.len != identity.arguments.len) continue;
                 if (!self.parameterizedIndexesBase(candidate_module_index, parameterized, identity.base)) continue;
                 const declaration = globalizer.globalDecl(self.offsets[candidate_module_index], parameterized.declaration);
@@ -185,11 +186,20 @@ pub const Resolver = struct {
             self.stats.calls += 1;
             return .resolved;
         }
-        if (!try self.hasVisibleGenericCandidate(module_index, module, reference)) return .not_applicable;
         const function = if (local_args) |args|
-            self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input) catch return .deferred
+            self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input) catch |err| switch (err) {
+                error.NoMatchingGenericFunction => return .not_applicable,
+                error.DeferredGenericFunction => return .deferred,
+                error.AmbiguousGenericFunction => return err,
+                else => return .deferred,
+            }
         else
-            self.resolveImplicitGenericFunction(module_index, module, reference, input) catch return .deferred;
+            self.resolveImplicitGenericFunction(module_index, module, reference, input) catch |err| switch (err) {
+                error.NoMatchingGenericFunction => return .not_applicable,
+                error.DeferredGenericFunction => return .deferred,
+                error.AmbiguousGenericFunction => return err,
+                else => return .deferred,
+            };
         if (!try self.core.completeCallInputFields(self.graph.functions.items[@intFromEnum(function)].input, input)) return .deferred;
         const output_ty = try self.core.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
@@ -200,29 +210,6 @@ pub const Resolver = struct {
         };
         self.stats.calls += 1;
         return .resolved;
-    }
-
-    fn hasVisibleGenericCandidate(
-        self: *Resolver,
-        current_module: usize,
-        module: *const module_sg.ModuleSemanticGraph,
-        reference: module_entities.ExternalRef,
-    ) !bool {
-        const module_filter = if (reference.module_path) |path|
-            try self.core.findModuleForQualifier(current_module, module.text(path))
-        else
-            null;
-        const name = module.text(reference.name);
-        for (self.modules, 0..) |*candidate_module, candidate_index| {
-            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
-                const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
-                const decl = self.graph.declarations.items[@intFromEnum(declaration)];
-                if (!std.mem.eql(u8, self.graph.text(decl.name), name)) continue;
-                if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
-                return true;
-            }
-        }
-        return false;
     }
 
     fn resolveExplicitGenericFunction(
@@ -241,15 +228,24 @@ pub const Resolver = struct {
         var best: ?global_sg.GlobalDeclId = null;
         var best_score: u32 = 0;
         var tied = false;
+        var saw_deferred = false;
         for (self.modules, 0..) |*candidate_module, candidate_index| {
             for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                if (parameterized.dispatch_kind == .abstract_contract) continue;
                 const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
                 if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
                 if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.allocator);
                 self.generics.bindGlobalArguments(candidate_index, parameterized.parameters, arguments, &bindings) catch continue;
-                const score = self.scoreParameterizedInput(candidate_index, parameterized.input, &bindings, input) orelse continue;
+                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+                    .no_match => continue,
+                    .deferred => {
+                        saw_deferred = true;
+                        continue;
+                    },
+                    .score => |score| score,
+                };
                 if (best == null or score > best_score) {
                     best = declaration;
                     best_score = score;
@@ -258,7 +254,8 @@ pub const Resolver = struct {
             }
         }
         if (tied) return error.AmbiguousGenericFunction;
-        return self.instantiate(best orelse return error.NoMatchingGenericFunction, arguments);
+        const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else error.NoMatchingGenericFunction;
+        return self.instantiate(declaration, arguments);
     }
 
     fn resolveImplicitGenericFunction(
@@ -280,8 +277,10 @@ pub const Resolver = struct {
         var best_arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = 0, .len = 0 };
         var best_score: u32 = 0;
         var tied = false;
+        var saw_deferred = false;
         for (self.modules, 0..) |*candidate_module, candidate_index| {
             for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                if (parameterized.dispatch_kind == .abstract_contract) continue;
                 const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
                 if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), module.text(reference.name))) continue;
                 if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
@@ -296,20 +295,30 @@ pub const Resolver = struct {
                     else => continue,
                 };
                 var matches = true;
+                var candidate_deferred = false;
                 for (storage.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, position| {
                     for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |value, supplied_position| {
                         const positional = supplied_position < literal.dispatch_prefix_positional_count or self.graph.text(value.name).len == 0;
                         if (if (positional) position != supplied_position else !std.mem.eql(u8, candidate_module.text(field.name), self.graph.text(value.name))) continue;
                         const actual = self.graph.nodes.items[@intFromEnum(value.value)].ty orelse {
+                            candidate_deferred = true;
                             matches = false;
                             break;
                         };
-                        if (!try self.inferInputType(candidate_index, field.ty, actual, &bindings)) matches = false;
+                        const inferred = self.inferInputType(candidate_index, field.ty, actual, &bindings) catch {
+                            candidate_deferred = true;
+                            matches = false;
+                            break;
+                        };
+                        if (!inferred) matches = false;
                         break;
                     }
                     if (!matches) break;
                 }
-                if (!matches) continue;
+                if (!matches) {
+                    if (candidate_deferred) saw_deferred = true;
+                    continue;
+                }
                 var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
                 defer arguments.deinit(self.allocator);
                 for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
@@ -323,7 +332,14 @@ pub const Resolver = struct {
                 if (arguments.items.len != parameterized.parameters.len) continue;
                 const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };
                 try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
-                const score = self.scoreParameterizedInput(candidate_index, parameterized.input, &bindings, input) orelse continue;
+                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+                    .no_match => continue,
+                    .deferred => {
+                        saw_deferred = true;
+                        continue;
+                    },
+                    .score => |score| score,
+                };
                 if (best == null or score > best_score) {
                     best = declaration;
                     best_arguments = range;
@@ -333,10 +349,11 @@ pub const Resolver = struct {
             }
         }
         if (tied) return error.AmbiguousGenericFunction;
-        return self.instantiate(best orelse return error.NoMatchingGenericFunction, best_arguments);
+        const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else error.NoMatchingGenericFunction;
+        return self.instantiate(declaration, best_arguments);
     }
 
-    fn scoreParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) ?u32 {
+    fn matchParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) core_mod.Resolver.CallInputMatch {
         // Signature probing must not create persistent generic identities on
         // each deferred retry, which would prevent the fixed point from closing.
         const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
@@ -347,9 +364,9 @@ pub const Resolver = struct {
             inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
             self.generics.stats = saved_stats;
         }
-        const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return null;
-        const fields = self.interfaceFields(ty) catch return null;
-        return self.core.scoreCallInput(fields, input);
+        const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return .deferred;
+        const fields = self.interfaceFields(ty) catch return .deferred;
+        return self.core.matchCallInput(fields, input);
     }
 
     // Infer from named input fields before materializing a function. Missing
