@@ -42,6 +42,28 @@ replace_once(
 )
 
 replace_once(
+    'src/4_semantics/module/parameterized/lowerer.zig',
+    '''            const ty = try self.parameterizedBuiltin(.Any);
+            return self.addResolvedNode(node, ty, .{ .struct_value_literal = .{
+                .fields = .{ .start = start, .len = @intCast(fields.items.len) },
+                .ty = ty,
+            } });
+''',
+    '''            return self.addResolvedNode(node, null, .{ .struct_value_literal = .{
+                .fields = .{ .start = start, .len = @intCast(fields.items.len) },
+            } });
+''',
+)
+
+replace_once(
+    'src/4_semantics/module/parameterized/lowerer.zig',
+    '''    fn addResolvedNode(self: *Context, node: syn.NodeIndex, ty: ir.ParameterizedTypeId, content: ir.ResolvedNode.Content) !ir.ParameterizedNodeId {
+''',
+    '''    fn addResolvedNode(self: *Context, node: syn.NodeIndex, ty: ?ir.ParameterizedTypeId, content: ir.ResolvedNode.Content) !ir.ParameterizedNodeId {
+''',
+)
+
+replace_once(
     'src/4_semantics/semantic_payload_verify.zig',
     '''        .struct_value_literal => |item| {
             try require(verify.rangeFits(item.fields, bounds.value_fields));
@@ -66,6 +88,19 @@ replace_once(
                 .fields = relocateEntityRange(global_sg.GlobalValueFieldId, o.value_field_base, value.fields),
                 .dispatch_prefix_positional_count = value.dispatch_prefix_positional_count,
             } },
+''',
+)
+
+replace_once(
+    'src/4_semantics/global/core.zig',
+    '''                .content = .{ .struct_value_literal = .{
+                    .fields = .{ .start = @intCast(self.graph.value_fields.items.len), .len = 0 },
+                    .ty = void_ty,
+                } },
+''',
+    '''                .content = .{ .struct_value_literal = .{
+                    .fields = .{ .start = @intCast(self.graph.value_fields.items.len), .len = 0 },
+                } },
 ''',
 )
 
