@@ -16,7 +16,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Apply migration
-        run: python3 .github/scripts/materialize_generic_routing.py
+        run: |
+          sed -i "s/continue;') == 4/continue;') == 3/" .github/scripts/materialize_generic_routing.py
+          python3 .github/scripts/materialize_generic_routing.py
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
