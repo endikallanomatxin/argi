@@ -135,6 +135,7 @@ pub const TypeResolutionState = enum(u8) {
 };
 
 const unresolved_type_poison_decl: GlobalDeclId = @enumFromInt(std.math.maxInt(u32));
+const unresolved_binding_type_poison: GlobalTypeId = @enumFromInt(std.math.maxInt(u32));
 
 pub const GlobalSemanticGraph = struct {
     modules: std.ArrayList(Module) = .empty,
@@ -152,6 +153,9 @@ pub const GlobalSemanticGraph = struct {
     function_operators: std.ArrayList(?callable.OperatorKind) = .empty,
     generic_function_instances: std.ArrayList(GenericFunctionInstance) = .empty,
     bindings: std.ArrayList(Binding) = .empty,
+    /// Present only while GlobalSema is inferring bindings whose type was not
+    /// available in ModuleSema. Final graphs always leave this list empty.
+    binding_type_resolution: std.ArrayList(TypeResolutionState) = .empty,
     nodes: std.ArrayList(Node) = .empty,
     blocks: std.ArrayList(Block) = .empty,
     fields: std.ArrayList(Field) = .empty,
@@ -188,6 +192,7 @@ pub const GlobalSemanticGraph = struct {
             &self.symbols,
             &self.symbol_declarations,   &self.types,                 &self.type_resolution,            &self.generic_instances,
             &self.functions,             &self.function_operators,    &self.generic_function_instances, &self.bindings,
+            &self.binding_type_resolution,
             &self.nodes,                 &self.blocks,                &self.fields,                     &self.variants,
             &self.generic_arguments,     &self.value_fields,          &self.switch_cases,               &self.switches,
             &self.auto_deinit_fields,    &self.auto_deinits,          &self.virtual_registries,         &self.virtualizes,
@@ -281,6 +286,47 @@ pub const GlobalSemanticGraph = struct {
         return self.bindings.items[@intFromEnum(id)];
     }
 
+    pub fn isBindingTypeUnresolved(self: *const GlobalSemanticGraph, id: GlobalBindingId) bool {
+        const raw: usize = @intFromEnum(id);
+        return raw < self.binding_type_resolution.items.len and self.binding_type_resolution.items[raw] == .unresolved;
+    }
+
+    pub fn markBindingTypeUnresolved(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalBindingId) !void {
+        const raw: usize = @intFromEnum(id);
+        if (raw >= self.bindings.items.len) return error.InvalidGlobalBindingId;
+        try self.ensureBindingTypeResolutionCovers(allocator, self.bindings.items.len);
+        self.binding_type_resolution.items[raw] = .unresolved;
+        self.bindings.items[raw].ty = unresolved_binding_type_poison;
+    }
+
+    pub fn reconcileBindingTypeResolution(self: *GlobalSemanticGraph) bool {
+        var changed = false;
+        const limit = @min(self.binding_type_resolution.items.len, self.bindings.items.len);
+        for (self.binding_type_resolution.items[0..limit], 0..) |*state, raw| {
+            if (state.* != .unresolved or self.bindings.items[raw].ty == unresolved_binding_type_poison) continue;
+            state.* = .resolved;
+            changed = true;
+        }
+        return changed;
+    }
+
+    pub fn hasUnresolvedBindingTypes(self: *const GlobalSemanticGraph) bool {
+        for (self.binding_type_resolution.items) |state| if (state == .unresolved) return true;
+        return false;
+    }
+
+    pub fn finishBindingTypeResolution(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) !void {
+        if (self.hasUnresolvedBindingTypes()) return error.UnresolvedGlobalBindingTypes;
+        self.binding_type_resolution.deinit(allocator);
+        self.binding_type_resolution = .empty;
+    }
+
+    fn ensureBindingTypeResolutionCovers(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, count: usize) !void {
+        if (self.binding_type_resolution.items.len >= count) return;
+        try self.binding_type_resolution.ensureTotalCapacity(allocator, count);
+        while (self.binding_type_resolution.items.len < count) self.binding_type_resolution.appendAssumeCapacity(.resolved);
+    }
+
     pub fn node(self: *const GlobalSemanticGraph, id: GlobalNodeId) Node {
         return self.nodes.items[@intFromEnum(id)];
     }
@@ -319,6 +365,7 @@ pub const GlobalSemanticGraph = struct {
             self.function_operators.items.len * @sizeOf(?callable.OperatorKind) +
             self.generic_function_instances.items.len * @sizeOf(GenericFunctionInstance) +
             self.bindings.items.len * @sizeOf(Binding) +
+            self.binding_type_resolution.items.len * @sizeOf(TypeResolutionState) +
             self.nodes.items.len * @sizeOf(Node) +
             self.blocks.items.len * @sizeOf(Block) +
             self.fields.items.len * @sizeOf(Field) +

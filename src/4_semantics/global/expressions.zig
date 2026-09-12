@@ -48,7 +48,7 @@ pub const Resolver = struct {
         const binding = name_lookup.binding(self.modules, self.offsets, module_index, name) orelse return false;
         const target = globalizer.globalNode(o, value.node);
         const source = self.graph.nodes.items[@intFromEnum(target)].source;
-        const ty = self.graph.bindings.items[@intFromEnum(binding)].ty;
+        const ty = if (self.graph.isBindingTypeUnresolved(binding)) null else self.graph.bindings.items[@intFromEnum(binding)].ty;
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = source,
             .ty = ty,
@@ -69,7 +69,7 @@ pub const Resolver = struct {
     ) bool {
         const target = globalizer.globalNode(o, node);
         const source = self.graph.nodes.items[@intFromEnum(target)].source;
-        const ty = self.graph.bindings.items[@intFromEnum(binding)].ty;
+        const ty = if (self.graph.isBindingTypeUnresolved(binding)) null else self.graph.bindings.items[@intFromEnum(binding)].ty;
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = source,
             .ty = ty,

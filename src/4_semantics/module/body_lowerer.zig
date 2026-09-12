@@ -280,15 +280,21 @@ const Context = struct {
             item.ty
         else
             null;
-        const stored_ty = try self.compatibilityType(semantic_ty);
         const name_text = self.tree.tokenTextFromSource(self.source, declaration.name_token);
-        const binding = try self.writer.addBinding(.{
-            .name = try self.writer.addString(name_text),
-            .source = self.sourceRef(node),
-            .ty = stored_ty,
-            .initialization = if (value) |item| item.node else null,
-            .mutability = graph_mod.mutabilityFromSyntax(declaration.mutability),
-        });
+        const name_range = try self.writer.addString(name_text);
+        const source = self.sourceRef(node);
+        const initialization = if (value) |item| item.node else null;
+        const mutability = graph_mod.mutabilityFromSyntax(declaration.mutability);
+        const binding = if (semantic_ty) |stored_ty|
+            try self.writer.addBinding(.{
+                .name = name_range,
+                .source = source,
+                .ty = stored_ty,
+                .initialization = initialization,
+                .mutability = mutability,
+            })
+        else
+            try self.writer.addUnresolvedBinding(name_range, source, initialization, mutability);
         const name = self.graph.semantic.bindings.items[@intFromEnum(binding)].name;
         try self.bindings.append(.{ .name = name, .id = binding, .ty = semantic_ty });
         return self.resolved(node, semantic_ty, .{ .binding_declaration = binding });
@@ -488,7 +494,7 @@ const Context = struct {
     fn lowerReturn(self: *Context, node: syn.NodeIndex) !Lowered {
         const ret = self.tree.returnStatement(node).?;
         const value = if (ret.value) |child| try self.lowerNode(child, null) else null;
-        const ty = if (value) |item| try self.compatibilityType(item.ty) else try self.builtin(.Void);
+        const ty: ?entities.ModuleTypeId = if (value) |item| item.ty else try self.builtin(.Void);
         return self.resolved(node, ty, .{ .return_statement = .{
             .expression = if (value) |item| item.node else null,
             .cleanup = .{ .start = @intCast(self.graph.semantic.node_refs.items.len), .len = 0 },
@@ -571,12 +577,12 @@ const Context = struct {
         const statement = self.tree.forStatement(node).?;
         const iterable = try self.lowerNode(statement.iterable, null);
         const name_text = self.tree.tokenTextFromSource(self.source, statement.name_token);
-        const binding = try self.writer.addBinding(.{
-            .name = try self.writer.addString(name_text),
-            .source = self.sourceRef(node),
-            .ty = try self.builtin(.Any),
-            .mutability = if (statement.mode == .mut_borrow) .variable else .constant,
-        });
+        const binding = try self.writer.addUnresolvedBinding(
+            try self.writer.addString(name_text),
+            self.sourceRef(node),
+            null,
+            if (statement.mode == .mut_borrow) .variable else .constant,
+        );
         try self.pushScope();
         const name = self.graph.semantic.bindings.items[@intFromEnum(binding)].name;
         try self.bindings.append(.{ .name = name, .id = binding, .ty = null });
@@ -609,12 +615,12 @@ const Context = struct {
             try self.pushScope();
             if (case.payload_name) |token_index| {
                 const text = self.tree.tokenTextFromSource(self.source, token_index);
-                const id = try self.writer.addBinding(.{
-                    .name = try self.writer.addString(text),
-                    .source = self.sourceRef(case_node),
-                    .ty = try self.builtin(.Any),
-                    .mutability = if (case.mode == .mut_borrow) .variable else .constant,
-                });
+                const id = try self.writer.addUnresolvedBinding(
+                    try self.writer.addString(text),
+                    self.sourceRef(case_node),
+                    null,
+                    if (case.mode == .mut_borrow) .variable else .constant,
+                );
                 payload_binding = id;
                 const name = self.graph.semantic.bindings.items[@intFromEnum(id)].name;
                 try self.bindings.append(.{ .name = name, .id = id, .ty = null });
@@ -685,10 +691,19 @@ const Context = struct {
 
     fn lowerDereference(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const value = try self.lowerNode(self.tree.unaryOperand(node).?, null);
-        const pointer_ty = try self.compatibilityType(value.ty);
-        const child_ty = if (value.ty) |known| try self.pointerChild(known) else null;
-        const ty = child_ty orelse expected orelse try self.builtin(.Any);
-        return self.resolved(node, ty, .{ .dereference = .{ .pointer = value.node, .ty = ty, .pointer_type = pointer_ty } });
+        if (value.ty) |pointer_ty| {
+            if (try self.pointerChild(pointer_ty)) |child_ty| {
+                return self.resolved(node, child_ty, .{ .dereference = .{
+                    .pointer = value.node,
+                    .ty = child_ty,
+                    .pointer_type = pointer_ty,
+                } });
+            }
+        }
+        return self.pending(node, .{ .resolve_dereference = .{
+            .node = self.nextNodeId(),
+            .pointer = value.node,
+        } }, expected);
     }
 
     fn pointerChild(self: *Context, ty: entities.ModuleTypeId) !?entities.ModuleTypeId {
@@ -705,7 +720,7 @@ const Context = struct {
         const assignment = self.tree.pointerAssignment(node).?;
         const pointer = try self.lowerNode(assignment.target, null);
         const value = try self.lowerNode(assignment.value, expected);
-        const ty = expected orelse try self.compatibilityType(value.ty);
+        const ty: ?entities.ModuleTypeId = expected orelse value.ty;
         return self.resolved(node, ty, .{ .pointer_assignment = .{ .pointer = pointer.node, .value = value.node } });
     }
 
@@ -716,8 +731,7 @@ const Context = struct {
 
     fn wrapUnary(self: *Context, node: syn.NodeIndex, comptime tag: anytype, expected: ?entities.ModuleTypeId) !Lowered {
         const value = try self.lowerNode(self.tree.unaryOperand(node).?, expected);
-        const ty = try self.compatibilityType(value.ty);
-        return self.resolved(node, ty, @unionInit(entities.ResolvedNode.Content, @tagName(tag), value.node));
+        return self.resolved(node, value.ty, @unionInit(entities.ResolvedNode.Content, @tagName(tag), value.node));
     }
 
     fn lowerImport(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
@@ -792,7 +806,7 @@ const Context = struct {
             try self.bindings.append(.{
                 .name = declaration.name,
                 .id = relation.binding,
-                .ty = binding.ty,
+                .ty = if (views.bindingTypeUnresolved(self.graph, relation.binding)) null else binding.ty,
             });
         }
     }

@@ -52,7 +52,19 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
     const semantic = &graph.semantic;
     try verifyOverlays(graph);
 
-    for (semantic.bindings.items) |value| try payload.binding(entities.Ids, value, bounds);
+    for (semantic.unresolved_binding_types.items, 0..) |id, index| {
+        try require(verify.idFits(id, semantic.bindings.items.len));
+        for (semantic.unresolved_binding_types.items[0..index]) |previous| try require(previous != id);
+        try require(semantic.bindings.items[@intFromEnum(id)].ty == entities.unresolved_binding_type_poison);
+    }
+    for (semantic.bindings.items, 0..) |value, raw| {
+        const id: entities.ModuleBindingId = @enumFromInt(@as(u32, @intCast(raw)));
+        if (views.bindingTypeUnresolved(graph, id)) {
+            try require(verify.stringFits(value.name, graph.strings.items));
+            try require(verify.sourceFits(value.source, graph.file_offsets.items.len));
+            try require(verify.optionalIdFits(value.initialization, semantic.nodes.items.len));
+        } else try payload.binding(entities.Ids, value, bounds);
+    }
     for (semantic.blocks.items) |value| try payload.block(entities.Ids, value, bounds);
     for (semantic.value_fields.items) |value| try payload.valueField(entities.Ids, value, bounds);
     for (semantic.switch_cases.items) |value| try payload.switchCase(entities.Ids, value, bounds);
@@ -189,6 +201,10 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.value, semantic.nodes.items.len));
             try require(verify.idFits(value.index, semantic.nodes.items.len));
             try require(verify.optionalIdFits(value.store_value, semantic.nodes.items.len));
+        },
+        .resolve_dereference => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.pointer, semantic.nodes.items.len));
         },
         .resolve_choice_literal => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));

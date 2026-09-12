@@ -18,6 +18,12 @@ pub fn genericArgumentCount(graph: *const graph_mod.ModuleSemanticGraph) usize {
     return graph.generic_type_arguments.items.len + graph.semantic.generic_arguments.items.len;
 }
 
+pub fn bindingTypeUnresolved(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleBindingId) bool {
+    for (graph.semantic.unresolved_binding_types.items) |candidate|
+        if (candidate == id) return true;
+    return false;
+}
+
 pub fn declarationView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleDeclId) !entities.Declaration {
     const raw: usize = @intFromEnum(id);
     if (raw >= graph.declarations.items.len) return error.InvalidModuleDeclarationId;

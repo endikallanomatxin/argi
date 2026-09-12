@@ -106,17 +106,19 @@ pub const Resolver = struct {
 
     pub fn materializeBindingTypes(self: *Resolver) bool {
         var changed = false;
-        for (self.graph.bindings.items) |*binding| {
-            if (!types.isBuiltin(self.graph, binding.ty, .Any)) continue;
+        for (self.graph.bindings.items, 0..) |*binding, raw| {
+            const id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (!self.graph.isBindingTypeUnresolved(id)) continue;
             const initialization = binding.initialization orelse continue;
             const inferred = self.graph.nodes.items[@intFromEnum(initialization)].ty orelse continue;
-            if (types.isBuiltin(self.graph, inferred, .Any)) continue;
+            if (self.graph.isTypeUnresolved(inferred)) continue;
             binding.ty = inferred;
             self.stats.binding_types += 1;
             changed = true;
         }
         for (self.graph.nodes.items) |*node| switch (node.content) {
             .binding_use => |binding_id| {
+                if (self.graph.isBindingTypeUnresolved(binding_id)) continue;
                 const inferred = self.graph.bindings.items[@intFromEnum(binding_id)].ty;
                 if (node.ty != null and types.equal(self.graph, node.ty.?, inferred)) continue;
                 node.ty = inferred;
@@ -156,6 +158,7 @@ pub const Resolver = struct {
             .resolve_binary => |value| resolution.Result.fromBool(try self.resolveBinary(module_index, o, value)),
             .resolve_comparison => |value| resolution.Result.fromBool(try self.resolveComparison(module_index, o, value)),
             .resolve_index => |value| try self.resolveIndex(module_index, o, value),
+            .resolve_dereference => |value| try self.resolveDereference(o, value),
             else => .not_applicable,
         };
     }
@@ -444,6 +447,29 @@ pub const Resolver = struct {
         };
         self.stats.fields += 1;
         return true;
+    }
+
+    fn resolveDereference(self: *Resolver, o: globalizer.Offsets, value: anytype) !resolution.Result {
+        const pointer = globalizer.globalNode(o, value.pointer);
+        const pointer_type = self.graph.nodes.items[@intFromEnum(pointer)].ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(pointer_type)) return .deferred;
+        const child = switch (self.graph.types.items[@intFromEnum(pointer_type)]) {
+            .pointer => |pointer_value| pointer_value.child,
+            else => return .deferred,
+        };
+        if (self.graph.isTypeUnresolved(child)) return .deferred;
+        const target = globalizer.globalNode(o, value.node);
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = self.graph.nodes.items[@intFromEnum(pointer)].source,
+            .ty = child,
+            .content = .{ .dereference = .{
+                .pointer = pointer,
+                .ty = child,
+                .pointer_type = pointer_type,
+            } },
+        };
+        self.stats.dereferences += 1;
+        return .resolved;
     }
 
     fn resolveBinary(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !bool {

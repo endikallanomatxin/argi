@@ -4,6 +4,8 @@ const payload = @import("../semantic_payload_verify.zig");
 const verify = @import("../semantic_verify.zig");
 
 pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
+    try require(graph.type_resolution.items.len == 0);
+    try require(graph.binding_type_resolution.items.len == 0);
     const bounds = makeBounds(graph);
     try verifyModulePartitions(graph);
     for (graph.module_aliases.items) |alias| {

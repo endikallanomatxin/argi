@@ -99,6 +99,7 @@ fn requireFinalizable(module: *const module_sg.ModuleSemanticGraph) !void {
     if (semantic.external_refs.items.len != 0 or semantic.pending_operations.items.len != 0)
         return error.UnresolvedModuleSemantics;
     if (semantic.parameterized_storage.storageBytes() != 0) return error.ModuleParameterizedSemanticsNotConsumed;
+    if (semantic.unresolved_binding_types.items.len != 0) return error.UnresolvedModuleSemantics;
     for (semantic.types.items) |ty| switch (ty) {
         .resolved => {},
         .external => return error.UnresolvedModuleSemantics,
@@ -337,13 +338,20 @@ fn appendReferencePools(allocator: std.mem.Allocator, result: *global_sg.GlobalS
 
 fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGraph, module: *const module_sg.ModuleSemanticGraph, o: Offsets, mode: Mode) !void {
     const storage = &module.semantic;
-    for (storage.bindings.items) |value| try result.bindings.append(allocator, .{
-        .name = try relocateString(module, value.name, o.string_base),
-        .source = globalSource(o, value.source),
-        .ty = globalType(o, value.ty),
-        .initialization = if (value.initialization) |id| globalNode(o, id) else null,
-        .mutability = value.mutability,
-    });
+    for (storage.bindings.items, 0..) |value, raw| {
+        const local_id: module_entities.ModuleBindingId = @enumFromInt(@as(u32, @intCast(raw)));
+        const unresolved = module_views.bindingTypeUnresolved(module, local_id);
+        if (unresolved and mode == .strict) return error.UnresolvedModuleSemantics;
+        const global_id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(result.bindings.items.len)));
+        try result.bindings.append(allocator, .{
+            .name = try relocateString(module, value.name, o.string_base),
+            .source = globalSource(o, value.source),
+            .ty = if (unresolved) @enumFromInt(0) else globalType(o, value.ty),
+            .initialization = if (value.initialization) |id| globalNode(o, id) else null,
+            .mutability = value.mutability,
+        });
+        if (unresolved) try result.markBindingTypeUnresolved(allocator, global_id);
+    }
     for (storage.blocks.items) |value| try result.blocks.append(allocator, .{
         .nodes = relocatePoolRange(global_sg.GlobalNodeId, o.node_ref_base, value.nodes),
         .ret_val = if (value.ret_val) |id| globalNode(o, id) else null,

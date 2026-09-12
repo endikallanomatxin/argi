@@ -3,6 +3,7 @@ const graph_mod = @import("graph.zig");
 const entities = @import("entities.zig");
 const storage = @import("storage.zig");
 const strings = @import("../primitives/strings.zig");
+const primitives = @import("../primitives/schema.zig");
 
 /// Canonical mutation API for ModuleSema. New semantic lowering should use this
 /// instead of appending to migration-era compatibility tables directly.
@@ -101,6 +102,27 @@ pub const Writer = struct {
     pub fn addBinding(self: *Writer, binding: entities.Binding) !entities.ModuleBindingId {
         const id = try directId(entities.ModuleBindingId, self.graph.semantic.bindings.items.len);
         try self.graph.semantic.bindings.append(self.allocator, binding);
+        return id;
+    }
+
+    pub fn addUnresolvedBinding(
+        self: *Writer,
+        name: primitives.StringRange,
+        source: primitives.SourceRef,
+        initialization: ?entities.ModuleNodeId,
+        mutability: primitives.Mutability,
+    ) !entities.ModuleBindingId {
+        const id = try directId(entities.ModuleBindingId, self.graph.semantic.bindings.items.len);
+        const old_len = self.graph.semantic.bindings.items.len;
+        errdefer self.graph.semantic.bindings.shrinkRetainingCapacity(old_len);
+        try self.graph.semantic.bindings.append(self.allocator, .{
+            .name = name,
+            .source = source,
+            .ty = entities.unresolved_binding_type_poison,
+            .initialization = initialization,
+            .mutability = mutability,
+        });
+        try self.graph.semantic.unresolved_binding_types.append(self.allocator, id);
         return id;
     }
 
