@@ -20,6 +20,7 @@ jobs:
           python3 .github/scripts/materialize_binding_type_state.py
           python3 .github/scripts/allow_untyped_binding_uses.py
           python3 .github/scripts/remove_optional_any_bridges.py
+          python3 .github/scripts/pending_dereference.py
           python3 .github/scripts/debug_binding_resolution.py
       - uses: mlugg/setup-zig@v2
         with:
