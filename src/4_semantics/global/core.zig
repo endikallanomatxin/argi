@@ -345,7 +345,6 @@ pub const Resolver = struct {
         const source = if (nodes.len != 0) self.graph.nodes.items[@intFromEnum(nodes[0])].source else self.syntheticSource();
         return self.appendNode(source, ty, .{ .struct_value_literal = .{
             .fields = .{ .start = start, .len = @intCast(nodes.len) },
-            .ty = ty,
         } });
     }
 
@@ -381,7 +380,6 @@ pub const Resolver = struct {
                 .ty = void_ty,
                 .content = .{ .struct_value_literal = .{
                     .fields = .{ .start = @intCast(self.graph.value_fields.items.len), .len = 0 },
-                    .ty = void_ty,
                 } },
             };
             self.stats.calls += 1;
@@ -625,13 +623,10 @@ pub const Resolver = struct {
                 if (supplied_node.ty) |actual| {
                     if (self.graph.isTypeUnresolved(actual)) return .deferred;
                     if (types.equal(self.graph, actual, expected.ty)) score += 4 else if (self.callTypesCompatible(actual, expected.ty)) score += 3 else if (types.isBuiltin(self.graph, expected.ty, .Any)) score += 1 else if (self.contextualLiteralFits(node, expected.ty)) score += 3 else return .no_match;
+                } else if (self.contextualLiteralFits(node, expected.ty)) {
+                    score += 3;
                 } else switch (supplied_node.content) {
-                    .string_literal => {
-                        if (self.contextualLiteralFits(node, expected.ty))
-                            score += 3
-                        else
-                            return .no_match;
-                    },
+                    .string_literal, .struct_value_literal => return .no_match,
                     else => return .deferred,
                 }
             } else if (expected.default_value == null) return .no_match;
@@ -698,7 +693,6 @@ pub const Resolver = struct {
         self.graph.nodes.items[@intFromEnum(input_node)].ty = ty;
         self.graph.nodes.items[@intFromEnum(input_node)].content.struct_value_literal = .{
             .fields = .{ .start = start, .len = expected_fields.len },
-            .ty = ty,
         };
         return true;
     }
@@ -824,7 +818,6 @@ pub const Resolver = struct {
             _ = self.coerceContextualValue(actual, expected.ty);
         }
         self.graph.nodes.items[@intFromEnum(node)].ty = target;
-        self.graph.nodes.items[@intFromEnum(node)].content.struct_value_literal.ty = target;
         return true;
     }
 
@@ -931,7 +924,7 @@ test "call input matching distinguishes deferred arguments from mismatches" {
     try graph.nodes.append(allocator, .{
         .source = .{ .file_index = 0, .offset = 2 },
         .ty = input_ty,
-        .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 1 }, .ty = input_ty } },
+        .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 1 } } },
     });
 
     var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };

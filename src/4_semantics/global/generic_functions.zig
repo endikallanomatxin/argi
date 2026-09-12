@@ -798,7 +798,7 @@ pub const Resolver = struct {
             self.resolver.graph.nodes.items[@intFromEnum(global)] = .{
                 .source = self.resolver.sourceFor(self.module_index, node.source),
                 .ty = expected,
-                .content = .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = local_fields.len }, .ty = expected } },
+                .content = .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = local_fields.len } } },
             };
             self.resolver.stats.nodes += 1;
             return global;
@@ -880,7 +880,7 @@ pub const Resolver = struct {
             const start: u32 = @intCast(self.resolver.graph.value_fields.items.len);
             try self.resolver.graph.value_fields.appendSlice(self.resolver.allocator, values.items);
             return .{ .source = self.resolver.sourceFor(self.module_index, node.source), .ty = ty, .content = .{
-                .struct_value_literal = .{ .fields = .{ .start = start, .len = @intCast(values.items.len) }, .ty = ty },
+                .struct_value_literal = .{ .fields = .{ .start = start, .len = @intCast(values.items.len) } },
             } };
         }
 
@@ -1149,7 +1149,6 @@ pub const Resolver = struct {
                 .ty = ty,
                 .content = .{ .struct_value_literal = .{
                     .fields = .{ .start = @intCast(self.resolver.graph.value_fields.items.len), .len = 0 },
-                    .ty = ty,
                 } },
             };
         }

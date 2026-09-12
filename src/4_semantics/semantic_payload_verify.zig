@@ -249,7 +249,6 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
         },
         .struct_value_literal => |item| {
             try require(verify.rangeFits(item.fields, bounds.value_fields));
-            try require(verify.idFits(item.ty, bounds.types));
         },
         .struct_field_access => |item| {
             try require(verify.idFits(item.value, bounds.nodes));
