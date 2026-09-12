@@ -221,6 +221,7 @@ pub const Resolver = struct {
         var tied = false;
         var saw_deferred = false;
         for (self.graph.functions.items, 0..) |function, raw| {
+            if (function.flags.is_abstract_dispatch) continue;
             const decl = self.graph.declarations.items[@intFromEnum(function.declaration)];
             if (!std.mem.eql(u8, self.graph.text(decl.name), name)) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
