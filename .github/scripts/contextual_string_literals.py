@@ -39,7 +39,12 @@ replace_once(
                     if (self.graph.isTypeUnresolved(actual)) return .deferred;
                     if (types.equal(self.graph, actual, expected.ty)) score += 4 else if (self.callTypesCompatible(actual, expected.ty)) score += 3 else if (types.isBuiltin(self.graph, expected.ty, .Any)) score += 1 else if (self.contextualLiteralFits(node, expected.ty)) score += 3 else return .no_match;
                 } else switch (supplied_node.content) {
-                    .string_literal => if (self.contextualLiteralFits(node, expected.ty)) score += 3 else return .no_match,
+                    .string_literal => {
+                        if (self.contextualLiteralFits(node, expected.ty))
+                            score += 3
+                        else
+                            return .no_match;
+                    },
                     else => return .deferred,
                 }
             } else if (expected.default_value == null) return .no_match;
