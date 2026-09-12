@@ -20,11 +20,36 @@ jobs:
           python3 .github/scripts/authoritative_struct_literal_type.py
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('src/4_semantics/global/core.zig')
-          text = p.read_text()
-          stale = '        self.graph.nodes.items[@intFromEnum(node)].content.struct_value_literal.ty = target;\n'
-          if stale in text:
-              p.write_text(text.replace(stale, '', 1))
+
+          core = Path('src/4_semantics/global/core.zig')
+          text = core.read_text()
+          text = text.replace(
+              '        self.graph.nodes.items[@intFromEnum(node)].content.struct_value_literal.ty = target;\n',
+              '',
+              1,
+          )
+          text = text.replace(
+              '        .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 1 }, .ty = input_ty } },\n',
+              '        .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 1 } } },\n',
+              1,
+          )
+          core.write_text(text)
+
+          constructors = Path('src/4_semantics/global/constructors.zig')
+          text = constructors.read_text()
+          text = text.replace(
+              '''            .content = .{ .struct_value_literal = .{
+                .fields = .{ .start = 0, .len = 0 },
+                .ty = input_type,
+            } },
+''',
+              '''            .content = .{ .struct_value_literal = .{
+                .fields = .{ .start = 0, .len = 0 },
+            } },
+''',
+              1,
+          )
+          constructors.write_text(text)
           PY
       - uses: mlugg/setup-zig@v2
         with:
