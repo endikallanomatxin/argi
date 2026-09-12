@@ -23,6 +23,9 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
+          def lines(*items):
+              return '\n'.join(items)
+
           path = Path('src/4_semantics/global/semantizer.zig')
           text = path.read_text()
           anchor = 'const ownership_mod = @import("ownership.zig");\n'
@@ -32,44 +35,67 @@ jobs:
           start = text.index('fn resolvePendingOperation(')
           end = text.index('\nfn markUnresolvedTypeSlots(', start)
           old = text[start:end]
-          type_old = '''        .resolve_type => blk: {
-            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
-            break :blk (try generics.tryResolve(module_index, module, o, operation)).isResolved();
-        },'''
-          call_old = '''        .resolve_call => blk: {
-            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
-            if ((try generic_functions.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
-            if ((try constructors.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
-            if ((try abstracts.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
-            break :blk (try control.tryResolve(module_index, module, o, operation)).isResolved();
-        },'''
-          index_old = '''        .resolve_index => blk: {
-            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
-            break :blk (try generic_functions.tryResolve(module_index, module, o, operation)).isResolved();
-        },'''
+
+          type_old = lines(
+              '        .resolve_type => blk: {',
+              '            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;',
+              '            break :blk (try generics.tryResolve(module_index, module, o, operation)).isResolved();',
+              '        },',
+          )
+          type_new = lines(
+              '        .resolve_type => blk: {',
+              '            if (terminalResolution(try core.tryResolve(module_index, module, o, operation))) |done| break :blk done;',
+              '            if (terminalResolution(try generics.tryResolve(module_index, module, o, operation))) |done| break :blk done;',
+              '            break :blk false;',
+              '        },',
+          )
+          call_old = lines(
+              '        .resolve_call => blk: {',
+              '            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;',
+              '            if ((try generic_functions.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;',
+              '            if ((try constructors.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;',
+              '            if ((try abstracts.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;',
+              '            break :blk (try control.tryResolve(module_index, module, o, operation)).isResolved();',
+              '        },',
+          )
+          call_new = lines(
+              '        .resolve_call => blk: {',
+              '            if (terminalResolution(try core.tryResolve(module_index, module, o, operation))) |done| break :blk done;',
+              '            if (terminalResolution(try generic_functions.tryResolve(module_index, module, o, operation))) |done| break :blk done;',
+              '            if (terminalResolution(try constructors.tryResolve(module_index, module, o, operation))) |done| break :blk done;',
+              '            if (terminalResolution(try abstracts.tryResolve(module_index, module, o, operation))) |done| break :blk done;',
+              '            if (terminalResolution(try control.tryResolve(module_index, module, o, operation))) |done| break :blk done;',
+              '            break :blk false;',
+              '        },',
+          )
+          index_old = lines(
+              '        .resolve_index => blk: {',
+              '            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;',
+              '            break :blk (try generic_functions.tryResolve(module_index, module, o, operation)).isResolved();',
+              '        },',
+          )
+          index_new = lines(
+              '        .resolve_index => blk: {',
+              '            if (terminalResolution(try core.tryResolve(module_index, module, o, operation))) |done| break :blk done;',
+              '            if (terminalResolution(try generic_functions.tryResolve(module_index, module, o, operation))) |done| break :blk done;',
+              '            break :blk false;',
+              '        },',
+          )
           assert type_old in old and call_old in old and index_old in old
-          type_new = '''        .resolve_type => blk: {
-            if (terminalResolution(try core.tryResolve(module_index, module, o, operation))) |done| break :blk done;
-            if (terminalResolution(try generics.tryResolve(module_index, module, o, operation))) |done| break :blk done;
-            break :blk false;
-        },'''
-          call_new = '''        .resolve_call => blk: {
-            if (terminalResolution(try core.tryResolve(module_index, module, o, operation))) |done| break :blk done;
-            if (terminalResolution(try generic_functions.tryResolve(module_index, module, o, operation))) |done| break :blk done;
-            if (terminalResolution(try constructors.tryResolve(module_index, module, o, operation))) |done| break :blk done;
-            if (terminalResolution(try abstracts.tryResolve(module_index, module, o, operation))) |done| break :blk done;
-            if (terminalResolution(try control.tryResolve(module_index, module, o, operation))) |done| break :blk done;
-            break :blk false;
-        },'''
-          index_new = '''        .resolve_index => blk: {
-            if (terminalResolution(try core.tryResolve(module_index, module, o, operation))) |done| break :blk done;
-            if (terminalResolution(try generic_functions.tryResolve(module_index, module, o, operation))) |done| break :blk done;
-            break :blk false;
-        },'''
           updated = old.replace(type_old, type_new, 1).replace(call_old, call_new, 1).replace(index_old, index_new, 1)
           text = text[:start] + updated + text[end:]
 
-          helper = '\nfn terminalResolution(result: resolution.Result) ?bool {\n    return switch (result) {\n        .resolved => true,\n        .deferred => false,\n        .not_applicable => null,\n    };\n}\n'
+          helper = lines(
+              '',
+              'fn terminalResolution(result: resolution.Result) ?bool {',
+              '    return switch (result) {',
+              '        .resolved => true,',
+              '        .deferred => false,',
+              '        .not_applicable => null,',
+              '    };',
+              '}',
+              '',
+          )
           insert = text.index('\nfn markUnresolvedTypeSlots(', text.index('fn resolvePendingOperation('))
           text = text[:insert] + helper + text[insert:]
           path.write_text(text)
