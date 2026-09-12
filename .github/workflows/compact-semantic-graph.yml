@@ -1,4 +1,4 @@
-name: Control call resolution ownership
+name: Compact semantic graph
 
 on:
   push:
@@ -7,56 +7,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-test-commit:
+  test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Classify choice test call ownership
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path('src/4_semantics/global/control.zig')
-          text = path.read_text()
-          old_try = '.resolve_call => |value| resolution.Result.fromBool(try self.resolveChoiceTest(module, o, value)),'
-          assert text.count(old_try) == 1
-          text = text.replace(old_try, '.resolve_call => |value| try self.resolveChoiceTest(module, o, value),', 1)
-
-          start = text.index('    fn resolveChoiceTest(')
-          end = text.index('\n    fn resolveChoicePayload(', start)
-          old = text[start:end]
-          assert ') !bool {' in old
-          assert '!std.mem.eql(u8, module.text(reference.name), "is")) return false;' in old
-
-          new = old.replace(') !bool {', ') !resolution.Result {', 1)
-          new = new.replace(
-              '!std.mem.eql(u8, module.text(reference.name), "is")) return false;',
-              '!std.mem.eql(u8, module.text(reference.name), "is")) return .not_applicable;',
-              1,
-          )
-          new = new.replace('return false;', 'return .deferred;')
-          new = new.replace('return false,', 'return .deferred,')
-          new = new.replace('return true;', 'return .resolved;')
-          new = new.replace('option_name orelse return false', 'option_name orelse return .deferred')
-          new = new.replace('.source = option_source.?,', '.source = option_source orelse return .deferred,')
-          text = text[:start] + new + text[end:]
-          path.write_text(text)
-
-          updated = path.read_text()[start:start + len(new) + 100]
-          assert 'return false' not in updated
-          assert 'return .not_applicable;' in updated
-          assert 'return .deferred;' in updated
-          assert 'return .resolved;' in updated
-          assert 'option_source.?' not in updated
-          print('control is-call ownership classified explicitly')
-          PY
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -79,10 +37,6 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Commit validated control call states
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/global/control.zig
-          git commit -m "Classify choice test call resolution states"
-          git push origin HEAD:compact-semantic-graph-chatgpt
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
