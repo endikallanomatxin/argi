@@ -15,6 +15,7 @@ const generic_functions_mod = @import("generic_functions.zig");
 const abstract_mod = @import("abstracts.zig");
 const error_mod = @import("errors.zig");
 const ownership_mod = @import("ownership.zig");
+const resolution = @import("resolution.zig");
 
 pub const Stats = struct {
     core: core_mod.Stats = .{},
@@ -241,7 +242,7 @@ fn resolvePendingPhase(
         const o = offsets[module_index];
         for (module.semantic.pending_operations.items) |operation| {
             if (!resolved[flat] and pendingPhase(operation) == phase) {
-                if (try resolvePendingOperation(
+                const result = try resolvePendingOperation(
                     core,
                     expressions,
                     constructors,
@@ -255,7 +256,8 @@ fn resolvePendingPhase(
                     module,
                     o,
                     operation,
-                )) {
+                );
+                if (result.isResolved()) {
                     resolved[flat] = true;
                     changed = true;
                 }
@@ -298,11 +300,10 @@ fn pendingPhase(operation: module_entities.PendingOperation) PendingPhase {
 }
 
 /// Route each pending semantic operation only to the subsystem(s) that own it.
-/// A small number of operations deliberately have a staged fallback because
-/// their final category cannot be known in ModuleSema (for example an ordinary,
-/// generic, virtual or intrinsic-looking call). Keeping those chains explicit
-/// makes resolver precedence part of the architecture instead of an accidental
-/// consequence of trying every resolver in sequence.
+/// Resolver chains obey a strict contract: `not_applicable` permits fallback,
+/// `deferred` claims the operation but waits for a dependency, and `resolved`
+/// completes it. This prevents a later resolver from stealing an operation that
+/// an earlier, more specific resolver has already claimed.
 fn resolvePendingOperation(
     core: *core_mod.Resolver,
     expressions: *expression_mod.Resolver,
@@ -317,31 +318,41 @@ fn resolvePendingOperation(
     module: *const module_sg.ModuleSemanticGraph,
     o: globalizer.Offsets,
     operation: module_entities.PendingOperation,
-) !bool {
+) !resolution.Result {
     return switch (operation) {
         .resolve_type => blk: {
-            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
-            break :blk (try generics.tryResolve(module_index, module, o, operation)).isResolved();
+            const core_result = try core.tryResolve(module_index, module, o, operation);
+            if (!core_result.allowsFallback()) break :blk core_result;
+            break :blk try generics.tryResolve(module_index, module, o, operation);
         },
         .resolve_call => blk: {
-            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
-            if ((try generic_functions.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
-            if ((try constructors.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
-            if ((try abstracts.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
-            break :blk (try control.tryResolve(module_index, module, o, operation)).isResolved();
+            const core_result = try core.tryResolve(module_index, module, o, operation);
+            if (!core_result.allowsFallback()) break :blk core_result;
+
+            const generic_result = try generic_functions.tryResolve(module_index, module, o, operation);
+            if (!generic_result.allowsFallback()) break :blk generic_result;
+
+            const constructor_result = try constructors.tryResolve(module_index, module, o, operation);
+            if (!constructor_result.allowsFallback()) break :blk constructor_result;
+
+            const abstract_result = try abstracts.tryResolve(module_index, module, o, operation);
+            if (!abstract_result.allowsFallback()) break :blk abstract_result;
+
+            break :blk try control.tryResolve(module_index, module, o, operation);
         },
         .resolve_index => blk: {
-            if ((try core.tryResolve(module_index, module, o, operation)).isResolved()) break :blk true;
-            break :blk (try generic_functions.tryResolve(module_index, module, o, operation)).isResolved();
+            const core_result = try core.tryResolve(module_index, module, o, operation);
+            if (!core_result.allowsFallback()) break :blk core_result;
+            break :blk try generic_functions.tryResolve(module_index, module, o, operation);
         },
         .resolve_field,
         .resolve_binary,
         .resolve_comparison,
-        => (try core.tryResolve(module_index, module, o, operation)).isResolved(),
+        => try core.tryResolve(module_index, module, o, operation),
         .resolve_name_use,
         .resolve_name_assignment,
         .resolve_import,
-        => (try expressions.tryResolve(module_index, module, o, operation)).isResolved(),
+        => try expressions.tryResolve(module_index, module, o, operation),
         .resolve_choice_literal,
         .resolve_choice_payload,
         .resolve_nullable_unwrap,
@@ -349,15 +360,15 @@ fn resolvePendingOperation(
         .resolve_for_each,
         .resolve_match,
         .resolve_match_case,
-        => (try control.tryResolve(module_index, module, o, operation)).isResolved(),
-        .resolve_abstract => (try abstracts.tryResolve(module_index, module, o, operation)).isResolved(),
-        .resolve_error_propagation => (try errors.tryResolve(module_index, module, o, operation)).isResolved(),
+        => try control.tryResolve(module_index, module, o, operation),
+        .resolve_abstract => try abstracts.tryResolve(module_index, module, o, operation),
+        .resolve_error_propagation => try errors.tryResolve(module_index, module, o, operation),
         .resolve_defer,
         .resolve_keep,
         .resolve_keep_name,
         .resolve_copy,
         .resolve_deinit,
-        => (try ownership.tryResolve(module_index, module, o, operation)).isResolved(),
+        => try ownership.tryResolve(module_index, module, o, operation),
     };
 }
 
