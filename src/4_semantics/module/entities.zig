@@ -30,6 +30,10 @@ pub const ModuleFileId = enum(u32) { _ };
 pub const ExternalRefId = enum(u32) { _ };
 pub const PendingOperationId = enum(u32) { _ };
 
+/// Construction-only poison carried only by bindings listed in
+/// `Storage.unresolved_binding_types`. It is never a language type.
+pub const unresolved_binding_type_poison: ModuleTypeId = @enumFromInt(std.math.maxInt(u32));
+
 pub const Ids = struct {
     pub const DeclId = ModuleDeclId;
     pub const TypeId = ModuleTypeId;
@@ -193,6 +197,10 @@ pub const PendingOperation = union(enum) {
         value: ModuleNodeId,
         index: ModuleNodeId,
         store_value: ?ModuleNodeId = null,
+    },
+    resolve_dereference: struct {
+        node: ModuleNodeId,
+        pointer: ModuleNodeId,
     },
     resolve_choice_literal: struct {
         node: ModuleNodeId,

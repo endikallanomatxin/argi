@@ -169,6 +169,7 @@ pub fn semantize(
         }
 
         if (relocation.graph.reconcileTypeResolution()) changed = true;
+        if (relocation.graph.reconcileBindingTypeResolution()) changed = true;
         if (core.materializeBindingTypes()) changed = true;
         if (core.materializeDereferences()) changed = true;
         if (try core.materializeAddresses()) changed = true;
@@ -186,17 +187,24 @@ pub fn semantize(
     const remaining = total - resolved_count;
     if (remaining != 0) {
         dumpUnresolved(modules, resolved);
+        debugUnresolvedBindingTypes(&relocation.graph);
         return error.UnsupportedGlobalSemantic;
     }
     _ = relocation.graph.reconcileTypeResolution();
+    _ = relocation.graph.reconcileBindingTypeResolution();
     if (relocation.graph.hasUnresolvedTypes()) {
         std.debug.print("global sema unresolved global type slots remain\n", .{});
+        return error.UnsupportedGlobalSemantic;
+    }
+    if (relocation.graph.hasUnresolvedBindingTypes()) {
+        std.debug.print("global sema unresolved binding types remain\n", .{});
         return error.UnsupportedGlobalSemantic;
     }
 
     // Construction-only resolution metadata must disappear before the graph is
     // exposed to Safety, Codegen or editor consumers.
     try relocation.graph.finishTypeResolution(allocator);
+    try relocation.graph.finishBindingTypeResolution(allocator);
 
     // Cleanup is finalized only after all calls/types/abstract dispatch decisions
     // are stable. Safety and Codegen consume these explicit cleanup edges.
@@ -276,6 +284,7 @@ fn pendingPhase(operation: module_entities.PendingOperation) PendingPhase {
         .resolve_binary,
         .resolve_comparison,
         .resolve_index,
+        .resolve_dereference,
         .resolve_name_use,
         .resolve_name_assignment,
         .resolve_import,
@@ -348,6 +357,7 @@ fn resolvePendingOperation(
         .resolve_field,
         .resolve_binary,
         .resolve_comparison,
+        .resolve_dereference,
         => try core.tryResolve(module_index, module, o, operation),
         .resolve_name_use,
         .resolve_name_assignment,
@@ -387,6 +397,31 @@ fn markUnresolvedTypeSlots(
             }
         }
     }
+}
+
+
+fn debugUnresolvedBindingTypes(graph: *const global_sg.GlobalSemanticGraph) void {
+    var count: usize = 0;
+    for (graph.bindings.items, 0..) |binding, raw| {
+        const id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
+        if (!graph.isBindingTypeUnresolved(id)) continue;
+        const init_ty = if (binding.initialization) |init| graph.nodes.items[@intFromEnum(init)].ty else null;
+        std.debug.print(
+            "unresolved binding: id={d} name={s} init={any} init_ty={any} source_file={d} source_off={d}\n",
+            .{ raw, graph.text(binding.name), binding.initialization, init_ty, binding.source.file_index, binding.source.offset },
+        );
+        var shown_uses: usize = 0;
+        for (graph.nodes.items, 0..) |node, node_raw| switch (node.content) {
+            .binding_use => |binding_id| if (binding_id == id and shown_uses < 6) {
+                std.debug.print("  use node={d} ty={any} source_file={d} source_off={d}\n", .{ node_raw, node.ty, node.source.file_index, node.source.offset });
+                shown_uses += 1;
+            },
+            else => {},
+        };
+        count += 1;
+        if (count == 20) break;
+    }
+    std.debug.print("unresolved binding debug count shown={d}\n", .{count});
 }
 
 fn dumpUnresolved(modules: []const module_sg.ModuleSemanticGraph, resolved: []const bool) void {

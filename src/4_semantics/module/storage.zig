@@ -39,6 +39,9 @@ pub const Storage = struct {
     generic_instances: std.ArrayList(type_shapes.GenericInstance(entities.Ids)) = .empty,
 
     bindings: std.ArrayList(entities.Binding) = .empty,
+    /// Sparse construction state: bindings whose semantic type is not known
+    /// until GlobalSema resolves an initializer/control-flow dependency.
+    unresolved_binding_types: std.ArrayList(entities.ModuleBindingId) = .empty,
     nodes: std.ArrayList(entities.ModuleNode) = .empty,
     blocks: std.ArrayList(entities.Block) = .empty,
     value_fields: std.ArrayList(entities.ValueField) = .empty,
@@ -84,6 +87,7 @@ pub const Storage = struct {
         self.types.deinit(allocator);
         self.generic_instances.deinit(allocator);
         self.bindings.deinit(allocator);
+        self.unresolved_binding_types.deinit(allocator);
         self.nodes.deinit(allocator);
         self.blocks.deinit(allocator);
         self.value_fields.deinit(allocator);
@@ -129,6 +133,7 @@ pub const Storage = struct {
             self.types.items.len * @sizeOf(entities.ModuleType) +
             self.generic_instances.items.len * @sizeOf(type_shapes.GenericInstance(entities.Ids)) +
             self.bindings.items.len * @sizeOf(entities.Binding) +
+            self.unresolved_binding_types.items.len * @sizeOf(entities.ModuleBindingId) +
             self.nodes.items.len * @sizeOf(entities.ModuleNode) +
             self.blocks.items.len * @sizeOf(entities.Block) +
             self.value_fields.items.len * @sizeOf(entities.ValueField) +
