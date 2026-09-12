@@ -22,6 +22,7 @@ jobs:
           python3 .github/scripts/remove_optional_any_bridges.py
           python3 .github/scripts/pending_dereference.py
           python3 .github/scripts/debug_binding_resolution.py
+          python3 .github/scripts/remove_binding_debug.py
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
@@ -47,5 +48,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/4_semantics
-          git commit -m "Represent unresolved binding types explicitly"
+          git commit -m "Remove temporary semantic diagnostics"
           git push origin HEAD:compact-semantic-graph-chatgpt
