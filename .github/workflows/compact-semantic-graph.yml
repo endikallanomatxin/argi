@@ -1,4 +1,4 @@
-name: Authoritative struct literal typing
+name: Single-evaluation block codegen
 
 on:
   push:
@@ -16,9 +16,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Apply migration
-        run: |
-          python3 .github/scripts/authoritative_struct_literal_type.py
-          python3 .github/scripts/fix_struct_literal_fixtures.py
+        run: python3 .github/scripts/fix_genblock_once.py
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
@@ -35,14 +33,19 @@ jobs:
       - name: Run internal tests
         timeout-minutes: 5
         run: zig build test-internal
+      - name: Run block single-evaluation regression
+        timeout-minutes: 3
+        run: |
+          zig-out/bin/argi build tests/feature_tests/functions/99_codegen_block_last_effect_once
+          tests/feature_tests/functions/99_codegen_block_last_effect_once/build/output
       - name: Commit source migration
         run: |
-          if git diff --quiet -- src/4_semantics src/5_codegen; then
+          if git diff --quiet -- src/5_codegen tests; then
             echo "No source changes to commit"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics src/5_codegen
-          git commit -m "Make node type authoritative for struct literals"
+          git add src/5_codegen tests
+          git commit -m "Generate block return values exactly once"
           git push origin HEAD:compact-semantic-graph-chatgpt
