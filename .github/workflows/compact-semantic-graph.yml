@@ -1,4 +1,4 @@
-name: Structured concrete function matching
+name: Compact semantic graph
 
 on:
   push:
@@ -7,102 +7,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-test-commit:
+  test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Preserve deferred state in concrete function lookup
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path('src/4_semantics/global/core.zig')
-          text = path.read_text()
-          start = text.index('    pub fn resolveFunctionByName(')
-          end = text.index('\n    pub fn resolveOperator(', start)
-          old = text[start:end]
-          assert 'self.scoreCallInput(function.input, input_node) orelse continue' in old
-          assert 'return best.?;' in old
-
-          new = '\n'.join([
-              '    pub const FunctionMatch = union(enum) {',
-              '        no_match,',
-              '        deferred,',
-              '        function: global_sg.GlobalFunctionId,',
-              '    };',
-              '',
-              '    pub fn matchFunctionByName(',
-              '        self: *Resolver,',
-              '        current_module: usize,',
-              '        reference: module_entities.ExternalRef,',
-              '        input_node: global_sg.GlobalNodeId,',
-              '    ) !FunctionMatch {',
-              '        const module_filter = if (reference.module_path) |path|',
-              '            try self.findModuleForQualifier(current_module, self.modules[current_module].text(path))',
-              '        else',
-              '            null;',
-              '        const name = self.modules[current_module].text(reference.name);',
-              '        var best: ?global_sg.GlobalFunctionId = null;',
-              '        var best_score: u32 = 0;',
-              '        var tied = false;',
-              '        var saw_deferred = false;',
-              '        for (self.graph.functions.items, 0..) |function, raw| {',
-              '            const decl = self.graph.declarations.items[@intFromEnum(function.declaration)];',
-              '            if (!std.mem.eql(u8, self.graph.text(decl.name), name)) continue;',
-              '            if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;',
-              '            const score = switch (self.matchCallInput(function.input, input_node)) {',
-              '                .no_match => continue,',
-              '                .deferred => {',
-              '                    saw_deferred = true;',
-              '                    continue;',
-              '                },',
-              '                .score => |score| score,',
-              '            };',
-              '            if (best == null or score > best_score) {',
-              '                best = @enumFromInt(@as(u32, @intCast(raw)));',
-              '                best_score = score;',
-              '                tied = false;',
-              '            } else if (score == best_score) tied = true;',
-              '        }',
-              '        if (best) |function| {',
-              '            if (tied) return error.AmbiguousGlobalFunction;',
-              '            return .{ .function = function };',
-              '        }',
-              '        if (saw_deferred) return .deferred;',
-              '        return .no_match;',
-              '    }',
-              '',
-              '    pub fn resolveFunctionByName(',
-              '        self: *Resolver,',
-              '        current_module: usize,',
-              '        reference: module_entities.ExternalRef,',
-              '        input_node: global_sg.GlobalNodeId,',
-              '    ) !global_sg.GlobalFunctionId {',
-              '        return switch (try self.matchFunctionByName(current_module, reference, input_node)) {',
-              '            .function => |function| function,',
-              '            .no_match => error.NoMatchingGlobalFunction,',
-              '            .deferred => error.DeferredGlobalFunction,',
-              '        };',
-              '    }',
-              '',
-          ])
-          text = text[:start] + new + text[end:]
-          path.write_text(text)
-
-          updated = path.read_text()
-          assert 'pub const FunctionMatch = union(enum)' in updated
-          assert '.deferred => error.DeferredGlobalFunction' in updated
-          assert 'self.matchCallInput(function.input, input_node)' in updated
-          assert 'self.scoreCallInput(function.input, input_node) orelse continue' not in updated[start:start + len(new) + 100]
-          print('concrete function lookup preserves deferred matching explicitly')
-          PY
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -125,10 +37,6 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Commit validated function matching
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/global/core.zig
-          git commit -m "Preserve deferred concrete function matching"
-          git push origin HEAD:compact-semantic-graph-chatgpt
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
