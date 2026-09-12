@@ -40,9 +40,11 @@ jobs:
           marker = '        const function = if (local_args) |args|\n'
           assert marker in block
           block = block.replace(marker, '        if (!try self.hasVisibleGenericCandidate(module_index, module, reference)) return .not_applicable;\n' + marker, 1)
-          block = block.replace(' catch return false;', ' catch return .deferred;', 2)
+          block = block.replace(' catch return false\n', ' catch return .deferred\n', 1)
+          block = block.replace(' catch return false;', ' catch return .deferred;', 1)
           block = block.replace('if (!try self.core.completeCallInputFields(self.graph.functions.items[@intFromEnum(function)].input, input)) return false;', 'if (!try self.core.completeCallInputFields(self.graph.functions.items[@intFromEnum(function)].input, input)) return .deferred;', 1)
           block = block.replace('        return true;\n', '        return .resolved;\n', 1)
+          assert 'return false' not in block
           text = text[:start] + block + text[end:]
 
           helper = '''\n    fn hasVisibleGenericCandidate(\n        self: *Resolver,\n        current_module: usize,\n        module: *const module_sg.ModuleSemanticGraph,\n        reference: module_entities.ExternalRef,\n    ) !bool {\n        const module_filter = if (reference.module_path) |path|\n            try self.core.findModuleForQualifier(current_module, module.text(path))\n        else\n            null;\n        const name = module.text(reference.name);\n        for (self.modules, 0..) |*candidate_module, candidate_index| {\n            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {\n                const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);\n                const decl = self.graph.declarations.items[@intFromEnum(declaration)];\n                if (!std.mem.eql(u8, self.graph.text(decl.name), name)) continue;\n                if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;\n                return true;\n            }\n        }\n        return false;\n    }\n'''
