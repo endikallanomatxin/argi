@@ -93,6 +93,19 @@ replace_once(
 
 replace_once(
     'src/4_semantics/global/core.zig',
+    '''        return self.appendNode(source, ty, .{ .struct_value_literal = .{
+            .fields = .{ .start = start, .len = @intCast(nodes.len) },
+            .ty = ty,
+        } });
+''',
+    '''        return self.appendNode(source, ty, .{ .struct_value_literal = .{
+            .fields = .{ .start = start, .len = @intCast(nodes.len) },
+        } });
+''',
+)
+
+replace_once(
+    'src/4_semantics/global/core.zig',
     '''                .content = .{ .struct_value_literal = .{
                     .fields = .{ .start = @intCast(self.graph.value_fields.items.len), .len = 0 },
                     .ty = void_ty,
