@@ -1,4 +1,4 @@
-name: Core call resolution ownership
+name: Compact semantic graph
 
 on:
   push:
@@ -7,92 +7,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-test-commit:
+  test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Classify core call resolution states
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path('src/4_semantics/global/core.zig')
-          text = path.read_text()
-          old_try = '.resolve_call => |value| resolution.Result.fromBool(try self.resolveCall(module_index, module, o, value)),'
-          assert text.count(old_try) == 1
-          text = text.replace(old_try, '.resolve_call => |value| try self.resolveCall(module_index, module, o, value),', 1)
-
-          start = text.index('    fn resolveCall(')
-          end = text.index('\n    fn makeSizeOf(', start)
-          old = text[start:end]
-          assert ') !bool {' in old
-          assert 'resolveFunctionByName(module_index, reference, input) catch return false' in old
-
-          new = '\n'.join([
-              '    fn resolveCall(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {',
-              '        const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];',
-              '        if (reference.generic_arguments != null) return .not_applicable;',
-              '        const input = globalizer.globalNode(o, value.input);',
-              '        if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "size_of")) {',
-              '            const node = (try self.makeSizeOf(input, self.sourceFor(reference.source, o))) orelse return .deferred;',
-              '            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;',
-              '            self.stats.calls += 1;',
-              '            return .resolved;',
-              '        }',
-              '        if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "Void")) {',
-              '            const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {',
-              '                .struct_value_literal => |item| item,',
-              '                else => return .deferred,',
-              '            };',
-              '            if (literal.fields.len != 0) return .deferred;',
-              '            const void_ty = try self.builtin(.Void);',
-              '            const target = globalizer.globalNode(o, value.node);',
-              '            self.graph.nodes.items[@intFromEnum(target)] = .{',
-              '                .source = self.sourceFor(reference.source, o),',
-              '                .ty = void_ty,',
-              '                .content = .{ .struct_value_literal = .{',
-              '                    .fields = .{ .start = @intCast(self.graph.value_fields.items.len), .len = 0 },',
-              '                    .ty = void_ty,',
-              '                } },',
-              '            };',
-              '            self.stats.calls += 1;',
-              '            return .resolved;',
-              '        }',
-              '        const function = switch (try self.matchFunctionByName(module_index, reference, input)) {',
-              '            .no_match => return .not_applicable,',
-              '            .deferred => return .deferred,',
-              '            .function => |function| function,',
-              '        };',
-              '        if (!try self.completeCallInput(function, input)) return .deferred;',
-              '        const output = try self.functionOutputType(function);',
-              '        const target = globalizer.globalNode(o, value.node);',
-              '        self.graph.nodes.items[@intFromEnum(target)] = .{',
-              '            .source = self.sourceFor(reference.source, o),',
-              '            .ty = if (value.expected_type) |local| globalizer.globalType(o, local) else output,',
-              '            .content = .{ .function_call = .{ .callee = function, .input = input } },',
-              '        };',
-              '        self.stats.calls += 1;',
-              '        return .resolved;',
-              '    }',
-              '',
-          ])
-          text = text[:start] + new + text[end:]
-          path.write_text(text)
-
-          updated = path.read_text()
-          assert 'if (reference.generic_arguments != null) return .not_applicable;' in updated
-          assert '.no_match => return .not_applicable' in updated
-          assert '.deferred => return .deferred' in updated
-          assert 'resolveFunctionByName(module_index, reference, input) catch return false' not in updated
-          print('core calls now classify ownership without changing orchestration')
-          PY
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -115,10 +37,6 @@ jobs:
         timeout-minutes: 5
         run: zig build test-internal
 
-      - name: Commit validated core call states
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/global/core.zig
-          git commit -m "Classify core call resolution states"
-          git push origin HEAD:compact-semantic-graph-chatgpt
+      - name: Run program suite
+        timeout-minutes: 15
+        run: zig build test-programs
