@@ -32,3 +32,6 @@ jobs:
       - name: Run internal tests
         timeout-minutes: 5
         run: zig build test-internal
+      - name: Run program tests
+        timeout-minutes: 15
+        run: zig build test-programs
