@@ -509,7 +509,6 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .bool_literal => |value| .{ .bool_literal = value },
             .list_literal => |value| .{ .list_literal = .{
                 .elements = relocatePoolRange(global_sg.GlobalNodeId, o.node_ref_base, value.elements),
-                .element_types = relocatePoolRange(global_sg.GlobalTypeId, o.type_ref_base, value.element_types),
             } },
             .struct_value_literal => |value| .{ .struct_value_literal = .{
                 .fields = relocateEntityRange(global_sg.GlobalValueFieldId, o.value_field_base, value.fields),
