@@ -32,18 +32,13 @@ else:
 
 case_dir = Path("tests/feature_tests/functions/99_codegen_block_last_effect_once")
 case_dir.mkdir(parents=True, exist_ok=True)
-case_dir.joinpath("main.rg").write_text("""counter :: Int32 = 0
-
-touch () -> () := {
-    counter = counter + 1
-}
-
-call_touch () -> () := {
-    touch()
+case_dir.joinpath("main.rg").write_text("""touch(.counter: $&Int32) -> () := {
+    counter& = counter& + 1
 }
 
 main () -> (.status_code: Int32) := {
-    call_touch()
+    counter :: Int32 = 0
+    touch(.counter = $&counter)
     status_code = counter - 1
 }
 """)
