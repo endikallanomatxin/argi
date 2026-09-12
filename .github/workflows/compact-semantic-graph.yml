@@ -18,6 +18,26 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Keep abstract dispatch out of ordinary lookup
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/4_semantics/global/core.zig')
+          text = path.read_text()
+          start = text.index('    pub fn matchFunctionByName(')
+          end = text.index('\n    pub fn resolveFunctionByName(', start)
+          block = text[start:end]
+          needle = '        for (self.graph.functions.items, 0..) |function, raw| {\n            const decl = self.graph.declarations.items[@intFromEnum(function.declaration)];'
+          assert needle in block
+          replacement = '        for (self.graph.functions.items, 0..) |function, raw| {\n            if (function.flags.is_abstract_dispatch) continue;\n            const decl = self.graph.declarations.items[@intFromEnum(function.declaration)];'
+          block = block.replace(needle, replacement, 1)
+          text = text[:start] + block + text[end:]
+          path.write_text(text)
+          assert 'if (function.flags.is_abstract_dispatch) continue;' in path.read_text()[start:end + 100]
+          print('ordinary function lookup excludes abstract dispatch contracts')
+          PY
+
       - name: Stop fallback on deferred resolution
         run: |
           python3 - <<'PY'
@@ -131,6 +151,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/4_semantics/global/semantizer.zig
+          git add src/4_semantics/global/core.zig src/4_semantics/global/semantizer.zig
           git commit -m "Enforce semantic resolution ownership"
           git push origin HEAD:compact-semantic-graph-chatgpt
