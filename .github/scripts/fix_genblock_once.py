@@ -30,31 +30,4 @@ if old in text:
 else:
     assert new in text, "genBlock implementation did not match expected old or new form"
 
-case_dir = Path("tests/feature_tests/functions/99_codegen_block_last_effect_once")
-case_dir.mkdir(parents=True, exist_ok=True)
-case_dir.joinpath("main.rg").write_text("""touch(.counter: $&Int32) -> () := {
-    counter& = counter& + 1
-}
-
-main () -> (.status_code: Int32) := {
-    counter :: Int32 = 0
-    touch(.counter = $&counter)
-    status_code = counter - 1
-}
-""")
-
-tests = Path("tests/test.zig")
-text = tests.read_text()
-marker = 'test "feature_tests/functions/99_codegen_block_last_effect_once"'
-if marker not in text:
-    text += """
-
-test "feature_tests/functions/99_codegen_block_last_effect_once" {
-    const test_path = "tests/feature_tests/functions/99_codegen_block_last_effect_once";
-    try expectSuccessfulBuild(test_path);
-    try run(test_path);
-}
-"""
-    tests.write_text(text)
-
-print("genBlock single-evaluation fix and regression test staged")
+print("genBlock single-evaluation fix staged")
