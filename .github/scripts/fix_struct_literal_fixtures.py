@@ -35,4 +35,25 @@ replace_once(
 """,
 )
 
-print("struct literal fixtures updated")
+replace_once(
+    "src/4_semantics/global/core.zig",
+    """                } else switch (supplied_node.content) {
+                    .string_literal => {
+                        if (self.contextualLiteralFits(node, expected.ty))
+                            score += 3
+                        else
+                            return .no_match;
+                    },
+                    else => return .deferred,
+                }
+""",
+    """                } else if (self.contextualLiteralFits(node, expected.ty)) {
+                    score += 3;
+                } else switch (supplied_node.content) {
+                    .string_literal, .struct_value_literal => return .no_match,
+                    else => return .deferred,
+                }
+""",
+)
+
+print("struct literal fixtures and contextual call matching updated")
