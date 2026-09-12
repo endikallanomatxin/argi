@@ -161,6 +161,35 @@ text = text.replace('''    try std.testing.expectEqual(fixture.declared_type, re
 p.write_text(text)
 
 replace_once(
+    'src/4_semantics/global/generic_functions.zig',
+    '''                .content = .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = local_fields.len }, .ty = expected } },
+''',
+    '''                .content = .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = local_fields.len } } },
+''',
+)
+
+replace_once(
+    'src/4_semantics/global/generic_functions.zig',
+    '''                .struct_value_literal = .{ .fields = .{ .start = start, .len = @intCast(values.items.len) }, .ty = ty },
+''',
+    '''                .struct_value_literal = .{ .fields = .{ .start = start, .len = @intCast(values.items.len) } },
+''',
+)
+
+replace_once(
+    'src/4_semantics/global/generic_functions.zig',
+    '''                .content = .{ .struct_value_literal = .{
+                    .fields = .{ .start = @intCast(self.resolver.graph.value_fields.items.len), .len = 0 },
+                    .ty = ty,
+                } },
+''',
+    '''                .content = .{ .struct_value_literal = .{
+                    .fields = .{ .start = @intCast(self.resolver.graph.value_fields.items.len), .len = 0 },
+                } },
+''',
+)
+
+replace_once(
     'src/5_codegen/global_codegen.zig',
     '''            .struct_value_literal => |literal| try self.structLiteral(literal),
 ''',
