@@ -415,7 +415,7 @@ pub const CodeGenerator = struct {
             .code_block => |block| try self.genBlock(block),
             .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal => try self.emitLiteral(node_id),
             .list_literal => |literal| try self.listLiteral(literal, node.ty),
-            .struct_value_literal => |literal| try self.structLiteral(literal),
+            .struct_value_literal => |literal| try self.structLiteral(literal, node.ty),
             .struct_field_access => |access| try self.fieldAccess(node_id, access),
             .choice_literal => |literal| try self.choiceLiteral(literal),
             .choice_payload_access => |access| try self.choicePayload(node_id, access),
@@ -524,30 +524,31 @@ pub const CodeGenerator = struct {
         return .{ .value_ref = aggregate, .type_ref = type_ref, .ty = ty };
     }
 
-    fn structLiteral(self: *CodeGenerator, literal: anytype) !TypedValue {
-        const type_ref = try self.toLLVMType(literal.ty);
-        const range = types.fields(self.graph, literal.ty) orelse return CodegenError.InvalidType;
-        if (self.isCUnion(literal.ty)) {
+    fn structLiteral(self: *CodeGenerator, literal: anytype, maybe_ty: ?graph_mod.GlobalTypeId) !TypedValue {
+        const ty = maybe_ty orelse return CodegenError.InvalidType;
+        const type_ref = try self.toLLVMType(ty);
+        const range = types.fields(self.graph, ty) orelse return CodegenError.InvalidType;
+        if (self.isCUnion(ty)) {
             const temp = c.LLVMBuildAlloca(self.builder, type_ref, "union.literal");
             for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |value_field| {
                 const name = self.graph.text(value_field.name);
-                const hit = types.findField(self.graph, literal.ty, name) orelse return CodegenError.InvalidType;
+                const hit = types.findField(self.graph, ty, name) orelse return CodegenError.InvalidType;
                 const value = (try self.visitNode(value_field.value)) orelse return CodegenError.ValueNotFound;
                 var lowerer = self.typeLowerer();
                 const pointer = try lowerer.buildUnionFieldPointer(self.builder, temp, types.effectiveFieldType(hit.field), "union.literal.field");
                 _ = c.LLVMBuildStore(self.builder, value.value_ref, pointer);
             }
-            return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, temp, "union.literal.value"), .type_ref = type_ref, .ty = literal.ty };
+            return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, temp, "union.literal.value"), .type_ref = type_ref, .ty = ty };
         }
         var aggregate = c.LLVMGetUndef(type_ref);
         for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |value_field| {
             const name = self.graph.text(value_field.name);
-            const hit = types.findField(self.graph, literal.ty, name) orelse return CodegenError.InvalidType;
+            const hit = types.findField(self.graph, ty, name) orelse return CodegenError.InvalidType;
             const value = (try self.visitNode(value_field.value)) orelse return CodegenError.ValueNotFound;
             aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value.value_ref, hit.index, "struct.field");
         }
         _ = range;
-        return .{ .value_ref = aggregate, .type_ref = type_ref, .ty = literal.ty };
+        return .{ .value_ref = aggregate, .type_ref = type_ref, .ty = ty };
     }
 
     fn fieldAccess(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId, access: anytype) !TypedValue {

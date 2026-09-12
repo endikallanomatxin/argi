@@ -405,7 +405,6 @@ pub fn Node(comptime Ids: type) type {
             },
             struct_value_literal: struct {
                 fields: Range(Ids.ValueFieldId),
-                ty: Ids.TypeId,
                 dispatch_prefix_positional_count: u32 = 0,
             },
             struct_field_access: struct {

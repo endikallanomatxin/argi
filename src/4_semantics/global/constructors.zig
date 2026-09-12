@@ -197,7 +197,6 @@ pub const Resolver = struct {
         if (!try self.core.completeCallInputFields(fields, input)) return .deferred;
 
         self.graph.nodes.items[@intFromEnum(input)].ty = ty;
-        self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.ty = ty;
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(input)];
         self.graph.nodes.items[@intFromEnum(target)].source = .{
@@ -352,7 +351,6 @@ test "declared type call materializes a struct value without visible init" {
     try std.testing.expect((try fixture.resolve()).isResolved());
     const result = fixture.graph.nodes.items[1];
     try std.testing.expectEqual(fixture.declared_type, result.ty.?);
-    try std.testing.expectEqual(fixture.declared_type, result.content.struct_value_literal.ty);
 }
 
 test "declared type call dispatches through visible init" {
@@ -436,7 +434,6 @@ const Fixture = struct {
             .ty = input_type,
             .content = .{ .struct_value_literal = .{
                 .fields = .{ .start = 0, .len = 0 },
-                .ty = input_type,
             } },
         });
         try graph.nodes.append(allocator, .{

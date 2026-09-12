@@ -512,10 +512,8 @@ pub const Context = struct {
             }
             const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.value_fields.items.len);
             try self.graph.semantic.parameterized_storage.ir.value_fields.appendSlice(self.allocator, fields.items);
-            const ty = try self.parameterizedBuiltin(.Any);
-            return self.addResolvedNode(node, ty, .{ .struct_value_literal = .{
+            return self.addResolvedNode(node, null, .{ .struct_value_literal = .{
                 .fields = .{ .start = start, .len = @intCast(fields.items.len) },
-                .ty = ty,
             } });
         }
         // Keep the few parameter-independent leaves compact and represent every
@@ -655,7 +653,7 @@ pub const Context = struct {
         return id;
     }
 
-    fn addResolvedNode(self: *Context, node: syn.NodeIndex, ty: ir.ParameterizedTypeId, content: ir.ResolvedNode.Content) !ir.ParameterizedNodeId {
+    fn addResolvedNode(self: *Context, node: syn.NodeIndex, ty: ?ir.ParameterizedTypeId, content: ir.ResolvedNode.Content) !ir.ParameterizedNodeId {
         const id: ir.ParameterizedNodeId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.nodes.items.len)));
         try self.graph.semantic.parameterized_storage.ir.nodes.append(self.allocator, .{ .resolved = .{
             .source = self.sourceRef(node),

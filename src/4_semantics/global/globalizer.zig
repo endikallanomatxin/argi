@@ -512,7 +512,6 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             } },
             .struct_value_literal => |value| .{ .struct_value_literal = .{
                 .fields = relocateEntityRange(global_sg.GlobalValueFieldId, o.value_field_base, value.fields),
-                .ty = globalType(o, value.ty),
                 .dispatch_prefix_positional_count = value.dispatch_prefix_positional_count,
             } },
             .struct_field_access => |value| .{ .struct_field_access = .{

@@ -390,10 +390,8 @@ const Context = struct {
         }
         const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
         try self.graph.semantic.value_fields.appendSlice(self.allocator, values.items);
-        const ty = try self.builtin(.Any);
-        return self.resolved(node, ty, .{ .struct_value_literal = .{
+        return self.resolved(node, null, .{ .struct_value_literal = .{
             .fields = .{ .start = start, .len = @intCast(literal.fields.len) },
-            .ty = ty,
             .dispatch_prefix_positional_count = literal.positional_prefix_count,
         } });
     }
