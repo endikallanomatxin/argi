@@ -155,7 +155,7 @@ pub const Resolver = struct {
             .resolve_field => |value| resolution.Result.fromBool(try self.resolveField(module, o, value)),
             .resolve_binary => |value| resolution.Result.fromBool(try self.resolveBinary(module_index, o, value)),
             .resolve_comparison => |value| resolution.Result.fromBool(try self.resolveComparison(module_index, o, value)),
-            .resolve_index => |value| resolution.Result.fromBool(try self.resolveIndex(module_index, o, value)),
+            .resolve_index => |value| try self.resolveIndex(module_index, o, value),
             else => .not_applicable,
         };
     }
@@ -506,10 +506,10 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn resolveIndex(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !bool {
+    fn resolveIndex(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
         const collection = globalizer.globalNode(o, value.value);
         const index = globalizer.globalNode(o, value.index);
-        const collection_ty = self.graph.nodes.items[@intFromEnum(collection)].ty orelse return false;
+        const collection_ty = self.graph.nodes.items[@intFromEnum(collection)].ty orelse return .deferred;
         if (types.arrayElement(self.graph, collection_ty)) |element_ty| {
             const target = globalizer.globalNode(o, value.node);
             self.graph.nodes.items[@intFromEnum(target)] = if (value.store_value) |local_store| .{
@@ -533,7 +533,7 @@ pub const Resolver = struct {
                 } },
             };
             self.stats.indexes += 1;
-            return true;
+            return .resolved;
         }
         const operator: callable.OperatorKind = if (value.store_value == null) .get else .set;
         var operands: [3]global_sg.GlobalNodeId = undefined;
@@ -545,8 +545,11 @@ pub const Resolver = struct {
             count = 3;
         }
         var operand_types: [3]global_sg.GlobalTypeId = undefined;
-        for (operands[0..count], 0..) |node, i| operand_types[i] = self.graph.nodes.items[@intFromEnum(node)].ty orelse return false;
-        const function = self.resolveOperator(module_index, operator, operand_types[0..count]) catch return false;
+        for (operands[0..count], 0..) |node, i| operand_types[i] = self.graph.nodes.items[@intFromEnum(node)].ty orelse return .deferred;
+        const function = self.resolveOperator(module_index, operator, operand_types[0..count]) catch switch (self.graph.types.items[@intFromEnum(collection_ty)]) {
+            .generic => return .not_applicable,
+            else => return .deferred,
+        };
         const input = try self.makeCallInput(function, operands[0..count]);
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -555,7 +558,7 @@ pub const Resolver = struct {
             .content = .{ .function_call = .{ .callee = function, .input = input } },
         };
         self.stats.indexes += 1;
-        return true;
+        return .resolved;
     }
 
     pub const CallInputMatch = union(enum) {
