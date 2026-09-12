@@ -256,7 +256,7 @@ const Context = struct {
             .char_literal => |item| self.resolved(node, try self.builtin(.Char), .{ .char_literal = item }),
             .string_literal => blk: {
                 const text = try self.writer.addString(self.tree.tokenTextFromSource(self.source, literal.token));
-                break :blk try self.resolved(node, try self.builtin(.Any), .{ .string_literal = text });
+                break :blk try self.resolved(node, null, .{ .string_literal = text });
             },
         };
     }
