@@ -16,6 +16,7 @@ const abstract_mod = @import("abstracts.zig");
 const error_mod = @import("errors.zig");
 const ownership_mod = @import("ownership.zig");
 const resolution = @import("resolution.zig");
+const dispatch_mod = @import("dispatch.zig");
 
 pub const Stats = struct {
     core: core_mod.Stats = .{},
@@ -150,6 +151,13 @@ pub fn semantize(
         .core = &core,
     };
     defer ownership.deinit();
+    var dispatch = dispatch_mod.Resolver{
+        .core = &core,
+        .generic_functions = &generic_functions,
+        .constructors = &constructors,
+        .abstracts = &abstracts,
+        .control = &control,
+    };
 
     try core.resolveExternalTypes();
     try generics.resolveExternalTypes();
@@ -172,10 +180,9 @@ pub fn semantize(
             if (try resolvePendingPhase(
                 &core,
                 &expressions,
-                &constructors,
+                &dispatch,
                 &control,
                 &generics,
-                &generic_functions,
                 &abstracts,
                 &errors,
                 &ownership,
@@ -250,10 +257,9 @@ pub fn semantize(
 fn resolvePendingPhase(
     core: *core_mod.Resolver,
     expressions: *expression_mod.Resolver,
-    constructors: *constructor_mod.Resolver,
+    dispatch: *dispatch_mod.Resolver,
     control: *control_mod.Resolver,
     generics: *generic_mod.Resolver,
-    generic_functions: *generic_functions_mod.Resolver,
     abstracts: *abstract_mod.Resolver,
     errors: *error_mod.Resolver,
     ownership: *ownership_mod.Resolver,
@@ -271,10 +277,9 @@ fn resolvePendingPhase(
                 const result = try resolvePendingOperation(
                     core,
                     expressions,
-                    constructors,
+                    dispatch,
                     control,
                     generics,
-                    generic_functions,
                     abstracts,
                     errors,
                     ownership,
@@ -376,61 +381,12 @@ fn resolveTypeOperation(
     return ownedResult(result);
 }
 
-fn resolveCallOperation(
-    core: *core_mod.Resolver,
-    generic_functions: *generic_functions_mod.Resolver,
-    constructors: *constructor_mod.Resolver,
-    abstracts: *abstract_mod.Resolver,
-    control: *control_mod.Resolver,
-    module_index: usize,
-    module: *const module_sg.ModuleSemanticGraph,
-    o: globalizer.Offsets,
-    operation: module_entities.PendingOperation,
-) !resolution.Result {
-    // `.resolve_call` has one owner: this coordinator. The ordered strategies
-    // encode language precedence, not competing ownership. A strategy may
-    // decline with `not_applicable`; once one defers or resolves, later
-    // strategies are not consulted during that pass.
-    const core_result = try core.tryResolve(module_index, module, o, operation);
-    if (!core_result.allowsFallback()) return core_result;
-
-    const generic_result = try generic_functions.tryResolve(module_index, module, o, operation);
-    if (!generic_result.allowsFallback()) return generic_result;
-
-    const constructor_result = try constructors.tryResolve(module_index, module, o, operation);
-    if (!constructor_result.allowsFallback()) return constructor_result;
-
-    const abstract_result = try abstracts.tryResolve(module_index, module, o, operation);
-    if (!abstract_result.allowsFallback()) return abstract_result;
-
-    const control_result = try control.tryResolve(module_index, module, o, operation);
-    return if (control_result.allowsFallback()) .deferred else control_result;
-}
-
-fn resolveIndexOperation(
-    core: *core_mod.Resolver,
-    generic_functions: *generic_functions_mod.Resolver,
-    module_index: usize,
-    module: *const module_sg.ModuleSemanticGraph,
-    o: globalizer.Offsets,
-    operation: module_entities.PendingOperation,
-) !resolution.Result {
-    // Index resolution owns both built-in/operator indexing and generic
-    // container indexing. Core and generic-functions are implementation
-    // strategies selected as more type information becomes available.
-    const core_result = try core.tryResolve(module_index, module, o, operation);
-    if (!core_result.allowsFallback()) return core_result;
-    const generic_result = try generic_functions.tryResolve(module_index, module, o, operation);
-    return if (generic_result.allowsFallback()) .deferred else generic_result;
-}
-
 fn resolvePendingOperation(
     core: *core_mod.Resolver,
     expressions: *expression_mod.Resolver,
-    constructors: *constructor_mod.Resolver,
+    dispatch: *dispatch_mod.Resolver,
     control: *control_mod.Resolver,
     generics: *generic_mod.Resolver,
-    generic_functions: *generic_functions_mod.Resolver,
     abstracts: *abstract_mod.Resolver,
     errors: *error_mod.Resolver,
     ownership: *ownership_mod.Resolver,
@@ -441,18 +397,8 @@ fn resolvePendingOperation(
 ) !resolution.Result {
     return switch (pendingOwner(operation)) {
         .types => resolveTypeOperation(core, generics, module_index, module, o, operation),
-        .calls => resolveCallOperation(
-            core,
-            generic_functions,
-            constructors,
-            abstracts,
-            control,
-            module_index,
-            module,
-            o,
-            operation,
-        ),
-        .indexing => resolveIndexOperation(core, generic_functions, module_index, module, o, operation),
+        .calls => dispatch.resolveCall(module_index, module, o, operation),
+        .indexing => dispatch.resolveIndex(module_index, module, o, operation),
         .core => ownedResult(try core.tryResolve(module_index, module, o, operation)),
         .expressions => ownedResult(try expressions.tryResolve(module_index, module, o, operation)),
         .control => ownedResult(try control.tryResolve(module_index, module, o, operation)),
