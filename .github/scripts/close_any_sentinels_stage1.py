@@ -35,7 +35,7 @@ replace(
         const body = self.graph.semantic.blocks.items[@intFromEnum(block)];
         const ty: ?entities.ModuleTypeId = if (body.ret_val) |ret_val|
             switch (self.graph.semantic.nodes.items[@intFromEnum(ret_val)]) {
-                .resolved => |resolved| resolved.ty,
+                .resolved => |resolved_node| resolved_node.ty,
                 .pending => null,
             }
         else
@@ -69,7 +69,7 @@ replace(
         const body = self.graph.semantic.parameterized_storage.ir.blocks.items[@intFromEnum(block)];
         const ty: ?ir.ParameterizedTypeId = if (body.ret_val) |ret_val|
             switch (self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(ret_val)]) {
-                .resolved => |resolved| resolved.ty,
+                .resolved => |resolved_node| resolved_node.ty,
                 .pending => null,
             }
         else
