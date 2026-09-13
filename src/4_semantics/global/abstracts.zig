@@ -214,13 +214,12 @@ pub const Resolver = struct {
     }
 
     pub fn resolveNestedCall(
-        context: *anyopaque,
+        self: *Resolver,
         module_index: usize,
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
         source: primitives.SourceRef,
     ) anyerror!?global_sg.Node {
-        const self: *Resolver = @ptrCast(@alignCast(context));
         return self.makeVirtualCall(module_index, reference, input, source);
     }
 
