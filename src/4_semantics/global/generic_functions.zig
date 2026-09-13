@@ -8,6 +8,7 @@ const globalizer = @import("globalizer.zig");
 const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
+const abstract_mod = @import("abstracts.zig");
 const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
 
@@ -24,8 +25,8 @@ pub const Resolver = struct {
     offsets: []const globalizer.Offsets,
     core: *core_mod.Resolver,
     generics: *generic_mod.Resolver,
-    nested_call_context: ?*anyopaque = null,
-    nested_call_resolver: ?*const fn (*anyopaque, usize, module_entities.ExternalRef, global_sg.GlobalNodeId, primitives.SourceRef) anyerror!?global_sg.Node = null,
+    nested_call_context: ?*abstract_mod.Resolver = null,
+    nested_call_resolver: ?*const fn (*abstract_mod.Resolver, usize, module_entities.ExternalRef, global_sg.GlobalNodeId, primitives.SourceRef) anyerror!?global_sg.Node = null,
     stats: Stats = .{},
 
     pub fn tryResolve(
@@ -354,8 +355,6 @@ pub const Resolver = struct {
     }
 
     fn matchParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) core_mod.Resolver.CallInputMatch {
-        // Signature probing must not create persistent generic identities on
-        // each deferred retry, which would prevent the fixed point from closing.
         const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
         var lengths: [pools.len]usize = undefined;
         inline for (pools, 0..) |pool, index| lengths[index] = @field(self.graph, pool.name).items.len;
@@ -369,8 +368,6 @@ pub const Resolver = struct {
         return self.core.matchCallInput(fields, input);
     }
 
-    // Infer from named input fields before materializing a function. Missing
-    // defaulted fields supply no evidence; repeated parameters must agree.
     fn inferInputType(
         self: *Resolver,
         module_index: usize,
@@ -511,9 +508,6 @@ pub const Resolver = struct {
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
     ) !global_sg.GlobalFunctionId {
         if (self.findExisting(declaration, arguments)) |id| return id;
-        // Candidate bodies can fail while their dependencies remain deferred.
-        // Discard every appended pool entry so retries never reuse a partial
-        // function or leave nested instances referring to abandoned nodes.
         const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
         var lengths: [pools.len]usize = undefined;
         inline for (pools, 0..) |pool, index| lengths[index] = @field(self.graph, pool.name).items.len;
@@ -542,9 +536,6 @@ pub const Resolver = struct {
         const input_bindings = try context.instantiateBindingRange(located.parameterized.input_bindings);
         const output_bindings = try context.instantiateBindingRange(located.parameterized.output_bindings);
 
-        // Reserve the function and identity before its body. Recursive generic
-        // calls can now discover this exact monomorphization while the body is
-        // still being instantiated.
         const function_id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(self.graph.functions.items.len)));
         try self.graph.functions.append(self.allocator, .{
             .declaration = declaration,
@@ -716,7 +707,6 @@ pub const Resolver = struct {
             if (self.block_map[@intFromEnum(id)]) |existing| return existing;
             const local = self.resolver.modules[self.module_index].semantic.parameterized_storage.ir.blocks.items[@intFromEnum(id)];
             const global: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.blocks.items.len)));
-            // Reserve to support nested/self-referential block graphs.
             try self.resolver.graph.blocks.append(self.resolver.allocator, .{ .nodes = .{ .start = 0, .len = 0 }, .ret_val = null });
             self.block_map[@intFromEnum(id)] = global;
 
@@ -741,7 +731,6 @@ pub const Resolver = struct {
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             const local = storage.nodes.items[@intFromEnum(id)];
             const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.nodes.items.len)));
-            // Reserve the slot first so recursive expression graphs remain stable.
             try self.resolver.graph.nodes.append(self.resolver.allocator, .{
                 .source = .{ .file_index = 0, .offset = 0 },
                 .ty = null,
