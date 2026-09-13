@@ -131,7 +131,10 @@ pub const Resolver = struct {
     fn materializeInferredErrable(self: *Resolver, id: global_sg.GlobalTypeId, child: global_sg.GlobalTypeId) !void {
         const ok_name = try self.graph.addString(self.allocator, "ok");
         const error_name = try self.graph.addString(self.allocator, "error");
-        const any = try self.builtin(.Any);
+        // `Any` here is the language wildcard for the still-open error
+        // family of `!T`; it is not a missing-type sentinel. Construction holes
+        // are represented by explicit resolution metadata elsewhere.
+        const open_error_payload = try self.builtin(.Any);
         const source = self.syntheticSource();
         const variant_start: u32 = @intCast(self.graph.variants.items.len);
         try self.graph.variants.append(self.allocator, .{
@@ -142,7 +145,7 @@ pub const Resolver = struct {
         });
         try self.graph.variants.append(self.allocator, .{
             .name = error_name,
-            .payload_type = any,
+            .payload_type = open_error_payload,
             .source = source,
             .value = 1,
         });

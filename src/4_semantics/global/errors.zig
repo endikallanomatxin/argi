@@ -42,7 +42,7 @@ pub const Resolver = struct {
         const ok = global_types.findVariant(self.graph, errable_ty, "ok") orelse return false;
         const err = global_types.findVariant(self.graph, errable_ty, "error") orelse return false;
         const ok_payload = ok.variant.payload_type orelse try self.builtin(.Void);
-        const error_payload = err.variant.payload_type orelse try self.builtin(.Any);
+        const error_payload = err.variant.payload_type orelse try self.builtin(.Void);
         const result_ty = unwrapSingleField(self.graph, ok_payload) orelse ok_payload;
 
         const target = globalizer.globalNode(o, value.node);
