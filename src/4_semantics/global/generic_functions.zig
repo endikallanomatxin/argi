@@ -778,6 +778,12 @@ pub const Resolver = struct {
                 }
             } else if (local.resolved.content == .struct_value_literal) {
                 return self.instantiateStructValueWithExpected(id, local.resolved, expected);
+            } else if (local.resolved.content == .string_literal) {
+                const global = try self.instantiateNode(id);
+                const current = self.resolver.graph.nodes.items[@intFromEnum(global)].ty;
+                if (current == null or !global_types.equal(self.resolver.graph, current.?, expected))
+                    _ = self.resolver.core.coerceContextualValue(global, expected);
+                return global;
             }
             return self.instantiateNode(id);
         }
@@ -811,7 +817,10 @@ pub const Resolver = struct {
             self.resolver.graph.nodes.items[@intFromEnum(global)] = .{
                 .source = self.resolver.sourceFor(self.module_index, node.source),
                 .ty = expected,
-                .content = .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = local_fields.len } } },
+                .content = .{ .struct_value_literal = .{
+                    .fields = .{ .start = start, .len = local_fields.len },
+                    .dispatch_prefix_positional_count = node.content.struct_value_literal.dispatch_prefix_positional_count,
+                } },
             };
             self.resolver.stats.nodes += 1;
             return global;
@@ -819,6 +828,19 @@ pub const Resolver = struct {
 
         fn instantiateResolvedNode(self: *InstanceContext, node: ir.ResolvedNode) anyerror!global_sg.Node {
             if (node.content == .struct_value_literal) return self.instantiateStructValue(node);
+            if (node.content == .code_block) {
+                const block = try self.instantiateBlock(node.content.code_block);
+                const body = self.resolver.graph.blocks.items[@intFromEnum(block)];
+                const ty: ?global_sg.GlobalTypeId = if (body.ret_val) |ret_val|
+                    self.resolver.graph.nodes.items[@intFromEnum(ret_val)].ty
+                else
+                    try self.resolver.generics.internType(.{ .builtin = .Void });
+                return .{
+                    .source = self.resolver.sourceFor(self.module_index, node.source),
+                    .ty = ty,
+                    .content = .{ .code_block = block },
+                };
+            }
             if (node.content == .binding_use or node.content == .binding_declaration) {
                 const declaration = node.content == .binding_declaration;
                 const binding = try self.instantiateBinding(if (declaration) node.content.binding_declaration else node.content.binding_use);
@@ -828,7 +850,12 @@ pub const Resolver = struct {
                     .content = if (declaration) .{ .binding_declaration = binding } else .{ .binding_use = binding },
                 };
             }
-            const ty = if (node.ty) |value| try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions, null) else null;
+            const ty = if (node.ty) |value|
+                try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions, null)
+            else if (node.content == .string_literal)
+                self.resolver.core.defaultStringLiteralType()
+            else
+                null;
             return .{
                 .source = self.resolver.sourceFor(self.module_index, node.source),
                 .ty = ty,
@@ -859,11 +886,13 @@ pub const Resolver = struct {
 
         fn instantiateStructValue(self: *InstanceContext, node: ir.ResolvedNode) !global_sg.Node {
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
-            const range = node.content.struct_value_literal.fields;
+            const literal = node.content.struct_value_literal;
+            const range = literal.fields;
             var values: std.ArrayList(global_sg.ValueField) = .empty;
             defer values.deinit(self.resolver.allocator);
             var fields: std.ArrayList(global_sg.Field) = .empty;
             defer fields.deinit(self.resolver.allocator);
+            var complete_type = true;
             var choice_context: ?global_sg.GlobalTypeId = null;
             for (storage.value_fields.items[range.start..][0..range.len]) |field| {
                 if (!std.mem.eql(u8, self.resolver.modules[self.module_index].text(field.name), "value")) continue;
@@ -881,22 +910,33 @@ pub const Resolver = struct {
                     try self.instantiateNode(field.value);
                 const name = try self.copyString(field.name);
                 try values.append(self.resolver.allocator, .{ .name = name, .value = value });
-                try fields.append(self.resolver.allocator, .{
-                    .name = name,
-                    .ty = self.resolver.graph.nodes.items[@intFromEnum(value)].ty orelse return error.MissingParameterizedValueType,
-                    .source = self.resolver.sourceFor(self.module_index, node.source),
-                });
+                if (self.resolver.graph.nodes.items[@intFromEnum(value)].ty) |field_ty| {
+                    try fields.append(self.resolver.allocator, .{
+                        .name = name,
+                        .ty = field_ty,
+                        .source = self.resolver.sourceFor(self.module_index, node.source),
+                    });
+                } else {
+                    complete_type = false;
+                }
             }
-            const field_start: u32 = @intCast(self.resolver.graph.fields.items.len);
-            try self.resolver.graph.fields.appendSlice(self.resolver.allocator, fields.items);
-            const ty: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.types.items.len)));
-            try self.resolver.graph.types.append(self.resolver.allocator, .{ .structural = .{
-                .fields = .{ .start = field_start, .len = @intCast(fields.items.len) },
-            } });
+            var ty: ?global_sg.GlobalTypeId = null;
+            if (complete_type) {
+                const field_start: u32 = @intCast(self.resolver.graph.fields.items.len);
+                try self.resolver.graph.fields.appendSlice(self.resolver.allocator, fields.items);
+                const structural: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.types.items.len)));
+                try self.resolver.graph.types.append(self.resolver.allocator, .{ .structural = .{
+                    .fields = .{ .start = field_start, .len = @intCast(fields.items.len) },
+                } });
+                ty = structural;
+            }
             const start: u32 = @intCast(self.resolver.graph.value_fields.items.len);
             try self.resolver.graph.value_fields.appendSlice(self.resolver.allocator, values.items);
             return .{ .source = self.resolver.sourceFor(self.module_index, node.source), .ty = ty, .content = .{
-                .struct_value_literal = .{ .fields = .{ .start = start, .len = @intCast(values.items.len) } },
+                .struct_value_literal = .{
+                    .fields = .{ .start = start, .len = @intCast(values.items.len) },
+                    .dispatch_prefix_positional_count = literal.dispatch_prefix_positional_count,
+                },
             } };
         }
 

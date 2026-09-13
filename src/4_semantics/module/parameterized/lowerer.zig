@@ -523,6 +523,7 @@ pub const Context = struct {
             try self.graph.semantic.parameterized_storage.ir.value_fields.appendSlice(self.allocator, fields.items);
             return self.addResolvedNode(node, null, .{ .struct_value_literal = .{
                 .fields = .{ .start = start, .len = @intCast(fields.items.len) },
+                .dispatch_prefix_positional_count = literal.positional_prefix_count,
             } });
         }
         // Keep the few parameter-independent leaves compact and represent every
