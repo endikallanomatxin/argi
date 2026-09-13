@@ -531,7 +531,7 @@ pub const Context = struct {
                 },
                 .bool_literal => |value| self.addResolvedNode(node, try self.parameterizedBuiltin(.Bool), .{ .bool_literal = value }),
                 .char_literal => |value| self.addResolvedNode(node, try self.parameterizedBuiltin(.Char), .{ .char_literal = value }),
-                .string_literal => self.addResolvedNode(node, try self.parameterizedBuiltin(.Any), .{
+                .string_literal => self.addResolvedNode(node, null, .{
                     .string_literal = try self.writer.addString(self.tree.tokenTextFromSource(self.source, literal.token)),
                 }),
             };
@@ -633,7 +633,15 @@ pub const Context = struct {
 
     fn blockAsNode(self: *Context, node: syn.NodeIndex) !ir.ParameterizedNodeId {
         const block = try self.lowerBlock(node);
-        return self.addResolvedNode(node, try self.parameterizedBuiltin(.Any), .{ .code_block = block });
+        const body = self.graph.semantic.parameterized_storage.ir.blocks.items[@intFromEnum(block)];
+        const ty: ?ir.ParameterizedTypeId = if (body.ret_val) |ret_val|
+            switch (self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(ret_val)]) {
+                .resolved => |resolved_node| resolved_node.ty,
+                .pending => null,
+            }
+        else
+            try self.parameterizedBuiltin(.Void);
+        return self.addResolvedNode(node, ty, .{ .code_block = block });
     }
 
     fn addPending(self: *Context, node: syn.NodeIndex, kind: ir.PendingExpressionKind, operands: []const ir.ParameterizedNodeId, name: ?primitives.StringRange, expected: ?ir.ParameterizedTypeId, detail: ir.PendingExpressionDetail) !ir.ParameterizedNodeId {
