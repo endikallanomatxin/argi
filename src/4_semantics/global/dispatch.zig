@@ -7,6 +7,7 @@ const constructor_mod = @import("constructors.zig");
 const control_mod = @import("control.zig");
 const generic_functions_mod = @import("generic_functions.zig");
 const abstract_mod = @import("abstracts.zig");
+const call_compatibility = @import("call_compatibility.zig");
 
 /// Owns operations whose language-level resolution is deliberately composed
 /// from several specialized strategies. Strategy fallback stays private to
@@ -27,6 +28,15 @@ pub const Resolver = struct {
     ) !resolution.Result {
         const core_result = try self.core.tryResolve(module_index, module, o, operation);
         if (!core_result.allowsFallback()) return core_result;
+
+        const abstract_ordinary_result = try call_compatibility.tryResolveOrdinaryCall(
+            .{ .core = self.core, .abstracts = self.abstracts },
+            module_index,
+            module,
+            o,
+            operation,
+        );
+        if (!abstract_ordinary_result.allowsFallback()) return abstract_ordinary_result;
 
         const generic_result = try self.generic_functions.tryResolve(module_index, module, o, operation);
         if (!generic_result.allowsFallback()) return generic_result;
