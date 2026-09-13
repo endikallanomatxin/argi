@@ -44,6 +44,11 @@ pub fn build(
     var graph = try module_sg.build(allocator, module_dir, files);
     errdefer graph.deinit(allocator);
 
+    // The syntax-oriented builder still produces a compatibility prefix while
+    // discovering declarations. Collapse it immediately so every semantic
+    // lowerer below observes and extends one canonical Module* ID space.
+    try canonicalize_storage.run(allocator, &graph);
+
     const module_aliases = try module_alias_lowerer.lower(allocator, &graph, files);
     const initializers = try initializer_lowerer.lower(allocator, &graph, files);
     try lowerOperatorMetadata(allocator, &graph, files);
@@ -61,7 +66,6 @@ pub fn build(
     const relation_stats = try abstract_relation_lowerer.lower(allocator, &graph, files);
     const generic_calls = try generic_call_args_lowerer.lower(allocator, &graph, files);
 
-    try canonicalize_storage.run(allocator, &graph);
     graph.semantic.local_semantics_complete = true;
     try complete_verify.verifyModule(&graph);
 
