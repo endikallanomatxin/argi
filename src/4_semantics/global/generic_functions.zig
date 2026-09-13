@@ -9,6 +9,7 @@ const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
 const abstract_mod = @import("abstracts.zig");
+const call_compatibility = @import("call_compatibility.zig");
 const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
 
@@ -365,6 +366,9 @@ pub const Resolver = struct {
         }
         const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return .deferred;
         const fields = self.interfaceFields(ty) catch return .deferred;
+        if (self.nested_call_context) |abstracts| {
+            return call_compatibility.matchInput(.{ .core = self.core, .abstracts = abstracts }, fields, input);
+        }
         return self.core.matchCallInput(fields, input);
     }
 
@@ -393,7 +397,11 @@ pub const Resolver = struct {
                     if (pointer.mutability == .read_write and value.mutability != .read_write) return false;
                     if (try self.inferInputType(module_index, pointer.child, value.child, bindings)) return true;
                     const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return false;
-                    return self.core.callTypesCompatible(actual, expected);
+                    if (self.core.callTypesCompatible(actual, expected)) return true;
+                    if (self.nested_call_context) |abstracts| {
+                        return (call_compatibility.Abstract{ .core = self.core, .abstracts = abstracts }).compatible(actual, expected);
+                    }
+                    return false;
                 },
                 .structural => |shape| {
                     const fields = global_types.fields(self.graph, actual) orelse return false;
