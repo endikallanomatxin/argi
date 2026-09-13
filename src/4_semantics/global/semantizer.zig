@@ -29,6 +29,7 @@ pub const Stats = struct {
     ownership: ownership_mod.Stats = .{},
     pending_total: u32 = 0,
     pending_resolved: u32 = 0,
+    pending_attempts: u64 = 0,
     remaining: u32 = 0,
 };
 
@@ -69,6 +70,67 @@ const pending_phases = [_]PendingPhase{
     .control_and_abstracts,
     .errors,
     .ownership,
+};
+
+const PendingWorkItem = struct {
+    module_index: u32,
+    operation_index: u32,
+    flat_index: u32,
+};
+
+/// Pending operations are routed once, then only unresolved work is retained.
+/// This preserves source order inside each phase while avoiding repeated scans
+/// of unrelated phases and already-resolved operations on every fixed-point
+/// iteration.
+const PendingWorklists = struct {
+    types_and_generics: std.ArrayList(PendingWorkItem) = .empty,
+    expressions_and_calls: std.ArrayList(PendingWorkItem) = .empty,
+    control_and_abstracts: std.ArrayList(PendingWorkItem) = .empty,
+    errors: std.ArrayList(PendingWorkItem) = .empty,
+    ownership: std.ArrayList(PendingWorkItem) = .empty,
+
+    fn init(allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph) !PendingWorklists {
+        var result: PendingWorklists = .{};
+        errdefer result.deinit(allocator);
+        var flat: u32 = 0;
+        for (modules, 0..) |*module, module_index| {
+            for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
+                try result.forPhase(pendingPhase(operation)).append(allocator, .{
+                    .module_index = @intCast(module_index),
+                    .operation_index = @intCast(operation_index),
+                    .flat_index = flat,
+                });
+                flat = std.math.add(u32, flat, 1) catch return error.TooManyPendingOperations;
+            }
+        }
+        return result;
+    }
+
+    fn deinit(self: *PendingWorklists, allocator: std.mem.Allocator) void {
+        self.types_and_generics.deinit(allocator);
+        self.expressions_and_calls.deinit(allocator);
+        self.control_and_abstracts.deinit(allocator);
+        self.errors.deinit(allocator);
+        self.ownership.deinit(allocator);
+    }
+
+    fn forPhase(self: *PendingWorklists, phase: PendingPhase) *std.ArrayList(PendingWorkItem) {
+        return switch (phase) {
+            .types_and_generics => &self.types_and_generics,
+            .expressions_and_calls => &self.expressions_and_calls,
+            .control_and_abstracts => &self.control_and_abstracts,
+            .errors => &self.errors,
+            .ownership => &self.ownership,
+        };
+    }
+
+    fn remaining(self: *const PendingWorklists) usize {
+        return self.types_and_generics.items.len +
+            self.expressions_and_calls.items.len +
+            self.control_and_abstracts.items.len +
+            self.errors.items.len +
+            self.ownership.items.len;
+    }
 };
 
 pub fn semantize(
@@ -167,6 +229,9 @@ pub fn semantize(
     const resolved = try allocator.alloc(bool, total);
     defer allocator.free(resolved);
     @memset(resolved, false);
+    var worklists = try PendingWorklists.init(allocator, modules);
+    defer worklists.deinit(allocator);
+    var pending_attempts: u64 = 0;
 
     // GlobalSema is staged by semantic domain. The outer fixed point remains
     // while dependencies between phases are still being made explicit; every
@@ -187,7 +252,8 @@ pub fn semantize(
                 modules,
                 relocation.offsets.items,
                 resolved,
-                phase,
+                worklists.forPhase(phase),
+                &pending_attempts,
             )) changed = true;
         }
 
@@ -204,11 +270,8 @@ pub fn semantize(
     try abstracts.validateGenericFunctionInstances();
     control.annotateChoiceTests();
 
-    var resolved_count: usize = 0;
-    for (resolved) |done| if (done) {
-        resolved_count += 1;
-    };
-    const remaining = total - resolved_count;
+    const remaining = worklists.remaining();
+    const resolved_count = total - remaining;
     if (remaining != 0) {
         dumpUnresolved(modules, resolved);
         return error.UnsupportedGlobalSemantic;
@@ -244,6 +307,7 @@ pub fn semantize(
         .ownership = ownership.stats,
         .pending_total = @intCast(total),
         .pending_resolved = @intCast(resolved_count),
+        .pending_attempts = pending_attempts,
         .remaining = 0,
     };
 
@@ -264,36 +328,42 @@ fn resolvePendingPhase(
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     resolved: []bool,
-    phase: PendingPhase,
+    work: *std.ArrayList(PendingWorkItem),
+    pending_attempts: *u64,
 ) !bool {
     var changed = false;
-    var flat: usize = 0;
-    for (modules, 0..) |*module, module_index| {
-        const o = offsets[module_index];
-        for (module.semantic.pending_operations.items) |operation| {
-            if (!resolved[flat] and pendingPhase(operation) == phase) {
-                const result = try resolvePendingOperation(
-                    core,
-                    expressions,
-                    dispatch,
-                    control,
-                    generics,
-                    abstracts,
-                    errors,
-                    ownership,
-                    module_index,
-                    module,
-                    o,
-                    operation,
-                );
-                if (result.isResolved()) {
-                    resolved[flat] = true;
-                    changed = true;
-                }
-            }
-            flat += 1;
+    var write: usize = 0;
+    const original_len = work.items.len;
+    for (work.items[0..original_len]) |item| {
+        pending_attempts.* += 1;
+        const module_index: usize = @intCast(item.module_index);
+        const operation_index: usize = @intCast(item.operation_index);
+        const flat_index: usize = @intCast(item.flat_index);
+        const module = &modules[module_index];
+        const operation = module.semantic.pending_operations.items[operation_index];
+        const result = try resolvePendingOperation(
+            core,
+            expressions,
+            dispatch,
+            control,
+            generics,
+            abstracts,
+            errors,
+            ownership,
+            module_index,
+            module,
+            offsets[module_index],
+            operation,
+        );
+        if (result.isResolved()) {
+            resolved[flat_index] = true;
+            changed = true;
+        } else {
+            work.items[write] = item;
+            write += 1;
         }
     }
+    work.shrinkRetainingCapacity(write);
     return changed;
 }
 
@@ -423,8 +493,6 @@ fn markUnresolvedTypeSlots(
     }
 }
 
-
-
 fn dumpUnresolved(modules: []const module_sg.ModuleSemanticGraph, resolved: []const bool) void {
     var flat: usize = 0;
     var shown: usize = 0;
@@ -503,5 +571,6 @@ test "global semantizer accepts an empty program" {
     defer result.graph.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), result.graph.nodes.items.len);
     try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
+    try std.testing.expectEqual(@as(u64, 0), result.stats.pending_attempts);
     try std.testing.expectEqual(@as(usize, 0), result.graph.type_resolution.items.len);
 }
