@@ -1,0 +1,46 @@
+name: Point 2 migration
+
+on:
+  push:
+    branches:
+      - compact-semantic-graph-chatgpt
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply point 2 migration
+        run: python3 .github/scripts/close_any_sentinels_stage1.py
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Install LLVM 21
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+          sudo apt-get install -y llvm-21-dev clang-21
+      - name: Build compiler
+        run: zig build
+      - name: Run internal tests
+        timeout-minutes: 5
+        run: zig build test-internal
+      - name: Commit migration
+        run: |
+          if git diff --quiet -- src/4_semantics; then
+            echo "No source changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/4_semantics
+          git commit -m "Remove remaining contextual Any sentinels"
+          git push origin HEAD:compact-semantic-graph-chatgpt
