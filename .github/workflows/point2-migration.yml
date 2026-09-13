@@ -30,6 +30,9 @@ jobs:
           sudo apt-get install -y llvm-21-dev clang-21
       - name: Build compiler
         run: zig build
+      - name: Run focused LSP regression
+        timeout-minutes: 5
+        run: zig build test-internal -Dtest-filter="definition responds with target location over protocol"
       - name: Run internal tests
         timeout-minutes: 5
         run: zig build test-internal
