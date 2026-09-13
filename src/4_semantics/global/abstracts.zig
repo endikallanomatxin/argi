@@ -160,9 +160,6 @@ pub const Resolver = struct {
         }
         const method_start: u32 = @intCast(self.graph.function_refs.items.len);
         try self.graph.function_refs.appendSlice(self.allocator, methods.items);
-        // Virtualize.safety_methods is a range into virtual_registry_refs, not
-        // directly into virtual_registries. Keep the indirection explicit so
-        // later registries can be non-contiguous without corrupting the range.
         const safety_start: u32 = @intCast(self.graph.virtual_registry_refs.items.len);
         for (methods.items, 0..) |_, index| {
             const registry: global_sg.GlobalVirtualRegistryId = @enumFromInt(@as(u32, @intCast(self.graph.virtual_registries.items.len)));
@@ -223,8 +220,7 @@ pub const Resolver = struct {
         return self.makeVirtualCall(module_index, reference, input, source);
     }
 
-    pub fn concreteImplements(context: *anyopaque, concrete: global_sg.GlobalTypeId, abstract_type: global_sg.GlobalTypeId) bool {
-        const self: *Resolver = @ptrCast(@alignCast(context));
+    pub fn concreteImplements(self: *Resolver, concrete: global_sg.GlobalTypeId, abstract_type: global_sg.GlobalTypeId) bool {
         const declaration = switch (self.graph.types.items[@intFromEnum(abstract_type)]) {
             .declared => |value| value,
             else => return false,
@@ -339,13 +335,12 @@ pub const Resolver = struct {
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
-        const instance = RequirementInstance{
+        return .{
             .declaration = declaration,
             .method_index = method_index,
             .input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings, self_type),
             .output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings, self_type),
         };
-        return instance;
     }
 
     fn findAbstractDefinition(self: *const Resolver, declaration: global_sg.GlobalDeclId) ?LocatedAbstractDefinition {
@@ -413,10 +408,6 @@ pub const Resolver = struct {
         return null;
     }
 
-    /// Validate constraints after a concrete function instance has been created.
-    /// This is deliberately a second pass: function monomorphization stays
-    /// independent of the abstract catalog, while no invalid instance can leave
-    /// GlobalSema as a final graph.
     pub fn validateGenericFunctionInstances(self: *Resolver) !void {
         for (self.graph.generic_function_instances.items) |instance| {
             const owner = self.graph.moduleForDeclaration(instance.parameterized_declaration) orelse return error.InvalidGenericFunctionOwner;
