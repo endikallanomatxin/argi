@@ -248,7 +248,7 @@ fn appendTypes(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGr
         const value = try module_views.typeView(module, @enumFromInt(@as(u32, @intCast(index))));
         const global: global_sg.GlobalType = switch (value) {
             .resolved => |item| relocateType(o, item),
-            .external => if (mode == .allow_holes) .{ .builtin = .Any } else return error.UnresolvedModuleSemantics,
+            .external => if (mode == .allow_holes) .{ .declared = global_sg.unresolved_type_poison_decl } else return error.UnresolvedModuleSemantics,
         };
         try result.types.append(allocator, global);
     }
