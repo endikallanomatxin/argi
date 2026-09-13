@@ -13,7 +13,7 @@ const primitives = @import("../primitives/schema.zig");
 /// compatibility; this policy adds the language-level concrete-to-abstract
 /// relation without making Core depend on the abstract resolver.
 pub const Abstract = struct {
-    core: *const core_mod.Resolver,
+    core: *core_mod.Resolver,
     abstracts: *abstract_mod.Resolver,
 
     pub fn compatible(self: @This(), actual: global_sg.GlobalTypeId, expected: global_sg.GlobalTypeId) bool {
