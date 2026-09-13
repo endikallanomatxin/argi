@@ -148,30 +148,61 @@ pub fn matchInput(
 }
 
 fn contextualLiteralFits(compatibility: Abstract, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
-    if (compatibility.core.contextualLiteralFits(node, target)) return true;
     const graph = compatibility.core.graph;
-    const literal = switch (graph.nodes.items[@intFromEnum(node)].content) {
-        .struct_value_literal => |literal| literal,
+    if (integerLiteralFits(graph, node, target)) return true;
+    switch (graph.nodes.items[@intFromEnum(node)].content) {
+        .string_literal => return switch (graph.types.items[@intFromEnum(target)]) {
+            .pointer => |pointer| pointer.mutability == .read_only and types.isBuiltin(graph, pointer.child, .Char),
+            else => false,
+        },
+        .struct_value_literal => |literal| {
+            const expected_fields = types.fields(graph, target) orelse return false;
+            if (literal.fields.len > expected_fields.len) return false;
+            for (0..expected_fields.len) |offset| {
+                const expected = graph.fields.items[expected_fields.start + @as(u32, @intCast(offset))];
+                const supplied = callArgument(graph, literal, offset, expected.name) orelse {
+                    if (expected.default_value == null) return false;
+                    continue;
+                };
+                const supplied_node = graph.nodes.items[@intFromEnum(supplied)];
+                if (supplied_node.ty) |actual| {
+                    if (types.equal(graph, actual, expected.ty) or
+                        compatibility.core.callTypesCompatible(actual, expected.ty) or
+                        compatibility.compatible(actual, expected.ty) or
+                        contextualLiteralFits(compatibility, supplied, expected.ty)) continue;
+                } else if (contextualLiteralFits(compatibility, supplied, expected.ty)) continue;
+                return false;
+            }
+            return true;
+        },
+        else => return false,
+    }
+}
+
+fn integerLiteralFits(
+    graph: *const global_sg.GlobalSemanticGraph,
+    node: global_sg.GlobalNodeId,
+    target: global_sg.GlobalTypeId,
+) bool {
+    const value = switch (graph.nodes.items[@intFromEnum(node)].content) {
+        .int_literal => |number| number,
         else => return false,
     };
-    const expected_fields = types.fields(graph, target) orelse return false;
-    if (literal.fields.len > expected_fields.len) return false;
-    for (0..expected_fields.len) |offset| {
-        const expected = graph.fields.items[expected_fields.start + @as(u32, @intCast(offset))];
-        const supplied = callArgument(graph, literal, offset, expected.name) orelse {
-            if (expected.default_value == null) return false;
-            continue;
-        };
-        const supplied_node = graph.nodes.items[@intFromEnum(supplied)];
-        if (supplied_node.ty) |actual| {
-            if (types.equal(graph, actual, expected.ty) or
-                compatibility.core.callTypesCompatible(actual, expected.ty) or
-                compatibility.compatible(actual, expected.ty) or
-                contextualLiteralFits(compatibility, supplied, expected.ty)) continue;
-        } else if (contextualLiteralFits(compatibility, supplied, expected.ty)) continue;
-        return false;
-    }
-    return true;
+    return switch (graph.types.items[@intFromEnum(target)]) {
+        .builtin => |builtin_type| switch (builtin_type) {
+            .Int8 => value >= std.math.minInt(i8) and value <= std.math.maxInt(i8),
+            .Int16 => value >= std.math.minInt(i16) and value <= std.math.maxInt(i16),
+            .Int32 => value >= std.math.minInt(i32) and value <= std.math.maxInt(i32),
+            .Int64 => true,
+            .UIntNative => value >= 0,
+            .UInt8 => value >= 0 and value <= std.math.maxInt(u8),
+            .UInt16 => value >= 0 and value <= std.math.maxInt(u16),
+            .UInt32 => value >= 0 and value <= std.math.maxInt(u32),
+            .UInt64 => value >= 0,
+            else => false,
+        },
+        else => false,
+    };
 }
 
 fn callArgument(
