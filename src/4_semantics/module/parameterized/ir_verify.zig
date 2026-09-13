@@ -50,7 +50,24 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
             .comptime_int => |id| try require(verify.idFits(id, storage.int_expressions.items.len)),
         }
     }
-    for (storage.bindings.items) |value| try payload.binding(ir.Ids, value, bounds);
+    for (storage.unresolved_binding_types.items, 0..) |binding, marker_index| {
+        try require(verify.idFits(binding, storage.bindings.items.len));
+        for (storage.unresolved_binding_types.items[0..marker_index]) |previous|
+            try require(previous != binding);
+        try require(storage.bindings.items[@intFromEnum(binding)].ty == ir.unresolved_binding_type_poison);
+    }
+    for (storage.bindings.items, 0..) |value, raw| {
+        const id: ir.ParameterizedBindingId = @enumFromInt(@as(u32, @intCast(raw)));
+        if (storage.bindingType(id) != null) {
+            try payload.binding(ir.Ids, value, bounds);
+        } else {
+            // Incomplete type is represented only by sparse construction metadata.
+            // Every other binding reference remains fully verified.
+            try require(verify.stringFits(value.name, graph.strings.items));
+            try require(verify.sourceFits(value.source, graph.file_offsets.items.len));
+            try require(verify.optionalIdFits(value.initialization, storage.nodes.items.len));
+        }
+    }
     for (storage.blocks.items) |value| try payload.block(ir.Ids, value, bounds);
     for (storage.value_fields.items) |value| try payload.valueField(ir.Ids, value, bounds);
     for (storage.switch_cases.items) |value| try payload.switchCase(ir.Ids, value, bounds);

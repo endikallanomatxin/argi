@@ -678,22 +678,35 @@ pub const Resolver = struct {
         fn instantiateBinding(self: *InstanceContext, id: ir.ParameterizedBindingId) !global_sg.GlobalBindingId {
             if (self.binding_map[@intFromEnum(id)]) |existing| return existing;
             const module = &self.resolver.modules[self.module_index];
-            const source = module.semantic.parameterized_storage.ir.bindings.items[@intFromEnum(id)];
+            const storage = &module.semantic.parameterized_storage.ir;
+            const source = storage.bindings.items[@intFromEnum(id)];
+            const source_ty = storage.bindingType(id);
             const global: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.bindings.items.len)));
             try self.resolver.graph.bindings.append(self.resolver.allocator, .{
                 .name = try self.resolver.graph.addString(self.resolver.allocator, module.text(source.name)),
                 .source = self.resolver.sourceFor(self.module_index, source.source),
-                .ty = try self.resolver.generics.instantiateParameterizedType(self.module_index, source.ty, self.substitutions, null),
+                .ty = if (source_ty) |ty|
+                    try self.resolver.generics.instantiateParameterizedType(self.module_index, ty, self.substitutions, null)
+                else
+                    @enumFromInt(0),
                 .initialization = null,
                 .mutability = source.mutability,
             });
             self.binding_map[@intFromEnum(id)] = global;
+            if (source_ty == null) try self.resolver.graph.markBindingTypeUnresolved(self.resolver.allocator, global);
             if (source.initialization) |node| {
-                const initialization = try self.instantiateNodeAs(node, source.ty);
+                const initialization = if (source_ty) |ty|
+                    try self.instantiateNodeAs(node, ty)
+                else
+                    try self.instantiateNode(node);
                 self.resolver.graph.bindings.items[@intFromEnum(global)].initialization = initialization;
-                const binding = &self.resolver.graph.bindings.items[@intFromEnum(global)];
-                if (global_types.isBuiltin(self.resolver.graph, binding.ty, .Any)) {
-                    binding.ty = self.resolver.graph.nodes.items[@intFromEnum(initialization)].ty orelse binding.ty;
+                if (source_ty == null) {
+                    if (self.resolver.graph.nodes.items[@intFromEnum(initialization)].ty) |inferred| {
+                        if (!self.resolver.graph.isTypeUnresolved(inferred)) {
+                            self.resolver.graph.bindings.items[@intFromEnum(global)].ty = inferred;
+                            _ = self.resolver.graph.reconcileBindingTypeResolution();
+                        }
+                    }
                 }
             }
             return global;
@@ -811,7 +824,7 @@ pub const Resolver = struct {
                 const binding = try self.instantiateBinding(if (declaration) node.content.binding_declaration else node.content.binding_use);
                 return .{
                     .source = self.resolver.sourceFor(self.module_index, node.source),
-                    .ty = self.resolver.graph.bindings.items[@intFromEnum(binding)].ty,
+                    .ty = if (self.resolver.graph.isBindingTypeUnresolved(binding)) null else self.resolver.graph.bindings.items[@intFromEnum(binding)].ty,
                     .content = if (declaration) .{ .binding_declaration = binding } else .{ .binding_use = binding },
                 };
             }
@@ -824,7 +837,10 @@ pub const Resolver = struct {
                     .binding_declaration => |binding| .{ .binding_declaration = try self.instantiateBinding(binding) },
                     .assignment => |assignment| .{ .assignment = .{
                         .binding = try self.instantiateBinding(assignment.binding),
-                        .value = try self.instantiateNodeAs(assignment.value, self.resolver.modules[self.module_index].semantic.parameterized_storage.ir.bindings.items[@intFromEnum(assignment.binding)].ty),
+                        .value = if (self.resolver.modules[self.module_index].semantic.parameterized_storage.ir.bindingType(assignment.binding)) |binding_ty|
+                            try self.instantiateNodeAs(assignment.value, binding_ty)
+                        else
+                            try self.instantiateNode(assignment.value),
                     } },
                     .code_block => |block| .{ .code_block = try self.instantiateBlock(block) },
                     .int_literal => |value| .{ .int_literal = value },
@@ -1027,6 +1043,7 @@ pub const Resolver = struct {
                     const payload = variant.variant.payload_type orelse return error.ParameterizedMatchPayloadOnPayloadlessVariant;
                     const binding = try self.instantiateBinding(local_binding);
                     self.resolver.graph.bindings.items[@intFromEnum(binding)].ty = try self.matchBindingType(payload, case.mode);
+                    _ = self.resolver.graph.reconcileBindingTypeResolution();
                 }
                 const body = try self.instantiateBlock(case.body);
                 const tag: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.nodes.items.len)));

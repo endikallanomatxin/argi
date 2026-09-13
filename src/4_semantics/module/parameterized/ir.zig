@@ -117,6 +117,9 @@ pub const GenericArgument = struct {
 pub const ResolvedType = primitives.SemanticType(Ids);
 pub const Field = primitives.Field(Ids);
 pub const Binding = primitives.Binding(Ids);
+/// Construction-only poison carried only by bindings listed in
+/// `Storage.unresolved_binding_types`. It is never a semantic type.
+pub const unresolved_binding_type_poison: ParameterizedTypeId = @enumFromInt(std.math.maxInt(u32));
 pub const Block = primitives.Block(Ids);
 pub const ValueField = primitives.ValueField(Ids);
 pub const SwitchCase = primitives.SwitchCase(Ids);
@@ -232,6 +235,9 @@ pub const Storage = struct {
     fields: std.ArrayList(Field) = .empty,
     generic_arguments: std.ArrayList(GenericArgument) = .empty,
     bindings: std.ArrayList(Binding) = .empty,
+    /// Sparse construction state for bindings whose type depends on generic
+    /// body resolution. Unknown is metadata, never the language `Any` type.
+    unresolved_binding_types: std.ArrayList(ParameterizedBindingId) = .empty,
     nodes: std.ArrayList(Node) = .empty,
     blocks: std.ArrayList(Block) = .empty,
     value_fields: std.ArrayList(ValueField) = .empty,
@@ -258,10 +264,16 @@ pub const Storage = struct {
     function_refs: std.ArrayList(ParameterizedFunctionId) = .empty,
     virtual_registry_refs: std.ArrayList(ParameterizedVirtualRegistryId) = .empty,
 
+    pub fn bindingType(self: *const Storage, id: ParameterizedBindingId) ?ParameterizedTypeId {
+        for (self.unresolved_binding_types.items) |pending| if (pending == id) return null;
+        return self.bindings.items[@intFromEnum(id)].ty;
+    }
+
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         inline for (.{
             &self.int_expressions, &self.types,              &self.declarations,          &self.functions,
             &self.variants,        &self.fields,             &self.generic_arguments,     &self.bindings,
+            &self.unresolved_binding_types,
             &self.nodes,           &self.blocks,             &self.value_fields,          &self.switch_cases,
             &self.switches,        &self.auto_deinit_fields, &self.auto_deinits,          &self.virtual_registries,
             &self.virtualizes,     &self.virtual_calls,      &self.reach_segments,        &self.reach_alternatives,
@@ -281,6 +293,7 @@ pub const Storage = struct {
             self.fields.items.len * @sizeOf(Field) +
             self.generic_arguments.items.len * @sizeOf(GenericArgument) +
             self.bindings.items.len * @sizeOf(Binding) +
+            self.unresolved_binding_types.items.len * @sizeOf(ParameterizedBindingId) +
             self.nodes.items.len * @sizeOf(Node) +
             self.blocks.items.len * @sizeOf(Block) +
             self.value_fields.items.len * @sizeOf(ValueField) +
