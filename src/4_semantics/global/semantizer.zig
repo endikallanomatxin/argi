@@ -36,6 +36,24 @@ pub const Result = struct {
     stats: Stats,
 };
 
+/// Top-level semantic ownership is stable for the lifetime of a pending
+/// operation. Composite owners such as calls and indexing may try multiple
+/// implementation strategies internally, but those strategies never compete
+/// for ownership at the GlobalSema boundary.
+const PendingOwner = enum {
+    types,
+    calls,
+    indexing,
+    core,
+    expressions,
+    control,
+    abstracts,
+    errors,
+    ownership,
+};
+
+const PendingTag = @typeInfo(module_entities.PendingOperation).@"union".tag_type.?;
+
 const PendingPhase = enum {
     types_and_generics,
     expressions_and_calls,
@@ -145,8 +163,8 @@ pub fn semantize(
     @memset(resolved, false);
 
     // GlobalSema is staged by semantic domain. The outer fixed point remains
-    // while dependencies between phases are still being made explicit; within
-    // a pass every PendingOperation has a single owning phase.
+    // while dependencies between phases are still being made explicit; every
+    // PendingOperation now has one stable top-level owner across all retries.
     var changed = true;
     while (changed) {
         changed = false;
@@ -276,20 +294,21 @@ fn resolvePendingPhase(
     return changed;
 }
 
-fn pendingPhase(operation: module_entities.PendingOperation) PendingPhase {
-    return switch (operation) {
-        .resolve_type => .types_and_generics,
-        .resolve_call,
+fn pendingOwnerTag(tag: PendingTag) PendingOwner {
+    return switch (tag) {
+        .resolve_type => .types,
+        .resolve_call => .calls,
+        .resolve_index => .indexing,
         .resolve_field,
         .resolve_binary,
         .resolve_comparison,
-        .resolve_index,
         .resolve_dereference,
         .resolve_address,
+        => .core,
         .resolve_name_use,
         .resolve_name_assignment,
         .resolve_import,
-        => .expressions_and_calls,
+        => .expressions,
         .resolve_choice_literal,
         .resolve_choice_payload,
         .resolve_nullable_unwrap,
@@ -297,8 +316,8 @@ fn pendingPhase(operation: module_entities.PendingOperation) PendingPhase {
         .resolve_for_each,
         .resolve_match,
         .resolve_match_case,
-        .resolve_abstract,
-        => .control_and_abstracts,
+        => .control,
+        .resolve_abstract => .abstracts,
         .resolve_error_propagation => .errors,
         .resolve_defer,
         .resolve_keep,
@@ -309,11 +328,102 @@ fn pendingPhase(operation: module_entities.PendingOperation) PendingPhase {
     };
 }
 
-/// Route each pending semantic operation only to the subsystem(s) that own it.
-/// Resolver chains obey a strict contract: `not_applicable` permits fallback,
-/// `deferred` claims the operation but waits for a dependency, and `resolved`
-/// completes it. This prevents a later resolver from stealing an operation that
-/// an earlier, more specific resolver has already claimed.
+fn pendingOwner(operation: module_entities.PendingOperation) PendingOwner {
+    return pendingOwnerTag(std.meta.activeTag(operation));
+}
+
+fn pendingPhase(operation: module_entities.PendingOperation) PendingPhase {
+    return switch (pendingOwner(operation)) {
+        .types => .types_and_generics,
+        .calls,
+        .indexing,
+        .core,
+        .expressions,
+        => .expressions_and_calls,
+        .control,
+        .abstracts,
+        => .control_and_abstracts,
+        .errors => .errors,
+        .ownership => .ownership,
+    };
+}
+
+/// A single-owner resolver rejecting its assigned operation is an internal
+/// routing bug. Composite owners consume `not_applicable` themselves while
+/// selecting an implementation strategy and expose only deferred/resolved.
+fn ownedResult(result: resolution.Result) resolution.Result {
+    std.debug.assert(result != .not_applicable);
+    return result;
+}
+
+fn resolveTypeOperation(
+    core: *core_mod.Resolver,
+    generics: *generic_mod.Resolver,
+    module_index: usize,
+    module: *const module_sg.ModuleSemanticGraph,
+    o: globalizer.Offsets,
+    operation: module_entities.PendingOperation,
+) !resolution.Result {
+    const value = switch (operation) {
+        .resolve_type => |value| value,
+        else => unreachable,
+    };
+    const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
+    const result = if (reference.generic_arguments != null)
+        try generics.tryResolve(module_index, module, o, operation)
+    else
+        try core.tryResolve(module_index, module, o, operation);
+    return ownedResult(result);
+}
+
+fn resolveCallOperation(
+    core: *core_mod.Resolver,
+    generic_functions: *generic_functions_mod.Resolver,
+    constructors: *constructor_mod.Resolver,
+    abstracts: *abstract_mod.Resolver,
+    control: *control_mod.Resolver,
+    module_index: usize,
+    module: *const module_sg.ModuleSemanticGraph,
+    o: globalizer.Offsets,
+    operation: module_entities.PendingOperation,
+) !resolution.Result {
+    // `.resolve_call` has one owner: this coordinator. The ordered strategies
+    // encode language precedence, not competing ownership. A strategy may
+    // decline with `not_applicable`; once one defers or resolves, later
+    // strategies are not consulted during that pass.
+    const core_result = try core.tryResolve(module_index, module, o, operation);
+    if (!core_result.allowsFallback()) return core_result;
+
+    const generic_result = try generic_functions.tryResolve(module_index, module, o, operation);
+    if (!generic_result.allowsFallback()) return generic_result;
+
+    const constructor_result = try constructors.tryResolve(module_index, module, o, operation);
+    if (!constructor_result.allowsFallback()) return constructor_result;
+
+    const abstract_result = try abstracts.tryResolve(module_index, module, o, operation);
+    if (!abstract_result.allowsFallback()) return abstract_result;
+
+    const control_result = try control.tryResolve(module_index, module, o, operation);
+    return if (control_result.allowsFallback()) .deferred else control_result;
+}
+
+fn resolveIndexOperation(
+    core: *core_mod.Resolver,
+    generic_functions: *generic_functions_mod.Resolver,
+    module_index: usize,
+    module: *const module_sg.ModuleSemanticGraph,
+    o: globalizer.Offsets,
+    operation: module_entities.PendingOperation,
+) !resolution.Result {
+    // Index resolution owns both built-in/operator indexing and generic
+    // container indexing. Core and generic-functions are implementation
+    // strategies selected as more type information becomes available.
+    const core_result = try core.tryResolve(module_index, module, o, operation);
+    if (!core_result.allowsFallback()) return core_result;
+    const generic_result = try generic_functions.tryResolve(module_index, module, o, operation);
+    return if (generic_result.allowsFallback()) .deferred else generic_result;
+}
+
 fn resolvePendingOperation(
     core: *core_mod.Resolver,
     expressions: *expression_mod.Resolver,
@@ -329,58 +439,26 @@ fn resolvePendingOperation(
     o: globalizer.Offsets,
     operation: module_entities.PendingOperation,
 ) !resolution.Result {
-    return switch (operation) {
-        .resolve_type => blk: {
-            const core_result = try core.tryResolve(module_index, module, o, operation);
-            if (!core_result.allowsFallback()) break :blk core_result;
-            break :blk try generics.tryResolve(module_index, module, o, operation);
-        },
-        .resolve_call => blk: {
-            const core_result = try core.tryResolve(module_index, module, o, operation);
-            if (!core_result.allowsFallback()) break :blk core_result;
-
-            const generic_result = try generic_functions.tryResolve(module_index, module, o, operation);
-            if (!generic_result.allowsFallback()) break :blk generic_result;
-
-            const constructor_result = try constructors.tryResolve(module_index, module, o, operation);
-            if (!constructor_result.allowsFallback()) break :blk constructor_result;
-
-            const abstract_result = try abstracts.tryResolve(module_index, module, o, operation);
-            if (!abstract_result.allowsFallback()) break :blk abstract_result;
-
-            break :blk try control.tryResolve(module_index, module, o, operation);
-        },
-        .resolve_index => blk: {
-            const core_result = try core.tryResolve(module_index, module, o, operation);
-            if (!core_result.allowsFallback()) break :blk core_result;
-            break :blk try generic_functions.tryResolve(module_index, module, o, operation);
-        },
-        .resolve_field,
-        .resolve_binary,
-        .resolve_comparison,
-        .resolve_dereference,
-        .resolve_address,
-        => try core.tryResolve(module_index, module, o, operation),
-        .resolve_name_use,
-        .resolve_name_assignment,
-        .resolve_import,
-        => try expressions.tryResolve(module_index, module, o, operation),
-        .resolve_choice_literal,
-        .resolve_choice_payload,
-        .resolve_nullable_unwrap,
-        .resolve_nullable_test,
-        .resolve_for_each,
-        .resolve_match,
-        .resolve_match_case,
-        => try control.tryResolve(module_index, module, o, operation),
-        .resolve_abstract => try abstracts.tryResolve(module_index, module, o, operation),
-        .resolve_error_propagation => try errors.tryResolve(module_index, module, o, operation),
-        .resolve_defer,
-        .resolve_keep,
-        .resolve_keep_name,
-        .resolve_copy,
-        .resolve_deinit,
-        => try ownership.tryResolve(module_index, module, o, operation),
+    return switch (pendingOwner(operation)) {
+        .types => resolveTypeOperation(core, generics, module_index, module, o, operation),
+        .calls => resolveCallOperation(
+            core,
+            generic_functions,
+            constructors,
+            abstracts,
+            control,
+            module_index,
+            module,
+            o,
+            operation,
+        ),
+        .indexing => resolveIndexOperation(core, generic_functions, module_index, module, o, operation),
+        .core => ownedResult(try core.tryResolve(module_index, module, o, operation)),
+        .expressions => ownedResult(try expressions.tryResolve(module_index, module, o, operation)),
+        .control => ownedResult(try control.tryResolve(module_index, module, o, operation)),
+        .abstracts => ownedResult(try abstracts.tryResolve(module_index, module, o, operation)),
+        .errors => ownedResult(try errors.tryResolve(module_index, module, o, operation)),
+        .ownership => ownedResult(try ownership.tryResolve(module_index, module, o, operation)),
     };
 }
 
@@ -461,6 +539,18 @@ fn totalPending(modules: []const module_sg.ModuleSemanticGraph) usize {
     var total: usize = 0;
     for (modules) |module| total += module.semantic.pending_operations.items.len;
     return total;
+}
+
+test "pending operation ownership is explicit" {
+    try std.testing.expectEqual(PendingOwner.types, pendingOwnerTag(.resolve_type));
+    try std.testing.expectEqual(PendingOwner.calls, pendingOwnerTag(.resolve_call));
+    try std.testing.expectEqual(PendingOwner.indexing, pendingOwnerTag(.resolve_index));
+    try std.testing.expectEqual(PendingOwner.core, pendingOwnerTag(.resolve_field));
+    try std.testing.expectEqual(PendingOwner.expressions, pendingOwnerTag(.resolve_name_use));
+    try std.testing.expectEqual(PendingOwner.control, pendingOwnerTag(.resolve_match));
+    try std.testing.expectEqual(PendingOwner.abstracts, pendingOwnerTag(.resolve_abstract));
+    try std.testing.expectEqual(PendingOwner.errors, pendingOwnerTag(.resolve_error_propagation));
+    try std.testing.expectEqual(PendingOwner.ownership, pendingOwnerTag(.resolve_deinit));
 }
 
 test "global semantizer accepts an empty program" {
