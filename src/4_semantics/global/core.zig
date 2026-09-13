@@ -804,7 +804,7 @@ pub const Resolver = struct {
         const literal = switch (self.graph.nodes.items[@intFromEnum(node)].content) {
             .struct_value_literal => |value| value,
             else => {
-                if (current == null or types.isBuiltin(self.graph, current.?, .Any)) {
+                if (current == null) {
                     self.graph.nodes.items[@intFromEnum(node)].ty = target;
                     return true;
                 }

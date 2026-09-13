@@ -359,7 +359,15 @@ const Context = struct {
 
     fn lowerBlockNode(self: *Context, node: syn.NodeIndex) !Lowered {
         const block = try self.lowerBlock(node);
-        return self.resolved(node, try self.builtin(.Any), .{ .code_block = block });
+        const body = self.graph.semantic.blocks.items[@intFromEnum(block)];
+        const ty: ?entities.ModuleTypeId = if (body.ret_val) |ret_val|
+            switch (self.graph.semantic.nodes.items[@intFromEnum(ret_val)]) {
+                .resolved => |resolved_node| resolved_node.ty,
+                .pending => null,
+            }
+        else
+            try self.builtin(.Void);
+        return self.resolved(node, ty, .{ .code_block = block });
     }
 
     fn lowerList(self: *Context, node: syn.NodeIndex) !Lowered {
