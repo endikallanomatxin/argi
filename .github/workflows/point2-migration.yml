@@ -16,7 +16,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Apply point 2 migration
-        run: python3 .github/scripts/close_any_sentinels_stage2.py
+        run: |
+          python3 .github/scripts/close_any_sentinels_stage2.py
+          python3 .github/scripts/close_any_sentinels_stage4.py
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
@@ -50,5 +52,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/4_semantics
-          git commit -m "Close contextual unknown type state"
+          git commit -m "Remove remaining Any construction sentinels"
           git push origin HEAD:compact-semantic-graph-chatgpt
