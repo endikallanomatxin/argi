@@ -25,8 +25,6 @@ pub const Resolver = struct {
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     stats: Stats = .{},
-    abstract_context: ?*anyopaque = null,
-    abstract_compatible: ?*const fn (*anyopaque, global_sg.GlobalTypeId, global_sg.GlobalTypeId) bool = null,
 
     pub fn resolveExternalTypes(self: *Resolver) !void {
         for (self.modules, 0..) |*module, module_index| {
@@ -676,10 +674,6 @@ pub const Resolver = struct {
         };
         if (expected_pointer.mutability == .read_write and actual_pointer.mutability != .read_write) return false;
         if (types.equal(self.graph, actual_pointer.child, expected_pointer.child)) return true;
-        if (self.abstract_context) |context| {
-            if (self.abstract_compatible) |compatible|
-                if (compatible(context, actual_pointer.child, expected_pointer.child)) return true;
-        }
         return switch (self.graph.types.items[@intFromEnum(actual_pointer.child)]) {
             .virtual => |abstract_type| types.equal(self.graph, abstract_type, expected_pointer.child),
             else => false,
@@ -961,7 +955,9 @@ test "call input matching distinguishes deferred arguments from mismatches" {
     try std.testing.expectEqual(@as(u32, 4), matched.score);
 }
 test "global core resolver is graph-only" {
-    try std.testing.expect(@sizeOf(Resolver) <= 112);
+    try std.testing.expect(!@hasField(Resolver, "abstract_context"));
+    try std.testing.expect(!@hasField(Resolver, "abstract_compatible"));
+    try std.testing.expect(@sizeOf(Resolver) <= 96);
 }
 
 test "qualified lookup follows linked module alias" {
