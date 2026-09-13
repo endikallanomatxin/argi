@@ -32,6 +32,37 @@ jobs:
       - name: Run internal tests
         timeout-minutes: 5
         run: zig build test-internal
-      - name: Run program tests
-        timeout-minutes: 15
-        run: zig build test-programs
+
+  program-shards:
+    name: programs / ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: basics-build-system-testing
+            filters: -Dtest-filter=feature_tests/basics -Dtest-filter=feature_tests/build -Dtest-filter=feature_tests/system -Dtest-filter=feature_tests/testing
+          - shard: collections-io-text
+            filters: -Dtest-filter=feature_tests/collections -Dtest-filter=feature_tests/io -Dtest-filter=feature_tests/text
+          - shard: comptime-functions-modules
+            filters: -Dtest-filter=feature_tests/comptime -Dtest-filter=feature_tests/functions -Dtest-filter=feature_tests/modules
+          - shard: control-types-polymorphism
+            filters: -Dtest-filter=feature_tests/control_flow -Dtest-filter=feature_tests/types -Dtest-filter=feature_tests/polymorphism
+          - shard: ownership-pointers
+            filters: -Dtest-filter=feature_tests/ownership -Dtest-filter=feature_tests/pointers
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Install LLVM 21
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+          sudo apt-get install -y llvm-21-dev clang-21
+      - name: Run filtered program tests
+        timeout-minutes: 6
+        run: zig build test-programs ${{ matrix.filters }}
