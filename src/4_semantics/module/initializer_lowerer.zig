@@ -185,13 +185,20 @@ const Context = struct {
             self.selectFile(decl.module_file_index);
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, decl) orelse continue;
             const syntax_decl = self.tree.symbolDeclaration(declaration_node) orelse continue;
-            const declared_ty = if (syntax_decl.type_node) |node| try self.lowerType(node) else try self.builtin(.Any);
-            const binding = try self.writer.addBinding(.{
-                .name = decl.name,
-                .source = self.sourceRef(declaration_node),
-                .ty = declared_ty,
-                .mutability = graph_mod.mutabilityFromSyntax(syntax_decl.mutability),
-            });
+            const binding = if (syntax_decl.type_node) |node|
+                try self.writer.addBinding(.{
+                    .name = decl.name,
+                    .source = self.sourceRef(declaration_node),
+                    .ty = try self.lowerType(node),
+                    .mutability = graph_mod.mutabilityFromSyntax(syntax_decl.mutability),
+                })
+            else
+                try self.writer.addUnresolvedBinding(
+                    decl.name,
+                    self.sourceRef(declaration_node),
+                    null,
+                    graph_mod.mutabilityFromSyntax(syntax_decl.mutability),
+                );
             const decl_id: entities.ModuleDeclId = @enumFromInt(@as(u32, @intCast(raw)));
             try self.graph.semantic.declaration_bindings.append(self.allocator, .{
                 .declaration = decl_id,
@@ -209,7 +216,11 @@ const Context = struct {
             const syntax_decl = self.tree.symbolDeclaration(declaration_node) orelse continue;
             const value_node = syntax_decl.value orelse continue;
             if (self.tree.tag(value_node) == .import_statement) continue;
-            const expected = self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].ty;
+            const unresolved = views.bindingTypeUnresolved(self.graph, relation.binding);
+            const expected: ?entities.ModuleTypeId = if (unresolved)
+                null
+            else
+                self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].ty;
             const value = try body_lowerer.lowerInitializerExpression(
                 self.allocator,
                 self.graph,
@@ -219,12 +230,15 @@ const Context = struct {
                 expected,
             );
             self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].initialization = value.node;
-            if (self.isAny(expected)) {
-                if (value.ty) |value_ty| {
-                    if (!self.isAny(value_ty))
-                        self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].ty = value_ty;
+            if (unresolved) if (value.ty) |value_ty| {
+                self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].ty = value_ty;
+                var index: usize = 0;
+                while (index < self.graph.semantic.unresolved_binding_types.items.len) : (index += 1) {
+                    if (self.graph.semantic.unresolved_binding_types.items[index] != relation.binding) continue;
+                    _ = self.graph.semantic.unresolved_binding_types.orderedRemove(index);
+                    break;
                 }
-            }
+            };
             try self.writer.addRoot(value.node);
         }
     }
@@ -310,17 +324,6 @@ const Context = struct {
             }
         }
         return self.writer.addResolvedType(.{ .builtin = value });
-    }
-
-    fn isAny(self: *Context, id: entities.ModuleTypeId) bool {
-        const value = views.typeView(self.graph, id) catch return false;
-        return switch (value) {
-            .resolved => |resolved_type| switch (resolved_type) {
-                .builtin => |builtin_value| builtin_value == .Any,
-                else => false,
-            },
-            .external => false,
-        };
     }
 
     fn sourceRef(self: *const Context, node: syn.NodeIndex) primitives.SourceRef {

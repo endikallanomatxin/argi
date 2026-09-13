@@ -134,7 +134,7 @@ pub const TypeResolutionState = enum(u8) {
     unresolved,
 };
 
-const unresolved_type_poison_decl: GlobalDeclId = @enumFromInt(std.math.maxInt(u32));
+pub const unresolved_type_poison_decl: GlobalDeclId = @enumFromInt(std.math.maxInt(u32));
 const unresolved_binding_type_poison: GlobalTypeId = @enumFromInt(std.math.maxInt(u32));
 
 pub const GlobalSemanticGraph = struct {
@@ -441,7 +441,7 @@ test "unresolved global type slots are construction state, not Any" {
     var graph: GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
 
-    try graph.types.append(allocator, .{ .builtin = .Any });
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
     try graph.markTypeUnresolved(allocator, @enumFromInt(0));
     try std.testing.expect(graph.isTypeUnresolved(@enumFromInt(0)));
     try std.testing.expect(graph.resolvedSemanticType(@enumFromInt(0)) == null);
