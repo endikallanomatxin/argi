@@ -30,6 +30,20 @@ jobs:
           sudo apt-get install -y llvm-21-dev clang-21
       - name: Build compiler
         run: zig build
+      - name: Probe equivalent CLI build
+        run: |
+          rm -rf /tmp/argi-lsp-probe
+          mkdir -p /tmp/argi-lsp-probe
+          cat > /tmp/argi-lsp-probe/main.rg <<'EOF'
+          helper() -> (.value: Int32) := {
+              value = 42
+          }
+
+          main() -> (.status_code: Int32 = 0) := {
+              status_code = helper()
+          }
+          EOF
+          ./zig-out/bin/argi build /tmp/argi-lsp-probe
       - name: Run focused LSP regression
         timeout-minutes: 5
         run: zig build test-internal -Dtest-filter="definition responds with target location over protocol"
