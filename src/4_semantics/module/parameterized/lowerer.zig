@@ -426,9 +426,10 @@ pub const Context = struct {
                     try self.graph.semantic.parameterized_storage.ir.bindings.append(self.allocator, .{
                         .name = try self.writer.addString(name),
                         .source = self.sourceRef(case_node),
-                        .ty = try self.parameterizedBuiltin(.Any),
+                        .ty = ir.unresolved_binding_type_poison,
                         .mutability = .constant,
                     });
+                    try self.graph.semantic.parameterized_storage.ir.unresolved_binding_types.append(self.allocator, binding);
                     try self.bindings.append(.{ .name = name, .id = binding });
                     break :blk binding;
                 } else null;
@@ -479,16 +480,24 @@ pub const Context = struct {
         }
         if (self.tree.symbolDeclaration(node)) |declaration| {
             const initialization = if (declaration.value) |value| try self.lowerBodyNode(value) else null;
-            const ty = if (declaration.type_node) |value| try self.lowerType(value, false) else try self.parameterizedBuiltin(.Any);
+            const inferred_ty: ?ir.ParameterizedTypeId = if (initialization) |value|
+                switch (self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(value)]) {
+                    .resolved => |resolved_node| resolved_node.ty,
+                    .pending => null,
+                }
+            else
+                null;
+            const ty: ?ir.ParameterizedTypeId = if (declaration.type_node) |value| try self.lowerType(value, false) else inferred_ty;
             const name = self.tree.tokenTextFromSource(self.source, declaration.name_token);
             const binding: ir.ParameterizedBindingId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len)));
             try self.graph.semantic.parameterized_storage.ir.bindings.append(self.allocator, .{
                 .name = try self.writer.addString(name),
                 .source = self.sourceRef(node),
-                .ty = ty,
+                .ty = ty orelse ir.unresolved_binding_type_poison,
                 .initialization = initialization,
                 .mutability = graph_mod.mutabilityFromSyntax(declaration.mutability),
             });
+            if (ty == null) try self.graph.semantic.parameterized_storage.ir.unresolved_binding_types.append(self.allocator, binding);
             try self.bindings.append(.{ .name = name, .id = binding });
             return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .{ .binding_declaration = binding });
         }
@@ -539,7 +548,7 @@ pub const Context = struct {
         if (self.tree.tag(node) == .identifier) {
             const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
             if (self.parameterizedBinding(name)) |binding| {
-                const ty = self.graph.semantic.parameterized_storage.ir.bindings.items[@intFromEnum(binding)].ty;
+                const ty = self.graph.semantic.parameterized_storage.ir.bindingType(binding);
                 return self.addResolvedNode(node, ty, .{ .binding_use = binding });
             }
             if (self.parameter(name)) |parameter_binding| {
