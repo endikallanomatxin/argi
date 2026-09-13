@@ -44,13 +44,14 @@ pub fn build(
     var graph = try module_sg.build(allocator, module_dir, files);
     errdefer graph.deinit(allocator);
 
-    // The syntax-oriented builder still produces a compatibility prefix while
-    // discovering declarations. Collapse it immediately so every semantic
-    // lowerer below observes and extends one canonical Module* ID space.
-    try canonicalize_storage.run(allocator, &graph);
-
+    // Declaration discovery can leave interfaces whose imported/generic types
+    // and default values still need source syntax. Finish that construction
+    // work first; everything after canonicalization consumes one Module* ID
+    // space and must not depend on the builder-era compatibility prefixes.
     const module_aliases = try module_alias_lowerer.lower(allocator, &graph, files);
     const initializers = try initializer_lowerer.lower(allocator, &graph, files);
+    try canonicalize_storage.run(allocator, &graph);
+
     try lowerOperatorMetadata(allocator, &graph, files);
     const global_roots = try global_roots_lowerer.lower(allocator, &graph);
 
