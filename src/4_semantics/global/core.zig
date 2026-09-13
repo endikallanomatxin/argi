@@ -144,6 +144,30 @@ pub const Resolver = struct {
         return changed;
     }
 
+    pub fn defaultStringLiteralType(self: *const Resolver) ?global_sg.GlobalTypeId {
+        for (self.graph.declarations.items, 0..) |declaration, raw| {
+            if (declaration.kind != .type or !std.mem.eql(u8, self.graph.text(declaration.name), "StringView")) continue;
+            const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
+            const owner = self.graph.moduleForDeclaration(id) orelse continue;
+            if (!self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) continue;
+            const ty = declaration.type_id orelse continue;
+            if (self.graph.isTypeUnresolved(ty)) continue;
+            return ty;
+        }
+        return null;
+    }
+
+    pub fn materializeStringLiteralTypes(self: *Resolver) bool {
+        const default_ty = self.defaultStringLiteralType() orelse return false;
+        var changed = false;
+        for (self.graph.nodes.items) |*node| {
+            if (node.ty != null or node.content != .string_literal) continue;
+            node.ty = default_ty;
+            changed = true;
+        }
+        return changed;
+    }
+
     pub fn tryResolve(
         self: *Resolver,
         module_index: usize,
