@@ -51,6 +51,19 @@ pub const ValueFacts = struct {
             .opaque_provenance = self.opaque_provenance,
         };
     }
+
+    /// Scalar values loaded from opaque storage retain physical/raw-storage
+    /// facts, but not the lifetime envelope of the container that happened to
+    /// hold them. This is the indexed equivalent of the legacy checker's
+    /// scalar opaque-read rule and prevents conservative parent projections
+    /// from manufacturing dependencies or ownership for plain scalar values.
+    pub fn scalarOpaqueRead(self: ValueFacts) ValueFacts {
+        return .{
+            .integer_address = self.integer_address,
+            .foreign_storage = self.foreign_storage,
+            .storage_capabilities = self.storage_capabilities,
+        };
+    }
 };
 
 pub const FieldFacts = struct {
@@ -129,4 +142,30 @@ test "indexed safety facts key places by GlobalBindingId" {
     Tracker.moveValue(&source, &destination);
     try std.testing.expectEqual(binding, destination.storage.root);
     try std.testing.expectEqual(root, destination.value.owned_roots[0]);
+}
+
+test "scalar opaque reads discard container lifetime facts" {
+    const binding: graph.GlobalBindingId = @enumFromInt(7);
+    const root: ValidityRootId = @enumFromInt(3);
+    const capability: StorageCapabilityId = @enumFromInt(2);
+    const value = ValueFacts{
+        .dependencies = &.{.{ .root = root }},
+        .owned_roots = &.{root},
+        .integer_address = true,
+        .foreign_storage = true,
+        .storage_capabilities = &.{capability},
+        .referenced_place = .{ .root = binding },
+        .opaque_provenance = &.{.{ .storage = .{ .root = binding }, .generation = root }},
+    };
+
+    const scalar = value.scalarOpaqueRead();
+    try std.testing.expectEqual(@as(usize, 0), scalar.dependencies.len);
+    try std.testing.expectEqual(@as(usize, 0), scalar.owned_roots.len);
+    try std.testing.expectEqual(@as(usize, 0), scalar.fields.len);
+    try std.testing.expectEqual(@as(usize, 0), scalar.variants.len);
+    try std.testing.expectEqual(@as(?Place, null), scalar.referenced_place);
+    try std.testing.expectEqual(@as(usize, 0), scalar.opaque_provenance.len);
+    try std.testing.expect(scalar.integer_address);
+    try std.testing.expect(scalar.foreign_storage);
+    try std.testing.expectEqualSlices(StorageCapabilityId, &.{capability}, scalar.storage_capabilities);
 }
