@@ -82,6 +82,7 @@ pub const CodeGenerator = struct {
     main_candidate: ?graph_mod.GlobalFunctionId = null,
     selected_test_candidate: ?graph_mod.GlobalFunctionId = null,
     string_literal_counter: u32 = 0,
+    virtual_table_counter: u32 = 0,
     runtime_argc_global: ?llvm.c.LLVMValueRef = null,
     runtime_argv_global: ?llvm.c.LLVMValueRef = null,
 
@@ -413,7 +414,8 @@ pub const CodeGenerator = struct {
                 break :blk null;
             },
             .function_call => |call| try self.genFunctionCall(call),
-            .virtualize, .virtual_call => CodegenError.NotYetImplemented,
+            .virtualize => |virtualize| try self.genVirtualize(virtualize),
+            .virtual_call => |virtual_call| try self.genVirtualCall(virtual_call),
             .code_block => |block| try self.genBlock(block),
             .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal => try self.emitLiteral(node_id),
             .list_literal => |literal| try self.listLiteral(literal, node.ty),
@@ -950,6 +952,83 @@ pub const CodeGenerator = struct {
         var blocks = [_]llvm.c.LLVMBasicBlockRef{ some_end, none_end };
         c.LLVMAddIncoming(phi, &values, &blocks, 2);
         return .{ .value_ref = phi, .type_ref = result_type, .ty = unwrap.result_type };
+    }
+
+    fn genVirtualize(self: *CodeGenerator, virtualize_id: graph_mod.GlobalVirtualizeId) !TypedValue {
+        const virtualize = self.graph.virtualizes.items[@intFromEnum(virtualize_id)];
+        const concrete_ptr = (try self.visitNode(virtualize.value)) orelse return CodegenError.ValueNotFound;
+        const ptr_type = c.LLVMPointerType(c.LLVMInt8Type(), 0);
+
+        var vtable_ptr = c.LLVMConstNull(ptr_type);
+        const methods = self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len];
+        if (methods.len != 0) {
+            const table_type = c.LLVMArrayType2(ptr_type, methods.len);
+            const table_name = try std.fmt.allocPrintZ(self.allocator, "argi.vtable.{d}", .{self.virtual_table_counter});
+            defer self.allocator.free(table_name);
+            self.virtual_table_counter += 1;
+
+            const table_global = c.LLVMAddGlobal(self.module, table_type, table_name.ptr);
+            c.LLVMSetLinkage(table_global, c.LLVMPrivateLinkage);
+            c.LLVMSetGlobalConstant(table_global, 1);
+            c.LLVMSetUnnamedAddress(table_global, c.LLVMGlobalUnnamedAddr);
+
+            const method_values = try self.allocator.alloc(llvm.c.LLVMValueRef, methods.len);
+            defer self.allocator.free(method_values);
+            for (methods, 0..) |method, index| {
+                const symbol = self.functions.get(method) orelse return CodegenError.SymbolNotFound;
+                method_values[index] = symbol.ref;
+            }
+            c.LLVMSetInitializer(table_global, c.LLVMConstArray2(ptr_type, method_values.ptr, methods.len));
+            vtable_ptr = table_global;
+        }
+
+        const virtual_type = try self.toLLVMType(virtualize.virtual_type);
+        var value = c.LLVMGetUndef(virtual_type);
+        value = c.LLVMBuildInsertValue(self.builder, value, concrete_ptr.value_ref, 0, "virtual.data");
+        value = c.LLVMBuildInsertValue(self.builder, value, vtable_ptr, 1, "virtual.vtable");
+        return .{ .value_ref = value, .type_ref = virtual_type, .ty = virtualize.virtual_type };
+    }
+
+    fn genVirtualCall(self: *CodeGenerator, call_id: graph_mod.GlobalVirtualCallId) !?TypedValue {
+        const call = self.graph.virtual_calls.items[@intFromEnum(call_id)];
+        const handle_ptr = (try self.visitNode(call.handle)) orelse return CodegenError.ValueNotFound;
+        const handle_ty = self.graph.nodes.items[@intFromEnum(call.handle)].ty orelse return CodegenError.InvalidType;
+        const virtual_ty = switch (self.graph.types.items[@intFromEnum(handle_ty)]) {
+            .pointer => |pointer| pointer.child,
+            else => return CodegenError.InvalidType,
+        };
+        const virtual_type = try self.toLLVMType(virtual_ty);
+        const virtual_value = c.LLVMBuildLoad2(self.builder, virtual_type, handle_ptr.value_ref, "virtual.handle");
+        const concrete_ptr = c.LLVMBuildExtractValue(self.builder, virtual_value, 0, "virtual.data");
+        const vtable_ptr = c.LLVMBuildExtractValue(self.builder, virtual_value, 1, "virtual.vtable");
+
+        const ptr_type = c.LLVMPointerType(c.LLVMInt8Type(), 0);
+        var method_indices = [_]llvm.c.LLVMValueRef{c.LLVMConstInt(try self.nativeUIntType(), call.method_index, 0)};
+        const method_ptr = c.LLVMBuildInBoundsGEP2(self.builder, ptr_type, vtable_ptr, &method_indices, 1, "virtual.method.ptr");
+        const method = c.LLVMBuildLoad2(self.builder, ptr_type, method_ptr, "virtual.method");
+
+        const input = (try self.visitNode(call.input)) orelse return CodegenError.ValueNotFound;
+        var patched_input = input.value_ref;
+        patched_input = c.LLVMBuildInsertValue(self.builder, patched_input, concrete_ptr, call.self_input_index, "virtual.input.self");
+
+        const output_type = try self.toLLVMType(call.output_type);
+        var parameter_types = [_]llvm.c.LLVMTypeRef{input.type_ref};
+        const fn_type = c.LLVMFunctionType(output_type, &parameter_types, 1, 0);
+        var arguments = [_]llvm.c.LLVMValueRef{patched_input};
+        const result = c.LLVMBuildCall2(self.builder, fn_type, method, &arguments, 1, "virtual.call");
+
+        const output_fields = types.fields(self.graph, call.output_type) orelse return CodegenError.InvalidType;
+        if (output_fields.len == 0) return null;
+        if (output_fields.len == 1) {
+            const field = self.graph.fields.items[output_fields.start];
+            const field_ty = types.effectiveFieldType(field);
+            return .{
+                .value_ref = c.LLVMBuildExtractValue(self.builder, result, 0, "virtual.call.out"),
+                .type_ref = try self.toLLVMType(field_ty),
+                .ty = field_ty,
+            };
+        }
+        return .{ .value_ref = result, .type_ref = output_type, .ty = call.output_type };
     }
 
     fn genFunctionCall(self: *CodeGenerator, call: anytype) !?TypedValue {
