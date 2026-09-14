@@ -2124,17 +2124,15 @@ pub const SafetyChecker = struct {
         };
     }
 
-    fn joinState(self: *SafetyChecker, out: *FunctionState, left: *const FunctionState, right: *const FunctionState) !void {
-        if (!left.reachable) return self.copyState(out, right);
-        if (!right.reachable) return self.copyState(out, left);
+    fn joinState(self: *SafetyChecker, destination: *FunctionState, left: *const FunctionState, right: *const FunctionState) !void {
+        if (!left.reachable) return self.copyState(destination, right);
+        if (!right.reachable) return self.copyState(destination, left);
 
-        // Branches clone the same root namespace but may materialize additional
-        // roots independently. Rebuild the joined root table to the widest
-        // namespace instead of assuming the destination already has that size.
-        var roots = std.array_list.Managed(facts.ValidityRoot).init(self.allocator);
-        defer roots.deinit();
-        const count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);
-        for (0..count) |index| {
+        var joined = FunctionState.init(self.allocator);
+        errdefer joined.deinit();
+
+        const root_count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);
+        for (0..root_count) |index| {
             const id: facts.ValidityRootId = @enumFromInt(index);
             const left_state: @TypeOf(left.tracker.roots.items[0].state) = if (index < left.tracker.roots.items.len)
                 left.tracker.roots.items[index].state
@@ -2150,47 +2148,83 @@ pub const SafetyChecker = struct {
                 .dead;
             const left_owned = index < left.tracker.roots.items.len and left.tracker.roots.items[index].owned_resource;
             const right_owned = index < right.tracker.roots.items.len and right.tracker.roots.items[index].owned_resource;
-            try roots.append(.{
+            try joined.tracker.roots.append(.{
                 .id = id,
                 .state = if (left_state == right_state) left_state else .maybe_alive,
                 .owned_resource = left_owned or right_owned,
             });
         }
-        out.tracker.roots.clearRetainingCapacity();
-        try out.tracker.roots.appendSlice(roots.items);
 
-        var joined_active = std.array_list.Managed(ChoiceActive).init(self.allocator);
-        defer joined_active.deinit();
+        const capability_count = @max(left.storage_capabilities.items.len, right.storage_capabilities.items.len);
+        for (0..capability_count) |index| {
+            const left_state: StorageCapabilityState = if (index < left.storage_capabilities.items.len)
+                left.storage_capabilities.items[index]
+            else
+                .consumed;
+            const right_state: StorageCapabilityState = if (index < right.storage_capabilities.items.len)
+                right.storage_capabilities.items[index]
+            else
+                .consumed;
+            try joined.storage_capabilities.append(if (left_state == right_state) left_state else .maybe_consumed);
+        }
+
+        for (left.places.items) |left_place| {
+            var merged = left_place;
+            if (findPlaceConst(right, left_place.storage)) |right_place| {
+                merged.initializedness = joinInitializedness(left_place.initializedness, right_place.initializedness);
+                merged.value = try self.mergeValueFacts(left_place.value, right_place.value);
+            }
+            try joined.places.append(merged);
+        }
+        for (right.places.items) |right_place| {
+            if (findPlaceConst(left, right_place.storage) == null) try joined.places.append(right_place);
+        }
+
+        for (left.ownership_edges.items) |edge| try joined.ownership_edges.append(edge);
+        for (right.ownership_edges.items) |edge| {
+            var found = false;
+            for (joined.ownership_edges.items) |existing| {
+                if (existing.owner == edge.owner and existing.owned == edge.owned) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) try joined.ownership_edges.append(edge);
+        }
+
+        try joined.storage_generations.appendSlice(left.storage_generations.items);
+        for (right.storage_generations.items) |candidate| {
+            var found = false;
+            for (joined.storage_generations.items) |existing| {
+                if (existing.storage.eql(candidate.storage)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) try joined.storage_generations.append(candidate);
+        }
+
+        for (left.opaque_storages.items) |opaque_storage|
+            try self.mergeOpaqueStorage(&joined, opaque_storage.storage, opaque_storage.hidden_dependencies);
+        for (right.opaque_storages.items) |opaque_storage|
+            try self.mergeOpaqueStorage(&joined, opaque_storage.storage, opaque_storage.hidden_dependencies);
+
         for (left.choice_active.items) |candidate| for (right.choice_active.items) |other| {
             if (candidate.storage.eql(other.storage) and candidate.variant_index == other.variant_index) {
-                try joined_active.append(candidate);
+                try joined.choice_active.append(candidate);
                 break;
             }
         };
-
-        var joined_rejected = std.array_list.Managed(ChoiceRejected).init(self.allocator);
-        defer joined_rejected.deinit();
         for (left.choice_rejected.items) |candidate| for (right.choice_rejected.items) |other| {
             if (candidate.storage.eql(other.storage) and candidate.variant_index == other.variant_index) {
-                try joined_rejected.append(candidate);
+                try joined.choice_rejected.append(candidate);
                 break;
             }
         };
 
-        for (out.places.items) |*place| {
-            const a = findPlaceConst(left, place.storage);
-            const b = findPlaceConst(right, place.storage);
-            if (a == null or b == null) {
-                place.initializedness = .maybe_initialized;
-                continue;
-            }
-            if (a.?.initializedness != b.?.initializedness) place.initializedness = .maybe_initialized;
-        }
-        out.choice_active.clearRetainingCapacity();
-        try out.choice_active.appendSlice(joined_active.items);
-        out.choice_rejected.clearRetainingCapacity();
-        try out.choice_rejected.appendSlice(joined_rejected.items);
-        out.reachable = true;
+        joined.reachable = true;
+        destination.deinit();
+        destination.* = joined;
     }
 
     /// Storage generations are created lazily when a Place first needs one. If
@@ -2507,6 +2541,11 @@ fn hasExternalOpaqueDependency(value: facts.ValueFacts, owned: []const facts.Val
     return false;
 }
 
+fn joinInitializedness(left: value_state.Initializedness, right: value_state.Initializedness) value_state.Initializedness {
+    if (left == right) return left;
+    return .maybe_initialized;
+}
+
 fn findPlaceConst(state: *const SafetyChecker.FunctionState, storage: facts.Place) ?*const facts.PlaceFacts {
     for (state.places.items) |*entry| if (entry.storage.eql(storage)) return entry;
     return null;
@@ -2704,4 +2743,68 @@ test "structural auto deinit marks nested fields and parent dead" {
     try checker.applyAutoDeinit(@enumFromInt(0), @enumFromInt(0), &state);
     try std.testing.expectEqual(value_state.Initializedness.deinitialized, checker.initializednessAtPlace(&state, child));
     try std.testing.expectEqual(value_state.Initializedness.deinitialized, checker.initializednessAtPlace(&state, root));
+}
+
+test "rich safety join preserves all compact state dimensions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+
+    var left = SafetyChecker.FunctionState.init(allocator);
+    defer left.deinit();
+    var right = SafetyChecker.FunctionState.init(allocator);
+    defer right.deinit();
+    var joined = SafetyChecker.FunctionState.init(allocator);
+    defer joined.deinit();
+
+    const changing = try left.tracker.establish(.fresh);
+    const left_dependency = try left.tracker.establish(.fresh);
+    const right_dependency = try left.tracker.establish(.fresh);
+    _ = try right.tracker.establish(.fresh);
+    _ = try right.tracker.establish(.fresh);
+    _ = try right.tracker.establish(.fresh);
+    right.tracker.end(changing);
+
+    try left.storage_capabilities.append(.available);
+    try right.storage_capabilities.append(.consumed);
+
+    const storage = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(0)) };
+    try left.places.append(.{
+        .storage = storage,
+        .initializedness = .initialized,
+        .value = .{ .dependencies = &.{.{ .root = left_dependency }} },
+    });
+    try right.places.append(.{
+        .storage = storage,
+        .initializedness = .initialized,
+        .value = .{ .dependencies = &.{.{ .root = right_dependency }} },
+    });
+
+    try left.ownership_edges.append(.{ .owner = changing, .owned = left_dependency });
+    try right.ownership_edges.append(.{ .owner = changing, .owned = right_dependency });
+    try left.storage_generations.append(.{ .storage = storage, .generation = left_dependency });
+    try right.storage_generations.append(.{ .storage = storage, .generation = right_dependency });
+    try left.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{left_dependency} });
+    try right.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{right_dependency} });
+    try left.choice_active.append(.{ .storage = storage, .variant_index = 2 });
+    try right.choice_active.append(.{ .storage = storage, .variant_index = 2 });
+    try left.choice_rejected.append(.{ .storage = storage, .variant_index = 1 });
+    try right.choice_rejected.append(.{ .storage = storage, .variant_index = 1 });
+
+    try checker.joinState(&joined, &left, &right);
+
+    try std.testing.expectEqual(.maybe_alive, joined.tracker.roots.items[@intFromEnum(changing)].state);
+    try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.maybe_consumed, joined.storage_capabilities.items[0]);
+    const joined_value = checker.valueAtPlace(&joined, storage).?;
+    try std.testing.expect(valueDependsOnRoot(joined_value, left_dependency));
+    try std.testing.expect(valueDependsOnRoot(joined_value, right_dependency));
+    try std.testing.expectEqual(@as(usize, 2), joined.ownership_edges.items.len);
+    try std.testing.expectEqual(@as(usize, 1), joined.storage_generations.items.len);
+    try std.testing.expectEqual(@as(usize, 1), joined.opaque_storages.items.len);
+    try std.testing.expect(containsRoot(joined.opaque_storages.items[0].hidden_dependencies, left_dependency));
+    try std.testing.expect(containsRoot(joined.opaque_storages.items[0].hidden_dependencies, right_dependency));
+    try std.testing.expectEqual(@as(usize, 1), joined.choice_active.items.len);
+    try std.testing.expectEqual(@as(usize, 1), joined.choice_rejected.items.len);
 }
