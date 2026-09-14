@@ -308,6 +308,12 @@ pub const SafetyChecker = struct {
             .choice_payload_access => |access| try self.evaluateChoicePayload(function, node.source, access, state),
             .function_call => |call| try self.evaluateCall(function, call, state),
             .virtual_call => |call_id| try self.evaluateVirtualCall(function, call_id, state),
+            .virtualize => |virtualize_id| blk: {
+                const virtualize = self.graph.virtualizes.items[@intFromEnum(virtualize_id)];
+                var value = (try self.evaluate(function, virtualize.value, state)).referenceCopy();
+                value.virtual_methods = self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len];
+                break :blk value;
+            },
             .nullable_unwrap_or => |unwrap_id| blk: {
                 const unwrap = self.graph.nullable_unwraps.items[@intFromEnum(unwrap_id)];
                 const value = try self.evaluate(function, unwrap.nullable_value, state);
@@ -358,7 +364,7 @@ pub const SafetyChecker = struct {
                 try self.validateBlock(function, block, state);
                 break :blk .{};
             },
-            .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .type_initializer, .testing_expect_error, .reach_directive, .virtualize, .break_statement, .continue_statement => .{},
+            .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .type_initializer, .testing_expect_error, .reach_directive, .break_statement, .continue_statement => .{},
             else => .{},
         };
     }
@@ -531,11 +537,55 @@ pub const SafetyChecker = struct {
         return .{};
     }
 
-    fn evaluateVirtualCall(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, id: graph_mod.GlobalVirtualCallId, state: *FunctionState) !facts.ValueFacts {
+    fn evaluateVirtualCall(self: *SafetyChecker, caller: graph_mod.GlobalFunctionId, id: graph_mod.GlobalVirtualCallId, state: *FunctionState) !facts.ValueFacts {
+        if (self.collect_stats) self.stats.calls += 1;
         const call = self.graph.virtual_calls.items[@intFromEnum(id)];
-        _ = try self.evaluate(function, call.handle, state);
-        _ = try self.evaluate(function, call.input, state);
-        return .{};
+        const input_node = self.graph.nodes.items[@intFromEnum(call.input)];
+        if (input_node.content != .struct_value_literal) {
+            _ = try self.evaluate(caller, call.handle, state);
+            _ = try self.evaluate(caller, call.input, state);
+            return .{};
+        }
+
+        const range = input_node.content.struct_value_literal.fields;
+        const argument_nodes = self.globalValueFieldIds(range);
+        var candidate = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+        defer candidate.deinit();
+        var values = try self.allocator.alloc(facts.ValueFacts, argument_nodes.len);
+        defer self.allocator.free(values);
+        for (argument_nodes, 0..) |field_id, index| {
+            const field = self.graph.value_fields.items[@intFromEnum(field_id)];
+            values[index] = try self.evaluate(caller, field.value, &candidate);
+        }
+
+        if (call.self_input_index >= values.len) return .{};
+        const receiver = values[call.self_input_index];
+        if (call.method_index >= receiver.virtual_methods.len) return .{};
+        const callee_id = receiver.virtual_methods[call.method_index];
+        const callee = self.graph.functions.items[@intFromEnum(callee_id)];
+
+        if (callee.safety_primitive != .none) {
+            if (self.collect_stats) self.stats.primitive_calls += 1;
+            const result = try self.evaluatePrimitive(caller, callee.safety_primitive, argument_nodes, values, &candidate, input_node.source);
+            self.commitState(state, &candidate);
+            return result;
+        }
+        if (callee.body == null) {
+            if (callee.output.len == 1 and isPointer(self.graph, self.graph.fields.items[callee.output.start].ty)) return .{ .foreign_storage = true };
+            return .{};
+        }
+        if (self.callStackContains(callee_id)) {
+            if (self.collect_stats) self.stats.recursive_edges += 1;
+            return .{};
+        }
+
+        try self.bindCallInputs(callee, values, &candidate);
+        try self.call_stack.append(callee_id);
+        defer _ = self.call_stack.pop();
+        try self.validateBlock(callee_id, callee.body.?, &candidate);
+        const result = try self.collectCallOutput(callee, &candidate);
+        self.commitState(state, &candidate);
+        return result;
     }
 
     fn applyAutoDeinit(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, id: graph_mod.GlobalAutoDeinitId, state: *FunctionState) !void {
