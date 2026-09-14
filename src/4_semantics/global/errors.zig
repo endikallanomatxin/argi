@@ -49,6 +49,8 @@ pub const Resolver = struct {
         const propagated_ty = self.enclosingErrableType(target) orelse errable_ty;
         const propagated_error = global_types.findVariant(self.graph, propagated_ty, "error") orelse err;
         const propagated_error_payload = propagated_error.variant.payload_type orelse error_payload;
+        if (!self.errorPayloadCanPropagate(error_payload, propagated_error_payload))
+            return error.IncompatibleErrorPayload;
         const source = self.graph.nodes.items[@intFromEnum(errable)].source;
         const empty = try self.graph.addString(self.allocator, "");
         const cleanup: primitives.Range(global_sg.GlobalNodeId) = .{ .start = @intCast(self.graph.node_refs.items.len), .len = 0 };
@@ -117,6 +119,28 @@ pub const Resolver = struct {
             return null;
         }
         return null;
+    }
+
+    fn errorPayloadCanPropagate(self: *const Resolver, source: global_sg.GlobalTypeId, target: global_sg.GlobalTypeId) bool {
+        if (global_types.equal(self.graph, source, target)) return true;
+        const source_reason = global_types.findField(self.graph, source, "reason") orelse return false;
+        const target_reason = global_types.findField(self.graph, target, "reason") orelse return false;
+        const source_trace = global_types.findField(self.graph, source, "trace") orelse return false;
+        const target_trace = global_types.findField(self.graph, target, "trace") orelse return false;
+        if (!global_types.equal(self.graph, source_trace.field.ty, target_trace.field.ty)) return false;
+        const source_variants = global_types.variants(self.graph, source_reason.field.ty) orelse return false;
+        if (self.graph.resolvedSemanticType(target_reason.field.ty)) |ty| switch (ty) {
+            .inferred_choice => |choice| if (choice.kind == .reasons) return true,
+            else => {},
+        };
+        for (self.graph.variants.items[source_variants.start..][0..source_variants.len]) |variant| {
+            const matching = global_types.findVariant(self.graph, target_reason.field.ty, self.graph.text(variant.name)) orelse return false;
+            if (variant.payload_type) |payload| {
+                const target_payload = matching.variant.payload_type orelse return false;
+                if (!global_types.equal(self.graph, payload, target_payload)) return false;
+            } else if (matching.variant.payload_type != null) return false;
+        }
+        return true;
     }
 
     fn blockContains(self: *Resolver, block_id: global_sg.GlobalBlockId, target: global_sg.GlobalNodeId) bool {
@@ -246,4 +270,26 @@ test "enclosing error search follows nested call arguments" {
         .core = undefined,
     };
     try std.testing.expect(resolver.blockContains(@enumFromInt(0), @enumFromInt(0)));
+}
+
+test "error payload propagation requires a superset of reasons" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.variants.append(allocator, .{ .name = try graph.addString(allocator, "first"), .source = source, .value = 0 });
+    try graph.variants.append(allocator, .{ .name = try graph.addString(allocator, "first"), .source = source, .value = 0 });
+    try graph.variants.append(allocator, .{ .name = try graph.addString(allocator, "second"), .source = source, .value = 1 });
+    try graph.types.append(allocator, .{ .builtin = .UInt8 });
+    try graph.types.append(allocator, .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 1 } } });
+    try graph.types.append(allocator, .{ .structural_choice = .{ .variants = .{ .start = 1, .len = 2 } } });
+    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "reason"), .ty = @enumFromInt(1), .source = source });
+    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "trace"), .ty = @enumFromInt(0), .source = source });
+    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "reason"), .ty = @enumFromInt(2), .source = source });
+    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "trace"), .ty = @enumFromInt(0), .source = source });
+    try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = 0, .len = 2 } } });
+    try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = 2, .len = 2 } } });
+    const resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = undefined };
+    try std.testing.expect(resolver.errorPayloadCanPropagate(@enumFromInt(3), @enumFromInt(4)));
+    try std.testing.expect(!resolver.errorPayloadCanPropagate(@enumFromInt(4), @enumFromInt(3)));
 }
