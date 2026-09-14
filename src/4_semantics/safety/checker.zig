@@ -1952,7 +1952,10 @@ pub const SafetyChecker = struct {
         var receiver = values[call.self_input_index];
         if (receiver.referenced_place) |wrapper| {
             if (self.valueAtPlace(&candidate, wrapper)) |stored| {
-                if (stored.referenced_place != null) receiver = stored;
+                if (stored.referenced_place != null) {
+                    values[call.self_input_index] = stored;
+                    receiver = stored;
+                }
             }
         }
         if (call.method_index >= receiver.virtual_methods.len) {
