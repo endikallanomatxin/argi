@@ -364,6 +364,8 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
         .value = globalNode(o, value.value),
         .variant = globalVariant(o, value.variant),
         .body = globalBlock(o, value.body),
+        .payload_binding = if (value.payload_binding) |id| globalBinding(o, id) else null,
+        .payload_mode = value.payload_mode,
     });
     for (storage.switches.items) |value| try result.switches.append(allocator, .{
         .expression = globalNode(o, value.expression),
