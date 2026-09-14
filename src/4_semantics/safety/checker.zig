@@ -178,6 +178,7 @@ pub const SafetyChecker = struct {
             try self.call_stack.append(id);
             defer _ = self.call_stack.pop();
             try self.validateBlock(id, function.body.?, &state, null);
+            if (state.reachable) try self.rejectEscapingOutputBindings(id, &state);
             if (self.collect_stats) self.stats.functions += 1;
         }
         if (self.diagnostics.list.items.len != before) return error.Reported;
@@ -268,6 +269,7 @@ pub const SafetyChecker = struct {
                         const value = try self.evaluate(function, expression, state);
                         try self.rejectEscapingLocalRoots(function, node.source, value, state);
                     }
+                    try self.rejectEscapingOutputBindings(function, state);
                     for (self.graph.node_refs.items[ret.cleanup.start..][0..ret.cleanup.len]) |cleanup|
                         _ = try self.evaluate(function, cleanup, state);
                     state.reachable = false;
@@ -2222,6 +2224,21 @@ pub const SafetyChecker = struct {
         }
         if (valueDependsOnDeadRoot(value, state))
             try self.report(source, "returned reference depends on a root that has ended", .{});
+    }
+
+    fn rejectEscapingOutputBindings(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        state: *FunctionState,
+    ) !void {
+        const record = self.graph.functions.items[@intFromEnum(function)];
+        for (self.graph.binding_refs.items[record.output_bindings.start..][0..record.output_bindings.len]) |binding| {
+            const storage = facts.Place{ .root = binding };
+            const output = self.valueAtPlace(state, storage) orelse continue;
+            if (self.initializednessAtPlace(state, storage) != .initialized or
+                !self.typeContainsPointer(self.graph.bindings.items[@intFromEnum(binding)].ty)) continue;
+            try self.rejectEscapingLocalRoots(function, self.graph.bindings.items[@intFromEnum(binding)].source, output, state);
+        }
     }
 
     fn valueDependsOnLocalStorage(
