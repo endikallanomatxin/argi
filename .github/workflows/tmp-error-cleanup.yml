@@ -22,12 +22,7 @@ jobs:
       - name: Apply error cleanup restoration
         run: |
           python3 .github/tmp-error-cleanup.py
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('src/4_semantics/global/ownership.zig')
-          s = p.read_text().replace('try std.testing.expect(cleanup.start <= graph.node_refs.items.len);', 'try std.testing.expect(cleanup.start != 0);')
-          p.write_text(s)
-          PY
+          python3 .github/tmp-fix-error-cleanup-test.py
       - name: Format ownership resolver
         run: zig fmt src/4_semantics/global/ownership.zig
       - name: Run internal tests
