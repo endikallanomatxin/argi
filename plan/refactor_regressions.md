@@ -1,5 +1,38 @@
 # Compact graph refactor: regression handoff
 
+## Current checkpoint (2026-09-14)
+
+This document's original checkpoint below records the 2026-09-09 state; its
+test counts and file paths are historical. Development continues on
+`compact-semantic-graph-chatgpt`, using `performance` as the behavior reference.
+
+The ownership pass now preserves the owning aggregate when projecting fields,
+retains opaque provenance through address formation, and lowers field writes
+through storage addresses. The opaque mutation negative fixtures 140X, 142X,
+143X, 144X, and 146X pass. Positive fixtures 141 and 145 are still blocked
+at codegen by a shared abstract runtime type problem, so ownership parity is
+not yet established end to end.
+
+GlobalSema now contextualizes typed literal assignment and initialization,
+coerces default integer constants to the typed operand for arithmetic, and
+reports a unique generic candidate's conflicting repeated type argument
+deterministically. The corresponding internal tests pass. Other pending-call
+classes still require comparison with `performance`.
+
+The error model remains incomplete. Indexed error propagation and context
+records exist, but codegen returns `NotYetImplemented` for both, as well as
+`testing_expect_error`. The old implementation attached trace entries, coerced
+error payloads to the caller's errable type, ran cleanup, and returned early;
+the new implementation must preserve those semantics in the indexed graph.
+The current GlobalSema error records also lack diagnostic line and column
+data, and their enclosing-function search misses nested expressions.
+
+The minimal program now reaches codegen and reports an `InvalidType` at the
+abstract `write_trace_text` parameter in `core/errors/errors.rg`. Restoring
+abstract-parameter specialization and concrete backing storage is the shared
+runtime prerequisite for positive executable validation. Do not treat the
+internal test result as suite parity.
+
 Checkpoint: 2026-09-09, branch `compact-semantic-graph-chatgpt`.
 The session started at `6d90348`; the branch was fast-forwarded to the published
 `97ac0c5` before implementation. The changes described below are local changes
