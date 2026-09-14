@@ -103,6 +103,14 @@ pub const Infer = struct {
             std.array_list.Managed(facts.PlacePostState).init(self.allocator);
         defer post_states.deinit();
 
+        var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
+        defer opaque_storage_effects.deinit();
+        const opaque_storage_empties = try self.inferOpaqueStorageEffects(
+            function_id,
+            function.body.?,
+            &opaque_storage_effects,
+        );
+
         if (function.flags.is_deinit) {
             const input_fields = self.graph.fields.items[function.input.start..][0..function.input.len];
             for (input_fields, 0..) |input_field, index| {
@@ -131,8 +139,8 @@ pub const Infer = struct {
             .outputs = outputs,
             .required_live_inputs = try required_live_inputs.toOwnedSlice(),
             .input_post_states = try post_states.toOwnedSlice(),
-            .opaque_storage_effects = previous.opaque_storage_effects,
-            .opaque_storage_empties = previous.opaque_storage_empties,
+            .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
+            .opaque_storage_empties = opaque_storage_empties,
         };
     }
 
@@ -202,6 +210,27 @@ pub const Infer = struct {
             var states = std.array_list.Managed(facts.PlacePostState).init(allocator);
             try states.appendSlice(self.states.items);
             return .{ .states = states, .reachable = self.reachable };
+        }
+    };
+
+    const OpaqueEmptyState = struct {
+        emptied: std.array_list.Managed(facts.InputPath),
+        reachable: bool = true,
+
+        fn init(allocator: std.mem.Allocator) OpaqueEmptyState {
+            return .{ .emptied = std.array_list.Managed(facts.InputPath).init(allocator) };
+        }
+
+        fn deinit(self: *OpaqueEmptyState) void {
+            self.emptied.deinit();
+        }
+
+        fn clone(self: *const OpaqueEmptyState, allocator: std.mem.Allocator) !OpaqueEmptyState {
+            var result = OpaqueEmptyState.init(allocator);
+            errdefer result.deinit();
+            try result.emptied.appendSlice(self.emptied.items);
+            result.reachable = self.reachable;
+            return result;
         }
     };
 
@@ -900,6 +929,582 @@ pub const Infer = struct {
 
     fn inputPlaceValueEffect(self: *Infer, target: facts.InputPath) !facts.ValueEffect {
         return .{ .input_place_values = try self.oneInputPath(target.input_index, target.projections) };
+    }
+
+    fn inferOpaqueStorageEffects(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        block_id: graph_mod.GlobalBlockId,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+    ) ![]const facts.InputPath {
+        var state = OpaqueEmptyState.init(self.allocator);
+        defer state.deinit();
+        var exits: ?std.array_list.Managed(facts.InputPath) = null;
+        defer if (exits) |*emptied| emptied.deinit();
+        try self.inferOpaqueEmptyBlock(function_id, block_id, effects, &state, &exits);
+        if (state.reachable) try self.recordOpaqueEmptyExit(&exits, state.emptied.items);
+
+        const emptied = if (exits) |*items|
+            try self.allocator.dupe(facts.InputPath, items.items)
+        else
+            &.{};
+        for (emptied) |storage| self.removeOpaqueStorageEffects(effects, storage);
+        return emptied;
+    }
+
+    fn inferOpaqueEmptyBlock(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        block_id: graph_mod.GlobalBlockId,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueEmptyState,
+        exits: *?std.array_list.Managed(facts.InputPath),
+    ) anyerror!void {
+        const block = self.graph.blocks.items[@intFromEnum(block_id)];
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
+            if (!state.reachable) break;
+            try self.inferOpaqueEmptyNode(function_id, node_id, effects, state, exits);
+        }
+        if (state.reachable) if (block.ret_val) |value|
+            try self.inferOpaqueEmptyExpression(function_id, value, effects, state, exits);
+    }
+
+    fn inferOpaqueEmptyNode(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        node_id: graph_mod.GlobalNodeId,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueEmptyState,
+        exits: *?std.array_list.Managed(facts.InputPath),
+    ) anyerror!void {
+        const node = self.graph.node(node_id);
+        switch (node.content) {
+            .binding_declaration => |binding| {
+                if (self.graph.binding(binding).initialization) |initialization|
+                    try self.inferOpaqueEmptyExpression(function_id, initialization, effects, state, exits);
+            },
+            .assignment => |assignment| try self.inferOpaqueEmptyExpression(function_id, assignment.value, effects, state, exits),
+            .function_call, .virtual_call => try self.inferOpaqueEmptyExpression(function_id, node_id, effects, state, exits),
+            .if_statement => |statement| {
+                try self.inferOpaqueEmptyExpression(function_id, statement.condition, effects, state, exits);
+                var then_state = try state.clone(self.allocator);
+                defer then_state.deinit();
+                try self.inferOpaqueEmptyBlock(function_id, statement.then_block, effects, &then_state, exits);
+                var else_state = try state.clone(self.allocator);
+                defer else_state.deinit();
+                if (statement.else_block) |child|
+                    try self.inferOpaqueEmptyBlock(function_id, child, effects, &else_state, exits);
+                try self.joinOpaqueEmptyFallthrough(state, &then_state, &else_state);
+            },
+            .while_statement => |statement| {
+                try self.inferOpaqueEmptyExpression(function_id, statement.condition, effects, state, exits);
+                var body_state = try state.clone(self.allocator);
+                defer body_state.deinit();
+                try self.inferOpaqueEmptyBlock(function_id, statement.body, effects, &body_state, exits);
+                state.emptied.clearRetainingCapacity();
+            },
+            .for_statement => |statement| {
+                if (statement.init) |initialization|
+                    try self.inferOpaqueEmptyNode(function_id, initialization, effects, state, exits);
+                if (!state.reachable) return;
+                try self.inferOpaqueEmptyExpression(function_id, statement.condition, effects, state, exits);
+                var body_state = try state.clone(self.allocator);
+                defer body_state.deinit();
+                try self.inferOpaqueEmptyBlock(function_id, statement.body, effects, &body_state, exits);
+                if (body_state.reachable) if (statement.increment) |increment|
+                    try self.inferOpaqueEmptyNode(function_id, increment, effects, &body_state, exits);
+                state.emptied.clearRetainingCapacity();
+            },
+            .switch_statement => |switch_id| {
+                const statement = self.graph.switches.items[@intFromEnum(switch_id)];
+                try self.inferOpaqueEmptyExpression(function_id, statement.expression, effects, state, exits);
+                var joined: ?OpaqueEmptyState = null;
+                defer if (joined) |*joined_state| joined_state.deinit();
+                for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| {
+                    var branch = try state.clone(self.allocator);
+                    defer branch.deinit();
+                    try self.inferOpaqueEmptyBlock(function_id, case.body, effects, &branch, exits);
+                    try self.joinOpaqueEmptyBranch(&joined, &branch);
+                }
+                if (statement.default_block) |child| {
+                    var branch = try state.clone(self.allocator);
+                    defer branch.deinit();
+                    try self.inferOpaqueEmptyBlock(function_id, child, effects, &branch, exits);
+                    try self.joinOpaqueEmptyBranch(&joined, &branch);
+                } else if (!statement.exhaustive) {
+                    try self.joinOpaqueEmptyBranch(&joined, state);
+                }
+                if (joined) |*joined_state|
+                    try self.copyOpaqueEmptyState(state, joined_state)
+                else
+                    state.reachable = false;
+            },
+            .return_statement => |statement| {
+                if (statement.expression) |expression|
+                    try self.inferOpaqueEmptyExpression(function_id, expression, effects, state, exits);
+                try self.inferOpaqueEmptyRange(function_id, statement.cleanup, effects, state, exits);
+                if (state.reachable) try self.recordOpaqueEmptyExit(exits, state.emptied.items);
+                state.reachable = false;
+            },
+            .struct_field_store => |store| {
+                try self.inferOpaqueEmptyExpression(function_id, store.struct_ptr, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function_id, store.value, effects, state, exits);
+                state.emptied.clearRetainingCapacity();
+            },
+            .array_store => |store| {
+                try self.inferOpaqueEmptyExpression(function_id, store.array_ptr, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function_id, store.index, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function_id, store.value, effects, state, exits);
+                state.emptied.clearRetainingCapacity();
+            },
+            .pointer_assignment => |assignment| {
+                try self.inferOpaqueEmptyExpression(function_id, assignment.pointer, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function_id, assignment.value, effects, state, exits);
+                state.emptied.clearRetainingCapacity();
+            },
+            .code_block => |child| try self.inferOpaqueEmptyBlock(function_id, child, effects, state, exits),
+            .break_statement, .continue_statement => state.reachable = false,
+            .auto_deinit_binding => |auto_id| try self.applyAutoDeinitOpaqueEffects(function_id, auto_id, effects, state),
+            else => try self.inferOpaqueEmptyExpression(function_id, node_id, effects, state, exits),
+        }
+    }
+
+    fn inferOpaqueEmptyRange(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        range: graph_mod.NodeRange,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueEmptyState,
+        exits: *?std.array_list.Managed(facts.InputPath),
+    ) anyerror!void {
+        for (self.graph.node_refs.items[range.start..][0..range.len]) |node_id| {
+            if (!state.reachable) break;
+            try self.inferOpaqueEmptyNode(function_id, node_id, effects, state, exits);
+        }
+    }
+
+    fn applyAutoDeinitOpaqueEffects(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        auto_id: graph_mod.GlobalAutoDeinitId,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueEmptyState,
+    ) !void {
+        const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
+        const binding_effect = self.bindings.get(cleanup.binding);
+        if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| {
+            if (self.engine.summaryFor(deinit_fn)) |summary|
+                try self.applyOpaqueEmptySummary(
+                    function_id,
+                    summary,
+                    input,
+                    effects,
+                    state,
+                    if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null,
+                );
+        };
+        if (binding_effect) |effect|
+            try self.applyAutoDeinitFieldOpaqueEffects(function_id, cleanup.fields, effects, state, effect);
+    }
+
+    fn applyAutoDeinitFieldOpaqueEffects(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        field_range: primitives.Range(graph_mod.GlobalAutoDeinitFieldId),
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueEmptyState,
+        parent_effect: facts.ValueEffect,
+    ) !void {
+        for (self.graph.auto_deinit_fields.items[field_range.start..][0..field_range.len]) |field| {
+            const field_effect = try self.projectValueEffect(parent_effect, .{ .field = field.field_index });
+            if (field.deinit_fn) |deinit_fn| if (field.input) |input| {
+                if (self.engine.summaryFor(deinit_fn)) |summary|
+                    try self.applyOpaqueEmptySummary(
+                        function_id,
+                        summary,
+                        input,
+                        effects,
+                        state,
+                        .{ .input_index = field.self_field_index, .effect = field_effect },
+                    );
+            };
+            try self.applyAutoDeinitFieldOpaqueEffects(function_id, field.fields, effects, state, field_effect);
+        }
+    }
+
+    fn inferOpaqueEmptyExpression(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        node_id: graph_mod.GlobalNodeId,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueEmptyState,
+        exits: *?std.array_list.Managed(facts.InputPath),
+    ) anyerror!void {
+        const node = self.graph.node(node_id);
+        switch (node.content) {
+            .move_value, .address_of => |value| try self.inferOpaqueEmptyExpression(function_id, value, effects, state, exits),
+            .dereference => |value| try self.inferOpaqueEmptyExpression(function_id, value.pointer, effects, state, exits),
+            .struct_value_literal => |literal| {
+                for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
+                    try self.inferOpaqueEmptyExpression(function_id, field.value, effects, state, exits);
+            },
+            .list_literal => |literal| {
+                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |element|
+                    try self.inferOpaqueEmptyExpression(function_id, element, effects, state, exits);
+            },
+            .array_literal => |literal| {
+                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |element|
+                    try self.inferOpaqueEmptyExpression(function_id, element, effects, state, exits);
+            },
+            .choice_literal => |literal| {
+                if (literal.payload) |payload|
+                    try self.inferOpaqueEmptyExpression(function_id, payload, effects, state, exits);
+            },
+            .struct_field_access => |access| try self.inferOpaqueEmptyExpression(function_id, access.value, effects, state, exits),
+            .choice_payload_access => |access| try self.inferOpaqueEmptyExpression(function_id, access.value, effects, state, exits),
+            .array_index => |index| {
+                try self.inferOpaqueEmptyExpression(function_id, index.array_ptr, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function_id, index.index, effects, state, exits);
+            },
+            .explicit_cast => |cast| try self.inferOpaqueEmptyExpression(function_id, cast.value, effects, state, exits),
+            .binary_operation => |operation| {
+                try self.inferOpaqueEmptyExpression(function_id, operation.left, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function_id, operation.right, effects, state, exits);
+            },
+            .comparison => |comparison| {
+                try self.inferOpaqueEmptyExpression(function_id, comparison.left, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function_id, comparison.right, effects, state, exits);
+            },
+            .logical_operation => |operation| {
+                try self.inferOpaqueEmptyExpression(function_id, operation.left, effects, state, exits);
+                try self.inferConditionalOpaqueEmptyExpression(function_id, operation.right, effects, state, exits);
+            },
+            .nullable_unwrap_or => |unwrap_id| {
+                const unwrap = self.graph.nullable_unwraps.items[@intFromEnum(unwrap_id)];
+                try self.inferOpaqueEmptyExpression(function_id, unwrap.nullable_value, effects, state, exits);
+                try self.inferConditionalOpaqueEmptyExpression(function_id, unwrap.fallback_value, effects, state, exits);
+            },
+            .testing_expect_error => |expect_id| {
+                const expect = self.graph.testing_expect_errors.items[@intFromEnum(expect_id)];
+                try self.inferOpaqueEmptyExpression(function_id, expect.expected_reason, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function_id, expect.actual_result, effects, state, exits);
+            },
+            .error_propagation => |propagation_id| {
+                const propagation = self.graph.error_propagations.items[@intFromEnum(propagation_id)];
+                try self.inferOpaqueEmptyExpression(function_id, propagation.errable_value, effects, state, exits);
+                var error_state = try state.clone(self.allocator);
+                defer error_state.deinit();
+                try self.inferOpaqueEmptyRange(function_id, propagation.cleanup_nodes, effects, &error_state, exits);
+                if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, error_state.emptied.items);
+            },
+            .error_context => |context_id| {
+                const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
+                try self.inferOpaqueEmptyExpression(function_id, context.errable_value, effects, state, exits);
+                var error_state = try state.clone(self.allocator);
+                defer error_state.deinit();
+                try self.inferOpaqueEmptyExpression(function_id, context.context, effects, &error_state, exits);
+                try self.inferOpaqueEmptyRange(function_id, context.cleanup_nodes, effects, &error_state, exits);
+                if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, error_state.emptied.items);
+            },
+            .function_call => |call| {
+                try self.inferOpaqueEmptyExpression(function_id, call.input, effects, state, exits);
+                try self.applyOpaqueEmptyFunctionCall(function_id, call.callee, call.input, effects, state);
+            },
+            .virtual_call => |virtual_call_id| {
+                const call = self.graph.virtual_calls.items[@intFromEnum(virtual_call_id)];
+                try self.inferOpaqueEmptyExpression(function_id, call.handle, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function_id, call.input, effects, state, exits);
+            },
+            .virtualize => |virtualize_id| try self.inferOpaqueEmptyExpression(
+                function_id,
+                self.graph.virtualizes.items[@intFromEnum(virtualize_id)].value,
+                effects,
+                state,
+                exits,
+            ),
+            .type_initializer => |initializer| try self.inferOpaqueEmptyExpression(function_id, initializer.args, effects, state, exits),
+            else => {},
+        }
+    }
+
+    fn inferConditionalOpaqueEmptyExpression(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        node_id: graph_mod.GlobalNodeId,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueEmptyState,
+        exits: *?std.array_list.Managed(facts.InputPath),
+    ) !void {
+        var executed = try state.clone(self.allocator);
+        defer executed.deinit();
+        try self.inferOpaqueEmptyExpression(function_id, node_id, effects, &executed, exits);
+        var skipped = try state.clone(self.allocator);
+        defer skipped.deinit();
+        try self.joinOpaqueEmptyFallthrough(state, &executed, &skipped);
+    }
+
+    fn applyOpaqueEmptyFunctionCall(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        callee: graph_mod.GlobalFunctionId,
+        input: graph_mod.GlobalNodeId,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueEmptyState,
+    ) !void {
+        const arguments = self.structArguments(input) orelse return;
+        const callee_function = self.graph.function(callee);
+        switch (callee_function.safety_primitive) {
+            .trusted_opaque_move => {
+                state.emptied.clearRetainingCapacity();
+                return;
+            },
+            .trusted_opaque_move_in => {
+                if (arguments.len != 3) return;
+                const storages = try self.inferInputPaths(function_id, arguments[0].value);
+                const hidden = try self.inferExpression(function_id, arguments[2].value);
+                for (storages) |storage| {
+                    self.removeOpaqueStorageRelease(&state.emptied, storage);
+                    try self.recordOpaqueStorageEffect(effects, storage, hidden);
+                }
+                return;
+            },
+            .trusted_opaque_mark_empty => {
+                if (arguments.len != 1) return;
+                const storages = try self.inferInputPaths(function_id, arguments[0].value);
+                for (storages) |storage| try self.recordOpaqueStorageRelease(&state.emptied, storage);
+                return;
+            },
+            else => {},
+        }
+        const summary = self.engine.summaryFor(callee) orelse return;
+        try self.applyOpaqueEmptySummary(function_id, summary, input, effects, state, null);
+    }
+
+    fn applyOpaqueEmptySummary(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        summary: facts.SafetySummary,
+        input: graph_mod.GlobalNodeId,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueEmptyState,
+        override: ?SymbolicInputOverride,
+    ) !void {
+        const arguments = self.structArguments(input) orelse return;
+        if (self.summaryMayRepopulateOpaqueStorage(summary)) state.emptied.clearRetainingCapacity();
+        for (summary.opaque_storage_effects) |effect| {
+            if (effect.storage.input_index >= arguments.len) continue;
+            const storages = try self.substituteRequiredInputPath(function_id, effect.storage, arguments, override);
+            const hidden = try self.substituteOutputWithOverride(function_id, effect.hidden_dependencies, arguments, override);
+            for (storages) |storage| {
+                self.removeOpaqueStorageRelease(&state.emptied, storage);
+                try self.recordOpaqueStorageEffect(effects, storage, hidden);
+            }
+        }
+        for (summary.opaque_storage_empties) |empty| {
+            if (empty.input_index >= arguments.len) continue;
+            const storages = try self.substituteRequiredInputPath(function_id, empty, arguments, override);
+            for (storages) |storage| try self.recordOpaqueStorageRelease(&state.emptied, storage);
+        }
+    }
+
+    fn joinOpaqueEmptyFallthrough(
+        self: *Infer,
+        destination: *OpaqueEmptyState,
+        left: *const OpaqueEmptyState,
+        right: *const OpaqueEmptyState,
+    ) !void {
+        if (!left.reachable and !right.reachable) {
+            destination.emptied.clearRetainingCapacity();
+            destination.reachable = false;
+            return;
+        }
+        if (!left.reachable) return self.copyOpaqueEmptyState(destination, right);
+        if (!right.reachable) return self.copyOpaqueEmptyState(destination, left);
+        const joined = try self.intersectInputPaths(left.emptied.items, right.emptied.items);
+        destination.emptied.clearRetainingCapacity();
+        try destination.emptied.appendSlice(joined);
+        destination.reachable = true;
+    }
+
+    fn joinOpaqueEmptyBranch(
+        self: *Infer,
+        joined: *?OpaqueEmptyState,
+        branch: *const OpaqueEmptyState,
+    ) !void {
+        if (joined.*) |*current| {
+            var combined = OpaqueEmptyState.init(self.allocator);
+            try self.joinOpaqueEmptyFallthrough(&combined, current, branch);
+            current.deinit();
+            current.* = combined;
+        } else {
+            joined.* = try branch.clone(self.allocator);
+        }
+    }
+
+    fn copyOpaqueEmptyState(
+        self: *Infer,
+        destination: *OpaqueEmptyState,
+        source: *const OpaqueEmptyState,
+    ) !void {
+        _ = self;
+        destination.emptied.clearRetainingCapacity();
+        try destination.emptied.appendSlice(source.emptied.items);
+        destination.reachable = source.reachable;
+    }
+
+    fn recordOpaqueEmptyExit(
+        self: *Infer,
+        exits: *?std.array_list.Managed(facts.InputPath),
+        emptied: []const facts.InputPath,
+    ) !void {
+        if (exits.*) |*current| {
+            const joined = try self.intersectInputPaths(current.items, emptied);
+            current.clearRetainingCapacity();
+            try current.appendSlice(joined);
+        } else {
+            var first = std.array_list.Managed(facts.InputPath).init(self.allocator);
+            try first.appendSlice(emptied);
+            exits.* = first;
+        }
+    }
+
+    fn removeOpaqueStorageRelease(
+        self: *Infer,
+        empties: *std.array_list.Managed(facts.InputPath),
+        storage: facts.InputPath,
+    ) void {
+        var index: usize = 0;
+        while (index < empties.items.len) {
+            if (self.inputPathEqual(empties.items[index], storage)) {
+                _ = empties.orderedRemove(index);
+            } else {
+                index += 1;
+            }
+        }
+    }
+
+    fn recordOpaqueStorageEffect(
+        self: *Infer,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        storage: facts.InputPath,
+        hidden: facts.ValueEffect,
+    ) !void {
+        const dependencies_only = try self.dependencyOnlyEffect(hidden);
+        for (effects.items) |*existing| {
+            if (!self.inputPathEqual(existing.storage, storage)) continue;
+            existing.hidden_dependencies = try self.mergeValueEffects(existing.hidden_dependencies, dependencies_only);
+            return;
+        }
+        try effects.append(.{ .storage = storage, .hidden_dependencies = dependencies_only });
+    }
+
+    fn recordOpaqueStorageRelease(
+        self: *Infer,
+        empties: *std.array_list.Managed(facts.InputPath),
+        storage: facts.InputPath,
+    ) !void {
+        _ = self;
+        try appendInputPath(empties, storage);
+    }
+
+    fn removeOpaqueStorageEffects(
+        self: *Infer,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        storage: facts.InputPath,
+    ) void {
+        var index: usize = 0;
+        while (index < effects.items.len) {
+            if (self.inputPathEqual(effects.items[index].storage, storage)) {
+                _ = effects.orderedRemove(index);
+            } else {
+                index += 1;
+            }
+        }
+    }
+
+    fn intersectInputPaths(
+        self: *Infer,
+        left: []const facts.InputPath,
+        right: []const facts.InputPath,
+    ) ![]const facts.InputPath {
+        var result = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (left) |candidate| {
+            for (right) |other| {
+                if (!self.inputPathEqual(candidate, other)) continue;
+                try appendInputPath(&result, candidate);
+                break;
+            }
+        }
+        return result.toOwnedSlice();
+    }
+
+    fn summaryMayRepopulateOpaqueStorage(self: *Infer, summary: facts.SafetySummary) bool {
+        _ = self;
+        for (summary.input_post_states) |post_state| {
+            if (post_state.opaque_ownership == .none and
+                post_state.initializedness == .initialized and
+                post_state.may_repopulate_opaque_storage) return true;
+        }
+        return false;
+    }
+
+    fn dependencyOnlyEffect(self: *Infer, effect: facts.ValueEffect) !facts.ValueEffect {
+        var owned_sources = std.array_list.Managed(facts.FreshEffectSource).init(self.allocator);
+        defer owned_sources.deinit();
+        try self.collectFreshOwnedSources(effect, &owned_sources);
+        return self.dependencyOnlyEffectExcludingOwned(effect, owned_sources.items);
+    }
+
+    fn collectFreshOwnedSources(
+        self: *Infer,
+        effect: facts.ValueEffect,
+        sources: *std.array_list.Managed(facts.FreshEffectSource),
+    ) !void {
+        for (effect.fresh_owned_roots) |source| try appendFresh(sources, source);
+        for (effect.fields) |field| try self.collectFreshOwnedSources(field.value.*, sources);
+        for (effect.variants) |variant| try self.collectFreshOwnedSources(variant.value.*, sources);
+    }
+
+    fn dependencyOnlyEffectExcludingOwned(
+        self: *Infer,
+        effect: facts.ValueEffect,
+        owned_sources: []const facts.FreshEffectSource,
+    ) !facts.ValueEffect {
+        const input_dependencies = try self.allocator.dupe(facts.InputDependency, effect.input_dependencies);
+        for (input_dependencies) |*dependency| dependency.transfers_ownership = false;
+
+        var fresh_dependencies = std.array_list.Managed(facts.FreshEffectSource).init(self.allocator);
+        for (effect.fresh_dependencies) |source| {
+            var owned = false;
+            for (owned_sources) |owned_source| if (owned_source == source) {
+                owned = true;
+                break;
+            };
+            if (!owned) try appendFresh(&fresh_dependencies, source);
+        }
+
+        const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
+        for (effect.fields, 0..) |field, index| {
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = try self.dependencyOnlyEffectExcludingOwned(field.value.*, owned_sources);
+            fields[index] = .{ .index = field.index, .value = value };
+        }
+        const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
+        for (effect.variants, 0..) |variant, index| {
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = try self.dependencyOnlyEffectExcludingOwned(variant.value.*, owned_sources);
+            variants[index] = .{ .index = variant.index, .value = value };
+        }
+        return .{
+            .input_dependencies = input_dependencies,
+            .input_places = effect.input_places,
+            .input_place_values = effect.input_place_values,
+            .opaque_generation_dependencies = effect.opaque_generation_dependencies,
+            .opaque_storage_dependencies = effect.opaque_storage_dependencies,
+            .fields = fields,
+            .variants = variants,
+            .fresh_dependencies = try fresh_dependencies.toOwnedSlice(),
+        };
     }
 
     fn inferRequiredLiveInputsBlock(

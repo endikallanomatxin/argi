@@ -4,6 +4,8 @@ const tok = @import("../../2_tokens/token.zig");
 const graph_mod = @import("../global/graph.zig");
 const types = @import("../global/types.zig");
 const facts = @import("facts.zig");
+const summary_engine = @import("summaries.zig");
+const summary_infer = @import("summary_infer.zig");
 const value_state = @import("../value_state.zig");
 const primitives = @import("../primitives/schema.zig");
 
@@ -91,6 +93,7 @@ pub const SafetyChecker = struct {
     diagnostics: *diagnostics.Diagnostics,
     graph: *const graph_mod.GlobalSemanticGraph,
     call_stack: std.array_list.Managed(graph_mod.GlobalFunctionId),
+    active_summaries: ?*summary_engine.Engine = null,
     collect_stats: bool = false,
     stats: Stats = .{},
 
@@ -118,6 +121,15 @@ pub const SafetyChecker = struct {
     pub fn analyze(self: *SafetyChecker) !void {
         self.stats = .{};
         const before = self.diagnostics.list.items.len;
+
+        var engine = summary_engine.Engine.init(self.allocator);
+        defer engine.deinit();
+        var inference = summary_infer.Infer.init(self.allocator, self.graph, &engine);
+        defer inference.deinit();
+        try inference.inferOutputFixedPoint();
+        self.active_summaries = &engine;
+        defer self.active_summaries = null;
+
         for (self.graph.functions.items, 0..) |function, raw| {
             if (function.body == null or function.safety_primitive != .none) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
@@ -282,29 +294,55 @@ pub const SafetyChecker = struct {
             },
             .address_of => |child| blk: {
                 const storage = try self.resolvePlace(child, state) orelse break :blk .{};
-                const root = try self.storageGeneration(state, storage);
-                break :blk .{ .dependencies = try self.oneDependency(root), .referenced_place = storage };
+                const opaque_provenance = try self.opaqueProvenanceForAccess(child, state);
+                var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+                if (opaque_provenance.len == 0) {
+                    try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, storage) });
+                } else {
+                    for (opaque_provenance) |provenance|
+                        try appendDependencyFact(&dependencies, .{ .root = provenance.generation });
+                }
+                break :blk .{
+                    .dependencies = try dependencies.toOwnedSlice(),
+                    .referenced_place = storage,
+                    .opaque_provenance = opaque_provenance,
+                };
             },
             .dereference => |deref| blk: {
-                const pointer = try self.evaluate(function, deref.pointer, state);
-                try self.requireLive(function, node.source, pointer, state);
-                if (pointer.referenced_place) |storage| if (self.getPlace(state, storage)) |place| {
-                    try self.requireInitialized(function, node.source, place.initializedness);
-                    break :blk place.value;
-                };
-                break :blk .{};
+                const pointer = try self.evaluatePointerUse(function, node.source, deref.pointer, state) orelse break :blk .{};
+                var value: facts.ValueFacts = .{};
+                if (pointer.referenced_place) |storage| {
+                    const initializedness = self.initializednessAtPlace(state, storage);
+                    try self.requireInitialized(function, node.source, initializedness);
+                    value = self.valueAtPlace(state, storage) orelse .{};
+                }
+                break :blk try self.envelopeOpaqueRead(state, value, node.ty, pointer);
             },
             .struct_field_access => |access| blk: {
-                if (try self.resolvePlace(node_id, state)) |storage| if (self.getPlace(state, storage)) |place| break :blk place.value;
+                if (try self.resolvePlace(node_id, state)) |storage| {
+                    const initializedness = self.initializednessAtPlace(state, storage);
+                    try self.requireInitialized(function, node.source, initializedness);
+                    if (self.valueAtPlace(state, storage)) |value| {
+                        const provenance = try self.opaqueProvenanceCarriedByAccess(access.value, state);
+                        break :blk try self.addOpaqueReadEnvelope(value, node.ty, provenance);
+                    }
+                }
                 const aggregate = try self.evaluate(function, access.value, state);
                 for (aggregate.fields) |field| if (field.index == access.field_index) break :blk field.value.*;
                 break :blk aggregate;
             },
             .array_index => |access| blk: {
-                _ = try self.evaluate(function, access.array_ptr, state);
+                const pointer = try self.evaluatePointerUse(function, node.source, access.array_ptr, state) orelse break :blk .{};
                 _ = try self.evaluate(function, access.index, state);
-                if (try self.resolvePlace(node_id, state)) |storage| if (self.getPlace(state, storage)) |place| break :blk place.value;
-                break :blk .{};
+                var value: facts.ValueFacts = .{};
+                if (pointer.referenced_place) |base| {
+                    const projection: facts.Projection = if (self.staticIndex(access.index)) |index| .{ .static_index = index } else .dynamic_index;
+                    const storage = try self.project(base, projection);
+                    const initializedness = self.initializednessAtPlace(state, storage);
+                    try self.requireInitialized(function, node.source, initializedness);
+                    value = self.valueAtPlace(state, storage) orelse .{};
+                }
+                break :blk try self.envelopeOpaqueRead(state, value, node.ty, pointer);
             },
             .struct_value_literal => |literal| try self.evaluateStruct(function, literal, state),
             .list_literal => |literal| try self.evaluateList(function, literal, state),
@@ -388,6 +426,21 @@ pub const SafetyChecker = struct {
 
     fn evaluateCall(self: *SafetyChecker, caller: graph_mod.GlobalFunctionId, call: anytype, state: *FunctionState) !facts.ValueFacts {
         if (self.collect_stats) self.stats.calls += 1;
+        var candidate = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+        defer candidate.deinit();
+        const diagnostic_count = self.diagnostics.list.items.len;
+        const result = try self.evaluateCallCandidate(caller, call, &candidate);
+        if (self.diagnostics.list.items.len != diagnostic_count) return .{};
+        self.commitState(state, &candidate);
+        return result;
+    }
+
+    fn evaluateCallCandidate(
+        self: *SafetyChecker,
+        caller: graph_mod.GlobalFunctionId,
+        call: anytype,
+        state: *FunctionState,
+    ) !facts.ValueFacts {
         const callee = self.graph.functions.items[@intFromEnum(call.callee)];
         var argument_nodes: []const graph_mod.GlobalValueFieldId = &.{};
         const input_node = self.graph.nodes.items[@intFromEnum(call.input)];
@@ -396,41 +449,40 @@ pub const SafetyChecker = struct {
             argument_nodes = self.globalValueFieldIds(range);
         }
 
-        var candidate = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
-        defer candidate.deinit();
         var values = try self.allocator.alloc(facts.ValueFacts, argument_nodes.len);
         defer self.allocator.free(values);
         for (argument_nodes, 0..) |field_id, index| {
             const field = self.graph.value_fields.items[@intFromEnum(field_id)];
-            values[index] = try self.evaluate(caller, field.value, &candidate);
+            values[index] = try self.evaluate(caller, field.value, state);
         }
 
         if (callee.safety_primitive != .none) {
             if (self.collect_stats) self.stats.primitive_calls += 1;
-            const result = try self.evaluatePrimitive(caller, callee.safety_primitive, argument_nodes, values, &candidate, input_node.source);
-            self.commitState(state, &candidate);
-            return result;
+            return self.evaluatePrimitive(caller, callee.safety_primitive, argument_nodes, values, state, input_node.source);
         }
         if (callee.body == null) {
-            // Foreign pointers are not made safe implicitly.
-            if (callee.output.len == 1 and isPointer(self.graph, self.graph.fields.items[callee.output.start].ty)) return .{ .foreign_storage = true };
+            // Argument evaluation is still part of the successful call and is
+            // committed by the outer transaction. Foreign pointers themselves
+            // do not become safe references implicitly.
+            if (callee.output.len == 1 and isPointer(self.graph, self.graph.fields.items[callee.output.start].ty))
+                return .{ .foreign_storage = true };
             return .{};
         }
 
         if (self.callStackContains(call.callee)) {
             if (self.collect_stats) self.stats.recursive_edges += 1;
-            // Recursive SCC summaries are a performance/precision refinement.
-            // Never manufacture a fresh safe reference at the cycle boundary.
-            return .{};
+            const summary = if (self.active_summaries) |engine| engine.summaryFor(call.callee) else null;
+            const resolved = summary orelse return .{};
+            if (!try self.validateSummaryRequiredLive(input_node.source, resolved, values, state)) return .{};
+            try self.applySummaryEffects(input_node.source, resolved, argument_nodes, values, state);
+            return self.instantiateSummaryOutputs(resolved.outputs, values, state);
         }
 
-        try self.bindCallInputs(callee, values, &candidate);
+        try self.bindCallInputs(callee, values, state);
         try self.call_stack.append(call.callee);
         defer _ = self.call_stack.pop();
-        try self.validateBlock(call.callee, callee.body.?, &candidate);
-        const result = try self.collectCallOutput(callee, &candidate);
-        self.commitState(state, &candidate);
-        return result;
+        try self.validateBlock(call.callee, callee.body.?, state);
+        return self.collectCallOutput(callee, state);
     }
 
     fn evaluatePrimitive(
@@ -442,8 +494,6 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         source: primitives.SourceRef,
     ) !facts.ValueFacts {
-        _ = function;
-        _ = argument_ids;
         return switch (primitive) {
             .none => .{},
             .raw_allocated_storage => blk: {
@@ -466,19 +516,1258 @@ pub const SafetyChecker = struct {
                             state.storage_capabilities.items[raw] = .consumed;
                     }
                 }
-                break :blk .{ .dependencies = try self.oneDependency(root), .owned_roots = if (primitive == .establish_allocation) try self.oneRoot(root) else &.{} };
+                break :blk .{
+                    .dependencies = try self.oneDependency(root),
+                    .owned_roots = if (primitive == .establish_allocation) try self.oneRoot(root) else &.{},
+                };
             },
             .reference_offset, .mutable_reference_offset, .reinterpret_reference, .mutable_reinterpret_reference, .restrict_reference, .read_reference => if (values.len != 0) values[0].referenceCopy() else .{},
-            .relocate, .trusted_opaque_move, .trusted_opaque_move_in => blk: {
-                if (values.len != 0) {
-                    const value = values[values.len - 1];
-                    for (value.owned_roots) |root| state.tracker.end(root);
-                }
+            .relocate => try self.relocatePrimitive(source, values, state),
+            .trusted_opaque_move, .trusted_opaque_move_in => blk: {
+                try self.applyOpaqueMovePrimitive(function, source, argument_ids, values, state);
                 break :blk .{};
             },
-            .trusted_opaque_move_out => .{},
-            .trusted_opaque_relocate, .trusted_opaque_drop, .trusted_opaque_mark_empty => .{},
+            .trusted_opaque_move_out => try self.opaqueMoveOutPrimitive(argument_ids, values, state),
+            .trusted_opaque_relocate => blk: {
+                if (values.len != 0) try self.rejectOpaqueRelocation(source, state, values[0]);
+                break :blk .{};
+            },
+            .trusted_opaque_mark_empty => blk: {
+                if (try self.primitiveArgumentStorage(argument_ids, values, 0, state)) |storage|
+                    self.markOpaqueStorageEmpty(state, storage);
+                break :blk .{};
+            },
+            // Slot destruction is trusted runtime behavior. Domain emptiness is
+            // communicated explicitly by mark_empty and by summaries.
+            .trusted_opaque_drop => .{},
         };
+    }
+
+    fn relocatePrimitive(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        values: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !facts.ValueFacts {
+        if (values.len != 2) return .{};
+        const source_place = values[0].referenced_place orelse return .{};
+        const destination = values[1].referenced_place orelse return .{};
+        if (source_place.eql(destination)) {
+            try self.report(source, "relocate requires distinct source and destination places", .{});
+            return .{};
+        }
+        const source_state = self.initializednessAtPlace(state, source_place);
+        if (source_state != .initialized) {
+            try self.requireInitialized(@enumFromInt(0), source, source_state);
+            return .{};
+        }
+        switch (self.initializednessAtPlace(state, destination)) {
+            .initialized => {
+                try self.report(source, "relocate destination is initialized", .{});
+                return .{};
+            },
+            .maybe_initialized => {
+                try self.report(source, "relocate destination may be initialized", .{});
+                return .{};
+            },
+            .deinitialized => try self.refreshStorageGenerationChecked(source, state, destination),
+            .moved => {},
+        }
+        const value = self.valueAtPlace(state, source_place) orelse return .{};
+        try self.setPlace(state, destination, .initialized, value);
+        try self.setPlace(state, source_place, .moved, .{});
+        return .{};
+    }
+
+    fn applyOpaqueMovePrimitive(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        source: primitives.SourceRef,
+        argument_ids: []const graph_mod.GlobalValueFieldId,
+        values: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !void {
+        if (values.len == 3) {
+            try self.closeOpaqueOwnedRoots(source, values[2], state, null);
+            if (try self.primitiveArgumentStorage(argument_ids, values, 0, state)) |storage| {
+                try self.markOpaqueArgumentAccess(argument_ids, 1, state, storage);
+                try self.hideOpaqueDependencies(state, storage, values[2]);
+                return;
+            }
+            const root_binding = self.primitiveArgumentRootBinding(argument_ids, 0);
+            if (root_binding != null and self.functionInputIndex(function, root_binding.?) != null) return;
+            if (valueHasDependency(values[2]))
+                try self.report(source, "opaque ownership storage requires an identifiable storage domain place", .{});
+            return;
+        }
+        if (values.len == 2) {
+            if (hasExternalOpaqueDependency(values[1], values[1].owned_roots)) {
+                try self.report(source, "opaque ownership storage cannot hide dependencies on external roots", .{});
+                return;
+            }
+            try self.closeOpaqueOwnedRoots(source, values[1], state, null);
+            if (try self.inferOpaqueDomain(state, values[0])) |storage| {
+                try self.markOpaqueArgumentAccess(argument_ids, 0, state, storage);
+                try self.hideOpaqueDependencies(state, storage, values[1]);
+            }
+        }
+    }
+
+    fn opaqueMoveOutPrimitive(
+        self: *SafetyChecker,
+        argument_ids: []const graph_mod.GlobalValueFieldId,
+        values: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !facts.ValueFacts {
+        const root = try state.tracker.establish(.fresh);
+        state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+        if (try self.primitiveArgumentStorage(argument_ids, values, 0, state)) |storage| {
+            for (state.opaque_storages.items) |opaque_storage| {
+                if (!opaque_storage.storage.eql(storage)) continue;
+                for (opaque_storage.hidden_dependencies) |dependency| {
+                    if (self.opaqueDependencyIsInternalToStorage(state, storage, dependency)) continue;
+                    try appendDependencyFact(&dependencies, .{ .root = dependency });
+                }
+            }
+        }
+        return .{
+            .dependencies = try dependencies.toOwnedSlice(),
+            .owned_roots = try self.oneRoot(root),
+        };
+    }
+
+    fn primitiveArgumentStorage(
+        self: *SafetyChecker,
+        argument_ids: []const graph_mod.GlobalValueFieldId,
+        values: []const facts.ValueFacts,
+        index: usize,
+        state: *FunctionState,
+    ) !?facts.Place {
+        if (index >= values.len) return null;
+        if (values[index].referenced_place) |storage| return storage;
+        if (index >= argument_ids.len) return null;
+        const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
+        return self.resolvePlace(argument, state);
+    }
+
+    fn markOpaqueArgumentAccess(
+        self: *SafetyChecker,
+        argument_ids: []const graph_mod.GlobalValueFieldId,
+        index: usize,
+        state: *FunctionState,
+        storage: facts.Place,
+    ) !void {
+        if (index >= argument_ids.len) return;
+        const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
+        const pointer_place = try self.resolvePlace(argument, state) orelse return;
+        const pointer = self.getPlace(state, pointer_place) orelse return;
+        try self.addOpaqueAccessProvenance(state, &pointer.value, storage);
+    }
+
+    fn addOpaqueAccessProvenance(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        pointer: *facts.ValueFacts,
+        storage: facts.Place,
+    ) !void {
+        var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
+        try provenances.appendSlice(pointer.opaque_provenance);
+        for (provenances.items) |provenance| if (provenance.storage.eql(storage)) return;
+
+        var inferred = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
+        defer inferred.deinit();
+        try self.collectOpaqueProvenancesCarriedBy(state, pointer.*, &inferred);
+        for (inferred.items) |provenance|
+            if (provenance.storage.eql(storage)) try appendOpaqueProvenanceFact(&provenances, provenance);
+
+        var found = false;
+        for (provenances.items) |provenance| if (provenance.storage.eql(storage)) {
+            found = true;
+            break;
+        };
+        if (!found) {
+            var domain_already_opaque = false;
+            for (state.opaque_storages.items) |opaque_storage| if (opaque_storage.storage.eql(storage)) {
+                domain_already_opaque = true;
+                break;
+            };
+            if (!domain_already_opaque) try appendOpaqueProvenanceFact(&provenances, .{
+                .storage = storage,
+                .generation = try self.storageGeneration(state, storage),
+            });
+        }
+        pointer.opaque_provenance = try provenances.toOwnedSlice();
+    }
+
+    fn inferOpaqueDomain(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        pointer: facts.ValueFacts,
+    ) !?facts.Place {
+        var storages = std.array_list.Managed(facts.Place).init(self.allocator);
+        defer storages.deinit();
+        try self.collectOpaqueDomainsAccessedBy(state, pointer, &storages);
+        if (storages.items.len != 0) return storages.items[0];
+        var index = state.places.items.len;
+        while (index > 0) {
+            index -= 1;
+            const candidate = state.places.items[index];
+            if (candidate.initializedness != .initialized) continue;
+            for (pointer.dependencies) |dependency|
+                if (valueContainsOwnedRoot(candidate.value, dependency.root)) return candidate.storage;
+        }
+        return null;
+    }
+
+    fn rejectOpaqueRelocation(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        state: *FunctionState,
+        pointer: facts.ValueFacts,
+    ) !void {
+        var storages = std.array_list.Managed(facts.Place).init(self.allocator);
+        defer storages.deinit();
+        try self.collectOpaqueDomainsAccessedBy(state, pointer, &storages);
+        for (storages.items) |storage| {
+            const generation = try self.storageGeneration(state, storage);
+            for (state.opaque_storages.items) |opaque_storage| {
+                if (!opaque_storage.storage.eql(storage)) continue;
+                var invalidates_dependency = containsRoot(opaque_storage.hidden_dependencies, generation);
+                if (!invalidates_dependency) {
+                    const storage_value = self.valueAtPlace(state, storage) orelse facts.ValueFacts{};
+                    for (opaque_storage.hidden_dependencies) |dependency| {
+                        if (!valueContainsOwnedRoot(storage_value, dependency)) continue;
+                        invalidates_dependency = true;
+                        break;
+                    }
+                }
+                if (!invalidates_dependency) continue;
+                try self.report(source, "relocation would invalidate a hidden opaque dependency", .{});
+                return;
+            }
+        }
+    }
+
+    fn primitiveArgumentRootBinding(
+        self: *SafetyChecker,
+        argument_ids: []const graph_mod.GlobalValueFieldId,
+        index: usize,
+    ) ?graph_mod.GlobalBindingId {
+        if (index >= argument_ids.len) return null;
+        const node = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
+        return self.rootBinding(node);
+    }
+
+    fn rootBinding(self: *SafetyChecker, node_id: graph_mod.GlobalNodeId) ?graph_mod.GlobalBindingId {
+        return switch (self.graph.nodes.items[@intFromEnum(node_id)].content) {
+            .binding_use => |binding| binding,
+            .move_value, .address_of => |child| self.rootBinding(child),
+            .struct_field_access => |access| self.rootBinding(access.value),
+            .array_index => |access| self.rootBinding(access.array_ptr),
+            .dereference => |access| self.rootBinding(access.pointer),
+            .choice_payload_access => |access| self.rootBinding(access.value),
+            else => null,
+        };
+    }
+
+    fn functionInputIndex(
+        self: *SafetyChecker,
+        function_id: graph_mod.GlobalFunctionId,
+        binding: graph_mod.GlobalBindingId,
+    ) ?usize {
+        const function = self.graph.functions.items[@intFromEnum(function_id)];
+        const inputs = self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len];
+        for (inputs, 0..) |candidate, index| if (candidate == binding) return index;
+        return null;
+    }
+
+    fn validateSummaryRequiredLive(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        summary: facts.SafetySummary,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !bool {
+        const before = self.diagnostics.list.items.len;
+        for (summary.required_live_inputs) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var value = try self.projectValueFacts(arguments[path.input_index], path.projections);
+            if (arguments[path.input_index].referenced_place) |base| {
+                var target = base;
+                for (path.projections) |projection| target = try self.project(target, projection);
+                if (self.valueAtPlace(state, target)) |stored| value = stored;
+            }
+            try self.requireLive(@enumFromInt(0), source, value, state);
+        }
+        return self.diagnostics.list.items.len == before;
+    }
+
+    fn applySummaryEffects(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        summary: facts.SafetySummary,
+        argument_ids: []const graph_mod.GlobalValueFieldId,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !void {
+        try self.applySummaryOpaqueStorageEmpties(summary, argument_ids, arguments, state);
+        try self.applySummaryInputPostStates(source, summary, argument_ids, arguments, state);
+        try self.applySummaryOpaqueStorageEmpties(summary, argument_ids, arguments, state);
+        try self.applySummaryOpaqueStorageEffects(summary, argument_ids, arguments, state);
+    }
+
+    fn applySummaryInputPostStates(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        summary: facts.SafetySummary,
+        argument_ids: []const graph_mod.GlobalValueFieldId,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !void {
+        var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator);
+        defer fresh_roots.deinit();
+        var fresh_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
+        defer fresh_capabilities.deinit();
+
+        for (summary.input_post_states) |post_state| {
+            if (post_state.target.input_index >= arguments.len) continue;
+            const index: usize = @intCast(post_state.target.input_index);
+
+            if (post_state.opaque_ownership == .none and post_state.initializedness == .initialized and
+                post_state.may_repopulate_opaque_storage)
+            {
+                var storages = std.array_list.Managed(facts.Place).init(self.allocator);
+                defer storages.deinit();
+                try self.collectOpaqueDomainsAccessedBy(state, arguments[index], &storages);
+                if (storages.items.len != 0) {
+                    var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                    defer hidden.deinit();
+                    try self.instantiateOpaqueDependencies(post_state.value, arguments, state, &fresh_roots, &hidden);
+                    for (storages.items) |storage| try self.mergeLiveOpaqueDependencies(state, storage, hidden.items);
+                }
+            }
+
+            if (post_state.opaque_ownership == .ambiguous) {
+                try self.report(source, "opaque ownership consumption has no single representable storage", .{});
+                continue;
+            }
+            if (post_state.opaque_ownership == .definite or post_state.opaque_ownership == .conditional) {
+                const consumed = try self.resolveSummaryInputPath(post_state.target, argument_ids, arguments, state);
+                const projected = try self.projectValueFacts(arguments[index], post_state.target.projections);
+                const value = if (consumed) |target|
+                    if (self.valueAtPlace(state, target)) |stored| stored else projected
+                else
+                    projected;
+
+                if (post_state.opaque_storage) |opaque_path| {
+                    const storage = try self.resolveSummaryInputPath(opaque_path, argument_ids, arguments, state) orelse continue;
+                    try self.closeOpaqueOwnedRoots(source, value, state, consumed);
+                    if (consumed) |target| try self.setPlace(state, target, .moved, .{});
+                    try self.hideOpaqueDependencies(state, storage, value);
+                } else {
+                    if (hasExternalOpaqueDependency(value, value.owned_roots))
+                        try self.report(source, "opaque ownership storage cannot hide dependencies on external roots", .{});
+                    try self.closeOpaqueOwnedRoots(source, value, state, consumed);
+                    if (consumed) |target| try self.setPlace(state, target, .moved, .{});
+                }
+                continue;
+            }
+
+            const target = try self.resolveSummaryInputPath(post_state.target, argument_ids, arguments, state) orelse {
+                if (post_state.ends_previous_roots and post_state.target.projections.len == 0) {
+                    for (arguments[index].dependencies) |dependency| _ = try self.endRoot(source, state, dependency.root);
+                }
+                continue;
+            };
+
+            if (post_state.requires_available_destination) {
+                if (self.getPlace(state, target)) |current| {
+                    if (current.initializedness == .initialized) {
+                        try self.report(source, "relocate destination is initialized", .{});
+                        continue;
+                    }
+                    if (current.initializedness == .maybe_initialized) {
+                        try self.report(source, "relocate destination may be initialized", .{});
+                        continue;
+                    }
+                }
+            }
+
+            const reinitializes_dead_place = post_state.initializedness == .initialized and
+                (if (self.getPlace(state, target)) |current| current.initializedness == .deinitialized else false);
+            const previous_value = self.valueAtPlace(state, target);
+            if (post_state.ends_previous_roots) if (previous_value) |previous| {
+                for (previous.owned_roots) |root| _ = try self.endRoot(source, state, root);
+            };
+            if (post_state.initializedness == .deinitialized)
+                try self.endStorageGenerationsUnder(source, state, target);
+            if (!post_state.requires_available_destination and (reinitializes_dead_place or post_state.refreshes_storage_generation))
+                try self.refreshStorageGenerationChecked(source, state, target);
+
+            const value = if (post_state.initializedness == .initialized)
+                try self.instantiateOutputWithFresh(post_state.value, arguments, state, &fresh_roots, &fresh_capabilities)
+            else
+                facts.ValueFacts{};
+            try self.setPlace(state, target, post_state.initializedness, value);
+        }
+    }
+
+    fn resolveSummaryInputPath(
+        self: *SafetyChecker,
+        path_value: facts.InputPath,
+        argument_ids: []const graph_mod.GlobalValueFieldId,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !?facts.Place {
+        if (path_value.input_index >= arguments.len) return null;
+        const index: usize = @intCast(path_value.input_index);
+        var target = arguments[index].referenced_place orelse blk: {
+            if (index >= argument_ids.len) return null;
+            const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
+            break :blk try self.resolvePlace(argument, state) orelse return null;
+        };
+        for (path_value.projections) |projection| target = try self.project(target, projection);
+        return target;
+    }
+
+    fn applySummaryOpaqueStorageEffects(
+        self: *SafetyChecker,
+        summary: facts.SafetySummary,
+        argument_ids: []const graph_mod.GlobalValueFieldId,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !void {
+        for (summary.opaque_storage_effects) |effect| {
+            const storage = try self.resolveSummaryInputPath(effect.storage, argument_ids, arguments, state) orelse continue;
+            var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            defer hidden.deinit();
+            var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator);
+            defer fresh_roots.deinit();
+            try self.instantiateOpaqueDependencies(effect.hidden_dependencies, arguments, state, &fresh_roots, &hidden);
+
+            var hidden_owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            defer hidden_owned.deinit();
+            for (effect.hidden_dependencies.input_dependencies) |dependency| {
+                if (dependency.path.input_index >= arguments.len) continue;
+                const value = try self.projectValueFacts(arguments[dependency.path.input_index], dependency.path.projections);
+                try collectOwnedRoots(value, &hidden_owned);
+            }
+
+            var external = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            defer external.deinit();
+            for (hidden.items) |dependency| {
+                var internal_generation = false;
+                for (arguments) |argument| if (valueContainsOpaqueGeneration(argument, storage, dependency)) {
+                    internal_generation = true;
+                    break;
+                };
+                if (!internal_generation and !containsRoot(hidden_owned.items, dependency))
+                    try appendRootFact(&external, dependency);
+            }
+            try self.mergeLiveOpaqueDependencies(state, storage, external.items);
+        }
+    }
+
+    fn applySummaryOpaqueStorageEmpties(
+        self: *SafetyChecker,
+        summary: facts.SafetySummary,
+        argument_ids: []const graph_mod.GlobalValueFieldId,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !void {
+        for (summary.opaque_storage_empties) |empty_path| {
+            const storage = try self.resolveSummaryInputPath(empty_path, argument_ids, arguments, state) orelse continue;
+            self.markOpaqueStorageEmpty(state, storage);
+        }
+    }
+
+    fn instantiateOpaqueDependencies(
+        self: *SafetyChecker,
+        effect: facts.ValueEffect,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+        fresh_roots: *std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId),
+        hidden: *std.array_list.Managed(facts.ValidityRootId),
+    ) !void {
+        for (effect.fresh_dependencies) |fresh|
+            try appendRootFact(hidden, try self.instantiateFreshRoot(fresh, state, fresh_roots));
+        for (effect.input_places) |input_path| {
+            if (input_path.input_index >= arguments.len) continue;
+            var target = arguments[input_path.input_index].referenced_place orelse continue;
+            for (input_path.projections) |projection| target = try self.project(target, projection);
+            try appendRootFact(hidden, try self.storageGeneration(state, target));
+        }
+        for (effect.input_dependencies) |dependency| {
+            if (dependency.path.input_index >= arguments.len) continue;
+            const input = try self.projectValueFacts(arguments[dependency.path.input_index], dependency.path.projections);
+            try self.collectOpaqueHiddenDependencies(state, input, hidden);
+        }
+        for (effect.input_place_values) |input_path| {
+            if (input_path.input_index >= arguments.len) continue;
+            var input = try self.projectValueFacts(arguments[input_path.input_index], input_path.projections);
+            if (arguments[input_path.input_index].referenced_place) |base| {
+                var target = base;
+                for (input_path.projections) |projection| target = try self.project(target, projection);
+                if (self.valueAtPlace(state, target)) |stored| input = stored;
+            }
+            try self.collectOpaqueHiddenDependencies(state, input, hidden);
+        }
+        for (effect.opaque_generation_dependencies) |input_path| {
+            if (input_path.input_index >= arguments.len) continue;
+            const input = try self.projectValueFacts(arguments[input_path.input_index], input_path.projections);
+            var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
+            defer provenances.deinit();
+            try self.collectOpaqueProvenancesRecursively(state, input, &provenances);
+            for (provenances.items) |provenance| try appendRootFact(hidden, provenance.generation);
+        }
+        for (effect.opaque_storage_dependencies) |input_path| {
+            if (input_path.input_index >= arguments.len) continue;
+            var storage = arguments[input_path.input_index].referenced_place orelse continue;
+            for (input_path.projections) |projection| storage = try self.project(storage, projection);
+            for (state.opaque_storages.items) |opaque_storage| {
+                if (!opaque_storage.storage.eql(storage)) continue;
+                for (opaque_storage.hidden_dependencies) |dependency|
+                    if (!self.opaqueDependencyIsInternalToStorage(state, storage, dependency))
+                        try appendRootFact(hidden, dependency);
+            }
+        }
+        for (effect.fields) |field|
+            try self.instantiateOpaqueDependencies(field.value.*, arguments, state, fresh_roots, hidden);
+        for (effect.variants) |variant|
+            try self.instantiateOpaqueDependencies(variant.value.*, arguments, state, fresh_roots, hidden);
+    }
+
+    fn instantiateSummaryOutputs(
+        self: *SafetyChecker,
+        outputs: []const facts.ValueEffect,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !facts.ValueFacts {
+        if (outputs.len == 0) return .{};
+        if (outputs.len == 1) return self.instantiateOutput(outputs[0], arguments, state);
+        const fields = try self.allocator.alloc(facts.FieldFacts, outputs.len);
+        var aggregate: facts.ValueFacts = .{};
+        for (outputs, 0..) |effect, index| {
+            const value = try self.allocator.create(facts.ValueFacts);
+            value.* = try self.instantiateOutput(effect, arguments, state);
+            fields[index] = .{ .index = @intCast(index), .value = value };
+            aggregate = try self.mergeValueFacts(aggregate, value.*);
+        }
+        aggregate.fields = fields;
+        return aggregate;
+    }
+
+    fn instantiateOutput(
+        self: *SafetyChecker,
+        effect: facts.ValueEffect,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !facts.ValueFacts {
+        var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator);
+        defer fresh_roots.deinit();
+        var fresh_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
+        defer fresh_capabilities.deinit();
+        return self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, &fresh_capabilities);
+    }
+
+    fn instantiateOutputWithFresh(
+        self: *SafetyChecker,
+        effect: facts.ValueEffect,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+        fresh_roots: *std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId),
+        fresh_capabilities: *std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId),
+    ) !facts.ValueFacts {
+        var result: facts.ValueFacts = .{};
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+        for (effect.fresh_dependencies) |fresh| {
+            const root = try self.instantiateFreshRoot(fresh, state, fresh_roots);
+            try appendDependencyFact(&dependencies, .{ .root = root });
+        }
+        for (effect.opaque_generation_dependencies) |input_path| {
+            if (input_path.input_index >= arguments.len) continue;
+            const input = try self.projectValueFacts(arguments[input_path.input_index], input_path.projections);
+            var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
+            defer provenances.deinit();
+            try self.collectOpaqueProvenancesRecursively(state, input, &provenances);
+            for (provenances.items) |provenance| try appendDependencyFact(&dependencies, .{ .root = provenance.generation });
+        }
+        for (effect.opaque_storage_dependencies) |input_path| {
+            if (input_path.input_index >= arguments.len) continue;
+            var storage = arguments[input_path.input_index].referenced_place orelse continue;
+            for (input_path.projections) |projection| storage = try self.project(storage, projection);
+            for (state.opaque_storages.items) |opaque_storage| {
+                if (!opaque_storage.storage.eql(storage)) continue;
+                for (opaque_storage.hidden_dependencies) |dependency|
+                    if (!self.opaqueDependencyIsInternalToStorage(state, storage, dependency))
+                        try appendDependencyFact(&dependencies, .{ .root = dependency });
+            }
+        }
+
+        var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        for (effect.fresh_owned_roots) |fresh| {
+            const root = try self.instantiateFreshRoot(fresh, state, fresh_roots);
+            state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
+            try appendRootFact(&owned, root);
+        }
+        result.owned_roots = try owned.toOwnedSlice();
+
+        var capabilities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator);
+        for (effect.fresh_storage_capabilities) |fresh|
+            try appendCapabilityFact(&capabilities, try self.instantiateFreshCapability(fresh, state, fresh_capabilities));
+        result.storage_capabilities = try capabilities.toOwnedSlice();
+
+        var referenced_place: ?facts.Place = null;
+        for (effect.input_places) |path| {
+            if (path.input_index >= arguments.len) continue;
+            if (arguments[path.input_index].referenced_place) |base| {
+                var target = base;
+                for (path.projections) |projection| target = try self.project(target, projection);
+                try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
+                referenced_place = target;
+            }
+        }
+        result.dependencies = try dependencies.toOwnedSlice();
+
+        for (effect.input_dependencies) |dependency| {
+            if (dependency.path.input_index >= arguments.len) continue;
+            var input = try self.projectValueFacts(arguments[dependency.path.input_index], dependency.path.projections);
+            if (!dependency.transfers_ownership) input.owned_roots = &.{};
+            result = try self.mergeValueFacts(result, input);
+        }
+        for (effect.input_place_values) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var input = try self.projectValueFacts(arguments[path.input_index], path.projections);
+            if (arguments[path.input_index].referenced_place) |base| {
+                var target = base;
+                for (path.projections) |projection| target = try self.project(target, projection);
+                if (self.valueAtPlace(state, target)) |stored| input = stored;
+            }
+            result = try self.mergeValueFacts(result, input);
+        }
+
+        if (effect.fields.len != 0) {
+            const variants = result.variants;
+            const fields = try self.allocator.alloc(facts.FieldFacts, effect.fields.len);
+            for (effect.fields, 0..) |field, index| {
+                const value = try self.allocator.create(facts.ValueFacts);
+                value.* = try self.instantiateOutputWithFresh(field.value.*, arguments, state, fresh_roots, fresh_capabilities);
+                fields[index] = .{ .index = field.index, .value = value };
+                result = try self.mergeValueFacts(result, value.*);
+            }
+            result.fields = fields;
+            result.variants = variants;
+        }
+        if (effect.variants.len != 0) {
+            const variants = try self.allocator.alloc(facts.VariantFacts, effect.variants.len);
+            for (effect.variants, 0..) |variant, index| {
+                const first_root = state.tracker.roots.items.len;
+                const first_capability = state.storage_capabilities.items.len;
+                const value = try self.allocator.create(facts.ValueFacts);
+                value.* = try self.instantiateOutputWithFresh(variant.value.*, arguments, state, fresh_roots, fresh_capabilities);
+                for (state.tracker.roots.items[first_root..]) |*root| root.state = .conditional;
+                for (state.storage_capabilities.items[first_capability..]) |*capability| capability.* = .conditional;
+                variants[index] = .{ .index = variant.index, .value = value };
+            }
+            result.variants = variants;
+        }
+        result.integer_address = effect.integer_address;
+        result.foreign_storage = result.foreign_storage or effect.foreign_storage;
+        result.known_choice_variant = effect.known_choice_variant;
+        if (referenced_place) |target| result.referenced_place = target;
+        return result;
+    }
+
+    fn instantiateFreshRoot(
+        self: *SafetyChecker,
+        source: facts.FreshEffectSource,
+        state: *FunctionState,
+        fresh: *std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId),
+    ) !facts.ValidityRootId {
+        _ = self;
+        if (fresh.get(source)) |root| return root;
+        const root = try state.tracker.establish(.fresh);
+        try fresh.put(source, root);
+        return root;
+    }
+
+    fn instantiateFreshCapability(
+        self: *SafetyChecker,
+        source: facts.FreshEffectSource,
+        state: *FunctionState,
+        fresh: *std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId),
+    ) !facts.StorageCapabilityId {
+        _ = self;
+        if (fresh.get(source)) |capability| return capability;
+        const capability: facts.StorageCapabilityId = @enumFromInt(state.storage_capabilities.items.len);
+        try state.storage_capabilities.append(.available);
+        try fresh.put(source, capability);
+        return capability;
+    }
+
+    fn projectValueFacts(
+        self: *SafetyChecker,
+        value: facts.ValueFacts,
+        projections: []const facts.Projection,
+    ) !facts.ValueFacts {
+        var current = value;
+        for (projections) |projection| {
+            switch (projection) {
+                .field => |wanted| {
+                    var found: ?facts.ValueFacts = null;
+                    for (current.fields) |field| if (field.index == wanted) {
+                        found = field.value.*;
+                        break;
+                    };
+                    current = found orelse current;
+                },
+                .static_index => |wanted| {
+                    var found: ?facts.ValueFacts = null;
+                    for (current.fields) |field| if (field.index == wanted) {
+                        found = field.value.*;
+                        break;
+                    };
+                    current = found orelse current;
+                },
+                .dynamic_index => {
+                    var merged: facts.ValueFacts = .{};
+                    for (current.fields) |field| merged = try self.mergeValueFacts(merged, field.value.*);
+                    if (current.fields.len != 0) current = merged;
+                },
+                .dereference => {},
+            }
+        }
+        return current;
+    }
+
+    fn mergeValueFacts(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts) !facts.ValueFacts {
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+        for (left.dependencies) |value| try appendDependencyFact(&dependencies, value);
+        for (right.dependencies) |value| try appendDependencyFact(&dependencies, value);
+        var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        for (left.owned_roots) |value| try appendRootFact(&owned, value);
+        for (right.owned_roots) |value| try appendRootFact(&owned, value);
+        var capabilities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator);
+        for (left.storage_capabilities) |value| try appendCapabilityFact(&capabilities, value);
+        for (right.storage_capabilities) |value| try appendCapabilityFact(&capabilities, value);
+        var opaque_provenance = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
+        for (left.opaque_provenance) |value| try appendOpaqueProvenanceFact(&opaque_provenance, value);
+        for (right.opaque_provenance) |value| try appendOpaqueProvenanceFact(&opaque_provenance, value);
+
+        var fields = std.array_list.Managed(facts.FieldFacts).init(self.allocator);
+        for (left.fields) |left_field| {
+            var merged = left_field.value.*;
+            for (right.fields) |right_field| if (right_field.index == left_field.index) {
+                merged = try self.mergeValueFacts(merged, right_field.value.*);
+                break;
+            };
+            const stored = try self.allocator.create(facts.ValueFacts);
+            stored.* = merged;
+            try fields.append(.{ .index = left_field.index, .value = stored });
+        }
+        for (right.fields) |right_field| {
+            var found = false;
+            for (left.fields) |left_field| if (left_field.index == right_field.index) {
+                found = true;
+                break;
+            };
+            if (!found) try fields.append(right_field);
+        }
+
+        var variants = std.array_list.Managed(facts.VariantFacts).init(self.allocator);
+        for (left.variants) |left_variant| {
+            var merged = left_variant.value.*;
+            for (right.variants) |right_variant| if (right_variant.index == left_variant.index) {
+                merged = try self.mergeValueFacts(merged, right_variant.value.*);
+                break;
+            };
+            const stored = try self.allocator.create(facts.ValueFacts);
+            stored.* = merged;
+            try variants.append(.{ .index = left_variant.index, .value = stored });
+        }
+        for (right.variants) |right_variant| {
+            var found = false;
+            for (left.variants) |left_variant| if (left_variant.index == right_variant.index) {
+                found = true;
+                break;
+            };
+            if (!found) try variants.append(right_variant);
+        }
+
+        return .{
+            .dependencies = try dependencies.toOwnedSlice(),
+            .owned_roots = try owned.toOwnedSlice(),
+            .fields = try fields.toOwnedSlice(),
+            .variants = try variants.toOwnedSlice(),
+            .known_choice_variant = if (left.known_choice_variant != null and left.known_choice_variant == right.known_choice_variant) left.known_choice_variant else null,
+            .integer_address = left.integer_address or right.integer_address,
+            .foreign_storage = left.foreign_storage or right.foreign_storage,
+            .storage_capabilities = try capabilities.toOwnedSlice(),
+            .referenced_place = if (left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?)) left.referenced_place else null,
+            .opaque_provenance = try opaque_provenance.toOwnedSlice(),
+            .virtual_methods = if (std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods)) left.virtual_methods else &.{},
+        };
+    }
+
+    fn initializednessAtPlace(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        storage: facts.Place,
+    ) value_state.Initializedness {
+        var projection_count = storage.projections.len;
+        while (true) {
+            const prefix = facts.Place{ .root = storage.root, .projections = storage.projections[0..projection_count] };
+            if (self.getPlace(state, prefix)) |stored| return stored.initializedness;
+            if (projection_count == 0) return .initialized;
+            projection_count -= 1;
+        }
+    }
+
+    fn valueAtPlace(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) ?facts.ValueFacts {
+        if (self.getPlace(state, storage)) |exact| return exact.value;
+        var projection_count = storage.projections.len;
+        while (projection_count > 0) {
+            projection_count -= 1;
+            const prefix = facts.Place{ .root = storage.root, .projections = storage.projections[0..projection_count] };
+            if (self.getPlace(state, prefix)) |ancestor|
+                return self.projectValueFacts(ancestor.value, storage.projections[projection_count..]) catch null;
+        }
+        return null;
+    }
+
+    fn refreshStorageGeneration(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) !void {
+        _ = self;
+        var index: usize = 0;
+        var replaced = false;
+        while (index < state.storage_generations.items.len) {
+            const entry = state.storage_generations.items[index];
+            if (!storage.isPrefixOf(entry.storage)) {
+                index += 1;
+                continue;
+            }
+            state.tracker.end(entry.generation);
+            if (entry.storage.eql(storage)) {
+                state.storage_generations.items[index].generation = try state.tracker.establish(.fresh);
+                replaced = true;
+                index += 1;
+            } else {
+                _ = state.storage_generations.orderedRemove(index);
+            }
+        }
+        if (!replaced)
+            try state.storage_generations.append(.{ .storage = storage, .generation = try state.tracker.establish(.fresh) });
+    }
+
+    fn evaluatePointerUse(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        source: primitives.SourceRef,
+        pointer_node: graph_mod.GlobalNodeId,
+        state: *FunctionState,
+    ) !?facts.ValueFacts {
+        const diagnostic_count = self.diagnostics.list.items.len;
+        const pointer = try self.evaluate(function, pointer_node, state);
+        if (self.diagnostics.list.items.len != diagnostic_count) return null;
+        try self.requireLive(function, source, pointer, state);
+        if (self.diagnostics.list.items.len != diagnostic_count) return null;
+        return pointer;
+    }
+
+    fn opaqueProvenanceForAccess(
+        self: *SafetyChecker,
+        node_id: graph_mod.GlobalNodeId,
+        state: *FunctionState,
+    ) ![]const facts.OpaqueProvenance {
+        return switch (self.graph.nodes.items[@intFromEnum(node_id)].content) {
+            .binding_use => |binding| blk: {
+                const value = self.getPlace(state, .{ .root = binding }) orelse break :blk &.{};
+                break :blk try self.currentOpaqueProvenancesForValue(state, value.value);
+            },
+            .move_value, .address_of => |child| self.opaqueProvenanceForAccess(child, state),
+            .struct_field_access => |access| self.opaqueProvenanceForAccess(access.value, state),
+            .choice_payload_access => |access| self.opaqueProvenanceForAccess(access.value, state),
+            .array_index => |access| self.opaqueProvenanceCarriedByPointerNode(access.array_ptr, state),
+            .dereference => |access| self.opaqueProvenanceCarriedByPointerNode(access.pointer, state),
+            else => &.{},
+        };
+    }
+
+    fn opaqueProvenanceCarriedByAccess(
+        self: *SafetyChecker,
+        node_id: graph_mod.GlobalNodeId,
+        state: *FunctionState,
+    ) ![]const facts.OpaqueProvenance {
+        return switch (self.graph.nodes.items[@intFromEnum(node_id)].content) {
+            .move_value => |child| self.opaqueProvenanceCarriedByAccess(child, state),
+            .struct_field_access => |access| self.opaqueProvenanceCarriedByAccess(access.value, state),
+            .choice_payload_access => |access| self.opaqueProvenanceCarriedByAccess(access.value, state),
+            .array_index => |access| self.opaqueProvenanceCarriedByPointerNode(access.array_ptr, state),
+            .dereference => |access| self.opaqueProvenanceCarriedByPointerNode(access.pointer, state),
+            else => &.{},
+        };
+    }
+
+    fn opaqueProvenanceCarriedByPointerNode(
+        self: *SafetyChecker,
+        node_id: graph_mod.GlobalNodeId,
+        state: *FunctionState,
+    ) ![]const facts.OpaqueProvenance {
+        const pointer_place = try self.resolvePlace(node_id, state) orelse return &.{};
+        const pointer = self.getPlace(state, pointer_place) orelse return &.{};
+        var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
+        try self.collectOpaqueProvenancesCarriedBy(state, pointer.value, &provenances);
+        return provenances.toOwnedSlice();
+    }
+
+    fn currentOpaqueProvenancesForValue(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        value: facts.ValueFacts,
+    ) ![]const facts.OpaqueProvenance {
+        var storages = std.array_list.Managed(facts.Place).init(self.allocator);
+        defer storages.deinit();
+        try self.collectOpaqueDomainsAccessedBy(state, value, &storages);
+        var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
+        for (storages.items) |storage| try appendOpaqueProvenanceFact(&provenances, .{
+            .storage = storage,
+            .generation = try self.storageGeneration(state, storage),
+        });
+        return provenances.toOwnedSlice();
+    }
+
+    fn envelopeOpaqueRead(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        value: facts.ValueFacts,
+        ty: ?graph_mod.GlobalTypeId,
+        pointer: facts.ValueFacts,
+    ) !facts.ValueFacts {
+        var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
+        defer provenances.deinit();
+        try self.collectOpaqueProvenancesCarriedBy(state, pointer, &provenances);
+        return self.addOpaqueReadEnvelope(value, ty, provenances.items);
+    }
+
+    fn addOpaqueReadEnvelope(
+        self: *SafetyChecker,
+        value: facts.ValueFacts,
+        ty: ?graph_mod.GlobalTypeId,
+        provenances: []const facts.OpaqueProvenance,
+    ) !facts.ValueFacts {
+        const value_type = ty orelse return value;
+        if (!self.typeContainsPointer(value_type)) return value.scalarOpaqueRead();
+        if (provenances.len == 0) return value;
+
+        var result = value;
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+        for (value.dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
+        for (provenances) |provenance| try appendDependencyFact(&dependencies, .{ .root = provenance.generation });
+        result.dependencies = try dependencies.toOwnedSlice();
+
+        if (value.fields.len != 0) {
+            const fields = try self.allocator.alloc(facts.FieldFacts, value.fields.len);
+            for (value.fields, 0..) |field, index| {
+                const stored = try self.allocator.create(facts.ValueFacts);
+                stored.* = try self.addOpaqueReadEnvelope(
+                    field.value.*,
+                    self.fieldTypeAt(value_type, field.index),
+                    provenances,
+                );
+                fields[index] = .{ .index = field.index, .value = stored };
+            }
+            result.fields = fields;
+        }
+        if (value.variants.len != 0) {
+            const variants = try self.allocator.alloc(facts.VariantFacts, value.variants.len);
+            for (value.variants, 0..) |variant, index| {
+                const stored = try self.allocator.create(facts.ValueFacts);
+                stored.* = try self.addOpaqueReadEnvelope(
+                    variant.value.*,
+                    self.variantPayloadTypeAt(value_type, variant.index),
+                    provenances,
+                );
+                variants[index] = .{ .index = variant.index, .value = stored };
+            }
+            result.variants = variants;
+        }
+        return result;
+    }
+
+    fn fieldTypeAt(
+        self: *SafetyChecker,
+        ty: graph_mod.GlobalTypeId,
+        index: u32,
+    ) ?graph_mod.GlobalTypeId {
+        if (types.arrayElement(self.graph, ty)) |element| return element;
+        const range = types.fields(self.graph, ty) orelse return null;
+        if (index >= range.len) return null;
+        return self.graph.fields.items[range.start + index].ty;
+    }
+
+    fn variantPayloadTypeAt(
+        self: *SafetyChecker,
+        ty: graph_mod.GlobalTypeId,
+        index: u32,
+    ) ?graph_mod.GlobalTypeId {
+        const range = types.variants(self.graph, ty) orelse return null;
+        if (index >= range.len) return null;
+        return self.graph.variants.items[range.start + index].payload_type;
+    }
+
+    fn typeContainsPointer(self: *SafetyChecker, ty: graph_mod.GlobalTypeId) bool {
+        const semantic = self.graph.resolvedSemanticType(ty) orelse return false;
+        return switch (semantic) {
+            .pointer, .virtual => true,
+            .array => |array| self.typeContainsPointer(array.element),
+            .nullable, .inferred_errable => |child| self.typeContainsPointer(child),
+            .builtin => false,
+            .declared, .structural => blk: {
+                const range = types.fields(self.graph, ty) orelse break :blk self.choiceTypeContainsPointer(ty);
+                for (self.graph.fields.items[range.start..][0..range.len]) |field|
+                    if (self.typeContainsPointer(field.ty)) break :blk true;
+                break :blk false;
+            },
+            .structural_choice, .inferred_choice => self.choiceTypeContainsPointer(ty),
+            .generic => blk: {
+                const instance = types.genericInstance(self.graph, ty) orelse break :blk false;
+                break :blk switch (instance.shape) {
+                    .array => |shape| self.typeContainsPointer(shape.element),
+                    .alias => |target| self.typeContainsPointer(target),
+                    .structure => |shape| fields_blk: {
+                        for (self.graph.fields.items[shape.fields.start..][0..shape.fields.len]) |field|
+                            if (self.typeContainsPointer(field.ty)) break :fields_blk true;
+                        break :fields_blk false;
+                    },
+                    .choice => |shape| variants_blk: {
+                        for (self.graph.variants.items[shape.variants.start..][0..shape.variants.len]) |variant|
+                            if (variant.payload_type) |payload|
+                                if (self.typeContainsPointer(payload)) break :variants_blk true;
+                        break :variants_blk false;
+                    },
+                };
+            },
+        };
+    }
+
+    fn choiceTypeContainsPointer(self: *SafetyChecker, ty: graph_mod.GlobalTypeId) bool {
+        const range = types.variants(self.graph, ty) orelse return false;
+        for (self.graph.variants.items[range.start..][0..range.len]) |variant|
+            if (variant.payload_type) |payload|
+                if (self.typeContainsPointer(payload)) return true;
+        return false;
+    }
+
+    fn mergeOpaqueStorage(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        storage: facts.Place,
+        dependencies: []const facts.ValidityRootId,
+    ) !void {
+        for (state.opaque_storages.items) |*opaque_storage| {
+            if (!opaque_storage.storage.eql(storage)) continue;
+            var merged = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            try merged.appendSlice(opaque_storage.hidden_dependencies);
+            for (dependencies) |dependency| try appendRootFact(&merged, dependency);
+            opaque_storage.hidden_dependencies = try merged.toOwnedSlice();
+            return;
+        }
+        var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        for (dependencies) |dependency| try appendRootFact(&hidden, dependency);
+        try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = try hidden.toOwnedSlice() });
+    }
+
+    fn markOpaqueStorageEmpty(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) void {
+        _ = self;
+        for (state.opaque_storages.items) |*opaque_storage| {
+            if (!opaque_storage.storage.eql(storage)) continue;
+            opaque_storage.hidden_dependencies = &.{};
+            return;
+        }
+    }
+
+    fn mergeLiveOpaqueDependencies(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        storage: facts.Place,
+        dependencies: []const facts.ValidityRootId,
+    ) !void {
+        var live = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer live.deinit();
+        for (dependencies) |dependency| if (state.tracker.isAlive(dependency)) try appendRootFact(&live, dependency);
+        try self.mergeOpaqueStorage(state, storage, live.items);
+    }
+
+    fn collectOpaqueHiddenDependencies(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        value: facts.ValueFacts,
+        hidden: *std.array_list.Managed(facts.ValidityRootId),
+    ) !void {
+        for (value.dependencies) |dependency| try appendRootFact(hidden, dependency.root);
+        var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
+        defer provenances.deinit();
+        try self.collectOpaqueProvenancesCarriedBy(state, value, &provenances);
+        for (provenances.items) |provenance| try appendRootFact(hidden, provenance.generation);
+        for (value.fields) |field| try self.collectOpaqueHiddenDependencies(state, field.value.*, hidden);
+        for (value.variants) |variant| try self.collectOpaqueHiddenDependencies(state, variant.value.*, hidden);
+    }
+
+    fn hideOpaqueDependencies(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, value: facts.ValueFacts) !void {
+        var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer hidden.deinit();
+        try self.collectOpaqueHiddenDependencies(state, value, &hidden);
+        try self.mergeLiveOpaqueDependencies(state, storage, hidden.items);
+    }
+
+    fn collectOpaqueDomainsAccessedBy(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        pointer: facts.ValueFacts,
+        result: *std.array_list.Managed(facts.Place),
+    ) !void {
+        for (pointer.opaque_provenance) |provenance| try appendPlaceFact(result, provenance.storage);
+        for (state.opaque_storages.items) |opaque_storage| {
+            if (self.valueAtPlace(state, opaque_storage.storage)) |storage_value| {
+                for (pointer.dependencies) |dependency|
+                    if (valueContainsOwnedRoot(storage_value, dependency.root)) try appendPlaceFact(result, opaque_storage.storage);
+            }
+            for (state.storage_generations.items) |entry| {
+                if (!opaque_storage.storage.isPrefixOf(entry.storage)) continue;
+                for (pointer.dependencies) |dependency|
+                    if (dependency.root == entry.generation) try appendPlaceFact(result, opaque_storage.storage);
+            }
+        }
+    }
+
+    fn collectOpaqueProvenancesCarriedBy(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        pointer: facts.ValueFacts,
+        result: *std.array_list.Managed(facts.OpaqueProvenance),
+    ) !void {
+        for (pointer.opaque_provenance) |provenance| try appendOpaqueProvenanceFact(result, provenance);
+        for (state.opaque_storages.items) |opaque_storage| {
+            if (self.valueAtPlace(state, opaque_storage.storage)) |storage_value| {
+                for (pointer.dependencies) |dependency|
+                    if (valueContainsOwnedRoot(storage_value, dependency.root)) try appendOpaqueProvenanceFact(result, .{
+                        .storage = opaque_storage.storage,
+                        .generation = dependency.root,
+                    });
+            }
+            for (state.storage_generations.items) |entry| {
+                if (!opaque_storage.storage.isPrefixOf(entry.storage)) continue;
+                for (pointer.dependencies) |dependency|
+                    if (dependency.root == entry.generation) try appendOpaqueProvenanceFact(result, .{
+                        .storage = opaque_storage.storage,
+                        .generation = dependency.root,
+                    });
+            }
+        }
+    }
+
+    fn collectOpaqueProvenancesRecursively(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        value: facts.ValueFacts,
+        result: *std.array_list.Managed(facts.OpaqueProvenance),
+    ) !void {
+        try self.collectOpaqueProvenancesCarriedBy(state, value, result);
+        for (value.fields) |field| try self.collectOpaqueProvenancesRecursively(state, field.value.*, result);
+        for (value.variants) |variant| try self.collectOpaqueProvenancesRecursively(state, variant.value.*, result);
+    }
+
+    fn opaqueDependencyIsInternalToStorage(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        storage: facts.Place,
+        root: facts.ValidityRootId,
+    ) bool {
+        if (self.valueAtPlace(state, storage)) |storage_value|
+            if (valueContainsOwnedRoot(storage_value, root) or valueDependsOnRoot(storage_value, root)) return true;
+        for (state.storage_generations.items) |entry|
+            if (storage.isPrefixOf(entry.storage) and entry.generation == root) return true;
+        for (state.places.items) |entry|
+            if (valueContainsOpaqueGeneration(entry.value, storage, root)) return true;
+        return false;
+    }
+
+    fn endRoot(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        state: *FunctionState,
+        root: facts.ValidityRootId,
+    ) !bool {
+        return self.endRoots(source, state, &.{root});
+    }
+
+    fn endRoots(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        state: *FunctionState,
+        roots: []const facts.ValidityRootId,
+    ) !bool {
+        for (roots) |root| {
+            var externally_hidden = false;
+            for (state.opaque_storages.items) |opaque_storage| {
+                if (!containsRoot(opaque_storage.hidden_dependencies, root)) continue;
+                if (self.opaqueDependencyIsInternalToStorage(state, opaque_storage.storage, root)) continue;
+                externally_hidden = true;
+                break;
+            }
+            if (!externally_hidden) continue;
+            try self.report(source, "cannot end a root while opaque storage hides a dependency on it", .{});
+            return false;
+        }
+        for (roots) |root| state.tracker.end(root);
+        return true;
+    }
+
+    fn closeOpaqueOwnedRoots(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        value: facts.ValueFacts,
+        state: *FunctionState,
+        consumed_source: ?facts.Place,
+    ) !void {
+        var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer roots.deinit();
+        try collectOwnedRoots(value, &roots);
+        for (roots.items) |root| {
+            for (state.places.items) |candidate| {
+                if (consumed_source) |consumed| if (consumed.isPrefixOf(candidate.storage)) continue;
+                if (candidate.initializedness != .initialized or !valueDependsOnRoot(candidate.value, root)) continue;
+                try self.report(source, "opaque ownership storage requires no live external aliases to the consumed root", .{});
+                return;
+            }
+        }
+        _ = try self.endRoots(source, state, roots.items);
+    }
+
+    fn endStorageGenerationsUnder(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        state: *FunctionState,
+        storage: facts.Place,
+    ) !void {
+        for (state.storage_generations.items) |entry| {
+            if (storage.isPrefixOf(entry.storage)) {
+                _ = try self.endRoot(source, state, entry.generation);
+            }
+        }
+    }
+
+    fn refreshStorageGenerationChecked(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        state: *FunctionState,
+        storage: facts.Place,
+    ) !void {
+        for (state.storage_generations.items) |entry| {
+            if (!storage.isPrefixOf(entry.storage)) continue;
+            if (!try self.endRoot(source, state, entry.generation)) return;
+        }
+        try self.refreshStorageGeneration(state, storage);
     }
 
     fn bindCallInputs(self: *SafetyChecker, function: graph_mod.Function, values: []const facts.ValueFacts, state: *FunctionState) !void {
@@ -538,10 +1827,16 @@ pub const SafetyChecker = struct {
     }
 
     fn evaluateChoicePayload(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, access: anytype, state: *FunctionState) !facts.ValueFacts {
-        const choice = try self.evaluate(function, access.value, state);
         const choice_ty = self.graph.nodes.items[@intFromEnum(access.value)].ty orelse return .{};
         const wanted = variantIndex(self.graph, choice_ty, access.variant) orelse return .{};
-        if (try self.resolvePlace(access.value, state)) |storage| {
+        const resolved = try self.resolvePlace(access.value, state);
+        const choice = if (resolved) |storage| blk: {
+            const stored = self.valueAtPlace(state, storage) orelse facts.ValueFacts{};
+            const provenance = try self.opaqueProvenanceCarriedByAccess(access.value, state);
+            break :blk try self.addOpaqueReadEnvelope(stored, choice_ty, provenance);
+        } else try self.evaluate(function, access.value, state);
+
+        if (resolved) |storage| {
             if (!self.variantActive(state, storage, wanted)) {
                 try self.report(source, "choice payload requires its variant to be proven active", .{});
                 return .{};
@@ -605,36 +1900,144 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn applyAutoDeinit(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, id: graph_mod.GlobalAutoDeinitId, state: *FunctionState) !void {
-        _ = function;
+    fn applyAutoDeinit(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        id: graph_mod.GlobalAutoDeinitId,
+        state: *FunctionState,
+    ) !void {
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
         const storage = facts.Place{ .root = cleanup.binding };
-        const current = self.getPlace(state, storage) orelse return;
-        if (current.initializedness != .initialized) return;
-        if (cleanup.deinit_fn) |deinit_fn| {
-            if (cleanup.input) |input| {
-                const call_node: graph_mod.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
-                _ = call_node;
-                // GlobalSema already resolved destructor identity/input. Safety
-                // executes the same function body through a synthetic call path.
-                const values = [_]facts.ValueFacts{current.value};
-                var candidate = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
-                defer candidate.deinit();
-                const fn_record = self.graph.functions.items[@intFromEnum(deinit_fn)];
-                try self.bindCallInputs(fn_record, &values, &candidate);
-                if (fn_record.body) |body| try self.validateBlock(deinit_fn, body, &candidate);
-                self.commitState(state, &candidate);
-                _ = input;
+        switch (self.initializednessAtPlace(state, storage)) {
+            .initialized => if (cleanup.deinit_fn != null) {
+                try self.evaluateResolvedAutoDeinit(function, cleanup, storage, state);
+            } else if (cleanup.fields.len == 0) {
+                if (self.getPlace(state, storage)) |owned_value| {
+                    const source = self.graph.bindings.items[@intFromEnum(cleanup.binding)].source;
+                    var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                    defer roots.deinit();
+                    try collectOwnedRoots(owned_value.value, &roots);
+                    if (!try self.endRoots(source, state, roots.items)) return;
+                }
+                try self.setPlace(state, storage, .deinitialized, .{});
+            } else {
+                const diagnostic_count = self.diagnostics.list.items.len;
+                try self.evaluateStructuralAutoDeinit(function, cleanup.fields, storage, state);
+                if (self.diagnostics.list.items.len == diagnostic_count)
+                    try self.setPlace(state, storage, .deinitialized, .{});
+            },
+            .maybe_initialized, .moved, .deinitialized => {},
+        }
+    }
+
+    fn evaluateResolvedAutoDeinit(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        cleanup: graph_mod.AutoDeinit,
+        storage: facts.Place,
+        state: *FunctionState,
+    ) !void {
+        return self.evaluateResolvedDeinit(
+            function,
+            cleanup.deinit_fn orelse return,
+            cleanup.input orelse return,
+            cleanup.self_field_index,
+            storage,
+            state,
+        );
+    }
+
+    fn evaluateStructuralAutoDeinit(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId),
+        storage: facts.Place,
+        state: *FunctionState,
+    ) !void {
+        for (self.graph.auto_deinit_fields.items[fields.start..][0..fields.len]) |field| {
+            const field_storage = try self.project(storage, .{ .field = field.field_index });
+            if (self.initializednessAtPlace(state, field_storage) != .initialized) continue;
+            if (field.deinit_fn) |deinit_fn| {
+                try self.evaluateResolvedDeinit(
+                    function,
+                    deinit_fn,
+                    field.input orelse continue,
+                    field.self_field_index,
+                    field_storage,
+                    state,
+                );
+            } else {
+                try self.evaluateStructuralAutoDeinit(function, field.fields, field_storage, state);
+                try self.setPlace(state, field_storage, .deinitialized, .{});
             }
         }
-        for (current.value.owned_roots) |root| state.tracker.end(root);
-        try self.setPlace(state, storage, .deinitialized, .{});
+    }
+
+    fn evaluateResolvedDeinit(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        deinit_fn: graph_mod.GlobalFunctionId,
+        input: graph_mod.GlobalNodeId,
+        self_field_index: u32,
+        storage: facts.Place,
+        state: *FunctionState,
+    ) !void {
+        const input_node = self.graph.nodes.items[@intFromEnum(input)];
+        if (input_node.content != .struct_value_literal) return;
+        const range = input_node.content.struct_value_literal.fields;
+        const argument_ids = self.globalValueFieldIds(range);
+
+        var candidate = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+        defer candidate.deinit();
+        const diagnostic_count = self.diagnostics.list.items.len;
+        var values = try self.allocator.alloc(facts.ValueFacts, argument_ids.len);
+        defer self.allocator.free(values);
+        for (argument_ids, 0..) |field_id, index| {
+            const field = self.graph.value_fields.items[@intFromEnum(field_id)];
+            values[index] = if (index == self_field_index)
+                .{
+                    .dependencies = try self.oneDependency(try self.storageGeneration(&candidate, storage)),
+                    .referenced_place = storage,
+                }
+            else
+                try self.evaluate(function, field.value, &candidate);
+        }
+
+        if (self.active_summaries) |engine| {
+            if (engine.summaryFor(deinit_fn)) |summary| {
+                if (!try self.validateSummaryRequiredLive(input_node.source, summary, values, &candidate)) return;
+                try self.applySummaryEffects(input_node.source, summary, argument_ids, values, &candidate);
+            } else {
+                try self.evaluateResolvedDeinitBody(deinit_fn, values, &candidate);
+            }
+        } else {
+            try self.evaluateResolvedDeinitBody(deinit_fn, values, &candidate);
+        }
+        if (self.diagnostics.list.items.len != diagnostic_count) return;
+        self.commitState(state, &candidate);
+    }
+
+    fn evaluateResolvedDeinitBody(
+        self: *SafetyChecker,
+        deinit_fn: graph_mod.GlobalFunctionId,
+        values: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !void {
+        const function = self.graph.functions.items[@intFromEnum(deinit_fn)];
+        if (function.safety_primitive != .none) return;
+        try self.bindCallInputs(function, values, state);
+        if (function.body) |body| {
+            try self.call_stack.append(deinit_fn);
+            defer _ = self.call_stack.pop();
+            try self.validateBlock(deinit_fn, body, state);
+        }
     }
 
     fn resolvePlace(self: *SafetyChecker, node_id: graph_mod.GlobalNodeId, state: *FunctionState) !?facts.Place {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
             .binding_use => |binding| facts.Place{ .root = binding },
+            .move_value => |child| self.resolvePlace(child, state),
             .address_of => |child| self.resolvePlace(child, state),
             .dereference => |deref| blk: {
                 const value = try self.evaluate(@enumFromInt(0), deref.pointer, state);
@@ -1031,6 +2434,79 @@ pub const SafetyChecker = struct {
     }
 };
 
+fn appendDependencyFact(list: *std.array_list.Managed(facts.ValidityDependency), dependency: facts.ValidityDependency) !void {
+    for (list.items) |existing| if (existing.root == dependency.root) return;
+    try list.append(dependency);
+}
+
+fn appendRootFact(list: *std.array_list.Managed(facts.ValidityRootId), root: facts.ValidityRootId) !void {
+    for (list.items) |existing| if (existing == root) return;
+    try list.append(root);
+}
+
+fn appendCapabilityFact(list: *std.array_list.Managed(facts.StorageCapabilityId), capability: facts.StorageCapabilityId) !void {
+    for (list.items) |existing| if (existing == capability) return;
+    try list.append(capability);
+}
+
+fn appendPlaceFact(list: *std.array_list.Managed(facts.Place), storage: facts.Place) !void {
+    for (list.items) |existing| if (existing.eql(storage)) return;
+    try list.append(storage);
+}
+
+fn appendOpaqueProvenanceFact(list: *std.array_list.Managed(facts.OpaqueProvenance), provenance: facts.OpaqueProvenance) !void {
+    for (list.items) |existing|
+        if (existing.storage.eql(provenance.storage) and existing.generation == provenance.generation) return;
+    try list.append(provenance);
+}
+
+fn containsRoot(roots: []const facts.ValidityRootId, root: facts.ValidityRootId) bool {
+    for (roots) |existing| if (existing == root) return true;
+    return false;
+}
+
+fn collectOwnedRoots(value: facts.ValueFacts, roots: *std.array_list.Managed(facts.ValidityRootId)) !void {
+    for (value.owned_roots) |root| try appendRootFact(roots, root);
+    for (value.fields) |field| try collectOwnedRoots(field.value.*, roots);
+    for (value.variants) |variant| try collectOwnedRoots(variant.value.*, roots);
+}
+
+fn valueDependsOnRoot(value: facts.ValueFacts, root: facts.ValidityRootId) bool {
+    for (value.dependencies) |dependency| if (dependency.root == root) return true;
+    for (value.fields) |field| if (valueDependsOnRoot(field.value.*, root)) return true;
+    for (value.variants) |variant| if (valueDependsOnRoot(variant.value.*, root)) return true;
+    return false;
+}
+
+fn valueContainsOwnedRoot(value: facts.ValueFacts, root: facts.ValidityRootId) bool {
+    if (containsRoot(value.owned_roots, root)) return true;
+    for (value.fields) |field| if (valueContainsOwnedRoot(field.value.*, root)) return true;
+    for (value.variants) |variant| if (valueContainsOwnedRoot(variant.value.*, root)) return true;
+    return false;
+}
+
+fn valueContainsOpaqueGeneration(value: facts.ValueFacts, storage: facts.Place, generation: facts.ValidityRootId) bool {
+    for (value.opaque_provenance) |provenance|
+        if (provenance.storage.eql(storage) and provenance.generation == generation) return true;
+    for (value.fields) |field| if (valueContainsOpaqueGeneration(field.value.*, storage, generation)) return true;
+    for (value.variants) |variant| if (valueContainsOpaqueGeneration(variant.value.*, storage, generation)) return true;
+    return false;
+}
+
+fn valueHasDependency(value: facts.ValueFacts) bool {
+    if (value.dependencies.len != 0) return true;
+    for (value.fields) |field| if (valueHasDependency(field.value.*)) return true;
+    for (value.variants) |variant| if (valueHasDependency(variant.value.*)) return true;
+    return false;
+}
+
+fn hasExternalOpaqueDependency(value: facts.ValueFacts, owned: []const facts.ValidityRootId) bool {
+    for (value.dependencies) |dependency| if (!containsRoot(owned, dependency.root)) return true;
+    for (value.fields) |field| if (hasExternalOpaqueDependency(field.value.*, owned)) return true;
+    for (value.variants) |variant| if (hasExternalOpaqueDependency(variant.value.*, owned)) return true;
+    return false;
+}
+
 fn findPlaceConst(state: *const SafetyChecker.FunctionState, storage: facts.Place) ?*const facts.PlaceFacts {
     for (state.places.items) |*entry| if (entry.storage.eql(storage)) return entry;
     return null;
@@ -1053,4 +2529,179 @@ fn variantIndex(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Globa
 test "global safety checker keys program state by compact ids" {
     try std.testing.expect(@sizeOf(graph_mod.GlobalBindingId) == 4);
     try std.testing.expect(@sizeOf(graph_mod.GlobalNodeId) == 4);
+}
+
+test "opaque summary runtime recovers hidden external dependencies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+
+    const binding: graph_mod.GlobalBindingId = @enumFromInt(0);
+    const storage = facts.Place{ .root = binding };
+    const backing = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(backing)].owned_resource = true;
+    const generation = try checker.storageGeneration(&state, storage);
+    const external = try state.tracker.establish(.fresh);
+    try checker.setPlace(&state, storage, .initialized, .{ .owned_roots = &.{backing} });
+    try checker.mergeOpaqueStorage(&state, storage, &.{ backing, generation, external });
+
+    const moved_out = try checker.instantiateOutput(.{
+        .opaque_storage_dependencies = &.{.{ .input_index = 0 }},
+        .fresh_owned_roots = &.{91},
+    }, &.{.{ .referenced_place = storage }}, &state);
+    try std.testing.expect(valueDependsOnRoot(moved_out, external));
+    try std.testing.expect(!valueDependsOnRoot(moved_out, backing));
+    try std.testing.expect(!valueDependsOnRoot(moved_out, generation));
+    try std.testing.expectEqual(@as(usize, 1), moved_out.owned_roots.len);
+
+    checker.markOpaqueStorageEmpty(&state, storage);
+    try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
+}
+
+test "opaque primitives move ownership through domain state" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+
+    const storage_binding: graph_mod.GlobalBindingId = @enumFromInt(0);
+    const storage = facts.Place{ .root = storage_binding };
+    const owned = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(owned)].owned_resource = true;
+    const external = try state.tracker.establish(.fresh);
+    const moved = facts.ValueFacts{
+        .dependencies = &.{.{ .root = external }},
+        .owned_roots = &.{owned},
+    };
+
+    try checker.applyOpaqueMovePrimitive(
+        @enumFromInt(0),
+        .{ .file_index = 0, .offset = 0 },
+        &.{},
+        &.{ .{ .referenced_place = storage }, .{}, moved },
+        &state,
+    );
+    try std.testing.expect(!state.tracker.isAlive(owned));
+    try std.testing.expectEqual(@as(usize, 1), state.opaque_storages.items.len);
+    try std.testing.expect(containsRoot(state.opaque_storages.items[0].hidden_dependencies, external));
+
+    const moved_out = try checker.opaqueMoveOutPrimitive(
+        &.{},
+        &.{.{ .referenced_place = storage }},
+        &state,
+    );
+    try std.testing.expect(valueDependsOnRoot(moved_out, external));
+    try std.testing.expectEqual(@as(usize, 1), moved_out.owned_roots.len);
+    try std.testing.expect(state.tracker.isAlive(moved_out.owned_roots[0]));
+
+    checker.markOpaqueStorageEmpty(&state, storage);
+    try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
+}
+
+test "relocate primitive preserves owned root identity" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+
+    const source_storage = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(0)) };
+    const destination = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(1)) };
+    const root = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
+    try checker.setPlace(&state, source_storage, .initialized, .{ .owned_roots = &.{root} });
+    try checker.setPlace(&state, destination, .moved, .{});
+
+    _ = try checker.relocatePrimitive(
+        .{ .file_index = 0, .offset = 0 },
+        &.{ .{ .referenced_place = source_storage }, .{ .referenced_place = destination } },
+        &state,
+    );
+    try std.testing.expect(state.tracker.isAlive(root));
+    try std.testing.expectEqual(value_state.Initializedness.moved, checker.getPlace(&state, source_storage).?.initializedness);
+    const destination_value = checker.getPlace(&state, destination).?.value;
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{root}, destination_value.owned_roots);
+}
+
+test "opaque read envelopes distinguish scalar and reference values" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .pointer = .{
+        .child = @as(graph_mod.GlobalTypeId, @enumFromInt(0)),
+        .mutability = .read_only,
+    } });
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+
+    const storage = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(0)) };
+    const generation: facts.ValidityRootId = @enumFromInt(7);
+    const unrelated: facts.ValidityRootId = @enumFromInt(8);
+    const provenance = [_]facts.OpaqueProvenance{.{ .storage = storage, .generation = generation }};
+
+    const scalar = try checker.addOpaqueReadEnvelope(
+        .{ .dependencies = &.{.{ .root = unrelated }} },
+        @as(graph_mod.GlobalTypeId, @enumFromInt(0)),
+        &provenance,
+    );
+    try std.testing.expectEqual(@as(usize, 0), scalar.dependencies.len);
+
+    const reference = try checker.addOpaqueReadEnvelope(
+        .{},
+        @as(graph_mod.GlobalTypeId, @enumFromInt(1)),
+        &provenance,
+    );
+    try std.testing.expect(valueDependsOnRoot(reference, generation));
+}
+
+test "structural auto deinit marks nested fields and parent dead" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.bindings.append(allocator, .{
+        .name = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(0),
+        .mutability = .variable,
+    });
+    try graph.auto_deinit_fields.append(allocator, .{
+        .field_index = 0,
+        .deinit_fn = null,
+    });
+    try graph.auto_deinits.append(allocator, .{
+        .binding = @enumFromInt(0),
+        .deinit_fn = null,
+        .fields = .{ .start = 0, .len = 1 },
+    });
+
+    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(allocator, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const root = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(0)) };
+    const child = try checker.project(root, .{ .field = 0 });
+    try checker.setPlace(&state, root, .initialized, .{});
+    try checker.setPlace(&state, child, .initialized, .{});
+
+    try checker.applyAutoDeinit(@enumFromInt(0), @enumFromInt(0), &state);
+    try std.testing.expectEqual(value_state.Initializedness.deinitialized, checker.initializednessAtPlace(&state, child));
+    try std.testing.expectEqual(value_state.Initializedness.deinitialized, checker.initializednessAtPlace(&state, root));
 }
