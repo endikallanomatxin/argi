@@ -577,6 +577,15 @@ pub const Context = struct {
     }
 
     fn collectBodyOperands(self: *Context, node: syn.NodeIndex, result: *std.array_list.Managed(ir.ParameterizedNodeId)) anyerror!void {
+        if (self.tree.pointerAssignment(node)) |assignment| {
+            const pointer = if (self.tree.tag(assignment.target) == .dereference)
+                self.tree.unaryOperand(assignment.target).?
+            else
+                assignment.target;
+            try result.append(try self.lowerBodyNode(pointer));
+            try result.append(try self.lowerBodyNode(assignment.value));
+            return;
+        }
         if (self.tree.structFieldAccess(node)) |access| {
             try result.append(try self.lowerBodyNode(access.value));
             return;
