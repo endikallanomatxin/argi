@@ -122,25 +122,81 @@ pub const Resolver = struct {
     fn blockContains(self: *Resolver, block_id: global_sg.GlobalBlockId, target: global_sg.GlobalNodeId) bool {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
-            if (node_id == target) return true;
-            const node = self.graph.nodes.items[@intFromEnum(node_id)];
-            switch (node.content) {
-                .code_block => |child| if (self.blockContains(child, target)) return true,
-                .if_statement => |statement| {
-                    if (self.blockContains(statement.then_block, target)) return true;
-                    if (statement.else_block) |child| if (self.blockContains(child, target)) return true;
-                },
-                .while_statement => |statement| if (self.blockContains(statement.body, target)) return true,
-                .for_statement => |statement| if (self.blockContains(statement.body, target)) return true,
-                .switch_statement => |switch_id| {
-                    const sw = self.graph.switches.items[@intFromEnum(switch_id)];
-                    for (self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]) |case|
-                        if (self.blockContains(case.body, target)) return true;
-                    if (sw.default_block) |child| if (self.blockContains(child, target)) return true;
-                },
-                else => {},
-            }
+            if (self.nodeContains(node_id, target)) return true;
         }
+        return false;
+    }
+
+    // A propagation can be nested in any expression, not just in a block's
+    // top-level node list. Follow graph edges so its enclosing return type is
+    // found without relying on source positions or allocation order.
+    fn nodeContains(self: *Resolver, node_id: global_sg.GlobalNodeId, target: global_sg.GlobalNodeId) bool {
+        if (node_id == target) return true;
+        const node = self.graph.nodes.items[@intFromEnum(node_id)];
+        return switch (node.content) {
+            .move_value, .address_of => |child| self.nodeContains(child, target),
+            .assignment => |value| self.nodeContains(value.value, target),
+            .function_call => |call| self.nodeContains(call.input, target),
+            .virtual_call => |id| blk: {
+                const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                break :blk self.nodeContains(call.handle, target) or self.nodeContains(call.input, target);
+            },
+            .virtualize => |id| self.nodeContains(self.graph.virtualizes.items[@intFromEnum(id)].value, target),
+            .code_block => |child| self.blockContains(child, target),
+            .list_literal => |literal| self.nodeRangeContains(literal.elements, target),
+            .array_literal => |literal| self.nodeRangeContains(literal.elements, target),
+            .struct_value_literal => |literal| blk: {
+                for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
+                    if (self.nodeContains(field.value, target)) break :blk true;
+                break :blk false;
+            },
+            .struct_field_access => |access| self.nodeContains(access.value, target),
+            .choice_literal => |literal| if (literal.payload) |child| self.nodeContains(child, target) else false,
+            .choice_payload_access => |access| self.nodeContains(access.value, target),
+            .nullable_unwrap_or => |id| blk: {
+                const unwrap = self.graph.nullable_unwraps.items[@intFromEnum(id)];
+                break :blk self.nodeContains(unwrap.nullable_value, target) or self.nodeContains(unwrap.fallback_value, target);
+            },
+            .testing_expect_error => |id| blk: {
+                const value = self.graph.testing_expect_errors.items[@intFromEnum(id)];
+                break :blk self.nodeContains(value.actual_result, target) or self.nodeContains(value.expected_reason, target);
+            },
+            .error_propagation => |id| self.nodeContains(self.graph.error_propagations.items[@intFromEnum(id)].errable_value, target),
+            .error_context => |id| blk: {
+                const value = self.graph.error_contexts.items[@intFromEnum(id)];
+                break :blk self.nodeContains(value.errable_value, target) or self.nodeContains(value.context, target);
+            },
+            .array_index => |access| self.nodeContains(access.array_ptr, target) or self.nodeContains(access.index, target),
+            .array_store => |store| self.nodeContains(store.array_ptr, target) or self.nodeContains(store.index, target) or self.nodeContains(store.value, target),
+            .struct_field_store => |store| self.nodeContains(store.struct_ptr, target) or self.nodeContains(store.value, target),
+            .binary_operation => |operation| self.nodeContains(operation.left, target) or self.nodeContains(operation.right, target),
+            .comparison => |operation| self.nodeContains(operation.left, target) or self.nodeContains(operation.right, target),
+            .logical_operation => |operation| self.nodeContains(operation.left, target) or self.nodeContains(operation.right, target),
+            .return_statement => |statement| if (statement.expression) |child| self.nodeContains(child, target) else false,
+            .if_statement => |statement| self.nodeContains(statement.condition, target) or self.blockContains(statement.then_block, target) or
+                (if (statement.else_block) |child| self.blockContains(child, target) else false),
+            .while_statement => |statement| self.nodeContains(statement.condition, target) or self.blockContains(statement.body, target),
+            .for_statement => |statement| (if (statement.init) |child| self.nodeContains(child, target) else false) or
+                self.nodeContains(statement.condition, target) or
+                (if (statement.increment) |child| self.nodeContains(child, target) else false) or self.blockContains(statement.body, target),
+            .switch_statement => |id| blk: {
+                const sw = self.graph.switches.items[@intFromEnum(id)];
+                if (self.nodeContains(sw.expression, target)) break :blk true;
+                for (self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]) |case|
+                    if (self.blockContains(case.body, target)) break :blk true;
+                break :blk if (sw.default_block) |child| self.blockContains(child, target) else false;
+            },
+            .dereference => |value| self.nodeContains(value.pointer, target),
+            .pointer_assignment => |value| self.nodeContains(value.pointer, target) or self.nodeContains(value.value, target),
+            .type_initializer => |value| self.nodeContains(value.args, target),
+            .explicit_cast => |value| self.nodeContains(value.value, target),
+            else => false,
+        };
+    }
+
+    fn nodeRangeContains(self: *Resolver, range: primitives.Range(global_sg.GlobalNodeId), target: global_sg.GlobalNodeId) bool {
+        for (self.graph.node_refs.items[range.start..][0..range.len]) |child|
+            if (self.nodeContains(child, target)) return true;
         return false;
     }
 
@@ -169,4 +225,25 @@ fn singleFieldIndex(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.G
 test "error propagation resolver writes indexed payloads" {
     try std.testing.expect(@sizeOf(global_sg.GlobalErrorPropagationId) == 4);
     try std.testing.expect(@sizeOf(global_sg.GlobalErrorContextId) == 4);
+}
+
+test "enclosing error search follows nested call arguments" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.nodes.append(allocator, .{ .source = source, .ty = null, .content = .{ .bool_literal = true } });
+    try graph.value_fields.append(allocator, .{ .name = try graph.addString(allocator, "value"), .value = @enumFromInt(0) });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 1 } } } });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = null, .content = .{ .function_call = .{ .callee = @enumFromInt(0), .input = @enumFromInt(1) } } });
+    try graph.node_refs.append(allocator, @enumFromInt(2));
+    try graph.blocks.append(allocator, .{ .nodes = .{ .start = 0, .len = 1 }, .ret_val = null });
+    var resolver: Resolver = .{
+        .allocator = allocator,
+        .graph = &graph,
+        .modules = &.{},
+        .offsets = &.{},
+        .core = undefined,
+    };
+    try std.testing.expect(resolver.blockContains(@enumFromInt(0), @enumFromInt(0)));
 }
