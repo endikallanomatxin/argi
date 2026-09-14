@@ -582,7 +582,11 @@ pub const Context = struct {
                 self.tree.unaryOperand(assignment.target).?
             else
                 assignment.target;
-            try result.append(try self.lowerBodyNode(pointer));
+            const target = try self.lowerBodyNode(pointer);
+            try result.append(if (self.tree.tag(assignment.target) == .dereference)
+                target
+            else
+                try self.addPending(node, .address_of, &.{target}, null, null, .{ .pointer_mutability = .read_write }));
             try result.append(try self.lowerBodyNode(assignment.value));
             return;
         }
