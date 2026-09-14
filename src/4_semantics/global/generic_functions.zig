@@ -200,6 +200,7 @@ pub const Resolver = struct {
                 error.NoMatchingGenericFunction => return .not_applicable,
                 error.DeferredGenericFunction => return .deferred,
                 error.AmbiguousGenericFunction => return err,
+                error.ConflictingGenericArgument => return err,
                 else => return .deferred,
             };
         if (!try self.core.completeCallInputFields(self.graph.functions.items[@intFromEnum(function)].input, input)) return .deferred;
@@ -280,12 +281,15 @@ pub const Resolver = struct {
         var best_score: u32 = 0;
         var tied = false;
         var saw_deferred = false;
+        var conflicting_candidates: usize = 0;
+        var candidate_count: usize = 0;
         for (self.modules, 0..) |*candidate_module, candidate_index| {
             for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
                 if (parameterized.dispatch_kind == .abstract_contract) continue;
                 const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
                 if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), module.text(reference.name))) continue;
                 if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
+                candidate_count += 1;
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.allocator);
                 const storage = &candidate_module.semantic.parameterized_storage.ir;
@@ -307,7 +311,12 @@ pub const Resolver = struct {
                             matches = false;
                             break;
                         };
-                        const inferred = self.inferInputType(candidate_index, field.ty, actual, &bindings) catch {
+                        const inferred = self.inferInputType(candidate_index, field.ty, actual, &bindings) catch |err| {
+                            if (err == error.ConflictingGenericArgument) {
+                                conflicting_candidates += 1;
+                                matches = false;
+                                break;
+                            }
                             candidate_deferred = true;
                             matches = false;
                             break;
@@ -351,7 +360,7 @@ pub const Resolver = struct {
             }
         }
         if (tied) return error.AmbiguousGenericFunction;
-        const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else error.NoMatchingGenericFunction;
+        const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else if (candidate_count == 1 and conflicting_candidates == 1) error.ConflictingGenericArgument else error.NoMatchingGenericFunction;
         return self.instantiate(declaration, best_arguments);
     }
 
@@ -384,7 +393,10 @@ pub const Resolver = struct {
         switch (storage.types.items[@intFromEnum(pattern)]) {
             .parameter => |parameter| {
                 const slot = &bindings.types[@intFromEnum(parameter)];
-                if (slot.*) |previous| return global_types.equal(self.graph, previous, actual);
+                if (slot.*) |previous| {
+                    if (!global_types.equal(self.graph, previous, actual)) return error.ConflictingGenericArgument;
+                    return true;
+                }
                 slot.* = actual;
                 return true;
             },
