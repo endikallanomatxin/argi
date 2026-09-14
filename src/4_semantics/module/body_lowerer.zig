@@ -727,8 +727,15 @@ const Context = struct {
 
     fn lowerPointerAssignment(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const assignment = self.tree.pointerAssignment(node).?;
-        const pointer = try self.lowerNode(assignment.target, null);
-        const value = try self.lowerNode(assignment.value, expected);
+        // Syntax retains the assignment place; the storage operation consumes
+        // its address, without loading the old pointee first.
+        const pointer_node = if (self.tree.tag(assignment.target) == .dereference)
+            self.tree.unaryOperand(assignment.target).?
+        else
+            assignment.target;
+        const pointer = try self.lowerNode(pointer_node, null);
+        const child_ty = if (pointer.ty) |pointer_ty| try self.pointerChild(pointer_ty) else null;
+        const value = try self.lowerNode(assignment.value, child_ty orelse expected);
         const ty: ?entities.ModuleTypeId = expected orelse value.ty;
         return self.resolved(node, ty, .{ .pointer_assignment = .{ .pointer = pointer.node, .value = value.node } });
     }
