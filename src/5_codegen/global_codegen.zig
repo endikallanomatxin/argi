@@ -147,7 +147,12 @@ pub const CodeGenerator = struct {
         for (self.graph.functions.items, 0..) |function, raw| {
             if (function.body == null or function.flags.is_abstract_dispatch) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            try self.generateFunctionBody(id);
+            self.generateFunctionBody(id) catch |err| {
+                if (err == CodegenError.Reported or err == error.OutOfMemory) return err;
+                const declaration = self.graph.declaration(function.declaration);
+                try self.report(declaration.source, "cannot generate function '{s}': {s}", .{ self.graph.text(declaration.name), @errorName(err) });
+                return CodegenError.Reported;
+            };
         }
 
         if (self.options.selected_test_name != null) {
@@ -179,7 +184,12 @@ pub const CodeGenerator = struct {
             // semantic contracts/templates, not runtime ABI symbols.
             if (function.body == null and function.flags.has_declared_body) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            _ = try self.declareFunction(id);
+            _ = self.declareFunction(id) catch |err| {
+                if (err == CodegenError.Reported or err == error.OutOfMemory) return err;
+                const declaration = self.graph.declaration(function.declaration);
+                try self.report(declaration.source, "cannot lower function signature '{s}': {s}", .{ self.graph.text(declaration.name), @errorName(err) });
+                return CodegenError.Reported;
+            };
         }
     }
 
@@ -388,6 +398,15 @@ pub const CodeGenerator = struct {
     }
 
     fn visitNode(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) anyerror!?TypedValue {
+        return self.visitNodeInner(node_id) catch |err| {
+            if (err == CodegenError.Reported or err == error.OutOfMemory) return err;
+            const node = self.graph.node(node_id);
+            try self.report(node.source, "cannot generate {s}: {s}", .{ @tagName(node.content), @errorName(err) });
+            return CodegenError.Reported;
+        };
+    }
+
+    fn visitNodeInner(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) anyerror!?TypedValue {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
             .declaration, .reach_directive, .type_literal => null,
