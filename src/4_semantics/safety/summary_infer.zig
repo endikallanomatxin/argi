@@ -4,6 +4,7 @@ const types = @import("../global/types.zig");
 const primitives = @import("../primitives/schema.zig");
 const facts = @import("facts.zig");
 const summaries = @import("summaries.zig");
+const value_state = @import("../value_state.zig");
 
 /// Symbolic SafetySummary inference over the compact GlobalSG.
 ///
@@ -88,10 +89,48 @@ pub const Infer = struct {
 
         var required_live_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator);
         try self.inferRequiredLiveInputsBlock(function_id, function.body.?, &required_live_inputs);
+
+        var post_flow = InputPostStateFlow.init(self.allocator);
+        defer post_flow.deinit();
+        var post_exits: ?std.array_list.Managed(facts.PlacePostState) = null;
+        defer if (post_exits) |*exits| exits.deinit();
+        try self.inferInputPostStates(function_id, function.body.?, &post_flow, &post_exits);
+        if (post_flow.reachable) try self.recordInputPostStateExit(&post_exits, &post_flow.states);
+
+        var post_states = if (post_exits) |*exits|
+            try self.cloneInputPostStates(exits)
+        else
+            std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        defer post_states.deinit();
+
+        if (function.flags.is_deinit) {
+            const input_fields = self.graph.fields.items[function.input.start..][0..function.input.len];
+            for (input_fields, 0..) |input_field, index| {
+                if (!std.mem.eql(u8, self.graph.text(input_field.name), "self")) continue;
+                const mutable_pointer = switch (self.graph.semanticType(input_field.ty)) {
+                    .pointer => |pointer| pointer.mutability == .read_write,
+                    else => false,
+                };
+                if (!mutable_pointer) continue;
+                const target = facts.InputPath{ .input_index = @intCast(index) };
+                try self.recordInputPostState(
+                    &post_states,
+                    &.{target},
+                    .deinitialized,
+                    .{},
+                    true,
+                    false,
+                    false,
+                    false,
+                );
+                break;
+            }
+        }
+
         return .{
             .outputs = outputs,
             .required_live_inputs = try required_live_inputs.toOwnedSlice(),
-            .input_post_states = previous.input_post_states,
+            .input_post_states = try post_states.toOwnedSlice(),
             .opaque_storage_effects = previous.opaque_storage_effects,
             .opaque_storage_empties = previous.opaque_storage_empties,
         };
@@ -146,6 +185,722 @@ pub const Infer = struct {
         input_index: u32,
         effect: facts.ValueEffect,
     };
+
+    const InputPostStateFlow = struct {
+        states: std.array_list.Managed(facts.PlacePostState),
+        reachable: bool = true,
+
+        fn init(allocator: std.mem.Allocator) InputPostStateFlow {
+            return .{ .states = std.array_list.Managed(facts.PlacePostState).init(allocator) };
+        }
+
+        fn deinit(self: *InputPostStateFlow) void {
+            self.states.deinit();
+        }
+
+        fn clone(self: *const InputPostStateFlow, allocator: std.mem.Allocator) !InputPostStateFlow {
+            var states = std.array_list.Managed(facts.PlacePostState).init(allocator);
+            try states.appendSlice(self.states.items);
+            return .{ .states = states, .reachable = self.reachable };
+        }
+    };
+
+    fn inferInputPostStates(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        block_id: graph_mod.GlobalBlockId,
+        flow: *InputPostStateFlow,
+        exits: *?std.array_list.Managed(facts.PlacePostState),
+    ) anyerror!void {
+        const block = self.graph.blocks.items[@intFromEnum(block_id)];
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
+            if (!flow.reachable) break;
+            try self.inferInputPostStatesNode(function_id, node_id, flow, exits);
+        }
+        if (flow.reachable) if (block.ret_val) |value|
+            try self.inferInputPostStatesExpression(function_id, value, &flow.states, exits);
+    }
+
+    fn inferInputPostStatesNode(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        node_id: graph_mod.GlobalNodeId,
+        flow: *InputPostStateFlow,
+        exits: *?std.array_list.Managed(facts.PlacePostState),
+    ) anyerror!void {
+        const node = self.graph.node(node_id);
+        const states = &flow.states;
+        switch (node.content) {
+            .binding_declaration => |binding| {
+                if (self.graph.binding(binding).initialization) |initialization|
+                    try self.inferInputPostStatesExpression(function_id, initialization, states, exits);
+            },
+            .assignment => |assignment| try self.inferInputPostStatesExpression(function_id, assignment.value, states, exits),
+            .function_call, .virtual_call => try self.inferInputPostStatesExpression(function_id, node_id, states, exits),
+            .pointer_assignment => |assignment| {
+                try self.inferInputPostStatesExpression(function_id, assignment.pointer, states, exits);
+                try self.inferInputPostStatesExpression(function_id, assignment.value, states, exits);
+                try self.recordInputPostState(
+                    states,
+                    try self.inferInputPaths(function_id, assignment.pointer),
+                    .initialized,
+                    try self.inferExpression(function_id, assignment.value),
+                    false,
+                    false,
+                    false,
+                    true,
+                );
+            },
+            .struct_field_store => |store| {
+                try self.inferInputPostStatesExpression(function_id, store.struct_ptr, states, exits);
+                try self.inferInputPostStatesExpression(function_id, store.value, states, exits);
+                const targets = try self.projectInputPaths(
+                    try self.inferInputPaths(function_id, store.struct_ptr),
+                    .{ .field = store.field_index },
+                );
+                try self.recordInputPostState(
+                    states,
+                    targets,
+                    .initialized,
+                    try self.inferExpression(function_id, store.value),
+                    false,
+                    false,
+                    false,
+                    true,
+                );
+            },
+            .array_store => |store| {
+                try self.inferInputPostStatesExpression(function_id, store.array_ptr, states, exits);
+                try self.inferInputPostStatesExpression(function_id, store.index, states, exits);
+                try self.inferInputPostStatesExpression(function_id, store.value, states, exits);
+                const projection: facts.Projection = if (self.staticIndex(store.index)) |index|
+                    .{ .static_index = index }
+                else
+                    .dynamic_index;
+                const targets = try self.projectInputPaths(
+                    try self.inferInputPaths(function_id, store.array_ptr),
+                    projection,
+                );
+                try self.recordInputPostState(
+                    states,
+                    targets,
+                    .initialized,
+                    try self.inferExpression(function_id, store.value),
+                    false,
+                    false,
+                    false,
+                    true,
+                );
+            },
+            .if_statement => |statement| {
+                try self.inferInputPostStatesExpression(function_id, statement.condition, states, exits);
+                var then_flow = try flow.clone(self.allocator);
+                defer then_flow.deinit();
+                try self.inferInputPostStates(function_id, statement.then_block, &then_flow, exits);
+                var else_flow = try flow.clone(self.allocator);
+                defer else_flow.deinit();
+                if (statement.else_block) |child|
+                    try self.inferInputPostStates(function_id, child, &else_flow, exits);
+                try self.joinInputPostStateFallthrough(flow, &then_flow, &else_flow);
+            },
+            .while_statement => |statement| {
+                try self.inferInputPostStatesExpression(function_id, statement.condition, states, exits);
+                var body_flow = try flow.clone(self.allocator);
+                defer body_flow.deinit();
+                try self.inferInputPostStates(function_id, statement.body, &body_flow, exits);
+                try self.joinInputPostStates(states, states, &body_flow.states);
+            },
+            .for_statement => |statement| {
+                if (statement.init) |initialization|
+                    try self.inferInputPostStatesNode(function_id, initialization, flow, exits);
+                if (!flow.reachable) return;
+                try self.inferInputPostStatesExpression(function_id, statement.condition, states, exits);
+                var body_flow = try flow.clone(self.allocator);
+                defer body_flow.deinit();
+                try self.inferInputPostStates(function_id, statement.body, &body_flow, exits);
+                if (body_flow.reachable) if (statement.increment) |increment|
+                    try self.inferInputPostStatesNode(function_id, increment, &body_flow, exits);
+                try self.joinInputPostStates(states, states, &body_flow.states);
+            },
+            .switch_statement => |switch_id| {
+                const statement = self.graph.switches.items[@intFromEnum(switch_id)];
+                try self.inferInputPostStatesExpression(function_id, statement.expression, states, exits);
+                var joined: ?InputPostStateFlow = null;
+                defer if (joined) |*joined_flow| joined_flow.deinit();
+
+                for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| {
+                    var branch = try flow.clone(self.allocator);
+                    defer branch.deinit();
+                    try self.inferInputPostStates(function_id, case.body, &branch, exits);
+                    try self.joinInputPostStateFlowBranch(&joined, &branch);
+                }
+                if (statement.default_block) |child| {
+                    var branch = try flow.clone(self.allocator);
+                    defer branch.deinit();
+                    try self.inferInputPostStates(function_id, child, &branch, exits);
+                    try self.joinInputPostStateFlowBranch(&joined, &branch);
+                } else if (!statement.exhaustive) {
+                    try self.joinInputPostStateFlowBranch(&joined, flow);
+                }
+                if (joined) |*joined_flow|
+                    try self.copyInputPostStateFlow(flow, joined_flow)
+                else
+                    flow.reachable = false;
+            },
+            .return_statement => |statement| {
+                if (statement.expression) |expression|
+                    try self.inferInputPostStatesExpression(function_id, expression, states, exits);
+                try self.inferInputPostStatesRange(function_id, statement.cleanup, flow, exits);
+                if (flow.reachable) try self.recordInputPostStateExit(exits, states);
+                flow.reachable = false;
+            },
+            .code_block => |child| try self.inferInputPostStates(function_id, child, flow, exits),
+            .break_statement, .continue_statement => flow.reachable = false,
+            .auto_deinit_binding => |auto_id| try self.applyAutoDeinitInputPostStates(function_id, auto_id, states),
+            else => try self.inferInputPostStatesExpression(function_id, node_id, states, exits),
+        }
+    }
+
+    fn inferInputPostStatesRange(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        range: graph_mod.NodeRange,
+        flow: *InputPostStateFlow,
+        exits: *?std.array_list.Managed(facts.PlacePostState),
+    ) anyerror!void {
+        for (self.graph.node_refs.items[range.start..][0..range.len]) |node| {
+            if (!flow.reachable) break;
+            try self.inferInputPostStatesNode(function_id, node, flow, exits);
+        }
+    }
+
+    fn inferInputPostStatesExpression(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        node_id: graph_mod.GlobalNodeId,
+        states: *std.array_list.Managed(facts.PlacePostState),
+        exits: *?std.array_list.Managed(facts.PlacePostState),
+    ) anyerror!void {
+        const node = self.graph.node(node_id);
+        switch (node.content) {
+            .move_value, .address_of => |value| try self.inferInputPostStatesExpression(function_id, value, states, exits),
+            .dereference => |value| try self.inferInputPostStatesExpression(function_id, value.pointer, states, exits),
+            .struct_value_literal => |literal| {
+                for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
+                    try self.inferInputPostStatesExpression(function_id, field.value, states, exits);
+            },
+            .list_literal => |literal| {
+                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |element|
+                    try self.inferInputPostStatesExpression(function_id, element, states, exits);
+            },
+            .array_literal => |literal| {
+                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |element|
+                    try self.inferInputPostStatesExpression(function_id, element, states, exits);
+            },
+            .choice_literal => |literal| {
+                if (literal.payload) |payload|
+                    try self.inferInputPostStatesExpression(function_id, payload, states, exits);
+            },
+            .struct_field_access => |access| try self.inferInputPostStatesExpression(function_id, access.value, states, exits),
+            .choice_payload_access => |access| try self.inferInputPostStatesExpression(function_id, access.value, states, exits),
+            .array_index => |index| {
+                try self.inferInputPostStatesExpression(function_id, index.array_ptr, states, exits);
+                try self.inferInputPostStatesExpression(function_id, index.index, states, exits);
+            },
+            .explicit_cast => |cast| try self.inferInputPostStatesExpression(function_id, cast.value, states, exits),
+            .binary_operation => |operation| {
+                try self.inferInputPostStatesExpression(function_id, operation.left, states, exits);
+                try self.inferInputPostStatesExpression(function_id, operation.right, states, exits);
+            },
+            .comparison => |comparison| {
+                try self.inferInputPostStatesExpression(function_id, comparison.left, states, exits);
+                try self.inferInputPostStatesExpression(function_id, comparison.right, states, exits);
+            },
+            .logical_operation => |operation| {
+                try self.inferInputPostStatesExpression(function_id, operation.left, states, exits);
+                try self.inferConditionalInputPostStatesExpression(function_id, operation.right, states, exits);
+            },
+            .nullable_unwrap_or => |unwrap_id| {
+                const unwrap = self.graph.nullable_unwraps.items[@intFromEnum(unwrap_id)];
+                try self.inferInputPostStatesExpression(function_id, unwrap.nullable_value, states, exits);
+                try self.inferConditionalInputPostStatesExpression(function_id, unwrap.fallback_value, states, exits);
+            },
+            .testing_expect_error => |expect_id| {
+                const expect = self.graph.testing_expect_errors.items[@intFromEnum(expect_id)];
+                try self.inferInputPostStatesExpression(function_id, expect.expected_reason, states, exits);
+                try self.inferInputPostStatesExpression(function_id, expect.actual_result, states, exits);
+            },
+            .error_propagation => |propagation_id| {
+                const propagation = self.graph.error_propagations.items[@intFromEnum(propagation_id)];
+                try self.inferInputPostStatesExpression(function_id, propagation.errable_value, states, exits);
+                var error_flow = InputPostStateFlow.init(self.allocator);
+                defer error_flow.deinit();
+                try error_flow.states.appendSlice(states.items);
+                for (self.graph.node_refs.items[propagation.cleanup_nodes.start..][0..propagation.cleanup_nodes.len]) |cleanup| {
+                    if (!error_flow.reachable) break;
+                    try self.inferInputPostStatesNode(function_id, cleanup, &error_flow, exits);
+                }
+                if (error_flow.reachable) try self.recordInputPostStateExit(exits, &error_flow.states);
+            },
+            .error_context => |context_id| {
+                const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
+                try self.inferInputPostStatesExpression(function_id, context.errable_value, states, exits);
+                var error_flow = InputPostStateFlow.init(self.allocator);
+                defer error_flow.deinit();
+                try error_flow.states.appendSlice(states.items);
+                try self.inferInputPostStatesExpression(function_id, context.context, &error_flow.states, exits);
+                for (self.graph.node_refs.items[context.cleanup_nodes.start..][0..context.cleanup_nodes.len]) |cleanup| {
+                    if (!error_flow.reachable) break;
+                    try self.inferInputPostStatesNode(function_id, cleanup, &error_flow, exits);
+                }
+                if (error_flow.reachable) try self.recordInputPostStateExit(exits, &error_flow.states);
+            },
+            .function_call => |call| {
+                try self.inferInputPostStatesExpression(function_id, call.input, states, exits);
+                try self.applyInputPostStatesFromFunctionCall(function_id, call.callee, call.input, states);
+            },
+            .virtual_call => |virtual_call_id| {
+                const call = self.graph.virtual_calls.items[@intFromEnum(virtual_call_id)];
+                try self.inferInputPostStatesExpression(function_id, call.handle, states, exits);
+                try self.inferInputPostStatesExpression(function_id, call.input, states, exits);
+            },
+            .virtualize => |virtualize_id| try self.inferInputPostStatesExpression(
+                function_id,
+                self.graph.virtualizes.items[@intFromEnum(virtualize_id)].value,
+                states,
+                exits,
+            ),
+            .type_initializer => |initializer| try self.inferInputPostStatesExpression(function_id, initializer.args, states, exits),
+            else => {},
+        }
+    }
+
+    fn inferConditionalInputPostStatesExpression(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        node_id: graph_mod.GlobalNodeId,
+        states: *std.array_list.Managed(facts.PlacePostState),
+        exits: *?std.array_list.Managed(facts.PlacePostState),
+    ) !void {
+        var executed = try self.cloneInputPostStates(states);
+        defer executed.deinit();
+        try self.inferInputPostStatesExpression(function_id, node_id, &executed, exits);
+        var skipped = try self.cloneInputPostStates(states);
+        defer skipped.deinit();
+        try self.joinInputPostStates(states, &executed, &skipped);
+    }
+
+    fn applyInputPostStatesFromFunctionCall(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        callee: graph_mod.GlobalFunctionId,
+        input: graph_mod.GlobalNodeId,
+        states: *std.array_list.Managed(facts.PlacePostState),
+    ) !void {
+        const arguments = self.structArguments(input) orelse return;
+        const callee_function = self.graph.function(callee);
+        if (callee_function.safety_primitive == .trusted_opaque_move or
+            callee_function.safety_primitive == .trusted_opaque_move_in)
+        {
+            if (arguments.len >= 2) {
+                const source_index: usize = if (arguments.len == 3) 2 else 1;
+                const targets = try self.inferInputPaths(function_id, arguments[source_index].value);
+                const storage = if (arguments.len == 3) blk: {
+                    const storage_targets = try self.inferInputPaths(function_id, arguments[0].value);
+                    break :blk if (storage_targets.len == 1) storage_targets[0] else null;
+                } else null;
+                try self.recordOpaqueOwnershipConsumption(states, targets, .definite, storage);
+            }
+            return;
+        }
+        if (callee_function.safety_primitive == .trusted_opaque_relocate) return;
+        if (callee_function.safety_primitive == .relocate) {
+            if (arguments.len != 2) return;
+            const source_targets = try self.inferInputPaths(function_id, arguments[0].value);
+            const destination_targets = try self.inferInputPaths(function_id, arguments[1].value);
+            for (source_targets) |source| {
+                try self.recordInputPostState(states, &.{source}, .moved, .{}, false, false, false, false);
+                var transferred = try self.inputValueEffect(source.input_index, source.projections);
+                transferred = try self.withOwnershipTransfer(transferred);
+                for (destination_targets) |destination|
+                    try self.recordInputPostState(
+                        states,
+                        &.{destination},
+                        .initialized,
+                        transferred,
+                        false,
+                        false,
+                        true,
+                        false,
+                    );
+            }
+            return;
+        }
+        const summary = self.engine.summaryFor(callee) orelse return;
+        try self.applyInputPostStatesFromSummary(function_id, summary, input, states, null);
+    }
+
+    fn applyInputPostStatesFromSummary(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        summary: facts.SafetySummary,
+        input: graph_mod.GlobalNodeId,
+        states: *std.array_list.Managed(facts.PlacePostState),
+        override: ?SymbolicInputOverride,
+    ) !void {
+        const arguments = self.structArguments(input) orelse return;
+        for (summary.input_post_states) |post_state| {
+            if (post_state.target.input_index >= arguments.len) continue;
+            const targets = try self.substituteRequiredInputPath(
+                function_id,
+                post_state.target,
+                arguments,
+                override,
+            );
+            if (post_state.opaque_ownership != .none) {
+                const storage = if (post_state.opaque_storage) |opaque_storage| blk: {
+                    if (opaque_storage.input_index >= arguments.len) break :blk null;
+                    const mapped = try self.substituteRequiredInputPath(
+                        function_id,
+                        opaque_storage,
+                        arguments,
+                        override,
+                    );
+                    break :blk if (mapped.len == 1) mapped[0] else null;
+                } else null;
+                try self.recordOpaqueOwnershipConsumption(
+                    states,
+                    targets,
+                    post_state.opaque_ownership,
+                    storage,
+                );
+                continue;
+            }
+            const value = try self.substituteOutputWithOverride(
+                function_id,
+                post_state.value,
+                arguments,
+                override,
+            );
+            try self.recordInputPostState(
+                states,
+                targets,
+                post_state.initializedness,
+                value,
+                post_state.ends_previous_roots,
+                post_state.refreshes_storage_generation,
+                post_state.requires_available_destination,
+                post_state.may_repopulate_opaque_storage,
+            );
+        }
+    }
+
+    fn applyAutoDeinitInputPostStates(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        auto_id: graph_mod.GlobalAutoDeinitId,
+        states: *std.array_list.Managed(facts.PlacePostState),
+    ) !void {
+        const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
+        const binding_effect = self.bindings.get(cleanup.binding);
+        if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| if (binding_effect) |effect| {
+            if (self.engine.summaryFor(deinit_fn)) |summary|
+                try self.applyInputPostStatesFromSummary(
+                    function_id,
+                    summary,
+                    input,
+                    states,
+                    .{ .input_index = cleanup.self_field_index, .effect = effect },
+                );
+        };
+        if (binding_effect) |effect|
+            try self.applyAutoDeinitFieldInputPostStates(function_id, cleanup.fields, states, effect);
+    }
+
+    fn applyAutoDeinitFieldInputPostStates(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        field_range: primitives.Range(graph_mod.GlobalAutoDeinitFieldId),
+        states: *std.array_list.Managed(facts.PlacePostState),
+        parent_effect: facts.ValueEffect,
+    ) !void {
+        for (self.graph.auto_deinit_fields.items[field_range.start..][0..field_range.len]) |field| {
+            const field_effect = try self.projectValueEffect(parent_effect, .{ .field = field.field_index });
+            if (field.deinit_fn) |deinit_fn| if (field.input) |input| {
+                if (self.engine.summaryFor(deinit_fn)) |summary|
+                    try self.applyInputPostStatesFromSummary(
+                        function_id,
+                        summary,
+                        input,
+                        states,
+                        .{ .input_index = field.self_field_index, .effect = field_effect },
+                    );
+            };
+            try self.applyAutoDeinitFieldInputPostStates(function_id, field.fields, states, field_effect);
+        }
+    }
+
+    fn recordInputPostState(
+        self: *Infer,
+        states: *std.array_list.Managed(facts.PlacePostState),
+        targets: []const facts.InputPath,
+        initializedness: value_state.Initializedness,
+        value: facts.ValueEffect,
+        ends_roots: bool,
+        refreshes_storage_generation: bool,
+        requires_available_destination: bool,
+        may_repopulate_opaque_storage: bool,
+    ) !void {
+        for (targets) |target| {
+            var existing_state: ?*facts.PlacePostState = null;
+            for (states.items) |*existing| if (self.inputPathEqual(existing.target, target)) {
+                existing_state = existing;
+                break;
+            };
+            if (existing_state) |existing| {
+                const was_deinitialized = existing.initializedness != .initialized;
+                existing.initializedness = initializedness;
+                existing.value = value;
+                existing.ends_previous_roots = existing.ends_previous_roots or ends_roots;
+                existing.refreshes_storage_generation =
+                    existing.refreshes_storage_generation or
+                    refreshes_storage_generation or
+                    (was_deinitialized and initializedness == .initialized);
+                existing.requires_available_destination =
+                    existing.requires_available_destination or requires_available_destination;
+                existing.may_repopulate_opaque_storage =
+                    existing.may_repopulate_opaque_storage or may_repopulate_opaque_storage;
+            } else try states.append(.{
+                .target = target,
+                .initializedness = initializedness,
+                .value = value,
+                .ends_previous_roots = ends_roots,
+                .refreshes_storage_generation = refreshes_storage_generation,
+                .requires_available_destination = requires_available_destination,
+                .may_repopulate_opaque_storage = may_repopulate_opaque_storage,
+            });
+        }
+    }
+
+    fn recordOpaqueOwnershipConsumption(
+        self: *Infer,
+        states: *std.array_list.Managed(facts.PlacePostState),
+        targets: []const facts.InputPath,
+        consumption: facts.OpaqueOwnershipConsumption,
+        storage: ?facts.InputPath,
+    ) !void {
+        for (targets) |target| {
+            var existing_state: ?*facts.PlacePostState = null;
+            for (states.items) |*existing| if (self.inputPathEqual(existing.target, target)) {
+                existing_state = existing;
+                break;
+            };
+            if (existing_state) |existing| {
+                existing.opaque_ownership = consumption;
+                existing.opaque_storage = storage;
+            } else try states.append(.{
+                .target = target,
+                .initializedness = .initialized,
+                .opaque_ownership = consumption,
+                .opaque_storage = storage,
+            });
+        }
+    }
+
+    fn joinInputPostStates(
+        self: *Infer,
+        destination: *std.array_list.Managed(facts.PlacePostState),
+        left: *const std.array_list.Managed(facts.PlacePostState),
+        right: *const std.array_list.Managed(facts.PlacePostState),
+    ) !void {
+        var joined = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        defer joined.deinit();
+
+        for (left.items) |left_state| {
+            var merged = left_state;
+            if (self.findInputPostState(right.items, left_state.target)) |right_state| {
+                merged.initializedness = joinInitializedness(left_state.initializedness, right_state.initializedness);
+                merged.value = try self.mergeValueEffects(left_state.value, right_state.value);
+                merged.ends_previous_roots = left_state.ends_previous_roots or right_state.ends_previous_roots;
+                merged.refreshes_storage_generation =
+                    left_state.refreshes_storage_generation or right_state.refreshes_storage_generation;
+                merged.requires_available_destination =
+                    left_state.requires_available_destination or right_state.requires_available_destination;
+                merged.may_repopulate_opaque_storage =
+                    left_state.may_repopulate_opaque_storage or right_state.may_repopulate_opaque_storage;
+                self.joinOpaqueOwnershipEffect(&merged, left_state, right_state);
+            } else {
+                if (left_state.initializedness != .initialized) {
+                    merged.initializedness = .maybe_initialized;
+                } else {
+                    merged.value = try self.mergeValueEffects(
+                        left_state.value,
+                        try self.inputPlaceValueEffect(left_state.target),
+                    );
+                }
+                self.joinOpaqueOwnershipEffect(
+                    &merged,
+                    left_state,
+                    .{ .target = left_state.target, .initializedness = .initialized },
+                );
+            }
+            try joined.append(merged);
+        }
+
+        for (right.items) |right_state| {
+            if (self.findInputPostState(left.items, right_state.target) != null) continue;
+            var merged = right_state;
+            if (right_state.initializedness != .initialized) {
+                merged.initializedness = .maybe_initialized;
+            } else {
+                merged.value = try self.mergeValueEffects(
+                    right_state.value,
+                    try self.inputPlaceValueEffect(right_state.target),
+                );
+            }
+            self.joinOpaqueOwnershipEffect(
+                &merged,
+                .{ .target = right_state.target, .initializedness = .initialized },
+                right_state,
+            );
+            try joined.append(merged);
+        }
+
+        destination.clearRetainingCapacity();
+        try destination.appendSlice(joined.items);
+    }
+
+    fn joinInputPostStateFallthrough(
+        self: *Infer,
+        destination: *InputPostStateFlow,
+        left: *const InputPostStateFlow,
+        right: *const InputPostStateFlow,
+    ) !void {
+        if (!left.reachable and !right.reachable) {
+            destination.states.clearRetainingCapacity();
+            destination.reachable = false;
+        } else if (!left.reachable) {
+            try self.copyInputPostStateFlow(destination, right);
+        } else if (!right.reachable) {
+            try self.copyInputPostStateFlow(destination, left);
+        } else {
+            try self.joinInputPostStates(&destination.states, &left.states, &right.states);
+            destination.reachable = true;
+        }
+    }
+
+    fn joinInputPostStateFlowBranch(
+        self: *Infer,
+        joined: *?InputPostStateFlow,
+        branch: *const InputPostStateFlow,
+    ) !void {
+        if (joined.*) |*current| {
+            var combined = InputPostStateFlow.init(self.allocator);
+            try self.joinInputPostStateFallthrough(&combined, current, branch);
+            current.deinit();
+            current.* = combined;
+        } else {
+            joined.* = try branch.clone(self.allocator);
+        }
+    }
+
+    fn copyInputPostStateFlow(
+        self: *Infer,
+        destination: *InputPostStateFlow,
+        source: *const InputPostStateFlow,
+    ) !void {
+        _ = self;
+        destination.states.clearRetainingCapacity();
+        try destination.states.appendSlice(source.states.items);
+        destination.reachable = source.reachable;
+    }
+
+    fn recordInputPostStateExit(
+        self: *Infer,
+        exits: *?std.array_list.Managed(facts.PlacePostState),
+        states: *const std.array_list.Managed(facts.PlacePostState),
+    ) !void {
+        if (exits.*) |*current| {
+            var combined = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+            defer combined.deinit();
+            try self.joinInputPostStates(&combined, current, states);
+            current.clearRetainingCapacity();
+            try current.appendSlice(combined.items);
+        } else {
+            exits.* = try self.cloneInputPostStates(states);
+        }
+    }
+
+    fn cloneInputPostStates(
+        self: *Infer,
+        source: *const std.array_list.Managed(facts.PlacePostState),
+    ) !std.array_list.Managed(facts.PlacePostState) {
+        var result = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        try result.appendSlice(source.items);
+        return result;
+    }
+
+    fn findInputPostState(
+        self: *Infer,
+        states: []const facts.PlacePostState,
+        target: facts.InputPath,
+    ) ?facts.PlacePostState {
+        for (states) |state| if (self.inputPathEqual(state.target, target)) return state;
+        return null;
+    }
+
+    fn inputPathEqual(self: *Infer, left: facts.InputPath, right: facts.InputPath) bool {
+        _ = self;
+        if (left.input_index != right.input_index or left.projections.len != right.projections.len) return false;
+        for (left.projections, right.projections) |a, b| if (!std.meta.eql(a, b)) return false;
+        return true;
+    }
+
+    fn optionalInputPathEqual(self: *Infer, left: ?facts.InputPath, right: ?facts.InputPath) bool {
+        if ((left == null) != (right == null)) return false;
+        return if (left) |path| self.inputPathEqual(path, right.?) else true;
+    }
+
+    fn joinOpaqueOwnershipEffect(
+        self: *Infer,
+        merged: *facts.PlacePostState,
+        left: facts.PlacePostState,
+        right: facts.PlacePostState,
+    ) void {
+        const left_ownership = left.opaque_ownership;
+        const right_ownership = right.opaque_ownership;
+        if (left_ownership == .ambiguous or right_ownership == .ambiguous) {
+            merged.opaque_ownership = .ambiguous;
+            merged.opaque_storage = null;
+            return;
+        }
+        if (left_ownership == .none and right_ownership == .none) {
+            merged.opaque_ownership = .none;
+            merged.opaque_storage = null;
+            return;
+        }
+
+        const left_storage = if (left_ownership == .none) right.opaque_storage else left.opaque_storage;
+        const right_storage = if (right_ownership == .none) left.opaque_storage else right.opaque_storage;
+        if (!self.optionalInputPathEqual(left_storage, right_storage)) {
+            merged.opaque_ownership = .ambiguous;
+            merged.opaque_storage = null;
+            return;
+        }
+
+        merged.opaque_storage = left_storage;
+        if (left_ownership == .none or right_ownership == .none or
+            left_ownership == .conditional or right_ownership == .conditional)
+        {
+            merged.opaque_ownership = .conditional;
+        } else {
+            merged.opaque_ownership = .definite;
+        }
+    }
+
+    fn inputPlaceValueEffect(self: *Infer, target: facts.InputPath) !facts.ValueEffect {
+        return .{ .input_place_values = try self.oneInputPath(target.input_index, target.projections) };
+    }
 
     fn inferRequiredLiveInputsBlock(
         self: *Infer,
@@ -642,7 +1397,17 @@ pub const Infer = struct {
         function_id: graph_mod.GlobalFunctionId,
         effect: facts.ValueEffect,
         arguments: []const graph_mod.ValueField,
-    ) anyerror!facts.ValueEffect {
+    ) !facts.ValueEffect {
+        return self.substituteOutputWithOverride(function_id, effect, arguments, null);
+    }
+
+    fn substituteOutputWithOverride(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        effect: facts.ValueEffect,
+        arguments: []const graph_mod.ValueField,
+        override: ?SymbolicInputOverride,
+    ) !facts.ValueEffect {
         var result: facts.ValueEffect = .{
             .fresh_dependencies = effect.fresh_dependencies,
             .fresh_owned_roots = effect.fresh_owned_roots,
@@ -652,15 +1417,58 @@ pub const Infer = struct {
             .known_choice_variant = effect.known_choice_variant,
         };
 
-        result.input_places = try self.substitutePaths(function_id, effect.input_places, arguments);
-        result.input_place_values = try self.substitutePaths(function_id, effect.input_place_values, arguments);
-        result.opaque_generation_dependencies = try self.substitutePaths(function_id, effect.opaque_generation_dependencies, arguments);
-        result.opaque_storage_dependencies = try self.substitutePaths(function_id, effect.opaque_storage_dependencies, arguments);
+        var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (effect.input_places) |path| {
+            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            for (mapped) |candidate| try appendInputPath(&input_places, candidate);
+        }
+        result.input_places = try input_places.toOwnedSlice();
+
+        var input_place_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        var input_place_value_overrides: facts.ValueEffect = .{};
+        for (effect.input_place_values) |path| {
+            if (path.input_index >= arguments.len) continue;
+            if (override) |symbolic| if (symbolic.input_index == path.input_index) {
+                var value = symbolic.effect;
+                for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
+                input_place_value_overrides = try self.mergeValueEffects(input_place_value_overrides, value);
+                continue;
+            };
+            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            for (mapped) |candidate| try appendInputPath(&input_place_values, candidate);
+        }
+        result.input_place_values = try input_place_values.toOwnedSlice();
+        result = try self.mergeValueEffects(result, input_place_value_overrides);
+
+        var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (effect.opaque_generation_dependencies) |path| {
+            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            for (mapped) |candidate| try appendInputPath(&opaque_generations, candidate);
+        }
+        result.opaque_generation_dependencies = try opaque_generations.toOwnedSlice();
+
+        var opaque_storages = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (effect.opaque_storage_dependencies) |path| {
+            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            for (mapped) |candidate| try appendInputPath(&opaque_storages, candidate);
+        }
+        result.opaque_storage_dependencies = try opaque_storages.toOwnedSlice();
 
         for (effect.input_dependencies) |dependency| {
             if (dependency.path.input_index >= arguments.len) continue;
-            var argument = try self.inferExpression(function_id, arguments[dependency.path.input_index].value);
-            for (dependency.path.projections) |projection| argument = try self.projectValueEffect(argument, projection);
+            if (override) |symbolic| {
+                if (symbolic.input_index == dependency.path.input_index and dependency.path.projections.len == 0)
+                    continue;
+            }
+            var argument = if (override) |symbolic|
+                if (symbolic.input_index == dependency.path.input_index)
+                    symbolic.effect
+                else
+                    try self.inferExpression(function_id, arguments[dependency.path.input_index].value)
+            else
+                try self.inferExpression(function_id, arguments[dependency.path.input_index].value);
+            for (dependency.path.projections) |projection|
+                argument = try self.projectValueEffect(argument, projection);
             argument = if (dependency.transfers_ownership)
                 try self.withOwnershipTransfer(argument)
             else
@@ -672,7 +1480,7 @@ pub const Infer = struct {
             const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
                 const value = try self.allocator.create(facts.ValueEffect);
-                value.* = try self.substituteOutput(function_id, field.value.*, arguments);
+                value.* = try self.substituteOutputWithOverride(function_id, field.value.*, arguments, override);
                 fields[index] = .{ .index = field.index, .value = value };
             }
             result.fields = fields;
@@ -681,7 +1489,7 @@ pub const Infer = struct {
             const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
             for (effect.variants, 0..) |variant, index| {
                 const value = try self.allocator.create(facts.ValueEffect);
-                value.* = try self.substituteOutput(function_id, variant.value.*, arguments);
+                value.* = try self.substituteOutputWithOverride(function_id, variant.value.*, arguments, override);
                 variants[index] = .{ .index = variant.index, .value = value };
             }
             result.variants = variants;
@@ -1170,4 +1978,76 @@ test "output summaries reach a fixed point through reverse call dependencies" {
     try std.testing.expectEqual(@as(u32, 0), identity.required_live_inputs[0].input_index);
     try std.testing.expectEqual(@as(usize, 1), wrapper.required_live_inputs.len);
     try std.testing.expectEqual(@as(u32, 0), wrapper.required_live_inputs[0].input_index);
+}
+
+test "input post-state joins retain caller-visible transitions" {
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(std.testing.allocator);
+    var engine = summaries.Engine.init(std.testing.allocator);
+    defer engine.deinit();
+    var inference = Infer.init(std.testing.allocator, &graph, &engine);
+    defer inference.deinit();
+
+    var states = std.array_list.Managed(facts.PlacePostState).init(std.testing.allocator);
+    defer states.deinit();
+    const target = facts.InputPath{ .input_index = 0 };
+
+    try inference.recordInputPostState(&states, &.{target}, .initialized, .{}, false, false, false, false);
+    try std.testing.expectEqual(@as(usize, 1), states.items.len);
+    try std.testing.expectEqual(value_state.Initializedness.initialized, states.items[0].initializedness);
+    try std.testing.expect(!states.items[0].refreshes_storage_generation);
+
+    try inference.recordInputPostState(&states, &.{target}, .deinitialized, .{}, true, false, false, false);
+    try inference.recordInputPostState(&states, &.{target}, .initialized, .{}, false, false, false, false);
+    try std.testing.expect(states.items[0].refreshes_storage_generation);
+
+    var changed = std.array_list.Managed(facts.PlacePostState).init(std.testing.allocator);
+    defer changed.deinit();
+    try changed.append(.{ .target = target, .initializedness = .moved });
+    var unchanged = std.array_list.Managed(facts.PlacePostState).init(std.testing.allocator);
+    defer unchanged.deinit();
+    var joined = std.array_list.Managed(facts.PlacePostState).init(std.testing.allocator);
+    defer joined.deinit();
+    try inference.joinInputPostStates(&joined, &changed, &unchanged);
+    try std.testing.expectEqual(value_state.Initializedness.maybe_initialized, joined.items[0].initializedness);
+}
+
+test "opaque ownership post-state joins preserve storage correlation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = Infer.init(allocator, &graph, &engine);
+    defer inference.deinit();
+
+    const target = facts.InputPath{ .input_index = 0 };
+    const storage = facts.InputPath{ .input_index = 1 };
+    const other_storage = facts.InputPath{ .input_index = 2 };
+    var opaque_branch = std.array_list.Managed(facts.PlacePostState).init(allocator);
+    defer opaque_branch.deinit();
+    try inference.recordOpaqueOwnershipConsumption(&opaque_branch, &.{target}, .definite, storage);
+    var plain = std.array_list.Managed(facts.PlacePostState).init(allocator);
+    defer plain.deinit();
+    var conditional = std.array_list.Managed(facts.PlacePostState).init(allocator);
+    defer conditional.deinit();
+    try inference.joinInputPostStates(&conditional, &opaque_branch, &plain);
+    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.conditional, conditional.items[0].opaque_ownership);
+    try std.testing.expect(inference.optionalInputPathEqual(storage, conditional.items[0].opaque_storage));
+
+    var other = std.array_list.Managed(facts.PlacePostState).init(allocator);
+    defer other.deinit();
+    try inference.recordOpaqueOwnershipConsumption(&other, &.{target}, .definite, other_storage);
+    var ambiguous = std.array_list.Managed(facts.PlacePostState).init(allocator);
+    defer ambiguous.deinit();
+    try inference.joinInputPostStates(&ambiguous, &opaque_branch, &other);
+    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.ambiguous, ambiguous.items[0].opaque_ownership);
+    try std.testing.expect(ambiguous.items[0].opaque_storage == null);
+}
+
+fn joinInitializedness(left: value_state.Initializedness, right: value_state.Initializedness) value_state.Initializedness {
+    if (left == right) return left;
+    return .maybe_initialized;
 }
