@@ -473,7 +473,7 @@ test "implicit generic calls reject conflicting repeated parameters" {
     const inputs = [_]module_graph.FileInput{.{ .path = "conflict/main.rg", .tree = &tree, .source = source }};
     var module = try @import("semantizer.zig").build(allocator, "conflict", &inputs);
     defer module.graph.deinit(allocator);
-    try std.testing.expectError(error.UnsupportedGlobalSemantic, @import("../global/semantizer.zig").semantize(allocator, &.{module.graph}));
+    try std.testing.expectError(error.ConflictingGenericArgument, @import("../global/semantizer.zig").semantize(allocator, &.{module.graph}));
 }
 
 test "failed generic bodies do not publish reusable instances" {
