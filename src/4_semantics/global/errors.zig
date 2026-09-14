@@ -46,7 +46,7 @@ pub const Resolver = struct {
         const result_ty = unwrapSingleField(self.graph, ok_payload) orelse ok_payload;
 
         const target = globalizer.globalNode(o, value.node);
-        const propagated_ty = self.enclosingErrableType(target) orelse errable_ty;
+        const propagated_ty = (try self.enclosingErrableType(target)) orelse return false;
         const propagated_error = global_types.findVariant(self.graph, propagated_ty, "error") orelse err;
         const propagated_error_payload = propagated_error.variant.payload_type orelse error_payload;
         if (!self.errorPayloadCanPropagate(error_payload, propagated_error_payload))
@@ -109,16 +109,16 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn enclosingErrableType(self: *Resolver, target: global_sg.GlobalNodeId) ?global_sg.GlobalTypeId {
+    fn enclosingErrableType(self: *Resolver, target: global_sg.GlobalNodeId) !?global_sg.GlobalTypeId {
         for (self.graph.functions.items) |function| {
             const body = function.body orelse continue;
             if (!self.blockContains(body, target)) continue;
-            if (function.output.len == 0) return null;
+            if (function.output.len == 0) return error.ErrorPropagationRequiresErrableReturn;
             if (function.output.len == 1) {
                 const ty = self.graph.fields.items[function.output.start].ty;
                 if (global_types.findVariant(self.graph, ty, "error") != null) return ty;
             }
-            return null;
+            return error.ErrorPropagationRequiresErrableReturn;
         }
         return null;
     }
@@ -281,6 +281,15 @@ test "enclosing error search follows nested call arguments" {
         .core = undefined,
     };
     try std.testing.expect(resolver.blockContains(@enumFromInt(0), @enumFromInt(0)));
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "result"), .ty = @enumFromInt(0), .source = source });
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 1 },
+        .body = @enumFromInt(0),
+    });
+    try std.testing.expectError(error.ErrorPropagationRequiresErrableReturn, resolver.enclosingErrableType(@enumFromInt(0)));
 }
 
 test "error payload propagation requires a superset of reasons" {
