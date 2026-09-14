@@ -854,7 +854,8 @@ pub const Resolver = struct {
         for (self.graph.bindings.items, 0..) |binding, raw| {
             if (self.graph.isBindingTypeUnresolved(@enumFromInt(@as(u32, @intCast(raw))))) continue;
             const initialization = binding.initialization orelse continue;
-            if (self.graph.node(initialization).ty == null)
+            const current = self.graph.node(initialization).ty;
+            if (current == null or (!types.equal(self.graph, current.?, binding.ty) and self.contextualLiteralFits(initialization, binding.ty)))
                 if (self.coerceContextualValue(initialization, binding.ty)) {
                     changed = true;
                 };
@@ -863,19 +864,24 @@ pub const Resolver = struct {
             const assignment = switch (node.content) {
                 .assignment => |value| value,
                 .pointer_assignment => |value| {
-                    if (self.graph.node(value.value).ty != null) continue;
                     const pointer_ty = self.graph.node(value.pointer).ty orelse continue;
                     const pointer = switch (self.graph.semanticType(pointer_ty)) {
                         .pointer => |item| item,
                         else => continue,
                     };
-                    if (self.coerceContextualValue(value.value, pointer.child)) changed = true;
+                    const current = self.graph.node(value.value).ty;
+                    if (current == null or (!types.equal(self.graph, current.?, pointer.child) and self.contextualLiteralFits(value.value, pointer.child)))
+                        if (self.coerceContextualValue(value.value, pointer.child)) {
+                            changed = true;
+                        };
                     continue;
                 },
                 else => continue,
             };
             if (self.graph.isBindingTypeUnresolved(assignment.binding)) continue;
-            if (self.graph.nodes.items[@intFromEnum(assignment.value)].ty != null) continue;
+            const current = self.graph.node(assignment.value).ty;
+            const expected = self.graph.binding(assignment.binding).ty;
+            if (current != null and (types.equal(self.graph, current.?, expected) or !self.contextualLiteralFits(assignment.value, expected))) continue;
             // Assignment destinations supply the contextual shape of anonymous
             // aggregates before summary inference and codegen consume them.
             if (self.coerceContextualValue(assignment.value, self.graph.binding(assignment.binding).ty)) changed = true;
@@ -1040,6 +1046,22 @@ test "default integer operands preserve typed compile-time constants" {
     right = @enumFromInt(1);
     resolver.coerceIntegerPair(@enumFromInt(1), &right, @enumFromInt(0), &left);
     try std.testing.expectEqual(left, right);
+}
+
+test "typed integer initializer adopts its binding context" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .builtin = .UIntNative });
+    const name = try graph.addString(allocator, "count");
+    try graph.nodes.append(allocator, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 131 } });
+    try graph.bindings.append(allocator, .{ .name = name, .source = source, .ty = @enumFromInt(1), .initialization = @enumFromInt(0), .mutability = .constant });
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    try std.testing.expect(resolver.materializeAssignmentValues());
+    try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(1)), graph.node(@enumFromInt(0)).ty.?);
+    try std.testing.expect(!resolver.materializeAssignmentValues());
 }
 
 test "global core resolver is graph-only" {
