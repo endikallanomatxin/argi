@@ -130,6 +130,7 @@ pub const SafetyChecker = struct {
     graph: *const graph_mod.GlobalSemanticGraph,
     call_stack: std.array_list.Managed(graph_mod.GlobalFunctionId),
     active_summaries: ?*summary_engine.Engine = null,
+    active_summary_inference: ?*summary_infer.Infer = null,
     collect_stats: bool = false,
     stats: Stats = .{},
 
@@ -164,6 +165,8 @@ pub const SafetyChecker = struct {
         defer inference.deinit();
         try inference.inferOutputFixedPoint();
         self.active_summaries = &engine;
+        self.active_summary_inference = &inference;
+        defer self.active_summary_inference = null;
         defer self.active_summaries = null;
 
         for (self.graph.functions.items, 0..) |function, raw| {
@@ -405,6 +408,19 @@ pub const SafetyChecker = struct {
             .virtual_call => |call_id| try self.evaluateVirtualCall(function, call_id, state),
             .virtualize => |virtualize_id| blk: {
                 const virtualize = self.graph.virtualizes.items[@intFromEnum(virtualize_id)];
+                if (self.active_summary_inference) |inference| {
+                    for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len]) |registry_id| {
+                        const merged = try inference.virtualSummary(registry_id);
+                        if (merged == null and inference.virtualSummaryInvalid(registry_id)) {
+                            try self.report(
+                                virtualize.source,
+                                "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+                                .{},
+                            );
+                            break;
+                        }
+                    }
+                }
                 var value = (try self.evaluate(function, virtualize.value, state)).referenceCopy();
                 value.virtual_methods = self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len];
                 break :blk value;
@@ -1936,7 +1952,18 @@ pub const SafetyChecker = struct {
 
         if (call.self_input_index >= values.len) return .{};
         const receiver = values[call.self_input_index];
-        if (call.method_index >= receiver.virtual_methods.len) return .{};
+        if (call.method_index >= receiver.virtual_methods.len) {
+            const result = (try self.applyVirtualSummaryFallback(
+                call,
+                input_node.source,
+                argument_nodes,
+                values,
+                &candidate,
+            )) orelse facts.ValueFacts{};
+            if (self.diagnostics.list.items.len != diagnostic_count) return .{};
+            self.commitState(state, &candidate);
+            return result;
+        }
         const callee_id = receiver.virtual_methods[call.method_index];
         const callee = self.graph.functions.items[@intFromEnum(callee_id)];
 
@@ -1972,6 +1999,29 @@ pub const SafetyChecker = struct {
         if (self.diagnostics.list.items.len != diagnostic_count) return .{};
         self.commitState(state, &candidate);
         return result;
+    }
+
+    fn applyVirtualSummaryFallback(
+        self: *SafetyChecker,
+        call: graph_mod.VirtualCall,
+        source: primitives.SourceRef,
+        argument_nodes: []const graph_mod.GlobalValueFieldId,
+        values: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !?facts.ValueFacts {
+        const inference = self.active_summary_inference orelse return null;
+        const summary = try inference.virtualSummary(call.safety_methods) orelse {
+            if (inference.virtualSummaryInvalid(call.safety_methods))
+                try self.report(
+                    source,
+                    "virtual method '{s}' has incompatible safety effects across implementations",
+                    .{self.graph.text(call.method_name)},
+                );
+            return null;
+        };
+        if (!try self.validateSummaryRequiredLive(source, summary, values, state)) return facts.ValueFacts{};
+        try self.applySummaryEffects(source, summary, argument_nodes, values, state);
+        return try self.instantiateSummaryOutputs(summary.outputs, values, state);
     }
 
     fn applyAutoDeinit(
