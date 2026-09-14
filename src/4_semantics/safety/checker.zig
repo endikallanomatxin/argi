@@ -40,6 +40,7 @@ pub const SafetyChecker = struct {
         storage_capabilities: std.array_list.Managed(StorageCapabilityState),
         ownership_edges: std.array_list.Managed(OwnershipEdge),
         storage_generations: std.array_list.Managed(StorageGeneration),
+        lexical_storage_generations: std.array_list.Managed(facts.ValidityRootId),
         opaque_storages: std.array_list.Managed(OpaqueStorage),
         choice_active: std.array_list.Managed(ChoiceActive),
         choice_rejected: std.array_list.Managed(ChoiceRejected),
@@ -52,6 +53,7 @@ pub const SafetyChecker = struct {
                 .storage_capabilities = std.array_list.Managed(StorageCapabilityState).init(allocator),
                 .ownership_edges = std.array_list.Managed(OwnershipEdge).init(allocator),
                 .storage_generations = std.array_list.Managed(StorageGeneration).init(allocator),
+                .lexical_storage_generations = std.array_list.Managed(facts.ValidityRootId).init(allocator),
                 .opaque_storages = std.array_list.Managed(OpaqueStorage).init(allocator),
                 .choice_active = std.array_list.Managed(ChoiceActive).init(allocator),
                 .choice_rejected = std.array_list.Managed(ChoiceRejected).init(allocator),
@@ -64,6 +66,7 @@ pub const SafetyChecker = struct {
             self.storage_capabilities.deinit();
             self.ownership_edges.deinit();
             self.storage_generations.deinit();
+            self.lexical_storage_generations.deinit();
             self.opaque_storages.deinit();
             self.choice_active.deinit();
             self.choice_rejected.deinit();
@@ -77,13 +80,14 @@ pub const SafetyChecker = struct {
             try out.storage_capabilities.appendSlice(self.storage_capabilities.items);
             try out.ownership_edges.appendSlice(self.ownership_edges.items);
             try out.storage_generations.appendSlice(self.storage_generations.items);
+            try out.lexical_storage_generations.appendSlice(self.lexical_storage_generations.items);
             try out.opaque_storages.appendSlice(self.opaque_storages.items);
             try out.choice_active.appendSlice(self.choice_active.items);
             try out.choice_rejected.appendSlice(self.choice_rejected.items);
             out.reachable = self.reachable;
             if (stats) |s| {
                 s.state_clones += 1;
-                s.state_elements_copied += @intCast(self.tracker.roots.items.len + self.places.items.len + self.storage_capabilities.items.len + self.ownership_edges.items.len + self.storage_generations.items.len + self.opaque_storages.items.len + self.choice_active.items.len + self.choice_rejected.items.len);
+                s.state_elements_copied += @intCast(self.tracker.roots.items.len + self.places.items.len + self.storage_capabilities.items.len + self.ownership_edges.items.len + self.storage_generations.items.len + self.lexical_storage_generations.items.len + self.opaque_storages.items.len + self.choice_active.items.len + self.choice_rejected.items.len);
             }
             return out;
         }
@@ -2138,12 +2142,51 @@ pub const SafetyChecker = struct {
         if (!state.tracker.dependenciesAreAlive(value)) try self.report(source, "reference depends on a root that has ended", .{});
     }
 
-    fn rejectEscapingLocalRoots(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, value: facts.ValueFacts, state: *FunctionState) !void {
-        _ = function;
-        for (value.dependencies) |dependency| if (!state.tracker.isAlive(dependency.root)) {
-            try self.report(source, "returned reference depends on a local root that has ended", .{});
+    fn rejectEscapingLocalRoots(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        source: primitives.SourceRef,
+        value: facts.ValueFacts,
+        state: *FunctionState,
+    ) !void {
+        if (self.valueDependsOnLocalStorage(function, value, state)) {
+            try self.report(source, "function output cannot depend on a local storage generation that ends before return", .{});
             return;
-        };
+        }
+        if (valueDependsOnDeadRoot(value, state))
+            try self.report(source, "returned reference depends on a root that has ended", .{});
+    }
+
+    fn valueDependsOnLocalStorage(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        value: facts.ValueFacts,
+        state: *const FunctionState,
+    ) bool {
+        for (value.dependencies) |dependency|
+            if (self.isLocalStorageGeneration(function, state, dependency.root)) return true;
+        for (value.fields) |field|
+            if (self.valueDependsOnLocalStorage(function, field.value.*, state)) return true;
+        for (value.variants) |variant|
+            if (self.valueDependsOnLocalStorage(function, variant.value.*, state)) return true;
+        return false;
+    }
+
+    fn isLocalStorageGeneration(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        state: *const FunctionState,
+        root: facts.ValidityRootId,
+    ) bool {
+        if (containsRoot(state.lexical_storage_generations.items, root)) return true;
+        const record = self.graph.functions.items[@intFromEnum(function)];
+        const inputs = self.graph.binding_refs.items[record.input_bindings.start..][0..record.input_bindings.len];
+        for (state.storage_generations.items) |entry| {
+            if (entry.generation != root) continue;
+            for (inputs) |input| if (input == entry.storage.root) return false;
+            return true;
+        }
+        return false;
     }
 
     fn endBlockStorage(self: *SafetyChecker, block_id: graph_mod.GlobalBlockId, state: *FunctionState) !void {
@@ -2154,6 +2197,7 @@ pub const SafetyChecker = struct {
                 while (i < state.storage_generations.items.len) {
                     const entry = state.storage_generations.items[i];
                     if (entry.storage.root == binding) {
+                        try appendRootFact(&state.lexical_storage_generations, entry.generation);
                         state.tracker.end(entry.generation);
                         _ = state.storage_generations.orderedRemove(i);
                     } else i += 1;
@@ -2246,6 +2290,8 @@ pub const SafetyChecker = struct {
             }
             if (!found) try joined.storage_generations.append(candidate);
         }
+        for (left.lexical_storage_generations.items) |root| try appendRootFact(&joined.lexical_storage_generations, root);
+        for (right.lexical_storage_generations.items) |root| try appendRootFact(&joined.lexical_storage_generations, root);
 
         for (left.opaque_storages.items) |opaque_storage|
             try self.mergeOpaqueStorage(&joined, opaque_storage.storage, opaque_storage.hidden_dependencies);
@@ -2530,6 +2576,13 @@ pub const SafetyChecker = struct {
             };
             if (!referenced) referenced = rootIsStructurallyReferenced(state, root);
             if (referenced) return;
+            var lexical_index: usize = 0;
+            while (lexical_index < state.lexical_storage_generations.items.len) {
+                if (state.lexical_storage_generations.items[lexical_index] == root)
+                    _ = state.lexical_storage_generations.orderedRemove(lexical_index)
+                else
+                    lexical_index += 1;
+            }
             _ = state.tracker.roots.pop();
         }
         _ = self;
@@ -2993,6 +3046,13 @@ fn collectDependencyRoots(value: facts.ValueFacts, roots: *std.array_list.Manage
     for (value.variants) |variant| try collectDependencyRoots(variant.value.*, roots);
 }
 
+fn valueDependsOnDeadRoot(value: facts.ValueFacts, state: *const SafetyChecker.FunctionState) bool {
+    for (value.dependencies) |dependency| if (!state.tracker.isAlive(dependency.root)) return true;
+    for (value.fields) |field| if (valueDependsOnDeadRoot(field.value.*, state)) return true;
+    for (value.variants) |variant| if (valueDependsOnDeadRoot(variant.value.*, state)) return true;
+    return false;
+}
+
 fn rootIsStructurallyReferenced(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) bool {
     for (state.places.items) |stored|
         if (valueContainsOwnedRoot(stored.value, root) or valueDependsOnRoot(stored.value, root)) return true;
@@ -3009,6 +3069,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
     if (left.reachable != right.reachable or
         left.tracker.roots.items.len != right.tracker.roots.items.len or
         left.storage_capabilities.items.len != right.storage_capabilities.items.len or
+        left.lexical_storage_generations.items.len != right.lexical_storage_generations.items.len or
         left.places.items.len != right.places.items.len or
         left.ownership_edges.items.len != right.ownership_edges.items.len or
         left.storage_generations.items.len != right.storage_generations.items.len or
@@ -3020,6 +3081,8 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         if (a.state != b.state or a.owned_resource != b.owned_resource) return false;
     for (left.storage_capabilities.items, right.storage_capabilities.items) |a, b|
         if (a != b) return false;
+    for (left.lexical_storage_generations.items) |root|
+        if (!containsRoot(right.lexical_storage_generations.items, root)) return false;
     for (left.places.items) |left_place| {
         const right_place = findPlaceConst(right, left_place.storage) orelse return false;
         if (left_place.initializedness != right_place.initializedness or !valueFactsEqual(left_place.value, right_place.value)) return false;
@@ -3512,4 +3575,56 @@ test "loop root widening does not hide crossed stale dependencies" {
     try checker.widenLoopOwnedRoots(&context, &joined, &left, &right);
     try std.testing.expectEqual(@as(usize, 0), context.roots.items.len);
     try std.testing.expect(!joined.tracker.dependenciesAreAlive(checker.getPlace(&joined, storage).?.value));
+}
+
+test "local storage generations survive scope cleanup for escape checks" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const input_binding: graph_mod.GlobalBindingId = @enumFromInt(0);
+    const local_binding: graph_mod.GlobalBindingId = @enumFromInt(1);
+    try graph.binding_refs.append(allocator, input_binding);
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+        .input_bindings = .{ .start = 0, .len = 1 },
+    });
+
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+
+    const input_root = try state.tracker.establish(.fresh);
+    const local_root = try state.tracker.establish(.fresh);
+    try state.storage_generations.append(.{ .storage = .{ .root = input_binding }, .generation = input_root });
+    try state.storage_generations.append(.{ .storage = .{ .root = local_binding }, .generation = local_root });
+
+    try std.testing.expect(!checker.isLocalStorageGeneration(@enumFromInt(0), &state, input_root));
+    try std.testing.expect(checker.isLocalStorageGeneration(@enumFromInt(0), &state, local_root));
+
+    try state.lexical_storage_generations.append(local_root);
+    _ = state.storage_generations.pop();
+    try std.testing.expect(checker.isLocalStorageGeneration(@enumFromInt(0), &state, local_root));
+
+    const nested = facts.ValueFacts{ .dependencies = &.{.{ .root = local_root }} };
+    const aggregate = facts.ValueFacts{ .fields = &.{.{ .index = 0, .value = &nested }} };
+    try std.testing.expect(checker.valueDependsOnLocalStorage(@enumFromInt(0), aggregate, &state));
+}
+
+test "dead root output detection traverses choice payloads" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const root = try state.tracker.establish(.fresh);
+    state.tracker.end(root);
+    const payload = facts.ValueFacts{ .dependencies = &.{.{ .root = root }} };
+    const value = facts.ValueFacts{ .variants = &.{.{ .index = 0, .value = &payload }} };
+    try std.testing.expect(valueDependsOnDeadRoot(value, &state));
 }
