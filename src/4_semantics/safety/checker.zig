@@ -523,11 +523,7 @@ pub const SafetyChecker = struct {
 
         if (self.callStackContains(call.callee)) {
             if (self.collect_stats) self.stats.recursive_edges += 1;
-            const summary = if (self.active_summaries) |engine| engine.summaryFor(call.callee) else null;
-            const resolved = summary orelse return .{};
-            if (!try self.validateSummaryRequiredLive(input_node.source, resolved, values, state)) return .{};
-            try self.applySummaryEffects(input_node.source, resolved, argument_nodes, values, state);
-            return self.instantiateSummaryOutputs(resolved.outputs, values, state);
+            return (try self.applyRecursiveSummary(input_node.source, call.callee, argument_nodes, values, state)) orelse .{};
         }
 
         try self.bindCallInputs(callee, values, state);
@@ -535,6 +531,21 @@ pub const SafetyChecker = struct {
         defer _ = self.call_stack.pop();
         try self.validateBlock(call.callee, callee.body.?, state, null);
         return self.collectCallOutput(callee, state);
+    }
+
+    fn applyRecursiveSummary(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        callee: graph_mod.GlobalFunctionId,
+        argument_nodes: []const graph_mod.GlobalValueFieldId,
+        values: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !?facts.ValueFacts {
+        const engine = self.active_summaries orelse return null;
+        const summary = engine.summaryFor(callee) orelse return null;
+        if (!try self.validateSummaryRequiredLive(source, summary, values, state)) return facts.ValueFacts{};
+        try self.applySummaryEffects(source, summary, argument_nodes, values, state);
+        return try self.instantiateSummaryOutputs(summary.outputs, values, state);
     }
 
     fn evaluatePrimitive(
@@ -1915,6 +1926,7 @@ pub const SafetyChecker = struct {
         const argument_nodes = self.globalValueFieldIds(range);
         var candidate = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
         defer candidate.deinit();
+        const diagnostic_count = self.diagnostics.list.items.len;
         var values = try self.allocator.alloc(facts.ValueFacts, argument_nodes.len);
         defer self.allocator.free(values);
         for (argument_nodes, 0..) |field_id, index| {
@@ -1931,16 +1943,25 @@ pub const SafetyChecker = struct {
         if (callee.safety_primitive != .none) {
             if (self.collect_stats) self.stats.primitive_calls += 1;
             const result = try self.evaluatePrimitive(caller, callee.safety_primitive, argument_nodes, values, &candidate, input_node.source);
+            if (self.diagnostics.list.items.len != diagnostic_count) return .{};
             self.commitState(state, &candidate);
             return result;
         }
         if (callee.body == null) {
-            if (callee.output.len == 1 and isPointer(self.graph, self.graph.fields.items[callee.output.start].ty)) return .{ .foreign_storage = true };
-            return .{};
+            const result: facts.ValueFacts = if (callee.output.len == 1 and isPointer(self.graph, self.graph.fields.items[callee.output.start].ty))
+                .{ .foreign_storage = true }
+            else
+                .{};
+            if (self.diagnostics.list.items.len != diagnostic_count) return .{};
+            self.commitState(state, &candidate);
+            return result;
         }
         if (self.callStackContains(callee_id)) {
             if (self.collect_stats) self.stats.recursive_edges += 1;
-            return .{};
+            const result = (try self.applyRecursiveSummary(input_node.source, callee_id, argument_nodes, values, &candidate)) orelse facts.ValueFacts{};
+            if (self.diagnostics.list.items.len != diagnostic_count) return .{};
+            self.commitState(state, &candidate);
+            return result;
         }
 
         try self.bindCallInputs(callee, values, &candidate);
@@ -1948,6 +1969,7 @@ pub const SafetyChecker = struct {
         defer _ = self.call_stack.pop();
         try self.validateBlock(callee_id, callee.body.?, &candidate, null);
         const result = try self.collectCallOutput(callee, &candidate);
+        if (self.diagnostics.list.items.len != diagnostic_count) return .{};
         self.commitState(state, &candidate);
         return result;
     }
@@ -3724,4 +3746,35 @@ test "temporary choice refinement tracks non-addressable expressions" {
 
     try checker.joinState(&joined, &left, &empty);
     try std.testing.expectEqual(@as(usize, 0), joined.choice_temporary_active.items.len);
+}
+
+test "recursive summary helper instantiates converged outputs" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var allocator = arena.allocator();
+
+    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(allocator, &diags, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    var engine = summary_engine.Engine.init(allocator);
+    defer engine.deinit();
+
+    const function: graph_mod.GlobalFunctionId = @enumFromInt(0);
+    try engine.ensureEmpty(function);
+    _ = try engine.updateSummary(function, .{
+        .outputs = &.{.{ .integer_address = true }},
+    });
+    checker.active_summaries = &engine;
+
+    const result = (try checker.applyRecursiveSummary(
+        .{ .file_index = 0, .offset = 0 },
+        function,
+        &.{},
+        &.{},
+        &state,
+    )).?;
+    try std.testing.expect(result.integer_address);
 }
