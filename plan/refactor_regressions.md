@@ -24,8 +24,12 @@ records exist, but codegen returns `NotYetImplemented` for both, as well as
 `testing_expect_error`. The old implementation attached trace entries, coerced
 error payloads to the caller's errable type, ran cleanup, and returned early;
 the new implementation must preserve those semantics in the indexed graph.
-The current GlobalSema error records also lack diagnostic line and column
-data, and their enclosing-function search misses nested expressions.
+GlobalSema now follows nested expressions to find the enclosing return type,
+checks that the caller returns an errable value, validates concrete reason
+supersets and trace type compatibility, and restricts `!!` contexts to
+read-only character pointers or `StringView`. The records still lack
+diagnostic line and column data, and inferred reason absorption is not yet
+equivalent to `performance`.
 
 The minimal program now reaches codegen and reports an `InvalidType` at the
 abstract `write_trace_text` parameter in `core/errors/errors.rg`. Restoring
