@@ -537,19 +537,11 @@ pub const SafetyChecker = struct {
             return .{};
         }
 
-        if (self.callStackContains(call.callee)) {
-            if (self.collect_stats) self.stats.recursive_edges += 1;
-            return (try self.applyRecursiveSummary(input_node.source, call.callee, argument_nodes, values, state)) orelse .{};
-        }
-
-        try self.bindCallInputs(callee, values, state);
-        try self.call_stack.append(call.callee);
-        defer _ = self.call_stack.pop();
-        try self.validateBlock(call.callee, callee.body.?, state, null);
-        return self.collectCallOutput(callee, state);
+        if (self.callStackContains(call.callee) and self.collect_stats) self.stats.recursive_edges += 1;
+        return (try self.applyFunctionSummary(input_node.source, call.callee, argument_nodes, values, state)) orelse .{};
     }
 
-    fn applyRecursiveSummary(
+    fn applyFunctionSummary(
         self: *SafetyChecker,
         source: primitives.SourceRef,
         callee: graph_mod.GlobalFunctionId,
@@ -1983,19 +1975,8 @@ pub const SafetyChecker = struct {
             self.commitState(state, &candidate);
             return result;
         }
-        if (self.callStackContains(callee_id)) {
-            if (self.collect_stats) self.stats.recursive_edges += 1;
-            const result = (try self.applyRecursiveSummary(input_node.source, callee_id, argument_nodes, values, &candidate)) orelse facts.ValueFacts{};
-            if (self.diagnostics.list.items.len != diagnostic_count) return .{};
-            self.commitState(state, &candidate);
-            return result;
-        }
-
-        try self.bindCallInputs(callee, values, &candidate);
-        try self.call_stack.append(callee_id);
-        defer _ = self.call_stack.pop();
-        try self.validateBlock(callee_id, callee.body.?, &candidate, null);
-        const result = try self.collectCallOutput(callee, &candidate);
+        if (self.callStackContains(callee_id) and self.collect_stats) self.stats.recursive_edges += 1;
+        const result = (try self.applyFunctionSummary(input_node.source, callee_id, argument_nodes, values, &candidate)) orelse facts.ValueFacts{};
         if (self.diagnostics.list.items.len != diagnostic_count) return .{};
         self.commitState(state, &candidate);
         return result;
@@ -3819,7 +3800,7 @@ test "recursive summary helper instantiates converged outputs" {
     });
     checker.active_summaries = &engine;
 
-    const result = (try checker.applyRecursiveSummary(
+    const result = (try checker.applyFunctionSummary(
         .{ .file_index = 0, .offset = 0 },
         function,
         &.{},
