@@ -57,6 +57,8 @@ pub const Resolver = struct {
 
         if (value.context) |local_context| {
             const context = globalizer.globalNode(o, local_context);
+            const context_ty = self.graph.nodes.items[@intFromEnum(context)].ty orelse return false;
+            if (!self.validContextType(context_ty)) return error.InvalidErrorContextType;
             const id: global_sg.GlobalErrorContextId = @enumFromInt(@as(u32, @intCast(self.graph.error_contexts.items.len)));
             try self.graph.error_contexts.append(self.allocator, .{
                 .errable_value = errable,
@@ -141,6 +143,15 @@ pub const Resolver = struct {
             } else if (matching.variant.payload_type != null) return false;
         }
         return true;
+    }
+
+    fn validContextType(self: *const Resolver, ty: global_sg.GlobalTypeId) bool {
+        const semantic = self.graph.resolvedSemanticType(ty) orelse return false;
+        return switch (semantic) {
+            .pointer => |pointer| pointer.mutability == .read_only and global_types.isBuiltin(self.graph, pointer.child, .Char),
+            .declared => |declaration| std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), "StringView"),
+            else => false,
+        };
     }
 
     fn blockContains(self: *Resolver, block_id: global_sg.GlobalBlockId, target: global_sg.GlobalNodeId) bool {
@@ -292,4 +303,19 @@ test "error payload propagation requires a superset of reasons" {
     const resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = undefined };
     try std.testing.expect(resolver.errorPayloadCanPropagate(@enumFromInt(3), @enumFromInt(4)));
     try std.testing.expect(!resolver.errorPayloadCanPropagate(@enumFromInt(4), @enumFromInt(3)));
+}
+
+test "error context accepts only read-only character pointers" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Char });
+    try graph.types.append(allocator, .{ .builtin = .UInt8 });
+    try graph.types.append(allocator, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
+    try graph.types.append(allocator, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } });
+    try graph.types.append(allocator, .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_only } });
+    const resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = undefined };
+    try std.testing.expect(resolver.validContextType(@enumFromInt(2)));
+    try std.testing.expect(!resolver.validContextType(@enumFromInt(3)));
+    try std.testing.expect(!resolver.validContextType(@enumFromInt(4)));
 }
