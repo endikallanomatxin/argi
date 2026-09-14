@@ -145,7 +145,7 @@ pub const CodeGenerator = struct {
         try self.initializeGlobalBindings();
 
         for (self.graph.functions.items, 0..) |function, raw| {
-            if (function.body == null) continue;
+            if (function.body == null or function.flags.is_abstract_dispatch) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
             try self.generateFunctionBody(id);
         }
@@ -170,6 +170,11 @@ pub const CodeGenerator = struct {
 
     fn predeclareFunctions(self: *CodeGenerator) !void {
         for (self.graph.functions.items, 0..) |function, raw| {
+            // Abstract contract instances are compile-time dispatch metadata.
+            // Runtime calls and vtables reference their selected concrete
+            // implementations, so an abstract Self type must not enter ABI
+            // lowering as though it were a material runtime type.
+            if (function.flags.is_abstract_dispatch) continue;
             // Declarations that promised a body but have no global body are
             // semantic contracts/templates, not runtime ABI symbols.
             if (function.body == null and function.flags.has_declared_body) continue;
@@ -1012,12 +1017,24 @@ pub const CodeGenerator = struct {
         const method_ptr = c.LLVMBuildInBoundsGEP2(self.builder, ptr_type, vtable_ptr, &method_indices, 1, "virtual.method.ptr");
         const method = c.LLVMBuildLoad2(self.builder, ptr_type, method_ptr, "virtual.method");
 
-        const input = (try self.visitNode(call.input)) orelse return CodegenError.ValueNotFound;
-        var patched_input = input.value_ref;
-        patched_input = c.LLVMBuildInsertValue(self.builder, patched_input, concrete_ptr, call.self_input_index, "virtual.input.self");
+        const input_node = self.graph.nodes.items[@intFromEnum(call.input)];
+        const literal = switch (input_node.content) {
+            .struct_value_literal => |value| value,
+            else => return CodegenError.InvalidType,
+        };
+        const fields = self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len];
+        const input_type = try self.toLLVMType(call.input_type);
+        var patched_input = c.LLVMGetUndef(input_type);
+        for (fields, 0..) |field, index| {
+            const argument = if (index == call.self_input_index)
+                concrete_ptr
+            else
+                ((try self.visitNode(field.value)) orelse return CodegenError.ValueNotFound).value_ref;
+            patched_input = c.LLVMBuildInsertValue(self.builder, patched_input, argument, @intCast(index), "virtual.input");
+        }
 
         const output_type = try self.toLLVMType(call.output_type);
-        var parameter_types = [_]llvm.c.LLVMTypeRef{input.type_ref};
+        var parameter_types = [_]llvm.c.LLVMTypeRef{input_type};
         const fn_type = c.LLVMFunctionType(output_type, &parameter_types, 1, 0);
         var arguments = [_]llvm.c.LLVMValueRef{patched_input};
         const result = c.LLVMBuildCall2(self.builder, fn_type, method, &arguments, 1, "virtual.call");
