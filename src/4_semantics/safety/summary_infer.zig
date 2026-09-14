@@ -432,8 +432,20 @@ pub const Infer = struct {
                 .for_statement => |statement| try self.inferBlock(function_id, statement.body, outputs),
                 .switch_statement => |switch_id| {
                     const statement = self.graph.switches.items[@intFromEnum(switch_id)];
-                    for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case|
+                    const choice = try self.inferExpression(function_id, statement.expression);
+                    for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| {
+                        if (case.payload_binding) |binding| {
+                            const ty = self.graph.node(statement.expression).ty orelse continue;
+                            const wanted = self.variantIndex(ty, case.variant) orelse continue;
+                            var payload: facts.ValueEffect = .{};
+                            for (choice.variants) |variant| if (variant.index == wanted) {
+                                payload = variant.value.*;
+                                break;
+                            };
+                            try self.bindings.put(binding, payload);
+                        }
                         try self.inferBlock(function_id, case.body, outputs);
+                    }
                     if (statement.default_block) |child| try self.inferBlock(function_id, child, outputs);
                 },
                 .code_block => |child| try self.inferBlock(function_id, child, outputs),

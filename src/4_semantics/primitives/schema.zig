@@ -230,6 +230,10 @@ pub fn SwitchCase(comptime Ids: type) type {
         value: Ids.NodeId,
         variant: Ids.VariantId,
         body: Ids.BlockId,
+        // Pattern bindings retain their transfer mode after match lowering so
+        // safety inference can follow ownership into the selected payload.
+        payload_binding: ?Ids.BindingId = null,
+        payload_mode: MatchCaseMode = .value,
     };
 }
 

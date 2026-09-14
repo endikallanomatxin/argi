@@ -118,6 +118,7 @@ pub fn valueField(comptime Ids: type, value: primitives.ValueField(Ids), bounds:
 }
 
 pub fn switchCase(comptime Ids: type, value: primitives.SwitchCase(Ids), bounds: Bounds) !void {
+    try require(verify.optionalIdFits(value.payload_binding, bounds.bindings));
     try require(verify.idFits(value.value, bounds.nodes));
     try require(verify.idFits(value.variant, bounds.variants));
     try require(verify.idFits(value.body, bounds.blocks));

@@ -362,6 +362,8 @@ pub const Resolver = struct {
                 .value = tag,
                 .variant = hit.id,
                 .body = globalizer.globalBlock(o, case.body),
+                .payload_binding = if (case.payload_binding) |binding| globalizer.globalBinding(o, binding) else null,
+                .payload_mode = case.mode,
             });
             const global_case_node = globalizer.globalNode(o, case.node);
             self.graph.nodes.items[@intFromEnum(global_case_node)] = .{

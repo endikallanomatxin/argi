@@ -307,13 +307,31 @@ pub const SafetyChecker = struct {
     ) !void {
         const sw = self.graph.switches.items[@intFromEnum(switch_id)];
         const choice = try self.evaluate(function, sw.expression, state);
-        _ = choice;
         var joined: ?FunctionState = null;
         defer if (joined) |*value| value.deinit();
         for (self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]) |case| {
             var branch = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
             defer branch.deinit();
-            if (try self.resolvePlace(sw.expression, &branch)) |storage| self.setActiveVariant(&branch, storage, @intFromEnum(case.variant));
+            try self.refineChoice(&branch, sw.expression, case.variant, true);
+            if (case.payload_binding) |binding| {
+                const wanted = variantIndex(self.graph, self.graph.nodes.items[@intFromEnum(sw.expression)].ty.?, case.variant) orelse 0;
+                var payload: facts.ValueFacts = .{};
+                for (choice.variants) |variant| if (variant.index == wanted) {
+                    payload = variant.value.*;
+                    break;
+                };
+                try self.activateConditionalOwnedRoots(&branch, payload);
+                try self.setPlace(&branch, .{ .root = binding }, .initialized, switch (case.payload_mode) {
+                    .value, .move => payload,
+                    .borrow, .mut_borrow => payload.referenceCopy(),
+                });
+                if (case.payload_mode == .move) if (try self.resolvePlace(sw.expression, &branch)) |storage| {
+                    var transferred = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                    defer transferred.deinit();
+                    try collectOwnedRoots(payload, &transferred);
+                    try self.setPlace(&branch, storage, .initialized, try self.withoutOwnedRoots(choice, transferred.items));
+                };
+            }
             try self.validateBlock(function, case.body, &branch, loop_transfers);
             if (joined) |*existing| {
                 var combined = try existing.clone(self.allocator, if (self.collect_stats) &self.stats else null);
@@ -1409,6 +1427,41 @@ pub const SafetyChecker = struct {
             .opaque_provenance = try opaque_provenance.toOwnedSlice(),
             .virtual_methods = if (std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods)) left.virtual_methods else &.{},
         };
+    }
+
+    fn withoutOwnedRoots(
+        self: *SafetyChecker,
+        value: facts.ValueFacts,
+        removed: []const facts.ValidityRootId,
+    ) !facts.ValueFacts {
+        // A moved payload no longer belongs to the choice. Remove its roots
+        // from the residual aggregate without changing historical aliases.
+        var result = value;
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+        for (value.dependencies) |dependency| if (!containsRoot(removed, dependency.root)) try appendDependencyFact(&dependencies, dependency);
+        result.dependencies = try dependencies.toOwnedSlice();
+        var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        for (value.owned_roots) |root| if (!containsRoot(removed, root)) try appendRootFact(&owned, root);
+        result.owned_roots = try owned.toOwnedSlice();
+        if (value.fields.len != 0) {
+            const fields = try self.allocator.alloc(facts.FieldFacts, value.fields.len);
+            for (value.fields, 0..) |field, index| {
+                const child = try self.allocator.create(facts.ValueFacts);
+                child.* = try self.withoutOwnedRoots(field.value.*, removed);
+                fields[index] = .{ .index = field.index, .value = child };
+            }
+            result.fields = fields;
+        }
+        if (value.variants.len != 0) {
+            const variants = try self.allocator.alloc(facts.VariantFacts, value.variants.len);
+            for (value.variants, 0..) |variant, index| {
+                const child = try self.allocator.create(facts.ValueFacts);
+                child.* = try self.withoutOwnedRoots(variant.value.*, removed);
+                variants[index] = .{ .index = variant.index, .value = child };
+            }
+            result.variants = variants;
+        }
+        return result;
     }
 
     fn initializednessAtPlace(
@@ -2893,6 +2946,11 @@ pub const SafetyChecker = struct {
         }
         const target = storage.?;
         if (active) {
+            if (self.valueAtPlace(state, target)) |value|
+                for (value.variants) |payload| if (payload.index == index) {
+                    try self.activateConditionalOwnedRoots(state, payload.value.*);
+                    break;
+                };
             self.clearRejectedVariant(state, target, index);
             self.setActiveVariant(state, target, index);
             return;
@@ -2913,6 +2971,16 @@ pub const SafetyChecker = struct {
             remaining = candidate;
         }
         if (remaining) |only| self.setActiveVariant(state, target, only);
+    }
+
+    fn activateConditionalOwnedRoots(self: *SafetyChecker, state: *FunctionState, value: facts.ValueFacts) !void {
+        var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer roots.deinit();
+        try collectOwnedRoots(value, &roots);
+        for (roots.items) |root| {
+            const entry = &state.tracker.roots.items[@intFromEnum(root)];
+            if (entry.state == .conditional) entry.state = .alive;
+        }
     }
 
     fn choiceTestFromCondition(self: *SafetyChecker, node_id: graph_mod.GlobalNodeId) ?primitives.ChoiceTagTest(graph_mod.Ids) {
@@ -3788,6 +3856,31 @@ test "dead root output detection traverses choice payloads" {
     const payload = facts.ValueFacts{ .dependencies = &.{.{ .root = root }} };
     const value = facts.ValueFacts{ .variants = &.{.{ .index = 0, .value = &payload }} };
     try std.testing.expect(valueDependsOnDeadRoot(value, &state));
+}
+
+test "payload transfer removes residual ownership without reviving ended roots" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const root = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(root)].state = .conditional;
+    const payload = facts.ValueFacts{ .owned_roots = &.{root}, .dependencies = &.{.{ .root = root }} };
+    const aggregate = facts.ValueFacts{ .variants = &.{.{ .index = 0, .value = &payload }} };
+    const residual = try checker.withoutOwnedRoots(aggregate, &.{root});
+    try std.testing.expect(!valueContainsOwnedRoot(residual, root));
+    try std.testing.expect(!valueDependsOnRoot(residual, root));
+    try std.testing.expect(valueContainsOwnedRoot(payload, root));
+    try checker.activateConditionalOwnedRoots(&state, payload);
+    try std.testing.expect(state.tracker.isAlive(root));
+    state.tracker.end(root);
+    try checker.activateConditionalOwnedRoots(&state, payload);
+    try std.testing.expect(!state.tracker.isAlive(root));
 }
 
 test "temporary choice refinement tracks non-addressable expressions" {

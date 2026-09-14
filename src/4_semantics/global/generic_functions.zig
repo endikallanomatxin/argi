@@ -1076,12 +1076,13 @@ pub const Resolver = struct {
                 const variant = global_types.findVariant(self.resolver.graph, choice_type, name) orelse return error.UnknownParameterizedMatchVariant;
                 for (seen.items) |previous| if (previous == variant.id) return error.DuplicateParameterizedMatchCase;
                 try seen.append(self.resolver.allocator, variant.id);
-                if (case.payload_binding) |local_binding| {
+                const payload_binding = if (case.payload_binding) |local_binding| blk: {
                     const payload = variant.variant.payload_type orelse return error.ParameterizedMatchPayloadOnPayloadlessVariant;
                     const binding = try self.instantiateBinding(local_binding);
                     self.resolver.graph.bindings.items[@intFromEnum(binding)].ty = try self.matchBindingType(payload, case.mode);
                     _ = self.resolver.graph.reconcileBindingTypeResolution();
-                }
+                    break :blk binding;
+                } else null;
                 const body = try self.instantiateBlock(case.body);
                 const tag: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.nodes.items.len)));
                 const int_type = try self.resolver.generics.internType(.{ .builtin = .Int32 });
@@ -1090,7 +1091,13 @@ pub const Resolver = struct {
                     .ty = int_type,
                     .content = .{ .int_literal = variant.variant.value },
                 });
-                try cases.append(self.resolver.allocator, .{ .value = tag, .variant = variant.id, .body = body });
+                try cases.append(self.resolver.allocator, .{
+                    .value = tag,
+                    .variant = variant.id,
+                    .body = body,
+                    .payload_binding = payload_binding,
+                    .payload_mode = case.mode,
+                });
             }
             const case_start: u32 = @intCast(self.resolver.graph.switch_cases.items.len);
             try self.resolver.graph.switch_cases.appendSlice(self.resolver.allocator, cases.items);
