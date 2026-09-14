@@ -131,11 +131,21 @@ pub const Resolver = struct {
     fn materializeInferredErrable(self: *Resolver, id: global_sg.GlobalTypeId, child: global_sg.GlobalTypeId) !void {
         const ok_name = try self.graph.addString(self.allocator, "ok");
         const error_name = try self.graph.addString(self.allocator, "error");
-        // `Any` here is the language wildcard for the still-open error
-        // family of `!T`; it is not a missing-type sentinel. Construction holes
-        // are represented by explicit resolution metadata elsewhere.
-        const open_error_payload = try self.builtin(.Any);
+        const reason_name = try self.graph.addString(self.allocator, "reason");
+        const trace_name = try self.graph.addString(self.allocator, "trace");
         const source = self.syntheticSource();
+        const trace_ty = self.errorTraceType() orelse return error.MissingErrorTraceType;
+        const reasons_ty: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
+        try self.graph.types.append(self.allocator, .{ .inferred_choice = .{
+            .identity = @intFromEnum(id),
+            .kind = .reasons,
+            .variants = .{ .start = @intCast(self.graph.variants.items.len), .len = 0 },
+        } });
+        const field_start: u32 = @intCast(self.graph.fields.items.len);
+        try self.graph.fields.append(self.allocator, .{ .name = reason_name, .ty = reasons_ty, .source = source });
+        try self.graph.fields.append(self.allocator, .{ .name = trace_name, .ty = trace_ty, .source = source });
+        const error_payload: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
+        try self.graph.types.append(self.allocator, .{ .structural = .{ .fields = .{ .start = field_start, .len = 2 } } });
         const variant_start: u32 = @intCast(self.graph.variants.items.len);
         try self.graph.variants.append(self.allocator, .{
             .name = ok_name,
@@ -145,7 +155,7 @@ pub const Resolver = struct {
         });
         try self.graph.variants.append(self.allocator, .{
             .name = error_name,
-            .payload_type = open_error_payload,
+            .payload_type = error_payload,
             .source = source,
             .value = 1,
         });
@@ -154,6 +164,14 @@ pub const Resolver = struct {
             .kind = .errable,
             .variants = .{ .start = variant_start, .len = 2 },
         } };
+    }
+
+    fn errorTraceType(self: *const Resolver) ?global_sg.GlobalTypeId {
+        for (self.graph.declarations.items) |declaration| {
+            if (declaration.kind != .type or !std.mem.eql(u8, self.graph.text(declaration.name), "ErrorTrace")) continue;
+            return declaration.type_id;
+        }
+        return null;
     }
 
     fn resolveChoiceLiteral(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !bool {
@@ -172,6 +190,7 @@ pub const Resolver = struct {
         const choice_ty = blk: {
             if (expected) |expected_ty| {
                 if (!types.isBuiltin(self.graph, expected_ty, .Any)) {
+                    try self.ensureInferredReasonVariant(expected_ty, name, self.sourceFor(reference.source, o));
                     if (types.findVariant(self.graph, expected_ty, name)) |hit| {
                         if (payload) |payload_node| if (hit.variant.payload_type) |expected_payload| {
                             if (self.core) |core| _ = core.coerceContextualValue(payload_node, expected_payload);
@@ -202,6 +221,23 @@ pub const Resolver = struct {
         };
         self.stats.choices += 1;
         return true;
+    }
+
+    fn ensureInferredReasonVariant(self: *Resolver, ty: global_sg.GlobalTypeId, name: []const u8, source: primitives.SourceRef) !void {
+        const choice = switch (self.graph.types.items[@intFromEnum(ty)]) {
+            .inferred_choice => |value| if (value.kind == .reasons) value else return,
+            else => return,
+        };
+        if (types.findVariant(self.graph, ty, name) != null) return;
+        const start: u32 = @intCast(self.graph.variants.items.len);
+        for (0..choice.variants.len) |offset|
+            try self.graph.variants.append(self.allocator, self.graph.variants.items[choice.variants.start + @as(u32, @intCast(offset))]);
+        try self.graph.variants.append(self.allocator, .{
+            .name = try self.graph.addString(self.allocator, name),
+            .source = source,
+            .value = @intCast(choice.variants.len),
+        });
+        self.graph.types.items[@intFromEnum(ty)].inferred_choice.variants = .{ .start = start, .len = choice.variants.len + 1 };
     }
 
     fn resolveChoiceTest(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
@@ -586,4 +622,32 @@ test "global control resolver materializes nullable into an explicit choice shap
     const variants = types.variants(&graph, @enumFromInt(1)).?;
     try std.testing.expectEqual(@as(u32, 2), variants.len);
     try std.testing.expectEqualStrings("some", graph.text(graph.variants.items[variants.start + 1].name));
+}
+
+test "inferred errable keeps an open reason choice and concrete trace field" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .declared = @enumFromInt(0) });
+    try graph.types.append(allocator, .{ .inferred_errable = @enumFromInt(0) });
+    try graph.declarations.append(allocator, .{
+        .kind = .type,
+        .name = try graph.addString(allocator, "ErrorTrace"),
+        .source = source,
+        .type_id = @enumFromInt(1),
+    });
+    var resolver = Resolver{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    try resolver.materializeSugarTypes();
+    const error_variant = types.findVariant(&graph, @enumFromInt(2), "error").?;
+    const payload_ty = error_variant.variant.payload_type.?;
+    const reason = types.findField(&graph, payload_ty, "reason").?;
+    const trace = types.findField(&graph, payload_ty, "trace").?;
+    try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(1)), trace.field.ty);
+    try std.testing.expectEqual(primitives.InferredChoiceKind.reasons, graph.types.items[@intFromEnum(reason.field.ty)].inferred_choice.kind);
+    try resolver.ensureInferredReasonVariant(reason.field.ty, "first", source);
+    try resolver.ensureInferredReasonVariant(reason.field.ty, "second", source);
+    try resolver.ensureInferredReasonVariant(reason.field.ty, "first", source);
+    try std.testing.expectEqual(@as(u32, 2), types.variants(&graph, reason.field.ty).?.len);
 }
