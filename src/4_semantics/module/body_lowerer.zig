@@ -733,7 +733,17 @@ const Context = struct {
             self.tree.unaryOperand(assignment.target).?
         else
             assignment.target;
-        const pointer = try self.lowerNode(pointer_node, null);
+        var pointer = try self.lowerNode(pointer_node, null);
+        if (self.tree.tag(assignment.target) != .dereference) {
+            pointer = if (pointer.ty) |child| blk: {
+                const ty = try self.writer.addResolvedType(.{ .pointer = .{ .child = child, .mutability = .read_write } });
+                break :blk try self.resolved(node, ty, .{ .address_of = pointer.node });
+            } else try self.pending(node, .{ .resolve_address = .{
+                .node = self.nextNodeId(),
+                .value = pointer.node,
+                .mutability = .read_write,
+            } }, null);
+        }
         const child_ty = if (pointer.ty) |pointer_ty| try self.pointerChild(pointer_ty) else null;
         const value = try self.lowerNode(assignment.value, child_ty orelse expected);
         const ty: ?entities.ModuleTypeId = expected orelse value.ty;

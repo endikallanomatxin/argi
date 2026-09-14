@@ -387,11 +387,11 @@ pub const SafetyChecker = struct {
             },
             .address_of => |child| blk: {
                 try self.validateAddressAccess(function, node.source, child, state);
-                const storage = try self.resolvePlace(child, state) orelse break :blk .{};
+                const storage = try self.resolvePlace(child, state);
                 const opaque_provenance = try self.opaqueProvenanceForAccess(child, state);
                 var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
                 if (opaque_provenance.len == 0) {
-                    try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, storage) });
+                    if (storage) |target| try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
                 } else {
                     for (opaque_provenance) |provenance|
                         try appendDependencyFact(&dependencies, .{ .root = provenance.generation });
