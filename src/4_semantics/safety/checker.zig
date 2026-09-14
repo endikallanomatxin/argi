@@ -33,6 +33,7 @@ pub const SafetyChecker = struct {
     const OpaqueStorage = struct { storage: facts.Place, hidden_dependencies: []const facts.ValidityRootId };
     const ChoiceActive = struct { storage: facts.Place, variant_index: u32 };
     const ChoiceRejected = struct { storage: facts.Place, variant_index: u32 };
+    const ChoiceTemporaryActive = struct { expression: graph_mod.GlobalNodeId, variant_index: u32 };
 
     const FunctionState = struct {
         tracker: facts.Tracker,
@@ -44,6 +45,7 @@ pub const SafetyChecker = struct {
         opaque_storages: std.array_list.Managed(OpaqueStorage),
         choice_active: std.array_list.Managed(ChoiceActive),
         choice_rejected: std.array_list.Managed(ChoiceRejected),
+        choice_temporary_active: std.array_list.Managed(ChoiceTemporaryActive),
         reachable: bool = true,
 
         fn init(allocator: std.mem.Allocator) FunctionState {
@@ -57,6 +59,7 @@ pub const SafetyChecker = struct {
                 .opaque_storages = std.array_list.Managed(OpaqueStorage).init(allocator),
                 .choice_active = std.array_list.Managed(ChoiceActive).init(allocator),
                 .choice_rejected = std.array_list.Managed(ChoiceRejected).init(allocator),
+                .choice_temporary_active = std.array_list.Managed(ChoiceTemporaryActive).init(allocator),
             };
         }
 
@@ -70,6 +73,7 @@ pub const SafetyChecker = struct {
             self.opaque_storages.deinit();
             self.choice_active.deinit();
             self.choice_rejected.deinit();
+            self.choice_temporary_active.deinit();
         }
 
         fn clone(self: *const FunctionState, allocator: std.mem.Allocator, stats: ?*Stats) !FunctionState {
@@ -84,10 +88,11 @@ pub const SafetyChecker = struct {
             try out.opaque_storages.appendSlice(self.opaque_storages.items);
             try out.choice_active.appendSlice(self.choice_active.items);
             try out.choice_rejected.appendSlice(self.choice_rejected.items);
+            try out.choice_temporary_active.appendSlice(self.choice_temporary_active.items);
             out.reachable = self.reachable;
             if (stats) |s| {
                 s.state_clones += 1;
-                s.state_elements_copied += @intCast(self.tracker.roots.items.len + self.places.items.len + self.storage_capabilities.items.len + self.ownership_edges.items.len + self.storage_generations.items.len + self.lexical_storage_generations.items.len + self.opaque_storages.items.len + self.choice_active.items.len + self.choice_rejected.items.len);
+                s.state_elements_copied += @intCast(self.tracker.roots.items.len + self.places.items.len + self.storage_capabilities.items.len + self.ownership_edges.items.len + self.storage_generations.items.len + self.lexical_storage_generations.items.len + self.opaque_storages.items.len + self.choice_active.items.len + self.choice_rejected.items.len + self.choice_temporary_active.items.len);
             }
             return out;
         }
@@ -237,11 +242,11 @@ pub const SafetyChecker = struct {
                     _ = try self.evaluate(function, statement.condition, state);
                     var then_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
                     defer then_state.deinit();
-                    if (statement.choice_test) |choice_test| self.refineChoice(&then_state, choice_test.choice_value, choice_test.variant, choice_test.then_has_variant);
+                    if (statement.choice_test) |choice_test| try self.refineChoice(&then_state, choice_test.choice_value, choice_test.variant, choice_test.then_has_variant);
                     try self.validateBlock(function, statement.then_block, &then_state, loop_transfers);
                     var else_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
                     defer else_state.deinit();
-                    if (statement.choice_test) |choice_test| self.refineChoice(&else_state, choice_test.choice_value, choice_test.variant, !choice_test.then_has_variant);
+                    if (statement.choice_test) |choice_test| try self.refineChoice(&else_state, choice_test.choice_value, choice_test.variant, !choice_test.then_has_variant);
                     if (statement.else_block) |child| try self.validateBlock(function, child, &else_state, loop_transfers);
                     try self.joinState(state, &then_state, &else_state);
                 },
@@ -451,7 +456,7 @@ pub const SafetyChecker = struct {
                 defer right_state.deinit();
                 if (self.choiceTestFromCondition(logic.left)) |choice_test| {
                     const left_has_variant = logic.operator == .and_;
-                    self.refineChoice(
+                    try self.refineChoice(
                         &right_state,
                         choice_test.choice_value,
                         choice_test.variant,
@@ -1888,7 +1893,7 @@ pub const SafetyChecker = struct {
                 try self.report(source, "choice payload requires its variant to be proven active", .{});
                 return .{};
             }
-        } else if (choice.known_choice_variant != wanted) {
+        } else if (choice.known_choice_variant != wanted and !self.temporaryVariantActive(state, access.value, wanted)) {
             try self.report(source, "choice payload access requires a proven active variant", .{});
             return .{};
         }
@@ -2307,6 +2312,12 @@ pub const SafetyChecker = struct {
         for (left.choice_rejected.items) |candidate| for (right.choice_rejected.items) |other| {
             if (candidate.storage.eql(other.storage) and candidate.variant_index == other.variant_index) {
                 try joined.choice_rejected.append(candidate);
+                break;
+            }
+        };
+        for (left.choice_temporary_active.items) |candidate| for (right.choice_temporary_active.items) |other| {
+            if (candidate.expression == other.expression and candidate.variant_index == other.variant_index) {
+                try joined.choice_temporary_active.append(candidate);
                 break;
             }
         };
@@ -2762,31 +2773,36 @@ pub const SafetyChecker = struct {
         };
     }
 
-    fn refineChoice(self: *SafetyChecker, state: *FunctionState, node: graph_mod.GlobalNodeId, variant: graph_mod.GlobalVariantId, active: bool) void {
-        const storage = self.resolvePlace(node, state) catch null orelse return;
+    fn refineChoice(self: *SafetyChecker, state: *FunctionState, node: graph_mod.GlobalNodeId, variant: graph_mod.GlobalVariantId, active: bool) !void {
         const ty = self.graph.nodes.items[@intFromEnum(node)].ty orelse return;
         const index = variantIndex(self.graph, ty, variant) orelse return;
+        const storage = try self.resolvePlace(node, state);
+        if (storage == null) {
+            if (active) try self.setTemporaryActiveVariant(state, node, index);
+            return;
+        }
+        const target = storage.?;
         if (active) {
-            self.clearRejectedVariant(state, storage, index);
-            self.setActiveVariant(state, storage, index);
+            self.clearRejectedVariant(state, target, index);
+            self.setActiveVariant(state, target, index);
             return;
         }
 
-        self.clearActiveVariant(state, storage, index);
-        self.setRejectedVariant(state, storage, index);
+        self.clearActiveVariant(state, target, index);
+        self.setRejectedVariant(state, target, index);
 
         // Once every other variant has been rejected, the remaining one is
-        // proven active. This restores the old checker's negative refinement
-        // without reintroducing syntax/object identity.
+        // proven active. Temporary expressions only retain positive proofs;
+        // negative refinement needs stable storage identity.
         const variants = types.variants(self.graph, ty) orelse return;
         var remaining: ?u32 = null;
         for (0..variants.len) |offset| {
             const candidate: u32 = @intCast(offset);
-            if (self.variantRejected(state, storage, candidate)) continue;
+            if (self.variantRejected(state, target, candidate)) continue;
             if (remaining != null) return;
             remaining = candidate;
         }
-        if (remaining) |only| self.setActiveVariant(state, storage, only);
+        if (remaining) |only| self.setActiveVariant(state, target, only);
     }
 
     fn choiceTestFromCondition(self: *SafetyChecker, node_id: graph_mod.GlobalNodeId) ?primitives.ChoiceTagTest(graph_mod.Ids) {
@@ -2846,6 +2862,23 @@ pub const SafetyChecker = struct {
                 cursor += 1;
             }
         }
+    }
+
+    fn setTemporaryActiveVariant(self: *SafetyChecker, state: *FunctionState, expression: graph_mod.GlobalNodeId, index: u32) !void {
+        _ = self;
+        for (state.choice_temporary_active.items) |*entry| {
+            if (entry.expression != expression) continue;
+            entry.variant_index = index;
+            return;
+        }
+        try state.choice_temporary_active.append(.{ .expression = expression, .variant_index = index });
+    }
+
+    fn temporaryVariantActive(self: *SafetyChecker, state: *const FunctionState, expression: graph_mod.GlobalNodeId, index: u32) bool {
+        _ = self;
+        for (state.choice_temporary_active.items) |entry|
+            if (entry.expression == expression) return entry.variant_index == index;
+        return false;
     }
 
     fn setRejectedVariant(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, index: u32) void {
@@ -3075,7 +3108,8 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         left.storage_generations.items.len != right.storage_generations.items.len or
         left.opaque_storages.items.len != right.opaque_storages.items.len or
         left.choice_active.items.len != right.choice_active.items.len or
-        left.choice_rejected.items.len != right.choice_rejected.items.len) return false;
+        left.choice_rejected.items.len != right.choice_rejected.items.len or
+        left.choice_temporary_active.items.len != right.choice_temporary_active.items.len) return false;
 
     for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
         if (a.state != b.state or a.owned_resource != b.owned_resource) return false;
@@ -3125,6 +3159,14 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
     for (left.choice_rejected.items) |candidate| {
         var found = false;
         for (right.choice_rejected.items) |other| if (candidate.storage.eql(other.storage) and candidate.variant_index == other.variant_index) {
+            found = true;
+            break;
+        };
+        if (!found) return false;
+    }
+    for (left.choice_temporary_active.items) |candidate| {
+        var found = false;
+        for (right.choice_temporary_active.items) |other| if (candidate.expression == other.expression and candidate.variant_index == other.variant_index) {
             found = true;
             break;
         };
@@ -3627,4 +3669,59 @@ test "dead root output detection traverses choice payloads" {
     const payload = facts.ValueFacts{ .dependencies = &.{.{ .root = root }} };
     const value = facts.ValueFacts{ .variants = &.{.{ .index = 0, .value = &payload }} };
     try std.testing.expect(valueDependsOnDeadRoot(value, &state));
+}
+
+test "temporary choice refinement tracks non-addressable expressions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+
+    try graph.variants.append(allocator, .{
+        .name = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+        .value = 0,
+    });
+    try graph.variants.append(allocator, .{
+        .name = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+        .value = 1,
+    });
+    try graph.types.append(allocator, .{ .structural_choice = .{
+        .variants = .{ .start = 0, .len = 2 },
+    } });
+    try graph.nodes.append(allocator, .{
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(0),
+        .content = .{ .int_literal = 0 },
+    });
+
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var left = SafetyChecker.FunctionState.init(allocator);
+    defer left.deinit();
+    var right = SafetyChecker.FunctionState.init(allocator);
+    defer right.deinit();
+    var empty = SafetyChecker.FunctionState.init(allocator);
+    defer empty.deinit();
+    var joined = SafetyChecker.FunctionState.init(allocator);
+    defer joined.deinit();
+
+    const expression: graph_mod.GlobalNodeId = @enumFromInt(0);
+    const variant: graph_mod.GlobalVariantId = @enumFromInt(1);
+    try checker.refineChoice(&left, expression, variant, true);
+    try checker.refineChoice(&right, expression, variant, true);
+    try std.testing.expect(checker.temporaryVariantActive(&left, expression, 1));
+
+    var cloned = try left.clone(allocator, null);
+    defer cloned.deinit();
+    try std.testing.expect(statesEqual(&left, &cloned));
+    try std.testing.expect(!statesEqual(&left, &empty));
+
+    try checker.joinState(&joined, &left, &right);
+    try std.testing.expect(checker.temporaryVariantActive(&joined, expression, 1));
+
+    try checker.joinState(&joined, &left, &empty);
+    try std.testing.expectEqual(@as(usize, 0), joined.choice_temporary_active.items.len);
 }
