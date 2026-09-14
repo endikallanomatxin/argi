@@ -42,7 +42,10 @@ pub const Resolver = struct {
                     const name = module.text(reference.name);
                     var resolved_builtin: ?primitives.BuiltinType = null;
                     inline for (@typeInfo(primitives.BuiltinType).@"enum".fields) |field| {
-                        if (std.mem.eql(u8, name, field.name)) { resolved_builtin = @enumFromInt(field.value); break; }
+                        if (std.mem.eql(u8, name, field.name)) {
+                            resolved_builtin = @enumFromInt(field.value);
+                            break;
+                        }
                     }
                     if (resolved_builtin) |builtin_type| {
                         self.graph.types.items[@intFromEnum(globalizer.globalType(o, local_id))] = .{ .builtin = builtin_type };
@@ -817,7 +820,8 @@ pub const Resolver = struct {
     }
 
     pub fn coerceContextualValue(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
-        if (self.coerceContextualLiteral(node, target)) return true;
+        if (self.graph.nodes.items[@intFromEnum(node)].content != .struct_value_literal and
+            self.coerceContextualLiteral(node, target)) return true;
         const current = self.graph.nodes.items[@intFromEnum(node)].ty;
         const literal = switch (self.graph.nodes.items[@intFromEnum(node)].content) {
             .struct_value_literal => |value| value,
@@ -837,6 +841,22 @@ pub const Resolver = struct {
         }
         self.graph.nodes.items[@intFromEnum(node)].ty = target;
         return true;
+    }
+
+    pub fn materializeAssignmentValues(self: *Resolver) bool {
+        var changed = false;
+        for (self.graph.nodes.items) |node| {
+            const assignment = switch (node.content) {
+                .assignment => |value| value,
+                else => continue,
+            };
+            if (self.graph.isBindingTypeUnresolved(assignment.binding)) continue;
+            if (self.graph.nodes.items[@intFromEnum(assignment.value)].ty != null) continue;
+            // Assignment destinations supply the contextual shape of anonymous
+            // aggregates before summary inference and codegen consume them.
+            if (self.coerceContextualValue(assignment.value, self.graph.binding(assignment.binding).ty)) changed = true;
+        }
+        return changed;
     }
 
     fn integerLiteralFits(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
@@ -954,6 +974,29 @@ test "call input matching distinguishes deferred arguments from mismatches" {
     const matched = resolver.matchCallInput(expected, @enumFromInt(1));
     try std.testing.expectEqual(@as(u32, 4), matched.score);
 }
+test "assignment context materializes anonymous aggregate and child types" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(allocator, "value");
+    const int_ty: global_sg.GlobalTypeId = @enumFromInt(0);
+    const aggregate_ty: global_sg.GlobalTypeId = @enumFromInt(1);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.fields.append(allocator, .{ .name = name, .ty = int_ty, .source = source });
+    try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } });
+    try graph.bindings.append(allocator, .{ .name = name, .source = source, .ty = aggregate_ty, .mutability = .variable });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = null, .content = .{ .int_literal = 7 } });
+    try graph.value_fields.append(allocator, .{ .name = name, .value = @enumFromInt(0) });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 1 } } } });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = aggregate_ty, .content = .{ .assignment = .{ .binding = @enumFromInt(0), .value = @enumFromInt(1) } } });
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    try std.testing.expect(resolver.materializeAssignmentValues());
+    try std.testing.expectEqual(aggregate_ty, graph.nodes.items[1].ty.?);
+    try std.testing.expectEqual(int_ty, graph.nodes.items[0].ty.?);
+    try std.testing.expect(!resolver.materializeAssignmentValues());
+}
+
 test "global core resolver is graph-only" {
     try std.testing.expect(!@hasField(Resolver, "abstract_context"));
     try std.testing.expect(!@hasField(Resolver, "abstract_compatible"));
