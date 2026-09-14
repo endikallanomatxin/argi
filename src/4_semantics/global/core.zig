@@ -769,6 +769,12 @@ pub const Resolver = struct {
         right_ty: *global_sg.GlobalTypeId,
     ) void {
         if (types.equal(self.graph, left_ty.*, right_ty.*)) return;
+        // Default integer literals follow the typed operand, including typed
+        // constants produced by compile-time operations such as size_of.
+        if (types.isBuiltin(self.graph, right_ty.*, .Int32) and self.coerceIntegerLiteral(right, left_ty.*)) {
+            right_ty.* = left_ty.*;
+            return;
+        }
         if (self.coerceIntegerLiteral(left, right_ty.*)) {
             left_ty.* = right_ty.*;
         } else if (self.coerceIntegerLiteral(right, left_ty.*)) {
@@ -1013,6 +1019,27 @@ test "assignment context materializes anonymous aggregate and child types" {
     try std.testing.expectEqual(aggregate_ty, graph.nodes.items[1].ty.?);
     try std.testing.expectEqual(int_ty, graph.nodes.items[0].ty.?);
     try std.testing.expect(!resolver.materializeAssignmentValues());
+}
+
+test "default integer operands preserve typed compile-time constants" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .UIntNative });
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.nodes.append(allocator, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 8 } });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = @enumFromInt(1), .content = .{ .int_literal = 2 } });
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    var left: global_sg.GlobalTypeId = @enumFromInt(0);
+    var right: global_sg.GlobalTypeId = @enumFromInt(1);
+    resolver.coerceIntegerPair(@enumFromInt(0), &left, @enumFromInt(1), &right);
+    try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(0)), left);
+    try std.testing.expectEqual(left, right);
+    graph.nodes.items[1].ty = @enumFromInt(1);
+    right = @enumFromInt(1);
+    resolver.coerceIntegerPair(@enumFromInt(1), &right, @enumFromInt(0), &left);
+    try std.testing.expectEqual(left, right);
 }
 
 test "global core resolver is graph-only" {
