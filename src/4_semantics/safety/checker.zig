@@ -89,6 +89,16 @@ pub const SafetyChecker = struct {
         }
     };
 
+    const LoopTransfers = struct {
+        break_state: ?FunctionState = null,
+        continue_state: ?FunctionState = null,
+
+        fn deinit(self: *LoopTransfers) void {
+            if (self.break_state) |*state| state.deinit();
+            if (self.continue_state) |*state| state.deinit();
+        }
+    };
+
     allocator: std.mem.Allocator,
     diagnostics: *diagnostics.Diagnostics,
     graph: *const graph_mod.GlobalSemanticGraph,
@@ -138,7 +148,7 @@ pub const SafetyChecker = struct {
             try self.seedFunctionInputs(function, &state);
             try self.call_stack.append(id);
             defer _ = self.call_stack.pop();
-            try self.validateBlock(id, function.body.?, &state);
+            try self.validateBlock(id, function.body.?, &state, null);
             if (self.collect_stats) self.stats.functions += 1;
         }
         if (self.diagnostics.list.items.len != before) return error.Reported;
@@ -167,6 +177,7 @@ pub const SafetyChecker = struct {
         function: graph_mod.GlobalFunctionId,
         block_id: graph_mod.GlobalBlockId,
         state: *FunctionState,
+        loop_transfers: ?*LoopTransfers,
     ) anyerror!void {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
@@ -206,30 +217,23 @@ pub const SafetyChecker = struct {
                     var then_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
                     defer then_state.deinit();
                     if (statement.choice_test) |choice_test| self.refineChoice(&then_state, choice_test.choice_value, choice_test.variant, choice_test.then_has_variant);
-                    try self.validateBlock(function, statement.then_block, &then_state);
+                    try self.validateBlock(function, statement.then_block, &then_state, loop_transfers);
                     var else_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
                     defer else_state.deinit();
                     if (statement.choice_test) |choice_test| self.refineChoice(&else_state, choice_test.choice_value, choice_test.variant, !choice_test.then_has_variant);
-                    if (statement.else_block) |child| try self.validateBlock(function, child, &else_state);
+                    if (statement.else_block) |child| try self.validateBlock(function, child, &else_state, loop_transfers);
                     try self.joinState(state, &then_state, &else_state);
                 },
                 .while_statement => |statement| {
                     _ = try self.evaluate(function, statement.condition, state);
-                    var body_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
-                    defer body_state.deinit();
-                    try self.validateBlock(function, statement.body, &body_state);
-                    try self.joinState(state, state, &body_state);
+                    try self.validateLoop(function, statement.body, state, null);
                 },
                 .for_statement => |statement| {
                     if (statement.init) |initialization| _ = try self.evaluate(function, initialization, state);
                     _ = try self.evaluate(function, statement.condition, state);
-                    var body_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
-                    defer body_state.deinit();
-                    try self.validateBlock(function, statement.body, &body_state);
-                    if (statement.increment) |increment| _ = try self.evaluate(function, increment, &body_state);
-                    try self.joinState(state, state, &body_state);
+                    try self.validateLoop(function, statement.body, state, statement.increment);
                 },
-                .switch_statement => |switch_id| try self.validateSwitch(function, switch_id, state),
+                .switch_statement => |switch_id| try self.validateSwitch(function, switch_id, state, loop_transfers),
                 .return_statement => |ret| {
                     if (ret.expression) |expression| {
                         const value = try self.evaluate(function, expression, state);
@@ -239,15 +243,37 @@ pub const SafetyChecker = struct {
                         _ = try self.evaluate(function, cleanup, state);
                     state.reachable = false;
                 },
-                .break_statement, .continue_statement => state.reachable = false,
+                .break_statement => {
+                    if (loop_transfers) |transfers| try self.mergeLoopTransfer(&transfers.break_state, state);
+                    state.reachable = false;
+                },
+                .continue_statement => {
+                    if (loop_transfers) |transfers| try self.mergeLoopTransfer(&transfers.continue_state, state);
+                    state.reachable = false;
+                },
+                .code_block => |nested| try self.validateBlock(function, nested, state, loop_transfers),
                 else => _ = try self.evaluate(function, node_id, state),
             }
             try self.validateUniqueOwnership(function, node.source, state);
+            if (!state.reachable) {
+                try self.endBlockStorage(block_id, state);
+                if (loop_transfers) |transfers| {
+                    if (transfers.break_state) |*break_state| try self.endBlockStorage(block_id, break_state);
+                    if (transfers.continue_state) |*continue_state| try self.endBlockStorage(block_id, continue_state);
+                }
+                return;
+            }
         }
         try self.endBlockStorage(block_id, state);
     }
 
-    fn validateSwitch(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, switch_id: graph_mod.GlobalSwitchId, state: *FunctionState) !void {
+    fn validateSwitch(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        switch_id: graph_mod.GlobalSwitchId,
+        state: *FunctionState,
+        loop_transfers: ?*LoopTransfers,
+    ) !void {
         const sw = self.graph.switches.items[@intFromEnum(switch_id)];
         const choice = try self.evaluate(function, sw.expression, state);
         _ = choice;
@@ -257,7 +283,7 @@ pub const SafetyChecker = struct {
             var branch = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
             defer branch.deinit();
             if (try self.resolvePlace(sw.expression, &branch)) |storage| self.setActiveVariant(&branch, storage, @intFromEnum(case.variant));
-            try self.validateBlock(function, case.body, &branch);
+            try self.validateBlock(function, case.body, &branch, loop_transfers);
             if (joined) |*existing| {
                 var combined = try existing.clone(self.allocator, if (self.collect_stats) &self.stats else null);
                 try self.joinState(&combined, existing, &branch);
@@ -268,7 +294,7 @@ pub const SafetyChecker = struct {
         if (sw.default_block) |child| {
             var branch = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
             defer branch.deinit();
-            try self.validateBlock(function, child, &branch);
+            try self.validateBlock(function, child, &branch, loop_transfers);
             if (joined) |*existing| try self.joinState(existing, existing, &branch) else joined = try branch.clone(self.allocator, if (self.collect_stats) &self.stats else null);
         }
         if (joined) |*result| try self.copyState(state, result);
@@ -416,7 +442,7 @@ pub const SafetyChecker = struct {
                 break :blk .{};
             },
             .code_block => |block| blk: {
-                try self.validateBlock(function, block, state);
+                try self.validateBlock(function, block, state, null);
                 break :blk .{};
             },
             .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .type_initializer, .testing_expect_error, .reach_directive, .break_statement, .continue_statement => .{},
@@ -481,7 +507,7 @@ pub const SafetyChecker = struct {
         try self.bindCallInputs(callee, values, state);
         try self.call_stack.append(call.callee);
         defer _ = self.call_stack.pop();
-        try self.validateBlock(call.callee, callee.body.?, state);
+        try self.validateBlock(call.callee, callee.body.?, state, null);
         return self.collectCallOutput(callee, state);
     }
 
@@ -1894,7 +1920,7 @@ pub const SafetyChecker = struct {
         try self.bindCallInputs(callee, values, &candidate);
         try self.call_stack.append(callee_id);
         defer _ = self.call_stack.pop();
-        try self.validateBlock(callee_id, callee.body.?, &candidate);
+        try self.validateBlock(callee_id, callee.body.?, &candidate, null);
         const result = try self.collectCallOutput(callee, &candidate);
         self.commitState(state, &candidate);
         return result;
@@ -2029,7 +2055,7 @@ pub const SafetyChecker = struct {
         if (function.body) |body| {
             try self.call_stack.append(deinit_fn);
             defer _ = self.call_stack.pop();
-            try self.validateBlock(deinit_fn, body, state);
+            try self.validateBlock(deinit_fn, body, state, null);
         }
     }
 
@@ -2225,6 +2251,84 @@ pub const SafetyChecker = struct {
         joined.reachable = true;
         destination.deinit();
         destination.* = joined;
+    }
+
+    fn validateLoop(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        body: graph_mod.GlobalBlockId,
+        state: *FunctionState,
+        increment: ?graph_mod.GlobalNodeId,
+    ) !void {
+        // Structural storage exists before control enters the loop. Materialize
+        // its generations before cloning entry state so first address-taking
+        // in the body is not mistaken for a conditionally created lifetime.
+        const existing_places = try self.allocator.dupe(facts.PlaceFacts, state.places.items);
+        for (existing_places) |place_facts| _ = try self.storageGeneration(state, place_facts.storage);
+
+        var entry = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+        defer entry.deinit();
+        var current = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+        defer current.deinit();
+        var last_break: ?FunctionState = null;
+        defer if (last_break) |*break_state| break_state.deinit();
+
+        for (0..8) |_| {
+            var iteration = try current.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+            defer iteration.deinit();
+            var transfers: LoopTransfers = .{};
+            defer transfers.deinit();
+
+            try self.validateBlock(function, body, &iteration, &transfers);
+            if (transfers.continue_state) |*continue_state|
+                try self.mergeLoopTransfer(&iteration, continue_state);
+            if (iteration.reachable) {
+                if (increment) |node| _ = try self.evaluate(function, node, &iteration);
+            }
+
+            if (last_break) |*break_state| break_state.deinit();
+            last_break = if (transfers.break_state) |*break_state|
+                try break_state.clone(self.allocator, if (self.collect_stats) &self.stats else null)
+            else
+                null;
+
+            var next = try entry.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+            try self.joinState(&next, &entry, &iteration);
+            if (statesEqual(&current, &next)) {
+                if (last_break) |*break_state| try self.mergeLoopTransfer(&next, break_state);
+                try self.copyState(state, &next);
+                next.deinit();
+                return;
+            }
+            current.deinit();
+            current = next;
+        }
+
+        if (last_break) |*break_state| try self.mergeLoopTransfer(&current, break_state);
+        try self.copyState(state, &current);
+    }
+
+    fn mergeLoopTransfer(self: *SafetyChecker, destination: anytype, source: *const FunctionState) !void {
+        const Destination = @TypeOf(destination.*);
+        if (comptime Destination == ?FunctionState) {
+            if (destination.*) |*current| {
+                var joined = try current.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                try self.joinState(&joined, current, source);
+                current.deinit();
+                current.* = joined;
+            } else {
+                destination.* = try source.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+            }
+        } else {
+            if (!destination.*.reachable) {
+                try self.copyState(destination, source);
+            } else {
+                var joined = try destination.*.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                try self.joinState(&joined, destination, source);
+                destination.deinit();
+                destination.* = joined;
+            }
+        }
     }
 
     /// Storage generations are created lazily when a Place first needs one. If
@@ -2541,6 +2645,93 @@ fn hasExternalOpaqueDependency(value: facts.ValueFacts, owned: []const facts.Val
     return false;
 }
 
+fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChecker.FunctionState) bool {
+    if (left.reachable != right.reachable or
+        left.tracker.roots.items.len != right.tracker.roots.items.len or
+        left.storage_capabilities.items.len != right.storage_capabilities.items.len or
+        left.places.items.len != right.places.items.len or
+        left.ownership_edges.items.len != right.ownership_edges.items.len or
+        left.storage_generations.items.len != right.storage_generations.items.len or
+        left.opaque_storages.items.len != right.opaque_storages.items.len or
+        left.choice_active.items.len != right.choice_active.items.len or
+        left.choice_rejected.items.len != right.choice_rejected.items.len) return false;
+
+    for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
+        if (a.state != b.state or a.owned_resource != b.owned_resource) return false;
+    for (left.storage_capabilities.items, right.storage_capabilities.items) |a, b|
+        if (a != b) return false;
+    for (left.places.items) |left_place| {
+        const right_place = findPlaceConst(right, left_place.storage) orelse return false;
+        if (left_place.initializedness != right_place.initializedness or !valueFactsEqual(left_place.value, right_place.value)) return false;
+    }
+    for (left.ownership_edges.items) |edge| {
+        var found = false;
+        for (right.ownership_edges.items) |other| if (edge.owner == other.owner and edge.owned == other.owned) {
+            found = true;
+            break;
+        };
+        if (!found) return false;
+    }
+    for (left.storage_generations.items) |entry| {
+        var found = false;
+        for (right.storage_generations.items) |other| if (entry.storage.eql(other.storage) and entry.generation == other.generation) {
+            found = true;
+            break;
+        };
+        if (!found) return false;
+    }
+    for (left.opaque_storages.items) |opaque_storage| {
+        var matching: ?SafetyChecker.OpaqueStorage = null;
+        for (right.opaque_storages.items) |other| if (opaque_storage.storage.eql(other.storage)) {
+            matching = other;
+            break;
+        };
+        const other = matching orelse return false;
+        if (opaque_storage.hidden_dependencies.len != other.hidden_dependencies.len) return false;
+        for (opaque_storage.hidden_dependencies) |dependency|
+            if (!containsRoot(other.hidden_dependencies, dependency)) return false;
+    }
+    for (left.choice_active.items) |candidate| {
+        var found = false;
+        for (right.choice_active.items) |other| if (candidate.storage.eql(other.storage) and candidate.variant_index == other.variant_index) {
+            found = true;
+            break;
+        };
+        if (!found) return false;
+    }
+    for (left.choice_rejected.items) |candidate| {
+        var found = false;
+        for (right.choice_rejected.items) |other| if (candidate.storage.eql(other.storage) and candidate.variant_index == other.variant_index) {
+            found = true;
+            break;
+        };
+        if (!found) return false;
+    }
+    return true;
+}
+
+fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.integer_address != right.integer_address or
+        left.foreign_storage != right.foreign_storage or
+        left.known_choice_variant != right.known_choice_variant or
+        !std.mem.eql(facts.StorageCapabilityId, left.storage_capabilities, right.storage_capabilities) or
+        !std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods) or
+        left.dependencies.len != right.dependencies.len or
+        left.owned_roots.len != right.owned_roots.len or
+        left.fields.len != right.fields.len or
+        left.variants.len != right.variants.len or
+        left.opaque_provenance.len != right.opaque_provenance.len) return false;
+    for (left.dependencies, right.dependencies) |a, b| if (a.root != b.root) return false;
+    for (left.owned_roots, right.owned_roots) |a, b| if (a != b) return false;
+    if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
+    if (left.referenced_place) |left_place| if (!left_place.eql(right.referenced_place.?)) return false;
+    for (left.opaque_provenance, right.opaque_provenance) |a, b|
+        if (!a.storage.eql(b.storage) or a.generation != b.generation) return false;
+    for (left.fields, right.fields) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
+    for (left.variants, right.variants) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
+    return true;
+}
+
 fn joinInitializedness(left: value_state.Initializedness, right: value_state.Initializedness) value_state.Initializedness {
     if (left == right) return left;
     return .maybe_initialized;
@@ -2807,4 +2998,45 @@ test "rich safety join preserves all compact state dimensions" {
     try std.testing.expect(containsRoot(joined.opaque_storages.items[0].hidden_dependencies, right_dependency));
     try std.testing.expectEqual(@as(usize, 1), joined.choice_active.items.len);
     try std.testing.expectEqual(@as(usize, 1), joined.choice_rejected.items.len);
+}
+
+test "loop transfer joins retain branch state" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+
+    var first = SafetyChecker.FunctionState.init(allocator);
+    defer first.deinit();
+    var second = SafetyChecker.FunctionState.init(allocator);
+    defer second.deinit();
+    const storage = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(0)) };
+    const first_root = try first.tracker.establish(.fresh);
+    const second_root = try first.tracker.establish(.fresh);
+    _ = try second.tracker.establish(.fresh);
+    _ = try second.tracker.establish(.fresh);
+    try first.places.append(.{ .storage = storage, .value = .{ .dependencies = &.{.{ .root = first_root }} } });
+    try second.places.append(.{ .storage = storage, .value = .{ .dependencies = &.{.{ .root = second_root }} } });
+
+    var transfer: ?SafetyChecker.FunctionState = null;
+    defer if (transfer) |*state| state.deinit();
+    try checker.mergeLoopTransfer(&transfer, &first);
+    try checker.mergeLoopTransfer(&transfer, &second);
+    const value = checker.valueAtPlace(&transfer.?, storage).?;
+    try std.testing.expect(valueDependsOnRoot(value, first_root));
+    try std.testing.expect(valueDependsOnRoot(value, second_root));
+}
+
+test "state equality observes capability and storage generation changes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var left = SafetyChecker.FunctionState.init(allocator);
+    defer left.deinit();
+    var right = SafetyChecker.FunctionState.init(allocator);
+    defer right.deinit();
+    try left.storage_capabilities.append(.available);
+    try right.storage_capabilities.append(.consumed);
+    try std.testing.expect(!statesEqual(&left, &right));
 }
