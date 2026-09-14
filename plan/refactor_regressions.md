@@ -24,12 +24,15 @@ records exist, but codegen returns `NotYetImplemented` for both, as well as
 `testing_expect_error`. The old implementation attached trace entries, coerced
 error payloads to the caller's errable type, ran cleanup, and returned early;
 the new implementation must preserve those semantics in the indexed graph.
-GlobalSema now follows nested expressions to find the enclosing return type,
-checks that the caller returns an errable value, validates concrete reason
-supersets and trace type compatibility, and restricts `!!` contexts to
-read-only character pointers or `StringView`. The records still lack
-diagnostic line and column data, and inferred reason absorption is not yet
-equivalent to `performance`.
+GlobalSema now follows nested expressions (including binding initializers) to
+find the enclosing return type, checks that the caller returns an errable
+value, validates concrete reason supersets and trace type compatibility, and
+restricts `!!` contexts to read-only character pointers or `StringView`.
+Inferred `!T` carries an open reason choice and an `ErrorTrace` field instead
+of an `Any` payload. Contextual reason literals and propagated reasons extend
+that choice through new contiguous variant ranges. The former inferred-error
+fixture now reaches codegen. Error records still lack diagnostic line and
+column data.
 
 The minimal program now reaches codegen and reports an `InvalidType` at the
 abstract `write_trace_text` parameter in `core/errors/errors.rg`. Restoring

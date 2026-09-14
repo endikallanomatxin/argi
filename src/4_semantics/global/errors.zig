@@ -51,6 +51,7 @@ pub const Resolver = struct {
         const propagated_error_payload = propagated_error.variant.payload_type orelse error_payload;
         if (!self.errorPayloadCanPropagate(error_payload, propagated_error_payload))
             return error.IncompatibleErrorPayload;
+        try self.absorbErrorPayloadReasons(error_payload, propagated_error_payload);
         const source = self.graph.nodes.items[@intFromEnum(errable)].source;
         const empty = try self.graph.addString(self.allocator, "");
         const cleanup: primitives.Range(global_sg.GlobalNodeId) = .{ .start = @intCast(self.graph.node_refs.items.len), .len = 0 };
@@ -131,18 +132,51 @@ pub const Resolver = struct {
         const target_trace = global_types.findField(self.graph, target, "trace") orelse return false;
         if (!global_types.equal(self.graph, source_trace.field.ty, target_trace.field.ty)) return false;
         const source_variants = global_types.variants(self.graph, source_reason.field.ty) orelse return false;
-        if (self.graph.resolvedSemanticType(target_reason.field.ty)) |ty| switch (ty) {
-            .inferred_choice => |choice| if (choice.kind == .reasons) return true,
-            else => {},
-        };
+        const open_reasons = if (self.graph.resolvedSemanticType(target_reason.field.ty)) |ty| switch (ty) {
+            .inferred_choice => |choice| choice.kind == .reasons,
+            else => false,
+        } else false;
         for (self.graph.variants.items[source_variants.start..][0..source_variants.len]) |variant| {
-            const matching = global_types.findVariant(self.graph, target_reason.field.ty, self.graph.text(variant.name)) orelse return false;
+            const matching = global_types.findVariant(self.graph, target_reason.field.ty, self.graph.text(variant.name)) orelse {
+                if (open_reasons) continue;
+                return false;
+            };
             if (variant.payload_type) |payload| {
                 const target_payload = matching.variant.payload_type orelse return false;
                 if (!global_types.equal(self.graph, payload, target_payload)) return false;
             } else if (matching.variant.payload_type != null) return false;
         }
         return true;
+    }
+
+    fn absorbErrorPayloadReasons(self: *Resolver, source: global_sg.GlobalTypeId, target: global_sg.GlobalTypeId) !void {
+        const source_reason = global_types.findField(self.graph, source, "reason") orelse return;
+        const target_reason = global_types.findField(self.graph, target, "reason") orelse return;
+        const target_id = target_reason.field.ty;
+        const target_choice = switch (self.graph.types.items[@intFromEnum(target_id)]) {
+            .inferred_choice => |choice| if (choice.kind == .reasons) choice else return,
+            else => return,
+        };
+        const source_range = global_types.variants(self.graph, source_reason.field.ty) orelse return;
+        var additions: std.ArrayList(global_sg.ChoiceVariant) = .empty;
+        defer additions.deinit(self.allocator);
+        for (self.graph.variants.items[source_range.start..][0..source_range.len]) |variant| {
+            if (global_types.findVariant(self.graph, target_id, self.graph.text(variant.name)) != null) continue;
+            try additions.append(self.allocator, variant);
+        }
+        if (additions.items.len == 0) return;
+
+        // Variant ranges are immutable slices of the indexed pool. Extend an
+        // open choice by publishing a new contiguous range, leaving any old
+        // range available to readers that already captured it.
+        const new_start: u32 = @intCast(self.graph.variants.items.len);
+        for (0..target_choice.variants.len) |offset|
+            try self.graph.variants.append(self.allocator, self.graph.variants.items[target_choice.variants.start + @as(u32, @intCast(offset))]);
+        try self.graph.variants.appendSlice(self.allocator, additions.items);
+        self.graph.types.items[@intFromEnum(target_id)].inferred_choice.variants = .{
+            .start = new_start,
+            .len = target_choice.variants.len + @as(u32, @intCast(additions.items.len)),
+        };
     }
 
     fn validContextType(self: *const Resolver, ty: global_sg.GlobalTypeId) bool {
@@ -169,6 +203,7 @@ pub const Resolver = struct {
         if (node_id == target) return true;
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
+            .binding_declaration => |binding| if (self.graph.bindings.items[@intFromEnum(binding)].initialization) |child| self.nodeContains(child, target) else false,
             .move_value, .address_of => |child| self.nodeContains(child, target),
             .assignment => |value| self.nodeContains(value.value, target),
             .function_call => |call| self.nodeContains(call.input, target),
@@ -281,6 +316,11 @@ test "enclosing error search follows nested call arguments" {
         .core = undefined,
     };
     try std.testing.expect(resolver.blockContains(@enumFromInt(0), @enumFromInt(0)));
+    try graph.bindings.append(allocator, .{ .name = try graph.addString(allocator, "nested"), .source = source, .ty = @enumFromInt(0), .initialization = @enumFromInt(0), .mutability = .constant });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = null, .content = .{ .binding_declaration = @enumFromInt(0) } });
+    try graph.node_refs.append(allocator, @enumFromInt(3));
+    try graph.blocks.append(allocator, .{ .nodes = .{ .start = 1, .len = 1 }, .ret_val = null });
+    try std.testing.expect(resolver.blockContains(@enumFromInt(1), @enumFromInt(0)));
     try graph.types.append(allocator, .{ .builtin = .Int32 });
     try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "result"), .ty = @enumFromInt(0), .source = source });
     try graph.functions.append(allocator, .{
@@ -312,6 +352,20 @@ test "error payload propagation requires a superset of reasons" {
     const resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = undefined };
     try std.testing.expect(resolver.errorPayloadCanPropagate(@enumFromInt(3), @enumFromInt(4)));
     try std.testing.expect(!resolver.errorPayloadCanPropagate(@enumFromInt(4), @enumFromInt(3)));
+
+    const open_reasons: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+    try graph.types.append(allocator, .{ .inferred_choice = .{ .identity = 99, .kind = .reasons, .variants = .{ .start = @intCast(graph.variants.items.len), .len = 0 } } });
+    const field_start: u32 = @intCast(graph.fields.items.len);
+    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "reason"), .ty = open_reasons, .source = source });
+    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "trace"), .ty = @enumFromInt(0), .source = source });
+    const open_payload: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+    try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = field_start, .len = 2 } } });
+    var mutable_resolver = resolver;
+    try std.testing.expect(mutable_resolver.errorPayloadCanPropagate(@enumFromInt(3), open_payload));
+    try mutable_resolver.absorbErrorPayloadReasons(@enumFromInt(3), open_payload);
+    try mutable_resolver.absorbErrorPayloadReasons(@enumFromInt(4), open_payload);
+    try std.testing.expectEqual(@as(u32, 2), global_types.variants(&graph, open_reasons).?.len);
+    try std.testing.expect(global_types.findVariant(&graph, open_reasons, "second") != null);
 }
 
 test "error context accepts only read-only character pointers" {
