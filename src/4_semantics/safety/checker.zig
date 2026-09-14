@@ -1630,9 +1630,12 @@ pub const SafetyChecker = struct {
     ) !facts.ValueFacts {
         const value_type = ty orelse return value;
         if (!self.typeContainsPointer(value_type)) return value.scalarOpaqueRead();
-        if (provenances.len == 0) return value;
+        // A projected pointer borrows its parent's generation. Conservative
+        // parent facts must not turn that borrow into ownership of the parent.
+        const projected = if (isPointer(self.graph, value_type)) value.referenceCopy() else value;
+        if (provenances.len == 0) return projected;
 
-        var result = value;
+        var result = projected;
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         for (value.dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
         for (provenances) |provenance| try appendDependencyFact(&dependencies, .{ .root = provenance.generation });
@@ -3591,6 +3594,13 @@ test "opaque read envelopes distinguish scalar and reference values" {
         &provenance,
     );
     try std.testing.expect(valueDependsOnRoot(reference, generation));
+    const projected = try checker.addOpaqueReadEnvelope(
+        .{ .dependencies = &.{.{ .root = unrelated }}, .owned_roots = &.{unrelated} },
+        @as(graph_mod.GlobalTypeId, @enumFromInt(1)),
+        &.{},
+    );
+    try std.testing.expect(valueDependsOnRoot(projected, unrelated));
+    try std.testing.expectEqual(@as(usize, 0), projected.owned_roots.len);
 }
 
 test "structural auto deinit marks nested fields and parent dead" {
