@@ -169,7 +169,10 @@ pub const CodeGenerator = struct {
     }
 
     fn predeclareFunctions(self: *CodeGenerator) !void {
-        for (self.graph.functions.items, 0..) |_, raw| {
+        for (self.graph.functions.items, 0..) |function, raw| {
+            // Declarations that promised a body but have no global body are
+            // semantic contracts/templates, not runtime ABI symbols.
+            if (function.body == null and function.flags.has_declared_body) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
             _ = try self.declareFunction(id);
         }
@@ -963,11 +966,13 @@ pub const CodeGenerator = struct {
         const methods = self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len];
         if (methods.len != 0) {
             const table_type = c.LLVMArrayType2(ptr_type, methods.len);
-            const table_name = try std.fmt.allocPrintZ(self.allocator, "argi.vtable.{d}", .{self.virtual_table_counter});
+            const table_name = try std.fmt.allocPrint(self.allocator, "argi.vtable.{d}", .{self.virtual_table_counter});
             defer self.allocator.free(table_name);
+            const table_name_z = try self.dupZ(table_name);
+            defer self.allocator.free(table_name_z);
             self.virtual_table_counter += 1;
 
-            const table_global = c.LLVMAddGlobal(self.module, table_type, table_name.ptr);
+            const table_global = c.LLVMAddGlobal(self.module, table_type, table_name_z.ptr);
             c.LLVMSetLinkage(table_global, c.LLVMPrivateLinkage);
             c.LLVMSetGlobalConstant(table_global, 1);
             c.LLVMSetUnnamedAddress(table_global, c.LLVMGlobalUnnamedAddr);
