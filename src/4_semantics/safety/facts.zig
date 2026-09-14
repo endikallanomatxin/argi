@@ -40,6 +40,10 @@ pub const ValueFacts = struct {
     storage_capabilities: []const StorageCapabilityId = &.{},
     referenced_place: ?Place = null,
     opaque_provenance: []const OpaqueProvenance = &.{},
+    /// Concrete vtable method identities carried by a `Virtual` value. Keeping
+    /// this in transient safety facts lets exact dispatch survive bindings and
+    /// ordinary value copies without reintroducing graph-object identity.
+    virtual_methods: []const graph.GlobalFunctionId = &.{},
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
         return .{
@@ -49,6 +53,7 @@ pub const ValueFacts = struct {
             .storage_capabilities = self.storage_capabilities,
             .referenced_place = self.referenced_place,
             .opaque_provenance = self.opaque_provenance,
+            .virtual_methods = self.virtual_methods,
         };
     }
 
@@ -148,6 +153,7 @@ test "scalar opaque reads discard container lifetime facts" {
     const binding: graph.GlobalBindingId = @enumFromInt(7);
     const root: ValidityRootId = @enumFromInt(3);
     const capability: StorageCapabilityId = @enumFromInt(2);
+    const method: graph.GlobalFunctionId = @enumFromInt(11);
     const value = ValueFacts{
         .dependencies = &.{.{ .root = root }},
         .owned_roots = &.{root},
@@ -156,6 +162,7 @@ test "scalar opaque reads discard container lifetime facts" {
         .storage_capabilities = &.{capability},
         .referenced_place = .{ .root = binding },
         .opaque_provenance = &.{.{ .storage = .{ .root = binding }, .generation = root }},
+        .virtual_methods = &.{method},
     };
 
     const scalar = value.scalarOpaqueRead();
@@ -165,7 +172,14 @@ test "scalar opaque reads discard container lifetime facts" {
     try std.testing.expectEqual(@as(usize, 0), scalar.variants.len);
     try std.testing.expectEqual(@as(?Place, null), scalar.referenced_place);
     try std.testing.expectEqual(@as(usize, 0), scalar.opaque_provenance.len);
+    try std.testing.expectEqual(@as(usize, 0), scalar.virtual_methods.len);
     try std.testing.expect(scalar.integer_address);
     try std.testing.expect(scalar.foreign_storage);
     try std.testing.expectEqualSlices(StorageCapabilityId, &.{capability}, scalar.storage_capabilities);
+}
+
+test "reference copies preserve virtual dispatch identity" {
+    const method: graph.GlobalFunctionId = @enumFromInt(9);
+    const copied = (ValueFacts{ .virtual_methods = &.{method} }).referenceCopy();
+    try std.testing.expectEqualSlices(graph.GlobalFunctionId, &.{method}, copied.virtual_methods);
 }
