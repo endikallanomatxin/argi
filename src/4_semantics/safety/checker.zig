@@ -99,6 +99,23 @@ pub const SafetyChecker = struct {
         }
     };
 
+    const LoopRootPhi = struct {
+        storage: facts.Place,
+        root: facts.ValidityRootId,
+    };
+
+    const LoopJoinContext = struct {
+        roots: std.array_list.Managed(LoopRootPhi),
+
+        fn init(allocator: std.mem.Allocator) LoopJoinContext {
+            return .{ .roots = std.array_list.Managed(LoopRootPhi).init(allocator) };
+        }
+
+        fn deinit(self: *LoopJoinContext) void {
+            self.roots.deinit();
+        }
+    };
+
     allocator: std.mem.Allocator,
     diagnostics: *diagnostics.Diagnostics,
     graph: *const graph_mod.GlobalSemanticGraph,
@@ -2272,6 +2289,8 @@ pub const SafetyChecker = struct {
         defer current.deinit();
         var last_break: ?FunctionState = null;
         defer if (last_break) |*break_state| break_state.deinit();
+        var join_context = LoopJoinContext.init(self.allocator);
+        defer join_context.deinit();
 
         for (0..8) |_| {
             var iteration = try current.clone(self.allocator, if (self.collect_stats) &self.stats else null);
@@ -2294,6 +2313,7 @@ pub const SafetyChecker = struct {
 
             var next = try entry.clone(self.allocator, if (self.collect_stats) &self.stats else null);
             try self.joinState(&next, &entry, &iteration);
+            try self.widenLoopOwnedRoots(&join_context, &next, &entry, &iteration);
             if (statesEqual(&current, &next)) {
                 if (last_break) |*break_state| try self.mergeLoopTransfer(&next, break_state);
                 try self.copyState(state, &next);
@@ -2306,6 +2326,314 @@ pub const SafetyChecker = struct {
 
         if (last_break) |*break_state| try self.mergeLoopTransfer(&current, break_state);
         try self.copyState(state, &current);
+    }
+
+    fn widenLoopOwnedRoots(
+        self: *SafetyChecker,
+        context: *LoopJoinContext,
+        joined: *FunctionState,
+        left: *const FunctionState,
+        right: *const FunctionState,
+    ) !void {
+        for (joined.places.items) |*joined_place| {
+            if (self.initializednessAtPlace(@constCast(left), joined_place.storage) != .initialized or
+                self.initializednessAtPlace(@constCast(right), joined_place.storage) != .initialized) continue;
+            const left_value = self.valueAtPlace(@constCast(left), joined_place.storage) orelse facts.ValueFacts{};
+            const right_value = self.valueAtPlace(@constCast(right), joined_place.storage) orelse facts.ValueFacts{};
+
+            const existing_phi = loopRootPhiForStorage(context, joined_place.storage);
+            var left_only = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            defer left_only.deinit();
+            for (left_value.owned_roots) |root|
+                if ((existing_phi == null or root != existing_phi.?) and !containsRoot(right_value.owned_roots, root)) try appendRootFact(&left_only, root);
+            var right_only = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            defer right_only.deinit();
+            for (right_value.owned_roots) |root|
+                if ((existing_phi == null or root != existing_phi.?) and !containsRoot(left_value.owned_roots, root)) try appendRootFact(&right_only, root);
+
+            for (left_value.owned_roots) |root| {
+                if (existing_phi != null and root == existing_phi.?) continue;
+                if (!containsRoot(right_value.owned_roots, root)) continue;
+                const index = @intFromEnum(root);
+                const left_alive = index < left.tracker.roots.items.len and left.tracker.isAlive(root);
+                const right_alive = index < right.tracker.roots.items.len and right.tracker.isAlive(root);
+                if (left_alive and !right_alive) try appendRootFact(&left_only, root);
+                if (right_alive and !left_alive) try appendRootFact(&right_only, root);
+            }
+
+            var stale_alternative: ?facts.ValidityRootId = null;
+            if (left_only.items.len == 0 and right_only.items.len == 1) {
+                for (right_value.owned_roots) |root| {
+                    if (!containsRoot(left_value.owned_roots, root)) continue;
+                    const index = @intFromEnum(root);
+                    const left_alive = index < left.tracker.roots.items.len and left.tracker.isAlive(root);
+                    const right_alive = index < right.tracker.roots.items.len and right.tracker.isAlive(root);
+                    if (left_alive or right_alive) continue;
+                    try appendRootFact(&left_only, root);
+                    stale_alternative = root;
+                    break;
+                }
+                var left_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                defer left_dependencies.deinit();
+                try collectDependencyRoots(left_value, &left_dependencies);
+                for (left_dependencies.items) |root| {
+                    if (stale_alternative != null) break;
+                    const index = @intFromEnum(root);
+                    if (!valueDependsOnRoot(right_value, root) or containsRoot(left_value.owned_roots, root) or
+                        containsRoot(right_value.owned_roots, root) or index >= left.tracker.roots.items.len or
+                        index >= right.tracker.roots.items.len or !left.tracker.roots.items[index].owned_resource or
+                        !left.tracker.isAlive(root) or right.tracker.isAlive(root)) continue;
+                    try appendRootFact(&left_only, root);
+                    stale_alternative = root;
+                    break;
+                }
+                if (stale_alternative == null) {
+                    var right_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                    defer right_dependencies.deinit();
+                    try collectDependencyRoots(right_value, &right_dependencies);
+                    for (right_dependencies.items) |root| {
+                        const index = @intFromEnum(root);
+                        if (valueDependsOnRoot(left_value, root) or containsRoot(right_value.owned_roots, root) or
+                            index >= right.tracker.roots.items.len or !right.tracker.roots.items[index].owned_resource or
+                            right.tracker.isAlive(root)) continue;
+                        try appendRootFact(&left_only, root);
+                        stale_alternative = root;
+                        break;
+                    }
+                }
+            } else if (right_only.items.len == 0 and left_only.items.len == 1) {
+                for (left_value.owned_roots) |root| {
+                    if (!containsRoot(right_value.owned_roots, root)) continue;
+                    const index = @intFromEnum(root);
+                    const left_alive = index < left.tracker.roots.items.len and left.tracker.isAlive(root);
+                    const right_alive = index < right.tracker.roots.items.len and right.tracker.isAlive(root);
+                    if (left_alive or right_alive) continue;
+                    try appendRootFact(&right_only, root);
+                    stale_alternative = root;
+                    break;
+                }
+                var right_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                defer right_dependencies.deinit();
+                try collectDependencyRoots(right_value, &right_dependencies);
+                for (right_dependencies.items) |root| {
+                    if (stale_alternative != null) break;
+                    const index = @intFromEnum(root);
+                    if (!valueDependsOnRoot(left_value, root) or containsRoot(left_value.owned_roots, root) or
+                        containsRoot(right_value.owned_roots, root) or index >= left.tracker.roots.items.len or
+                        index >= right.tracker.roots.items.len or !right.tracker.roots.items[index].owned_resource or
+                        !right.tracker.isAlive(root) or left.tracker.isAlive(root)) continue;
+                    try appendRootFact(&right_only, root);
+                    stale_alternative = root;
+                    break;
+                }
+                if (stale_alternative == null) {
+                    var left_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                    defer left_dependencies.deinit();
+                    try collectDependencyRoots(left_value, &left_dependencies);
+                    for (left_dependencies.items) |root| {
+                        const index = @intFromEnum(root);
+                        if (valueDependsOnRoot(right_value, root) or containsRoot(left_value.owned_roots, root) or
+                            index >= left.tracker.roots.items.len or !left.tracker.roots.items[index].owned_resource or
+                            left.tracker.isAlive(root)) continue;
+                        try appendRootFact(&right_only, root);
+                        stale_alternative = root;
+                        break;
+                    }
+                }
+            }
+
+            if (left_only.items.len == 0 and right_only.items.len == 0) {
+                var left_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                defer left_dependencies.deinit();
+                try collectDependencyRoots(left_value, &left_dependencies);
+                var right_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                defer right_dependencies.deinit();
+                try collectDependencyRoots(right_value, &right_dependencies);
+                for (left_dependencies.items) |root| {
+                    const index = @intFromEnum(root);
+                    if ((existing_phi == null or root != existing_phi.?) and
+                        !containsRoot(right_dependencies.items, root) and index < left.tracker.roots.items.len and
+                        left.tracker.roots.items[index].owned_resource and left.tracker.isAlive(root))
+                        try appendRootFact(&left_only, root);
+                }
+                for (right_dependencies.items) |root| {
+                    const index = @intFromEnum(root);
+                    if ((existing_phi == null or root != existing_phi.?) and
+                        !containsRoot(left_dependencies.items, root) and index < right.tracker.roots.items.len and
+                        right.tracker.roots.items[index].owned_resource and right.tracker.isAlive(root))
+                        try appendRootFact(&right_only, root);
+                }
+            }
+            if (left_only.items.len == 0 and right_only.items.len == 0) continue;
+            if (left_only.items.len + right_only.items.len > 2) continue;
+            if (left_only.items.len > 1) {
+                var alive: usize = 0;
+                for (left_only.items) |root| {
+                    if (left.tracker.isAlive(root)) alive += 1;
+                }
+                if (right_only.items.len != 0 or alive != 1) continue;
+            }
+            if (right_only.items.len > 1) {
+                var alive: usize = 0;
+                for (right_only.items) |root| {
+                    if (right.tracker.isAlive(root)) alive += 1;
+                }
+                if (left_only.items.len != 0 or alive != 1) continue;
+            }
+
+            var alternatives: [2]facts.ValidityRootId = undefined;
+            var alternative_count: usize = 0;
+            for (left_only.items) |root| {
+                alternatives[alternative_count] = root;
+                alternative_count += 1;
+            }
+            for (right_only.items) |root| {
+                alternatives[alternative_count] = root;
+                alternative_count += 1;
+            }
+
+            var safe = true;
+            for (alternatives[0..alternative_count]) |root| {
+                const index = @intFromEnum(root);
+                const left_stale_remnant = stale_alternative == root and index < left.tracker.roots.items.len and !left.tracker.isAlive(root);
+                const right_stale_remnant = stale_alternative == root and index < right.tracker.roots.items.len and !right.tracker.isAlive(root);
+                if ((valueDependsOnRoot(left_value, root) and !containsRoot(left_value.owned_roots, root) and !left_stale_remnant) or
+                    (valueDependsOnRoot(right_value, root) and !containsRoot(right_value.owned_roots, root) and !right_stale_remnant))
+                {
+                    safe = false;
+                    break;
+                }
+            }
+            if (!safe) continue;
+
+            const logical_storage = if (existing_phi != null)
+                loopRootPhiStorage(context, existing_phi.?).?
+            else
+                self.loopPhiOwnerStorage(joined, joined_place.storage, alternatives[0..alternative_count]);
+            const phi = try self.loopRootPhi(context, joined, logical_storage);
+            for (joined.places.items) |*related| {
+                if (!logical_storage.isPrefixOf(related.storage)) continue;
+                related.value = try self.replaceValueRoots(related.value, alternatives[0..alternative_count], phi);
+            }
+            self.replaceOwnershipEdgeRoots(joined, alternatives[0..alternative_count], phi);
+        }
+        self.trimUnreferencedLoopRoots(context, joined);
+    }
+
+    fn trimUnreferencedLoopRoots(self: *SafetyChecker, context: *const LoopJoinContext, state: *FunctionState) void {
+        while (state.tracker.roots.items.len != 0) {
+            const root: facts.ValidityRootId = @enumFromInt(state.tracker.roots.items.len - 1);
+            var referenced = false;
+            for (context.roots.items) |entry| if (entry.root == root) {
+                referenced = true;
+                break;
+            };
+            if (!referenced) referenced = rootIsStructurallyReferenced(state, root);
+            if (referenced) return;
+            _ = state.tracker.roots.pop();
+        }
+        _ = self;
+    }
+
+    fn loopPhiOwnerStorage(
+        self: *SafetyChecker,
+        state: *const FunctionState,
+        fallback: facts.Place,
+        roots: []const facts.ValidityRootId,
+    ) facts.Place {
+        _ = self;
+        var result = fallback;
+        for (state.places.items) |candidate| {
+            if (candidate.storage.root != fallback.root or candidate.storage.projections.len <= result.projections.len) continue;
+            var contains = false;
+            for (roots) |root| if (containsRoot(candidate.value.owned_roots, root)) {
+                contains = true;
+                break;
+            };
+            if (contains) result = candidate.storage;
+        }
+        return result;
+    }
+
+    fn replaceOwnershipEdgeRoots(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        sources: []const facts.ValidityRootId,
+        replacement: facts.ValidityRootId,
+    ) void {
+        var write: usize = 0;
+        for (state.ownership_edges.items) |edge| {
+            const rewritten = OwnershipEdge{
+                .owner = if (containsRoot(sources, edge.owner)) replacement else edge.owner,
+                .owned = if (containsRoot(sources, edge.owned)) replacement else edge.owned,
+            };
+            var duplicate = false;
+            for (state.ownership_edges.items[0..write]) |existing| {
+                if (existing.owner == rewritten.owner and existing.owned == rewritten.owned) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) {
+                state.ownership_edges.items[write] = rewritten;
+                write += 1;
+            }
+        }
+        state.ownership_edges.shrinkRetainingCapacity(write);
+        _ = self;
+    }
+
+    fn loopRootPhi(
+        self: *SafetyChecker,
+        context: *LoopJoinContext,
+        state: *FunctionState,
+        storage: facts.Place,
+    ) !facts.ValidityRootId {
+        _ = self;
+        for (context.roots.items) |entry| if (entry.storage.eql(storage)) {
+            const index = @intFromEnum(entry.root);
+            if (index < state.tracker.roots.items.len) {
+                state.tracker.roots.items[index].state = .alive;
+                state.tracker.roots.items[index].owned_resource = true;
+            }
+            return entry.root;
+        };
+        const root = try state.tracker.establish(.fresh);
+        state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
+        try context.roots.append(.{ .storage = storage, .root = root });
+        return root;
+    }
+
+    fn replaceValueRoots(
+        self: *SafetyChecker,
+        value: facts.ValueFacts,
+        sources: []const facts.ValidityRootId,
+        replacement: facts.ValidityRootId,
+    ) !facts.ValueFacts {
+        var result = value;
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+        for (value.dependencies) |dependency|
+            try appendDependencyFact(&dependencies, .{ .root = if (containsRoot(sources, dependency.root)) replacement else dependency.root });
+        result.dependencies = try dependencies.toOwnedSlice();
+        var owned_roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        for (value.owned_roots) |root|
+            try appendRootFact(&owned_roots, if (containsRoot(sources, root)) replacement else root);
+        result.owned_roots = try owned_roots.toOwnedSlice();
+        const fields = try self.allocator.alloc(facts.FieldFacts, value.fields.len);
+        for (value.fields, 0..) |field, index| {
+            const stored = try self.allocator.create(facts.ValueFacts);
+            stored.* = try self.replaceValueRoots(field.value.*, sources, replacement);
+            fields[index] = .{ .index = field.index, .value = stored };
+        }
+        result.fields = fields;
+        const variants = try self.allocator.alloc(facts.VariantFacts, value.variants.len);
+        for (value.variants, 0..) |variant, index| {
+            const stored = try self.allocator.create(facts.ValueFacts);
+            stored.* = try self.replaceValueRoots(variant.value.*, sources, replacement);
+            variants[index] = .{ .index = variant.index, .value = stored };
+        }
+        result.variants = variants;
+        return result;
     }
 
     fn mergeLoopTransfer(self: *SafetyChecker, destination: anytype, source: *const FunctionState) !void {
@@ -2642,6 +2970,38 @@ fn hasExternalOpaqueDependency(value: facts.ValueFacts, owned: []const facts.Val
     for (value.dependencies) |dependency| if (!containsRoot(owned, dependency.root)) return true;
     for (value.fields) |field| if (hasExternalOpaqueDependency(field.value.*, owned)) return true;
     for (value.variants) |variant| if (hasExternalOpaqueDependency(variant.value.*, owned)) return true;
+    return false;
+}
+
+fn loopRootPhiForStorage(context: *const SafetyChecker.LoopJoinContext, storage: facts.Place) ?facts.ValidityRootId {
+    var result: ?SafetyChecker.LoopRootPhi = null;
+    for (context.roots.items) |entry| {
+        if (!entry.storage.isPrefixOf(storage)) continue;
+        if (result == null or entry.storage.projections.len > result.?.storage.projections.len) result = entry;
+    }
+    return if (result) |entry| entry.root else null;
+}
+
+fn loopRootPhiStorage(context: *const SafetyChecker.LoopJoinContext, root: facts.ValidityRootId) ?facts.Place {
+    for (context.roots.items) |entry| if (entry.root == root) return entry.storage;
+    return null;
+}
+
+fn collectDependencyRoots(value: facts.ValueFacts, roots: *std.array_list.Managed(facts.ValidityRootId)) !void {
+    for (value.dependencies) |dependency| try appendRootFact(roots, dependency.root);
+    for (value.fields) |field| try collectDependencyRoots(field.value.*, roots);
+    for (value.variants) |variant| try collectDependencyRoots(variant.value.*, roots);
+}
+
+fn rootIsStructurallyReferenced(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) bool {
+    for (state.places.items) |stored|
+        if (valueContainsOwnedRoot(stored.value, root) or valueDependsOnRoot(stored.value, root)) return true;
+    for (state.storage_generations.items) |storage_generation|
+        if (storage_generation.generation == root) return true;
+    for (state.opaque_storages.items) |opaque_storage|
+        if (containsRoot(opaque_storage.hidden_dependencies, root)) return true;
+    for (state.ownership_edges.items) |edge|
+        if (edge.owner == root or edge.owned == root) return true;
     return false;
 }
 
@@ -3039,4 +3399,117 @@ test "state equality observes capability and storage generation changes" {
     try left.storage_capabilities.append(.available);
     try right.storage_capabilities.append(.consumed);
     try std.testing.expect(!statesEqual(&left, &right));
+}
+
+test "loop root widening is stable and preserves historical aliases" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+
+    const binding: graph_mod.GlobalBindingId = @enumFromInt(0);
+    const owner = facts.Place{ .root = binding, .projections = &.{.{ .field = 0 }} };
+    const alias = facts.Place{ .root = binding, .projections = &.{.{ .field = 1 }} };
+
+    var entry = SafetyChecker.FunctionState.init(allocator);
+    defer entry.deinit();
+    const old = try entry.tracker.establish(.fresh);
+    entry.tracker.roots.items[@intFromEnum(old)].owned_resource = true;
+    const child = try entry.tracker.establish(.fresh);
+    entry.tracker.roots.items[@intFromEnum(child)].owned_resource = true;
+    try entry.ownership_edges.append(.{ .owner = old, .owned = child });
+    try entry.places.append(.{ .storage = owner, .initializedness = .initialized, .value = .{
+        .dependencies = &.{.{ .root = old }},
+        .owned_roots = &.{old},
+    } });
+    try entry.places.append(.{ .storage = alias, .initializedness = .initialized, .value = .{
+        .dependencies = &.{.{ .root = old }},
+    } });
+
+    var iteration = try entry.clone(allocator, null);
+    defer iteration.deinit();
+    iteration.tracker.end(old);
+    const replacement = try iteration.tracker.establish(.fresh);
+    iteration.tracker.roots.items[@intFromEnum(replacement)].owned_resource = true;
+    try iteration.ownership_edges.append(.{ .owner = replacement, .owned = child });
+    checker.getPlace(&iteration, owner).?.value = .{
+        .dependencies = &.{.{ .root = replacement }},
+        .owned_roots = &.{replacement},
+    };
+
+    var context = SafetyChecker.LoopJoinContext.init(allocator);
+    defer context.deinit();
+    var joined = try entry.clone(allocator, null);
+    defer joined.deinit();
+    try checker.joinState(&joined, &entry, &iteration);
+    try checker.widenLoopOwnedRoots(&context, &joined, &entry, &iteration);
+    try std.testing.expectEqual(@as(usize, 1), context.roots.items.len);
+    const phi = context.roots.items[0].root;
+    const widened_owner = checker.getPlace(&joined, owner).?.value;
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{phi}, widened_owner.owned_roots);
+    try std.testing.expect(joined.tracker.dependenciesAreAlive(widened_owner));
+    try std.testing.expect(!joined.tracker.dependenciesAreAlive(checker.getPlace(&joined, alias).?.value));
+    try std.testing.expectEqual(@as(usize, 1), joined.ownership_edges.items.len);
+    try std.testing.expectEqual(phi, joined.ownership_edges.items[0].owner);
+    try std.testing.expectEqual(child, joined.ownership_edges.items[0].owned);
+    const stable_root_count = joined.tracker.roots.items.len;
+
+    var second_iteration = try joined.clone(allocator, null);
+    defer second_iteration.deinit();
+    second_iteration.tracker.end(phi);
+    const second_replacement = try second_iteration.tracker.establish(.fresh);
+    second_iteration.tracker.roots.items[@intFromEnum(second_replacement)].owned_resource = true;
+    try second_iteration.ownership_edges.append(.{ .owner = second_replacement, .owned = child });
+    checker.getPlace(&second_iteration, owner).?.value = .{
+        .dependencies = &.{.{ .root = second_replacement }},
+        .owned_roots = &.{second_replacement},
+    };
+
+    var fixed_point = try entry.clone(allocator, null);
+    defer fixed_point.deinit();
+    try checker.joinState(&fixed_point, &entry, &second_iteration);
+    try checker.widenLoopOwnedRoots(&context, &fixed_point, &entry, &second_iteration);
+    try std.testing.expectEqual(phi, checker.getPlace(&fixed_point, owner).?.value.owned_roots[0]);
+    try std.testing.expectEqual(stable_root_count, fixed_point.tracker.roots.items.len);
+    try std.testing.expectEqual(@as(usize, 1), fixed_point.ownership_edges.items.len);
+    try std.testing.expectEqual(phi, fixed_point.ownership_edges.items[0].owner);
+}
+
+test "loop root widening does not hide crossed stale dependencies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+
+    const storage = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(0)) };
+    var left = SafetyChecker.FunctionState.init(allocator);
+    defer left.deinit();
+    const first = try left.tracker.establish(.fresh);
+    const second = try left.tracker.establish(.fresh);
+    left.tracker.roots.items[@intFromEnum(first)].owned_resource = true;
+    left.tracker.roots.items[@intFromEnum(second)].owned_resource = true;
+    left.tracker.end(second);
+    try left.places.append(.{ .storage = storage, .value = .{
+        .dependencies = &.{ .{ .root = first }, .{ .root = second } },
+        .owned_roots = &.{first},
+    } });
+    var right = try left.clone(allocator, null);
+    defer right.deinit();
+    right.tracker.roots.items[@intFromEnum(first)].state = .dead;
+    right.tracker.roots.items[@intFromEnum(second)].state = .alive;
+    checker.getPlace(&right, storage).?.value = .{
+        .dependencies = &.{ .{ .root = first }, .{ .root = second } },
+        .owned_roots = &.{second},
+    };
+
+    var joined = try left.clone(allocator, null);
+    defer joined.deinit();
+    try checker.joinState(&joined, &left, &right);
+    var context = SafetyChecker.LoopJoinContext.init(allocator);
+    defer context.deinit();
+    try checker.widenLoopOwnedRoots(&context, &joined, &left, &right);
+    try std.testing.expectEqual(@as(usize, 0), context.roots.items.len);
+    try std.testing.expect(!joined.tracker.dependenciesAreAlive(checker.getPlace(&joined, storage).?.value));
 }
