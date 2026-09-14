@@ -75,7 +75,7 @@ pub const Infer = struct {
         }
     }
 
-    fn virtualSummary(
+    pub fn virtualSummary(
         self: *Infer,
         registry_id: graph_mod.GlobalVirtualRegistryId,
     ) !?facts.SafetySummary {
@@ -103,6 +103,10 @@ pub const Infer = struct {
         }
         try self.virtual_summaries.put(registry_id, merged);
         return merged;
+    }
+
+    pub fn virtualSummaryInvalid(self: *const Infer, registry_id: graph_mod.GlobalVirtualRegistryId) bool {
+        return self.invalid_virtual_summaries.contains(registry_id);
     }
 
     fn mergeVirtualSafetySummary(
