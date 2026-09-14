@@ -1943,7 +1943,16 @@ pub const SafetyChecker = struct {
         }
 
         if (call.self_input_index >= values.len) return .{};
-        const receiver = values[call.self_input_index];
+        // The call argument points at the Virtual wrapper, while the exact
+        // implementation facts are stored in that wrapper's value. Recover
+        // them when available; parameters and joined values still fall back
+        // to the program-wide virtual summary below.
+        var receiver = values[call.self_input_index];
+        if (receiver.referenced_place) |wrapper| {
+            if (self.valueAtPlace(&candidate, wrapper)) |stored| {
+                if (stored.referenced_place != null) receiver = stored;
+            }
+        }
         if (call.method_index >= receiver.virtual_methods.len) {
             const result = (try self.applyVirtualSummaryFallback(
                 call,
