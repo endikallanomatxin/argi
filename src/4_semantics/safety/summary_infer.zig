@@ -603,14 +603,14 @@ pub const Infer = struct {
     ) !void {
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = self.bindings.get(cleanup.binding);
-        if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| if (binding_effect) |effect| {
+        if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| {
             if (self.engine.summaryFor(deinit_fn)) |summary|
                 try self.applyInputPostStatesFromSummary(
                     function_id,
                     summary,
                     input,
                     states,
-                    .{ .input_index = cleanup.self_field_index, .effect = effect },
+                    if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null,
                 );
         };
         if (binding_effect) |effect|
@@ -1148,13 +1148,13 @@ pub const Infer = struct {
         if (cleanup.input) |input| {
             try self.inferRequiredLiveInputsNode(function_id, input, required);
             if (cleanup.deinit_fn) |deinit_fn| {
-                if (self.engine.summaryFor(deinit_fn)) |summary| if (binding_effect) |effect|
+                if (self.engine.summaryFor(deinit_fn)) |summary|
                     try self.substituteRequiredLiveInputsWithOverride(
                         function_id,
                         summary.required_live_inputs,
                         input,
                         required,
-                        .{ .input_index = cleanup.self_field_index, .effect = effect },
+                        if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null,
                     );
             }
         }
