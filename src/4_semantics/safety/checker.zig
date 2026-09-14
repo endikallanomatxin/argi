@@ -127,7 +127,7 @@ pub const SafetyChecker = struct {
 
     allocator: std.mem.Allocator,
     diagnostics: *diagnostics.Diagnostics,
-    graph: *const graph_mod.GlobalSemanticGraph,
+    graph: *graph_mod.GlobalSemanticGraph,
     call_stack: std.array_list.Managed(graph_mod.GlobalFunctionId),
     active_summaries: ?*summary_engine.Engine = null,
     active_summary_inference: ?*summary_infer.Infer = null,
@@ -137,7 +137,7 @@ pub const SafetyChecker = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         diags: *diagnostics.Diagnostics,
-        graph: *const graph_mod.GlobalSemanticGraph,
+        graph: *graph_mod.GlobalSemanticGraph,
     ) SafetyChecker {
         return .{
             .allocator = allocator,
@@ -406,7 +406,7 @@ pub const SafetyChecker = struct {
             .array_literal => |literal| try self.evaluateArray(function, literal, state),
             .choice_literal => |literal| try self.evaluateChoice(function, literal, state),
             .choice_payload_access => |access| try self.evaluateChoicePayload(function, node.source, access, state),
-            .function_call => |call| try self.evaluateCall(function, call, state),
+            .function_call => |call| try self.evaluateCall(function, node_id, call, state),
             .virtual_call => |call_id| try self.evaluateVirtualCall(function, call_id, state),
             .virtualize => |virtualize_id| blk: {
                 const virtualize = self.graph.virtualizes.items[@intFromEnum(virtualize_id)];
@@ -494,12 +494,18 @@ pub const SafetyChecker = struct {
         };
     }
 
-    fn evaluateCall(self: *SafetyChecker, caller: graph_mod.GlobalFunctionId, call: anytype, state: *FunctionState) !facts.ValueFacts {
+    fn evaluateCall(
+        self: *SafetyChecker,
+        caller: graph_mod.GlobalFunctionId,
+        call_node: graph_mod.GlobalNodeId,
+        call: anytype,
+        state: *FunctionState,
+    ) !facts.ValueFacts {
         if (self.collect_stats) self.stats.calls += 1;
         var candidate = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
         defer candidate.deinit();
         const diagnostic_count = self.diagnostics.list.items.len;
-        const result = try self.evaluateCallCandidate(caller, call, &candidate);
+        const result = try self.evaluateCallCandidate(caller, call_node, call, &candidate);
         if (self.diagnostics.list.items.len != diagnostic_count) return .{};
         self.commitState(state, &candidate);
         return result;
@@ -508,6 +514,7 @@ pub const SafetyChecker = struct {
     fn evaluateCallCandidate(
         self: *SafetyChecker,
         caller: graph_mod.GlobalFunctionId,
+        call_node: ?graph_mod.GlobalNodeId,
         call: anytype,
         state: *FunctionState,
     ) !facts.ValueFacts {
@@ -540,12 +547,13 @@ pub const SafetyChecker = struct {
         }
 
         if (self.callStackContains(call.callee) and self.collect_stats) self.stats.recursive_edges += 1;
-        return (try self.applyFunctionSummary(input_node.source, call.callee, argument_nodes, values, state)) orelse .{};
+        return (try self.applyFunctionSummary(input_node.source, call_node, call.callee, argument_nodes, values, state)) orelse .{};
     }
 
     fn applyFunctionSummary(
         self: *SafetyChecker,
         source: primitives.SourceRef,
+        call_node: ?graph_mod.GlobalNodeId,
         callee: graph_mod.GlobalFunctionId,
         argument_nodes: []const graph_mod.GlobalValueFieldId,
         values: []const facts.ValueFacts,
@@ -554,8 +562,28 @@ pub const SafetyChecker = struct {
         const engine = self.active_summaries orelse return null;
         const summary = engine.summaryFor(callee) orelse return null;
         if (!try self.validateSummaryRequiredLive(source, summary, values, state)) return facts.ValueFacts{};
+        if (call_node) |node| self.recordFunctionCallAutoDeinit(node, summary, argument_nodes);
         try self.applySummaryEffects(source, summary, argument_nodes, values, state);
         return try self.instantiateSummaryOutputs(summary.outputs, values, state);
+    }
+
+    fn recordFunctionCallAutoDeinit(
+        self: *SafetyChecker,
+        call_node: graph_mod.GlobalNodeId,
+        summary: facts.SafetySummary,
+        argument_ids: []const graph_mod.GlobalValueFieldId,
+    ) void {
+        const node = &self.graph.nodes.items[@intFromEnum(call_node)];
+        if (node.content != .function_call) return;
+        for (summary.input_post_states) |post_state| {
+            if (post_state.target.projections.len != 0 or post_state.target.input_index >= argument_ids.len) continue;
+            const field = self.graph.value_fields.items[@intFromEnum(argument_ids[post_state.target.input_index])];
+            if (self.graph.nodes.items[@intFromEnum(field.value)].content != .address_of or self.rootBinding(field.value) == null) continue;
+            if (post_state.requires_available_destination)
+                node.content.function_call.initializes_auto_deinit = field.value;
+            if (post_state.initializedness == .deinitialized or post_state.initializedness == .moved)
+                node.content.function_call.consumes_auto_deinit = field.value;
+        }
     }
 
     fn evaluatePrimitive(
@@ -1990,7 +2018,7 @@ pub const SafetyChecker = struct {
             return result;
         }
         if (self.callStackContains(callee_id) and self.collect_stats) self.stats.recursive_edges += 1;
-        const result = (try self.applyFunctionSummary(input_node.source, callee_id, argument_nodes, values, &candidate)) orelse facts.ValueFacts{};
+        const result = (try self.applyFunctionSummary(input_node.source, null, callee_id, argument_nodes, values, &candidate)) orelse facts.ValueFacts{};
         if (self.diagnostics.list.items.len != diagnostic_count) return .{};
         self.commitState(state, &candidate);
         return result;
@@ -3840,10 +3868,45 @@ test "recursive summary helper instantiates converged outputs" {
 
     const result = (try checker.applyFunctionSummary(
         .{ .file_index = 0, .offset = 0 },
+        null,
         function,
         &.{},
         &.{},
         &state,
     )).?;
     try std.testing.expect(result.integer_address);
+}
+
+test "direct call summaries annotate auto deinit transitions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const binding: graph_mod.GlobalBindingId = @enumFromInt(0);
+    const binding_use: graph_mod.GlobalNodeId = @enumFromInt(0);
+    const address: graph_mod.GlobalNodeId = @enumFromInt(1);
+    const initializes_call: graph_mod.GlobalNodeId = @enumFromInt(2);
+    const consumes_call: graph_mod.GlobalNodeId = @enumFromInt(3);
+    try graph.nodes.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .binding_use = binding } });
+    try graph.nodes.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .address_of = binding_use } });
+    try graph.nodes.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .function_call = .{ .callee = @enumFromInt(0), .input = binding_use } } });
+    try graph.nodes.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .function_call = .{ .callee = @enumFromInt(0), .input = binding_use } } });
+    try graph.value_fields.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = address });
+
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    checker.recordFunctionCallAutoDeinit(initializes_call, .{ .input_post_states = &.{.{
+        .target = .{ .input_index = 0 },
+        .initializedness = .initialized,
+        .requires_available_destination = true,
+    }} }, &.{@as(graph_mod.GlobalValueFieldId, @enumFromInt(0))});
+    checker.recordFunctionCallAutoDeinit(consumes_call, .{ .input_post_states = &.{.{
+        .target = .{ .input_index = 0 },
+        .initializedness = .deinitialized,
+    }} }, &.{@as(graph_mod.GlobalValueFieldId, @enumFromInt(0))});
+
+    try std.testing.expectEqual(address, graph.nodes.items[@intFromEnum(initializes_call)].content.function_call.initializes_auto_deinit.?);
+    try std.testing.expectEqual(address, graph.nodes.items[@intFromEnum(consumes_call)].content.function_call.consumes_auto_deinit.?);
 }
