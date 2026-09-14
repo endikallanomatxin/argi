@@ -225,12 +225,17 @@ pub const SafetyChecker = struct {
                 },
                 .auto_deinit_binding => |auto_id| try self.applyAutoDeinit(function, auto_id, state),
                 .struct_field_store => |store| {
+                    const pointer = try self.evaluatePointerUse(function, node.source, store.struct_ptr, state) orelse continue;
                     const value = try self.evaluate(function, store.value, state);
+                    try self.recordOpaqueWrite(state, pointer, value);
                     if (try self.resolvePlace(store.struct_ptr, state)) |base|
                         try self.setPlace(state, try self.project(base, .{ .field = store.field_index }), .initialized, value);
                 },
                 .array_store => |store| {
+                    const pointer = try self.evaluatePointerUse(function, node.source, store.array_ptr, state) orelse continue;
+                    _ = try self.evaluate(function, store.index, state);
                     const value = try self.evaluate(function, store.value, state);
+                    try self.recordOpaqueWrite(state, pointer, value);
                     if (try self.resolvePlace(store.array_ptr, state)) |base| {
                         const projection: facts.Projection = if (self.staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
                         try self.setPlace(state, try self.project(base, projection), .initialized, value);
@@ -240,6 +245,7 @@ pub const SafetyChecker = struct {
                     const pointer = try self.evaluate(function, assignment.pointer, state);
                     try self.requireLive(function, node.source, pointer, state);
                     const value = try self.evaluate(function, assignment.value, state);
+                    try self.recordOpaqueWrite(state, pointer, value);
                     if (pointer.referenced_place) |target| try self.setPlace(state, target, .initialized, value);
                 },
                 .if_statement => |statement| {
@@ -1792,6 +1798,15 @@ pub const SafetyChecker = struct {
                     if (dependency.root == entry.generation) try appendPlaceFact(result, opaque_storage.storage);
             }
         }
+    }
+
+    fn recordOpaqueWrite(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, value: facts.ValueFacts) !void {
+        // Slot contents remain opaque, but every reference stored through an
+        // access to the domain must constrain the lifetime of its target.
+        var domains = std.array_list.Managed(facts.Place).init(self.allocator);
+        defer domains.deinit();
+        try self.collectOpaqueDomainsAccessedBy(state, pointer, &domains);
+        for (domains.items) |domain| try self.hideOpaqueDependencies(state, domain, value);
     }
 
     fn collectOpaqueProvenancesCarriedBy(
@@ -3856,6 +3871,26 @@ test "dead root output detection traverses choice payloads" {
     const payload = facts.ValueFacts{ .dependencies = &.{.{ .root = root }} };
     const value = facts.ValueFacts{ .variants = &.{.{ .index = 0, .value = &payload }} };
     try std.testing.expect(valueDependsOnDeadRoot(value, &state));
+}
+
+test "opaque writes repopulate only accessed domains" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const domain = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(0)) };
+    const other = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(1)) };
+    const root = try state.tracker.establish(.fresh);
+    try checker.mergeOpaqueStorage(&state, domain, &.{});
+    try checker.mergeOpaqueStorage(&state, other, &.{});
+    try checker.recordOpaqueWrite(&state, .{ .opaque_provenance = &.{.{ .storage = domain, .generation = root }} }, .{ .dependencies = &.{.{ .root = root }} });
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{root}, state.opaque_storages.items[0].hidden_dependencies);
+    try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[1].hidden_dependencies.len);
 }
 
 test "payload transfer removes residual ownership without reviving ended roots" {
