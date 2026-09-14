@@ -242,7 +242,19 @@ pub const SafetyChecker = struct {
                     }
                 },
                 .pointer_assignment => |assignment| {
-                    const pointer = try self.evaluate(function, assignment.pointer, state);
+                    var pointer = try self.evaluate(function, assignment.pointer, state);
+                    if (pointer.referenced_place) |target| {
+                        if (self.initializednessAtPlace(state, target) == .deinitialized and pointer.opaque_provenance.len == 0) {
+                            const old_generation = try self.storageGeneration(state, target);
+                            try self.refreshStorageGenerationChecked(node.source, state, target);
+                            const generation = try self.storageGeneration(state, target);
+                            // Only the precise pointer used to initialize storage
+                            // follows its new generation; historical aliases do not.
+                            pointer = try self.replaceValueRoots(pointer, &.{old_generation}, generation);
+                            if (try self.resolvePlace(assignment.pointer, state)) |pointer_storage|
+                                try self.setPlace(state, pointer_storage, .initialized, pointer);
+                        }
+                    }
                     try self.requireLive(function, node.source, pointer, state);
                     const value = try self.evaluate(function, assignment.value, state);
                     try self.recordOpaqueWrite(state, pointer, value);
@@ -374,6 +386,7 @@ pub const SafetyChecker = struct {
                 break :blk value;
             },
             .address_of => |child| blk: {
+                try self.validateAddressAccess(function, node.source, child, state);
                 const storage = try self.resolvePlace(child, state) orelse break :blk .{};
                 const opaque_provenance = try self.opaqueProvenanceForAccess(child, state);
                 var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
@@ -2245,6 +2258,23 @@ pub const SafetyChecker = struct {
             try self.call_stack.append(deinit_fn);
             defer _ = self.call_stack.pop();
             try self.validateBlock(deinit_fn, body, state, null);
+        }
+    }
+
+    // Taking an address does not read the destination, but every pointer used
+    // to reach it must still refer to a live storage generation.
+    fn validateAddressAccess(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, node_id: graph_mod.GlobalNodeId, state: *FunctionState) !void {
+        switch (self.graph.nodes.items[@intFromEnum(node_id)].content) {
+            .dereference => |access| {
+                _ = try self.evaluatePointerUse(function, source, access.pointer, state);
+            },
+            .struct_field_access => |access| try self.validateAddressAccess(function, source, access.value, state),
+            .choice_payload_access => |access| try self.validateAddressAccess(function, source, access.value, state),
+            .array_index => |access| {
+                _ = try self.evaluatePointerUse(function, source, access.array_ptr, state);
+                _ = try self.evaluate(function, access.index, state);
+            },
+            else => {},
         }
     }
 
