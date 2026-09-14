@@ -430,6 +430,82 @@ pub const Resolver = struct {
         }
     }
 
+    /// Virtual call safety is checked against every concrete implementation
+    /// that can inhabit the erased abstract type. Resolution records exact
+    /// methods on each `virtualize` node for codegen; once the program-wide set
+    /// is stable, this pass builds the conservative registries consumed by the
+    /// summary engine.
+    pub fn closeVirtualMethodRegistries(self: *Resolver) !void {
+        for (self.graph.virtualizes.items) |virtualize| {
+            const registries = self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len];
+            for (registries, 0..) |registry_id, method_index|
+                try self.closeVirtualMethodRegistry(registry_id, virtualize.abstract_decl, method_index);
+        }
+
+        for (self.graph.virtual_calls.items) |call| {
+            const abstract_decl = self.virtualCallAbstract(call) orelse continue;
+            try self.closeVirtualMethodRegistry(call.safety_methods, abstract_decl, call.method_index);
+        }
+    }
+
+    fn closeVirtualMethodRegistry(
+        self: *Resolver,
+        registry_id: global_sg.GlobalVirtualRegistryId,
+        abstract_decl: global_sg.GlobalDeclId,
+        method_index: usize,
+    ) !void {
+        var implementations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
+        defer implementations.deinit(self.allocator);
+
+        for (self.graph.virtualizes.items) |candidate| {
+            if (candidate.abstract_decl != abstract_decl or method_index >= candidate.methods.len) continue;
+            const implementation = self.graph.function_refs.items[candidate.methods.start + @as(u32, @intCast(method_index))];
+            var exists = false;
+            for (implementations.items) |existing| if (existing == implementation) {
+                exists = true;
+                break;
+            };
+            if (exists) continue;
+            try implementations.append(self.allocator, implementation);
+        }
+
+        const start: u32 = @intCast(self.graph.function_refs.items.len);
+        try self.graph.function_refs.appendSlice(self.allocator, implementations.items);
+        self.graph.virtual_registries.items[@intFromEnum(registry_id)].implementations = .{
+            .start = start,
+            .len = @intCast(implementations.items.len),
+        };
+    }
+
+    fn virtualCallAbstract(self: *const Resolver, call: global_sg.VirtualCall) ?global_sg.GlobalDeclId {
+        const handle_ty = self.graph.nodes.items[@intFromEnum(call.handle)].ty orelse return null;
+        const handle_child = switch (self.graph.types.items[@intFromEnum(handle_ty)]) {
+            .pointer => |pointer| pointer.child,
+            else => handle_ty,
+        };
+        if (self.abstractDeclFromType(handle_child)) |declaration| return declaration;
+
+        const input_fields = global_types.fields(self.graph, call.input_type) orelse return null;
+        if (call.self_input_index >= input_fields.len) return null;
+        const self_ty = self.graph.fields.items[input_fields.start + call.self_input_index].ty;
+        const self_child = switch (self.graph.types.items[@intFromEnum(self_ty)]) {
+            .pointer => |pointer| pointer.child,
+            else => self_ty,
+        };
+        return self.abstractDeclFromType(self_child);
+    }
+
+    fn abstractDeclFromType(self: *const Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalDeclId {
+        const abstract_ty = switch (self.graph.types.items[@intFromEnum(ty)]) {
+            .virtual => |abstract_type| abstract_type,
+            else => ty,
+        };
+        return switch (self.graph.types.items[@intFromEnum(abstract_ty)]) {
+            .declared => |declaration| if (self.findAbstractDefinition(declaration) != null) declaration else null,
+            else => null,
+        };
+    }
+
     fn matchesImplementationParameterized(
         self: *Resolver,
         module_index: usize,

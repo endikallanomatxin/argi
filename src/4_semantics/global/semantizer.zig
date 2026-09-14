@@ -287,6 +287,8 @@ pub fn semantize(
         return error.UnsupportedGlobalSemantic;
     }
 
+    try abstracts.closeVirtualMethodRegistries();
+
     // Construction-only resolution metadata must disappear before the graph is
     // exposed to Safety, Codegen or editor consumers.
     try relocation.graph.finishTypeResolution(allocator);

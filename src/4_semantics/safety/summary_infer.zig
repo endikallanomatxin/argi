@@ -60,19 +60,30 @@ pub const Infer = struct {
                 try self.engine.summaries.put(id, .{ .outputs = outputs });
             try functions.append(id);
         }
-        try self.engine.seed(functions.items);
-
-        while (self.engine.nextDirty()) |function| {
+        var changed = true;
+        while (changed) {
+            changed = false;
             self.virtual_summaries.clearRetainingCapacity();
             self.invalid_virtual_summaries.clearRetainingCapacity();
-            self.engine.beginInference(function);
-            const next = self.inferFunction(function) catch |err| {
-                self.engine.current = null;
-                return err;
-            };
-            try self.engine.endInference();
-            _ = try self.engine.updateSummary(function, next);
+            try self.engine.seed(functions.items);
+
+            while (self.engine.nextDirty()) |function| {
+                self.virtual_summaries.clearRetainingCapacity();
+                self.invalid_virtual_summaries.clearRetainingCapacity();
+                self.engine.beginInference(function);
+                const next = self.inferFunction(function) catch |err| {
+                    self.engine.current = null;
+                    return err;
+                };
+                try self.engine.endInference();
+                if (try self.engine.updateSummary(function, next)) changed = true;
+            }
         }
+        // A virtual summary may have been cached while one of its concrete
+        // implementations still held an earlier fixed-point approximation.
+        // Runtime validation must merge the final summaries.
+        self.virtual_summaries.clearRetainingCapacity();
+        self.invalid_virtual_summaries.clearRetainingCapacity();
     }
 
     pub fn virtualSummary(
