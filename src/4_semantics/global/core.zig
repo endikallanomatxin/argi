@@ -845,9 +845,27 @@ pub const Resolver = struct {
 
     pub fn materializeAssignmentValues(self: *Resolver) bool {
         var changed = false;
+        for (self.graph.bindings.items, 0..) |binding, raw| {
+            if (self.graph.isBindingTypeUnresolved(@enumFromInt(@as(u32, @intCast(raw))))) continue;
+            const initialization = binding.initialization orelse continue;
+            if (self.graph.node(initialization).ty == null)
+                if (self.coerceContextualValue(initialization, binding.ty)) {
+                    changed = true;
+                };
+        }
         for (self.graph.nodes.items) |node| {
             const assignment = switch (node.content) {
                 .assignment => |value| value,
+                .pointer_assignment => |value| {
+                    if (self.graph.node(value.value).ty != null) continue;
+                    const pointer_ty = self.graph.node(value.pointer).ty orelse continue;
+                    const pointer = switch (self.graph.semanticType(pointer_ty)) {
+                        .pointer => |item| item,
+                        else => continue,
+                    };
+                    if (self.coerceContextualValue(value.value, pointer.child)) changed = true;
+                    continue;
+                },
                 else => continue,
             };
             if (self.graph.isBindingTypeUnresolved(assignment.binding)) continue;
