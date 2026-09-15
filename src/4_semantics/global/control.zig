@@ -292,7 +292,7 @@ pub const Resolver = struct {
         const payload_ty = hit.variant.payload_type orelse return false;
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
-            .source = self.graph.nodes.items[@intFromEnum(source)].source,
+            .source = self.sourceFor(value.source, o),
             .ty = payload_ty,
             .content = .{ .choice_payload_access = .{
                 .value = source,

@@ -221,6 +221,7 @@ pub const PendingOperation = union(enum) {
         node: ModuleNodeId,
         value: ModuleNodeId,
         option_name: primitives.StringRange,
+        source: primitives.SourceRef,
     },
     resolve_nullable_unwrap: struct {
         node: ModuleNodeId,
