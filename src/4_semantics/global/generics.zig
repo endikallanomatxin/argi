@@ -167,11 +167,26 @@ pub const Resolver = struct {
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
         bindings: *Bindings,
     ) !void {
+        try self.bindGlobalArgumentsPartial(module_index, parameters, arguments, bindings);
+        for (parameters.start..parameters.start + parameters.len) |param_raw| {
+            const parameter = self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items[param_raw];
+            if (parameter.kind == .type and bindings.types[param_raw] == null) return error.MissingGenericArgument;
+            if (parameter.kind == .comptime_int and bindings.ints[param_raw] == null) return error.MissingGenericArgument;
+        }
+    }
+
+    pub fn bindGlobalArgumentsPartial(
+        self: *Resolver,
+        module_index: usize,
+        parameters: primitives.Range(ir.ComptimeParameterId),
+        arguments: primitives.Range(global_sg.GlobalGenericArgId),
+        bindings: *Bindings,
+    ) !void {
         const module = &self.modules[module_index];
         for (0..parameters.len) |position| {
             const param_raw = parameters.start + @as(u32, @intCast(position));
             const parameter = module.semantic.parameterized_storage.comptime_parameters.items[param_raw];
-            const argument = self.findGlobalArgument(module, parameter.name, arguments, position) orelse return error.MissingGenericArgument;
+            const argument = self.findGlobalArgument(module, parameter.name, arguments, position) orelse continue;
             switch (parameter.kind) {
                 .type => switch (argument.value) {
                     .type => |value| bindings.types[param_raw] = value,

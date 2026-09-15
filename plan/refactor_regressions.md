@@ -59,8 +59,10 @@ hardcoded. The minimal program consequently advances beyond the former
 `write_trace_text` codegen signature failure, but exhaustive core bodies still
 leave unrelated string operations pending. Selective reachability/root-context
 construction remains necessary, and functions with explicit generic
-parameters must also append implicit constrained parameters instead of choosing
-only one parameter category.
+parameters now append implicit constrained parameters instead of choosing only
+one parameter category. Explicit dispatch binds supplied arguments, infers the
+remaining contract parameters from the call input, and publishes the complete
+substitution list used as the concrete instance identity.
 Abstract contracts nested inside ordinary generic type arguments are also
 collected as constrained type parameters. `Virtual#(.abstract: ...)` is an
 exception because its abstract argument selects a runtime vtable rather than
