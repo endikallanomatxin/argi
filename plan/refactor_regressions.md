@@ -23,9 +23,13 @@ context, then the selected concrete type can drive specialization. No core
 contract names are hardcoded into the lowering path.
 Parameterized ModuleSema now retains `#reach` alternatives and path segments
 in its own indexed IR when they appear as function input defaults. This data
-was previously dropped by the template body lowerer. GlobalSema still needs
-to instantiate those defaults and resolve them against the caller's captured
-binding context before implicit type inference.
+was previously dropped by the template body lowerer. Parameterized input and
+output bindings now retain their default initializers as well. Generic dispatch
+uses the presence of those defaults while scoring an omitted argument, then
+the selected instance receives its own concrete default nodes without mutating
+an interned structural type. Instantiated `#reach` alternatives are resolved
+against the ordinary caller scope by the same GlobalSema path as non-generic
+calls.
 Ordinary ModuleSema call operations capture the binding IDs visible at the
 call site in lexical order. GlobalSema consumes that scope when completing
 reached defaults. Missing values still require propagation through the
