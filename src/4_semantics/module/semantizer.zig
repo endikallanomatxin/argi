@@ -59,6 +59,7 @@ pub fn buildWithAbstractCatalog(
     // space and must not depend on the builder-era compatibility prefixes.
     const module_aliases = try module_alias_lowerer.lower(allocator, &graph, files);
     const initializers = try initializer_lowerer.lower(allocator, &graph, files);
+    try lowerNominalLayouts(allocator, &graph, files);
     try canonicalize_storage.run(allocator, &graph);
 
     try lowerOperatorMetadata(allocator, &graph, files);
@@ -96,6 +97,21 @@ pub fn buildWithAbstractCatalog(
             .local_semantics_complete = true,
         },
     };
+}
+
+fn lowerNominalLayouts(allocator: std.mem.Allocator, graph: *module_sg.ModuleSemanticGraph, files: []const module_sg.FileInput) !void {
+    for (graph.declarations.items, 0..) |declaration, raw| {
+        if (declaration.kind != .type) continue;
+        const file = files[declaration.module_file_index];
+        const node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;
+        const tag = file.tree.tag(node);
+        if (tag != .c_enum_declaration and tag != .c_union_declaration) continue;
+        try graph.semantic.declaration_semantics.append(allocator, .{
+            .declaration = @enumFromInt(@as(u32, @intCast(raw))),
+            .choice_layout = if (tag == .c_enum_declaration) .c_enum else .regular,
+            .struct_layout = if (tag == .c_union_declaration) .c_union else .regular,
+        });
+    }
 }
 
 fn lowerOperatorMetadata(
