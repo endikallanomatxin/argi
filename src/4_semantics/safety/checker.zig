@@ -158,6 +158,7 @@ pub const SafetyChecker = struct {
     pub fn analyze(self: *SafetyChecker) !void {
         self.stats = .{};
         const before = self.diagnostics.list.items.len;
+        try self.validateNominalChoiceLayouts();
 
         var engine = summary_engine.Engine.init(self.allocator);
         defer engine.deinit();
@@ -182,6 +183,17 @@ pub const SafetyChecker = struct {
             if (self.collect_stats) self.stats.functions += 1;
         }
         if (self.diagnostics.list.items.len != before) return error.Reported;
+    }
+
+    fn validateNominalChoiceLayouts(self: *SafetyChecker) !void {
+        for (self.graph.declarations.items) |declaration| {
+            if (declaration.choice_layout != .c_enum) continue;
+            const variants = declaration.choice_variants orelse continue;
+            for (self.graph.variants.items[variants.start..][0..variants.len]) |variant| {
+                if (variant.payload_type == null) continue;
+                try self.report(variant.source, "CEnum variant '..{s}' cannot carry a payload", .{self.graph.text(variant.name)});
+            }
+        }
     }
 
     fn seedFunctionInputs(self: *SafetyChecker, function: graph_mod.Function, state: *FunctionState) !void {
