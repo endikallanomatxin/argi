@@ -643,6 +643,18 @@ fn diagnoseUnresolvedCall(
                 .struct_value_literal => |value| value,
                 else => continue,
             };
+            var input_complete = true;
+            for (graph.value_fields.items[input.fields.start..][0..input.fields.len]) |field| {
+                const ty = graph.node(field.value).ty orelse {
+                    input_complete = false;
+                    break;
+                };
+                if (graph.isTypeUnresolved(ty)) {
+                    input_complete = false;
+                    break;
+                }
+            }
+            if (!input_complete) continue;
             var candidates: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
             defer candidates.deinit(allocator);
             for (graph.functions.items, 0..) |function, raw| {
