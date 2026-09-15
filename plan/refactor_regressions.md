@@ -89,6 +89,12 @@ coerces default integer constants to the typed operand for arithmetic, and
 reports a unique generic candidate's conflicting repeated type argument
 deterministically. The corresponding internal tests pass. Other pending-call
 classes still require comparison with `performance`.
+Generic input unification now also binds comptime integer parameters carried by
+generic type arguments and array lengths. Repeated occurrences must agree, and
+dependent binary expressions are checked once their operands have bindings.
+Source syntax still accepts only literal array lengths, so the array path is
+covered at the parameterized IR boundary until dependent array syntax is
+restored.
 
 The error model remains incomplete. Indexed error propagation and context
 records now have codegen control flow, and `testing_expect_error` is lowered by
