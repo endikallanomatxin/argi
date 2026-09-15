@@ -1017,12 +1017,17 @@ pub const CodeGenerator = struct {
 
         c.LLVMPositionBuilderAtEnd(self.builder, ok_block);
         const ok_payload = c.LLVMBuildExtractValue(self.builder, value.value_ref, (try self.variantIndex(source_errable_type, propagation.ok_variant)) + 1, "error.ok.payload");
+        const result_ty = if (propagation.ok_value_field_index) |index| blk: {
+            const fields = types.fields(self.graph, propagation.ok_payload_type) orelse return CodegenError.InvalidType;
+            if (index >= fields.len) return CodegenError.InvalidType;
+            break :blk self.graph.fields.items[fields.start + index].ty;
+        } else propagation.ok_payload_type;
         const result = if (propagation.ok_value_field_index) |index|
             c.LLVMBuildExtractValue(self.builder, ok_payload, index, "error.ok.value")
         else
             ok_payload;
         _ = context;
-        return .{ .value_ref = result, .type_ref = try self.toLLVMType(propagation.ok_payload_type), .ty = propagation.ok_payload_type };
+        return .{ .value_ref = result, .type_ref = try self.toLLVMType(result_ty), .ty = result_ty };
     }
 
     fn coerceErrorPayload(self: *CodeGenerator, value: llvm.c.LLVMValueRef, source_ty: graph_mod.GlobalTypeId, target_ty: graph_mod.GlobalTypeId) !llvm.c.LLVMValueRef {
