@@ -1409,7 +1409,20 @@ pub const CodeGenerator = struct {
             else => return CodegenError.InvalidType,
         };
         const fields = self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len];
-        const input_type = try self.toLLVMType(call.input_type);
+        // The abstract receiver has no standalone runtime layout. The vtable
+        // ABI replaces it with the concrete data pointer; LLVM opaque pointers
+        // give every implementation the same slot type.
+        const semantic_input = types.fields(self.graph, call.input_type) orelse return CodegenError.InvalidType;
+        if (semantic_input.len != fields.len) return CodegenError.InvalidType;
+        const abi_fields = try self.allocator.alloc(llvm.c.LLVMTypeRef, fields.len);
+        defer self.allocator.free(abi_fields);
+        for (0..fields.len) |index| {
+            abi_fields[index] = if (index == call.self_input_index)
+                c.LLVMPointerType(c.LLVMInt8Type(), 0)
+            else
+                try self.toLLVMType(types.effectiveFieldType(self.graph.fields.items[semantic_input.start + @as(u32, @intCast(index))]));
+        }
+        const input_type = c.LLVMStructType(if (abi_fields.len == 0) null else abi_fields.ptr, @intCast(abi_fields.len), 0);
         var patched_input = c.LLVMGetUndef(input_type);
         for (fields, 0..) |field, index| {
             const argument = if (index == call.self_input_index)

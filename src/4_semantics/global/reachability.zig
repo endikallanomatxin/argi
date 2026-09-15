@@ -147,7 +147,17 @@ const State = struct {
                 if (call.initializes_auto_deinit) |value| try self.walkNode(value);
                 try self.includeFunction(call.callee);
             },
-            .virtualize => |id| try self.walkNode(self.graph.virtualizes.items[@intFromEnum(id)].value),
+            .virtualize => |id| {
+                const value = self.graph.virtualizes.items[@intFromEnum(id)];
+                try self.walkNode(value.value);
+                for (self.graph.function_refs.items[value.methods.start..][0..value.methods.len]) |method|
+                    try self.includeFunction(method);
+                for (self.graph.virtual_registry_refs.items[value.safety_methods.start..][0..value.safety_methods.len]) |registry_id| {
+                    const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
+                    for (self.graph.function_refs.items[registry.implementations.start..][0..registry.implementations.len]) |method|
+                        try self.includeFunction(method);
+                }
+            },
             .virtual_call => |id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
                 try self.walkNode(call.handle);
