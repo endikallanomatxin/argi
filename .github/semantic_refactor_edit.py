@@ -1,280 +1,191 @@
 from pathlib import Path
 
-path = Path("src/4_semantics/global/generic_functions.zig")
-text = path.read_text()
+
+def edit(path: str, replacements: list[tuple[str, str]]) -> None:
+    file = Path(path)
+    text = file.read_text()
+    for old, new in replacements:
+        count = text.count(old)
+        if count != 1:
+            raise RuntimeError(f"{path}: expected exactly one match, found {count}: {old[:120]!r}")
+        text = text.replace(old, new, 1)
+    file.write_text(text)
 
 
-def replace_once(old: str, new: str) -> None:
-    global text
-    count = text.count(old)
-    if count != 1:
-        raise RuntimeError(f"expected exactly one match, found {count}: {old[:120]!r}")
-    text = text.replace(old, new, 1)
-
-
-# Track declaration specificity independently from compatibility after
-# substitution. Otherwise a free T inferred as Int32 becomes indistinguishable
-# from a declaration that actually constrained the call to Int32.
-replace_once(
-    "        var best_score: u32 = 0;\n        var tied = false;\n        var saw_deferred = false;\n",
-    "        var best_score: u32 = 0;\n        var best_specificity: ParameterizedSpecificity = .{};\n        var tied = false;\n        var saw_deferred = false;\n",
+# Preserve the source of a choice payload access as first-class pending-op
+# provenance. Reusing the source value's location loses the '..variant' site.
+edit(
+    "src/4_semantics/module/entities.zig",
+    [(
+        "    resolve_choice_payload: struct {\n"
+        "        node: ModuleNodeId,\n"
+        "        value: ModuleNodeId,\n"
+        "        option_name: primitives.StringRange,\n"
+        "    },\n",
+        "    resolve_choice_payload: struct {\n"
+        "        node: ModuleNodeId,\n"
+        "        value: ModuleNodeId,\n"
+        "        option_name: primitives.StringRange,\n"
+        "        source: primitives.SourceRef,\n"
+        "    },\n",
+    )],
 )
 
-replace_once(
-    "                if (best == null or score > best_score) {\n"
-    "                    best = declaration;\n"
-    "                    best_arguments = complete_arguments;\n"
-    "                    best_score = score;\n"
-    "                    tied = false;\n"
-    "                } else if (score == best_score and declaration != best.?) tied = true;\n",
-    "                const specificity = self.parameterizedInputSpecificity(candidate_index, parameterized.input, input);\n"
-    "                const ordering: CandidateOrdering = if (best == null) .better else compareCandidates(specificity, score, best_specificity, best_score);\n"
-    "                switch (ordering) {\n"
-    "                    .better => {\n"
-    "                        best = declaration;\n"
-    "                        best_arguments = complete_arguments;\n"
-    "                        best_score = score;\n"
-    "                        best_specificity = specificity;\n"
-    "                        tied = false;\n"
-    "                    },\n"
-    "                    .worse => {},\n"
-    "                    .tie => if (declaration != best.?) {\n"
-    "                        tied = true;\n"
-    "                    },\n"
-    "                }\n",
+edit(
+    "src/4_semantics/module/body_lowerer.zig",
+    [(
+        "        return self.pending(node, .{ .resolve_choice_payload = .{\n"
+        "            .node = self.nextNodeId(),\n"
+        "            .value = value.node,\n"
+        "            .option_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.variant_token)),\n"
+        "        } }, expected);\n",
+        "        return self.pending(node, .{ .resolve_choice_payload = .{\n"
+        "            .node = self.nextNodeId(),\n"
+        "            .value = value.node,\n"
+        "            .option_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.variant_token)),\n"
+        "            .source = self.sourceRef(node),\n"
+        "        } }, expected);\n",
+    )],
 )
 
-replace_once(
-    "        var best_score: u32 = 0;\n        var best_kind: parameterized_storage.GenericDispatchKind = .abstract_contract;\n        var tied = false;\n",
-    "        var best_score: u32 = 0;\n        var best_specificity: ParameterizedSpecificity = .{};\n        var tied = false;\n",
+edit(
+    "src/4_semantics/global/control.zig",
+    [(
+        "        self.graph.nodes.items[@intFromEnum(target)] = .{\n"
+        "            .source = self.graph.nodes.items[@intFromEnum(source)].source,\n"
+        "            .ty = payload_ty,\n"
+        "            .content = .{ .choice_payload_access = .{\n",
+        "        self.graph.nodes.items[@intFromEnum(target)] = .{\n"
+        "            .source = self.sourceFor(value.source, o),\n"
+        "            .ty = payload_ty,\n"
+        "            .content = .{ .choice_payload_access = .{\n",
+    )],
 )
 
-replace_once(
-    "                const regular_wins_tie = parameterized.dispatch_kind == .regular and best_kind == .abstract_contract;\n"
-    "                if (best == null or score > best_score or (score == best_score and regular_wins_tie)) {\n"
-    "                    best = declaration;\n"
-    "                    best_arguments = range;\n"
-    "                    best_score = score;\n"
-    "                    best_kind = parameterized.dispatch_kind;\n"
-    "                    tied = false;\n"
-    "                } else if (score == best_score and parameterized.dispatch_kind == best_kind and declaration != best.?) tied = true;\n",
-    "                const specificity = self.parameterizedInputSpecificity(candidate_index, parameterized.input, input);\n"
-    "                const ordering: CandidateOrdering = if (best == null) .better else compareCandidates(specificity, score, best_specificity, best_score);\n"
-    "                switch (ordering) {\n"
-    "                    .better => {\n"
-    "                        best = declaration;\n"
-    "                        best_arguments = range;\n"
-    "                        best_score = score;\n"
-    "                        best_specificity = specificity;\n"
-    "                        tied = false;\n"
-    "                    },\n"
-    "                    .worse => {},\n"
-    "                    .tie => if (declaration != best.?) {\n"
-    "                        tied = true;\n"
-    "                    },\n"
-    "                }\n",
-)
+semantizer = Path("src/4_semantics/global/semantizer.zig")
+text = semantizer.read_text()
 
-marker = "    fn matchParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) core_mod.Resolver.CallInputMatch {\n"
+old_import = 'const global_sg = @import("graph.zig");\n'
+new_import = 'const global_sg = @import("graph.zig");\nconst global_types = @import("types.zig");\n'
+if text.count(old_import) != 1:
+    raise RuntimeError("semantizer import anchor changed")
+text = text.replace(old_import, new_import, 1)
+
+old_diagnostics = (
+    "        if (options.diagnostics) |diagnostics| {\n"
+    "            if (try diagnoseUnresolvedCopy(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))\n"
+    "                return error.Reported;\n"
+)
+new_diagnostics = (
+    "        if (options.diagnostics) |diagnostics| {\n"
+    "            if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))\n"
+    "                return error.Reported;\n"
+    "            if (try diagnoseUnresolvedCopy(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))\n"
+    "                return error.Reported;\n"
+)
+if text.count(old_diagnostics) != 1:
+    raise RuntimeError("semantizer diagnostic anchor changed")
+text = text.replace(old_diagnostics, new_diagnostics, 1)
+
+marker = "fn diagnoseUnresolvedCopy(\n"
 if text.count(marker) != 1:
-    raise RuntimeError("matchParameterizedInput marker changed")
+    raise RuntimeError("diagnoseUnresolvedCopy marker changed")
 
-helpers = r'''    const ParameterizedSpecificity = struct {
-        /// Exact nominal/builtin leaves. Exactness also satisfies the weaker
-        /// "bounded" dimension so a concrete type dominates an abstract bound.
-        exact: u32 = 0,
-        bounded: u32 = 0,
-        /// Fixed type constructors such as pointer/array/structural shape.
-        structure: u32 = 0,
-
-        fn add(self: *ParameterizedSpecificity, other: ParameterizedSpecificity) void {
-            self.exact += other.exact;
-            self.bounded += other.bounded;
-            self.structure += other.structure;
-        }
-    };
-
-    const SpecificityOrdering = enum { less, equal, greater, incomparable };
-    const CandidateOrdering = enum { better, worse, tie };
-
-    fn compareSpecificity(left: ParameterizedSpecificity, right: ParameterizedSpecificity) SpecificityOrdering {
-        if (left.exact == right.exact and left.bounded == right.bounded and left.structure == right.structure) return .equal;
-        const left_at_least = left.exact >= right.exact and left.bounded >= right.bounded and left.structure >= right.structure;
-        const right_at_least = right.exact >= left.exact and right.bounded >= left.bounded and right.structure >= left.structure;
-        if (left_at_least) return .greater;
-        if (right_at_least) return .less;
-        return .incomparable;
-    }
-
-    fn compareCandidates(
-        candidate_specificity: ParameterizedSpecificity,
-        candidate_score: u32,
-        best_specificity: ParameterizedSpecificity,
-        best_score: u32,
-    ) CandidateOrdering {
-        return switch (compareSpecificity(candidate_specificity, best_specificity)) {
-            .greater => .better,
-            .less => .worse,
-            // Compatibility remains a useful discriminator when declarations
-            // impose the same restrictions, or restrictions on orthogonal
-            // dimensions. Equal quality in the latter case is ambiguous.
-            .equal, .incomparable => if (candidate_score > best_score)
-                .better
-            else if (candidate_score < best_score)
-                .worse
+helper = r'''fn diagnoseUnresolvedChoice(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    resolved: []const bool,
+    reachable: ?*const reachability_mod.FunctionSet,
+    offsets: []const globalizer.Offsets,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    var flat: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
+            defer flat += 1;
+            const owner = if (operation_index < module.semantic.pending_owner_functions.items.len)
+                if (module.semantic.pending_owner_functions.items[operation_index]) |value| globalizer.globalFunction(offsets[module_index], value) else null
             else
-                .tie,
-        };
-    }
+                null;
+            if (resolved[flat] or (reachable != null and owner != null and !reachable.?.contains(owner.?))) continue;
 
-    fn exactSpecificity() ParameterizedSpecificity {
-        return .{ .exact = 1, .bounded = 1 };
-    }
+            switch (operation) {
+                .resolve_choice_literal => |choice| {
+                    const reference = module.semantic.external_refs.items[@intFromEnum(choice.option)];
+                    const name = module.text(reference.name);
+                    const target = globalizer.globalNode(offsets[module_index], choice.node);
+                    const choice_ty = if (choice.expected_type) |local_ty|
+                        globalizer.globalType(offsets[module_index], local_ty)
+                    else
+                        graph.node(target).ty orelse continue;
+                    if (graph.isTypeUnresolved(choice_ty) or global_types.isBuiltin(graph, choice_ty, .Any)) continue;
+                    // A known non-choice may still become meaningful through a
+                    // different pending operation. Only classify operations for
+                    // which the choice family itself is already final.
+                    if (global_types.variants(graph, choice_ty) == null) continue;
 
-    fn parameterizedInputSpecificity(
-        self: *Resolver,
-        module_index: usize,
-        pattern: ir.ParameterizedTypeId,
-        input: global_sg.GlobalNodeId,
-    ) ParameterizedSpecificity {
-        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
-        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
-            .struct_value_literal => |value| value,
-            else => return self.parameterizedTypeSpecificity(module_index, pattern),
-        };
-        const shape = switch (storage.types.items[@intFromEnum(pattern)]) {
-            .resolved => |resolved| switch (resolved) {
-                .structural => |value| value,
-                else => return self.parameterizedTypeSpecificity(module_index, pattern),
-            },
-            else => return self.parameterizedTypeSpecificity(module_index, pattern),
-        };
-
-        var specificity: ParameterizedSpecificity = .{};
-        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |supplied, supplied_position| {
-            const positional = supplied_position < literal.dispatch_prefix_positional_count or self.graph.text(supplied.name).len == 0;
-            var matched: ?ir.ParameterizedTypeId = null;
-            if (positional) {
-                if (supplied_position < shape.fields.len) {
-                    matched = storage.fields.items[shape.fields.start + @as(u32, @intCast(supplied_position))].ty;
-                }
-            } else {
-                for (storage.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
-                    if (!std.mem.eql(u8, self.modules[module_index].text(field.name), self.graph.text(supplied.name))) continue;
-                    matched = field.ty;
-                    break;
-                }
+                    const source = .{
+                        .file_index = offsets[module_index].file_base + reference.source.file_index,
+                        .offset = reference.source.offset,
+                    };
+                    const hit = global_types.findVariant(graph, choice_ty, name) orelse {
+                        var type_name = std.array_list.Managed(u8).init(allocator);
+                        defer type_name.deinit();
+                        try appendTypeName(&type_name, graph, choice_ty);
+                        try diagnostics.add(
+                            diagnosticLocation(graph, diagnostics, source),
+                            .semantic,
+                            "choice type '{s}' has no variant '..{s}'",
+                            .{ type_name.items, name },
+                        );
+                        return true;
+                    };
+                    if (hit.variant.payload_type != null and choice.payload == null) {
+                        try diagnostics.add(
+                            diagnosticLocation(graph, diagnostics, source),
+                            .semantic,
+                            "choice variant '..{s}' requires a payload",
+                            .{name},
+                        );
+                        return true;
+                    }
+                },
+                .resolve_choice_payload => |access| {
+                    const value = graph.node(globalizer.globalNode(offsets[module_index], access.value));
+                    const choice_ty = value.ty orelse continue;
+                    if (graph.isTypeUnresolved(choice_ty) or global_types.variants(graph, choice_ty) == null) continue;
+                    const name = module.text(access.option_name);
+                    const hit = global_types.findVariant(graph, choice_ty, name) orelse continue;
+                    if (hit.variant.payload_type != null) continue;
+                    const source = .{
+                        .file_index = offsets[module_index].file_base + access.source.file_index,
+                        .offset = access.source.offset,
+                    };
+                    try diagnostics.add(
+                        diagnosticLocation(graph, diagnostics, source),
+                        .semantic,
+                        "choice variant '..{s}' has no payload",
+                        .{name},
+                    );
+                    return true;
+                },
+                else => {},
             }
-            if (matched) |field_type| specificity.add(self.parameterizedTypeSpecificity(module_index, field_type));
         }
-        return specificity;
     }
-
-    fn parameterizedTypeSpecificity(
-        self: *Resolver,
-        module_index: usize,
-        pattern: ir.ParameterizedTypeId,
-    ) ParameterizedSpecificity {
-        const module = &self.modules[module_index];
-        const storage = &module.semantic.parameterized_storage.ir;
-        return switch (storage.types.items[@intFromEnum(pattern)]) {
-            .parameter => |parameter| if (module.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter)].constraint != null)
-                .{ .bounded = 1 }
-            else
-                .{},
-            .abstract_self => .{ .bounded = 1 },
-            .concrete, .external => exactSpecificity(),
-            .array => |array| blk: {
-                var result: ParameterizedSpecificity = .{ .structure = 1 };
-                result.add(self.parameterizedIntSpecificity(module_index, array.length));
-                result.add(self.parameterizedTypeSpecificity(module_index, array.element));
-                break :blk result;
-            },
-            .resolved => |resolved| self.resolvedPatternSpecificity(module_index, resolved),
-        };
-    }
-
-    fn parameterizedIntSpecificity(
-        self: *Resolver,
-        module_index: usize,
-        expression: ir.ParameterizedIntExprId,
-    ) ParameterizedSpecificity {
-        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
-        return switch (storage.int_expressions.items[@intFromEnum(expression)]) {
-            .literal => exactSpecificity(),
-            .parameter => .{},
-            .binary => |binary| blk: {
-                var result: ParameterizedSpecificity = .{ .structure = 1 };
-                result.add(self.parameterizedIntSpecificity(module_index, binary.left));
-                result.add(self.parameterizedIntSpecificity(module_index, binary.right));
-                break :blk result;
-            },
-        };
-    }
-
-    fn resolvedPatternSpecificity(
-        self: *Resolver,
-        module_index: usize,
-        resolved: ir.ResolvedType,
-    ) ParameterizedSpecificity {
-        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
-        return switch (resolved) {
-            .builtin => |builtin| if (builtin == .Any) .{} else exactSpecificity(),
-            .declared => exactSpecificity(),
-            .pointer => |pointer| blk: {
-                var result: ParameterizedSpecificity = .{ .structure = 1 };
-                result.add(self.parameterizedTypeSpecificity(module_index, pointer.child));
-                break :blk result;
-            },
-            .array => |array| blk: {
-                var result: ParameterizedSpecificity = .{ .structure = 1 };
-                result.add(exactSpecificity());
-                result.add(self.parameterizedTypeSpecificity(module_index, array.element));
-                break :blk result;
-            },
-            .nullable, .inferred_errable, .virtual => |child| blk: {
-                var result: ParameterizedSpecificity = .{ .structure = 1 };
-                result.add(self.parameterizedTypeSpecificity(module_index, child));
-                break :blk result;
-            },
-            .generic => |generic| blk: {
-                var result = exactSpecificity();
-                result.structure += 1;
-                for (storage.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| switch (argument.value) {
-                    .type => |ty| result.add(self.parameterizedTypeSpecificity(module_index, ty)),
-                    .comptime_int => |value| result.add(self.parameterizedIntSpecificity(module_index, value)),
-                };
-                break :blk result;
-            },
-            .structural => |shape| blk: {
-                var result: ParameterizedSpecificity = .{ .structure = 1 };
-                for (storage.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
-                    result.structure += 1;
-                    result.add(self.parameterizedTypeSpecificity(module_index, field.ty));
-                }
-                break :blk result;
-            },
-            .structural_choice => |shape| blk: {
-                var result: ParameterizedSpecificity = .{ .structure = 1 };
-                for (storage.variants.items[shape.variants.start..][0..shape.variants.len]) |variant| {
-                    result.structure += 1;
-                    if (variant == .semantic) if (variant.semantic.payload_type) |payload|
-                        result.add(self.parameterizedTypeSpecificity(module_index, payload));
-                }
-                break :blk result;
-            },
-            .inferred_choice => .{ .structure = 1 },
-        };
-    }
+    return false;
+}
 
 '''
-text = text.replace(marker, helpers + marker, 1)
+text = text.replace(marker, helper + marker, 1)
+semantizer.write_text(text)
 
-path.write_text(text)
-Path(".git/semantic-refactor-message").write_text("Rank generic overloads by declared specificity\n")
-Path(".git/semantic-refactor-test-command").write_text(
+Path(".git/semantic-refactor-message").write_text("Diagnose deterministic unresolved choice operations\n")
+# Override the tracked default gate for this edit without committing harness state.
+Path(".github/semantic_refactor_test_command").write_text(
     "zig build test-programs "
-    "-Dtest-filter=feature_tests/polymorphism/24_abstract_dispatch_beats_regular_generic_with_defaults "
-    "-Dtest-filter=feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous "
-    "-Dtest-filter=feature_tests/modules/24_imported_generic_abstract_dispatch_prefers_concrete\n"
+    "-Dtest-filter=feature_tests/types/04X_choice_missing_payload "
+    "-Dtest-filter=feature_tests/types/10X_choice_unknown_variant "
+    "-Dtest-filter=feature_tests/types/11X_choice_payload_access_without_payload\n"
 )
