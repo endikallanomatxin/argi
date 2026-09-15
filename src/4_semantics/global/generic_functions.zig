@@ -454,6 +454,14 @@ pub const Resolver = struct {
                 slot.* = actual;
                 return true;
             },
+            .array => |array| {
+                const value = switch (self.graph.types.items[@intFromEnum(actual)]) {
+                    .array => |value| value,
+                    else => return false,
+                };
+                if (!try self.inferIntExpression(module_index, array.length, @intCast(value.length), bindings)) return false;
+                return self.inferInputType(module_index, array.element, value.element, bindings);
+            },
             .resolved => |resolved| switch (resolved) {
                 .pointer => |pointer| {
                     const value = switch (self.graph.types.items[@intFromEnum(actual)]) {
@@ -496,7 +504,10 @@ pub const Resolver = struct {
                                     if (concrete.value != .type) return false;
                                     if (!try self.inferInputType(module_index, ty, concrete.value.type, bindings)) return false;
                                 },
-                                .comptime_int => return false,
+                                .comptime_int => |expression| {
+                                    if (concrete.value != .comptime_int) return false;
+                                    if (!try self.inferIntExpression(module_index, expression, concrete.value.comptime_int, bindings)) return false;
+                                },
                             }
                             matched = true;
                             break;
@@ -511,6 +522,30 @@ pub const Resolver = struct {
         }
         const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return false;
         return global_types.equal(self.graph, expected, actual);
+    }
+
+    fn inferIntExpression(
+        self: *Resolver,
+        module_index: usize,
+        expression: ir.ParameterizedIntExprId,
+        actual: i64,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+        return switch (storage.int_expressions.items[@intFromEnum(expression)]) {
+            .literal => |value| value == actual,
+            .parameter => |parameter| blk: {
+                const slot = &bindings.ints[@intFromEnum(parameter)];
+                if (slot.*) |previous| {
+                    if (previous != actual) return error.ConflictingGenericArgument;
+                } else slot.* = actual;
+                break :blk true;
+            },
+            // Composite expressions are constraints rather than invertible
+            // bindings. Once their operands have been inferred elsewhere the
+            // regular evaluator validates the dependent value.
+            .binary => (self.generics.evalInt(module_index, expression, bindings) catch return false) == actual,
+        };
     }
 
     fn makeExplicitCast(
@@ -1532,4 +1567,27 @@ fn argumentRangesEqual(
 test "generic function monomorphization uses stable GlobalFunctionId identity" {
     try std.testing.expect(@sizeOf(global_sg.GlobalFunctionId) == 4);
     try std.testing.expect(@sizeOf(global_sg.GenericFunctionInstance) <= 16);
+}
+
+test "generic inference binds comptime integer expressions" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "generic_int") };
+    defer module.deinit(allocator);
+    try module.semantic.parameterized_storage.comptime_parameters.append(allocator, .{
+        .name = try @import("../primitives/strings.zig").append(&module.strings, allocator, "n"),
+        .kind = .comptime_int,
+    });
+    try module.semantic.parameterized_storage.ir.int_expressions.append(allocator, .{ .parameter = @enumFromInt(0) });
+    const modules = [_]module_sg.ModuleSemanticGraph{module};
+    var core: core_mod.Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &.{} };
+    var generics: generic_mod.Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &.{}, .core = &core };
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &modules, .offsets = &.{}, .core = &core, .generics = &generics };
+    var bindings = try generic_mod.Resolver.Bindings.init(allocator, 1);
+    defer bindings.deinit(allocator);
+
+    try std.testing.expect(try resolver.inferIntExpression(0, @enumFromInt(0), 7, &bindings));
+    try std.testing.expectEqual(@as(?i64, 7), bindings.ints[0]);
+    try std.testing.expectError(error.ConflictingGenericArgument, resolver.inferIntExpression(0, @enumFromInt(0), 8, &bindings));
 }
