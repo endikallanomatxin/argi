@@ -6,6 +6,7 @@ on:
       - compact-semantic-graph-chatgpt
     paths:
       - .github/semantic_refactor_edit.py
+      - .github/semantic_refactor_post_edit.py
       - .github/semantic_refactor_test_command
 
 permissions:
@@ -34,7 +35,11 @@ jobs:
           sudo ./llvm.sh 21
           sudo apt-get install -y llvm-21-dev clang-21
       - name: Apply semantic edit
-        run: python3 .github/semantic_refactor_edit.py
+        run: |
+          python3 .github/semantic_refactor_edit.py
+          if [[ -f .github/semantic_refactor_post_edit.py ]]; then
+            python3 .github/semantic_refactor_post_edit.py
+          fi
       - name: Build compiler
         run: zig build
       - name: Run internal tests
