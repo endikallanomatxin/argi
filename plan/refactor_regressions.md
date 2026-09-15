@@ -42,7 +42,11 @@ internal suite currently has 164 passing tests and one LSP crash: the only
 remaining pending path in that fixture is `System.deinit` calling
 `Terminal.deinit` without an allocator visible in the local scope. The old
 compiler propagated that reached field into the enclosing function input;
-this indexed propagation is the next required step.
+GlobalSema now restores that propagation by extending the enclosing function's
+input fields and input bindings, then resolving the outer call on the next
+fixed-point iteration. A two-level regression test passes, all 165 internal
+tests pass, and the minimal program advances beyond `System.deinit` to the
+imported abstract signature in `write_trace_text`.
 Abstract contracts nested inside ordinary generic type arguments are also
 collected as constrained type parameters. `Virtual#(.abstract: ...)` is an
 exception because its abstract argument selects a runtime vtable rather than

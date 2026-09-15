@@ -75,12 +75,14 @@ const Context = struct {
     source: []const u8 = &.{},
     pipe_value: ?Lowered = null,
     expression_mode: ExpressionMode = .body,
+    current_function: ?entities.ModuleFunctionId = null,
 
     fn lowerFunctions(self: *Context) !Stats {
         var stats: Stats = .{};
         for (self.graph.functions.items, 0..) |interface, raw_index| {
             const function_id: entities.ModuleFunctionId = @enumFromInt(@as(u32, @intCast(raw_index)));
             if (hasFunctionSemantic(self.graph, function_id)) continue;
+            self.current_function = function_id;
             const legacy_decl = self.graph.declarations.items[@intFromEnum(interface.declaration)];
             self.file_index = legacy_decl.module_file_index;
             const file = self.files[@intCast(self.file_index)];
@@ -358,6 +360,7 @@ const Context = struct {
             .input = input.node,
             .expected_type = expected,
             .visible_bindings = try self.writer.appendBindingRefs(visible.items),
+            .owner_function = self.current_function,
         } }, expected);
     }
 
