@@ -95,6 +95,12 @@ dependent binary expressions are checked once their operands have bindings.
 Source syntax still accepts only literal array lengths, so the array path is
 covered at the parameterized IR boundary until dependent array syntax is
 restored.
+ModuleSG no longer requires local generic shapes for every resolved generic
+type. Those types are durable materialization requests whose canonical
+declaration may only be known after modules are linked; GlobalSema remains the
+owner of complete shape materialization and GlobalSG verification still checks
+the one-shape-per-generic invariant. The local generic struct fixture now
+passes ModuleSema and advances to the shared imported abstract-contract blocker.
 
 The error model remains incomplete. Indexed error propagation and context
 records now have codegen control flow, and `testing_expect_error` is lowered by
