@@ -229,6 +229,14 @@ their function bodies are removed from the final graph. This restores the old
 selective-body algorithm at the GlobalSG boundary without moving cross-module
 dispatch back into ModuleSema.
 
+Error reason inference is again interprocedural. ModuleSG marks inferred
+Errable signatures, and GlobalSema repeatedly derives effective reason sets
+from returned values, output assignments and propagation nodes. Calls consume
+the callee's previous summary, so recursive and transitive chains converge at
+the whole-program fixed point. Inferred signatures update their identity-bearing
+open choice; explicitly declared signatures retain a separate subset in
+`Function.inferred_error_reasons`.
+
 1. **Finish ordinary system initializers.** Allocator and strings now resolve
    completely. Trusted drops of a type without an explicit destructor lower to
    a no-op, matching the retired semantizer. Contextual structural literals

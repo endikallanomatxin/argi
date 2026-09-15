@@ -21,6 +21,202 @@ pub const Resolver = struct {
     core: *core_mod.Resolver,
     stats: Stats = .{},
 
+    /// Compute effective reason summaries until recursive call chains stop
+    /// changing. Open inferred signatures grow their declared reason choice;
+    /// explicit signatures retain a separate subset summary.
+    pub fn inferFunctionErrorReasons(self: *Resolver) !bool {
+        var any_changed = false;
+        var round: usize = 0;
+        while (round <= self.graph.functions.items.len) : (round += 1) {
+            var changed = false;
+            for (0..self.graph.functions.items.len) |raw| {
+                if (try self.inferOne(@enumFromInt(@as(u32, @intCast(raw))))) changed = true;
+            }
+            any_changed = any_changed or changed;
+            if (!changed) break;
+        }
+        return any_changed;
+    }
+
+    fn inferOne(self: *Resolver, function_id: global_sg.GlobalFunctionId) !bool {
+        const function = &self.graph.functions.items[@intFromEnum(function_id)];
+        const declared = self.functionReasonType(function.*) orelse {
+            function.inferred_error_reasons = null;
+            return false;
+        };
+        const body = function.body orelse {
+            if (function.inferred_error_reasons == null) function.inferred_error_reasons = declared;
+            return false;
+        };
+        var collected: std.ArrayList(global_sg.GlobalVariantId) = .empty;
+        defer collected.deinit(self.allocator);
+        try self.collectBlock(function.*, body, &collected);
+
+        if (function.flags.uses_inferred_error_reasons) {
+            const changed = try self.replaceOpenReasons(declared, collected.items);
+            function.inferred_error_reasons = declared;
+            return changed;
+        }
+        if (self.sameReasonSet(function.inferred_error_reasons, collected.items)) return false;
+        function.inferred_error_reasons = try self.makeReasonSubset(declared, collected.items);
+        return true;
+    }
+
+    fn functionReasonType(self: *const Resolver, function: global_sg.Function) ?global_sg.GlobalTypeId {
+        if (function.output.len != 1) return null;
+        const errable = self.graph.fields.items[function.output.start].ty;
+        const error_variant = global_types.findVariant(self.graph, errable, "error") orelse return null;
+        const payload = error_variant.variant.payload_type orelse return null;
+        return (global_types.findField(self.graph, payload, "reason") orelse return null).field.ty;
+    }
+
+    fn collectBlock(self: *Resolver, function: global_sg.Function, block_id: global_sg.GlobalBlockId, out: *std.ArrayList(global_sg.GlobalVariantId)) anyerror!void {
+        const block = self.graph.blocks.items[@intFromEnum(block_id)];
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| try self.collectNode(function, node, out);
+        if (block.ret_val) |node| try self.markErrableNode(node, out);
+    }
+
+    fn collectNode(self: *Resolver, function: global_sg.Function, node_id: global_sg.GlobalNodeId, out: *std.ArrayList(global_sg.GlobalVariantId)) anyerror!void {
+        const node = self.graph.nodes.items[@intFromEnum(node_id)];
+        switch (node.content) {
+            .assignment => |value| {
+                if (self.isOutputBinding(function, value.binding)) try self.markErrableNode(value.value, out);
+                try self.collectNode(function, value.value, out);
+            },
+            .return_statement => |value| if (value.expression) |child| try self.markErrableNode(child, out),
+            .error_propagation => |id| try self.markErrableNode(self.graph.error_propagations.items[@intFromEnum(id)].errable_value, out),
+            .error_context => |id| try self.markErrableNode(self.graph.error_contexts.items[@intFromEnum(id)].errable_value, out),
+            .binding_declaration => |id| if (self.graph.binding(id).initialization) |child| try self.collectNode(function, child, out),
+            .move_value, .address_of => |child| try self.collectNode(function, child, out),
+            .function_call => |call| try self.collectNode(function, call.input, out),
+            .virtualize => |id| try self.collectNode(function, self.graph.virtualizes.items[@intFromEnum(id)].value, out),
+            .virtual_call => |id| {
+                const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                try self.collectNode(function, call.handle, out);
+                try self.collectNode(function, call.input, out);
+            },
+            .code_block => |block| try self.collectBlock(function, block, out),
+            .list_literal => |literal| {
+                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |child| try self.collectNode(function, child, out);
+            },
+            .array_literal => |literal| {
+                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |child| try self.collectNode(function, child, out);
+            },
+            .struct_value_literal => |literal| {
+                for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| try self.collectNode(function, field.value, out);
+            },
+            .struct_field_access => |value| try self.collectNode(function, value.value, out),
+            .choice_literal => |value| if (value.payload) |child| try self.collectNode(function, child, out),
+            .choice_payload_access => |value| try self.collectNode(function, value.value, out),
+            .nullable_unwrap_or => |id| {
+                const value = self.graph.nullable_unwraps.items[@intFromEnum(id)];
+                try self.collectNode(function, value.nullable_value, out);
+                try self.collectNode(function, value.fallback_value, out);
+            },
+            .testing_expect_error => |id| try self.collectNode(function, self.graph.testing_expect_errors.items[@intFromEnum(id)].actual_result, out),
+            .array_index => |value| {
+                try self.collectNode(function, value.array_ptr, out);
+                try self.collectNode(function, value.index, out);
+            },
+            .array_store => |value| {
+                try self.collectNode(function, value.array_ptr, out);
+                try self.collectNode(function, value.index, out);
+                try self.collectNode(function, value.value, out);
+            },
+            .struct_field_store => |value| {
+                try self.collectNode(function, value.struct_ptr, out);
+                try self.collectNode(function, value.value, out);
+            },
+            .binary_operation => |value| {
+                try self.collectNode(function, value.left, out);
+                try self.collectNode(function, value.right, out);
+            },
+            .comparison => |value| {
+                try self.collectNode(function, value.left, out);
+                try self.collectNode(function, value.right, out);
+            },
+            .logical_operation => |value| {
+                try self.collectNode(function, value.left, out);
+                try self.collectNode(function, value.right, out);
+            },
+            .if_statement => |value| {
+                try self.collectBlock(function, value.then_block, out);
+                if (value.else_block) |block| try self.collectBlock(function, block, out);
+            },
+            .while_statement => |value| try self.collectBlock(function, value.body, out),
+            .for_statement => |value| try self.collectBlock(function, value.body, out),
+            .switch_statement => |id| {
+                const value = self.graph.switches.items[@intFromEnum(id)];
+                for (self.graph.switch_cases.items[value.cases.start..][0..value.cases.len]) |case| try self.collectBlock(function, case.body, out);
+                if (value.default_block) |block| try self.collectBlock(function, block, out);
+            },
+            .dereference => |value| try self.collectNode(function, value.pointer, out),
+            .pointer_assignment => |value| {
+                try self.collectNode(function, value.pointer, out);
+                try self.collectNode(function, value.value, out);
+            },
+            .type_initializer => |value| try self.collectNode(function, value.args, out),
+            .explicit_cast => |value| try self.collectNode(function, value.value, out),
+            else => {},
+        }
+    }
+
+    fn isOutputBinding(self: *const Resolver, function: global_sg.Function, binding: global_sg.GlobalBindingId) bool {
+        for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |candidate|
+            if (candidate == binding) return true;
+        return false;
+    }
+
+    fn markErrableNode(self: *Resolver, node_id: global_sg.GlobalNodeId, out: *std.ArrayList(global_sg.GlobalVariantId)) !void {
+        const node = self.graph.node(node_id);
+        const reasons = switch (node.content) {
+            .function_call => |call| self.graph.function(call.callee).inferred_error_reasons orelse self.reasonTypeFromErrable(node.ty orelse return),
+            else => self.reasonTypeFromErrable(node.ty orelse return),
+        } orelse return;
+        const variants = global_types.variants(self.graph, reasons) orelse return;
+        for (0..variants.len) |offset| {
+            const id: global_sg.GlobalVariantId = @enumFromInt(variants.start + @as(u32, @intCast(offset)));
+            if (!containsVariant(self.graph, out.items, id)) try out.append(self.allocator, id);
+        }
+    }
+
+    fn reasonTypeFromErrable(self: *const Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalTypeId {
+        const error_variant = global_types.findVariant(self.graph, ty, "error") orelse return null;
+        const payload = error_variant.variant.payload_type orelse return null;
+        return (global_types.findField(self.graph, payload, "reason") orelse return null).field.ty;
+    }
+
+    fn sameReasonSet(self: *const Resolver, current: ?global_sg.GlobalTypeId, wanted: []const global_sg.GlobalVariantId) bool {
+        const ty = current orelse return false;
+        const range = global_types.variants(self.graph, ty) orelse return false;
+        if (range.len != wanted.len) return false;
+        for (0..range.len) |offset| {
+            const id: global_sg.GlobalVariantId = @enumFromInt(range.start + @as(u32, @intCast(offset)));
+            if (!containsVariant(self.graph, wanted, id)) return false;
+        }
+        return true;
+    }
+
+    fn replaceOpenReasons(self: *Resolver, ty: global_sg.GlobalTypeId, wanted: []const global_sg.GlobalVariantId) !bool {
+        if (self.sameReasonSet(ty, wanted)) return false;
+        const start: u32 = @intCast(self.graph.variants.items.len);
+        for (wanted) |id| try self.graph.variants.append(self.allocator, self.graph.variants.items[@intFromEnum(id)]);
+        self.graph.types.items[@intFromEnum(ty)].inferred_choice.variants = .{ .start = start, .len = @intCast(wanted.len) };
+        return true;
+    }
+
+    fn makeReasonSubset(self: *Resolver, declared: global_sg.GlobalTypeId, collected: []const global_sg.GlobalVariantId) !global_sg.GlobalTypeId {
+        const start: u32 = @intCast(self.graph.variants.items.len);
+        const declared_range = global_types.variants(self.graph, declared) orelse return declared;
+        for (0..declared_range.len) |offset| {
+            const id: global_sg.GlobalVariantId = @enumFromInt(declared_range.start + @as(u32, @intCast(offset)));
+            if (containsVariant(self.graph, collected, id)) try self.graph.variants.append(self.allocator, self.graph.variants.items[@intFromEnum(id)]);
+        }
+        const result: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
+        try self.graph.types.append(self.allocator, .{ .structural_choice = .{ .variants = .{ .start = start, .len = @intCast(self.graph.variants.items.len - start) } } });
+        return result;
+    }
+
     pub fn tryResolve(
         self: *Resolver,
         module_index: usize,
@@ -379,6 +575,16 @@ fn expectedLiteralVariantName(graph: *const global_sg.GlobalSemanticGraph, liter
     const raw = @intFromEnum(literal.variant);
     if (raw >= graph.variants.items.len) return null;
     return graph.variants.items[raw].name;
+}
+
+fn containsVariant(graph: *const global_sg.GlobalSemanticGraph, haystack: []const global_sg.GlobalVariantId, needle_id: global_sg.GlobalVariantId) bool {
+    const needle = graph.variants.items[@intFromEnum(needle_id)];
+    for (haystack) |candidate_id| {
+        const candidate = graph.variants.items[@intFromEnum(candidate_id)];
+        if (!std.mem.eql(u8, graph.text(candidate.name), graph.text(needle.name))) continue;
+        if (candidate.payload_type == needle.payload_type) return true;
+    }
+    return false;
 }
 
 test "error propagation resolver writes indexed payloads" {
