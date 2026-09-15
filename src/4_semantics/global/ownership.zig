@@ -324,6 +324,7 @@ pub const Resolver = struct {
 
     fn autoDeinitNode(self: *Resolver, binding: global_sg.GlobalBindingId) !?global_sg.GlobalNodeId {
         for (self.auto_nodes.items) |entry| if (entry.binding == binding) return entry.node;
+        if (self.graph.isBindingTypeUnresolved(binding)) return null;
         const record = self.graph.bindings.items[@intFromEnum(binding)];
         const descriptor = try self.buildAutoDeinit(binding, record.ty) orelse return null;
         const auto_id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));
