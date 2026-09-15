@@ -55,13 +55,10 @@ pub fn build(
     try lowerOperatorMetadata(allocator, &graph, files);
     const global_roots = try global_roots_lowerer.lower(allocator, &graph);
 
-    // Body lowering has one authority. Constructs that need whole-program
-    // information are emitted as explicit pending operations during the same
-    // traversal instead of rolling semantic tables back and walking the
-    // function again with a second implementation.
-    const bodies = try body_lowerer.lowerMissingFunctions(allocator, &graph, files);
-
     const parameterized_stats = try parameterized_lowerer.lower(allocator, &graph, files);
+    // Templates claim abstract interfaces before ordinary body lowering, so
+    // each contract body is materialized only after specialization.
+    const bodies = try body_lowerer.lowerMissingFunctions(allocator, &graph, files);
     const generic_operators = try generic_operator_lowerer.lower(&graph, files);
     const identity_stats = function_identity_lowerer.lower(&graph, files);
     const relation_stats = try abstract_relation_lowerer.lower(allocator, &graph, files);

@@ -279,13 +279,13 @@ pub const Resolver = struct {
         var best: ?global_sg.GlobalDeclId = null;
         var best_arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = 0, .len = 0 };
         var best_score: u32 = 0;
+        var best_kind: parameterized_storage.GenericDispatchKind = .abstract_contract;
         var tied = false;
         var saw_deferred = false;
         var conflicting_candidates: usize = 0;
         var candidate_count: usize = 0;
         for (self.modules, 0..) |*candidate_module, candidate_index| {
             for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
-                if (parameterized.dispatch_kind == .abstract_contract) continue;
                 const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
                 if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), module.text(reference.name))) continue;
                 if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
@@ -351,12 +351,14 @@ pub const Resolver = struct {
                     },
                     .score => |score| score,
                 };
-                if (best == null or score > best_score) {
+                const regular_wins_tie = parameterized.dispatch_kind == .regular and best_kind == .abstract_contract;
+                if (best == null or score > best_score or (score == best_score and regular_wins_tie)) {
                     best = declaration;
                     best_arguments = range;
                     best_score = score;
+                    best_kind = parameterized.dispatch_kind;
                     tied = false;
-                } else if (score == best_score and declaration != best.?) tied = true;
+                } else if (score == best_score and parameterized.dispatch_kind == best_kind and declaration != best.?) tied = true;
             }
         }
         if (tied) return error.AmbiguousGenericFunction;
@@ -569,7 +571,9 @@ pub const Resolver = struct {
                 .is_deinit = located.parameterized.is_deinit,
                 .has_declared_body = located.parameterized.body != null,
                 .is_generic_instantiation = true,
-                .is_abstract_dispatch = located.parameterized.dispatch_kind == .abstract_contract,
+                // A contract template has no runtime ABI; its inferred
+                // instance does, once every abstract parameter is concrete.
+                .is_abstract_dispatch = false,
             },
         });
         try self.graph.function_operators.append(self.allocator, located.parameterized.operator);
