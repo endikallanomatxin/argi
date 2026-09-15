@@ -83,9 +83,21 @@ pub const Resolver = struct {
                 if (self.isOutputBinding(function, value.binding)) try self.markErrableNode(value.value, out);
                 try self.collectNode(function, value.value, out);
             },
-            .return_statement => |value| if (value.expression) |child| try self.markErrableNode(child, out),
-            .error_propagation => |id| try self.markErrableNode(self.graph.error_propagations.items[@intFromEnum(id)].errable_value, out),
-            .error_context => |id| try self.markErrableNode(self.graph.error_contexts.items[@intFromEnum(id)].errable_value, out),
+            .return_statement => |value| if (value.expression) |child| {
+                try self.markErrableNode(child, out);
+                try self.collectNode(function, child, out);
+            },
+            .error_propagation => |id| {
+                const child = self.graph.error_propagations.items[@intFromEnum(id)].errable_value;
+                try self.markErrableNode(child, out);
+                try self.collectNode(function, child, out);
+            },
+            .error_context => |id| {
+                const value = self.graph.error_contexts.items[@intFromEnum(id)];
+                try self.markErrableNode(value.errable_value, out);
+                try self.collectNode(function, value.errable_value, out);
+                try self.collectNode(function, value.context, out);
+            },
             .binding_declaration => |id| if (self.graph.binding(id).initialization) |child| try self.collectNode(function, child, out),
             .move_value, .address_of => |child| try self.collectNode(function, child, out),
             .function_call => |call| try self.collectNode(function, call.input, out),
