@@ -393,8 +393,9 @@ pub const Resolver = struct {
     }
 
     fn triviallyCopyable(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
+        if (global_types.deinitFunction(self.graph, ty) != null) return false;
         return switch (self.graph.types.items[@intFromEnum(ty)]) {
-            .builtin, .pointer => true,
+            .builtin, .pointer, .virtual => true,
             .array => |array| self.triviallyCopyable(array.element),
             .structural, .declared, .generic => blk: {
                 const fields = global_types.fields(self.graph, ty) orelse break :blk false;

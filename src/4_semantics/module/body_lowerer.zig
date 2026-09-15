@@ -296,7 +296,7 @@ const Context = struct {
 
     fn lowerBinding(self: *Context, node: syn.NodeIndex) !Lowered {
         const declaration = self.tree.symbolDeclaration(node).?;
-        const value = if (declaration.value) |value_node| try self.lowerNode(value_node, null) else null;
+        const value = if (declaration.value) |value_node| try self.valuePosition(value_node, try self.lowerNode(value_node, null)) else null;
         const semantic_ty: ?entities.ModuleTypeId = if (declaration.type_node) |type_node|
             try self.lowerType(type_node)
         else if (value) |item|
@@ -326,11 +326,13 @@ const Context = struct {
     fn lowerAssignment(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const assignment = self.tree.assignment(node).?;
         const name_text = self.tree.tokenTextFromSource(self.source, assignment.name_token);
+        if (std.mem.eql(u8, name_text, "_"))
+            return self.valuePosition(assignment.value, try self.lowerNode(assignment.value, expected));
         if (self.lookupBinding(name_text)) |binding| {
-            const value = try self.lowerNode(assignment.value, binding.ty);
+            const value = try self.valuePosition(assignment.value, try self.lowerNode(assignment.value, binding.ty));
             return self.resolved(node, binding.ty, .{ .assignment = .{ .binding = binding.id, .value = value.node } });
         }
-        const value = try self.lowerNode(assignment.value, expected);
+        const value = try self.valuePosition(assignment.value, try self.lowerNode(assignment.value, expected));
         return self.pending(node, .{ .resolve_name_assignment = .{
             .node = self.nextNodeId(),
             .name = try self.writer.addString(name_text),
@@ -417,7 +419,7 @@ const Context = struct {
         defer values.deinit(self.allocator);
         for (literal.fields) |field_node| {
             const field = self.tree.valueField(field_node).?;
-            const value = try self.lowerNode(field.value, null);
+            const value = try self.valuePosition(field.value, try self.lowerNode(field.value, null));
             const name = if (field.name_token) |token_index|
                 try self.writer.addString(self.tree.tokenTextFromSource(self.source, token_index))
             else
@@ -795,6 +797,24 @@ const Context = struct {
             .node = self.nextNodeId(),
             .path = try self.writer.addString(path),
         } }, expected);
+    }
+
+    fn valuePosition(self: *Context, node: syn.NodeIndex, value: Lowered) !Lowered {
+        const needs_copy = switch (self.graph.semantic.nodes.items[@intFromEnum(value.node)]) {
+            .resolved => |item| switch (item.content) {
+                .binding_use, .struct_field_access, .choice_payload_access, .array_index, .dereference => true,
+                else => false,
+            },
+            .pending => |operation_id| switch (self.graph.semantic.pending_operations.items[@intFromEnum(operation_id)]) {
+                .resolve_name_use, .resolve_field, .resolve_choice_payload, .resolve_index => true,
+                else => false,
+            },
+        };
+        if (!needs_copy) return value;
+        return self.pending(node, .{ .resolve_copy = .{
+            .node = self.nextNodeId(),
+            .value = value.node,
+        } }, value.ty);
     }
 
     fn pending(self: *Context, node: syn.NodeIndex, operation: entities.PendingOperation, ty: ?entities.ModuleTypeId) !Lowered {
