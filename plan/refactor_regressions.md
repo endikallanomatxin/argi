@@ -44,7 +44,9 @@ errable tag, executes recorded cleanup on the error path, rebuilds the caller's
 errable, and unwraps the success payload. Propagation compares source tags by
 their choice-local index, remaps reason tags by name into the caller's superset,
 preserves the trace field, and packs the result according to the function ABI.
-Context strings are not yet appended to the runtime trace. GlobalSema lowers
+Codegen derives propagation metadata from `SourceDb`, grows and relocates the
+trace's `DynamicArray`, and appends the source location and optional `!!`
+context before remapping the payload. GlobalSema lowers
 `testing.expect_error` into its indexed semantic payload, including the actual
 reason field, expected reason, result type, and testing failure function.
 Codegen evaluates the errable once, distinguishes unexpected success from a
