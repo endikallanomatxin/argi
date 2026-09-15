@@ -297,13 +297,15 @@ const Context = struct {
 
     fn lowerBinding(self: *Context, node: syn.NodeIndex) !Lowered {
         const declaration = self.tree.symbolDeclaration(node).?;
-        const value = if (declaration.value) |value_node| try self.valuePosition(value_node, try self.lowerNode(value_node, null)) else null;
-        const semantic_ty: ?entities.ModuleTypeId = if (declaration.type_node) |type_node|
+        const declared_ty: ?entities.ModuleTypeId = if (declaration.type_node) |type_node|
             try self.lowerType(type_node)
-        else if (value) |item|
-            item.ty
         else
             null;
+        const value = if (declaration.value) |value_node|
+            try self.valuePosition(value_node, try self.lowerNode(value_node, declared_ty))
+        else
+            null;
+        const semantic_ty: ?entities.ModuleTypeId = declared_ty orelse if (value) |item| item.ty else null;
         const name_text = self.tree.tokenTextFromSource(self.source, declaration.name_token);
         const name_range = try self.writer.addString(name_text);
         const source = self.sourceRef(node);
@@ -529,12 +531,21 @@ const Context = struct {
 
     fn lowerReturn(self: *Context, node: syn.NodeIndex) !Lowered {
         const ret = self.tree.returnStatement(node).?;
-        const value = if (ret.value) |child| try self.lowerNode(child, null) else null;
-        const ty: ?entities.ModuleTypeId = if (value) |item| item.ty else try self.builtin(.Void);
+        const expected = try self.currentReturnType();
+        const value = if (ret.value) |child| try self.lowerNode(child, expected) else null;
+        const ty: ?entities.ModuleTypeId = expected orelse if (value) |item| item.ty else try self.builtin(.Void);
         return self.resolved(node, ty, .{ .return_statement = .{
             .expression = if (value) |item| item.node else null,
             .cleanup = .{ .start = @intCast(self.graph.semantic.node_refs.items.len), .len = 0 },
         } });
+    }
+
+    fn currentReturnType(self: *Context) !?entities.ModuleTypeId {
+        const function_id = self.current_function orelse return null;
+        const output = self.graph.functions.items[@intFromEnum(function_id)].output;
+        if (output.len != 1) return null;
+        const field_id: entities.ModuleFieldId = @enumFromInt(output.start);
+        return (try views.fieldView(self.graph, field_id)).ty;
     }
 
     fn lowerBinary(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
