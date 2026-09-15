@@ -452,8 +452,8 @@ pub const CodeGenerator = struct {
             .choice_payload_access => |access| try self.choicePayload(node_id, access),
             .nullable_unwrap_or => |unwrap| try self.nullableUnwrap(unwrap),
             .testing_expect_error => |id| try self.genTestingExpectError(self.graph.testing_expect_errors.items[@intFromEnum(id)]),
-            .error_propagation => |id| try self.genErrorPropagation(self.graph.error_propagations.items[@intFromEnum(id)], null),
-            .error_context => |id| try self.genErrorPropagation(self.graph.error_contexts.items[@intFromEnum(id)], self.graph.error_contexts.items[@intFromEnum(id)].context),
+            .error_propagation => |id| try self.genErrorPropagation(self.graph.error_propagations.items[@intFromEnum(id)], null, node.source),
+            .error_context => |id| try self.genErrorPropagation(self.graph.error_contexts.items[@intFromEnum(id)], self.graph.error_contexts.items[@intFromEnum(id)].context, node.source),
             .array_literal => |literal| try self.arrayLiteral(literal),
             .array_index => |access| try self.arrayIndex(access),
             .array_store => |store| blk: {
@@ -988,7 +988,7 @@ pub const CodeGenerator = struct {
     // continue with the unwrapped success payload. Trace enrichment is kept in
     // a separate helper so the indexed graph semantics do not depend on a
     // particular error payload layout.
-    fn genErrorPropagation(self: *CodeGenerator, propagation: anytype, context: ?graph_mod.GlobalNodeId) !TypedValue {
+    fn genErrorPropagation(self: *CodeGenerator, propagation: anytype, context: ?graph_mod.GlobalNodeId, source: primitives.SourceRef) !TypedValue {
         const value = (try self.visitNode(propagation.errable_value)) orelse return CodegenError.ValueNotFound;
         const source_errable_type = self.graph.node(propagation.errable_value).ty orelse return CodegenError.InvalidType;
         const tag = c.LLVMBuildExtractValue(self.builder, value.value_ref, 0, "error.tag");
@@ -1005,7 +1005,8 @@ pub const CodeGenerator = struct {
         const source_error_index = try self.variantIndex(source_errable_type, propagation.error_variant);
         const propagated_error_index = try self.variantIndex(propagation.propagated_errable_type, propagation.propagated_error_variant);
         const payload = c.LLVMBuildExtractValue(self.builder, value.value_ref, source_error_index + 1, "error.payload");
-        const converted_payload = try self.coerceErrorPayload(payload, propagation.error_payload_type, propagation.propagated_error_payload_type);
+        const traced_payload = try self.appendErrorTrace(payload, propagation.error_payload_type, source, context);
+        const converted_payload = try self.coerceErrorPayload(traced_payload, propagation.error_payload_type, propagation.propagated_error_payload_type);
         propagated = c.LLVMBuildInsertValue(self.builder, propagated, propagated_error_tag, 0, "error.return.tag");
         propagated = c.LLVMBuildInsertValue(self.builder, propagated, converted_payload, propagated_error_index + 1, "error.return.payload");
         for (self.graph.node_refs.items[propagation.cleanup_nodes.start..][0..propagation.cleanup_nodes.len]) |cleanup|
@@ -1026,8 +1027,182 @@ pub const CodeGenerator = struct {
             c.LLVMBuildExtractValue(self.builder, ok_payload, index, "error.ok.value")
         else
             ok_payload;
-        _ = context;
         return .{ .value_ref = result, .type_ref = try self.toLLVMType(result_ty), .ty = result_ty };
+    }
+
+    fn appendErrorTrace(
+        self: *CodeGenerator,
+        error_value: llvm.c.LLVMValueRef,
+        error_ty: graph_mod.GlobalTypeId,
+        source: primitives.SourceRef,
+        context_node: ?graph_mod.GlobalNodeId,
+    ) !llvm.c.LLVMValueRef {
+        const reason = types.findField(self.graph, error_ty, "reason") orelse return CodegenError.InvalidType;
+        const trace = types.findField(self.graph, error_ty, "trace") orelse return CodegenError.InvalidType;
+        const entries = types.findField(self.graph, trace.field.ty, "entries") orelse return CodegenError.InvalidType;
+        const allocation = types.findField(self.graph, entries.field.ty, "allocation") orelse return CodegenError.InvalidType;
+        const length = types.findField(self.graph, entries.field.ty, "length") orelse return CodegenError.InvalidType;
+        const capacity = types.findField(self.graph, entries.field.ty, "capacity") orelse return CodegenError.InvalidType;
+        const data = types.findField(self.graph, allocation.field.ty, "data") orelse return CodegenError.InvalidType;
+        const size = types.findField(self.graph, allocation.field.ty, "size") orelse return CodegenError.InvalidType;
+        const entry_ty = self.genericTypeArgument(entries.field.ty, "t") orelse return CodegenError.InvalidType;
+        const source_file = types.findField(self.graph, entry_ty, "source_file") orelse return CodegenError.InvalidType;
+        const line = types.findField(self.graph, entry_ty, "line") orelse return CodegenError.InvalidType;
+        const column = types.findField(self.graph, entry_ty, "column") orelse return CodegenError.InvalidType;
+        const context = types.findField(self.graph, entry_ty, "context") orelse return CodegenError.InvalidType;
+        const source_line = types.findField(self.graph, entry_ty, "source_line") orelse return CodegenError.InvalidType;
+
+        const trace_value = c.LLVMBuildExtractValue(self.builder, error_value, trace.index, "error.trace");
+        const entries_value = c.LLVMBuildExtractValue(self.builder, trace_value, entries.index, "trace.entries");
+        const allocation_value = c.LLVMBuildExtractValue(self.builder, entries_value, allocation.index, "trace.allocation");
+        const old_data = c.LLVMBuildExtractValue(self.builder, allocation_value, data.index, "trace.data");
+        const old_length = c.LLVMBuildExtractValue(self.builder, entries_value, length.index, "trace.length");
+        const old_capacity = c.LLVMBuildExtractValue(self.builder, entries_value, capacity.index, "trace.capacity");
+        const native_uint = try self.nativeUIntType();
+        const entry_size = c.LLVMConstInt(native_uint, try types.sizeOf(self.graph, entry_ty), 0);
+        const zero = c.LLVMConstInt(native_uint, 0, 0);
+        const one = c.LLVMConstInt(native_uint, 1, 0);
+
+        const current = c.LLVMGetInsertBlock(self.builder) orelse return CodegenError.InvalidType;
+        const function = c.LLVMGetBasicBlockParent(current);
+        const grow_block = c.LLVMAppendBasicBlock(function, "trace.grow");
+        const reuse_block = c.LLVMAppendBasicBlock(function, "trace.reuse");
+        const merge_block = c.LLVMAppendBasicBlock(function, "trace.merge");
+        const full = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, old_length, old_capacity, "trace.full");
+        _ = c.LLVMBuildCondBr(self.builder, full, grow_block, reuse_block);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, grow_block);
+        const capacity_is_zero = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, old_capacity, zero, "trace.capacity.zero");
+        const doubled = c.LLVMBuildMul(self.builder, old_capacity, c.LLVMConstInt(native_uint, 2, 0), "trace.capacity.doubled");
+        const new_capacity = c.LLVMBuildSelect(self.builder, capacity_is_zero, one, doubled, "trace.capacity.next");
+        const new_size = c.LLVMBuildMul(self.builder, new_capacity, entry_size, "trace.bytes");
+        const new_data = try self.callRuntimeAllocation(new_size);
+        try self.callRuntimeMemcpy(new_data, old_data, c.LLVMBuildMul(self.builder, old_length, entry_size, "trace.copy.bytes"));
+        try self.callRuntimeFree(old_data);
+        var grown_allocation = c.LLVMGetUndef(try self.toLLVMType(allocation.field.ty));
+        grown_allocation = c.LLVMBuildInsertValue(self.builder, grown_allocation, new_data, data.index, "trace.allocation.data");
+        grown_allocation = c.LLVMBuildInsertValue(self.builder, grown_allocation, new_size, size.index, "trace.allocation.size");
+        var grown_entries = entries_value;
+        grown_entries = c.LLVMBuildInsertValue(self.builder, grown_entries, grown_allocation, allocation.index, "trace.entries.allocation");
+        grown_entries = c.LLVMBuildInsertValue(self.builder, grown_entries, new_capacity, capacity.index, "trace.entries.capacity");
+        _ = c.LLVMBuildBr(self.builder, merge_block);
+        const grow_end = c.LLVMGetInsertBlock(self.builder);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, reuse_block);
+        _ = c.LLVMBuildBr(self.builder, merge_block);
+        const reuse_end = c.LLVMGetInsertBlock(self.builder);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, merge_block);
+        const entries_type = try self.toLLVMType(entries.field.ty);
+        const current_entries = c.LLVMBuildPhi(self.builder, entries_type, "trace.entries.current");
+        var entry_values = [_]llvm.c.LLVMValueRef{ grown_entries, entries_value };
+        var entry_blocks = [_]llvm.c.LLVMBasicBlockRef{ grow_end, reuse_end };
+        c.LLVMAddIncoming(current_entries, &entry_values, &entry_blocks, 2);
+        const current_allocation = c.LLVMBuildExtractValue(self.builder, current_entries, allocation.index, "trace.allocation.current");
+        const current_data = c.LLVMBuildExtractValue(self.builder, current_allocation, data.index, "trace.data.current");
+        const byte_offset = c.LLVMBuildMul(self.builder, old_length, entry_size, "trace.offset");
+        const data_address = c.LLVMBuildPtrToInt(self.builder, current_data, native_uint, "trace.data.address");
+        const entry_address = c.LLVMBuildAdd(self.builder, data_address, byte_offset, "trace.entry.address");
+        const entry_type = try self.toLLVMType(entry_ty);
+        const entry_pointer = c.LLVMBuildIntToPtr(self.builder, entry_address, c.LLVMPointerType(entry_type, 0), "trace.entry.pointer");
+
+        const metadata = try self.traceMetadata(source, context_node);
+        var entry = c.LLVMGetUndef(entry_type);
+        entry = c.LLVMBuildInsertValue(self.builder, entry, metadata.source_file, source_file.index, "trace.entry.source_file");
+        entry = c.LLVMBuildInsertValue(self.builder, entry, c.LLVMConstInt(try self.toLLVMType(line.field.ty), metadata.line, 0), line.index, "trace.entry.line");
+        entry = c.LLVMBuildInsertValue(self.builder, entry, c.LLVMConstInt(try self.toLLVMType(column.field.ty), metadata.column, 0), column.index, "trace.entry.column");
+        entry = c.LLVMBuildInsertValue(self.builder, entry, metadata.context, context.index, "trace.entry.context");
+        entry = c.LLVMBuildInsertValue(self.builder, entry, metadata.source_line, source_line.index, "trace.entry.source_line");
+        _ = c.LLVMBuildStore(self.builder, entry, entry_pointer);
+
+        var final_entries = current_entries;
+        final_entries = c.LLVMBuildInsertValue(self.builder, final_entries, c.LLVMBuildAdd(self.builder, old_length, one, "trace.length.next"), length.index, "trace.entries.length");
+        var final_trace = trace_value;
+        final_trace = c.LLVMBuildInsertValue(self.builder, final_trace, final_entries, entries.index, "trace.final");
+        var final_error = error_value;
+        final_error = c.LLVMBuildInsertValue(self.builder, final_error, c.LLVMBuildExtractValue(self.builder, error_value, reason.index, "error.reason"), reason.index, "error.reason.final");
+        return c.LLVMBuildInsertValue(self.builder, final_error, final_trace, trace.index, "error.trace.final");
+    }
+
+    const TraceMetadata = struct {
+        source_file: llvm.c.LLVMValueRef,
+        source_line: llvm.c.LLVMValueRef,
+        context: llvm.c.LLVMValueRef,
+        line: u32,
+        column: u32,
+    };
+
+    fn traceMetadata(self: *CodeGenerator, source: primitives.SourceRef, context_node: ?graph_mod.GlobalNodeId) !TraceMetadata {
+        if (source.file_index >= self.graph.files.items.len) return CodegenError.InvalidType;
+        const path = self.graph.text(self.graph.files.items[source.file_index].path);
+        const file_id = self.diags.source_db.findPath(path) orelse return CodegenError.InvalidType;
+        const position = self.diags.source_db.lineColumn(file_id, source.offset);
+        const file = self.diags.source_db.get(file_id);
+        const line_start = file.line_starts[position.line - 1];
+        const remaining = file.source[line_start..];
+        const line_end = std.mem.indexOfScalar(u8, remaining, '\n') orelse remaining.len;
+        const path_z = try self.dupZ(path);
+        defer self.allocator.free(path_z);
+        const line_z = try self.dupZ(remaining[0..line_end]);
+        defer self.allocator.free(line_z);
+        const pointer_ty = c.LLVMPointerType(c.LLVMInt8Type(), 0);
+        const context = if (context_node) |id| blk: {
+            const value = (try self.visitNode(id)) orelse return CodegenError.ValueNotFound;
+            if (value.ty) |ty| {
+                if (types.findField(self.graph, ty, "data")) |field|
+                    break :blk c.LLVMBuildExtractValue(self.builder, value.value_ref, field.index, "trace.context.data");
+            }
+            break :blk value.value_ref;
+        } else c.LLVMConstNull(pointer_ty);
+        return .{
+            .source_file = c.LLVMBuildGlobalStringPtr(self.builder, path_z.ptr, "trace.source_file"),
+            .source_line = c.LLVMBuildGlobalStringPtr(self.builder, line_z.ptr, "trace.source_line"),
+            .context = context,
+            .line = position.line,
+            .column = position.column,
+        };
+    }
+
+    fn genericTypeArgument(self: *CodeGenerator, ty: graph_mod.GlobalTypeId, name: []const u8) ?graph_mod.GlobalTypeId {
+        const generic = switch (self.graph.types.items[@intFromEnum(ty)]) {
+            .generic => |value| value,
+            else => return null,
+        };
+        for (self.graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| {
+            if (!std.mem.eql(u8, self.graph.text(argument.name), name)) continue;
+            return switch (argument.value) {
+                .type => |value| value,
+                else => null,
+            };
+        }
+        return null;
+    }
+
+    fn runtimeFunction(self: *CodeGenerator, name: []const u8) !FunctionSymbol {
+        for (self.graph.functions.items, 0..) |function, raw| {
+            if (!std.mem.eql(u8, self.graph.text(self.graph.declaration(function.declaration).name), name)) continue;
+            const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            return self.functions.get(id) orelse return CodegenError.SymbolNotFound;
+        }
+        return CodegenError.SymbolNotFound;
+    }
+
+    fn callRuntimeAllocation(self: *CodeGenerator, size: llvm.c.LLVMValueRef) !llvm.c.LLVMValueRef {
+        const function = try self.runtimeFunction("malloc");
+        var arguments = [_]llvm.c.LLVMValueRef{size};
+        return c.LLVMBuildCall2(self.builder, function.type_ref, function.ref, &arguments, 1, "trace.malloc");
+    }
+
+    fn callRuntimeFree(self: *CodeGenerator, pointer: llvm.c.LLVMValueRef) !void {
+        const function = try self.runtimeFunction("free");
+        var arguments = [_]llvm.c.LLVMValueRef{pointer};
+        _ = c.LLVMBuildCall2(self.builder, function.type_ref, function.ref, &arguments, 1, "");
+    }
+
+    fn callRuntimeMemcpy(self: *CodeGenerator, destination: llvm.c.LLVMValueRef, source: llvm.c.LLVMValueRef, size: llvm.c.LLVMValueRef) !void {
+        const function = try self.runtimeFunction("memcpy");
+        var arguments = [_]llvm.c.LLVMValueRef{ destination, source, size };
+        _ = c.LLVMBuildCall2(self.builder, function.type_ref, function.ref, &arguments, 3, "");
     }
 
     fn genTestingExpectError(self: *CodeGenerator, expect: graph_mod.TestingExpectError) !TypedValue {
