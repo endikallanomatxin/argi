@@ -6,6 +6,7 @@ on:
       - compact-semantic-graph-chatgpt
     paths:
       - .github/semantic_refactor_edit.py
+      - .github/semantic_refactor_test_command
 
 permissions:
   contents: write
@@ -43,7 +44,9 @@ jobs:
         timeout-minutes: 8
         shell: bash
         run: |
-          if [[ -f .git/semantic-refactor-test-command ]]; then
+          if [[ -f .github/semantic_refactor_test_command ]]; then
+            bash -euo pipefail -c "$(cat .github/semantic_refactor_test_command)"
+          elif [[ -f .git/semantic-refactor-test-command ]]; then
             bash -euo pipefail -c "$(cat .git/semantic-refactor-test-command)"
           fi
       - name: Commit verified source edit
