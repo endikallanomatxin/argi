@@ -266,6 +266,7 @@ pub fn semantize(
         if (core.materializeDereferences()) changed = true;
         if (try core.materializeAddresses()) changed = true;
         if (try generics.materializeKnownTypes()) changed = true;
+        if (try abstracts.materializeAbstractFieldStorage()) changed = true;
         try control.materializeSugarTypes();
     }
 
