@@ -532,3 +532,22 @@ test "local abstract inputs specialize one body per concrete implementer" {
     }
     try std.testing.expectEqual(@as(usize, 2), instances);
 }
+
+test "abstract contract nested in a generic type argument becomes a parameter" {
+    const allocator = std.testing.allocator;
+    const source =
+        "Contract : Abstract = ()\n" ++
+        "Box#(.t: Type) : Type = (.value: t)\n" ++
+        "read(.box: Box#(.t: Contract)) -> () := {}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const files = [_]module_graph.FileInput{.{ .path = "nested_contract/main.rg", .tree = &tree, .source = source }};
+    var module = try module_graph.build(allocator, "nested_contract", &files);
+    defer module.deinit(allocator);
+    _ = try @import("parameterized/lowerer.zig").lower(allocator, &module, &files);
+    const storage = &module.semantic.parameterized_storage;
+    try std.testing.expectEqual(@as(usize, 1), storage.parameterized_functions.items.len);
+    const template = storage.parameterized_functions.items[0];
+    try std.testing.expectEqual(@as(u32, 1), template.parameters.len);
+    try std.testing.expect(storage.comptime_parameters.items[template.parameters.start].constraint != null);
+}

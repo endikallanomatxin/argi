@@ -243,7 +243,17 @@ pub const Context = struct {
                 const variant = self.tree.choiceTypeVariant(variant_node) orelse continue;
                 if (variant.payload_type) |ty| try self.collectLocalAbstractParameters(ty);
             },
-            .generic => {},
+            .generic => |generic| {
+                // Virtual carries the abstract contract as runtime dispatch
+                // metadata; its argument is not a concrete type to infer.
+                const base = self.tree.syntaxType(generic.base) orelse return;
+                if (base == .name and std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Virtual")) return;
+                const arguments = self.tree.structTypeLiteral(generic.arguments) orelse return;
+                for (arguments.fields) |field_node| {
+                    const field = self.tree.structTypeField(field_node) orelse continue;
+                    if (field.type_node) |ty| try self.collectLocalAbstractParameters(ty);
+                }
+            },
         }
     }
 
