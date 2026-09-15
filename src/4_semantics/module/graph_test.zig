@@ -643,3 +643,34 @@ test "named call inputs reject unrelated default-only overloads" {
     }
     try std.testing.expect(matched);
 }
+
+test "ordinary reached default selects a caller binding" {
+    const allocator = std.testing.allocator;
+    const source =
+        "consume(.value: Int32 = #reach value) -> (.result: Int32) := { result = value }\n" ++
+        "main() -> (.result: Int32) := {\n" ++
+        "    value :: Int32 = 7\n" ++
+        "    result = consume().result\n" ++
+        "}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try @import("semantizer.zig").build(allocator, "reach_local", &.{.{ .path = "reach_local/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+    defer result.graph.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
+    var reached = false;
+    for (result.graph.nodes.items) |node| {
+        if (node.content != .function_call) continue;
+        const function = result.graph.functions.items[@intFromEnum(node.content.function_call.callee)];
+        const declaration = result.graph.declaration(function.declaration);
+        if (!std.mem.eql(u8, result.graph.text(declaration.name), "consume")) continue;
+        const input = result.graph.nodes.items[@intFromEnum(node.content.function_call.input)].content.struct_value_literal;
+        const argument = result.graph.value_fields.items[input.fields.start];
+        const value = result.graph.nodes.items[@intFromEnum(argument.value)];
+        try std.testing.expect(value.content == .binding_use);
+        try std.testing.expectEqualStrings("value", result.graph.text(result.graph.bindings.items[@intFromEnum(value.content.binding_use)].name));
+        reached = true;
+    }
+    try std.testing.expect(reached);
+}

@@ -26,16 +26,23 @@ in its own indexed IR when they appear as function input defaults. This data
 was previously dropped by the template body lowerer. GlobalSema still needs
 to instantiate those defaults and resolve them against the caller's captured
 binding context before implicit type inference.
-Ordinary ModuleSema call operations now capture the binding IDs visible at the
-call site in lexical order. A local `#reach` resolver prototype proved that
-this data can select a caller binding, but applying it to all ordinary calls
-exposed unresolved `flush`/`deinit` paths and made the LSP test fail. That
-prototype was withdrawn; the scope data remains available for a resolver that
-also preserves overload fallback and propagates missing reach arguments.
+Ordinary ModuleSema call operations capture the binding IDs visible at the
+call site in lexical order. GlobalSema consumes that scope when completing
+reached defaults. Missing values still require propagation through the
+enclosing function's input.
 GlobalSema now rejects a named argument that does not occur in a candidate's
 input fields before scoring its defaults. This prevents `.self` from selecting
 an unrelated `flush(.stdout = #reach ...)` overload and blocking the next
 dispatch strategy. The same shape check applies to abstract-compatible calls.
+GlobalSema now resolves ordinary `#reach` defaults from the bindings captured
+at the call site, walking alternatives and nested field paths in source order.
+It completes the chosen call with a new argument node and does not mutate the
+callee's shared default. A local executable semantic fixture passes. The
+internal suite currently has 164 passing tests and one LSP crash: the only
+remaining pending path in that fixture is `System.deinit` calling
+`Terminal.deinit` without an allocator visible in the local scope. The old
+compiler propagated that reached field into the enclosing function input;
+this indexed propagation is the next required step.
 Abstract contracts nested inside ordinary generic type arguments are also
 collected as constrained type parameters. `Virtual#(.abstract: ...)` is an
 exception because its abstract argument selects a runtime vtable rather than
