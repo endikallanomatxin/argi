@@ -596,6 +596,30 @@ test "parameterized call defaults preserve reach alternatives" {
     try std.testing.expect(input_binding.initialization != null);
 }
 
+test "imported abstract inputs become constrained templates" {
+    const allocator = std.testing.allocator;
+    const source = "write(.writer: $&Writer) -> () := {}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try @import("semantizer.zig").buildWithAbstractCatalog(allocator, "consumer", &.{.{
+        .path = "consumer/main.rg",
+        .tree = &tree,
+        .source = source,
+    }}, &.{"Writer"});
+    defer module.graph.deinit(allocator);
+
+    const templates = module.graph.semantic.parameterized_storage.parameterized_functions.items;
+    try std.testing.expectEqual(@as(usize, 1), templates.len);
+    try std.testing.expectEqual(@import("parameterized/storage.zig").GenericDispatchKind.abstract_contract, templates[0].dispatch_kind);
+    const parameter = module.graph.semantic.parameterized_storage.comptime_parameters.items[templates[0].parameters.start];
+    try std.testing.expect(parameter.constraint != null);
+    const constraint = module.graph.semantic.parameterized_storage.abstract_constraints.items[@intFromEnum(parameter.constraint.?)];
+    try std.testing.expect(constraint.abstract_ref == .external);
+    const reference = module.graph.semantic.external_refs.items[@intFromEnum(constraint.abstract_ref.external)];
+    try std.testing.expectEqual(@import("entities.zig").ExternalKind.abstract, reference.kind);
+    try std.testing.expectEqualStrings("Writer", module.graph.text(reference.name));
+}
+
 test "parameterized call defaults reach caller bindings after instantiation" {
     const allocator = std.testing.allocator;
     const source =

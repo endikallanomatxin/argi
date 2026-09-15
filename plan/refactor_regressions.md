@@ -51,18 +51,16 @@ input fields and input bindings, then resolving the outer call on the next
 fixed-point iteration. A two-level regression test passes, all 165 internal
 tests pass, and the minimal program advances beyond `System.deinit` to the
 imported abstract signature in `write_trace_text`.
-An uncommitted catalog prototype derived implicit core abstract names from
-syntax and successfully classified imported contracts without hardcoded
-identifiers. Enabling it across exhaustive core bodies exposed a separate root
-context issue: `concat_views` declares a local abstract allocator initialized
-by `#reach allocator, system.allocator`, while the minimal fixture declares no
-`system` input. The retired compiler's own diagnostic suggested
-`main(.system: System = System(), ...)`; it did not synthesize a hidden global
-binding. The prototype was removed so imported-contract lowering is not
-coupled to an invented `system` lookup. The next implementation should combine
-the derived catalog with reachability/root-context construction, and functions
-with explicit generic parameters must also append implicit constrained
-parameters instead of choosing only one parameter category.
+The frontend derives an abstract declaration catalog from the loaded syntax
+files and passes it into each ModuleSema invocation. Imported abstract inputs
+are now lowered as constrained parameterized templates through an external
+declaration reference; no core contract names or hidden `system` lookup are
+hardcoded. The minimal program consequently advances beyond the former
+`write_trace_text` codegen signature failure, but exhaustive core bodies still
+leave unrelated string operations pending. Selective reachability/root-context
+construction remains necessary, and functions with explicit generic
+parameters must also append implicit constrained parameters instead of choosing
+only one parameter category.
 Abstract contracts nested inside ordinary generic type arguments are also
 collected as constrained type parameters. `Virtual#(.abstract: ...)` is an
 exception because its abstract argument selects a runtime vtable rather than

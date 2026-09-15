@@ -41,6 +41,15 @@ pub fn build(
     module_dir: []const u8,
     files: []const module_sg.FileInput,
 ) !BuildResult {
+    return buildWithAbstractCatalog(allocator, module_dir, files, &.{});
+}
+
+pub fn buildWithAbstractCatalog(
+    allocator: std.mem.Allocator,
+    module_dir: []const u8,
+    files: []const module_sg.FileInput,
+    abstract_names: []const []const u8,
+) !BuildResult {
     var graph = try module_sg.build(allocator, module_dir, files);
     errdefer graph.deinit(allocator);
 
@@ -55,7 +64,7 @@ pub fn build(
     try lowerOperatorMetadata(allocator, &graph, files);
     const global_roots = try global_roots_lowerer.lower(allocator, &graph);
 
-    const parameterized_stats = try parameterized_lowerer.lower(allocator, &graph, files);
+    const parameterized_stats = try parameterized_lowerer.lowerWithAbstractCatalog(allocator, &graph, files, abstract_names);
     // Templates claim abstract interfaces before ordinary body lowering, so
     // each contract body is materialized only after specialization.
     const bodies = try body_lowerer.lowerMissingFunctions(allocator, &graph, files);

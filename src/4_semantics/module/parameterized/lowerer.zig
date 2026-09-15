@@ -33,6 +33,15 @@ pub fn lower(
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
 ) !Stats {
+    return lowerWithAbstractCatalog(allocator, graph, files, &.{});
+}
+
+pub fn lowerWithAbstractCatalog(
+    allocator: std.mem.Allocator,
+    graph: *graph_mod.ModuleSemanticGraph,
+    files: []const graph_mod.FileInput,
+    abstract_names: []const []const u8,
+) !Stats {
     var ctx = Context{
         .allocator = allocator,
         .graph = graph,
@@ -40,6 +49,7 @@ pub fn lower(
         .writer = writer_mod.Writer.init(allocator, graph),
         .parameters = std.array_list.Managed(ParameterBinding).init(allocator),
         .bindings = std.array_list.Managed(BindingName).init(allocator),
+        .abstract_names = abstract_names,
     };
     defer ctx.parameters.deinit();
     defer ctx.bindings.deinit();
@@ -53,6 +63,7 @@ pub const Context = struct {
     writer: writer_mod.Writer,
     parameters: std.array_list.Managed(ParameterBinding),
     bindings: std.array_list.Managed(BindingName),
+    abstract_names: []const []const u8 = &.{},
     file_index: u32 = 0,
     tree: *const syn.FileSyntaxTree = undefined,
     source: []const u8 = &.{},
@@ -216,13 +227,22 @@ pub const Context = struct {
         const syntax_type = self.tree.syntaxType(node) orelse return;
         switch (syntax_type) {
             .name => |name| {
-                if (name.qualifier_token != null) return;
                 const text = self.tree.tokenTextFromSource(self.source, name.name_token);
-                const declaration = self.localAbstractType(text) orelse return;
+                const local_declaration = if (name.qualifier_token == null) self.localAbstractType(text) else null;
+                if (local_declaration == null and !self.knownAbstract(text)) return;
                 if (self.parameter(text) != null) return;
+                const abstract_ref: ir.DeclarationRef = if (local_declaration) |declaration|
+                    .{ .module = declaration }
+                else
+                    .{ .external = try self.writer.addExternalRef(.{
+                        .kind = .abstract,
+                        .module_path = if (name.qualifier_token) |qualifier| try self.writer.addString(self.tree.tokenTextFromSource(self.source, qualifier)) else null,
+                        .name = try self.writer.addString(text),
+                        .source = self.sourceRef(node),
+                    }) };
                 const constraint: parameterized_storage.AbstractConstraintId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.abstract_constraints.items.len)));
                 try self.graph.semantic.parameterized_storage.abstract_constraints.append(self.allocator, .{
-                    .abstract_ref = .{ .module = declaration },
+                    .abstract_ref = abstract_ref,
                     .source = self.sourceRef(node),
                 });
                 const parameter_id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
@@ -253,6 +273,11 @@ pub const Context = struct {
                 }
             },
         }
+    }
+
+    fn knownAbstract(self: *const Context, name: []const u8) bool {
+        for (self.abstract_names) |candidate| if (std.mem.eql(u8, candidate, name)) return true;
+        return false;
     }
 
     pub fn lowerType(self: *Context, node: syn.NodeIndex, allow_self: bool) anyerror!ir.ParameterizedTypeId {
