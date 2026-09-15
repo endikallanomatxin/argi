@@ -563,6 +563,8 @@ pub const CodeGenerator = struct {
     fn structLiteral(self: *CodeGenerator, literal: anytype, maybe_ty: ?graph_mod.GlobalTypeId) !TypedValue {
         const ty = maybe_ty orelse return CodegenError.InvalidType;
         const type_ref = try self.toLLVMType(ty);
+        if (types.isBuiltin(self.graph, ty, .Void) and literal.fields.len == 0)
+            return .{ .value_ref = c.LLVMGetUndef(type_ref), .type_ref = type_ref, .ty = ty };
         const range = types.fields(self.graph, ty) orelse return CodegenError.InvalidType;
         if (self.isCUnion(ty)) {
             const temp = c.LLVMBuildAlloca(self.builder, type_ref, "union.literal");
