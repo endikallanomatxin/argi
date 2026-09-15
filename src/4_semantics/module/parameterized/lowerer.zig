@@ -446,11 +446,13 @@ pub const Context = struct {
             const field = self.tree.structTypeField(field_node) orelse continue;
             const type_node = field.type_node orelse continue;
             const name = if (field.inferred_result) "result" else self.tree.tokenTextFromSource(self.source, field.name_token);
+            const initialization = if (field.default_value) |value| try self.lowerBodyNode(value) else null;
             const binding_id: ir.ParameterizedBindingId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len)));
             try self.graph.semantic.parameterized_storage.ir.bindings.append(self.allocator, .{
                 .name = try self.writer.addString(name),
                 .source = self.sourceRef(field_node),
                 .ty = try self.lowerType(type_node, false),
+                .initialization = initialization,
                 .mutability = if (field.inferred_result) .variable else .constant,
             });
             try self.bindings.append(.{ .name = name, .id = binding_id });

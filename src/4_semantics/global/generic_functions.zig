@@ -377,10 +377,54 @@ pub const Resolver = struct {
         }
         const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return .deferred;
         const fields = self.interfaceFields(ty) catch return .deferred;
+        const matching_fields = self.materializeDefaultPresenceForMatch(module_index, pattern, fields) catch return .deferred;
         if (self.nested_call_context) |abstracts| {
-            return call_compatibility.matchInput(.{ .core = self.core, .abstracts = abstracts }, fields, input);
+            return call_compatibility.matchInput(.{ .core = self.core, .abstracts = abstracts }, matching_fields, input);
         }
-        return self.core.matchCallInput(fields, input);
+        return self.core.matchCallInput(matching_fields, input);
+    }
+
+    /// Dispatch only needs to know whether an omitted field has a default. Its
+    /// concrete node is instantiated after selecting the generic declaration.
+    fn materializeDefaultPresenceForMatch(
+        self: *Resolver,
+        module_index: usize,
+        pattern: ir.ParameterizedTypeId,
+        fields: global_sg.FieldRange,
+    ) !global_sg.FieldRange {
+        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+        const shape = switch (storage.types.items[@intFromEnum(pattern)]) {
+            .resolved => |resolved| switch (resolved) {
+                .structural => |shape| shape,
+                else => return fields,
+            },
+            else => return fields,
+        };
+        if (shape.fields.len != fields.len) return fields;
+        var has_defaults = false;
+        for (storage.fields.items[shape.fields.start..][0..shape.fields.len]) |field|
+            if (field.default_value != null) {
+                has_defaults = true;
+                break;
+            };
+        if (!has_defaults) return fields;
+
+        const copied = try self.allocator.dupe(global_sg.Field, self.graph.fields.items[fields.start..][0..fields.len]);
+        defer self.allocator.free(copied);
+        const start: u32 = @intCast(self.graph.fields.items.len);
+        try self.graph.fields.appendSlice(self.allocator, copied);
+        for (storage.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, offset| {
+            if (field.default_value == null) continue;
+            const global_field = &self.graph.fields.items[start + @as(u32, @intCast(offset))];
+            const marker: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+            try self.graph.nodes.append(self.allocator, .{
+                .source = global_field.source,
+                .ty = global_field.ty,
+                .content = .break_statement,
+            });
+            global_field.default_value = marker;
+        }
+        return .{ .start = start, .len = fields.len };
     }
 
     fn inferInputType(
@@ -558,13 +602,15 @@ pub const Resolver = struct {
 
         const input_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions, null);
         const output_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions, null);
-        const input_fields = try self.interfaceFields(input_ty);
-        const output_fields = try self.interfaceFields(output_ty);
+        const input_shape = try self.interfaceFields(input_ty);
+        const output_shape = try self.interfaceFields(output_ty);
 
         var context = try InstanceContext.init(self, located.module_index, located.parameterized, &substitutions);
         defer context.deinit();
         const input_bindings = try context.instantiateBindingRange(located.parameterized.input_bindings);
         const output_bindings = try context.instantiateBindingRange(located.parameterized.output_bindings);
+        const input_fields = try self.materializeInterfaceDefaults(input_shape, input_bindings);
+        const output_fields = try self.materializeInterfaceDefaults(output_shape, output_bindings);
 
         const function_id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(self.graph.functions.items.len)));
         try self.graph.functions.append(self.allocator, .{
@@ -640,6 +686,27 @@ pub const Resolver = struct {
             .source = .{ .file_index = 0, .offset = 0 },
         });
         return .{ .start = start, .len = 1 };
+    }
+
+    /// Function interface fields are owned by the concrete instance. Generic
+    /// structural types can be interned and shared, so their canonical fields
+    /// must not be mutated when defaults become concrete nodes.
+    fn materializeInterfaceDefaults(
+        self: *Resolver,
+        shape: global_sg.FieldRange,
+        bindings: global_sg.BindingRange,
+    ) !global_sg.FieldRange {
+        const fields = try self.allocator.dupe(global_sg.Field, self.graph.fields.items[shape.start..][0..shape.len]);
+        defer self.allocator.free(fields);
+        const start: u32 = @intCast(self.graph.fields.items.len);
+        try self.graph.fields.appendSlice(self.allocator, fields);
+        const count = @min(shape.len, bindings.len);
+        for (0..count) |offset| {
+            const binding_id = self.graph.binding_refs.items[bindings.start + @as(u32, @intCast(offset))];
+            self.graph.fields.items[start + @as(u32, @intCast(offset))].default_value =
+                self.graph.bindings.items[@intFromEnum(binding_id)].initialization;
+        }
+        return .{ .start = start, .len = shape.len };
     }
 
     fn sourceFor(self: *Resolver, module_index: usize, source: primitives.SourceRef) primitives.SourceRef {
@@ -883,6 +950,7 @@ pub const Resolver = struct {
                 .content = switch (node.content) {
                     .binding_use => |binding| .{ .binding_use = try self.instantiateBinding(binding) },
                     .binding_declaration => |binding| .{ .binding_declaration = try self.instantiateBinding(binding) },
+                    .reach_directive => |reach| .{ .reach_directive = try self.instantiateReach(reach) },
                     .assignment => |assignment| .{ .assignment = .{
                         .binding = try self.instantiateBinding(assignment.binding),
                         .value = if (self.resolver.modules[self.module_index].semantic.parameterized_storage.ir.bindingType(assignment.binding)) |binding_ty|
@@ -903,6 +971,29 @@ pub const Resolver = struct {
                     else => return error.UnsupportedResolvedParameterizedNode,
                 },
             };
+        }
+
+        fn instantiateReach(self: *InstanceContext, id: ir.ParameterizedReachId) !global_sg.GlobalReachId {
+            const module = &self.resolver.modules[self.module_index];
+            const storage = &module.semantic.parameterized_storage.ir;
+            const local = storage.reaches.items[@intFromEnum(id)];
+            const alternatives_start: u32 = @intCast(self.resolver.graph.reach_alternatives.items.len);
+            for (storage.reach_alternatives.items[local.alternatives.start..][0..local.alternatives.len]) |alternative| {
+                const segments_start: u32 = @intCast(self.resolver.graph.reach_segments.items.len);
+                for (storage.reach_segments.items[alternative.segments.start..][0..alternative.segments.len]) |segment|
+                    try self.resolver.graph.reach_segments.append(
+                        self.resolver.allocator,
+                        try self.resolver.graph.addString(self.resolver.allocator, module.text(segment)),
+                    );
+                try self.resolver.graph.reach_alternatives.append(self.resolver.allocator, .{
+                    .segments = .{ .start = segments_start, .len = alternative.segments.len },
+                });
+            }
+            const global: global_sg.GlobalReachId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.reaches.items.len)));
+            try self.resolver.graph.reaches.append(self.resolver.allocator, .{
+                .alternatives = .{ .start = alternatives_start, .len = local.alternatives.len },
+            });
+            return global;
         }
 
         fn instantiateStructValue(self: *InstanceContext, node: ir.ResolvedNode) !global_sg.Node {
