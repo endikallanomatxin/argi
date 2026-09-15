@@ -34,6 +34,11 @@ that choice through new contiguous variant ranges. The former inferred-error
 fixture now reaches codegen. Error records still lack diagnostic line and
 column data.
 
+Codegen now contains the indexed propagation control flow: it branches on the
+errable tag, executes recorded cleanup on the error path, rebuilds the caller's
+errable, and unwraps the success payload. Context strings are not yet appended
+to the runtime trace, and `testing.expect_error` remains to be restored.
+
 The minimal program now reaches codegen and reports an `InvalidType` at the
 abstract `write_trace_text` parameter in `core/errors/errors.rg`. Restoring
 abstract-parameter specialization and concrete backing storage is the shared
