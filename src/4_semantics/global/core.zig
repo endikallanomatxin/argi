@@ -582,11 +582,15 @@ pub const Resolver = struct {
         const left = globalizer.globalNode(o, value.left);
         const right = globalizer.globalNode(o, value.right);
         var left_ty = self.graph.nodes.items[@intFromEnum(left)].ty orelse return false;
+        if (self.graph.nodes.items[@intFromEnum(right)].ty == null and
+            self.contextualizeChoiceOperand(module_index, o, right, left_ty)) return false;
         var right_ty = self.graph.nodes.items[@intFromEnum(right)].ty orelse return false;
         self.coerceIntegerPair(left, &left_ty, right, &right_ty);
         const bool_ty = try self.builtin(.Bool);
         const target = globalizer.globalNode(o, value.node);
-        if (self.isBuiltinComparable(left_ty, right_ty)) {
+        const directly_comparable = self.isBuiltinComparable(left_ty, right_ty) or
+            ((value.operator == .equal or value.operator == .not_equal) and self.isCEnumPair(left_ty, right_ty));
+        if (directly_comparable) {
             self.graph.nodes.items[@intFromEnum(target)] = .{
                 .source = self.graph.nodes.items[@intFromEnum(left)].source,
                 .ty = bool_ty,
@@ -609,6 +613,21 @@ pub const Resolver = struct {
         };
         self.stats.operators += 1;
         return true;
+    }
+
+    fn contextualizeChoiceOperand(self: *Resolver, module_index: usize, o: globalizer.Offsets, node_id: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) bool {
+        const module = &self.modules[module_index];
+        for (module.semantic.pending_operations.items) |pending| switch (pending) {
+            .resolve_choice_literal => |choice| {
+                if (globalizer.globalNode(o, choice.node) != node_id) continue;
+                if (choice.expected_type != null) return false;
+                if (types.variants(self.graph, expected) == null) return false;
+                self.graph.nodes.items[@intFromEnum(node_id)].ty = expected;
+                return true;
+            },
+            else => {},
+        };
+        return false;
     }
 
     fn resolveIndex(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
@@ -1111,6 +1130,14 @@ pub const Resolver = struct {
         if (!types.equal(self.graph, a, b)) return false;
         return switch (self.graph.types.items[@intFromEnum(a)]) {
             .builtin => |value| value != .Void and value != .Type and value != .Any,
+            else => false,
+        };
+    }
+
+    fn isCEnumPair(self: *const Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {
+        if (!types.equal(self.graph, a, b)) return false;
+        return switch (self.graph.resolvedSemanticType(a) orelse return false) {
+            .declared => |decl| self.graph.declaration(decl).choice_layout == .c_enum,
             else => false,
         };
     }

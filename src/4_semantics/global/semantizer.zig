@@ -302,6 +302,10 @@ pub fn semantizeWithOptions(
         if (relocation.graph.reconcileBindingTypeResolution()) changed = true;
         if (core.materializeStringLiteralTypes()) changed = true;
         if (core.materializeBindingTypes()) changed = true;
+        if (relocation.graph.reconcileBindingTypeResolution()) {
+            changed = true;
+            if (core.materializeBindingTypes()) changed = true;
+        }
         if (core.materializeAssignmentValues()) changed = true;
         if (core.materializeDereferences()) changed = true;
         if (try core.materializeAddresses()) changed = true;
