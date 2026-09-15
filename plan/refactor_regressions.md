@@ -12,6 +12,11 @@ through storage addresses. The opaque mutation negative fixtures 140X, 142X,
 143X, 144X, and 146X pass. Positive fixtures 141 and 145 are still blocked
 at codegen by a shared abstract runtime type problem, so ownership parity is
 not yet established end to end.
+GlobalSema now also fixes the backing type of an abstract struct field from its
+first concrete pointer assignment, propagates that representation to stores
+and field accesses, and rejects a later assignment selecting a different
+concrete implementer. This restores the static-layout algorithm independently
+of the remaining abstract-parameter specialization work.
 
 GlobalSema now contextualizes typed literal assignment and initialization,
 coerces default integer constants to the typed operand for arithmetic, and

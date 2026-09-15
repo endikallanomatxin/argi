@@ -229,6 +229,73 @@ pub const Resolver = struct {
         return self.implements(concrete, declaration) catch false;
     }
 
+    /// Abstract fields use static backing storage. Once an assignment selects
+    /// a concrete implementer, every later access and codegen operation must
+    /// use that same representation; mixing implementers would make the
+    /// aggregate layout depend on control flow.
+    pub fn materializeAbstractFieldStorage(self: *Resolver) !bool {
+        var changed = false;
+        for (self.graph.nodes.items) |*node| {
+            const store = switch (node.content) {
+                .struct_field_store => |*value| value,
+                else => continue,
+            };
+            const actual_ty = self.graph.node(store.value).ty orelse continue;
+            const fields = global_types.fields(self.graph, store.struct_type) orelse continue;
+            if (store.field_index >= fields.len) return error.InvalidAbstractFieldIndex;
+            const field = &self.graph.fields.items[fields.start + store.field_index];
+            if (global_types.equal(self.graph, field.ty, actual_ty)) continue;
+            if (!try self.abstractStorageCompatible(field.ty, actual_ty)) continue;
+            if (field.storage_type) |existing| {
+                if (!global_types.equal(self.graph, existing, actual_ty)) return error.ConflictingAbstractFieldStorage;
+            } else {
+                field.storage_type = actual_ty;
+                changed = true;
+            }
+            if (!global_types.equal(self.graph, store.field_type, actual_ty)) {
+                store.field_type = actual_ty;
+                changed = true;
+            }
+        }
+        for (self.graph.nodes.items) |*node| {
+            const access = switch (node.content) {
+                .struct_field_access => |value| value,
+                else => continue,
+            };
+            const base_ty = self.graph.node(access.value).ty orelse continue;
+            const struct_ty = switch (self.graph.types.items[@intFromEnum(base_ty)]) {
+                .pointer => |pointer| pointer.child,
+                else => base_ty,
+            };
+            const fields = global_types.fields(self.graph, struct_ty) orelse continue;
+            if (access.field_index >= fields.len) return error.InvalidAbstractFieldIndex;
+            const effective = global_types.effectiveFieldType(self.graph.fields.items[fields.start + access.field_index]);
+            if (node.ty == null or !global_types.equal(self.graph, node.ty.?, effective)) {
+                node.ty = effective;
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    fn abstractStorageCompatible(self: *Resolver, expected: global_sg.GlobalTypeId, actual: global_sg.GlobalTypeId) !bool {
+        const expected_pointer = switch (self.graph.types.items[@intFromEnum(expected)]) {
+            .pointer => |value| value,
+            else => return false,
+        };
+        const actual_pointer = switch (self.graph.types.items[@intFromEnum(actual)]) {
+            .pointer => |value| value,
+            else => return false,
+        };
+        if (expected_pointer.mutability == .read_write and actual_pointer.mutability != .read_write) return false;
+        const abstract_decl = switch (self.graph.types.items[@intFromEnum(expected_pointer.child)]) {
+            .declared => |value| value,
+            else => return false,
+        };
+        if (self.findAbstractDefinition(abstract_decl) == null) return false;
+        return self.implements(actual_pointer.child, abstract_decl);
+    }
+
     fn makeVirtualCall(
         self: *Resolver,
         module_index: usize,
