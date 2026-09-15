@@ -1,4 +1,6 @@
 const std = @import("std");
+const diagnostics_mod = @import("../../1_base/diagnostic.zig");
+const tok = @import("../../2_tokens/token.zig");
 const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const module_views = @import("../module/views.zig");
@@ -22,6 +24,7 @@ const reachability_mod = @import("reachability.zig");
 pub const Options = struct {
     selected_test_name: ?[]const u8 = null,
     exhaustive_function_bodies: bool = true,
+    diagnostics: ?*diagnostics_mod.Diagnostics = null,
 };
 
 pub const Stats = struct {
@@ -351,6 +354,9 @@ pub fn semantizeWithOptions(
         resolved_count += 1;
     };
     if (remaining != 0) {
+        if (options.diagnostics) |diagnostics|
+            if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                return error.Reported;
         dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
         return error.UnsupportedGlobalSemantic;
     }
@@ -606,6 +612,125 @@ fn markUnresolvedTypeSlots(
             }
         }
     }
+}
+
+fn diagnoseUnresolvedCall(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    resolved: []const bool,
+    reachable: ?*const reachability_mod.FunctionSet,
+    offsets: []const globalizer.Offsets,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    var flat: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
+            defer flat += 1;
+            const call = switch (operation) {
+                .resolve_call => |value| value,
+                else => continue,
+            };
+            const owner = if (operation_index < module.semantic.pending_owner_functions.items.len)
+                if (module.semantic.pending_owner_functions.items[operation_index]) |value| globalizer.globalFunction(offsets[module_index], value) else null
+            else
+                null;
+            if (resolved[flat] or (reachable != null and owner != null and !reachable.?.contains(owner.?))) continue;
+            const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
+            const name = module.text(reference.name);
+            const input_id = globalizer.globalNode(offsets[module_index], call.input);
+            const input = switch (graph.node(input_id).content) {
+                .struct_value_literal => |value| value,
+                else => continue,
+            };
+            var candidates: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
+            defer candidates.deinit(allocator);
+            for (graph.functions.items, 0..) |function, raw| {
+                const declaration = graph.declaration(function.declaration);
+                if (std.mem.eql(u8, graph.text(declaration.name), name))
+                    try candidates.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
+            }
+            if (candidates.items.len == 0) continue;
+
+            var message = std.array_list.Managed(u8).init(allocator);
+            defer message.deinit();
+            try message.appendSlice("no overload of '");
+            try message.appendSlice(name);
+            try message.appendSlice("' accepts arguments ");
+            try appendValueShape(&message, graph, input);
+            try message.appendSlice(". Available signatures:");
+            for (candidates.items) |candidate| {
+                const function = graph.functions.items[@intFromEnum(candidate)];
+                try message.appendSlice("\n  - ");
+                try message.appendSlice(name);
+                try message.append(' ');
+                try appendFieldShape(&message, graph, function.input);
+                try message.appendSlice(" -> ");
+                try appendFieldShape(&message, graph, function.output);
+            }
+            const location = diagnosticLocation(graph, diagnostics, .{
+                .file_index = offsets[module_index].file_base + reference.source.file_index,
+                .offset = reference.source.offset + @as(u32, @intCast(name.len)),
+            });
+            try diagnostics.add(location, .semantic, "{s}", .{message.items});
+            return true;
+        }
+    }
+    return false;
+}
+
+fn appendValueShape(buffer: *std.array_list.Managed(u8), graph: *const global_sg.GlobalSemanticGraph, literal: anytype) !void {
+    try buffer.append('(');
+    for (graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, index| {
+        if (index != 0) try buffer.appendSlice(", ");
+        try buffer.append('.');
+        try buffer.appendSlice(graph.text(field.name));
+        try buffer.appendSlice(": ");
+        const ty = graph.node(field.value).ty orelse {
+            try buffer.appendSlice("?");
+            continue;
+        };
+        try appendTypeName(buffer, graph, ty);
+    }
+    try buffer.append(')');
+}
+
+fn appendFieldShape(buffer: *std.array_list.Managed(u8), graph: *const global_sg.GlobalSemanticGraph, range: global_sg.FieldRange) !void {
+    try buffer.append('(');
+    for (graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
+        if (index != 0) try buffer.appendSlice(", ");
+        try buffer.append('.');
+        try buffer.appendSlice(graph.text(field.name));
+        try buffer.appendSlice(": ");
+        try appendTypeName(buffer, graph, field.ty);
+    }
+    try buffer.append(')');
+}
+
+fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) !void {
+    switch (graph.semanticType(ty)) {
+        .builtin => |builtin| try buffer.appendSlice(@tagName(builtin)),
+        .declared => |declaration| try buffer.appendSlice(graph.text(graph.declaration(declaration).name)),
+        .pointer => |pointer| {
+            try buffer.appendSlice(if (pointer.mutability == .read_write) "$&" else "&");
+            try appendTypeName(buffer, graph, pointer.child);
+        },
+        else => try buffer.appendSlice("<type>"),
+    }
+}
+
+fn diagnosticLocation(graph: *const global_sg.GlobalSemanticGraph, diagnostics: *const diagnostics_mod.Diagnostics, source: @import("../primitives/schema.zig").SourceRef) tok.Location {
+    if (source.file_index < graph.files.items.len) {
+        const graph_file = graph.files.items[source.file_index];
+        const wanted_name = graph.text(graph_file.path);
+        const wanted_dir = graph.text(graph.modules.items[@intFromEnum(graph_file.module)].dir);
+        for (diagnostics.source_files, 0..) |file, index| {
+            if (std.mem.eql(u8, std.fs.path.basename(file.path), wanted_name) and
+                std.mem.eql(u8, std.fs.path.dirname(file.path) orelse ".", wanted_dir))
+                return .{ .file = @enumFromInt(@as(u32, @intCast(index))), .offset = source.offset };
+        }
+    }
+    return .{ .file = @enumFromInt(0), .offset = source.offset };
 }
 
 fn dumpUnresolved(
