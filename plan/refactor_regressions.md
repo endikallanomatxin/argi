@@ -40,7 +40,9 @@ errable, and unwraps the success payload. Propagation compares source tags by
 their choice-local index, remaps reason tags by name into the caller's superset,
 preserves the trace field, and packs the result according to the function ABI.
 Context strings are not yet appended to the runtime trace, and
-`testing.expect_error` remains to be restored.
+GlobalSema now lowers `testing.expect_error` into its indexed semantic payload,
+including the actual reason field, expected reason, result type, and testing
+failure function. Its LLVM control flow remains to be restored.
 
 The minimal program now reaches codegen and reports an `InvalidType` at the
 abstract `write_trace_text` parameter in `core/errors/errors.rg`. Restoring
