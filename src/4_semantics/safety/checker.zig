@@ -232,9 +232,12 @@ pub const SafetyChecker = struct {
                         try self.validateContextualIntegerLiteral(initialization, record.ty);
                         break :blk try self.evaluate(function, initialization, state);
                     } else facts.ValueFacts{};
-                    try self.setPlace(state, .{ .root = binding }, .initialized, value);
+                    try self.setPlace(state, .{ .root = binding }, if (record.initialization != null) .initialized else .deinitialized, value);
                 },
                 .assignment => |assignment| {
+                    const binding = self.graph.binding(assignment.binding);
+                    if (binding.mutability == .constant and self.initializednessAtPlace(state, .{ .root = assignment.binding }) == .initialized)
+                        try self.report(node.source, "binding '{s}' is constant and cannot be reassigned after initialization", .{self.graph.text(binding.name)});
                     try self.validateContextualIntegerLiteral(assignment.value, self.graph.binding(assignment.binding).ty);
                     const value = try self.evaluate(function, assignment.value, state);
                     try self.setPlace(state, .{ .root = assignment.binding }, .initialized, value);
