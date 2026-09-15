@@ -598,7 +598,7 @@ test "parameterized call defaults preserve reach alternatives" {
 
 test "imported abstract inputs become constrained templates" {
     const allocator = std.testing.allocator;
-    const source = "write(.writer: $&Writer) -> () := {}\n";
+    const source = "write#(.t: Type)(.value: t, .writer: $&Writer) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var module = try @import("semantizer.zig").buildWithAbstractCatalog(allocator, "consumer", &.{.{
@@ -611,7 +611,8 @@ test "imported abstract inputs become constrained templates" {
     const templates = module.graph.semantic.parameterized_storage.parameterized_functions.items;
     try std.testing.expectEqual(@as(usize, 1), templates.len);
     try std.testing.expectEqual(@import("parameterized/storage.zig").GenericDispatchKind.abstract_contract, templates[0].dispatch_kind);
-    const parameter = module.graph.semantic.parameterized_storage.comptime_parameters.items[templates[0].parameters.start];
+    try std.testing.expectEqual(@as(u32, 2), templates[0].parameters.len);
+    const parameter = module.graph.semantic.parameterized_storage.comptime_parameters.items[templates[0].parameters.start + 1];
     try std.testing.expect(parameter.constraint != null);
     const constraint = module.graph.semantic.parameterized_storage.abstract_constraints.items[@intFromEnum(parameter.constraint.?)];
     try std.testing.expect(constraint.abstract_ref == .external);

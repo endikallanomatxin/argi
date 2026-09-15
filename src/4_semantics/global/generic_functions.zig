@@ -229,18 +229,20 @@ pub const Resolver = struct {
             null;
         const name = module.text(reference.name);
         var best: ?global_sg.GlobalDeclId = null;
+        var best_arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = 0, .len = 0 };
         var best_score: u32 = 0;
         var tied = false;
         var saw_deferred = false;
         for (self.modules, 0..) |*candidate_module, candidate_index| {
             for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
-                if (parameterized.dispatch_kind == .abstract_contract) continue;
                 const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
                 if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
                 if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.allocator);
-                self.generics.bindGlobalArguments(candidate_index, parameterized.parameters, arguments, &bindings) catch continue;
+                self.generics.bindGlobalArgumentsPartial(candidate_index, parameterized.parameters, arguments, &bindings) catch continue;
+                if (!try self.inferBindingsFromInput(candidate_index, parameterized.input, input, &bindings)) continue;
+                const complete_arguments = try self.appendBoundArguments(candidate_index, parameterized.parameters, &bindings);
                 const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
                     .no_match => continue,
                     .deferred => {
@@ -251,6 +253,7 @@ pub const Resolver = struct {
                 };
                 if (best == null or score > best_score) {
                     best = declaration;
+                    best_arguments = complete_arguments;
                     best_score = score;
                     tied = false;
                 } else if (score == best_score and declaration != best.?) tied = true;
@@ -258,7 +261,60 @@ pub const Resolver = struct {
         }
         if (tied) return error.AmbiguousGenericFunction;
         const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else error.NoMatchingGenericFunction;
-        return self.instantiate(declaration, arguments);
+        return self.instantiate(declaration, best_arguments);
+    }
+
+    fn inferBindingsFromInput(
+        self: *Resolver,
+        module_index: usize,
+        pattern: ir.ParameterizedTypeId,
+        input: global_sg.GlobalNodeId,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |literal| literal,
+            else => return false,
+        };
+        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+        const shape = switch (storage.types.items[@intFromEnum(pattern)]) {
+            .resolved => |ty| switch (ty) {
+                .structural => |shape| shape,
+                else => return false,
+            },
+            else => return false,
+        };
+        for (storage.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, position| {
+            for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |value, supplied_position| {
+                const positional = supplied_position < literal.dispatch_prefix_positional_count or self.graph.text(value.name).len == 0;
+                if (if (positional) position != supplied_position else !std.mem.eql(u8, self.modules[module_index].text(field.name), self.graph.text(value.name))) continue;
+                const actual = self.graph.nodes.items[@intFromEnum(value.value)].ty orelse return false;
+                if (!try self.inferInputType(module_index, field.ty, actual, bindings)) return false;
+                break;
+            }
+        }
+        return true;
+    }
+
+    fn appendBoundArguments(
+        self: *Resolver,
+        module_index: usize,
+        parameters: primitives.Range(ir.ComptimeParameterId),
+        bindings: *const generic_mod.Resolver.Bindings,
+    ) !primitives.Range(global_sg.GlobalGenericArgId) {
+        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        const storage = &self.modules[module_index].semantic.parameterized_storage;
+        for (parameters.start..parameters.start + parameters.len) |raw| {
+            const parameter = storage.comptime_parameters.items[raw];
+            const value: global_sg.GenericArgument.Value = switch (parameter.kind) {
+                .type => .{ .type = bindings.types[raw] orelse return error.MissingGenericArgument },
+                .comptime_int => .{ .comptime_int = bindings.ints[raw] orelse return error.MissingGenericArgument },
+            };
+            try self.graph.generic_arguments.append(self.allocator, .{
+                .name = try self.graph.addString(self.allocator, self.modules[module_index].text(parameter.name)),
+                .value = value,
+            });
+        }
+        return .{ .start = start, .len = parameters.len };
     }
 
     fn resolveImplicitGenericFunction(

@@ -97,12 +97,17 @@ pub const Context = struct {
                     self.parameters.clearRetainingCapacity();
                     self.bindings.clearRetainingCapacity();
                     const explicit = hasGenericParameters(function.generic_params, function.generic_params_struct);
-                    const params = if (explicit)
-                        try self.lowerParameters(function.generic_params, function.generic_params_struct)
-                    else
-                        try self.lowerLocalAbstractParameters(function.input);
+                    const parameter_start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
+                    if (explicit) _ = try self.lowerParameters(function.generic_params, function.generic_params_struct);
+                    const explicit_count: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - parameter_start);
+                    try self.collectLocalAbstractParameters(function.input);
+                    const params: primitives.Range(ir.ComptimeParameterId) = .{
+                        .start = parameter_start,
+                        .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - parameter_start),
+                    };
+                    const has_abstract_parameters = params.len > explicit_count;
                     if (params.len == 0) continue;
-                    if (!explicit) if (declaration.function_id) |function_id| {
+                    if (has_abstract_parameters) if (declaration.function_id) |function_id| {
                         // The source interface keeps declaration identity;
                         // only concrete instances own an executable body.
                         try self.graph.semantic.function_semantics.append(self.allocator, .{
@@ -126,7 +131,7 @@ pub const Context = struct {
                         .body = body,
                         .input_bindings = .{ .start = input_start, .len = output_start - input_start },
                         .output_bindings = .{ .start = output_start, .len = output_end - output_start },
-                        .dispatch_kind = if (explicit) .regular else .abstract_contract,
+                        .dispatch_kind = if (has_abstract_parameters) .abstract_contract else .regular,
                     });
                     stats.generic_functions += 1;
                 },
