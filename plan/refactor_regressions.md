@@ -21,6 +21,11 @@ instance and failed contract validation. The catalog pass was withdrawn:
 `#reach` defaults must first be resolved in the caller's indexed binding
 context, then the selected concrete type can drive specialization. No core
 contract names are hardcoded into the lowering path.
+Parameterized ModuleSema now retains `#reach` alternatives and path segments
+in its own indexed IR when they appear as function input defaults. This data
+was previously dropped by the template body lowerer. GlobalSema still needs
+to instantiate those defaults and resolve them against the caller's captured
+binding context before implicit type inference.
 Abstract contracts nested inside ordinary generic type arguments are also
 collected as constrained type parameters. `Virtual#(.abstract: ...)` is an
 exception because its abstract argument selects a runtime vtable rather than

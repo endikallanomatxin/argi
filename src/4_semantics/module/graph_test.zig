@@ -571,3 +571,25 @@ test "virtual type arguments remain runtime contracts in parameterized IR" {
     try std.testing.expect(storage.ir.types.items[@intFromEnum(field.ty)] == .resolved);
     try std.testing.expect(storage.ir.types.items[@intFromEnum(field.ty)].resolved == .virtual);
 }
+
+test "parameterized call defaults preserve reach alternatives" {
+    const allocator = std.testing.allocator;
+    const source = "consume#(.t: Type)(.value: t = #reach value, context.value) -> () := {}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const files = [_]module_graph.FileInput{.{ .path = "reach_template/main.rg", .tree = &tree, .source = source }};
+    var module = try module_graph.build(allocator, "reach_template", &files);
+    defer module.deinit(allocator);
+    _ = try @import("parameterized/lowerer.zig").lower(allocator, &module, &files);
+    const storage = &module.semantic.parameterized_storage.ir;
+    const input = storage.types.items[@intFromEnum(module.semantic.parameterized_storage.parameterized_functions.items[0].input)].resolved.structural;
+    const field = storage.fields.items[input.fields.start];
+    const default_node = storage.nodes.items[@intFromEnum(field.default_value.?)].resolved;
+    const reach = storage.reaches.items[@intFromEnum(default_node.content.reach_directive)];
+    try std.testing.expectEqual(@as(u32, 2), reach.alternatives.len);
+    const first = storage.reach_alternatives.items[reach.alternatives.start];
+    const second = storage.reach_alternatives.items[reach.alternatives.start + 1];
+    try std.testing.expectEqualStrings("value", module.text(storage.reach_segments.items[first.segments.start]));
+    try std.testing.expectEqualStrings("context", module.text(storage.reach_segments.items[second.segments.start]));
+    try std.testing.expectEqualStrings("value", module.text(storage.reach_segments.items[second.segments.start + 1]));
+}
