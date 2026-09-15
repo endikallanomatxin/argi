@@ -14,6 +14,11 @@ separate concrete function instance. This restores the local part of the
 pre-refactor abstract monomorphization algorithm. Imported abstract inputs
 remain unresolved: their declaration identity and concrete `#reach` backing
 type must be carried across module boundaries before applying the same rule.
+Abstract contracts nested inside ordinary generic type arguments are also
+collected as constrained type parameters. `Virtual#(.abstract: ...)` is an
+exception because its abstract argument selects a runtime vtable rather than
+a concrete representation to infer. The nested-pattern regression test passes
+and the internal suite remains green (160 tests).
 
 The ownership pass now preserves the owning aggregate when projecting fields,
 retains opaque provenance through address formation, and lowers field writes
@@ -35,9 +40,8 @@ classes still require comparison with `performance`.
 
 The error model remains incomplete. Indexed error propagation and context
 records now have codegen control flow, and `testing_expect_error` is lowered by
-GlobalSema and codegen. The old implementation also attached trace entries;
-the new implementation must still restore that runtime enrichment in the
-indexed graph.
+GlobalSema and codegen. Runtime trace entries are appended for propagation,
+context, and expect-error failures in the indexed graph.
 GlobalSema now follows nested expressions (including binding initializers) to
 find the enclosing return type, checks that the caller returns an errable
 value, validates concrete reason supersets and trace type compatibility, and
@@ -45,8 +49,8 @@ restricts `!!` contexts to read-only character pointers or `StringView`.
 Inferred `!T` carries an open reason choice and an `ErrorTrace` field instead
 of an `Any` payload. Contextual reason literals and propagated reasons extend
 that choice through new contiguous variant ranges. The former inferred-error
-fixture now reaches codegen. Error records still lack diagnostic line and
-column data.
+fixture now reaches codegen. Trace entries include diagnostic line and column
+data.
 
 Codegen now contains the indexed propagation control flow: it branches on the
 errable tag, executes recorded cleanup on the error path, rebuilds the caller's
