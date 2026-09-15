@@ -475,6 +475,7 @@ const Context = struct {
             .node = self.nextNodeId(),
             .value = value.node,
             .option_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.variant_token)),
+            .source = .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(access.variant_token).offset },
         } }, expected);
     }
 
