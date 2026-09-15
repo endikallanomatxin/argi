@@ -51,7 +51,9 @@ context before remapping the payload. GlobalSema lowers
 reason field, expected reason, result type, and testing failure function.
 Codegen evaluates the errable once, distinguishes unexpected success from a
 reason mismatch, and merges both testing failures with the successful `ok`
-result through explicit LLVM control flow.
+result through explicit LLVM control flow. Testing failures now append a source
+trace entry with a context naming unexpected success or the expected and actual
+reason, selected from the runtime reason tag.
 
 The minimal program now reaches codegen and reports an `InvalidType` at the
 abstract `write_trace_text` parameter in `core/errors/errors.rg`. Restoring
