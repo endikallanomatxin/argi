@@ -354,9 +354,12 @@ pub fn semantizeWithOptions(
         resolved_count += 1;
     };
     if (remaining != 0) {
-        if (options.diagnostics) |diagnostics|
+        if (options.diagnostics) |diagnostics| {
+            if (try diagnoseUnresolvedCopy(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                return error.Reported;
             if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
+        }
         dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
         return error.UnsupportedGlobalSemantic;
     }
@@ -612,6 +615,46 @@ fn markUnresolvedTypeSlots(
             }
         }
     }
+}
+
+fn diagnoseUnresolvedCopy(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    resolved: []const bool,
+    reachable: ?*const reachability_mod.FunctionSet,
+    offsets: []const globalizer.Offsets,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    var flat: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
+            defer flat += 1;
+            const copy = switch (operation) {
+                .resolve_copy => |value| value,
+                else => continue,
+            };
+            const owner = if (operation_index < module.semantic.pending_owner_functions.items.len)
+                if (module.semantic.pending_owner_functions.items[operation_index]) |value| globalizer.globalFunction(offsets[module_index], value) else null
+            else
+                null;
+            if (resolved[flat] or (reachable != null and owner != null and !reachable.?.contains(owner.?))) continue;
+            const value = graph.node(globalizer.globalNode(offsets[module_index], copy.value));
+            const ty = value.ty orelse continue;
+            if (graph.isTypeUnresolved(ty)) continue;
+            var type_name = std.array_list.Managed(u8).init(allocator);
+            defer type_name.deinit();
+            try appendTypeName(&type_name, graph, ty);
+            try diagnostics.add(
+                diagnosticLocation(graph, diagnostics, value.source),
+                .semantic,
+                "type '{s}' cannot be copied implicitly; use '~value' to transfer ownership",
+                .{type_name.items},
+            );
+            return true;
+        }
+    }
+    return false;
 }
 
 fn diagnoseUnresolvedCall(
