@@ -672,8 +672,18 @@ pub const Resolver = struct {
         for (operands[0..count], 0..) |node, i| operand_types[i] = self.graph.nodes.items[@intFromEnum(node)].ty orelse return .deferred;
         const function = self.resolveOperator(module_index, operator, operand_types[0..count]) catch switch (self.graph.types.items[@intFromEnum(collection_ty)]) {
             .generic => return .not_applicable,
-            else => return .deferred,
+            else => self.resolveAddressedIndexOperator(module_index, operator, collection_ty, operand_types[0..count]) orelse return .deferred,
         };
+        const receiver_ty = self.graph.fields.items[self.graph.functions.items[@intFromEnum(function)].input.start].ty;
+        if (!types.equal(self.graph, collection_ty, receiver_ty)) {
+            const address: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+            try self.graph.nodes.append(self.allocator, .{
+                .source = self.graph.node(collection).source,
+                .ty = receiver_ty,
+                .content = .{ .address_of = collection },
+            });
+            operands[0] = address;
+        }
         const input = try self.makeCallInput(function, operands[0..count]);
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -683,6 +693,32 @@ pub const Resolver = struct {
         };
         self.stats.indexes += 1;
         return .resolved;
+    }
+
+    fn resolveAddressedIndexOperator(self: *Resolver, module_index: usize, operator: callable.OperatorKind, collection_ty: global_sg.GlobalTypeId, operand_types: []const global_sg.GlobalTypeId) ?global_sg.GlobalFunctionId {
+        var chosen: ?global_sg.GlobalFunctionId = null;
+        for (self.graph.functions.items, 0..) |candidate, raw| {
+            if (raw >= self.graph.function_operators.items.len or self.graph.function_operators.items[raw] != operator) continue;
+            if (candidate.input.len != operand_types.len) continue;
+            if (!self.declarationVisible(module_index, candidate.declaration, null)) continue;
+            const receiver = self.graph.fields.items[candidate.input.start].ty;
+            const pointer = switch (self.graph.resolvedSemanticType(receiver) orelse continue) {
+                .pointer => |value| value,
+                else => continue,
+            };
+            if (!types.equal(self.graph, pointer.child, collection_ty)) continue;
+            var matches = true;
+            for (1..operand_types.len) |offset| {
+                if (!types.equal(self.graph, self.graph.fields.items[candidate.input.start + @as(u32, @intCast(offset))].ty, operand_types[offset])) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (!matches) continue;
+            if (chosen != null) return null;
+            chosen = @enumFromInt(@as(u32, @intCast(raw)));
+        }
+        return chosen;
     }
 
     pub const CallInputMatch = union(enum) {
