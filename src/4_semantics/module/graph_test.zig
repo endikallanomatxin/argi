@@ -6,6 +6,7 @@ const syn = @import("../../3_syntax/syntax_tree.zig");
 const syntaxer = @import("../../3_syntax/syntaxer.zig");
 const tokenizer = @import("../../2_tokens/tokenizer.zig");
 const module_graph = @import("graph.zig");
+const module_semantizer = @import("semantizer.zig");
 const initializer_lowerer = @import("initializer_lowerer.zig");
 const parameterized_lowerer = @import("parameterized/lowerer.zig");
 
@@ -284,6 +285,16 @@ test "module callable interfaces preserve inferred errable types" {
     const output = graph.fields.items[interface.output.start];
     const child = graph.types.items[@intFromEnum(output.ty)].inferred_errable;
     try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.types.items[@intFromEnum(child)].builtin);
+}
+
+test "module semantizing marks inferred error signatures" {
+    const allocator = std.testing.allocator;
+    const source = "run() -> !Int32 := { return 1 }\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var result = try module_semantizer.build(allocator, "errable", &.{.{ .path = "errable/main.rg", .tree = &tree, .source = source }});
+    defer result.graph.deinit(allocator);
+    try std.testing.expect((try @import("views.zig").functionView(&result.graph, @enumFromInt(0))).flags.uses_inferred_error_reasons);
 }
 
 test "module callable interfaces preserve anonymous structural types" {

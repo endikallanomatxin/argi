@@ -121,6 +121,7 @@ const Context = struct {
                     .is_once = declaration.is_once,
                     .is_test = legacy_decl.kind == .test_function,
                     .has_declared_body = declaration.body != null,
+                    .uses_inferred_error_reasons = try self.interfaceUsesInferredErrable(interface.output),
                 },
             });
             self.popScope();
@@ -128,6 +129,21 @@ const Context = struct {
         }
         self.writer.pending_owner_function = null;
         return stats;
+    }
+
+    fn interfaceUsesInferredErrable(self: *const Context, fields: graph_mod.FieldRange) !bool {
+        for (0..fields.len) |offset| {
+            const field_id: entities.ModuleFieldId = @enumFromInt(fields.start + @as(u32, @intCast(offset)));
+            const field = try views.fieldView(self.graph, field_id);
+            switch (try views.typeView(self.graph, field.ty)) {
+                .resolved => |ty| switch (ty) {
+                    .inferred_errable => return true,
+                    else => {},
+                },
+                .external => {},
+            }
+        }
+        return false;
     }
 
     fn bindInterface(
