@@ -90,6 +90,9 @@ classes still require comparison with `performance`.
 Generic input unification now also binds comptime integer parameters carried by
 generic type arguments and array lengths. Repeated occurrences must agree, and
 dependent binary expressions are checked once their operands have bindings.
+Type parameters are recursively inferred through nullable and inferred-errable
+wrappers, and structural patterns now require every declared pattern field to
+match instead of silently accepting a missing field.
 Source syntax still accepts only literal array lengths, so the array path is
 covered at the parameterized IR boundary until dependent array syntax is
 restored.
