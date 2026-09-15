@@ -349,11 +349,15 @@ const Context = struct {
             .name = try self.writer.addString(name_text),
             .source = self.sourceRef(node),
         });
+        var visible: std.ArrayList(entities.ModuleBindingId) = .empty;
+        defer visible.deinit(self.allocator);
+        for (self.bindings.items) |binding| try visible.append(self.allocator, binding.id);
         return self.pending(node, .{ .resolve_call = .{
             .node = self.nextNodeId(),
             .callee = external,
             .input = input.node,
             .expected_type = expected,
+            .visible_bindings = try self.writer.appendBindingRefs(visible.items),
         } }, expected);
     }
 

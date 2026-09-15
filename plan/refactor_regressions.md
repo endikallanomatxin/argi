@@ -26,6 +26,12 @@ in its own indexed IR when they appear as function input defaults. This data
 was previously dropped by the template body lowerer. GlobalSema still needs
 to instantiate those defaults and resolve them against the caller's captured
 binding context before implicit type inference.
+Ordinary ModuleSema call operations now capture the binding IDs visible at the
+call site in lexical order. A local `#reach` resolver prototype proved that
+this data can select a caller binding, but applying it to all ordinary calls
+exposed unresolved `flush`/`deinit` paths and made the LSP test fail. That
+prototype was withdrawn; the scope data remains available for a resolver that
+also preserves overload fallback and propagates missing reach arguments.
 Abstract contracts nested inside ordinary generic type arguments are also
 collected as constrained type parameters. `Virtual#(.abstract: ...)` is an
 exception because its abstract argument selects a runtime vtable rather than
