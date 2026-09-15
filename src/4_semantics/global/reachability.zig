@@ -6,13 +6,18 @@ const graph_mod = @import("graph.zig");
 /// resulting set of materialized function bodies.
 pub const FunctionSet = struct {
     values: std.AutoHashMap(graph_mod.GlobalFunctionId, void),
+    bindings: std.AutoHashMap(graph_mod.GlobalBindingId, void),
 
     pub fn init(allocator: std.mem.Allocator) FunctionSet {
-        return .{ .values = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator) };
+        return .{
+            .values = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
+            .bindings = std.AutoHashMap(graph_mod.GlobalBindingId, void).init(allocator),
+        };
     }
 
     pub fn deinit(self: *FunctionSet) void {
         self.values.deinit();
+        self.bindings.deinit();
     }
 
     pub fn contains(self: *const FunctionSet, function: graph_mod.GlobalFunctionId) bool {
@@ -22,6 +27,10 @@ pub const FunctionSet = struct {
     pub fn include(self: *FunctionSet, function: graph_mod.GlobalFunctionId) !bool {
         const result = try self.values.getOrPut(function);
         return !result.found_existing;
+    }
+
+    pub fn containsBinding(self: *const FunctionSet, binding: graph_mod.GlobalBindingId) bool {
+        return self.bindings.contains(binding);
     }
 };
 
@@ -62,6 +71,8 @@ pub fn expand(
     defer state.visited_functions.deinit();
     defer state.visited_nodes.deinit();
 
+    for (graph.roots.items) |node_id| try state.walkNode(node_id);
+
     var cursor: usize = 0;
     while (cursor < graph.functions.items.len) : (cursor += 1) {
         const function_id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(cursor)));
@@ -85,8 +96,18 @@ const State = struct {
 
     fn walkFunction(self: *State, function_id: graph_mod.GlobalFunctionId) anyerror!void {
         if ((try self.visited_functions.getOrPut(function_id)).found_existing) return;
-        const body = self.graph.functions.items[@intFromEnum(function_id)].body orelse return;
+        const function = self.graph.functions.items[@intFromEnum(function_id)];
+        try self.includeBindingRange(function.input_bindings);
+        try self.includeBindingRange(function.output_bindings);
+        const body = function.body orelse return;
         try self.walkBlock(body);
+    }
+
+    fn includeBindingRange(self: *State, range: graph_mod.BindingRange) !void {
+        for (0..range.len) |offset| {
+            const raw = range.start + @as(u32, @intCast(offset));
+            try self.functions.bindings.put(@enumFromInt(raw), {});
+        }
     }
 
     fn walkBlock(self: *State, block_id: graph_mod.GlobalBlockId) anyerror!void {
@@ -99,15 +120,21 @@ const State = struct {
         if ((try self.visited_nodes.getOrPut(node_id)).found_existing) return;
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
-            .declaration, .binding_use, .reach_directive, .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal, .break_statement, .continue_statement, .type_literal => {},
+            .declaration, .reach_directive, .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal, .break_statement, .continue_statement, .type_literal => {},
+            .binding_use => |binding| try self.functions.bindings.put(binding, {}),
             .binding_declaration => |binding_id| {
+                try self.functions.bindings.put(binding_id, {});
                 const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
                 if (binding.initialization) |value| try self.walkNode(value);
             },
             .move_value, .address_of => |value| try self.walkNode(value),
-            .assignment => |value| try self.walkNode(value.value),
+            .assignment => |value| {
+                try self.functions.bindings.put(value.binding, {});
+                try self.walkNode(value.value);
+            },
             .auto_deinit_binding => |id| {
                 const value = self.graph.auto_deinits.items[@intFromEnum(id)];
+                try self.functions.bindings.put(value.binding, {});
                 if (value.input) |input| try self.walkNode(input);
                 if (value.deinit_fn) |callee| try self.includeFunction(callee);
             },
@@ -128,7 +155,11 @@ const State = struct {
                     try self.includeFunction(callee);
             },
             .code_block => |block| try self.walkBlock(block),
-            .list_literal, .array_literal => |literal| {
+            .list_literal => |literal| {
+                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |value|
+                    try self.walkNode(value);
+            },
+            .array_literal => |literal| {
                 for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |value|
                     try self.walkNode(value);
             },
@@ -176,7 +207,15 @@ const State = struct {
                 try self.walkNode(value.struct_ptr);
                 try self.walkNode(value.value);
             },
-            .binary_operation, .comparison, .logical_operation => |value| {
+            .binary_operation => |value| {
+                try self.walkNode(value.left);
+                try self.walkNode(value.right);
+            },
+            .comparison => |value| {
+                try self.walkNode(value.left);
+                try self.walkNode(value.right);
+            },
+            .logical_operation => |value| {
                 try self.walkNode(value.left);
                 try self.walkNode(value.right);
             },
@@ -195,9 +234,9 @@ const State = struct {
                 try self.walkBlock(value.body);
             },
             .for_statement => |value| {
-                if (value.init) |node| try self.walkNode(node);
+                if (value.init) |child| try self.walkNode(child);
                 try self.walkNode(value.condition);
-                if (value.increment) |node| try self.walkNode(node);
+                if (value.increment) |child| try self.walkNode(child);
                 try self.walkBlock(value.body);
             },
             .switch_statement => |id| {

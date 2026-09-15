@@ -884,7 +884,7 @@ pub const Resolver = struct {
         return id;
     }
 
-    fn builtin(self: *Resolver, builtin_type: primitives.BuiltinType) !global_sg.GlobalTypeId {
+    pub fn builtin(self: *Resolver, builtin_type: primitives.BuiltinType) !global_sg.GlobalTypeId {
         for (self.graph.types.items, 0..) |ty, raw| switch (ty) {
             .builtin => |value| if (value == builtin_type) return @enumFromInt(@as(u32, @intCast(raw))),
             else => {},
