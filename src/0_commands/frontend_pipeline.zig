@@ -23,7 +23,7 @@ pub const FrontendPipeline = struct {
         include_tests: bool = false,
         selected_test_name: ?[]const u8 = null,
         implicit_testing_module_dir: ?[]const u8 = null,
-        exhaustive_function_bodies: bool = true,
+        exhaustive_function_bodies: bool = false,
     };
 
     pub const Options = struct {
@@ -231,7 +231,10 @@ pub const FrontendPipeline = struct {
         self.module_semantizing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - module_start);
 
         const global_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-        const result = try global_semantizer.semantize(self.allocator, self.module_graphs.items);
+        const result = try global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{
+            .selected_test_name = self.options.semantizer.selected_test_name,
+            .exhaustive_function_bodies = self.options.semantizer.exhaustive_function_bodies,
+        });
         self.global_graph = result.graph;
         self.global_stats = result.stats;
         try global_once_verify.verify(

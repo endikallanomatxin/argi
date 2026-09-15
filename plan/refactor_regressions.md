@@ -218,6 +218,17 @@ env ZIG_LOCAL_CACHE_DIR=$PWD/.zig-cache ZIG_GLOBAL_CACHE_DIR=$PWD/.zig-global-ca
 
 ## Observed remaining blockers, in suggested order
 
+GlobalSema now has an entrypoint-driven function closure. Pending operations
+record their owning function; normal builds resolve only reachable body work,
+while `check` retains exhaustive whole-module behavior. The closure follows
+direct calls, type initializers, testing helpers and all implementations in a
+virtual registry. Function interfaces remain global because overload dispatch
+needs them before a body becomes reachable. Dormant body bindings have their
+construction-only unresolved state retired before GlobalSG is published, and
+their function bodies are removed from the final graph. This restores the old
+selective-body algorithm at the GlobalSG boundary without moving cross-module
+dispatch back into ModuleSema.
+
 1. **Finish ordinary system initializers.** Allocator and strings now resolve
    completely. Trusted drops of a type without an explicit destructor lower to
    a no-op, matching the retired semantizer. Contextual structural literals

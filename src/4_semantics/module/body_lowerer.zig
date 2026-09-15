@@ -83,7 +83,9 @@ const Context = struct {
             const function_id: entities.ModuleFunctionId = @enumFromInt(@as(u32, @intCast(raw_index)));
             if (hasFunctionSemantic(self.graph, function_id)) continue;
             self.current_function = function_id;
-            self.writer.pending_owner_function = function_id;
+            // Function interfaces participate in dispatch even when their
+            // bodies are unreachable, so their pending work is global.
+            self.writer.pending_owner_function = null;
             const legacy_decl = self.graph.declarations.items[@intFromEnum(interface.declaration)];
             self.file_index = legacy_decl.module_file_index;
             const file = self.files[@intCast(self.file_index)];
@@ -108,6 +110,7 @@ const Context = struct {
             try self.bindInterface(interface.output, .variable, &outputs);
             const input_range = try self.writer.appendBindingRefs(inputs.items);
             const output_range = try self.writer.appendBindingRefs(outputs.items);
+            self.writer.pending_owner_function = function_id;
             const body = if (declaration.body) |body_node| try self.lowerBlock(body_node) else null;
             try self.graph.semantic.function_semantics.append(self.allocator, .{
                 .function = function_id,

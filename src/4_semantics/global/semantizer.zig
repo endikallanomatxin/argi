@@ -17,6 +17,12 @@ const error_mod = @import("errors.zig");
 const ownership_mod = @import("ownership.zig");
 const resolution = @import("resolution.zig");
 const dispatch_mod = @import("dispatch.zig");
+const reachability_mod = @import("reachability.zig");
+
+pub const Options = struct {
+    selected_test_name: ?[]const u8 = null,
+    exhaustive_function_bodies: bool = true,
+};
 
 pub const Stats = struct {
     core: core_mod.Stats = .{},
@@ -132,18 +138,36 @@ const PendingWorklists = struct {
         };
     }
 
-    fn remaining(self: *const PendingWorklists) usize {
-        return self.types_and_generics.items.len +
-            self.expressions_and_calls.items.len +
-            self.control_and_abstracts.items.len +
-            self.errors.items.len +
-            self.ownership.items.len;
+    fn remaining(self: *const PendingWorklists, reachable: ?*const reachability_mod.FunctionSet) usize {
+        var count: usize = 0;
+        for (pending_phases) |phase| for (self.forPhaseConst(phase).items) |item| {
+            if (isActive(item, reachable)) count += 1;
+        };
+        return count;
+    }
+
+    fn forPhaseConst(self: *const PendingWorklists, phase: PendingPhase) *const std.ArrayList(PendingWorkItem) {
+        return switch (phase) {
+            .types_and_generics => &self.types_and_generics,
+            .expressions_and_calls => &self.expressions_and_calls,
+            .control_and_abstracts => &self.control_and_abstracts,
+            .errors => &self.errors,
+            .ownership => &self.ownership,
+        };
     }
 };
 
 pub fn semantize(
     allocator: std.mem.Allocator,
     modules: []const module_sg.ModuleSemanticGraph,
+) !Result {
+    return semantizeWithOptions(allocator, modules, .{});
+}
+
+pub fn semantizeWithOptions(
+    allocator: std.mem.Allocator,
+    modules: []const module_sg.ModuleSemanticGraph,
+    options: Options,
 ) !Result {
     var relocation = try globalizer.relocate(allocator, modules, .allow_holes);
     errdefer relocation.deinit(allocator);
@@ -240,6 +264,13 @@ pub fn semantize(
     @memset(resolved, false);
     var worklists = try PendingWorklists.init(allocator, modules, relocation.offsets.items);
     defer worklists.deinit(allocator);
+    var reachable_storage: reachability_mod.FunctionSet = undefined;
+    var reachable: ?*reachability_mod.FunctionSet = null;
+    if (!options.exhaustive_function_bodies) {
+        reachable_storage = try reachability_mod.roots(allocator, &relocation.graph, options.selected_test_name);
+        reachable = &reachable_storage;
+    }
+    defer if (reachable) |set| set.deinit();
     var pending_attempts: u64 = 0;
 
     // GlobalSema is staged by semantic domain. The outer fixed point remains
@@ -262,6 +293,7 @@ pub fn semantize(
                 relocation.offsets.items,
                 resolved,
                 worklists.forPhase(phase),
+                reachable,
                 &pending_attempts,
             )) changed = true;
         }
@@ -276,15 +308,23 @@ pub fn semantize(
         if (try generics.materializeKnownTypes()) changed = true;
         if (try abstracts.materializeAbstractFieldStorage()) changed = true;
         try control.materializeSugarTypes();
+        if (reachable) |set| {
+            if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
+        }
     }
 
     try abstracts.validateGenericFunctionInstances();
     control.annotateChoiceTests();
 
-    const remaining = worklists.remaining();
-    const resolved_count = total - remaining;
+    if (reachable) |set| try retireDormantBindingResolution(&relocation.graph, set, try core.builtin(.Any));
+
+    const remaining = worklists.remaining(reachable);
+    var resolved_count: usize = 0;
+    for (resolved) |done| if (done) {
+        resolved_count += 1;
+    };
     if (remaining != 0) {
-        dumpUnresolved(modules, resolved);
+        dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
         return error.UnsupportedGlobalSemantic;
     }
     _ = relocation.graph.reconcileTypeResolution();
@@ -308,6 +348,13 @@ pub fn semantize(
     // Cleanup is finalized only after all calls/types/abstract dispatch decisions
     // are stable. Safety and Codegen consume these explicit cleanup edges.
     try ownership.finalize();
+
+    if (reachable) |set| {
+        for (relocation.graph.functions.items, 0..) |*function, raw| {
+            const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (!set.contains(id)) function.body = null;
+        }
+    }
 
     var stats = Stats{
         .core = core.stats,
@@ -342,12 +389,18 @@ fn resolvePendingPhase(
     offsets: []const globalizer.Offsets,
     resolved: []bool,
     work: *std.ArrayList(PendingWorkItem),
+    reachable: ?*const reachability_mod.FunctionSet,
     pending_attempts: *u64,
 ) !bool {
     var changed = false;
     var write: usize = 0;
     const original_len = work.items.len;
     for (work.items[0..original_len]) |item| {
+        if (!isActive(item, reachable)) {
+            work.items[write] = item;
+            write += 1;
+            continue;
+        }
         pending_attempts.* += 1;
         const module_index: usize = @intCast(item.module_index);
         const operation_index: usize = @intCast(item.operation_index);
@@ -378,6 +431,32 @@ fn resolvePendingPhase(
     }
     work.shrinkRetainingCapacity(write);
     return changed;
+}
+
+fn isActive(item: PendingWorkItem, reachable: ?*const reachability_mod.FunctionSet) bool {
+    const set = reachable orelse return true;
+    const owner = item.owner_function orelse return true;
+    return set.contains(owner);
+}
+
+/// ModuleSG owns relocatable storage for every lowered body. Selective
+/// semantizing publishes only the reachable bodies, so provisional binding
+/// types in the remaining dormant storage must not keep GlobalSG in its
+/// construction state. Any is used solely as a valid inert payload for those
+/// unreachable records; no published body can observe it.
+fn retireDormantBindingResolution(
+    graph: *global_sg.GlobalSemanticGraph,
+    reachable: *const reachability_mod.FunctionSet,
+    dormant_type: global_sg.GlobalTypeId,
+) !void {
+    const limit = @min(graph.binding_type_resolution.items.len, graph.bindings.items.len);
+    for (graph.binding_type_resolution.items[0..limit], 0..) |*state, raw| {
+        if (state.* != .unresolved) continue;
+        const binding: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
+        if (reachable.containsBinding(binding)) continue;
+        graph.bindings.items[raw].ty = dormant_type;
+        state.* = .resolved;
+    }
 }
 
 fn pendingOwnerTag(tag: PendingTag) PendingOwner {
@@ -506,12 +585,29 @@ fn markUnresolvedTypeSlots(
     }
 }
 
-fn dumpUnresolved(modules: []const module_sg.ModuleSemanticGraph, resolved: []const bool) void {
+fn dumpUnresolved(
+    modules: []const module_sg.ModuleSemanticGraph,
+    resolved: []const bool,
+    reachable: ?*const reachability_mod.FunctionSet,
+    offsets: []const globalizer.Offsets,
+) void {
     var flat: usize = 0;
     var shown: usize = 0;
     for (modules, 0..) |*module, module_index| {
-        for (module.semantic.pending_operations.items) |operation| {
-            if (!resolved[flat] and shown < 8) {
+        for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
+            const item: PendingWorkItem = .{
+                .module_index = @intCast(module_index),
+                .operation_index = @intCast(operation_index),
+                .flat_index = @intCast(flat),
+                .owner_function = if (operation_index < module.semantic.pending_owner_functions.items.len)
+                    if (module.semantic.pending_owner_functions.items[operation_index]) |owner|
+                        globalizer.globalFunction(offsets[module_index], owner)
+                    else
+                        null
+                else
+                    null,
+            };
+            if (!resolved[flat] and isActive(item, reachable) and shown < 8) {
                 switch (operation) {
                     .resolve_call => |call| {
                         const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
