@@ -394,6 +394,14 @@ pub const Resolver = struct {
         const storage = &module.semantic.parameterized_storage.ir;
         switch (storage.types.items[@intFromEnum(pattern)]) {
             .parameter => |parameter| {
+                const comptime_parameter = module.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter)];
+                // A contract declaration can appear as an intermediate input
+                // type while a caller is still unspecialized. Only an
+                // implementer's type may bind its constrained parameter.
+                if (comptime_parameter.constraint != null) switch (self.graph.types.items[@intFromEnum(actual)]) {
+                    .declared => |declaration| if (self.graph.declarations.items[@intFromEnum(declaration)].kind == .abstract_type) return false,
+                    else => {},
+                };
                 const slot = &bindings.types[@intFromEnum(parameter)];
                 if (slot.*) |previous| {
                     if (!global_types.equal(self.graph, previous, actual)) return error.ConflictingGenericArgument;

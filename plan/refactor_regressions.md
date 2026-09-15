@@ -14,6 +14,13 @@ separate concrete function instance. This restores the local part of the
 pre-refactor abstract monomorphization algorithm. Imported abstract inputs
 remain unresolved: their declaration identity and concrete `#reach` backing
 type must be carried across module boundaries before applying the same rule.
+GlobalSema now refuses to bind a constrained type parameter to the abstract
+contract declaration itself. During an attempted core-wide catalog pass,
+`string_with_capacity` otherwise acquired an `Allocator`-as-implementer
+instance and failed contract validation. The catalog pass was withdrawn:
+`#reach` defaults must first be resolved in the caller's indexed binding
+context, then the selected concrete type can drive specialization. No core
+contract names are hardcoded into the lowering path.
 Abstract contracts nested inside ordinary generic type arguments are also
 collected as constrained type parameters. `Virtual#(.abstract: ...)` is an
 exception because its abstract argument selects a runtime vtable rather than
