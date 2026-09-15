@@ -85,6 +85,7 @@ pub const CodeGenerator = struct {
     virtual_table_counter: u32 = 0,
     runtime_argc_global: ?llvm.c.LLVMValueRef = null,
     runtime_argv_global: ?llvm.c.LLVMValueRef = null,
+    pruned_function_bodies: usize = 0,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -160,6 +161,8 @@ pub const CodeGenerator = struct {
         } else if (self.main_candidate) |id| {
             try self.generateCMainWrapper(id);
         }
+
+        try self.pruneUnreachableFunctionBodies();
 
         var message: [*c]u8 = null;
         if (c.LLVMVerifyModule(self.module, c.LLVMReturnStatusAction, &message) != 0) {
@@ -1817,7 +1820,6 @@ pub const CodeGenerator = struct {
         while (function != null) : (function = c.LLVMGetNextFunction(function)) {
             if (c.LLVMGetFirstBasicBlock(function) == null) continue;
             stats.llvm_functions_with_body += 1;
-            stats.reachable_llvm_functions_with_body += 1;
             var block = c.LLVMGetFirstBasicBlock(function);
             while (block != null) : (block = c.LLVMGetNextBasicBlock(block)) {
                 stats.basic_blocks += 1;
@@ -1825,12 +1827,90 @@ pub const CodeGenerator = struct {
                 while (instruction != null) : (instruction = c.LLVMGetNextInstruction(instruction)) stats.instructions += 1;
             }
         }
+        var reachable = try self.computeReachableFunctionBodies();
+        defer reachable.deinit();
+        stats.reachable_llvm_functions_with_body = reachable.count();
+        stats.pruned_llvm_function_bodies = self.pruned_function_bodies;
         const text = c.LLVMPrintModuleToString(self.module);
         if (text != null) {
             stats.ir_bytes = std.mem.span(text).len;
             c.LLVMDisposeMessage(text);
         }
         return stats;
+    }
+
+    fn computeReachableFunctionBodies(self: *const CodeGenerator) !std.AutoHashMap(llvm.c.LLVMValueRef, void) {
+        var defined = std.AutoHashMap(llvm.c.LLVMValueRef, void).init(self.allocator);
+        defer defined.deinit();
+        var function = c.LLVMGetFirstFunction(self.module);
+        while (function != null) : (function = c.LLVMGetNextFunction(function))
+            if (c.LLVMGetFirstBasicBlock(function) != null) try defined.put(function, {});
+
+        var reachable = std.AutoHashMap(llvm.c.LLVMValueRef, void).init(self.allocator);
+        errdefer reachable.deinit();
+        var worklist = std.ArrayList(llvm.c.LLVMValueRef).empty;
+        defer worklist.deinit(self.allocator);
+
+        // The generated C wrapper is the executable root. A defined function
+        // whose address escapes a direct call is also a root because it can be
+        // reached through runtime dispatch, including generated virtual tables.
+        if (c.LLVMGetNamedFunction(self.module, "main")) |main_function| {
+            if (defined.contains(main_function)) {
+                try reachable.put(main_function, {});
+                try worklist.append(self.allocator, main_function);
+            }
+        }
+        function = c.LLVMGetFirstFunction(self.module);
+        while (function != null) : (function = c.LLVMGetNextFunction(function)) {
+            if (!defined.contains(function)) continue;
+            var use = c.LLVMGetFirstUse(function);
+            var address_taken = false;
+            while (use != null) : (use = c.LLVMGetNextUse(use)) {
+                const user = c.LLVMGetUser(use);
+                const instruction = c.LLVMIsAInstruction(user);
+                if (instruction == null or
+                    c.LLVMGetInstructionOpcode(instruction) != c.LLVMCall or
+                    c.LLVMGetCalledValue(instruction) != function)
+                {
+                    address_taken = true;
+                    break;
+                }
+            }
+            if (address_taken and !reachable.contains(function)) {
+                try reachable.put(function, {});
+                try worklist.append(self.allocator, function);
+            }
+        }
+
+        var next: usize = 0;
+        while (next < worklist.items.len) : (next += 1) {
+            const caller = worklist.items[next];
+            var block = c.LLVMGetFirstBasicBlock(caller);
+            while (block != null) : (block = c.LLVMGetNextBasicBlock(block)) {
+                var instruction = c.LLVMGetFirstInstruction(block);
+                while (instruction != null) : (instruction = c.LLVMGetNextInstruction(instruction)) {
+                    if (c.LLVMGetInstructionOpcode(instruction) != c.LLVMCall) continue;
+                    const callee = c.LLVMGetCalledValue(instruction);
+                    if (!defined.contains(callee) or reachable.contains(callee)) continue;
+                    try reachable.put(callee, {});
+                    try worklist.append(self.allocator, callee);
+                }
+            }
+        }
+        return reachable;
+    }
+
+    fn pruneUnreachableFunctionBodies(self: *CodeGenerator) !void {
+        if (c.LLVMGetNamedFunction(self.module, "main") == null) return;
+        var reachable = try self.computeReachableFunctionBodies();
+        defer reachable.deinit();
+
+        var function = c.LLVMGetFirstFunction(self.module);
+        while (function != null) : (function = c.LLVMGetNextFunction(function)) {
+            if (c.LLVMGetFirstBasicBlock(function) == null or reachable.contains(function)) continue;
+            while (c.LLVMGetFirstBasicBlock(function)) |block| c.LLVMDeleteBasicBlock(block);
+            self.pruned_function_bodies += 1;
+        }
     }
 
     fn firstLocation(self: *CodeGenerator) tok.Location {
@@ -1856,4 +1936,36 @@ test "global codegen identities are graph IDs rather than semantic pointers" {
     try std.testing.expect(@sizeOf(graph_mod.GlobalFunctionId) == 4);
     try std.testing.expect(@sizeOf(graph_mod.GlobalBindingId) == 4);
     try std.testing.expect(@sizeOf(graph_mod.GlobalNodeId) == 4);
+}
+
+test "global codegen prunes bodies outside the executable call graph" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var diagnostics = diagnostic.Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    var generator = try CodeGenerator.init(allocator, std.testing.io, &graph, &diagnostics, .{});
+    defer generator.deinit();
+
+    const void_function_type = c.LLVMFunctionType(c.LLVMVoidType(), null, 0, 0);
+    const main_function = c.LLVMAddFunction(generator.module, "main", void_function_type);
+    const helper = c.LLVMAddFunction(generator.module, "reachable_helper", void_function_type);
+    const unused = c.LLVMAddFunction(generator.module, "unused_helper", void_function_type);
+
+    const main_entry = c.LLVMAppendBasicBlock(main_function, "entry");
+    c.LLVMPositionBuilderAtEnd(generator.builder, main_entry);
+    _ = c.LLVMBuildCall2(generator.builder, void_function_type, helper, null, 0, "");
+    _ = c.LLVMBuildRetVoid(generator.builder);
+    const helper_entry = c.LLVMAppendBasicBlock(helper, "entry");
+    c.LLVMPositionBuilderAtEnd(generator.builder, helper_entry);
+    _ = c.LLVMBuildRetVoid(generator.builder);
+    const unused_entry = c.LLVMAppendBasicBlock(unused, "entry");
+    c.LLVMPositionBuilderAtEnd(generator.builder, unused_entry);
+    _ = c.LLVMBuildRetVoid(generator.builder);
+
+    try generator.pruneUnreachableFunctionBodies();
+    try std.testing.expect(c.LLVMGetFirstBasicBlock(main_function) != null);
+    try std.testing.expect(c.LLVMGetFirstBasicBlock(helper) != null);
+    try std.testing.expect(c.LLVMGetFirstBasicBlock(unused) == null);
+    try std.testing.expectEqual(@as(usize, 1), generator.pruned_function_bodies);
 }
