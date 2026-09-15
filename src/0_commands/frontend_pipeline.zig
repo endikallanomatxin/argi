@@ -234,6 +234,7 @@ pub const FrontendPipeline = struct {
         const result = try global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{
             .selected_test_name = self.options.semantizer.selected_test_name,
             .exhaustive_function_bodies = self.options.semantizer.exhaustive_function_bodies,
+            .diagnostics = self.diagnostics,
         });
         self.global_graph = result.graph;
         self.global_stats = result.stats;
