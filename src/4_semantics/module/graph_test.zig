@@ -619,3 +619,27 @@ test "ordinary calls retain caller bindings for reached defaults" {
     }
     try std.testing.expect(found);
 }
+
+test "named call inputs reject unrelated default-only overloads" {
+    const allocator = std.testing.allocator;
+    const source =
+        "fill(.stdout: Int32 = 1) -> (.result: Int32) := { result = stdout }\n" ++
+        "fill(.self: Int32) -> (.result: Int32) := { result = self }\n" ++
+        "main() -> (.result: Int32) := { result = fill(.self = 2).result }\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try @import("semantizer.zig").build(allocator, "named_overloads", &.{.{ .path = "named_overloads/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+    defer result.graph.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
+    var matched = false;
+    for (result.graph.nodes.items) |node| {
+        if (node.content != .function_call) continue;
+        const function = result.graph.functions.items[@intFromEnum(node.content.function_call.callee)];
+        if (!std.mem.eql(u8, result.graph.text(result.graph.declaration(function.declaration).name), "fill")) continue;
+        try std.testing.expectEqualStrings("self", result.graph.text(result.graph.fields.items[function.input.start].name));
+        matched = true;
+    }
+    try std.testing.expect(matched);
+}
