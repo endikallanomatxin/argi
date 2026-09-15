@@ -593,3 +593,29 @@ test "parameterized call defaults preserve reach alternatives" {
     try std.testing.expectEqualStrings("context", module.text(storage.reach_segments.items[second.segments.start]));
     try std.testing.expectEqualStrings("value", module.text(storage.reach_segments.items[second.segments.start + 1]));
 }
+
+test "ordinary calls retain caller bindings for reached defaults" {
+    const allocator = std.testing.allocator;
+    const source =
+        "consume(.value: Int32) -> () := {}\n" ++
+        "main() -> () := {\n" ++
+        "    local :: Int32 = 7\n" ++
+        "    consume(.value = local)\n" ++
+        "}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try @import("semantizer.zig").build(allocator, "reach_caller", &.{.{ .path = "reach_caller/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    var found = false;
+    for (module.graph.semantic.pending_operations.items) |operation| {
+        if (operation != .resolve_call) continue;
+        const call = operation.resolve_call;
+        const callee = module.graph.semantic.external_refs.items[@intFromEnum(call.callee)];
+        if (!std.mem.eql(u8, module.graph.text(callee.name), "consume")) continue;
+        const refs = module.graph.semantic.binding_refs.items[call.visible_bindings.start..][0..call.visible_bindings.len];
+        for (refs) |binding| {
+            if (std.mem.eql(u8, module.graph.text(module.graph.semantic.bindings.items[@intFromEnum(binding)].name), "local")) found = true;
+        }
+    }
+    try std.testing.expect(found);
+}

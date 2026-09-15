@@ -174,6 +174,9 @@ pub const PendingOperation = union(enum) {
         callee: ExternalRefId,
         input: ModuleNodeId,
         expected_type: ?ModuleTypeId = null,
+        // Indices into ModuleSema.binding_refs, captured at the call site.
+        // Later reach resolution must use the caller's lexical environment.
+        visible_bindings: BindingRange = .{ .start = 0, .len = 0 },
     },
     resolve_field: struct {
         node: ModuleNodeId,
