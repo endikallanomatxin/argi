@@ -228,6 +228,7 @@ pub fn semantizeWithOptions(
         .core = &core,
         .generics = &generics,
     };
+    constructors.abstracts = &abstracts;
     defer abstracts.deinit();
     generic_functions.nested_call_context = &abstracts;
     generic_functions.nested_call_resolver = abstract_mod.Resolver.resolveNestedCall;

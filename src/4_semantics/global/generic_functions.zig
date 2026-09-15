@@ -367,7 +367,7 @@ pub const Resolver = struct {
                             matches = false;
                             break;
                         };
-                        const inferred = self.inferInputType(candidate_index, field.ty, actual, &bindings) catch |err| {
+                        _ = self.inferInputType(candidate_index, field.ty, actual, &bindings) catch |err| {
                             if (err == error.ConflictingGenericArgument) {
                                 conflicting_candidates += 1;
                                 matches = false;
@@ -377,7 +377,6 @@ pub const Resolver = struct {
                             matches = false;
                             break;
                         };
-                        if (!inferred) matches = false;
                         break;
                     }
                     if (!matches) break;
@@ -682,6 +681,47 @@ pub const Resolver = struct {
             .ty = try self.generics.internType(.{ .builtin = .UIntNative }),
             .content = .{ .int_literal = std.math.cast(i64, size) orelse return error.TypeSizeOverflow },
         };
+    }
+
+    /// Infer the implicit abstract arguments of a constructor's `init` from
+    /// its destination and supplied fields, then materialize its runtime body.
+    pub fn instantiateInitializer(
+        self: *Resolver,
+        declaration: global_sg.GlobalDeclId,
+        destination_type: global_sg.GlobalTypeId,
+        input: global_sg.GlobalNodeId,
+    ) !?global_sg.GlobalFunctionId {
+        const located = self.findParameterized(declaration) orelse return null;
+        const module = &self.modules[located.module_index];
+        const storage = &module.semantic.parameterized_storage.ir;
+        const shape = switch (storage.types.items[@intFromEnum(located.parameterized.input)]) {
+            .resolved => |ty| switch (ty) {
+                .structural => |value| value,
+                else => return null,
+            },
+            else => return null,
+        };
+        if (shape.fields.len == 0) return null;
+        const supplied = switch (self.graph.node(input).content) {
+            .struct_value_literal => |value| value,
+            else => return null,
+        };
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+        const destination_pointer = try self.generics.internType(.{ .pointer = .{ .child = destination_type, .mutability = .read_write } });
+        if (!try self.inferInputType(located.module_index, storage.fields.items[shape.fields.start].ty, destination_pointer, &bindings)) return null;
+        for (storage.fields.items[shape.fields.start + 1..][0 .. shape.fields.len - 1]) |field| {
+            for (self.graph.value_fields.items[supplied.fields.start..][0..supplied.fields.len]) |value| {
+                if (!std.mem.eql(u8, module.text(field.name), self.graph.text(value.name))) continue;
+                const actual = self.graph.node(value.value).ty orelse return null;
+                // Concrete fields are checked by the contextual matcher after
+                // instantiation; their literal types need not match yet.
+                _ = self.inferInputType(located.module_index, field.ty, actual, &bindings) catch return null;
+                break;
+            }
+        }
+        const arguments = self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings) catch return null;
+        return try self.instantiate(declaration, arguments);
     }
 
     pub fn instantiate(
