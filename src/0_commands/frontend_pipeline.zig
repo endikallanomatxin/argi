@@ -193,12 +193,17 @@ pub const FrontendPipeline = struct {
             files: std.ArrayList(module_sg.FileInput) = .empty,
         };
         var groups: std.ArrayList(ModuleInputs) = .empty;
+        var abstract_names: std.ArrayList([]const u8) = .empty;
+        defer abstract_names.deinit(self.allocator);
         defer {
             for (groups.items) |*group| group.files.deinit(self.allocator);
             groups.deinit(self.allocator);
         }
         for (self.syntax_files.items) |*file| {
             const source = self.source_db.get(file.file_id);
+            for (file.roots) |root| if (file.abstractDeclaration(root)) |abstract| {
+                try abstract_names.append(self.allocator, file.tokenTextFromSource(source.source, abstract.name_token));
+            };
             const dir = std.fs.path.dirname(source.path) orelse ".";
             var group_index: ?usize = null;
             for (groups.items, 0..) |group, index| if (std.mem.eql(u8, group.dir, dir)) {
@@ -218,7 +223,7 @@ pub const FrontendPipeline = struct {
         }
         try self.module_graphs.ensureTotalCapacity(self.allocator, groups.items.len);
         for (groups.items) |group| {
-            const result = try module_semantizer.build(self.allocator, group.dir, group.files.items);
+            const result = try module_semantizer.buildWithAbstractCatalog(self.allocator, group.dir, group.files.items, abstract_names.items);
             self.module_lowered_functions += result.stats.lowered_functions;
             self.module_fallback_functions += result.stats.fallback_functions;
             self.module_graphs.appendAssumeCapacity(result.graph);
