@@ -308,6 +308,7 @@ pub fn semantizeWithOptions(
         if (try generics.materializeKnownTypes()) changed = true;
         if (try abstracts.materializeAbstractFieldStorage()) changed = true;
         try control.materializeSugarTypes();
+        if (try errors.inferFunctionErrorReasons()) changed = true;
         if (reachable) |set| {
             if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
         }
