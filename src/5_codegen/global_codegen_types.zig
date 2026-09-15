@@ -14,11 +14,10 @@ pub const Lowerer = struct {
     pub fn toLLVMType(self: *Lowerer, ty: graph_mod.GlobalTypeId) Error!llvm.c.LLVMTypeRef {
         return switch (self.graph.types.items[@intFromEnum(ty)]) {
             .builtin => |builtin| self.builtinType(builtin),
-            .pointer => |pointer| blk: {
-                if (types.isBuiltin(self.graph, pointer.child, .Any))
-                    break :blk c.LLVMPointerType(c.LLVMInt8Type(), 0);
-                break :blk c.LLVMPointerType(try self.toLLVMType(pointer.child), 0);
-            },
+            // LLVM uses opaque pointers. The pointee's semantic type is kept
+            // in GlobalSG and supplied explicitly to loads and GEPs; lowering
+            // it here would recurse through self-referential structures.
+            .pointer => c.LLVMPointerType(c.LLVMInt8Type(), 0),
             .array => |array| c.LLVMArrayType(try self.toLLVMType(array.element), @intCast(array.length)),
             .declared => |decl| self.declaredType(decl),
             .structural => |shape| self.structType(shape.fields, shape.layout),
