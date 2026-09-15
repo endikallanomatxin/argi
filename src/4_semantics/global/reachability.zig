@@ -44,11 +44,14 @@ pub fn roots(
     for (graph.functions.items, 0..) |function, raw| {
         const declaration = graph.declaration(function.declaration);
         const name = graph.text(declaration.name);
-        const selected = if (selected_test_name) |wanted|
+        const entrypoint = if (selected_test_name) |wanted|
             function.flags.is_test and std.mem.eql(u8, name, wanted)
         else
             !function.flags.is_test and std.mem.eql(u8, name, "main");
-        if (selected) _ = try result.include(@enumFromInt(@as(u32, @intCast(raw))));
+        // Open Errable signatures are completed from their bodies and can be
+        // inspected while resolving an otherwise reachable caller.
+        if (entrypoint or function.flags.uses_inferred_error_reasons)
+            _ = try result.include(@enumFromInt(@as(u32, @intCast(raw))));
     }
     return result;
 }
