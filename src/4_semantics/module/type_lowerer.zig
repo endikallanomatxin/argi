@@ -5,6 +5,15 @@ const entities = @import("entities.zig");
 const views = @import("views.zig");
 const writer_mod = @import("writer.zig");
 
+// Virtual is a language-level runtime type constructor. Its abstract
+// argument describes a vtable contract, unlike an ordinary generic argument
+// whose type can be specialized from a concrete call input.
+pub fn isRuntimeVirtualType(tree: *const syn.FileSyntaxTree, source: []const u8, generic: syn.GenericType) bool {
+    const base = tree.syntaxType(generic.base) orelse return false;
+    return base == .name and base.name.qualifier_token == null and
+        std.mem.eql(u8, tree.tokenTextFromSource(source, base.name.name_token), "Virtual");
+}
+
 pub const Context = struct {
     graph: *graph_mod.ModuleSemanticGraph,
     writer: *writer_mod.Writer,
@@ -137,8 +146,7 @@ pub const Context = struct {
     fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
         const arguments_literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericArguments;
         const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericBase;
-        if (base == .name and base.name.qualifier_token == null and
-            std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Virtual"))
+        if (isRuntimeVirtualType(self.tree, self.source, generic))
         {
             if (arguments_literal.fields.len != 1) return error.InvalidVirtualArguments;
             const field = self.tree.structTypeField(arguments_literal.fields[0]) orelse return error.InvalidVirtualArguments;

@@ -6,6 +6,7 @@ const graph_mod = @import("../graph.zig");
 const entities = @import("../entities.zig");
 const writer_mod = @import("../writer.zig");
 const views = @import("../views.zig");
+const type_lowerer = @import("../type_lowerer.zig");
 const parameterized_storage = @import("storage.zig");
 const ir = @import("ir.zig");
 const primitives = @import("../../primitives/schema.zig");
@@ -244,10 +245,7 @@ pub const Context = struct {
                 if (variant.payload_type) |ty| try self.collectLocalAbstractParameters(ty);
             },
             .generic => |generic| {
-                // Virtual carries the abstract contract as runtime dispatch
-                // metadata; its argument is not a concrete type to infer.
-                const base = self.tree.syntaxType(generic.base) orelse return;
-                if (base == .name and std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Virtual")) return;
+                if (type_lowerer.isRuntimeVirtualType(self.tree, self.source, generic)) return;
                 const arguments = self.tree.structTypeLiteral(generic.arguments) orelse return;
                 for (arguments.fields) |field_node| {
                     const field = self.tree.structTypeField(field_node) orelse continue;
@@ -302,6 +300,13 @@ pub const Context = struct {
     }
 
     fn lowerGenericType(self: *Context, generic: syn.GenericType, allow_self: bool) !ir.ParameterizedTypeId {
+        if (type_lowerer.isRuntimeVirtualType(self.tree, self.source, generic)) {
+            const literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidVirtualArguments;
+            if (literal.fields.len != 1) return error.InvalidVirtualArguments;
+            const field = self.tree.structTypeField(literal.fields[0]) orelse return error.InvalidVirtualArguments;
+            if (!std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, field.name_token), "abstract")) return error.InvalidVirtualArguments;
+            return self.addType(.{ .resolved = .{ .virtual = try self.lowerType(field.type_node orelse return error.InvalidVirtualArguments, allow_self) } });
+        }
         const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericParameterizedBase;
         if (base != .name) return error.InvalidGenericParameterizedBase;
         const name = base.name;

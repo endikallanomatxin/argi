@@ -17,8 +17,11 @@ type must be carried across module boundaries before applying the same rule.
 Abstract contracts nested inside ordinary generic type arguments are also
 collected as constrained type parameters. `Virtual#(.abstract: ...)` is an
 exception because its abstract argument selects a runtime vtable rather than
-a concrete representation to infer. The nested-pattern regression test passes
-and the internal suite remains green (160 tests).
+a concrete representation to infer. Both ModuleSema type lowering and
+parameterized lowering classify the constructor as a virtual runtime type;
+the parameterized IR retains its virtual type instead of encoding a generic
+instantiation. The nested-pattern and runtime-contract tests pass, and the
+internal suite remains green (161 tests).
 
 The ownership pass now preserves the owning aggregate when projecting fields,
 retains opaque provenance through address formation, and lowers field writes
