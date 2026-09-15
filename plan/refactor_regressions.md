@@ -6,6 +6,15 @@ This document's original checkpoint below records the 2026-09-09 state; its
 test counts and file paths are historical. Development continues on
 `compact-semantic-graph-chatgpt`, using `performance` as the behavior reference.
 
+ModuleSema now recognizes a same-module abstract input as a constrained
+parameterized function. It retains the source declaration as a bodyless
+contract interface and lowers the executable body once as a template;
+GlobalSema infers a concrete implementer at each call and materializes a
+separate concrete function instance. This restores the local part of the
+pre-refactor abstract monomorphization algorithm. Imported abstract inputs
+remain unresolved: their declaration identity and concrete `#reach` backing
+type must be carried across module boundaries before applying the same rule.
+
 The ownership pass now preserves the owning aggregate when projecting fields,
 retains opaque provenance through address formation, and lowers field writes
 through storage addresses. The opaque mutation negative fixtures 140X, 142X,

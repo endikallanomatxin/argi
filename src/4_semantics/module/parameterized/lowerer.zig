@@ -82,10 +82,22 @@ pub const Context = struct {
                 },
                 .function => {
                     const function = self.tree.functionDeclaration(declaration_node) orelse continue;
-                    if (!hasGenericParameters(function.generic_params, function.generic_params_struct)) continue;
                     self.parameters.clearRetainingCapacity();
                     self.bindings.clearRetainingCapacity();
-                    const params = try self.lowerParameters(function.generic_params, function.generic_params_struct);
+                    const explicit = hasGenericParameters(function.generic_params, function.generic_params_struct);
+                    const params = if (explicit)
+                        try self.lowerParameters(function.generic_params, function.generic_params_struct)
+                    else
+                        try self.lowerLocalAbstractParameters(function.input);
+                    if (params.len == 0) continue;
+                    if (!explicit) if (declaration.function_id) |function_id| {
+                        // The source interface keeps declaration identity;
+                        // only concrete instances own an executable body.
+                        try self.graph.semantic.function_semantics.append(self.allocator, .{
+                            .function = function_id,
+                            .flags = .{ .has_declared_body = function.body != null, .is_abstract_dispatch = true },
+                        });
+                    };
                     const input = try self.lowerType(function.input, false);
                     const output = try self.lowerType(function.output, false);
                     const input_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
@@ -102,6 +114,7 @@ pub const Context = struct {
                         .body = body,
                         .input_bindings = .{ .start = input_start, .len = output_start - input_start },
                         .output_bindings = .{ .start = output_start, .len = output_end - output_start },
+                        .dispatch_kind = if (explicit) .regular else .abstract_contract,
                     });
                     stats.generic_functions += 1;
                 },
@@ -190,6 +203,48 @@ pub const Context = struct {
             }
         }
         return .{ .start = start, .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - start) };
+    }
+
+    fn lowerLocalAbstractParameters(self: *Context, input: syn.NodeIndex) !primitives.Range(ir.ComptimeParameterId) {
+        const start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
+        try self.collectLocalAbstractParameters(input);
+        return .{ .start = start, .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - start) };
+    }
+
+    fn collectLocalAbstractParameters(self: *Context, node: syn.NodeIndex) !void {
+        const syntax_type = self.tree.syntaxType(node) orelse return;
+        switch (syntax_type) {
+            .name => |name| {
+                if (name.qualifier_token != null) return;
+                const text = self.tree.tokenTextFromSource(self.source, name.name_token);
+                const declaration = self.localAbstractType(text) orelse return;
+                if (self.parameter(text) != null) return;
+                const constraint: parameterized_storage.AbstractConstraintId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.abstract_constraints.items.len)));
+                try self.graph.semantic.parameterized_storage.abstract_constraints.append(self.allocator, .{
+                    .abstract_ref = .{ .module = declaration },
+                    .source = self.sourceRef(node),
+                });
+                const parameter_id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
+                try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
+                    .name = try self.writer.addString(text),
+                    .kind = .type,
+                    .constraint = constraint,
+                });
+                try self.parameters.append(.{ .name = text, .id = parameter_id, .kind = .type });
+            },
+            .pointer => |pointer| try self.collectLocalAbstractParameters(pointer.child),
+            .nullable, .inferred_errable => |child| try self.collectLocalAbstractParameters(child),
+            .array => |array| try self.collectLocalAbstractParameters(array.element),
+            .struct_literal => |literal| for (literal.fields) |field_node| {
+                const field = self.tree.structTypeField(field_node) orelse continue;
+                if (field.type_node) |ty| try self.collectLocalAbstractParameters(ty);
+            },
+            .choice_literal => |literal| for (literal.variants) |variant_node| {
+                const variant = self.tree.choiceTypeVariant(variant_node) orelse continue;
+                if (variant.payload_type) |ty| try self.collectLocalAbstractParameters(ty);
+            },
+            .generic => {},
+        }
     }
 
     pub fn lowerType(self: *Context, node: syn.NodeIndex, allow_self: bool) anyerror!ir.ParameterizedTypeId {
@@ -747,6 +802,12 @@ pub const Context = struct {
             .type, .abstract_type => return id,
             else => {},
         };
+        return null;
+    }
+
+    fn localAbstractType(self: *Context, name: []const u8) ?entities.ModuleDeclId {
+        for (self.graph.declarationsNamed(name)) |id|
+            if (self.graph.declarations.items[@intFromEnum(id)].kind == .abstract_type) return id;
         return null;
     }
 

@@ -504,3 +504,31 @@ test "failed generic bodies do not publish reusable instances" {
         try std.testing.expectEqual(@as(usize, 0), relocation.graph.generic_function_instances.items.len);
     }
 }
+
+test "local abstract inputs specialize one body per concrete implementer" {
+    const allocator = std.testing.allocator;
+    const source =
+        "Contract : Abstract = ()\n" ++
+        "Int32 implements Contract\n" ++
+        "Char implements Contract\n" ++
+        "use(.value: Contract) -> (.result: Int32) := { result = 1 }\n" ++
+        "main() -> (.result: Int32) := { result = use(.value = 7).result + use(.value = 'A').result }\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "contract/main.rg", .tree = &tree, .source = source }};
+    var module = try @import("semantizer.zig").build(allocator, "contract", &inputs);
+    defer module.graph.deinit(allocator);
+    const template = module.graph.semantic.parameterized_storage.parameterized_functions.items[0];
+    try std.testing.expectEqual(@as(@import("parameterized/storage.zig").GenericDispatchKind, .abstract_contract), template.dispatch_kind);
+    try std.testing.expectEqual(@as(u32, 1), template.parameters.len);
+    const parameter = module.graph.semantic.parameterized_storage.comptime_parameters.items[template.parameters.start];
+    try std.testing.expect(parameter.constraint != null);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+    defer result.graph.deinit(allocator);
+    var instances: usize = 0;
+    for (result.graph.generic_function_instances.items) |instance| {
+        const declaration = result.graph.declaration(instance.parameterized_declaration);
+        if (std.mem.eql(u8, result.graph.text(declaration.name), "use")) instances += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), instances);
+}
