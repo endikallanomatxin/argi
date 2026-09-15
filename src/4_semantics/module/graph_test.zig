@@ -612,6 +612,8 @@ test "ordinary calls retain caller bindings for reached defaults" {
         const call = operation.resolve_call;
         const callee = module.graph.semantic.external_refs.items[@intFromEnum(call.callee)];
         if (!std.mem.eql(u8, module.graph.text(callee.name), "consume")) continue;
+        const owner = module.graph.functions.items[@intFromEnum(call.owner_function.?)];
+        try std.testing.expectEqualStrings("main", module.graph.text(module.graph.declarations.items[@intFromEnum(owner.declaration)].name));
         const refs = module.graph.semantic.binding_refs.items[call.visible_bindings.start..][0..call.visible_bindings.len];
         for (refs) |binding| {
             if (std.mem.eql(u8, module.graph.text(module.graph.semantic.bindings.items[@intFromEnum(binding)].name), "local")) found = true;
@@ -673,4 +675,32 @@ test "ordinary reached default selects a caller binding" {
         reached = true;
     }
     try std.testing.expect(reached);
+}
+
+test "reached defaults propagate through an intermediate function" {
+    const allocator = std.testing.allocator;
+    const source =
+        "consume(.value: Int32 = #reach value) -> (.result: Int32) := { result = value }\n" ++
+        "forward() -> (.result: Int32) := { result = consume().result }\n" ++
+        "main() -> (.result: Int32) := {\n" ++
+        "    value :: Int32 = 7\n" ++
+        "    result = forward().result\n" ++
+        "}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try @import("semantizer.zig").build(allocator, "reach_propagation", &.{.{ .path = "reach_propagation/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+    defer result.graph.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
+    var found = false;
+    for (result.graph.functions.items) |function| {
+        const declaration = result.graph.declaration(function.declaration);
+        if (!std.mem.eql(u8, result.graph.text(declaration.name), "forward")) continue;
+        try std.testing.expectEqual(@as(u32, 1), function.input.len);
+        try std.testing.expectEqual(@as(u32, 1), function.input_bindings.len);
+        try std.testing.expectEqualStrings("value", result.graph.text(result.graph.fields.items[function.input.start].name));
+        found = true;
+    }
+    try std.testing.expect(found);
 }
