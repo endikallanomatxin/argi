@@ -990,31 +990,71 @@ pub const CodeGenerator = struct {
     // particular error payload layout.
     fn genErrorPropagation(self: *CodeGenerator, propagation: anytype, context: ?graph_mod.GlobalNodeId) !TypedValue {
         const value = (try self.visitNode(propagation.errable_value)) orelse return CodegenError.ValueNotFound;
+        const source_errable_type = self.graph.node(propagation.errable_value).ty orelse return CodegenError.InvalidType;
         const tag = c.LLVMBuildExtractValue(self.builder, value.value_ref, 0, "error.tag");
-        const error_tag = c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(propagation.propagated_errable_type, propagation.propagated_error_variant)), 0);
+        const source_error_tag = c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(source_errable_type, propagation.error_variant)), 0);
+        const propagated_error_tag = c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(propagation.propagated_errable_type, propagation.propagated_error_variant)), 0);
         const current = c.LLVMGetInsertBlock(self.builder) orelse return CodegenError.InvalidType;
         const function = c.LLVMGetBasicBlockParent(current);
         const error_block = c.LLVMAppendBasicBlock(function, "error.propagate");
         const ok_block = c.LLVMAppendBasicBlock(function, "error.ok");
-        _ = c.LLVMBuildCondBr(self.builder, c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, tag, error_tag, "error.is_error"), error_block, ok_block);
+        _ = c.LLVMBuildCondBr(self.builder, c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, tag, source_error_tag, "error.is_error"), error_block, ok_block);
 
         c.LLVMPositionBuilderAtEnd(self.builder, error_block);
         var propagated = c.LLVMGetUndef(try self.toLLVMType(propagation.propagated_errable_type));
-        const payload = c.LLVMBuildExtractValue(self.builder, value.value_ref, @intCast(@intFromEnum(propagation.error_variant) + 1), "error.payload");
-        propagated = c.LLVMBuildInsertValue(self.builder, propagated, error_tag, 0, "error.return.tag");
-        propagated = c.LLVMBuildInsertValue(self.builder, propagated, payload, @intCast(@intFromEnum(propagation.propagated_error_variant) + 1), "error.return.payload");
+        const source_error_index = try self.variantIndex(source_errable_type, propagation.error_variant);
+        const propagated_error_index = try self.variantIndex(propagation.propagated_errable_type, propagation.propagated_error_variant);
+        const payload = c.LLVMBuildExtractValue(self.builder, value.value_ref, source_error_index + 1, "error.payload");
+        const converted_payload = try self.coerceErrorPayload(payload, propagation.error_payload_type, propagation.propagated_error_payload_type);
+        propagated = c.LLVMBuildInsertValue(self.builder, propagated, propagated_error_tag, 0, "error.return.tag");
+        propagated = c.LLVMBuildInsertValue(self.builder, propagated, converted_payload, propagated_error_index + 1, "error.return.payload");
         for (self.graph.node_refs.items[propagation.cleanup_nodes.start..][0..propagation.cleanup_nodes.len]) |cleanup|
             _ = try self.visitNode(cleanup);
-        _ = c.LLVMBuildRet(self.builder, propagated);
+        const return_type = self.current_return_type orelse return CodegenError.InvalidType;
+        var return_value = c.LLVMGetUndef(return_type);
+        return_value = c.LLVMBuildInsertValue(self.builder, return_value, propagated, 0, "error.return");
+        _ = c.LLVMBuildRet(self.builder, return_value);
 
         c.LLVMPositionBuilderAtEnd(self.builder, ok_block);
-        const ok_payload = c.LLVMBuildExtractValue(self.builder, value.value_ref, @intCast(@intFromEnum(propagation.ok_variant) + 1), "error.ok.payload");
+        const ok_payload = c.LLVMBuildExtractValue(self.builder, value.value_ref, (try self.variantIndex(source_errable_type, propagation.ok_variant)) + 1, "error.ok.payload");
         const result = if (propagation.ok_value_field_index) |index|
             c.LLVMBuildExtractValue(self.builder, ok_payload, index, "error.ok.value")
         else
             ok_payload;
         _ = context;
         return .{ .value_ref = result, .type_ref = try self.toLLVMType(propagation.ok_payload_type), .ty = propagation.ok_payload_type };
+    }
+
+    fn coerceErrorPayload(self: *CodeGenerator, value: llvm.c.LLVMValueRef, source_ty: graph_mod.GlobalTypeId, target_ty: graph_mod.GlobalTypeId) !llvm.c.LLVMValueRef {
+        if (types.equal(self.graph, source_ty, target_ty)) return value;
+        const source_reason = types.findField(self.graph, source_ty, "reason") orelse return CodegenError.InvalidType;
+        const source_trace = types.findField(self.graph, source_ty, "trace") orelse return CodegenError.InvalidType;
+        const target_reason = types.findField(self.graph, target_ty, "reason") orelse return CodegenError.InvalidType;
+        const target_trace = types.findField(self.graph, target_ty, "trace") orelse return CodegenError.InvalidType;
+        const reason = c.LLVMBuildExtractValue(self.builder, value, source_reason.index, "error.reason");
+        const trace = c.LLVMBuildExtractValue(self.builder, value, source_trace.index, "error.trace");
+        const converted_reason = try self.coerceReasonChoice(reason, source_reason.field.ty, target_reason.field.ty);
+        var result = c.LLVMGetUndef(try self.toLLVMType(target_ty));
+        result = c.LLVMBuildInsertValue(self.builder, result, converted_reason, target_reason.index, "error.reason.converted");
+        result = c.LLVMBuildInsertValue(self.builder, result, trace, target_trace.index, "error.trace.converted");
+        return result;
+    }
+
+    fn coerceReasonChoice(self: *CodeGenerator, value: llvm.c.LLVMValueRef, source_ty: graph_mod.GlobalTypeId, target_ty: graph_mod.GlobalTypeId) !llvm.c.LLVMValueRef {
+        if (types.equal(self.graph, source_ty, target_ty)) return value;
+        const source_variants = types.variants(self.graph, source_ty) orelse return CodegenError.InvalidType;
+        const source_tag = c.LLVMBuildExtractValue(self.builder, value, 0, "error.reason.tag");
+        var mapped = c.LLVMConstInt(c.LLVMInt32Type(), 0, 0);
+        for (0..source_variants.len) |offset| {
+            const variant_id: graph_mod.GlobalVariantId = @enumFromInt(source_variants.start + @as(u32, @intCast(offset)));
+            const variant = self.graph.variants.items[@intFromEnum(variant_id)];
+            if (variant.payload_type != null) return CodegenError.InvalidType;
+            const target = types.findVariant(self.graph, target_ty, self.graph.text(variant.name)) orelse return CodegenError.InvalidType;
+            const condition = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, source_tag, c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(source_ty, variant_id)), 0), "error.reason.matches");
+            mapped = c.LLVMBuildSelect(self.builder, condition, c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(target_ty, target.id)), 0), mapped, "error.reason.remap");
+        }
+        const result = c.LLVMGetUndef(try self.toLLVMType(target_ty));
+        return c.LLVMBuildInsertValue(self.builder, result, mapped, 0, "error.reason.converted");
     }
 
     fn genVirtualize(self: *CodeGenerator, virtualize_id: graph_mod.GlobalVirtualizeId) !TypedValue {

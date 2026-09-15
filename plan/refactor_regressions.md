@@ -36,8 +36,11 @@ column data.
 
 Codegen now contains the indexed propagation control flow: it branches on the
 errable tag, executes recorded cleanup on the error path, rebuilds the caller's
-errable, and unwraps the success payload. Context strings are not yet appended
-to the runtime trace, and `testing.expect_error` remains to be restored.
+errable, and unwraps the success payload. Propagation compares source tags by
+their choice-local index, remaps reason tags by name into the caller's superset,
+preserves the trace field, and packs the result according to the function ABI.
+Context strings are not yet appended to the runtime trace, and
+`testing.expect_error` remains to be restored.
 
 The minimal program now reaches codegen and reports an `InvalidType` at the
 abstract `write_trace_text` parameter in `core/errors/errors.rg`. Restoring
