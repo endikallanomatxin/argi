@@ -140,6 +140,7 @@ const State = struct {
                 try self.functions.bindings.put(value.binding, {});
                 if (value.input) |input| try self.walkNode(input);
                 if (value.deinit_fn) |callee| try self.includeFunction(callee);
+                try self.includeAutoDeinitFields(value.fields);
             },
             .function_call => |call| {
                 try self.walkNode(call.input);
@@ -271,6 +272,14 @@ const State = struct {
                 try self.includeFunction(value.init_fn);
             },
             .explicit_cast => |value| try self.walkNode(value.value),
+        }
+    }
+
+    fn includeAutoDeinitFields(self: *State, range: @import("../primitives/schema.zig").Range(graph_mod.GlobalAutoDeinitFieldId)) anyerror!void {
+        for (self.graph.auto_deinit_fields.items[range.start..][0..range.len]) |field| {
+            if (field.input) |input| try self.walkNode(input);
+            if (field.deinit_fn) |callee| try self.includeFunction(callee);
+            try self.includeAutoDeinitFields(field.fields);
         }
     }
 };
