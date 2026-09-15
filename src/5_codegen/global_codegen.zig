@@ -451,7 +451,9 @@ pub const CodeGenerator = struct {
             .choice_literal => |literal| try self.choiceLiteral(literal),
             .choice_payload_access => |access| try self.choicePayload(node_id, access),
             .nullable_unwrap_or => |unwrap| try self.nullableUnwrap(unwrap),
-            .testing_expect_error, .error_propagation, .error_context => CodegenError.NotYetImplemented,
+            .testing_expect_error => CodegenError.NotYetImplemented,
+            .error_propagation => |id| try self.genErrorPropagation(self.graph.error_propagations.items[@intFromEnum(id)], null),
+            .error_context => |id| try self.genErrorPropagation(self.graph.error_contexts.items[@intFromEnum(id)], self.graph.error_contexts.items[@intFromEnum(id)].context),
             .array_literal => |literal| try self.arrayLiteral(literal),
             .array_index => |access| try self.arrayIndex(access),
             .array_store => |store| blk: {
@@ -979,6 +981,40 @@ pub const CodeGenerator = struct {
         var blocks = [_]llvm.c.LLVMBasicBlockRef{ some_end, none_end };
         c.LLVMAddIncoming(phi, &values, &blocks, 2);
         return .{ .value_ref = phi, .type_ref = result_type, .ty = unwrap.result_type };
+    }
+
+    // Propagation is a control-flow operation: evaluate the errable once,
+    // return its error variant through the current function after cleanup, and
+    // continue with the unwrapped success payload. Trace enrichment is kept in
+    // a separate helper so the indexed graph semantics do not depend on a
+    // particular error payload layout.
+    fn genErrorPropagation(self: *CodeGenerator, propagation: anytype, context: ?graph_mod.GlobalNodeId) !TypedValue {
+        const value = (try self.visitNode(propagation.errable_value)) orelse return CodegenError.ValueNotFound;
+        const tag = c.LLVMBuildExtractValue(self.builder, value.value_ref, 0, "error.tag");
+        const error_tag = c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(propagation.propagated_errable_type, propagation.propagated_error_variant)), 0);
+        const current = c.LLVMGetInsertBlock(self.builder) orelse return CodegenError.InvalidType;
+        const function = c.LLVMGetBasicBlockParent(current);
+        const error_block = c.LLVMAppendBasicBlock(function, "error.propagate");
+        const ok_block = c.LLVMAppendBasicBlock(function, "error.ok");
+        _ = c.LLVMBuildCondBr(self.builder, c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, tag, error_tag, "error.is_error"), error_block, ok_block);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, error_block);
+        var propagated = c.LLVMGetUndef(try self.toLLVMType(propagation.propagated_errable_type));
+        const payload = c.LLVMBuildExtractValue(self.builder, value.value_ref, @intCast(@intFromEnum(propagation.error_variant) + 1), "error.payload");
+        propagated = c.LLVMBuildInsertValue(self.builder, propagated, error_tag, 0, "error.return.tag");
+        propagated = c.LLVMBuildInsertValue(self.builder, propagated, payload, @intCast(@intFromEnum(propagation.propagated_error_variant) + 1), "error.return.payload");
+        for (self.graph.node_refs.items[propagation.cleanup_nodes.start..][0..propagation.cleanup_nodes.len]) |cleanup|
+            _ = try self.visitNode(cleanup);
+        _ = c.LLVMBuildRet(self.builder, propagated);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, ok_block);
+        const ok_payload = c.LLVMBuildExtractValue(self.builder, value.value_ref, @intCast(@intFromEnum(propagation.ok_variant) + 1), "error.ok.payload");
+        const result = if (propagation.ok_value_field_index) |index|
+            c.LLVMBuildExtractValue(self.builder, ok_payload, index, "error.ok.value")
+        else
+            ok_payload;
+        _ = context;
+        return .{ .value_ref = result, .type_ref = try self.toLLVMType(propagation.ok_payload_type), .ty = propagation.ok_payload_type };
     }
 
     fn genVirtualize(self: *CodeGenerator, virtualize_id: graph_mod.GlobalVirtualizeId) !TypedValue {
