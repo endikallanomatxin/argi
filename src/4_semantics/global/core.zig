@@ -637,7 +637,7 @@ pub const Resolver = struct {
             .struct_value_literal => |value| value,
             else => return .no_match,
         };
-        if (literal.fields.len > expected_fields.len) return .no_match;
+        if (!self.callInputNamesMatch(expected_fields, literal)) return .no_match;
         var score: u32 = 0;
         for (0..expected_fields.len) |expected_offset| {
             const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(expected_offset))];
@@ -657,6 +657,24 @@ pub const Resolver = struct {
             } else if (expected.default_value == null) return .no_match;
         }
         return .{ .score = score };
+    }
+
+    pub fn callInputNamesMatch(self: *const Resolver, expected_fields: global_sg.FieldRange, literal: anytype) bool {
+        if (literal.fields.len > expected_fields.len) return false;
+        for (0..literal.fields.len) |supplied_offset| {
+            const supplied = self.graph.value_fields.items[literal.fields.start + @as(u32, @intCast(supplied_offset))];
+            const name = self.graph.text(supplied.name);
+            if (supplied_offset < literal.dispatch_prefix_positional_count or name.len == 0) continue;
+            var known = false;
+            for (self.graph.fields.items[expected_fields.start..][0..expected_fields.len]) |expected| {
+                if (std.mem.eql(u8, name, self.graph.text(expected.name))) {
+                    known = true;
+                    break;
+                }
+            }
+            if (!known) return false;
+        }
+        return true;
     }
 
     pub fn scoreCallInput(self: *Resolver, expected_fields: global_sg.FieldRange, input_node: global_sg.GlobalNodeId) ?u32 {

@@ -32,6 +32,10 @@ this data can select a caller binding, but applying it to all ordinary calls
 exposed unresolved `flush`/`deinit` paths and made the LSP test fail. That
 prototype was withdrawn; the scope data remains available for a resolver that
 also preserves overload fallback and propagates missing reach arguments.
+GlobalSema now rejects a named argument that does not occur in a candidate's
+input fields before scoring its defaults. This prevents `.self` from selecting
+an unrelated `flush(.stdout = #reach ...)` overload and blocking the next
+dispatch strategy. The same shape check applies to abstract-compatible calls.
 Abstract contracts nested inside ordinary generic type arguments are also
 collected as constrained type parameters. `Virtual#(.abstract: ...)` is an
 exception because its abstract argument selects a runtime vtable rather than

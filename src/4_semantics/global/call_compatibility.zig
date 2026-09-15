@@ -117,7 +117,7 @@ pub fn matchInput(
         .struct_value_literal => |value| value,
         else => return .no_match,
     };
-    if (literal.fields.len > expected_fields.len) return .no_match;
+    if (!compatibility.core.callInputNamesMatch(expected_fields, literal)) return .no_match;
     var score: u32 = 0;
     for (0..expected_fields.len) |expected_offset| {
         const expected = graph.fields.items[expected_fields.start + @as(u32, @intCast(expected_offset))];
