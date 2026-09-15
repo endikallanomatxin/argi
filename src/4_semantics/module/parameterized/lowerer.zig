@@ -482,6 +482,7 @@ pub const Context = struct {
     fn lowerBodyNode(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedNodeId {
         if (self.tree.tag(node) == .expression_statement)
             return self.lowerBodyNode(self.tree.unaryOperand(node).?);
+        if (self.tree.tag(node) == .reach_directive) return self.lowerReach(node);
         if (self.tree.matchStatement(node)) |statement| {
             const value = try self.lowerBodyNode(statement.value);
             var cases: std.ArrayList(ir.MatchCase) = .empty;
@@ -644,6 +645,26 @@ pub const Context = struct {
             else => null,
         };
         return self.addPending(node, kind, operands.items, name, null, parameterizedDetailForTag(self.tree.tag(node)));
+    }
+
+    fn lowerReach(self: *Context, node: syn.NodeIndex) !ir.ParameterizedNodeId {
+        const directive = self.tree.reachDirective(node) orelse return error.InvalidParameterizedReach;
+        const alt_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.reach_alternatives.items.len);
+        for (directive.alternatives) |alt_node| {
+            const alternative = self.tree.reachAlternative(alt_node) orelse return error.InvalidParameterizedReachAlternative;
+            const segment_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.reach_segments.items.len);
+            for (alternative.segments) |segment| {
+                try self.graph.semantic.parameterized_storage.ir.reach_segments.append(self.allocator, try self.writer.addString(self.tree.tokenTextFromSource(self.source, self.tree.mainToken(segment))));
+            }
+            try self.graph.semantic.parameterized_storage.ir.reach_alternatives.append(self.allocator, .{
+                .segments = .{ .start = segment_start, .len = @intCast(alternative.segments.len) },
+            });
+        }
+        const reach_id: ir.ParameterizedReachId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.reaches.items.len)));
+        try self.graph.semantic.parameterized_storage.ir.reaches.append(self.allocator, .{
+            .alternatives = .{ .start = alt_start, .len = @intCast(directive.alternatives.len) },
+        });
+        return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .{ .reach_directive = reach_id });
     }
 
     fn collectBodyOperands(self: *Context, node: syn.NodeIndex, result: *std.array_list.Managed(ir.ParameterizedNodeId)) anyerror!void {
