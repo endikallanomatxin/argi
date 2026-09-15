@@ -20,10 +20,10 @@ deterministically. The corresponding internal tests pass. Other pending-call
 classes still require comparison with `performance`.
 
 The error model remains incomplete. Indexed error propagation and context
-records exist, but codegen returns `NotYetImplemented` for both, as well as
-`testing_expect_error`. The old implementation attached trace entries, coerced
-error payloads to the caller's errable type, ran cleanup, and returned early;
-the new implementation must preserve those semantics in the indexed graph.
+records now have codegen control flow, and `testing_expect_error` is lowered by
+GlobalSema and codegen. The old implementation also attached trace entries;
+the new implementation must still restore that runtime enrichment in the
+indexed graph.
 GlobalSema now follows nested expressions (including binding initializers) to
 find the enclosing return type, checks that the caller returns an errable
 value, validates concrete reason supersets and trace type compatibility, and
@@ -39,10 +39,12 @@ errable tag, executes recorded cleanup on the error path, rebuilds the caller's
 errable, and unwraps the success payload. Propagation compares source tags by
 their choice-local index, remaps reason tags by name into the caller's superset,
 preserves the trace field, and packs the result according to the function ABI.
-Context strings are not yet appended to the runtime trace, and
-GlobalSema now lowers `testing.expect_error` into its indexed semantic payload,
-including the actual reason field, expected reason, result type, and testing
-failure function. Its LLVM control flow remains to be restored.
+Context strings are not yet appended to the runtime trace. GlobalSema lowers
+`testing.expect_error` into its indexed semantic payload, including the actual
+reason field, expected reason, result type, and testing failure function.
+Codegen evaluates the errable once, distinguishes unexpected success from a
+reason mismatch, and merges both testing failures with the successful `ok`
+result through explicit LLVM control flow.
 
 The minimal program now reaches codegen and reports an `InvalidType` at the
 abstract `write_trace_text` parameter in `core/errors/errors.rg`. Restoring
