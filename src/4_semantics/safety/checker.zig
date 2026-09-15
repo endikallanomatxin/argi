@@ -216,10 +216,14 @@ pub const SafetyChecker = struct {
             switch (node.content) {
                 .binding_declaration => |binding| {
                     const record = self.graph.bindings.items[@intFromEnum(binding)];
-                    const value = if (record.initialization) |initialization| try self.evaluate(function, initialization, state) else facts.ValueFacts{};
+                    const value = if (record.initialization) |initialization| blk: {
+                        try self.validateContextualIntegerLiteral(initialization, record.ty);
+                        break :blk try self.evaluate(function, initialization, state);
+                    } else facts.ValueFacts{};
                     try self.setPlace(state, .{ .root = binding }, .initialized, value);
                 },
                 .assignment => |assignment| {
+                    try self.validateContextualIntegerLiteral(assignment.value, self.graph.binding(assignment.binding).ty);
                     const value = try self.evaluate(function, assignment.value, state);
                     try self.setPlace(state, .{ .root = assignment.binding }, .initialized, value);
                 },
@@ -526,7 +530,11 @@ pub const SafetyChecker = struct {
                 try self.validateBlock(function, block, state, null);
                 break :blk .{};
             },
-            .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .type_initializer, .testing_expect_error, .reach_directive, .break_statement, .continue_statement => .{},
+            .int_literal => |value| blk: {
+                try self.validateIntegerLiteral(node.source, node.ty, value);
+                break :blk .{};
+            },
+            .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .type_initializer, .testing_expect_error, .reach_directive, .break_statement, .continue_statement => .{},
             else => .{},
         };
     }
@@ -3201,6 +3209,45 @@ pub const SafetyChecker = struct {
     fn report(self: *SafetyChecker, source: primitives.SourceRef, comptime fmt: []const u8, args: anytype) !void {
         const loc = self.location(source) orelse return;
         try self.diagnostics.add(loc, .semantic, fmt, args);
+    }
+
+    fn validateIntegerLiteral(self: *SafetyChecker, source: primitives.SourceRef, maybe_ty: ?graph_mod.GlobalTypeId, value: i64) !void {
+        const ty = maybe_ty orelse return;
+        const builtin = switch (self.graph.resolvedSemanticType(ty) orelse return) {
+            .builtin => |kind| kind,
+            else => return,
+        };
+        const fits = switch (builtin) {
+            .Int8 => value >= std.math.minInt(i8) and value <= std.math.maxInt(i8),
+            .Int16 => value >= std.math.minInt(i16) and value <= std.math.maxInt(i16),
+            .Int32 => value >= std.math.minInt(i32) and value <= std.math.maxInt(i32),
+            .Int64 => true,
+            .UInt8 => value >= 0 and value <= std.math.maxInt(u8),
+            .UInt16 => value >= 0 and value <= std.math.maxInt(u16),
+            .UInt32 => value >= 0 and value <= std.math.maxInt(u32),
+            .UInt64, .UIntNative => value >= 0,
+            else => return,
+        };
+        if (fits) return;
+        switch (builtin) {
+            .Int8 => try self.report(source, "integer literal {d} does not fit in '{s}' (min {d}, max {d})", .{ value, @tagName(builtin), std.math.minInt(i8), std.math.maxInt(i8) }),
+            .Int16 => try self.report(source, "integer literal {d} does not fit in '{s}' (min {d}, max {d})", .{ value, @tagName(builtin), std.math.minInt(i16), std.math.maxInt(i16) }),
+            .Int32 => try self.report(source, "integer literal {d} does not fit in '{s}' (min {d}, max {d})", .{ value, @tagName(builtin), std.math.minInt(i32), std.math.maxInt(i32) }),
+            .UInt8 => try self.report(source, "integer literal {d} does not fit in '{s}' (max {d})", .{ value, @tagName(builtin), std.math.maxInt(u8) }),
+            .UInt16 => try self.report(source, "integer literal {d} does not fit in '{s}' (max {d})", .{ value, @tagName(builtin), std.math.maxInt(u16) }),
+            .UInt32 => try self.report(source, "integer literal {d} does not fit in '{s}' (max {d})", .{ value, @tagName(builtin), std.math.maxInt(u32) }),
+            .UInt64, .UIntNative => try self.report(source, "integer literal {d} does not fit in '{s}' (minimum 0)", .{ value, @tagName(builtin) }),
+            else => unreachable,
+        }
+    }
+
+    fn validateContextualIntegerLiteral(self: *SafetyChecker, node_id: graph_mod.GlobalNodeId, expected: graph_mod.GlobalTypeId) !void {
+        const node = self.graph.node(node_id);
+        const value = switch (node.content) {
+            .int_literal => |literal| literal,
+            else => return,
+        };
+        try self.validateIntegerLiteral(node.source, expected, value);
     }
 
     fn location(self: *SafetyChecker, source: primitives.SourceRef) ?tok.Location {
