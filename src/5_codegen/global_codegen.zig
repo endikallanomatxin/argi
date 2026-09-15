@@ -813,6 +813,28 @@ pub const CodeGenerator = struct {
         }
         for (self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len], 0..) |case, index| {
             c.LLVMPositionBuilderAtEnd(self.builder, blocks[index]);
+            if (case.payload_binding) |binding| {
+                const variant = self.graph.variants.items[@intFromEnum(case.variant)];
+                const payload_ty = variant.payload_type orelse return CodegenError.InvalidType;
+                const payload_index = try self.variantIndex(choice_ty, case.variant);
+                const payload = switch (case.payload_mode) {
+                    .borrow, .mut_borrow => blk: {
+                        const choice_pointer = try self.addressablePointer(sw.expression);
+                        break :blk c.LLVMBuildStructGEP2(self.builder, try self.toLLVMType(choice_ty), choice_pointer.value_ref, payload_index + 1, "match.payload.addr");
+                    },
+                    .value, .move => c.LLVMBuildExtractValue(self.builder, expression.value_ref, payload_index + 1, "match.payload"),
+                };
+                try self.allocateLocalBinding(binding, null);
+                const storage = self.bindings.getPtr(binding) orelse return CodegenError.SymbolNotFound;
+                const expected_type = switch (case.payload_mode) {
+                    .borrow, .mut_borrow => c.LLVMPointerType(try self.toLLVMType(payload_ty), 0),
+                    .value, .move => try self.toLLVMType(payload_ty),
+                };
+                if (storage.type_ref != expected_type) return CodegenError.InvalidType;
+                _ = c.LLVMBuildStore(self.builder, payload, storage.ref);
+                storage.initialized = true;
+                if (storage.drop_state) |drop| self.storeDropState(drop, true);
+            }
             _ = try self.genBlock(case.body);
             if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) _ = c.LLVMBuildBr(self.builder, end_block);
         }
