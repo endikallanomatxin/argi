@@ -98,6 +98,11 @@ match instead of silently accepting a missing field.
 Source syntax still accepts only literal array lengths, so the array path is
 covered at the parameterized IR boundary until dependent array syntax is
 restored.
+ModuleSG records the owning function beside every pending body operation.
+Interface, declaration, and module-root work retains a null owner and is always
+eligible for global resolution. This explicit ownership table is the boundary
+needed for GlobalSema to activate work by entrypoint reachability without
+reconstructing lexical ownership from node allocation order.
 ModuleSG no longer requires local generic shapes for every resolved generic
 type. Those types are durable materialization requests whose canonical
 declaration may only be known after modules are linked; GlobalSema remains the

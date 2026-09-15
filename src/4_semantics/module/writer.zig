@@ -11,6 +11,7 @@ pub const Writer = struct {
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
     compatibility_bases: storage.CompatibilityBases,
+    pending_owner_function: ?entities.ModuleFunctionId = null,
 
     pub fn init(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph) Writer {
         const bases = graph.semantic.compatibility_bases orelse blk: {
@@ -139,6 +140,8 @@ pub const Writer = struct {
     pub fn addPendingOperation(self: *Writer, operation: entities.PendingOperation) !entities.PendingOperationId {
         const id = try directId(entities.PendingOperationId, self.graph.semantic.pending_operations.items.len);
         try self.graph.semantic.pending_operations.append(self.allocator, operation);
+        errdefer self.graph.semantic.pending_operations.shrinkRetainingCapacity(@intFromEnum(id));
+        try self.graph.semantic.pending_owner_functions.append(self.allocator, self.pending_owner_function);
         return id;
     }
 

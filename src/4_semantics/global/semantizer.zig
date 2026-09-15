@@ -76,6 +76,7 @@ const PendingWorkItem = struct {
     module_index: u32,
     operation_index: u32,
     flat_index: u32,
+    owner_function: ?global_sg.GlobalFunctionId = null,
 };
 
 /// Pending operations are routed once, then only unresolved work is retained.
@@ -89,7 +90,7 @@ const PendingWorklists = struct {
     errors: std.ArrayList(PendingWorkItem) = .empty,
     ownership: std.ArrayList(PendingWorkItem) = .empty,
 
-    fn init(allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph) !PendingWorklists {
+    fn init(allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, offsets: []const globalizer.Offsets) !PendingWorklists {
         var result: PendingWorklists = .{};
         errdefer result.deinit(allocator);
         var flat: u32 = 0;
@@ -99,6 +100,13 @@ const PendingWorklists = struct {
                     .module_index = @intCast(module_index),
                     .operation_index = @intCast(operation_index),
                     .flat_index = flat,
+                    .owner_function = if (operation_index < module.semantic.pending_owner_functions.items.len)
+                        if (module.semantic.pending_owner_functions.items[operation_index]) |owner|
+                            globalizer.globalFunction(offsets[module_index], owner)
+                        else
+                            null
+                    else
+                        null,
                 });
                 flat = std.math.add(u32, flat, 1) catch return error.TooManyPendingOperations;
             }
@@ -230,7 +238,7 @@ pub fn semantize(
     const resolved = try allocator.alloc(bool, total);
     defer allocator.free(resolved);
     @memset(resolved, false);
-    var worklists = try PendingWorklists.init(allocator, modules);
+    var worklists = try PendingWorklists.init(allocator, modules, relocation.offsets.items);
     defer worklists.deinit(allocator);
     var pending_attempts: u64 = 0;
 

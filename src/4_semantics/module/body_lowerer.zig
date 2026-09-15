@@ -83,6 +83,7 @@ const Context = struct {
             const function_id: entities.ModuleFunctionId = @enumFromInt(@as(u32, @intCast(raw_index)));
             if (hasFunctionSemantic(self.graph, function_id)) continue;
             self.current_function = function_id;
+            self.writer.pending_owner_function = function_id;
             const legacy_decl = self.graph.declarations.items[@intFromEnum(interface.declaration)];
             self.file_index = legacy_decl.module_file_index;
             const file = self.files[@intCast(self.file_index)];
@@ -122,6 +123,7 @@ const Context = struct {
             self.popScope();
             stats.lowered_functions += 1;
         }
+        self.writer.pending_owner_function = null;
         return stats;
     }
 

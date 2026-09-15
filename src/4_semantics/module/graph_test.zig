@@ -652,12 +652,13 @@ test "ordinary calls retain caller bindings for reached defaults" {
     var module = try @import("semantizer.zig").build(allocator, "reach_caller", &.{.{ .path = "reach_caller/main.rg", .tree = &tree, .source = source }});
     defer module.graph.deinit(allocator);
     var found = false;
-    for (module.graph.semantic.pending_operations.items) |operation| {
+    for (module.graph.semantic.pending_operations.items, 0..) |operation, operation_index| {
         if (operation != .resolve_call) continue;
         const call = operation.resolve_call;
         const callee = module.graph.semantic.external_refs.items[@intFromEnum(call.callee)];
         if (!std.mem.eql(u8, module.graph.text(callee.name), "consume")) continue;
         const owner = module.graph.functions.items[@intFromEnum(call.owner_function.?)];
+        try std.testing.expectEqual(call.owner_function, module.graph.semantic.pending_owner_functions.items[operation_index]);
         try std.testing.expectEqualStrings("main", module.graph.text(module.graph.declarations.items[@intFromEnum(owner.declaration)].name));
         const refs = module.graph.semantic.binding_refs.items[call.visible_bindings.start..][0..call.visible_bindings.len];
         for (refs) |binding| {

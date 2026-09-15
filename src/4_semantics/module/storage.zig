@@ -65,6 +65,9 @@ pub const Storage = struct {
     scopes: std.ArrayList(entities.Scope) = .empty,
     external_refs: std.ArrayList(entities.ExternalRef) = .empty,
     pending_operations: std.ArrayList(entities.PendingOperation) = .empty,
+    /// Function owning each pending operation, or null for module/interface
+    /// construction work that is always active.
+    pending_owner_functions: std.ArrayList(?entities.ModuleFunctionId) = .empty,
 
     node_refs: std.ArrayList(entities.ModuleNodeId) = .empty,
     type_refs: std.ArrayList(entities.ModuleTypeId) = .empty,
@@ -109,6 +112,7 @@ pub const Storage = struct {
         self.scopes.deinit(allocator);
         self.external_refs.deinit(allocator);
         self.pending_operations.deinit(allocator);
+        self.pending_owner_functions.deinit(allocator);
         self.node_refs.deinit(allocator);
         self.type_refs.deinit(allocator);
         self.binding_refs.deinit(allocator);
@@ -155,6 +159,7 @@ pub const Storage = struct {
             self.scopes.items.len * @sizeOf(entities.Scope) +
             self.external_refs.items.len * @sizeOf(entities.ExternalRef) +
             self.pending_operations.items.len * @sizeOf(entities.PendingOperation) +
+            self.pending_owner_functions.items.len * @sizeOf(?entities.ModuleFunctionId) +
             self.node_refs.items.len * @sizeOf(entities.ModuleNodeId) +
             self.type_refs.items.len * @sizeOf(entities.ModuleTypeId) +
             self.binding_refs.items.len * @sizeOf(entities.ModuleBindingId) +
