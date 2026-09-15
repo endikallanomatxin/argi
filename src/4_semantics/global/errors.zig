@@ -36,6 +36,89 @@ pub const Resolver = struct {
         };
     }
 
+    pub fn tryResolveCall(
+        self: *Resolver,
+        module_index: usize,
+        module: *const module_sg.ModuleSemanticGraph,
+        o: globalizer.Offsets,
+        operation: module_entities.PendingOperation,
+    ) !resolution.Result {
+        const value = switch (operation) {
+            .resolve_call => |call| call,
+            else => return .not_applicable,
+        };
+        const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
+        if (!std.mem.eql(u8, module.text(reference.name), "expect_error")) return .not_applicable;
+        const qualifier = reference.module_path orelse return .not_applicable;
+        if (!std.mem.eql(u8, module.text(qualifier), "testing")) return .not_applicable;
+
+        const input = globalizer.globalNode(o, value.input);
+        const literal = switch (self.graph.node(input).content) {
+            .struct_value_literal => |item| item,
+            else => return .deferred,
+        };
+        var expected_reason: ?global_sg.GlobalNodeId = null;
+        var actual_result: ?global_sg.GlobalNodeId = null;
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
+            if (std.mem.eql(u8, self.graph.text(field.name), "expected_reason")) expected_reason = field.value;
+            if (std.mem.eql(u8, self.graph.text(field.name), "actual_result")) actual_result = field.value;
+        }
+        const expected = expected_reason orelse return error.InvalidTestingExpectErrorArguments;
+        const actual = actual_result orelse return error.InvalidTestingExpectErrorArguments;
+        const actual_ty = self.graph.node(actual).ty orelse return .deferred;
+        const error_variant = global_types.findVariant(self.graph, actual_ty, "error") orelse return error.TestingExpectErrorRequiresErrable;
+        const error_payload = error_variant.variant.payload_type orelse return error.TestingExpectErrorRequiresErrable;
+        const reason = global_types.findField(self.graph, error_payload, "reason") orelse return error.TestingExpectErrorRequiresReason;
+        if (self.graph.node(expected).ty == null) {
+            self.graph.nodes.items[@intFromEnum(expected)].ty = reason.field.ty;
+            return .deferred;
+        }
+        const expected_literal = switch (self.graph.node(expected).content) {
+            .choice_literal => |choice| choice,
+            else => return .deferred,
+        };
+        if (!global_types.equal(self.graph, expected_literal.choice_type, reason.field.ty)) return error.IncompatibleExpectedErrorReason;
+
+        const fail_function = self.findTestingFailFunction(module_index) orelse return .deferred;
+        const fail = self.graph.functions.items[@intFromEnum(fail_function)];
+        if (fail.output.len != 1) return error.InvalidTestingFailFunction;
+        const result_ty = self.graph.fields.items[fail.output.start].ty;
+        const result_ok = global_types.findVariant(self.graph, result_ty, "ok") orelse return error.InvalidTestingFailFunction;
+        const id: global_sg.GlobalTestingExpectErrorId = @enumFromInt(@as(u32, @intCast(self.graph.testing_expect_errors.items.len)));
+        const empty = try self.graph.addString(self.allocator, "");
+        try self.graph.testing_expect_errors.append(self.allocator, .{
+            .expected_reason = expected,
+            .actual_result = actual,
+            .actual_error_variant = error_variant.id,
+            .actual_error_payload_type = error_payload,
+            .actual_reason_field_index = reason.index,
+            .result_type = result_ty,
+            .result_ok_variant = result_ok.id,
+            .test_fail_function = fail_function,
+            .expected_reason_name = expectedLiteralVariantName(self.graph, expected_literal),
+            .diagnostic_line = 0,
+            .diagnostic_column = 0,
+            .diagnostic_source_line = empty,
+        });
+        const target = globalizer.globalNode(o, value.node);
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset },
+            .ty = result_ty,
+            .content = .{ .testing_expect_error = id },
+        };
+        return .resolved;
+    }
+
+    fn findTestingFailFunction(self: *const Resolver, current_module: usize) ?global_sg.GlobalFunctionId {
+        for (self.graph.functions.items, 0..) |function, raw| {
+            const declaration = self.graph.declaration(function.declaration);
+            if (!std.mem.eql(u8, self.graph.text(declaration.name), "test_fail_impl")) continue;
+            if (!self.core.declarationVisible(current_module, function.declaration, null)) continue;
+            return @enumFromInt(@as(u32, @intCast(raw)));
+        }
+        return null;
+    }
+
     fn resolve(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
         const errable = globalizer.globalNode(o, value.errable_value);
         const errable_ty = self.graph.nodes.items[@intFromEnum(errable)].ty orelse return false;
@@ -290,6 +373,12 @@ fn unwrapSingleField(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.
 fn singleFieldIndex(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) ?u32 {
     const fields = global_types.fields(graph, ty) orelse return null;
     return if (fields.len == 1) 0 else null;
+}
+
+fn expectedLiteralVariantName(graph: *const global_sg.GlobalSemanticGraph, literal: anytype) ?primitives.StringRange {
+    const raw = @intFromEnum(literal.variant);
+    if (raw >= graph.variants.items.len) return null;
+    return graph.variants.items[raw].name;
 }
 
 test "error propagation resolver writes indexed payloads" {

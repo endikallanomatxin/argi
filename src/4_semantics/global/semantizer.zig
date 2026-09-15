@@ -217,6 +217,7 @@ pub fn semantize(
         .constructors = &constructors,
         .abstracts = &abstracts,
         .control = &control,
+        .errors = &errors,
     };
 
     try core.resolveExternalTypes();

@@ -7,6 +7,7 @@ const constructor_mod = @import("constructors.zig");
 const control_mod = @import("control.zig");
 const generic_functions_mod = @import("generic_functions.zig");
 const abstract_mod = @import("abstracts.zig");
+const error_mod = @import("errors.zig");
 const call_compatibility = @import("call_compatibility.zig");
 
 /// Owns operations whose language-level resolution is deliberately composed
@@ -18,6 +19,7 @@ pub const Resolver = struct {
     constructors: *constructor_mod.Resolver,
     abstracts: *abstract_mod.Resolver,
     control: *control_mod.Resolver,
+    errors: *error_mod.Resolver,
 
     pub fn resolveCall(
         self: *Resolver,
@@ -26,6 +28,8 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
+        const error_result = try self.errors.tryResolveCall(module_index, module, o, operation);
+        if (!error_result.allowsFallback()) return error_result;
         const core_result = try self.core.tryResolve(module_index, module, o, operation);
         if (!core_result.allowsFallback()) return core_result;
 
