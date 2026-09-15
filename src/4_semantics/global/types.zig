@@ -111,6 +111,22 @@ pub fn findVariant(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
     return null;
 }
 
+/// Destructors receive an address of the owned value. A reference itself is
+/// never the value whose lifetime that destructor closes.
+pub fn deinitFunction(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalFunctionId {
+    if (graph.semanticType(ty) == .pointer) return null;
+    for (graph.functions.items, 0..) |function, raw| {
+        if (!function.flags.is_deinit or function.input.len == 0) continue;
+        const self_ty = graph.fields.items[function.input.start].ty;
+        const child = switch (graph.semanticType(self_ty)) {
+            .pointer => |pointer| pointer.child,
+            else => self_ty,
+        };
+        if (equal(graph, child, ty)) return @enumFromInt(@as(u32, @intCast(raw)));
+    }
+    return null;
+}
+
 pub fn genericInstance(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GenericInstance {
     if (graph.isTypeUnresolved(ty)) return null;
     for (graph.generic_instances.items) |instance| if (instance.type_id == ty) return instance;

@@ -1,5 +1,6 @@
 const std = @import("std");
 const graph_mod = @import("graph.zig");
+const types = @import("types.zig");
 
 /// Reachability is construction state derived from the selected executable
 /// root. It stays outside GlobalSG because final consumers only need the
@@ -147,6 +148,15 @@ const State = struct {
                 if (call.consumes_auto_deinit) |value| try self.walkNode(value);
                 if (call.initializes_auto_deinit) |value| try self.walkNode(value);
                 try self.includeFunction(call.callee);
+                const callee = self.graph.functions.items[@intFromEnum(call.callee)];
+                if (callee.safety_primitive == .trusted_opaque_drop and callee.input.len != 0) {
+                    const slot_ty = self.graph.fields.items[callee.input.start].ty;
+                    if (self.graph.resolvedSemanticType(slot_ty)) |semantic| switch (semantic) {
+                        .pointer => |pointer| if (types.deinitFunction(self.graph, pointer.child)) |destructor|
+                            try self.includeFunction(destructor),
+                        else => {},
+                    };
+                }
             },
             .virtualize => |id| {
                 const value = self.graph.virtualizes.items[@intFromEnum(id)];

@@ -344,7 +344,10 @@ pub const Resolver = struct {
         binding: global_sg.GlobalBindingId,
         ty: global_sg.GlobalTypeId,
     ) !?global_sg.AutoDeinit {
-        if (self.findDeinitFunction(ty)) |function| return .{ .binding = binding, .deinit_fn = function };
+        // A reference does not own its pointee. Its cleanup belongs to the
+        // pointee's storage owner, including when the reference is writable.
+        if (self.graph.semanticType(ty) == .pointer) return null;
+        if (global_types.deinitFunction(self.graph, ty)) |function| return .{ .binding = binding, .deinit_fn = function };
         const fields = global_types.fields(self.graph, ty) orelse return null;
         const start: u32 = @intCast(self.graph.auto_deinit_fields.items.len);
         var count: u32 = 0;
@@ -357,7 +360,8 @@ pub const Resolver = struct {
     }
 
     fn appendAutoField(self: *Resolver, field_index: u32, ty: global_sg.GlobalTypeId) !bool {
-        if (self.findDeinitFunction(ty)) |function| {
+        if (self.graph.semanticType(ty) == .pointer) return false;
+        if (global_types.deinitFunction(self.graph, ty)) |function| {
             try self.graph.auto_deinit_fields.append(self.allocator, .{ .field_index = field_index, .deinit_fn = function });
             return true;
         }
@@ -375,15 +379,6 @@ pub const Resolver = struct {
             .fields = .{ .start = child_start, .len = child_count },
         });
         return true;
-    }
-
-    fn findDeinitFunction(self: *Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalFunctionId {
-        for (self.graph.functions.items, 0..) |function, raw| {
-            if (!function.flags.is_deinit or function.input.len == 0) continue;
-            const first = self.graph.fields.items[function.input.start].ty;
-            if (typeAccepts(self.graph, first, ty)) return @enumFromInt(@as(u32, @intCast(raw)));
-        }
-        return null;
     }
 
     fn findUnaryFunction(self: *Resolver, name: []const u8, ty: global_sg.GlobalTypeId) ?global_sg.GlobalFunctionId {

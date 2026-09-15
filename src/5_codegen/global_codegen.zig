@@ -1478,9 +1478,10 @@ pub const CodeGenerator = struct {
 
     fn genFunctionCall(self: *CodeGenerator, call: anytype) !?TypedValue {
         const callee = self.graph.functions.items[@intFromEnum(call.callee)];
-        const symbol = self.functions.get(call.callee) orelse return CodegenError.SymbolNotFound;
         if (callee.safety_primitive == .trusted_opaque_move or callee.safety_primitive == .trusted_opaque_move_in) return self.opaqueStore(call.input);
         if (callee.safety_primitive == .trusted_opaque_move_out) return self.opaqueTake(call.input);
+        if (callee.safety_primitive == .trusted_opaque_drop) return self.opaqueDrop(call.input, callee);
+        const symbol = self.functions.get(call.callee) orelse return CodegenError.SymbolNotFound;
         const input = (try self.visitNode(call.input)) orelse return CodegenError.ValueNotFound;
 
         if (!symbol.is_extern) {
@@ -1562,6 +1563,34 @@ pub const CodeGenerator = struct {
         };
         const type_ref = try self.toLLVMType(child);
         return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, slot.value_ref, "opaque.take"), .type_ref = type_ref, .ty = child };
+    }
+
+    fn opaqueDrop(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId, primitive: graph_mod.Function) !?TypedValue {
+        const input = switch (self.graph.nodes.items[@intFromEnum(input_id)].content) {
+            .struct_value_literal => |literal| literal,
+            else => return CodegenError.InvalidType,
+        };
+        const slot_ty = self.graph.fields.items[primitive.input.start].ty;
+        const child = switch (self.graph.semanticType(slot_ty)) {
+            .pointer => |pointer| pointer.child,
+            else => return CodegenError.InvalidType,
+        };
+        const destructor = types.deinitFunction(self.graph, child) orelse return null;
+        const self_field = self.graph.functions.items[@intFromEnum(destructor)].input;
+        var self_index: u32 = 0;
+        for (self.graph.fields.items[self_field.start..][0..self_field.len], 0..) |field, index| {
+            if (std.mem.eql(u8, self.graph.text(field.name), "self")) {
+                self_index = @intCast(index);
+                break;
+            }
+        }
+        for (self.graph.value_fields.items[input.fields.start..][0..input.fields.len]) |field| {
+            if (!std.mem.eql(u8, self.graph.text(field.name), "slot")) continue;
+            const slot = (try self.visitNode(field.value)) orelse return CodegenError.ValueNotFound;
+            try self.callDeinit(destructor, input_id, self_index, slot.value_ref);
+            return null;
+        }
+        return CodegenError.InvalidType;
     }
 
     fn typeInitializer(self: *CodeGenerator, initializer: anytype) !TypedValue {
