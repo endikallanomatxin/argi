@@ -392,6 +392,18 @@ pub const Resolver = struct {
             self.stats.calls += 1;
             return .resolved;
         }
+        if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "alignment_of")) {
+            const node = (try self.makeAlignmentOf(input, self.sourceFor(reference.source, o))) orelse return .deferred;
+            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            self.stats.calls += 1;
+            return .resolved;
+        }
+        if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "type_of")) {
+            const node = (try self.makeTypeOf(input, self.sourceFor(reference.source, o))) orelse return .deferred;
+            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            self.stats.calls += 1;
+            return .resolved;
+        }
         if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "Void")) {
             const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
                 .struct_value_literal => |item| item,
@@ -428,6 +440,31 @@ pub const Resolver = struct {
     }
 
     fn makeSizeOf(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef) !?global_sg.Node {
+        const measured = self.typeArgument(input) orelse return null;
+        const size = types.sizeOf(self.graph, measured) catch return null;
+        return try self.typeInfoLiteral(source, size);
+    }
+
+    fn makeAlignmentOf(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef) !?global_sg.Node {
+        const measured = self.typeArgument(input) orelse return null;
+        const alignment = types.alignmentOf(self.graph, measured) catch return null;
+        return try self.typeInfoLiteral(source, alignment);
+    }
+
+    fn makeTypeOf(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef) !?global_sg.Node {
+        const literal = switch (self.graph.node(input).content) {
+            .struct_value_literal => |value| value,
+            else => return null,
+        };
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
+            if (!std.mem.eql(u8, self.graph.text(field.name), "value")) continue;
+            const value_ty = self.graph.node(field.value).ty orelse return null;
+            return .{ .source = source, .ty = try self.builtin(.Type), .content = .{ .type_literal = value_ty } };
+        }
+        return null;
+    }
+
+    fn typeArgument(self: *const Resolver, input: global_sg.GlobalNodeId) ?global_sg.GlobalTypeId {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |value| value,
             else => return null,
@@ -441,11 +478,14 @@ pub const Resolver = struct {
             };
             break;
         }
-        const size = types.sizeOf(self.graph, measured orelse return null) catch return null;
+        return measured;
+    }
+
+    fn typeInfoLiteral(self: *Resolver, source: primitives.SourceRef, value: u64) !global_sg.Node {
         return .{
             .source = source,
             .ty = try self.builtin(.UIntNative),
-            .content = .{ .int_literal = std.math.cast(i64, size) orelse return error.TypeSizeOverflow },
+            .content = .{ .int_literal = std.math.cast(i64, value) orelse return error.TypeSizeOverflow },
         };
     }
 
