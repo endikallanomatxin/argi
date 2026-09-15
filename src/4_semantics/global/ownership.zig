@@ -58,15 +58,16 @@ pub const Resolver = struct {
     }
 
     pub fn finalize(self: *Resolver) !void {
+        for (self.graph.functions.items) |function| if (function.body) |body|
+            try self.finalizeFunctionBody(body);
+    }
+
+    pub fn finalizeFunctionBody(self: *Resolver, body: global_sg.GlobalBlockId) !void {
         var active: std.ArrayList(global_sg.GlobalBindingId) = .empty;
         defer active.deinit(self.allocator);
         var defers: std.ArrayList(global_sg.GlobalNodeId) = .empty;
         defer defers.deinit(self.allocator);
-        for (self.graph.functions.items) |function| if (function.body) |body| {
-            active.clearRetainingCapacity();
-            defers.clearRetainingCapacity();
-            try self.finalizeBlock(body, &active, &defers);
-        };
+        try self.finalizeBlock(body, &active, &defers);
     }
 
     fn resolveDefer(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {

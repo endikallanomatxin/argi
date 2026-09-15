@@ -273,49 +273,71 @@ pub fn semantizeWithOptions(
     defer if (reachable) |set| set.deinit();
     var pending_attempts: u64 = 0;
 
-    // GlobalSema is staged by semantic domain. The outer fixed point remains
-    // while dependencies between phases are still being made explicit; every
-    // PendingOperation now has one stable top-level owner across all retries.
+    // GlobalSema is staged by semantic domain. Ownership finalization can add
+    // cleanup calls to functions absent from the source call graph. Each newly
+    // reachable body gets another resolution pass before its cleanup is built.
+    var finalized_functions = std.AutoHashMap(global_sg.GlobalFunctionId, void).init(allocator);
+    defer finalized_functions.deinit();
     var changed = true;
-    while (changed) {
-        changed = false;
-        for (pending_phases) |phase| {
-            if (try resolvePendingPhase(
-                &core,
-                &expressions,
-                &dispatch,
-                &control,
-                &generics,
-                &abstracts,
-                &errors,
-                &ownership,
-                modules,
-                relocation.offsets.items,
-                resolved,
-                worklists.forPhase(phase),
-                reachable,
-                &pending_attempts,
-            )) changed = true;
-        }
+    while (true) {
+        while (changed) {
+            changed = false;
+            for (pending_phases) |phase| {
+                if (try resolvePendingPhase(
+                    &core,
+                    &expressions,
+                    &dispatch,
+                    &control,
+                    &generics,
+                    &abstracts,
+                    &errors,
+                    &ownership,
+                    modules,
+                    relocation.offsets.items,
+                    resolved,
+                    worklists.forPhase(phase),
+                    reachable,
+                    &pending_attempts,
+                )) changed = true;
+            }
 
-        if (relocation.graph.reconcileTypeResolution()) changed = true;
-        if (relocation.graph.reconcileBindingTypeResolution()) changed = true;
-        if (core.materializeStringLiteralTypes()) changed = true;
-        if (core.materializeBindingTypes()) changed = true;
-        if (relocation.graph.reconcileBindingTypeResolution()) {
-            changed = true;
+            if (relocation.graph.reconcileTypeResolution()) changed = true;
+            if (relocation.graph.reconcileBindingTypeResolution()) changed = true;
+            if (core.materializeStringLiteralTypes()) changed = true;
             if (core.materializeBindingTypes()) changed = true;
+            if (relocation.graph.reconcileBindingTypeResolution()) {
+                changed = true;
+                if (core.materializeBindingTypes()) changed = true;
+            }
+            if (core.materializeAssignmentValues()) changed = true;
+            if (core.materializeDereferences()) changed = true;
+            if (try core.materializeAddresses()) changed = true;
+            if (try generics.materializeKnownTypes()) changed = true;
+            if (try abstracts.materializeAbstractFieldStorage()) changed = true;
+            try control.materializeSugarTypes();
+            if (try errors.inferFunctionErrorReasons()) changed = true;
+            if (reachable) |set| {
+                if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
+            }
         }
-        if (core.materializeAssignmentValues()) changed = true;
-        if (core.materializeDereferences()) changed = true;
-        if (try core.materializeAddresses()) changed = true;
-        if (try generics.materializeKnownTypes()) changed = true;
-        if (try abstracts.materializeAbstractFieldStorage()) changed = true;
-        try control.materializeSugarTypes();
-        if (try errors.inferFunctionErrorReasons()) changed = true;
-        if (reachable) |set| {
-            if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
+        var finalized_any = false;
+        for (relocation.graph.functions.items, 0..) |function, raw| {
+            const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (reachable) |set| {
+                if (!set.contains(id)) continue;
+            }
+            if (function.body) |body| {
+                if ((try finalized_functions.getOrPut(id)).found_existing) continue;
+                try ownership.finalizeFunctionBody(body);
+                finalized_any = true;
+            }
         }
+        const reached_cleanup = if (reachable) |set|
+            try reachability_mod.expand(allocator, &relocation.graph, set)
+        else
+            false;
+        if (!finalized_any and !reached_cleanup) break;
+        changed = true;
     }
 
     try abstracts.validateGenericFunctionInstances();
@@ -349,10 +371,6 @@ pub fn semantizeWithOptions(
     // exposed to Safety, Codegen or editor consumers.
     try relocation.graph.finishTypeResolution(allocator);
     try relocation.graph.finishBindingTypeResolution(allocator);
-
-    // Cleanup is finalized only after all calls/types/abstract dispatch decisions
-    // are stable. Safety and Codegen consume these explicit cleanup edges.
-    try ownership.finalize();
 
     if (reachable) |set| {
         for (relocation.graph.functions.items, 0..) |*function, raw| {
