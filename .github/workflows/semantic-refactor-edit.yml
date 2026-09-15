@@ -1,0 +1,60 @@
+name: Verified semantic refactor edit
+
+on:
+  push:
+    branches:
+      - compact-semantic-graph-chatgpt
+    paths:
+      - .github/semantic_refactor_edit.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: semantic-refactor-edit
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Install LLVM 21
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+          sudo apt-get install -y llvm-21-dev clang-21
+      - name: Apply semantic edit
+        run: python3 .github/semantic_refactor_edit.py
+      - name: Build compiler
+        run: zig build
+      - name: Run internal tests
+        timeout-minutes: 5
+        run: zig build test-internal
+      - name: Run focused semantic tests
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          if [[ -f .git/semantic-refactor-test-command ]]; then
+            bash -euo pipefail -c "$(cat .git/semantic-refactor-test-command)"
+          fi
+      - name: Commit verified source edit
+        shell: bash
+        run: |
+          if git diff --quiet -- src tests; then
+            echo "No source changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src tests
+          git commit -m "$(cat .git/semantic-refactor-message)"
+          git push origin HEAD:compact-semantic-graph-chatgpt
