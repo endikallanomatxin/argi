@@ -646,7 +646,7 @@ pub const CodeGenerator = struct {
     }
 
     fn arrayIndex(self: *CodeGenerator, access: anytype) !TypedValue {
-        const pointer = (try self.visitNode(access.array_ptr)) orelse return CodegenError.ValueNotFound;
+        const pointer = try self.addressablePointer(access.array_ptr);
         const index = (try self.visitNode(access.index)) orelse return CodegenError.ValueNotFound;
         const array_type = try self.toLLVMType(access.array_type);
         const element_type = try self.toLLVMType(access.element_type);
@@ -655,7 +655,7 @@ pub const CodeGenerator = struct {
     }
 
     fn arrayStore(self: *CodeGenerator, store: anytype) !void {
-        const pointer = (try self.visitNode(store.array_ptr)) orelse return CodegenError.ValueNotFound;
+        const pointer = try self.addressablePointer(store.array_ptr);
         const index = (try self.visitNode(store.index)) orelse return CodegenError.ValueNotFound;
         const value = (try self.visitNode(store.value)) orelse return CodegenError.ValueNotFound;
         const array_type = try self.toLLVMType(store.array_type);
@@ -703,15 +703,32 @@ pub const CodeGenerator = struct {
     fn emitComparison(self: *CodeGenerator, comparison: anytype) !TypedValue {
         const left = (try self.visitNode(comparison.left)) orelse return CodegenError.ValueNotFound;
         const right = (try self.visitNode(comparison.right)) orelse return CodegenError.ValueNotFound;
+        var left_value = left.value_ref;
+        var right_value = right.value_ref;
+        if (left.ty) |ty| {
+            if (types.variants(self.graph, ty) != null and !self.isCEnum(ty)) {
+                left_value = c.LLVMBuildExtractValue(self.builder, left_value, 0, "choice.lhs.tag");
+                if (right.ty) |right_ty| {
+                    if (types.variants(self.graph, right_ty) != null and !self.isCEnum(right_ty))
+                        right_value = c.LLVMBuildExtractValue(self.builder, right_value, 0, "choice.rhs.tag");
+                }
+            }
+        }
+        if (c.LLVMTypeOf(left_value) != c.LLVMTypeOf(right_value)) {
+            const right_node = self.graph.node(comparison.right);
+            if (right_node.content != .int_literal or c.LLVMGetTypeKind(c.LLVMTypeOf(left_value)) != c.LLVMIntegerTypeKind)
+                return CodegenError.InvalidType;
+            right_value = c.LLVMConstInt(c.LLVMTypeOf(left_value), @bitCast(right_node.content.int_literal), 1);
+        }
         const float = if (left.ty) |ty| self.isFloat(ty) else false;
         const unsigned = if (left.ty) |ty| self.isUnsigned(ty) else false;
         const value = switch (comparison.operator) {
-            .equal => if (float) c.LLVMBuildFCmp(self.builder, c.LLVMRealOEQ, left.value_ref, right.value_ref, "eq") else c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, left.value_ref, right.value_ref, "eq"),
-            .not_equal => if (float) c.LLVMBuildFCmp(self.builder, c.LLVMRealONE, left.value_ref, right.value_ref, "ne") else c.LLVMBuildICmp(self.builder, c.LLVMIntNE, left.value_ref, right.value_ref, "ne"),
-            .less_than => if (float) c.LLVMBuildFCmp(self.builder, c.LLVMRealOLT, left.value_ref, right.value_ref, "lt") else c.LLVMBuildICmp(self.builder, if (unsigned) c.LLVMIntULT else c.LLVMIntSLT, left.value_ref, right.value_ref, "lt"),
-            .greater_than => if (float) c.LLVMBuildFCmp(self.builder, c.LLVMRealOGT, left.value_ref, right.value_ref, "gt") else c.LLVMBuildICmp(self.builder, if (unsigned) c.LLVMIntUGT else c.LLVMIntSGT, left.value_ref, right.value_ref, "gt"),
-            .less_than_or_equal => if (float) c.LLVMBuildFCmp(self.builder, c.LLVMRealOLE, left.value_ref, right.value_ref, "le") else c.LLVMBuildICmp(self.builder, if (unsigned) c.LLVMIntULE else c.LLVMIntSLE, left.value_ref, right.value_ref, "le"),
-            .greater_than_or_equal => if (float) c.LLVMBuildFCmp(self.builder, c.LLVMRealOGE, left.value_ref, right.value_ref, "ge") else c.LLVMBuildICmp(self.builder, if (unsigned) c.LLVMIntUGE else c.LLVMIntSGE, left.value_ref, right.value_ref, "ge"),
+            .equal => if (float) c.LLVMBuildFCmp(self.builder, c.LLVMRealOEQ, left_value, right_value, "eq") else c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, left_value, right_value, "eq"),
+            .not_equal => if (float) c.LLVMBuildFCmp(self.builder, c.LLVMRealONE, left_value, right_value, "ne") else c.LLVMBuildICmp(self.builder, c.LLVMIntNE, left_value, right_value, "ne"),
+            .less_than => if (float) c.LLVMBuildFCmp(self.builder, c.LLVMRealOLT, left_value, right_value, "lt") else c.LLVMBuildICmp(self.builder, if (unsigned) c.LLVMIntULT else c.LLVMIntSLT, left_value, right_value, "lt"),
+            .greater_than => if (float) c.LLVMBuildFCmp(self.builder, c.LLVMRealOGT, left_value, right_value, "gt") else c.LLVMBuildICmp(self.builder, if (unsigned) c.LLVMIntUGT else c.LLVMIntSGT, left_value, right_value, "gt"),
+            .less_than_or_equal => if (float) c.LLVMBuildFCmp(self.builder, c.LLVMRealOLE, left_value, right_value, "le") else c.LLVMBuildICmp(self.builder, if (unsigned) c.LLVMIntULE else c.LLVMIntSLE, left_value, right_value, "le"),
+            .greater_than_or_equal => if (float) c.LLVMBuildFCmp(self.builder, c.LLVMRealOGE, left_value, right_value, "ge") else c.LLVMBuildICmp(self.builder, if (unsigned) c.LLVMIntUGE else c.LLVMIntSGE, left_value, right_value, "ge"),
         };
         return .{ .value_ref = value, .type_ref = c.LLVMInt1Type(), .ty = null };
     }

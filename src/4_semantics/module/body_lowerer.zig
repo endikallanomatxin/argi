@@ -75,6 +75,7 @@ const Context = struct {
     source: []const u8 = &.{},
     pipe_value: ?Lowered = null,
     expression_mode: ExpressionMode = .body,
+    suppress_implicit_copies: bool = false,
     current_function: ?entities.ModuleFunctionId = null,
 
     fn lowerFunctions(self: *Context) !Stats {
@@ -362,8 +363,11 @@ const Context = struct {
 
     fn lowerCall(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const call = self.tree.functionCall(node).?;
-        const input = try self.lowerNode(call.input, null);
         const name_text = self.tree.tokenTextFromSource(self.source, call.callee_token);
+        const previous_suppression = self.suppress_implicit_copies;
+        if (std.mem.eql(u8, name_text, "is")) self.suppress_implicit_copies = true;
+        defer self.suppress_implicit_copies = previous_suppression;
+        const input = try self.lowerNode(call.input, null);
         const module_path = if (call.module_qualifier) |token_index|
             try self.writer.addString(self.tree.tokenTextFromSource(self.source, token_index))
         else
@@ -800,6 +804,7 @@ const Context = struct {
     }
 
     fn valuePosition(self: *Context, node: syn.NodeIndex, value: Lowered) !Lowered {
+        if (self.suppress_implicit_copies) return value;
         const needs_copy = switch (self.graph.semantic.nodes.items[@intFromEnum(value.node)]) {
             .resolved => |item| switch (item.content) {
                 .binding_use, .struct_field_access, .choice_payload_access, .array_index, .dereference => true,

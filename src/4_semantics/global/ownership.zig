@@ -397,14 +397,39 @@ pub const Resolver = struct {
         return switch (self.graph.types.items[@intFromEnum(ty)]) {
             .builtin, .pointer, .virtual => true,
             .array => |array| self.triviallyCopyable(array.element),
-            .structural, .declared, .generic => blk: {
+            .structural, .declared => blk: {
                 const fields = global_types.fields(self.graph, ty) orelse break :blk false;
                 for (self.graph.fields.items[fields.start..][0..fields.len]) |field|
                     if (!self.triviallyCopyable(field.ty)) break :blk false;
                 break :blk true;
             },
-            else => false,
+            .generic => blk: {
+                const instance = global_types.genericInstance(self.graph, ty) orelse break :blk false;
+                break :blk switch (instance.shape) {
+                    .structure => |shape| self.fieldsTriviallyCopyable(shape.fields),
+                    .choice => |shape| self.variantsTriviallyCopyable(shape.variants),
+                    .array => |shape| self.triviallyCopyable(shape.element),
+                    .alias => |target| self.triviallyCopyable(target),
+                };
+            },
+            .structural_choice, .inferred_choice => blk: {
+                const variants = global_types.variants(self.graph, ty) orelse break :blk false;
+                break :blk self.variantsTriviallyCopyable(variants);
+            },
+            .nullable, .inferred_errable => |child| self.triviallyCopyable(child),
         };
+    }
+
+    fn fieldsTriviallyCopyable(self: *Resolver, fields: global_sg.FieldRange) bool {
+        for (self.graph.fields.items[fields.start..][0..fields.len]) |field|
+            if (!self.triviallyCopyable(field.ty)) return false;
+        return true;
+    }
+
+    fn variantsTriviallyCopyable(self: *Resolver, variants: global_sg.VariantRange) bool {
+        for (self.graph.variants.items[variants.start..][0..variants.len]) |variant|
+            if (variant.payload_type) |payload| if (!self.triviallyCopyable(payload)) return false;
+        return true;
     }
 
     fn deferValue(self: *Resolver, marker: global_sg.GlobalNodeId) ?global_sg.GlobalNodeId {

@@ -210,8 +210,11 @@ pub const SafetyChecker = struct {
             } else .{};
             try self.setPlace(state, .{ .root = binding }, .initialized, value);
         }
-        for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding|
-            try self.setPlace(state, .{ .root = binding }, .initialized, .{});
+        // Outputs without defaults are storage to be filled by the body.
+        for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding| {
+            const record = self.graph.binding(binding);
+            try self.setPlace(state, .{ .root = binding }, if (record.initialization == null) .deinitialized else .initialized, .{});
+        }
     }
 
     fn validateBlock(
@@ -1086,7 +1089,13 @@ pub const SafetyChecker = struct {
         var target = arguments[index].referenced_place orelse blk: {
             if (index >= argument_ids.len) return null;
             const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
-            break :blk try self.resolvePlace(argument, state) orelse return null;
+            const storage = try self.resolvePlace(argument, state) orelse return null;
+            // An abstract pointer input has no concrete pointee Place. Its
+            // binding stores the pointer itself, so writing a pointee summary
+            // there would replace the pointer's own temporal dependencies.
+            if (isPointer(self.graph, self.graph.binding(storage.root).ty) and
+                arguments[index].referenced_place == null) return null;
+            break :blk storage;
         };
         for (path_value.projections) |projection| target = try self.project(target, projection);
         return target;
@@ -2337,6 +2346,16 @@ pub const SafetyChecker = struct {
 
     fn setPlace(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, initializedness: value_state.Initializedness, value: facts.ValueFacts) !void {
         self.invalidateChoiceRefinements(state, storage);
+        // Replacing an aggregate invalidates facts recorded for its old
+        // projections. Otherwise a later read can observe stale facts from a
+        // preceding iteration rather than the newly assigned aggregate.
+        var index: usize = 0;
+        while (index < state.places.items.len) {
+            const candidate = state.places.items[index].storage;
+            if (!candidate.eql(storage) and storage.isPrefixOf(candidate)) {
+                _ = state.places.orderedRemove(index);
+            } else index += 1;
+        }
         for (state.places.items) |*entry| if (entry.storage.eql(storage)) {
             entry.initializedness = initializedness;
             entry.value = value;

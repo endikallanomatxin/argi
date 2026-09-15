@@ -9,6 +9,8 @@ const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
 const generic_functions_mod = @import("generic_functions.zig");
 const types = @import("types.zig");
+const abstract_mod = @import("abstracts.zig");
+const call_compatibility = @import("call_compatibility.zig");
 
 /// Resolves call syntax whose callee is a declared type. A visible `init`
 /// whose first input is `$&ConstructedType` owns construction; only types with
@@ -18,6 +20,7 @@ pub const Resolver = struct {
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     core: *core_mod.Resolver,
+    abstracts: ?*abstract_mod.Resolver = null,
 
     const InitializerLookup = struct {
         function: ?global_sg.GlobalFunctionId = null,
@@ -63,13 +66,33 @@ pub const Resolver = struct {
 
         const initializer = self.findInitializer(module_index, ty, input);
         if (initializer.function) |function_id| {
-            const function = self.graph.functions.items[@intFromEnum(function_id)];
+            var selected = function_id;
+            if (self.graph.functions.items[@intFromEnum(selected)].flags.is_abstract_dispatch) {
+                var generics = generic_mod.Resolver{
+                    .allocator = self.core.allocator,
+                    .graph = self.graph,
+                    .modules = self.modules,
+                    .offsets = self.offsets,
+                    .core = self.core,
+                };
+                var generic_functions = generic_functions_mod.Resolver{
+                    .allocator = self.core.allocator,
+                    .graph = self.graph,
+                    .modules = self.modules,
+                    .offsets = self.offsets,
+                    .core = self.core,
+                    .generics = &generics,
+                    .nested_call_context = self.abstracts,
+                };
+                selected = (try generic_functions.instantiateInitializer(self.graph.functions.items[@intFromEnum(selected)].declaration, ty, input)) orelse return .deferred;
+            }
+            const function = self.graph.functions.items[@intFromEnum(selected)];
             const user_fields = global_sg.FieldRange{
                 .start = function.input.start + 1,
                 .len = function.input.len - 1,
             };
             if (!try self.core.completeCallInputFields(user_fields, input)) return .deferred;
-            self.writeInitializer(o, value, reference, declaration_id, ty, function_id, input);
+            self.writeInitializer(o, value, reference, declaration_id, ty, selected, input);
             return .resolved;
         }
 
@@ -229,7 +252,14 @@ pub const Resolver = struct {
                 .start = function.input.start + 1,
                 .len = function.input.len - 1,
             };
-            var score = self.core.scoreCallInput(user_fields, input) orelse continue;
+            const score_match = if (self.abstracts) |abstracts|
+                call_compatibility.matchInput(.{ .core = self.core, .abstracts = abstracts }, user_fields, input)
+            else
+                self.core.matchCallInput(user_fields, input);
+            var score = switch (score_match) {
+                .score => |value| value,
+                .no_match, .deferred => continue,
+            };
             const owner = self.graph.moduleForDeclaration(function.declaration) orelse continue;
             if (@intFromEnum(owner) == module_index) score += 1;
             if (result.function == null or score > best_score) {

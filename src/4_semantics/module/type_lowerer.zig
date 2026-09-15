@@ -146,6 +146,25 @@ pub const Context = struct {
     fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
         const arguments_literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericArguments;
         const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericBase;
+        if (base == .name and base.name.qualifier_token == null and
+            std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Array"))
+        {
+            var length: ?u64 = null;
+            var element: ?entities.ModuleTypeId = null;
+            for (arguments_literal.fields) |field_node| {
+                const field = self.tree.structTypeField(field_node) orelse return error.InvalidArrayArguments;
+                const name = self.tree.tokenTextFromSource(self.source, field.name_token);
+                if (std.mem.eql(u8, name, "n")) {
+                    if (length != null or field.default_value == null) return error.InvalidArrayArguments;
+                    length = std.math.cast(u64, try self.evalComptimeInt(field.default_value.?)) orelse return error.InvalidArrayLength;
+                } else if (std.mem.eql(u8, name, "t")) {
+                    if (element != null or field.type_node == null) return error.InvalidArrayArguments;
+                    element = try self.lower(field.type_node.?);
+                } else return error.InvalidArrayArguments;
+            }
+            if (length == null or element == null) return error.InvalidArrayArguments;
+            return self.writer.addResolvedType(.{ .array = .{ .length = length.?, .element = element.? } });
+        }
         if (isRuntimeVirtualType(self.tree, self.source, generic))
         {
             if (arguments_literal.fields.len != 1) return error.InvalidVirtualArguments;

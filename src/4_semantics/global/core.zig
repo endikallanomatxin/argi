@@ -121,13 +121,16 @@ pub const Resolver = struct {
             .binding_use => |binding_id| {
                 if (self.graph.isBindingTypeUnresolved(binding_id)) continue;
                 const inferred = self.graph.bindings.items[@intFromEnum(binding_id)].ty;
-                if (node.ty != null and types.equal(self.graph, node.ty.?, inferred)) continue;
+                // An unresolved type is unequal even to itself in semantic
+                // matching, but writing the same slot cannot advance the
+                // fixed point.
+                if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
                 node.ty = inferred;
                 changed = true;
             },
             .move_value => |value| {
                 const inferred = self.graph.nodes.items[@intFromEnum(value)].ty orelse continue;
-                if (node.ty != null and types.equal(self.graph, node.ty.?, inferred)) continue;
+                if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
                 node.ty = inferred;
                 changed = true;
             },
@@ -136,7 +139,7 @@ pub const Resolver = struct {
                 var right_ty = self.graph.nodes.items[@intFromEnum(operation.right)].ty orelse continue;
                 self.coerceIntegerPair(operation.left, &left_ty, operation.right, &right_ty);
                 if (!self.isBuiltinArithmetic(left_ty, right_ty)) continue;
-                if (node.ty != null and types.equal(self.graph, node.ty.?, left_ty)) continue;
+                if (node.ty != null and (node.ty.? == left_ty or types.equal(self.graph, node.ty.?, left_ty))) continue;
                 node.ty = left_ty;
                 changed = true;
             },
@@ -386,6 +389,34 @@ pub const Resolver = struct {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
         if (reference.generic_arguments != null) return .not_applicable;
         const input = globalizer.globalNode(o, value.input);
+        if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "length")) {
+            const literal = switch (self.graph.node(input).content) {
+                .struct_value_literal => |item| item,
+                else => return .not_applicable,
+            };
+            if (literal.fields.len == 1) {
+                const field = self.graph.value_fields.items[literal.fields.start];
+                if (std.mem.eql(u8, self.graph.text(field.name), "value") or literal.dispatch_prefix_positional_count == 1) {
+                    const measured = self.graph.node(field.value);
+                    const length: ?u64 = switch (measured.content) {
+                        .list_literal => |list| list.elements.len,
+                        .array_literal => |array| array.length,
+                        else => if (measured.ty) |ty| types.arrayLength(self.graph, ty) else null,
+                    };
+                    if (length) |count| {
+                        const result = std.math.cast(i64, count) orelse return .deferred;
+                        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = .{
+                            .source = self.sourceFor(reference.source, o),
+                            .ty = try self.builtin(.UIntNative),
+                            .content = .{ .int_literal = result },
+                        };
+                        self.stats.calls += 1;
+                        return .resolved;
+                    }
+                    if (measured.ty == null or self.graph.isTypeUnresolved(measured.ty.?)) return .deferred;
+                }
+            }
+        }
         if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "size_of")) {
             const node = (try self.makeSizeOf(input, self.sourceFor(reference.source, o))) orelse return .deferred;
             self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
@@ -1046,8 +1077,24 @@ pub const Resolver = struct {
                 else => false,
             },
             .struct_value_literal => |literal| return self.contextualStructLiteralFits(literal, target),
+            .list_literal => |literal| return self.contextualListLiteralFits(literal, target),
             else => return false,
         }
+    }
+
+    fn contextualListLiteralFits(self: *const Resolver, literal: anytype, target: global_sg.GlobalTypeId) bool {
+        const element = types.arrayElement(self.graph, target) orelse return false;
+        const length = types.arrayLength(self.graph, target) orelse return false;
+        if (literal.elements.len != length) return false;
+        for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |item| {
+            const node = self.graph.node(item);
+            if (node.ty) |actual| {
+                if (types.equal(self.graph, actual, element) or self.callTypesCompatible(actual, element) or
+                    self.contextualLiteralFits(item, element)) continue;
+            } else if (self.contextualLiteralFits(item, element)) continue;
+            return false;
+        }
+        return true;
     }
 
     fn contextualStructLiteralFits(self: *const Resolver, literal: anytype, target: global_sg.GlobalTypeId) bool {
@@ -1076,6 +1123,19 @@ pub const Resolver = struct {
     }
 
     pub fn coerceContextualValue(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+        if (self.graph.node(node).content == .list_literal and self.contextualListLiteralFits(self.graph.node(node).content.list_literal, target)) {
+            const literal = self.graph.node(node).content.list_literal;
+            const element = types.arrayElement(self.graph, target) orelse return false;
+            for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |item|
+                _ = self.coerceContextualValue(item, element);
+            self.graph.nodes.items[@intFromEnum(node)].content = .{ .array_literal = .{
+                .elements = literal.elements,
+                .element_type = element,
+                .length = literal.elements.len,
+            } };
+            self.graph.nodes.items[@intFromEnum(node)].ty = target;
+            return true;
+        }
         if (self.graph.nodes.items[@intFromEnum(node)].content != .struct_value_literal and
             self.coerceContextualLiteral(node, target)) return true;
         const current = self.graph.nodes.items[@intFromEnum(node)].ty;

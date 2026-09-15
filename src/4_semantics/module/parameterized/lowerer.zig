@@ -118,9 +118,9 @@ pub const Context = struct {
                     const input = try self.lowerType(function.input, false);
                     const output = try self.lowerType(function.output, false);
                     const input_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
-                    try self.seedFunctionBindings(function.input);
+                    try self.seedFunctionBindings(function.input, .constant);
                     const output_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
-                    try self.seedFunctionBindings(function.output);
+                    try self.seedFunctionBindings(function.output, .variable);
                     const output_end: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
                     const body = if (function.body) |node| try self.lowerBlock(node) else null;
                     try self.graph.semantic.parameterized_storage.parameterized_functions.append(self.allocator, .{
@@ -341,6 +341,24 @@ pub const Context = struct {
         if (base != .name) return error.InvalidGenericParameterizedBase;
         const name = base.name;
         const base_text = self.tree.tokenTextFromSource(self.source, name.name_token);
+        if (name.qualifier_token == null and std.mem.eql(u8, base_text, "Array")) {
+            const literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidArrayArguments;
+            var length: ?ir.ParameterizedIntExprId = null;
+            var element: ?ir.ParameterizedTypeId = null;
+            for (literal.fields) |field_node| {
+                const field = self.tree.structTypeField(field_node) orelse return error.InvalidArrayArguments;
+                const argument_name = self.tree.tokenTextFromSource(self.source, field.name_token);
+                if (std.mem.eql(u8, argument_name, "n")) {
+                    if (length != null or field.default_value == null) return error.InvalidArrayArguments;
+                    length = try self.lowerIntExpression(field.default_value.?);
+                } else if (std.mem.eql(u8, argument_name, "t")) {
+                    if (element != null or field.type_node == null) return error.InvalidArrayArguments;
+                    element = try self.lowerType(field.type_node.?, allow_self);
+                } else return error.InvalidArrayArguments;
+            }
+            if (length == null or element == null) return error.InvalidArrayArguments;
+            return self.addType(.{ .array = .{ .length = length.?, .element = element.? } });
+        }
         const declaration_ref = if (name.qualifier_token == null and self.localType(base_text) != null)
             ir.DeclarationRef{ .module = self.localType(base_text).? }
         else blk: {
@@ -470,7 +488,7 @@ pub const Context = struct {
         } });
     }
 
-    fn seedFunctionBindings(self: *Context, struct_node: syn.NodeIndex) !void {
+    fn seedFunctionBindings(self: *Context, struct_node: syn.NodeIndex, mutability: primitives.Mutability) !void {
         const literal = self.tree.structTypeLiteral(struct_node) orelse return;
         for (literal.fields) |field_node| {
             const field = self.tree.structTypeField(field_node) orelse continue;
@@ -483,7 +501,7 @@ pub const Context = struct {
                 .source = self.sourceRef(field_node),
                 .ty = try self.lowerType(type_node, false),
                 .initialization = initialization,
-                .mutability = if (field.inferred_result) .variable else .constant,
+                .mutability = mutability,
             });
             try self.bindings.append(.{ .name = name, .id = binding_id });
         }
