@@ -463,6 +463,20 @@ pub const Resolver = struct {
                 return self.inferInputType(module_index, array.element, value.element, bindings);
             },
             .resolved => |resolved| switch (resolved) {
+                .nullable => |child| {
+                    const value = switch (self.graph.types.items[@intFromEnum(actual)]) {
+                        .nullable => |value| value,
+                        else => return false,
+                    };
+                    return self.inferInputType(module_index, child, value, bindings);
+                },
+                .inferred_errable => |child| {
+                    const value = switch (self.graph.types.items[@intFromEnum(actual)]) {
+                        .inferred_errable => |value| value,
+                        else => return false,
+                    };
+                    return self.inferInputType(module_index, child, value, bindings);
+                },
                 .pointer => |pointer| {
                     const value = switch (self.graph.types.items[@intFromEnum(actual)]) {
                         .pointer => |value| value,
@@ -480,11 +494,14 @@ pub const Resolver = struct {
                 .structural => |shape| {
                     const fields = global_types.fields(self.graph, actual) orelse return false;
                     for (storage.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
+                        var matched = false;
                         for (self.graph.fields.items[fields.start..][0..fields.len]) |value| {
                             if (!std.mem.eql(u8, module.text(field.name), self.graph.text(value.name))) continue;
                             if (!try self.inferInputType(module_index, field.ty, value.ty, bindings)) return false;
+                            matched = true;
                             break;
                         }
+                        if (!matched) return false;
                     }
                     return true;
                 },
