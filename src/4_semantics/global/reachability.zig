@@ -273,8 +273,8 @@ test "reachability roots select main or one test" {
     const test_name = try graph.addString(allocator, "selected");
     try graph.declarations.append(allocator, .{ .kind = .function, .name = main_name, .source = .{ .file_index = 0, .offset = 0 }, .function_id = @enumFromInt(0) });
     try graph.declarations.append(allocator, .{ .kind = .test_function, .name = test_name, .source = .{ .file_index = 0, .offset = 0 }, .function_id = @enumFromInt(1) });
-    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0) });
-    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(1), .flags = .{ .is_test = true } });
+    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(1), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_test = true } });
 
     var executable = try roots(allocator, &graph, null);
     defer executable.deinit();
