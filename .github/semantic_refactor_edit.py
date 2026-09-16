@@ -1,96 +1,187 @@
 from pathlib import Path
 
-# Reuse the generic-function unifier from constructor dispatch instead of
-# growing a second inference implementation in constructors.zig.
-generic_functions = Path("src/4_semantics/global/generic_functions.zig")
-text = generic_functions.read_text()
-for old, new in (
-    ("    fn inferBindingsFromInput(\n", "    pub fn inferBindingsFromInput(\n"),
-    ("    fn appendBoundArguments(\n", "    pub fn appendBoundArguments(\n"),
-):
-    if text.count(old) != 1:
-        raise RuntimeError(f"generic inference anchor changed: {old!r} -> {text.count(old)}")
-    text = text.replace(old, new, 1)
-generic_functions.write_text(text)
-
-# Parameterized-type identity belongs to the generic type resolver. Constructor
-# dispatch asks this semantic query rather than interpreting declaration
-# metadata such as generic_parameter_count.
-generics_path = Path("src/4_semantics/global/generics.zig")
-text = generics_path.read_text()
-anchor = '''    fn findTypeParameterized(self: *Resolver, declaration: global_sg.GlobalDeclId) ?LocatedTypeParameterized {
+# Synthetic semantic calls (used by desugaring) should share the same ordinary
+# function selection as source calls, without inventing a syntax ExternalRef.
+core = Path("src/4_semantics/global/core.zig")
+text = core.read_text()
+old = '''    pub fn matchFunctionByName(
+        self: *Resolver,
+        current_module: usize,
+        reference: module_entities.ExternalRef,
+        input_node: global_sg.GlobalNodeId,
+    ) !FunctionMatch {
+        const module_filter = if (reference.module_path) |path|
+            try self.findModuleForQualifier(current_module, self.modules[current_module].text(path))
+        else
+            null;
+        const name = self.modules[current_module].text(reference.name);
+        var best: ?global_sg.GlobalFunctionId = null;
 '''
-insert = '''    pub fn isParameterizedTypeDeclaration(self: *Resolver, declaration: global_sg.GlobalDeclId) bool {
-        return self.findTypeParameterized(declaration) != null;
+new = '''    pub fn matchFunctionByName(
+        self: *Resolver,
+        current_module: usize,
+        reference: module_entities.ExternalRef,
+        input_node: global_sg.GlobalNodeId,
+    ) !FunctionMatch {
+        const module_filter = if (reference.module_path) |path|
+            try self.findModuleForQualifier(current_module, self.modules[current_module].text(path))
+        else
+            null;
+        return self.matchFunctionNamed(current_module, self.modules[current_module].text(reference.name), module_filter, input_node);
     }
 
-'''
-if text.count(anchor) != 1:
-    raise RuntimeError(f"parameterized type query anchor changed: {text.count(anchor)}")
-generics_path.write_text(text.replace(anchor, insert + anchor, 1))
-
-constructors = Path("src/4_semantics/global/constructors.zig")
-text = constructors.read_text()
-
-old = '''    const InitializerProbe = struct {
-        owns_type: bool = false,
-        score: ?u32 = null,
-    };
-'''
-new = '''    const InitializerProbe = struct {
-        owns_type: bool = false,
-        score: ?u32 = null,
-    };
-
-    const InferredInitializerLookup = struct {
-        function: ?global_sg.GlobalFunctionId = null,
-        constructed_type: ?global_sg.GlobalTypeId = null,
-        has_visible_initializer: bool = false,
-    };
-'''
-if text.count(old) != 1:
-    raise RuntimeError(f"initializer probe anchor changed: {text.count(old)}")
-text = text.replace(old, new, 1)
-
-old = '''        const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
-        const ty = declaration.type_id orelse return .deferred;
-        const input = globalizer.globalNode(o, value.input);
-
-        const initializer = self.findInitializer(module_index, ty, input);
-'''
-new = '''        const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
-        const input = globalizer.globalNode(o, value.input);
-        var generics = generic_mod.Resolver{
-            .allocator = self.core.allocator,
-            .graph = self.graph,
-            .modules = self.modules,
-            .offsets = self.offsets,
-            .core = self.core,
-        };
-        if (generics.isParameterizedTypeDeclaration(declaration_id))
-            return self.resolveImplicitGenericCall(module_index, o, value, reference, declaration_id, input);
-        const ty = declaration.type_id orelse return .deferred;
-
-        const initializer = self.findInitializer(module_index, ty, input);
-'''
-if text.count(old) != 1:
-    raise RuntimeError(f"implicit constructor dispatch anchor changed: {text.count(old)}")
-text = text.replace(old, new, 1)
-
-anchor = '''    fn resolveExplicitGenericCall(
-'''
-insert = '''    fn resolveImplicitGenericCall(
+    /// Resolve a compiler-synthesized, unqualified call using the same ordinary
+    /// overload rules as a source call. Semantic sugar must not manufacture a
+    /// module-local ExternalRef merely to enter dispatch.
+    pub fn matchUnqualifiedFunctionByName(
         self: *Resolver,
-        module_index: usize,
-        o: globalizer.Offsets,
-        value: anytype,
+        current_module: usize,
+        name: []const u8,
+        input_node: global_sg.GlobalNodeId,
+    ) !FunctionMatch {
+        return self.matchFunctionNamed(current_module, name, null, input_node);
+    }
+
+    fn matchFunctionNamed(
+        self: *Resolver,
+        current_module: usize,
+        name: []const u8,
+        module_filter: ?global_sg.GlobalModuleId,
+        input_node: global_sg.GlobalNodeId,
+    ) !FunctionMatch {
+        var best: ?global_sg.GlobalFunctionId = null;
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"ordinary synthetic dispatch anchor changed: {text.count(old)}")
+core.write_text(text.replace(old, new, 1))
+
+# Do the same for parameterized calls. The implementation below remains the
+# single generic overload/inference engine; source calls and semantic sugar
+# only differ in how they provide the name/module filter.
+generic_functions = Path("src/4_semantics/global/generic_functions.zig")
+text = generic_functions.read_text()
+old = '''    fn resolveImplicitGenericFunction(
+        self: *Resolver,
+        current_module: usize,
+        module: *const module_sg.ModuleSemanticGraph,
         reference: module_entities.ExternalRef,
-        declaration_id: global_sg.GlobalDeclId,
         input: global_sg.GlobalNodeId,
-    ) !resolution.Result {
-        // Candidate inference interns temporary types and generic identities.
-        // Keep the whole attempt transactional: if some dependency is still
-        // unresolved, a later fixed-point round must start from the same graph.
+    ) !global_sg.GlobalFunctionId {
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |literal| literal,
+            else => return error.MissingGenericInputType,
+        };
+        const module_filter = if (reference.module_path) |path|
+            try self.core.findModuleForQualifier(current_module, module.text(path))
+        else
+            null;
+        var best: ?global_sg.GlobalDeclId = null;
+'''
+new = '''    fn resolveImplicitGenericFunction(
+        self: *Resolver,
+        current_module: usize,
+        module: *const module_sg.ModuleSemanticGraph,
+        reference: module_entities.ExternalRef,
+        input: global_sg.GlobalNodeId,
+    ) !global_sg.GlobalFunctionId {
+        const module_filter = if (reference.module_path) |path|
+            try self.core.findModuleForQualifier(current_module, module.text(path))
+        else
+            null;
+        return self.resolveImplicitGenericFunctionFiltered(
+            current_module,
+            module.text(reference.name),
+            module_filter,
+            input,
+        );
+    }
+
+    /// Compiler-generated calls participate in exactly the same generic
+    /// inference and declaration-specificity ordering as source calls.
+    pub fn resolveImplicitGenericFunctionByName(
+        self: *Resolver,
+        current_module: usize,
+        name: []const u8,
+        input: global_sg.GlobalNodeId,
+    ) !global_sg.GlobalFunctionId {
+        return self.resolveImplicitGenericFunctionFiltered(current_module, name, null, input);
+    }
+
+    fn resolveImplicitGenericFunctionFiltered(
+        self: *Resolver,
+        current_module: usize,
+        name: []const u8,
+        module_filter: ?global_sg.GlobalModuleId,
+        input: global_sg.GlobalNodeId,
+    ) !global_sg.GlobalFunctionId {
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |literal| literal,
+            else => return error.MissingGenericInputType,
+        };
+        var best: ?global_sg.GlobalDeclId = null;
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"generic synthetic dispatch anchor changed: {text.count(old)}")
+text = text.replace(old, new, 1)
+old = '''                if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), module.text(reference.name))) continue;
+'''
+new = '''                if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"generic dispatch name anchor changed: {text.count(old)}")
+generic_functions.write_text(text.replace(old, new, 1))
+
+control = Path("src/4_semantics/global/control.zig")
+text = control.read_text()
+old = '''const core_mod = @import("core.zig");
+const types = @import("types.zig");
+'''
+new = '''const core_mod = @import("core.zig");
+const generic_functions_mod = @import("generic_functions.zig");
+const abstract_mod = @import("abstracts.zig");
+const types = @import("types.zig");
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"control import anchor changed: {text.count(old)}")
+text = text.replace(old, new, 1)
+old = '''    core: ?*core_mod.Resolver = null,
+    stats: Stats = .{},
+'''
+new = '''    core: ?*core_mod.Resolver = null,
+    generic_functions: ?*generic_functions_mod.Resolver = null,
+    abstracts: ?*abstract_mod.Resolver = null,
+    stats: Stats = .{},
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"control resolver dependency anchor changed: {text.count(old)}")
+text = text.replace(old, new, 1)
+old = '''            .resolve_for_each => |value| resolution.Result.fromBool(try self.resolveForEach(module_index, o, value)),
+'''
+new = '''            .resolve_for_each => |value| try self.resolveForEach(module_index, o, value),
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"for-each result anchor changed: {text.count(old)}")
+text = text.replace(old, new, 1)
+
+start = text.index("    fn resolveForEach(")
+end = text.index("\n    fn findChoiceType(", start)
+replacement = r'''    const SyntheticCallResult = union(enum) {
+        no_match,
+        deferred,
+        call: global_sg.GlobalNodeId,
+    };
+
+    fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
+        const core = self.core orelse return .deferred;
+        const generic_functions = self.generic_functions orelse return .deferred;
+        const abstracts = self.abstracts orelse return .deferred;
+        const iterable = globalizer.globalNode(o, value.iterable);
+        const iterable_ty = self.graph.nodes.items[@intFromEnum(iterable)].ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(iterable_ty)) return .deferred;
+
+        // Desugaring is speculative while downstream types/functions may still
+        // be unresolved. Roll every append-only GlobalSG pool back unless the
+        // complete iterator loop can be published atomically.
         const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
         var lengths: [pools.len]usize = undefined;
         inline for (pools, 0..) |pool, index| lengths[index] = @field(self.graph, pool.name).items.len;
@@ -99,278 +190,212 @@ insert = '''    fn resolveImplicitGenericCall(
             inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
         };
 
-        var generics = generic_mod.Resolver{
-            .allocator = self.core.allocator,
-            .graph = self.graph,
-            .modules = self.modules,
-            .offsets = self.offsets,
-            .core = self.core,
+        const iterable_contract_name, const conversion_name, const iterable_mutable = switch (value.mode) {
+            .value => .{ "Iterable", "to_iterator", false },
+            .borrow => .{ "ROPointerIterable", "to_ro_pointer_iterator", false },
+            .mut_borrow => .{ "RWPointerIterable", "to_rw_pointer_iterator", true },
         };
-        var generic_functions = generic_functions_mod.Resolver{
-            .allocator = self.core.allocator,
-            .graph = self.graph,
-            .modules = self.modules,
-            .offsets = self.offsets,
-            .core = self.core,
-            .generics = &generics,
-            .nested_call_context = self.abstracts,
-        };
+        const iterable_contract = self.visibleAbstract(module_index, iterable_contract_name) orelse return .deferred;
+        if (!try abstracts.implements(iterable_ty, iterable_contract)) return .invalid;
 
-        // Context can fully determine a generic constructor even when none of
-        // the runtime arguments mention its type parameter (for example an
-        // owning container whose element type appears only in `$&Container#`).
-        if (value.expected_type) |local_expected| {
-            const expected = globalizer.globalType(o, local_expected);
-            if (!self.graph.isTypeUnresolved(expected)) switch (self.graph.types.items[@intFromEnum(expected)]) {
-                .generic => |identity| if (identity.base == declaration_id) {
-                    _ = generics.ensureGenericInstance(expected) catch return .deferred;
-                    const initializer = try self.findGenericInitializer(
-                        &generics,
-                        &generic_functions,
-                        module_index,
-                        expected,
-                        identity.arguments,
-                        input,
-                    );
-                    if (initializer.function) |function_id| {
-                        const function = self.graph.functions.items[@intFromEnum(function_id)];
-                        const user_fields = global_sg.FieldRange{
-                            .start = function.input.start + 1,
-                            .len = function.input.len - 1,
-                        };
-                        if (!try self.core.completeCallInputFields(user_fields, input)) return .deferred;
-                        self.writeInitializer(o, value, reference, declaration_id, expected, function_id, input);
-                        committed = true;
-                        return .resolved;
-                    }
-                    if (initializer.has_visible_initializer) return .deferred;
-                },
-                else => {},
-            };
+        const source = self.graph.nodes.items[@intFromEnum(iterable)].source;
+        var iterable_declaration: ?global_sg.GlobalNodeId = null;
+        var iterable_place = iterable;
+        if (!self.addressable(iterable)) {
+            const binding: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.graph.bindings.items.len)));
+            try self.graph.bindings.append(self.allocator, .{
+                .name = try self.graph.addString(self.allocator, "$for_iterable"),
+                .source = source,
+                .ty = iterable_ty,
+                .initialization = iterable,
+                .mutability = if (iterable_mutable) .variable else .constant,
+            });
+            iterable_declaration = try self.appendNode(source, try self.builtin(.Void), .{ .binding_declaration = binding });
+            iterable_place = try self.appendNode(source, iterable_ty, .{ .binding_use = binding });
         }
 
-        const initializer = try self.findImplicitGenericInitializer(
-            &generics,
-            &generic_functions,
-            module_index,
-            declaration_id,
-            input,
-        );
-        if (initializer.function) |function_id| {
-            const ty = initializer.constructed_type.?;
-            const function = self.graph.functions.items[@intFromEnum(function_id)];
-            const user_fields = global_sg.FieldRange{
-                .start = function.input.start + 1,
-                .len = function.input.len - 1,
-            };
-            if (!try self.core.completeCallInputFields(user_fields, input)) return .deferred;
-            self.writeInitializer(o, value, reference, declaration_id, ty, function_id, input);
-            committed = true;
-            return .resolved;
+        const iterable_reference = try self.appendAddress(iterable_place, iterable_ty, iterable_mutable, source);
+        const conversion = try self.syntheticCall(module_index, conversion_name, iterable_reference, source, core, generic_functions);
+        const iterator_value = switch (conversion) {
+            .call => |node| node,
+            .deferred => return .deferred,
+            .no_match => return .invalid,
+        };
+        const iterator_ty = self.graph.nodes.items[@intFromEnum(iterator_value)].ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(iterator_ty)) return .deferred;
+        const iterator_contract = self.visibleAbstract(module_index, "Iterator") orelse return .deferred;
+        if (!try abstracts.implements(iterator_ty, iterator_contract)) return .invalid;
+
+        const iterator_binding: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.graph.bindings.items.len)));
+        try self.graph.bindings.append(self.allocator, .{
+            .name = try self.graph.addString(self.allocator, "$for_iterator"),
+            .source = source,
+            .ty = iterator_ty,
+            .initialization = iterator_value,
+            .mutability = .variable,
+        });
+        const iterator_declaration = try self.appendNode(source, try self.builtin(.Void), .{ .binding_declaration = iterator_binding });
+
+        const condition_iterator = try self.appendNode(source, iterator_ty, .{ .binding_use = iterator_binding });
+        const condition_self = try self.appendAddress(condition_iterator, iterator_ty, false, source);
+        const condition_result = try self.syntheticCall(module_index, "has_next", condition_self, source, core, generic_functions);
+        const condition = switch (condition_result) {
+            .call => |node| node,
+            .deferred => return .deferred,
+            .no_match => return .invalid,
+        };
+        const bool_ty = try self.builtin(.Bool);
+        const condition_ty = self.graph.nodes.items[@intFromEnum(condition)].ty orelse return .deferred;
+        if (!types.equal(self.graph, condition_ty, bool_ty)) return .invalid;
+
+        const next_iterator = try self.appendNode(source, iterator_ty, .{ .binding_use = iterator_binding });
+        const next_self = try self.appendAddress(next_iterator, iterator_ty, true, source);
+        const next_result = try self.syntheticCall(module_index, "next", next_self, source, core, generic_functions);
+        const next_value = switch (next_result) {
+            .call => |node| node,
+            .deferred => return .deferred,
+            .no_match => return .invalid,
+        };
+        const element_ty = self.graph.nodes.items[@intFromEnum(next_value)].ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(element_ty)) return .deferred;
+
+        const item_binding = globalizer.globalBinding(o, value.binding);
+        const old_binding_ty = self.graph.bindings.items[@intFromEnum(item_binding)].ty;
+        self.graph.bindings.items[@intFromEnum(item_binding)].ty = element_ty;
+        errdefer self.graph.bindings.items[@intFromEnum(item_binding)].ty = old_binding_ty;
+        const item_declaration = try self.appendNode(source, try self.builtin(.Void), .{ .binding_declaration = item_binding });
+        const item_assignment = try self.appendNode(source, element_ty, .{ .assignment = .{
+            .binding = item_binding,
+            .value = next_value,
+        } });
+
+        const old_body = self.graph.blocks.items[@intFromEnum(globalizer.globalBlock(o, value.body))];
+        const old_nodes = self.graph.node_refs.items[old_body.nodes.start..][0..old_body.nodes.len];
+        const body_start: u32 = @intCast(self.graph.node_refs.items.len);
+        try self.graph.node_refs.append(self.allocator, item_declaration);
+        try self.graph.node_refs.append(self.allocator, item_assignment);
+        try self.graph.node_refs.appendSlice(self.allocator, old_nodes);
+        const body_id: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
+        try self.graph.blocks.append(self.allocator, .{
+            .nodes = .{ .start = body_start, .len = @intCast(old_nodes.len + 2) },
+            .ret_val = old_body.ret_val,
+        });
+
+        var init = iterator_declaration;
+        if (iterable_declaration) |iterable_decl| {
+            const init_start: u32 = @intCast(self.graph.node_refs.items.len);
+            try self.graph.node_refs.append(self.allocator, iterable_decl);
+            try self.graph.node_refs.append(self.allocator, iterator_declaration);
+            const init_block: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
+            try self.graph.blocks.append(self.allocator, .{
+                .nodes = .{ .start = init_start, .len = 2 },
+                .ret_val = null,
+            });
+            init = try self.appendNode(source, try self.builtin(.Void), .{ .code_block = init_block });
         }
 
-        // Generic type construction without an initializer needs inference
-        // from the parameterized type body itself. Do not guess that mapping
-        // here; a visible initializer also owns construction even when the
-        // supplied arguments are not yet sufficient to select an overload.
-        if (initializer.has_visible_initializer) return .deferred;
-        return .deferred;
+        const target = globalizer.globalNode(o, value.node);
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = source,
+            .ty = try self.builtin(.Void),
+            .content = .{ .for_statement = .{
+                .init = init,
+                .condition = condition,
+                .increment = null,
+                .body = body_id,
+            } },
+        };
+        self.stats.array_loops += 1;
+        committed = true;
+        return .resolved;
     }
 
-'''
-if text.count(anchor) != 1:
-    raise RuntimeError(f"explicit generic constructor anchor changed: {text.count(anchor)}")
-text = text.replace(anchor, insert + anchor, 1)
-
-anchor = '''    fn findGenericInitializer(
-'''
-insert = '''    fn findImplicitGenericInitializer(
+    fn syntheticCall(
         self: *Resolver,
-        generics: *generic_mod.Resolver,
-        generic_functions: *generic_functions_mod.Resolver,
         module_index: usize,
-        constructed_declaration: global_sg.GlobalDeclId,
-        input: global_sg.GlobalNodeId,
-    ) !InferredInitializerLookup {
-        var result: InferredInitializerLookup = .{};
-        var best_declaration: ?global_sg.GlobalDeclId = null;
-        var best_score: u32 = 0;
-        var tied = false;
-
-        for (self.modules, 0..) |*candidate_module, candidate_index| {
-            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
-                const declaration_id = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
-                const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
-                if (!std.mem.eql(u8, self.graph.text(declaration.name), "init")) continue;
-                if (!self.core.declarationVisible(module_index, declaration_id, null)) continue;
-                if (!self.parameterizedInitializerOwnsType(generics, candidate_index, parameterized, constructed_declaration)) continue;
-                result.has_visible_initializer = true;
-
-                const probe = try self.probeImplicitGenericInitializer(
-                    generics,
-                    generic_functions,
-                    candidate_module,
-                    candidate_index,
-                    parameterized,
-                    input,
-                );
-                var score = probe.score orelse continue;
-                const owner = self.graph.moduleForDeclaration(declaration_id) orelse continue;
-                if (@intFromEnum(owner) == module_index) score += 1;
-                if (best_declaration == null or score > best_score) {
-                    best_declaration = declaration_id;
-                    best_score = score;
-                    tied = false;
-                } else if (score == best_score and declaration_id != best_declaration.?) {
-                    tied = true;
-                }
-            }
-        }
-
-        if (tied or best_declaration == null) return result;
-        const materialized = try self.materializeImplicitGenericInitializer(
-            generics,
-            generic_functions,
-            best_declaration.?,
-            constructed_declaration,
-            input,
-        ) orelse return result;
-        result.function = materialized.function;
-        result.constructed_type = materialized.constructed_type;
-        return result;
-    }
-
-    fn parameterizedInitializerOwnsType(
-        self: *Resolver,
-        generics: *generic_mod.Resolver,
-        candidate_index: usize,
-        parameterized: anytype,
-        constructed_declaration: global_sg.GlobalDeclId,
-    ) bool {
-        const storage = &self.modules[candidate_index].semantic.parameterized_storage.ir;
-        const shape = switch (storage.types.items[@intFromEnum(parameterized.input)]) {
-            .resolved => |ty| switch (ty) {
-                .structural => |value| value,
-                else => return false,
-            },
-            else => return false,
-        };
-        if (shape.fields.len == 0) return false;
-        const destination = storage.fields.items[shape.fields.start];
-        const pointer = switch (storage.types.items[@intFromEnum(destination.ty)]) {
-            .resolved => |ty| switch (ty) {
-                .pointer => |value| value,
-                else => return false,
-            },
-            else => return false,
-        };
-        const generic = switch (storage.types.items[@intFromEnum(pointer.child)]) {
-            .resolved => |ty| switch (ty) {
-                .generic => |value| value,
-                else => return false,
-            },
-            else => return false,
-        };
-        const base = generics.resolveParameterizedDeclaration(candidate_index, generic.base) catch return false;
-        return base == constructed_declaration;
-    }
-
-    fn probeImplicitGenericInitializer(
-        self: *Resolver,
-        generics: *generic_mod.Resolver,
+        name: []const u8,
+        argument: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+        core: *core_mod.Resolver,
         generic_functions: *generic_functions_mod.Resolver,
-        candidate_module: *const module_sg.ModuleSemanticGraph,
-        candidate_index: usize,
-        parameterized: anytype,
-        input: global_sg.GlobalNodeId,
-    ) !InitializerProbe {
-        // Inference may instantiate nested generic types while probing. Roll
-        // every graph pool and generic statistic back before considering the
-        // next overload so dispatch is observationally pure.
-        const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
-        var lengths: [pools.len]usize = undefined;
-        inline for (pools, 0..) |pool, index| lengths[index] = @field(self.graph, pool.name).items.len;
-        const saved_stats = generics.stats;
-        defer {
-            inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
-            generics.stats = saved_stats;
-        }
-
-        var bindings = try generic_mod.Resolver.Bindings.init(
-            self.core.allocator,
-            candidate_module.semantic.parameterized_storage.comptime_parameters.items.len,
-        );
-        defer bindings.deinit(self.core.allocator);
-        if (!try generic_functions.inferBindingsFromInput(candidate_index, parameterized.input, input, &bindings))
-            return .{ .owns_type = true };
-        const input_ty = generics.instantiateParameterizedType(candidate_index, parameterized.input, &bindings, null) catch
-            return .{ .owns_type = true };
-        const fields = types.fields(self.graph, input_ty) orelse return .{ .owns_type = true };
-        if (fields.len == 0) return .{ .owns_type = true };
-        const user_fields = global_sg.FieldRange{
-            .start = fields.start + 1,
-            .len = fields.len - 1,
+    ) !SyntheticCallResult {
+        const input = try self.positionalInput(argument, source);
+        const function = switch (try core.matchUnqualifiedFunctionByName(module_index, name, input)) {
+            .function => |function| function,
+            .deferred => return .deferred,
+            .no_match => generic_functions.resolveImplicitGenericFunctionByName(module_index, name, input) catch |err| switch (err) {
+                error.NoMatchingGenericFunction => return .no_match,
+                error.DeferredGenericFunction => return .deferred,
+                error.ConflictingGenericArgument => return .no_match,
+                else => return err,
+            },
         };
-        const score_match = if (self.abstracts) |abstracts|
-            call_compatibility.matchInput(.{ .core = self.core, .abstracts = abstracts }, user_fields, input)
-        else
-            self.core.matchCallInput(user_fields, input);
-        return switch (score_match) {
-            .score => |score| .{ .owns_type = true, .score = score },
-            .no_match, .deferred => .{ .owns_type = true },
-        };
+        const fields = self.graph.functions.items[@intFromEnum(function)].input;
+        if (!try core.completeCallInputFields(fields, input)) return .deferred;
+        const output = try core.functionOutputType(function);
+        const call = try self.appendNode(source, output, .{ .function_call = .{
+            .callee = function,
+            .input = input,
+        } });
+        return .{ .call = call };
     }
 
-    fn materializeImplicitGenericInitializer(
-        self: *Resolver,
-        generics: *generic_mod.Resolver,
-        generic_functions: *generic_functions_mod.Resolver,
-        declaration: global_sg.GlobalDeclId,
-        constructed_declaration: global_sg.GlobalDeclId,
-        input: global_sg.GlobalNodeId,
-    ) !?InferredInitializerLookup {
-        for (self.modules, 0..) |*candidate_module, candidate_index| {
-            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
-                const declaration_id = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
-                if (declaration_id != declaration) continue;
-                if (!self.parameterizedInitializerOwnsType(generics, candidate_index, parameterized, constructed_declaration)) return null;
-
-                var bindings = try generic_mod.Resolver.Bindings.init(
-                    self.core.allocator,
-                    candidate_module.semantic.parameterized_storage.comptime_parameters.items.len,
-                );
-                defer bindings.deinit(self.core.allocator);
-                if (!try generic_functions.inferBindingsFromInput(candidate_index, parameterized.input, input, &bindings)) return null;
-                const input_ty = generics.instantiateParameterizedType(candidate_index, parameterized.input, &bindings, null) catch return null;
-                const fields = types.fields(self.graph, input_ty) orelse return null;
-                if (fields.len == 0) return null;
-                const destination = self.graph.fields.items[fields.start];
-                const pointer = switch (self.graph.types.items[@intFromEnum(destination.ty)]) {
-                    .pointer => |value| value,
-                    else => return null,
-                };
-                const identity = switch (self.graph.types.items[@intFromEnum(pointer.child)]) {
-                    .generic => |value| value,
-                    else => return null,
-                };
-                if (identity.base != constructed_declaration) return null;
-                const arguments = generic_functions.appendBoundArguments(candidate_index, parameterized.parameters, &bindings) catch return null;
-                const function = generic_functions.instantiate(declaration, arguments) catch return null;
-                return .{
-                    .function = function,
-                    .constructed_type = pointer.child,
-                    .has_visible_initializer = true,
-                };
-            }
-        }
-        return null;
+    fn positionalInput(self: *Resolver, argument: global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.GlobalNodeId {
+        const start: u32 = @intCast(self.graph.value_fields.items.len);
+        try self.graph.value_fields.append(self.allocator, .{
+            .name = try self.graph.addString(self.allocator, ""),
+            .value = argument,
+        });
+        const input: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        try self.graph.nodes.append(self.allocator, .{
+            .source = source,
+            .ty = null,
+            .content = .{ .struct_value_literal = .{
+                .fields = .{ .start = start, .len = 1 },
+                .dispatch_prefix_positional_count = 1,
+            } },
+        });
+        return input;
     }
 
+    fn visibleAbstract(self: *Resolver, module_index: usize, name: []const u8) ?global_sg.GlobalDeclId {
+        const core = self.core orelse return null;
+        var found: ?global_sg.GlobalDeclId = null;
+        for (self.graph.declarations.items, 0..) |declaration, raw| {
+            if (declaration.kind != .abstract_type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
+            const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (!core.declarationVisible(module_index, id, null)) continue;
+            if (found != null) return null;
+            found = id;
+        }
+        return found;
+    }
+
+    fn addressable(self: *Resolver, node: global_sg.GlobalNodeId) bool {
+        return switch (self.graph.nodes.items[@intFromEnum(node)].content) {
+            .binding_use, .struct_field_access, .choice_payload_access, .dereference => true,
+            else => false,
+        };
+    }
 '''
-if text.count(anchor) != 1:
-    raise RuntimeError(f"generic initializer anchor changed: {text.count(anchor)}")
-text = text.replace(anchor, insert + anchor, 1)
-constructors.write_text(text)
+text = text[:start] + replacement + text[end:]
+control.write_text(text)
+
+semantizer = Path("src/4_semantics/global/semantizer.zig")
+text = semantizer.read_text()
+old = '''    constructors.abstracts = &abstracts;
+    defer abstracts.deinit();
+    generic_functions.nested_call_context = &abstracts;
+'''
+new = '''    constructors.abstracts = &abstracts;
+    control.generic_functions = &generic_functions;
+    control.abstracts = &abstracts;
+    defer abstracts.deinit();
+    generic_functions.nested_call_context = &abstracts;
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"control dependency wiring anchor changed: {text.count(old)}")
+semantizer.write_text(text.replace(old, new, 1))
 
 Path(".github/semantic_refactor_test_command").write_text(
     "zig build test-programs "
@@ -380,4 +405,4 @@ Path(".github/semantic_refactor_test_command").write_text(
     "-Dtest-filter=feature_tests/control_flow/10_range_default_start "
     "-Dtest-filter=feature_tests/control_flow/11_range_default_start_with_step\n"
 )
-Path(".git/semantic-refactor-message").write_text("Infer generic type constructors from initializers\n")
+Path(".git/semantic-refactor-message").write_text("Lower for-each through iterator contracts\n")
