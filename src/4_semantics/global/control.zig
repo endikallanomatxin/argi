@@ -46,8 +46,8 @@ pub const Resolver = struct {
     ) !resolution.Result {
         return switch (operation) {
             .resolve_call => |value| try self.resolveChoiceTest(module, o, value),
-            .resolve_choice_literal => |value| resolution.Result.fromBool(try self.resolveChoiceLiteral(module, o, value)),
-            .resolve_choice_payload => |value| resolution.Result.fromBool(try self.resolveChoicePayload(module, o, value)),
+            .resolve_choice_literal => |value| try self.resolveChoiceLiteral(module, o, value),
+            .resolve_choice_payload => |value| try self.resolveChoicePayload(module, o, value),
             .resolve_nullable_unwrap => |value| resolution.Result.fromBool(try self.resolveNullableUnwrap(o, value)),
             .resolve_nullable_test => |value| resolution.Result.fromBool(try self.resolveNullableTest(o, value)),
             .resolve_match => |value| resolution.Result.fromBool(try self.resolveMatch(module, o, value)),
@@ -174,42 +174,44 @@ pub const Resolver = struct {
         return null;
     }
 
-    fn resolveChoiceLiteral(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !bool {
+    fn resolveChoiceLiteral(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.option)];
         const name = module.text(reference.name);
         const payload = if (value.payload) |id| globalizer.globalNode(o, id) else null;
         var payload_ty = if (payload) |id| self.graph.nodes.items[@intFromEnum(id)].ty else null;
         const target = globalizer.globalNode(o, value.node);
-        if (self.graph.nodes.items[@intFromEnum(target)].content == .int_literal) return true;
+        if (self.graph.nodes.items[@intFromEnum(target)].content == .int_literal) return .resolved;
         const expected = if (value.expected_type) |id| globalizer.globalType(o, id) else self.graph.nodes.items[@intFromEnum(target)].ty;
 
-        // An explicit contextual type is authoritative. Coerce the payload to
-        // that variant before asking the global fallback to disambiguate choice
-        // families; otherwise a contextual literal can make its own expected
-        // choice invisible during lookup.
+        // An explicit contextual type is authoritative. Shape errors that can
+        // no longer change (unknown variant, or a required payload being
+        // absent) are terminal-invalid; unresolved payload typing remains
+        // deferred so coercion/generic resolution can still make progress.
         const choice_ty = blk: {
             if (expected) |expected_ty| {
-                if (!types.isBuiltin(self.graph, expected_ty, .Any)) {
+                if (!self.graph.isTypeUnresolved(expected_ty) and !types.isBuiltin(self.graph, expected_ty, .Any)) {
                     try self.ensureInferredReasonVariant(expected_ty, name, self.sourceFor(reference.source, o));
                     if (types.findVariant(self.graph, expected_ty, name)) |hit| {
+                        if (hit.variant.payload_type != null and payload == null) return .invalid;
                         if (payload) |payload_node| if (hit.variant.payload_type) |expected_payload| {
                             if (self.core) |core| _ = core.coerceContextualValue(payload_node, expected_payload);
                             payload_ty = self.graph.nodes.items[@intFromEnum(payload_node)].ty;
                         };
-                        if (!self.payloadCompatible(hit.variant.payload_type, payload_ty)) return false;
+                        if (!self.payloadCompatible(hit.variant.payload_type, payload_ty)) return .deferred;
                         break :blk expected_ty;
                     }
+                    if (value.expected_type != null and types.variants(self.graph, expected_ty) != null) return .invalid;
                 }
             }
-            break :blk self.findChoiceType(expected, name, payload_ty) orelse return false;
+            break :blk self.findChoiceType(expected, name, payload_ty) orelse return .deferred;
         };
 
-        const variant = types.findVariant(self.graph, choice_ty, name) orelse return false;
+        const variant = types.findVariant(self.graph, choice_ty, name) orelse return .deferred;
         if (payload) |payload_node| if (variant.variant.payload_type) |expected_payload| {
             if (self.core) |core| _ = core.coerceContextualValue(payload_node, expected_payload);
             payload_ty = self.graph.nodes.items[@intFromEnum(payload_node)].ty;
         };
-        if (!self.payloadCompatible(variant.variant.payload_type, payload_ty)) return false;
+        if (!self.payloadCompatible(variant.variant.payload_type, payload_ty)) return .deferred;
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = self.sourceFor(reference.source, o),
             .ty = choice_ty,
@@ -220,7 +222,7 @@ pub const Resolver = struct {
             } },
         };
         self.stats.choices += 1;
-        return true;
+        return .resolved;
     }
 
     fn ensureInferredReasonVariant(self: *Resolver, ty: global_sg.GlobalTypeId, name: []const u8, source: primitives.SourceRef) !void {
@@ -289,12 +291,13 @@ pub const Resolver = struct {
         return .resolved;
     }
 
-    fn resolveChoicePayload(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !bool {
+    fn resolveChoicePayload(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
         const source = globalizer.globalNode(o, value.value);
-        const choice_ty = self.graph.nodes.items[@intFromEnum(source)].ty orelse return false;
+        const choice_ty = self.graph.nodes.items[@intFromEnum(source)].ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(choice_ty)) return .deferred;
         const name = module.text(value.option_name);
-        const hit = types.findVariant(self.graph, choice_ty, name) orelse return false;
-        const payload_ty = hit.variant.payload_type orelse return false;
+        const hit = types.findVariant(self.graph, choice_ty, name) orelse return .deferred;
+        const payload_ty = hit.variant.payload_type orelse return .invalid;
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = self.sourceFor(value.source, o),
@@ -306,7 +309,7 @@ pub const Resolver = struct {
             } },
         };
         self.stats.choices += 1;
-        return true;
+        return .resolved;
     }
 
     fn resolveNullableUnwrap(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {

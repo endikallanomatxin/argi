@@ -19,8 +19,10 @@ pub const Result = enum(u2) {
     /// `not_applicable` is an internal strategy result: a composite operation
     /// owner (for example call or index resolution) may try its next strategy.
     /// At the GlobalSema boundary every PendingOperation has one stable owner;
-    /// `deferred` means that owner is waiting for semantic dependencies and
-    /// `resolved` means it has completed the operation.
+    /// `deferred` means that owner is waiting for semantic dependencies,
+    /// `invalid` means all required information is present but the operation is
+    /// semantically impossible and awaits a source diagnostic, and `resolved`
+    /// means it has completed the operation.
     pub fn allowsFallback(self: Result) bool {
         return self == .not_applicable;
     }
