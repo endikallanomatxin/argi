@@ -251,7 +251,12 @@ pub const Resolver = struct {
         };
         var choice_value: ?global_sg.GlobalNodeId = null;
         var tag_node: ?global_sg.GlobalNodeId = null;
-        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, index| {
+            if (index < literal.dispatch_prefix_positional_count) {
+                if (index == 0) choice_value = field.value;
+                if (index == 1) tag_node = field.value;
+                continue;
+            }
             if (std.mem.eql(u8, self.graph.text(field.name), "value")) choice_value = field.value;
             if (std.mem.eql(u8, self.graph.text(field.name), "variant")) tag_node = field.value;
         }
