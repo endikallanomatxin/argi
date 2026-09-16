@@ -128,6 +128,10 @@ pub const Resolver = struct {
         parameterized: parameterized_storage.ParameterizedType,
     };
 
+    pub fn isParameterizedTypeDeclaration(self: *Resolver, declaration: global_sg.GlobalDeclId) bool {
+        return self.findTypeParameterized(declaration) != null;
+    }
+
     fn findTypeParameterized(self: *Resolver, declaration: global_sg.GlobalDeclId) ?LocatedTypeParameterized {
         const owner = self.graph.moduleForDeclaration(declaration) orelse return null;
         const module_index: usize = @intFromEnum(owner);
