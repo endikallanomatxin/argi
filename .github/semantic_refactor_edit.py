@@ -1,138 +1,203 @@
 from pathlib import Path
 
-core = Path("src/4_semantics/global/core.zig")
-text = core.read_text()
-start = text.index("    fn resolveComparison(")
-end = text.index("    fn contextualizeChoiceOperand(", start)
-replacement = r'''    fn resolveComparison(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !bool {
-        const left = globalizer.globalNode(o, value.left);
-        const right = globalizer.globalNode(o, value.right);
+path = Path("src/3_syntax/syntaxer.zig")
+text = path.read_text()
 
-        // In equality tests a bare `..variant` denotes the choice tag, not a
-        // value construction. Materialize that tag directly so payload-bearing
-        // variants can participate in refinement without weakening normal
-        // construction rules.
-        if (value.operator == .equal or value.operator == .not_equal) {
-            if (self.graph.nodes.items[@intFromEnum(left)].ty) |left_ty| {
-                if (try self.materializeChoiceTagOperand(module_index, o, right, left_ty))
-                    return self.patchChoiceTagComparison(o, value, left, right);
-            }
-            if (self.graph.nodes.items[@intFromEnum(right)].ty) |right_ty| {
-                if (try self.materializeChoiceTagOperand(module_index, o, left, right_ty))
-                    // Canonicalize choice-vs-tag comparisons for Safety and
-                    // codegen regardless of source operand order.
-                    return self.patchChoiceTagComparison(o, value, right, left);
-            }
-        }
+old_rhs = r'''    fn parsePipeRhs(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const prev_pipe_rhs = self.parsing_pipe_rhs;
+        self.parsing_pipe_rhs = true;
+        defer self.parsing_pipe_rhs = prev_pipe_rhs;
+        return self.parsePrimary();
+    }
+'''
+new_rhs = r'''    const PipePlaceholderAnalysis = struct {
+        has_placeholder: bool = false,
+        direct_shape: bool = false,
+        first_placeholder: ?syn.TokenIndex = null,
+        invalid_placeholder: ?syn.TokenIndex = null,
+    };
 
-        var left_ty = self.graph.nodes.items[@intFromEnum(left)].ty orelse return false;
-        if (self.graph.nodes.items[@intFromEnum(right)].ty == null and
-            self.contextualizeChoiceOperand(module_index, o, right, left_ty)) return false;
-        var right_ty = self.graph.nodes.items[@intFromEnum(right)].ty orelse return false;
-        self.coerceIntegerPair(left, &left_ty, right, &right_ty);
-        const bool_ty = try self.builtin(.Bool);
-        const target = globalizer.globalNode(o, value.node);
-        const directly_comparable = self.isBuiltinComparable(left_ty, right_ty) or
-            ((value.operator == .equal or value.operator == .not_equal) and self.isCEnumPair(left_ty, right_ty));
-        if (directly_comparable) {
-            self.graph.nodes.items[@intFromEnum(target)] = .{
-                .source = self.graph.nodes.items[@intFromEnum(left)].source,
-                .ty = bool_ty,
-                .content = .{ .comparison = .{ .operator = value.operator, .left = left, .right = right } },
-            };
-            self.stats.operators += 1;
-            return true;
-        }
-        const operator: callable.OperatorKind = switch (value.operator) {
-            .equal => .equal,
-            .not_equal => .not_equal,
-            else => return false,
-        };
-        const function = self.resolveOperator(module_index, operator, &.{ left_ty, right_ty }) catch return false;
-        const input = try self.makeCallInput(function, &.{ left, right });
-        self.graph.nodes.items[@intFromEnum(target)] = .{
-            .source = self.graph.nodes.items[@intFromEnum(left)].source,
-            .ty = bool_ty,
-            .content = .{ .function_call = .{ .callee = function, .input = input } },
-        };
-        self.stats.operators += 1;
-        return true;
+    fn mergePipePlaceholderAnalysis(result: *PipePlaceholderAnalysis, child: PipePlaceholderAnalysis) void {
+        if (!result.has_placeholder and child.has_placeholder) result.first_placeholder = child.first_placeholder;
+        result.has_placeholder = result.has_placeholder or child.has_placeholder;
+        if (result.invalid_placeholder == null) result.invalid_placeholder = child.invalid_placeholder;
     }
 
-    fn patchChoiceTagComparison(
-        self: *Resolver,
-        o: globalizer.Offsets,
-        value: anytype,
-        choice: global_sg.GlobalNodeId,
-        tag: global_sg.GlobalNodeId,
-    ) !bool {
-        const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
-            .source = self.graph.nodes.items[@intFromEnum(choice)].source,
-            .ty = try self.builtin(.Bool),
-            .content = .{ .comparison = .{
-                .operator = value.operator,
-                .left = choice,
-                .right = tag,
-            } },
-        };
-        self.stats.operators += 1;
-        return true;
+    fn invalidatePipePlaceholderAnalysis(result: *PipePlaceholderAnalysis) void {
+        if (result.has_placeholder and result.invalid_placeholder == null)
+            result.invalid_placeholder = result.first_placeholder;
+        result.direct_shape = false;
     }
 
-    fn materializeChoiceTagOperand(
-        self: *Resolver,
-        module_index: usize,
-        o: globalizer.Offsets,
-        node_id: global_sg.GlobalNodeId,
-        choice_ty: global_sg.GlobalTypeId,
-    ) !bool {
-        if (types.variants(self.graph, choice_ty) == null) return false;
-        const module = &self.modules[module_index];
-        for (module.semantic.pending_operations.items) |pending| switch (pending) {
-            .resolve_choice_literal => |choice| {
-                if (globalizer.globalNode(o, choice.node) != node_id) continue;
-                if (choice.payload != null) return false;
-                const reference = module.semantic.external_refs.items[@intFromEnum(choice.option)];
-                const hit = types.findVariant(self.graph, choice_ty, module.text(reference.name)) orelse return false;
-                self.graph.nodes.items[@intFromEnum(node_id)] = .{
-                    .source = .{
-                        .file_index = o.file_base + reference.source.file_index,
-                        .offset = reference.source.offset,
-                    },
-                    .ty = try self.builtin(.Int32),
-                    .content = .{ .int_literal = hit.variant.value },
-                };
-                return true;
+    fn analyzePipePlaceholder(self: *Syntaxer, node: syn.NodeIndex) PipePlaceholderAnalysis {
+        return switch (self.file.tag(node)) {
+            .pipe_placeholder => .{
+                .has_placeholder = true,
+                .direct_shape = true,
+                .first_placeholder = self.file.mainToken(node),
             },
-            else => {},
+
+            // These are the deliberately supported placeholder expressions.
+            // Chaining field/payload projections remains a direct shape because
+            // lowering can substitute the piped value before applying them.
+            .address_of, .address_of_mut => blk: {
+                const child_node = self.file.unaryOperand(node).?;
+                var result = self.analyzePipePlaceholder(child_node);
+                if (result.has_placeholder and (result.invalid_placeholder != null or !result.direct_shape))
+                    invalidatePipePlaceholderAnalysis(&result);
+                break :blk result;
+            },
+            .struct_field_access => blk: {
+                const access = self.file.structFieldAccess(node).?;
+                var result = self.analyzePipePlaceholder(access.value);
+                if (result.has_placeholder and (result.invalid_placeholder != null or !result.direct_shape))
+                    invalidatePipePlaceholderAnalysis(&result);
+                break :blk result;
+            },
+            .choice_payload_access => blk: {
+                const access = self.file.choicePayloadAccess(node).?;
+                var result = self.analyzePipePlaceholder(access.value);
+                if (result.has_placeholder and (result.invalid_placeholder != null or !result.direct_shape))
+                    invalidatePipePlaceholderAnalysis(&result);
+                break :blk result;
+            },
+
+            // Calls and aggregate literals are containers: placeholders inside
+            // their values keep their validity, but the container itself is not
+            // a direct placeholder shape that another operator may wrap.
+            .function_call => blk: {
+                const call = self.file.functionCall(node).?;
+                var result = self.analyzePipePlaceholder(call.input);
+                result.direct_shape = false;
+                break :blk result;
+            },
+            .struct_value_literal => blk: {
+                const literal = self.file.structValueLiteral(node).?;
+                var result: PipePlaceholderAnalysis = .{};
+                for (literal.fields) |field_node|
+                    mergePipePlaceholderAnalysis(&result, self.analyzePipePlaceholder(field_node));
+                result.direct_shape = false;
+                break :blk result;
+            },
+            .struct_value_field, .positional_value_field => blk: {
+                const field = self.file.valueField(node).?;
+                var result = self.analyzePipePlaceholder(field.value);
+                result.direct_shape = false;
+                break :blk result;
+            },
+            .list_literal => blk: {
+                const literal = self.file.listLiteral(node).?;
+                var result: PipePlaceholderAnalysis = .{};
+                for (literal.elements) |element|
+                    mergePipePlaceholderAnalysis(&result, self.analyzePipePlaceholder(element));
+                result.direct_shape = false;
+                break :blk result;
+            },
+            .choice_literal, .choice_some_literal => blk: {
+                const literal = self.file.choiceLiteral(node).?;
+                var result: PipePlaceholderAnalysis = .{};
+                if (literal.payload) |payload| result = self.analyzePipePlaceholder(payload);
+                result.direct_shape = false;
+                break :blk result;
+            },
+
+            // Composite operators are not substitution points. If a placeholder
+            // appears anywhere under one, diagnose the placeholder itself.
+            .pipe_expression,
+            .unwrap_or,
+            .unwrap_or_do,
+            .binary_add,
+            .binary_subtract,
+            .binary_multiply,
+            .binary_divide,
+            .binary_modulo,
+            .compare_equal,
+            .compare_not_equal,
+            .compare_less,
+            .compare_greater,
+            .compare_less_equal,
+            .compare_greater_equal,
+            .logical_and,
+            .logical_or,
+            .error_context,
+            .index_access,
+            => blk: {
+                const op = self.file.binaryOperation(node).?;
+                var result = self.analyzePipePlaceholder(op.lhs);
+                mergePipePlaceholderAnalysis(&result, self.analyzePipePlaceholder(op.rhs));
+                invalidatePipePlaceholderAnalysis(&result);
+                break :blk result;
+            },
+
+            .move_expression,
+            .error_propagation,
+            .nullable_test,
+            .dereference,
+            => blk: {
+                var result = self.analyzePipePlaceholder(self.file.unaryOperand(node).?);
+                invalidatePipePlaceholderAnalysis(&result);
+                break :blk result;
+            },
+
+            else => .{},
         };
-        return false;
     }
 
+    fn parsePipeRhs(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const prev_pipe_rhs = self.parsing_pipe_rhs;
+        self.parsing_pipe_rhs = true;
+        defer self.parsing_pipe_rhs = prev_pipe_rhs;
+        return self.parsePrimary();
+    }
 '''
-text = text[:start] + replacement + text[end:]
-core.write_text(text)
+if text.count(old_rhs) != 1:
+    raise RuntimeError(f"parsePipeRhs anchor changed: {text.count(old_rhs)}")
+text = text.replace(old_rhs, new_rhs, 1)
 
-control = Path("src/4_semantics/global/control.zig")
-text = control.read_text()
-old = '''        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
-            if (std.mem.eql(u8, self.graph.text(field.name), "value")) choice_value = field.value;
-            if (std.mem.eql(u8, self.graph.text(field.name), "variant")) tag_node = field.value;
+old_pipe = r'''    fn parsePipeExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        var lhs = try self.parsePrimary();
+
+        while (self.tokenIs(.pipe)) {
+            const pipe_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+            const right = try self.parsePipeRhs();
+            lhs = try self.addNode(.pipe_expression, pipe_token, .{ .node_and_node = .{ .first = lhs, .second = right } });
         }
+        return lhs;
+    }
 '''
-new = '''        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, index| {
-            if (index < literal.dispatch_prefix_positional_count) {
-                if (index == 0) choice_value = field.value;
-                if (index == 1) tag_node = field.value;
-                continue;
+new_pipe = r'''    fn parsePipeExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        var lhs = try self.parsePrimary();
+
+        while (self.tokenIs(.pipe)) {
+            const pipe_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+            const right = try self.parsePipeRhs();
+            const placeholder = self.analyzePipePlaceholder(right);
+            if (!placeholder.has_placeholder) {
+                try self.diags.add(
+                    self.file.tokenLocation(pipe_token),
+                    .syntax,
+                    "pipe right-hand side must use at least one argument placeholder",
+                    .{},
+                );
+            } else if (placeholder.invalid_placeholder) |invalid| {
+                try self.diags.add(
+                    self.file.tokenLocation(invalid),
+                    .syntax,
+                    "pipe placeholders are only supported as '_', '&_', '$&_', '_.field', or '..variant' payload access for now",
+                    .{},
+                );
             }
-            if (std.mem.eql(u8, self.graph.text(field.name), "value")) choice_value = field.value;
-            if (std.mem.eql(u8, self.graph.text(field.name), "variant")) tag_node = field.value;
+            lhs = try self.addNode(.pipe_expression, pipe_token, .{ .node_and_node = .{ .first = lhs, .second = right } });
         }
+        return lhs;
+    }
 '''
-if text.count(old) != 1:
-    raise RuntimeError(f"control positional-is anchor changed: {text.count(old)}")
-control.write_text(text.replace(old, new, 1))
+if text.count(old_pipe) != 1:
+    raise RuntimeError(f"parsePipeExpr anchor changed: {text.count(old_pipe)}")
+path.write_text(text.replace(old_pipe, new_pipe, 1))
 
-Path(".git/semantic-refactor-message").write_text("Resolve bare choice variants as tag tests\n")
+Path(".git/semantic-refactor-message").write_text("Validate pipe placeholder shapes in syntax\n")
