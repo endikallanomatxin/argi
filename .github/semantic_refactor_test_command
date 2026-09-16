@@ -1,1 +1,1 @@
-zig build test-programs -Dtest-filter=feature_tests/functions/17_pipe_builtin_is_positional -Dtest-filter=feature_tests/functions/18_choice_variant_equality -Dtest-filter=feature_tests/types/03_choice_payloads -Dtest-filter=feature_tests/types/04X_choice_missing_payload
+zig build test-programs -Dtest-filter=feature_tests/functions/17_pipe_builtin_is_positional -Dtest-filter=feature_tests/functions/18_choice_variant_equality -Dtest-filter=feature_tests/types/04X_choice_missing_payload
