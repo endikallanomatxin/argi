@@ -1,1 +1,1 @@
-zig build test-programs -Dtest-filter=feature_tests/modules/02_import_current_relative -Dtest-filter=feature_tests/modules/09_import_more_library -Dtest-filter=feature_tests/modules/10_import_transitive
+zig build test-programs -Dtest-filter=feature_tests/modules/03X_import_missing_module -Dtest-filter=feature_tests/modules/04X_import_missing_value -Dtest-filter=feature_tests/modules/06X_private_module_value -Dtest-filter=feature_tests/modules/07X_private_module_type
