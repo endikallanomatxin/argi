@@ -932,6 +932,90 @@ fn diagnoseUnresolvedChoice(
                     );
                     return true;
                 },
+                .resolve_match => |match| {
+                    const expression = graph.node(globalizer.globalNode(offsets[module_index], match.value));
+                    const choice_ty = expression.ty orelse continue;
+                    if (graph.isTypeUnresolved(choice_ty)) continue;
+                    const variants = global_types.variants(graph, choice_ty) orelse {
+                        var type_name = std.array_list.Managed(u8).init(allocator);
+                        defer type_name.deinit();
+                        try appendTypeName(&type_name, graph, choice_ty);
+                        try diagnostics.add(
+                            diagnosticLocation(graph, diagnostics, expression.source),
+                            .semantic,
+                            "match expects a choice value, found '{s}'",
+                            .{type_name.items},
+                        );
+                        return true;
+                    };
+                    _ = variants;
+
+                    var seen: std.ArrayList(global_sg.GlobalVariantId) = .empty;
+                    defer seen.deinit(allocator);
+                    for (module.semantic.node_refs.items[match.cases.start..][0..match.cases.len]) |local_case_node| {
+                        const pending_id = switch (module.semantic.nodes.items[@intFromEnum(local_case_node)]) {
+                            .pending => |id| id,
+                            else => continue,
+                        };
+                        const case = switch (module.semantic.pending_operations.items[@intFromEnum(pending_id)]) {
+                            .resolve_match_case => |item| item,
+                            else => continue,
+                        };
+                        const option_ref = module.semantic.external_refs.items[@intFromEnum(case.option)];
+                        const name = module.text(option_ref.name);
+                        const source = globalSource(offsets[module_index], option_ref.source);
+                        const hit = global_types.findVariant(graph, choice_ty, name) orelse {
+                            var type_name = std.array_list.Managed(u8).init(allocator);
+                            defer type_name.deinit();
+                            try appendTypeName(&type_name, graph, choice_ty);
+                            try diagnostics.add(
+                                diagnosticLocation(graph, diagnostics, source),
+                                .semantic,
+                                "choice type '{s}' has no variant '..{s}'",
+                                .{ type_name.items, name },
+                            );
+                            return true;
+                        };
+                        var duplicate = false;
+                        for (seen.items) |previous| if (previous == hit.id) {
+                            duplicate = true;
+                            break;
+                        };
+                        if (duplicate) {
+                            try diagnostics.add(
+                                diagnosticLocation(graph, diagnostics, source),
+                                .semantic,
+                                "choice variant '..{s}' appears more than once in match",
+                                .{name},
+                            );
+                            return true;
+                        }
+                        try seen.append(allocator, hit.id);
+
+                        if (case.payload_binding != null and hit.variant.payload_type == null) {
+                            const payload_source: @import("../primitives/schema.zig").SourceRef = .{
+                                .file_index = source.file_index,
+                                .offset = source.offset + @as(u32, @intCast(name.len + 1)),
+                            };
+                            try diagnostics.add(
+                                diagnosticLocation(graph, diagnostics, payload_source),
+                                .semantic,
+                                "choice variant '..{s}' has no payload to bind",
+                                .{name},
+                            );
+                            return true;
+                        }
+                        if (case.payload_binding == null and hit.variant.payload_type != null) {
+                            try diagnostics.add(
+                                diagnosticLocation(graph, diagnostics, source),
+                                .semantic,
+                                "choice variant '..{s}' carries a payload and match must bind it explicitly; use '..{s} _' to ignore it",
+                                .{ name, name },
+                            );
+                            return true;
+                        }
+                    }
+                },
                 else => {},
             }
         }

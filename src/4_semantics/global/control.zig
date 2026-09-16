@@ -50,7 +50,7 @@ pub const Resolver = struct {
             .resolve_choice_payload => |value| try self.resolveChoicePayload(module, o, value),
             .resolve_nullable_unwrap => |value| resolution.Result.fromBool(try self.resolveNullableUnwrap(o, value)),
             .resolve_nullable_test => |value| resolution.Result.fromBool(try self.resolveNullableTest(o, value)),
-            .resolve_match => |value| resolution.Result.fromBool(try self.resolveMatch(module, o, value)),
+            .resolve_match => |value| try self.resolveMatch(module, o, value),
             .resolve_match_case => |value| resolution.Result.fromBool(self.matchCaseAlreadyResolved(o, value)),
             .resolve_for_each => |value| resolution.Result.fromBool(try self.resolveForEach(module_index, o, value)),
             else => .not_applicable,
@@ -369,34 +369,50 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn resolveMatch(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !bool {
+    fn resolveMatch(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
         const expression = globalizer.globalNode(o, value.value);
-        const choice_ty = self.graph.nodes.items[@intFromEnum(expression)].ty orelse return false;
-        const variants = types.variants(self.graph, choice_ty) orelse return false;
+        const choice_ty = self.graph.nodes.items[@intFromEnum(expression)].ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(choice_ty)) return .deferred;
+        const variants = types.variants(self.graph, choice_ty) orelse return .invalid;
         const local_cases = module.semantic.node_refs.items[value.cases.start..][0..value.cases.len];
-        const case_start: u32 = @intCast(self.graph.switch_cases.items.len);
+
+        // Validate the complete pattern set before mutating the global graph.
+        // A terminal-invalid case must not leave partially materialized switch
+        // cases or payload binding types behind for later fixed-point rounds.
         var seen: std.ArrayList(global_sg.GlobalVariantId) = .empty;
         defer seen.deinit(self.allocator);
-
         for (local_cases) |local_case_node| {
             const local_node = module.semantic.nodes.items[@intFromEnum(local_case_node)];
             const pending_id = switch (local_node) {
                 .pending => |id| id,
-                else => return false,
+                else => return .deferred,
             };
             const pending = module.semantic.pending_operations.items[@intFromEnum(pending_id)];
             const case = switch (pending) {
                 .resolve_match_case => |item| item,
-                else => return false,
+                else => return .deferred,
             };
             const option_ref = module.semantic.external_refs.items[@intFromEnum(case.option)];
             const option_name = module.text(option_ref.name);
-            const hit = types.findVariant(self.graph, choice_ty, option_name) orelse return false;
-            for (seen.items) |previous| if (previous == hit.id) return error.DuplicateMatchCase;
+            const hit = types.findVariant(self.graph, choice_ty, option_name) orelse return .invalid;
+            for (seen.items) |previous| if (previous == hit.id) return .invalid;
             try seen.append(self.allocator, hit.id);
+            if (case.payload_binding != null and hit.variant.payload_type == null) return .invalid;
+            if (case.payload_binding == null and hit.variant.payload_type != null) return .invalid;
+        }
+
+        const case_start: u32 = @intCast(self.graph.switch_cases.items.len);
+        for (local_cases) |local_case_node| {
+            const pending_id = switch (module.semantic.nodes.items[@intFromEnum(local_case_node)]) {
+                .pending => |id| id,
+                else => unreachable,
+            };
+            const case = module.semantic.pending_operations.items[@intFromEnum(pending_id)].resolve_match_case;
+            const option_ref = module.semantic.external_refs.items[@intFromEnum(case.option)];
+            const hit = types.findVariant(self.graph, choice_ty, module.text(option_ref.name)).?;
 
             if (case.payload_binding) |local_binding| {
-                const payload_ty = hit.variant.payload_type orelse return error.MatchPayloadOnPayloadlessVariant;
+                const payload_ty = hit.variant.payload_type.?;
                 const binding = globalizer.globalBinding(o, local_binding);
                 self.graph.bindings.items[@intFromEnum(binding)].ty = try self.matchBindingType(payload_ty, case.mode);
             }
@@ -431,7 +447,7 @@ pub const Resolver = struct {
             .content = .{ .switch_statement = switch_id },
         };
         self.stats.matches += 1;
-        return true;
+        return .resolved;
     }
 
     fn matchCaseAlreadyResolved(self: *Resolver, o: globalizer.Offsets, value: anytype) bool {
