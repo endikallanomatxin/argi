@@ -1,94 +1,136 @@
 from pathlib import Path
 
-checker = Path("src/4_semantics/safety/checker.zig")
-text = checker.read_text()
-
-# Stored choice values already carry a known discriminant. Payload safety may
-# use either that concrete value fact or a control-flow refinement.
-start = text.index("    fn evaluateChoicePayload(")
-end = text.index("\n    fn ", start + 5)
-segment = text[start:end]
-old = "            if (!self.variantActive(state, storage, wanted)) {"
-new = "            if (choice.known_choice_variant != wanted and !self.variantActive(state, storage, wanted)) {"
-if segment.count(old) != 1:
-    raise RuntimeError(f"choice payload refinement anchor changed: {segment.count(old)}")
-segment = segment.replace(old, new, 1)
-text = text[:start] + segment + text[end:]
-
-# Opaque reads of pointer-free aggregates must discard lifetime/ownership facts,
-# but the aggregate's semantic shape is still real information. Previously the
-# scalar fast path erased fields, variants and known_choice_variant wholesale.
-old = '''        const value_type = ty orelse return value;
-        if (!self.typeContainsPointer(value_type)) return value.scalarOpaqueRead();
-        // A projected pointer borrows its parent's generation. Conservative
+resolution = Path("src/4_semantics/global/resolution.zig")
+text = resolution.read_text()
+old = '''pub const Result = enum(u2) {
+    not_applicable,
+    deferred,
+    resolved,
 '''
-new = '''        const value_type = ty orelse return value;
-        if (!self.typeContainsPointer(value_type)) return self.nonPointerOpaqueRead(value, value_type);
-        // A projected pointer borrows its parent's generation. Conservative
+new = '''pub const Result = enum(u2) {
+    not_applicable,
+    deferred,
+    invalid,
+    resolved,
 '''
 if text.count(old) != 1:
-    raise RuntimeError(f"opaque read fast-path anchor changed: {text.count(old)}")
+    raise RuntimeError(f"resolution enum anchor changed: {text.count(old)}")
 text = text.replace(old, new, 1)
-
-anchor = '''        return result;
+old = '''    pub fn isResolved(self: Result) bool {
+        return self == .resolved;
     }
 
-    fn fieldTypeAt(
+    /// `not_applicable` is an internal strategy result'''
+new = '''    pub fn isResolved(self: Result) bool {
+        return self == .resolved;
+    }
+
+    pub fn isInvalid(self: Result) bool {
+        return self == .invalid;
+    }
+
+    /// `not_applicable` is an internal strategy result'''
+if text.count(old) != 1:
+    raise RuntimeError(f"resolution helper anchor changed: {text.count(old)}")
+text = text.replace(old, new, 1)
+old = '''    try std.testing.expect(!Result.deferred.allowsFallback());
+    try std.testing.expect(!Result.resolved.allowsFallback());
+    try std.testing.expect(Result.deferred.isDeferred());
+}'''
+new = '''    try std.testing.expect(!Result.deferred.allowsFallback());
+    try std.testing.expect(!Result.invalid.allowsFallback());
+    try std.testing.expect(!Result.resolved.allowsFallback());
+    try std.testing.expect(Result.deferred.isDeferred());
+    try std.testing.expect(Result.invalid.isInvalid());
+}'''
+if text.count(old) != 1:
+    raise RuntimeError(f"resolution test anchor changed: {text.count(old)}")
+resolution.write_text(text.replace(old, new, 1))
+
+semantizer = Path("src/4_semantics/global/semantizer.zig")
+text = semantizer.read_text()
+old = '''    const resolved = try allocator.alloc(bool, total);
+    defer allocator.free(resolved);
+    @memset(resolved, false);
+    var worklists = try PendingWorklists.init(allocator, modules, relocation.offsets.items);
 '''
-helper = '''        return result;
-    }
-
-    /// Remove lifetime/ownership facts from a pointer-free opaque read while
-    /// preserving structural value facts. Choice discriminants and aggregate
-    /// projections describe the value itself, not the storage envelope that
-    /// happened to contain it.
-    fn nonPointerOpaqueRead(
-        self: *SafetyChecker,
-        value: facts.ValueFacts,
-        ty: graph_mod.GlobalTypeId,
-    ) !facts.ValueFacts {
-        var result = value.scalarOpaqueRead();
-        result.known_choice_variant = value.known_choice_variant;
-
-        if (value.fields.len != 0) {
-            const fields = try self.allocator.alloc(facts.FieldFacts, value.fields.len);
-            for (value.fields, 0..) |field, index| {
-                const stored = try self.allocator.create(facts.ValueFacts);
-                stored.* = if (self.fieldTypeAt(ty, field.index)) |field_ty|
-                    try self.nonPointerOpaqueRead(field.value.*, field_ty)
-                else
-                    field.value.scalarOpaqueRead();
-                fields[index] = .{ .index = field.index, .value = stored };
-            }
-            result.fields = fields;
-        }
-        if (value.variants.len != 0) {
-            const variants = try self.allocator.alloc(facts.VariantFacts, value.variants.len);
-            for (value.variants, 0..) |variant, index| {
-                const stored = try self.allocator.create(facts.ValueFacts);
-                stored.* = if (self.variantPayloadTypeAt(ty, variant.index)) |payload_ty|
-                    try self.nonPointerOpaqueRead(variant.value.*, payload_ty)
-                else
-                    variant.value.scalarOpaqueRead();
-                variants[index] = .{ .index = variant.index, .value = stored };
-            }
-            result.variants = variants;
-        }
-        return result;
-    }
-
-    fn fieldTypeAt(
+new = '''    const resolved = try allocator.alloc(bool, total);
+    defer allocator.free(resolved);
+    @memset(resolved, false);
+    const invalid = try allocator.alloc(bool, total);
+    defer allocator.free(invalid);
+    @memset(invalid, false);
+    var worklists = try PendingWorklists.init(allocator, modules, relocation.offsets.items);
 '''
-if text.count(anchor) != 1:
-    raise RuntimeError(f"opaque read helper anchor changed: {text.count(anchor)}")
-text = text.replace(anchor, helper, 1)
-checker.write_text(text)
+if text.count(old) != 1:
+    raise RuntimeError(f"work-state allocation anchor changed: {text.count(old)}")
+text = text.replace(old, new, 1)
+old = '''                    relocation.offsets.items,
+                    resolved,
+                    worklists.forPhase(phase),
+'''
+new = '''                    relocation.offsets.items,
+                    resolved,
+                    invalid,
+                    worklists.forPhase(phase),
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"resolve phase call anchor changed: {text.count(old)}")
+text = text.replace(old, new, 1)
+old = '''    offsets: []const globalizer.Offsets,
+    resolved: []bool,
+    work: *std.ArrayList(PendingWorkItem),
+'''
+new = '''    offsets: []const globalizer.Offsets,
+    resolved: []bool,
+    invalid: []bool,
+    work: *std.ArrayList(PendingWorkItem),
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"resolve phase signature anchor changed: {text.count(old)}")
+text = text.replace(old, new, 1)
+old = '''        const flat_index: usize = @intCast(item.flat_index);
+        const module = &modules[module_index];
+        const operation = module.semantic.pending_operations.items[operation_index];
+'''
+new = '''        const flat_index: usize = @intCast(item.flat_index);
+        if (invalid[flat_index]) {
+            work.items[write] = item;
+            write += 1;
+            continue;
+        }
+        const module = &modules[module_index];
+        const operation = module.semantic.pending_operations.items[operation_index];
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"terminal invalid skip anchor changed: {text.count(old)}")
+text = text.replace(old, new, 1)
+old = '''        if (result.isResolved()) {
+            resolved[flat_index] = true;
+            changed = true;
+        } else {
+            work.items[write] = item;
+            write += 1;
+        }
+'''
+new = '''        if (result.isResolved()) {
+            resolved[flat_index] = true;
+            changed = true;
+        } else {
+            if (result.isInvalid()) invalid[flat_index] = true;
+            work.items[write] = item;
+            write += 1;
+        }
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"terminal invalid result anchor changed: {text.count(old)}")
+semantizer.write_text(text.replace(old, new, 1))
 
 Path(".github/semantic_refactor_test_command").write_text(
     "zig build test-programs "
     "-Dtest-filter=feature_tests/types/03_choice_payloads "
-    "-Dtest-filter=feature_tests/ownership/94_choice_if_narrowing "
-    "-Dtest-filter=feature_tests/ownership/95X_choice_unproven_payload "
-    "-Dtest-filter=feature_tests/ownership/96_choice_comparison_narrowing\n"
+    "-Dtest-filter=feature_tests/types/04X_choice_missing_payload "
+    "-Dtest-filter=feature_tests/types/10X_choice_unknown_variant "
+    "-Dtest-filter=feature_tests/types/11X_choice_payload_access_without_payload\n"
 )
-Path(".git/semantic-refactor-message").write_text("Preserve structural facts across opaque reads\n")
+Path(".git/semantic-refactor-message").write_text("Track terminal invalid semantic resolutions\n")
