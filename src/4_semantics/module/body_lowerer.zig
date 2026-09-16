@@ -305,6 +305,7 @@ const Context = struct {
         return self.pending(node, .{ .resolve_name_use = .{
             .node = self.nextNodeId(),
             .name = try self.writer.addString(text),
+            .source = self.sourceRef(node),
         } }, expected);
     }
 
@@ -481,6 +482,7 @@ const Context = struct {
                         .node = self.nextNodeId(),
                         .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.field_token)),
                         .module_path = module_path,
+                        .source = self.sourceRef(access.value),
                     } }, expected);
                 }
             }

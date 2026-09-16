@@ -272,6 +272,7 @@ pub const PendingOperation = union(enum) {
         node: ModuleNodeId,
         name: primitives.StringRange,
         module_path: ?primitives.StringRange = null,
+        source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 },
     },
     resolve_name_assignment: struct {
         node: ModuleNodeId,

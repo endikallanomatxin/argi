@@ -4,6 +4,7 @@ const tok = @import("../../2_tokens/token.zig");
 const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const module_views = @import("../module/views.zig");
+const primitives = @import("../primitives/schema.zig");
 const global_sg = @import("graph.zig");
 const global_types = @import("types.zig");
 const globalizer = @import("globalizer.zig");
@@ -358,6 +359,10 @@ pub fn semantizeWithOptions(
     };
     if (remaining != 0) {
         if (options.diagnostics) |diagnostics| {
+            if (try diagnoseUnresolvedQualifiedTypes(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
+                return error.Reported;
+            if (try diagnoseUnresolvedQualifiedNames(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                return error.Reported;
             if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
             if (try diagnoseUnresolvedCopy(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
@@ -371,6 +376,9 @@ pub fn semantizeWithOptions(
     _ = relocation.graph.reconcileTypeResolution();
     _ = relocation.graph.reconcileBindingTypeResolution();
     if (relocation.graph.hasUnresolvedTypes()) {
+        if (options.diagnostics) |diagnostics|
+            if (try diagnoseUnresolvedQualifiedTypes(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
+                return error.Reported;
         std.debug.print("global sema unresolved global type slots remain\n", .{});
         return error.UnsupportedGlobalSemantic;
     }
@@ -622,6 +630,218 @@ fn markUnresolvedTypeSlots(
     }
 }
 
+fn diagnoseUnresolvedQualifiedTypes(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    offsets: []const globalizer.Offsets,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    for (modules, 0..) |*module, module_index| {
+        for (0..module_views.typeCount(module)) |raw| {
+            const local_type: module_entities.ModuleTypeId = @enumFromInt(@as(u32, @intCast(raw)));
+            const external = switch (try module_views.typeView(module, local_type)) {
+                .external => |id| id,
+                .resolved => continue,
+            };
+            const global_type = globalizer.globalType(offsets[module_index], local_type);
+            if (!graph.isTypeUnresolved(global_type)) continue;
+            const reference = module.semantic.external_refs.items[@intFromEnum(external)];
+            if (reference.kind != .type or reference.module_path == null) continue;
+            const target = module_linker.resolveImportPath(
+                allocator,
+                graph,
+                modules,
+                module_index,
+                module.text(reference.module_path.?),
+            ) catch |err| switch (err) {
+                error.UnknownModuleReference, error.AmbiguousModuleReference => continue,
+                else => return err,
+            };
+            if (@intFromEnum(target) == module_index) continue;
+            const name = module.text(reference.name);
+            if (!std.mem.startsWith(u8, name, "_")) continue;
+            if (!declarationNameExistsInModule(graph, target, name, &.{ .type, .abstract_type })) continue;
+            try diagnostics.add(
+                diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], reference.source)),
+                .semantic,
+                "type '{s}' is private to its module",
+                .{name},
+            );
+            return true;
+        }
+    }
+    return false;
+}
+
+fn diagnoseUnresolvedQualifiedNames(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    resolved: []const bool,
+    reachable: ?*const reachability_mod.FunctionSet,
+    offsets: []const globalizer.Offsets,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    var flat: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
+            defer flat += 1;
+            const value = switch (operation) {
+                .resolve_name_use => |item| item,
+                else => continue,
+            };
+            const path = value.module_path orelse continue;
+            const owner = if (operation_index < module.semantic.pending_owner_functions.items.len)
+                if (module.semantic.pending_owner_functions.items[operation_index]) |item| globalizer.globalFunction(offsets[module_index], item) else null
+            else
+                null;
+            if (resolved[flat] or (reachable != null and owner != null and !reachable.?.contains(owner.?))) continue;
+
+            const target = module_linker.resolveImportPath(
+                allocator,
+                graph,
+                modules,
+                module_index,
+                module.text(path),
+            ) catch |err| switch (err) {
+                error.UnknownModuleReference, error.AmbiguousModuleReference => continue,
+                else => return err,
+            };
+            const target_index: usize = @intFromEnum(target);
+            const name = module.text(value.name);
+            const source = globalSource(offsets[module_index], value.source);
+            if (moduleBindingNameExists(&modules[target_index], name)) {
+                if (target_index == module_index or !std.mem.startsWith(u8, name, "_")) continue;
+                try diagnostics.add(
+                    diagnosticLocation(graph, diagnostics, source),
+                    .semantic,
+                    "value '{s}' is private to its module",
+                    .{name},
+                );
+                return true;
+            }
+            try diagnostics.add(
+                diagnosticLocation(graph, diagnostics, source),
+                .semantic,
+                "module '{s}' has no value '.{s}'",
+                .{ moduleQualifierText(graph, diagnostics, source, module, path, name), name },
+            );
+            return true;
+        }
+    }
+    return false;
+}
+
+fn globalSource(o: globalizer.Offsets, source: primitives.SourceRef) primitives.SourceRef {
+    return .{ .file_index = o.file_base + source.file_index, .offset = source.offset };
+}
+
+fn moduleQualifierText(
+    graph: *const global_sg.GlobalSemanticGraph,
+    diagnostics: *const diagnostics_mod.Diagnostics,
+    source: primitives.SourceRef,
+    module: *const module_sg.ModuleSemanticGraph,
+    path: primitives.StringRange,
+    member_name: []const u8,
+) []const u8 {
+    if (sourceQualifierText(graph, diagnostics, source, member_name)) |value| return value;
+    const spelling = std.mem.trim(u8, module.text(path), "\"'");
+    return std.fs.path.basename(spelling);
+}
+
+fn sourceQualifierText(
+    graph: *const global_sg.GlobalSemanticGraph,
+    diagnostics: *const diagnostics_mod.Diagnostics,
+    source: primitives.SourceRef,
+    member_name: []const u8,
+) ?[]const u8 {
+    const location = diagnosticLocation(graph, diagnostics, source);
+    const file_index: usize = @intFromEnum(location.file);
+    if (file_index >= diagnostics.source_files.len) return null;
+    const code = diagnostics.source_files[file_index].code;
+    const offset: usize = @intCast(location.offset);
+    if (offset > code.len) return null;
+
+    // Most member nodes point either at the qualifier (`dep.foo`) or at the
+    // member token itself. Handle both without storing duplicate source text in
+    // the compact semantic graph.
+    if (offset < code.len and std.mem.startsWith(u8, code[offset..], member_name)) {
+        if (offset != 0 and code[offset - 1] == '.') return identifierBefore(code, offset - 1);
+    }
+    if (offset < code.len and isIdentifierByte(code[offset])) {
+        var end = offset;
+        while (end < code.len and isIdentifierByte(code[end])) : (end += 1) {}
+        if (end < code.len and code[end] == '.') return code[offset..end];
+    }
+    if (offset < code.len and code[offset] == '.') return identifierBefore(code, offset);
+    return null;
+}
+
+fn identifierBefore(code: []const u8, dot: usize) ?[]const u8 {
+    if (dot == 0 or code[dot] != '.') return null;
+    var start = dot;
+    while (start != 0 and isIdentifierByte(code[start - 1])) : (start -= 1) {}
+    if (start == dot) return null;
+    return code[start..dot];
+}
+
+fn isIdentifierByte(value: u8) bool {
+    return std.ascii.isAlphanumeric(value) or value == '_';
+}
+
+fn moduleBindingNameExists(module: *const module_sg.ModuleSemanticGraph, name: []const u8) bool {
+    for (module.semantic.declaration_bindings.items) |relation| {
+        const declaration = module.declarations.items[@intFromEnum(relation.declaration)];
+        if (std.mem.eql(u8, module.text(declaration.name), name)) return true;
+    }
+    return false;
+}
+
+fn declarationNameExistsInModule(
+    graph: *const global_sg.GlobalSemanticGraph,
+    module: global_sg.GlobalModuleId,
+    name: []const u8,
+    kinds: []const primitives.DeclarationKind,
+) bool {
+    for (graph.declarations.items, 0..) |declaration, raw| {
+        const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
+        if (graph.moduleForDeclaration(id) != module) continue;
+        if (!std.mem.eql(u8, graph.text(declaration.name), name)) continue;
+        for (kinds) |kind| if (declaration.kind == kind) return true;
+    }
+    return false;
+}
+
+fn functionDeclarationVisibleForDiagnostic(
+    graph: *const global_sg.GlobalSemanticGraph,
+    current_module: usize,
+    declaration: global_sg.GlobalDeclId,
+    qualified_module: ?global_sg.GlobalModuleId,
+) bool {
+    const owner = graph.moduleForDeclaration(declaration) orelse return false;
+    const own_module = @intFromEnum(owner) == current_module;
+    const name = graph.text(graph.declarations.items[@intFromEnum(declaration)].name);
+    if (!own_module and std.mem.startsWith(u8, name, "_")) return false;
+    if (qualified_module) |wanted| return owner == wanted;
+    return own_module or graph.modules.items[@intFromEnum(owner)].is_bundled_core;
+}
+
+fn visibleFunctionNameExists(
+    graph: *const global_sg.GlobalSemanticGraph,
+    current_module: usize,
+    qualified_module: ?global_sg.GlobalModuleId,
+    name: []const u8,
+) bool {
+    for (graph.declarations.items, 0..) |declaration, raw| {
+        if (declaration.kind != .function and declaration.kind != .test_function) continue;
+        if (!std.mem.eql(u8, graph.text(declaration.name), name)) continue;
+        const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
+        if (functionDeclarationVisibleForDiagnostic(graph, current_module, id, qualified_module)) return true;
+    }
+    return false;
+}
+
 fn diagnoseUnresolvedChoice(
     allocator: std.mem.Allocator,
     graph: *const global_sg.GlobalSemanticGraph,
@@ -770,8 +990,43 @@ fn diagnoseUnresolvedCall(
             else
                 null;
             if (resolved[flat] or (reachable != null and owner != null and !reachable.?.contains(owner.?))) continue;
+
             const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
             const name = module.text(reference.name);
+            const qualified_module: ?global_sg.GlobalModuleId = if (reference.module_path) |path|
+                module_linker.resolveImportPath(allocator, graph, modules, module_index, module.text(path)) catch |err| switch (err) {
+                    error.UnknownModuleReference, error.AmbiguousModuleReference => null,
+                    else => return err,
+                }
+            else
+                null;
+            const source = globalSource(offsets[module_index], reference.source);
+            const location = diagnosticLocation(graph, diagnostics, .{
+                .file_index = source.file_index,
+                .offset = source.offset + @as(u32, @intCast(name.len)),
+            });
+
+            if (reference.module_path) |path| {
+                const target = qualified_module orelse continue;
+                const has_name = declarationNameExistsInModule(graph, target, name, &.{ .function, .test_function });
+                if (has_name and @intFromEnum(target) != module_index and std.mem.startsWith(u8, name, "_")) {
+                    try diagnostics.add(location, .semantic, "function '{s}' is private to its module", .{name});
+                    return true;
+                }
+                if (!has_name) {
+                    try diagnostics.add(
+                        location,
+                        .semantic,
+                        "module '{s}' has no function named '{s}'",
+                        .{ moduleQualifierText(graph, diagnostics, source, module, path, name), name },
+                    );
+                    return true;
+                }
+            } else if (!visibleFunctionNameExists(graph, module_index, null, name)) {
+                try diagnostics.add(location, .semantic, "no function named '{s}' exists", .{name});
+                return true;
+            }
+
             const input_id = globalizer.globalNode(offsets[module_index], call.input);
             const input = switch (graph.node(input_id).content) {
                 .struct_value_literal => |value| value,
@@ -789,12 +1044,14 @@ fn diagnoseUnresolvedCall(
                 }
             }
             if (!input_complete) continue;
+
             var candidates: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
             defer candidates.deinit(allocator);
             for (graph.functions.items, 0..) |function, raw| {
                 const declaration = graph.declaration(function.declaration);
-                if (std.mem.eql(u8, graph.text(declaration.name), name))
-                    try candidates.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
+                if (!std.mem.eql(u8, graph.text(declaration.name), name)) continue;
+                if (!functionDeclarationVisibleForDiagnostic(graph, module_index, function.declaration, qualified_module)) continue;
+                try candidates.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
             }
             if (candidates.items.len == 0) continue;
 
@@ -814,10 +1071,6 @@ fn diagnoseUnresolvedCall(
                 try message.appendSlice(" -> ");
                 try appendFieldShape(&message, graph, function.output);
             }
-            const location = diagnosticLocation(graph, diagnostics, .{
-                .file_index = offsets[module_index].file_base + reference.source.file_index,
-                .offset = reference.source.offset + @as(u32, @intCast(name.len)),
-            });
             try diagnostics.add(location, .semantic, "{s}", .{message.items});
             return true;
         }
