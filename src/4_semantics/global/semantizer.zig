@@ -269,6 +269,9 @@ pub fn semantizeWithOptions(
     const resolved = try allocator.alloc(bool, total);
     defer allocator.free(resolved);
     @memset(resolved, false);
+    const invalid = try allocator.alloc(bool, total);
+    defer allocator.free(invalid);
+    @memset(invalid, false);
     var worklists = try PendingWorklists.init(allocator, modules, relocation.offsets.items);
     defer worklists.deinit(allocator);
     var reachable_storage: reachability_mod.FunctionSet = undefined;
@@ -302,6 +305,7 @@ pub fn semantizeWithOptions(
                     modules,
                     relocation.offsets.items,
                     resolved,
+                    invalid,
                     worklists.forPhase(phase),
                     reachable,
                     &pending_attempts,
@@ -433,6 +437,7 @@ fn resolvePendingPhase(
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     resolved: []bool,
+    invalid: []bool,
     work: *std.ArrayList(PendingWorkItem),
     reachable: ?*const reachability_mod.FunctionSet,
     pending_attempts: *u64,
@@ -450,6 +455,11 @@ fn resolvePendingPhase(
         const module_index: usize = @intCast(item.module_index);
         const operation_index: usize = @intCast(item.operation_index);
         const flat_index: usize = @intCast(item.flat_index);
+        if (invalid[flat_index]) {
+            work.items[write] = item;
+            write += 1;
+            continue;
+        }
         const module = &modules[module_index];
         const operation = module.semantic.pending_operations.items[operation_index];
         const result = try resolvePendingOperation(
@@ -470,6 +480,7 @@ fn resolvePendingPhase(
             resolved[flat_index] = true;
             changed = true;
         } else {
+            if (result.isInvalid()) invalid[flat_index] = true;
             work.items[write] = item;
             write += 1;
         }
