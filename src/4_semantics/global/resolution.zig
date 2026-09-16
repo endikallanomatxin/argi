@@ -1,6 +1,7 @@
 pub const Result = enum(u2) {
     not_applicable,
     deferred,
+    invalid,
     resolved,
 
     pub fn fromBool(value: bool) Result {
@@ -9,6 +10,10 @@ pub const Result = enum(u2) {
 
     pub fn isResolved(self: Result) bool {
         return self == .resolved;
+    }
+
+    pub fn isInvalid(self: Result) bool {
+        return self == .invalid;
     }
 
     /// `not_applicable` is an internal strategy result: a composite operation
@@ -32,6 +37,8 @@ test "resolution result represents strategy fallback explicitly" {
     try std.testing.expect(!Result.not_applicable.isResolved());
     try std.testing.expect(Result.not_applicable.allowsFallback());
     try std.testing.expect(!Result.deferred.allowsFallback());
+    try std.testing.expect(!Result.invalid.allowsFallback());
     try std.testing.expect(!Result.resolved.allowsFallback());
     try std.testing.expect(Result.deferred.isDeferred());
+    try std.testing.expect(Result.invalid.isInvalid());
 }
