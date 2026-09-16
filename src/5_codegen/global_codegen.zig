@@ -504,7 +504,7 @@ pub const CodeGenerator = struct {
                 try self.pointerAssignment(assignment);
                 break :blk null;
             },
-            .type_initializer => |initializer| try self.typeInitializer(initializer),
+            .type_initializer => |initializer| try self.typeInitializer(initializer, node.ty),
             .explicit_cast => |cast| try self.explicitCast(cast),
         };
     }
@@ -1610,9 +1610,8 @@ pub const CodeGenerator = struct {
         return CodegenError.InvalidType;
     }
 
-    fn typeInitializer(self: *CodeGenerator, initializer: anytype) !TypedValue {
-        const declaration = self.graph.declarations.items[@intFromEnum(initializer.type_decl)];
-        const ty = declaration.type_id orelse return CodegenError.InvalidType;
+    fn typeInitializer(self: *CodeGenerator, initializer: anytype, maybe_ty: ?graph_mod.GlobalTypeId) !TypedValue {
+        const ty = maybe_ty orelse return CodegenError.InvalidType;
         const type_ref = try self.toLLVMType(ty);
         const storage = c.LLVMBuildAlloca(self.builder, type_ref, "type.init.tmp");
         try self.typeInitializerInto(initializer, storage);

@@ -274,7 +274,7 @@ pub const Resolver = struct {
         return self.instantiate(declaration, best_arguments);
     }
 
-    fn inferBindingsFromInput(
+    pub fn inferBindingsFromInput(
         self: *Resolver,
         module_index: usize,
         pattern: ir.ParameterizedTypeId,
@@ -305,7 +305,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn appendBoundArguments(
+    pub fn appendBoundArguments(
         self: *Resolver,
         module_index: usize,
         parameters: primitives.Range(ir.ComptimeParameterId),
@@ -915,7 +915,7 @@ pub const Resolver = struct {
         defer bindings.deinit(self.allocator);
         const destination_pointer = try self.generics.internType(.{ .pointer = .{ .child = destination_type, .mutability = .read_write } });
         if (!try self.inferInputType(located.module_index, storage.fields.items[shape.fields.start].ty, destination_pointer, &bindings)) return null;
-        for (storage.fields.items[shape.fields.start + 1..][0 .. shape.fields.len - 1]) |field| {
+        for (storage.fields.items[shape.fields.start + 1 ..][0 .. shape.fields.len - 1]) |field| {
             for (self.graph.value_fields.items[supplied.fields.start..][0..supplied.fields.len]) |value| {
                 if (!std.mem.eql(u8, module.text(field.name), self.graph.text(value.name))) continue;
                 const actual = self.graph.node(value.value).ty orelse return null;
