@@ -1,1 +1,1 @@
-zig build test-programs -Dtest-filter=feature_tests/polymorphism/24_abstract_dispatch_beats_regular_generic_with_defaults
+zig build test-programs -Dtest-filter=feature_tests/modules/02_import_current_relative -Dtest-filter=feature_tests/modules/09_import_more_library -Dtest-filter=feature_tests/modules/10_import_transitive
