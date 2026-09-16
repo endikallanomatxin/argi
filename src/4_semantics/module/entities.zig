@@ -271,6 +271,7 @@ pub const PendingOperation = union(enum) {
     resolve_name_use: struct {
         node: ModuleNodeId,
         name: primitives.StringRange,
+        module_path: ?primitives.StringRange = null,
     },
     resolve_name_assignment: struct {
         node: ModuleNodeId,

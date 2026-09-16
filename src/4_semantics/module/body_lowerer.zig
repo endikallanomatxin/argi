@@ -15,6 +15,10 @@ const NamedBinding = struct {
     id: entities.ModuleBindingId,
     ty: ?entities.ModuleTypeId,
 };
+const ScopeMark = struct {
+    bindings: usize,
+    module_aliases: usize,
+};
 pub const Lowered = struct { node: entities.ModuleNodeId, ty: ?entities.ModuleTypeId };
 const ExpressionMode = enum { body, initializer };
 
@@ -29,9 +33,11 @@ pub fn lowerMissingFunctions(
         .files = files,
         .writer = writer_mod.Writer.init(allocator, graph),
         .bindings = std.array_list.Managed(NamedBinding).init(allocator),
-        .scope_marks = std.array_list.Managed(usize).init(allocator),
+        .module_aliases = std.array_list.Managed(type_lowerer.LexicalModuleAlias).init(allocator),
+        .scope_marks = std.array_list.Managed(ScopeMark).init(allocator),
     };
     defer context.bindings.deinit();
+    defer context.module_aliases.deinit();
     defer context.scope_marks.deinit();
     return context.lowerFunctions();
 }
@@ -50,16 +56,19 @@ pub fn lowerInitializerExpression(
         .files = files,
         .writer = writer_mod.Writer.init(allocator, graph),
         .bindings = std.array_list.Managed(NamedBinding).init(allocator),
-        .scope_marks = std.array_list.Managed(usize).init(allocator),
+        .module_aliases = std.array_list.Managed(type_lowerer.LexicalModuleAlias).init(allocator),
+        .scope_marks = std.array_list.Managed(ScopeMark).init(allocator),
         .expression_mode = .initializer,
     };
     defer context.bindings.deinit();
+    defer context.module_aliases.deinit();
     defer context.scope_marks.deinit();
     context.file_index = file_index;
     const file = files[@intCast(file_index)];
     context.tree = file.tree;
     context.source = file.source;
     try context.seedGlobalBindings();
+    try context.seedGlobalModuleAliases();
     return context.lowerNode(node, expected);
 }
 
@@ -69,7 +78,8 @@ const Context = struct {
     files: []const graph_mod.FileInput,
     writer: writer_mod.Writer,
     bindings: std.array_list.Managed(NamedBinding),
-    scope_marks: std.array_list.Managed(usize),
+    module_aliases: std.array_list.Managed(type_lowerer.LexicalModuleAlias),
+    scope_marks: std.array_list.Managed(ScopeMark),
     file_index: u32 = 0,
     tree: *const syn.FileSyntaxTree = undefined,
     source: []const u8 = &.{},
@@ -101,7 +111,9 @@ const Context = struct {
             if (declaration.generic_params.len != 0 or declaration.generic_params_struct != null) continue;
 
             self.bindings.clearRetainingCapacity();
+            self.module_aliases.clearRetainingCapacity();
             self.scope_marks.clearRetainingCapacity();
+            try self.seedGlobalModuleAliases();
             try self.pushScope();
             var inputs = std.array_list.Managed(entities.ModuleBindingId).init(self.allocator);
             defer inputs.deinit();
@@ -175,6 +187,7 @@ const Context = struct {
         defer nodes.deinit();
         var ret_val: ?entities.ModuleNodeId = null;
         for (block.statements) |statement| {
+            if (try self.lowerLocalModuleAlias(statement)) continue;
             const value = try self.lowerNode(statement, null);
             try nodes.append(value.node);
             ret_val = value.node;
@@ -371,7 +384,7 @@ const Context = struct {
         defer self.suppress_implicit_copies = previous_suppression;
         const input = try self.lowerNode(call.input, null);
         const module_path = if (call.module_qualifier) |token_index|
-            try self.writer.addString(self.tree.tokenTextFromSource(self.source, token_index))
+            try self.modulePathForQualifier(token_index)
         else
             null;
         const external = try self.writer.addExternalRef(.{
@@ -460,6 +473,18 @@ const Context = struct {
 
     fn lowerField(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const access = self.tree.structFieldAccess(node).?;
+        if (self.tree.tag(access.value) == .identifier) {
+            const qualifier = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(access.value));
+            if (self.lookupBinding(qualifier) == null) {
+                if (self.moduleAliasPath(qualifier)) |module_path| {
+                    return self.pending(node, .{ .resolve_name_use = .{
+                        .node = self.nextNodeId(),
+                        .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.field_token)),
+                        .module_path = module_path,
+                    } }, expected);
+                }
+            }
+        }
         const value = try self.lowerNode(access.value, null);
         return self.pending(node, .{ .resolve_field = .{
             .node = self.nextNodeId(),
@@ -806,6 +831,18 @@ const Context = struct {
         return self.resolved(node, value.ty, @unionInit(entities.ResolvedNode.Content, @tagName(tag), value.node));
     }
 
+    fn lowerLocalModuleAlias(self: *Context, node: syn.NodeIndex) !bool {
+        const declaration = self.tree.symbolDeclaration(node) orelse return false;
+        const value = declaration.value orelse return false;
+        if (self.tree.tag(value) != .import_statement) return false;
+        const statement = self.tree.importStatement(value).?;
+        try self.module_aliases.append(.{
+            .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, declaration.name_token)),
+            .path = try self.writer.addString(self.tree.tokenTextFromSource(self.source, statement.path_token)),
+        });
+        return true;
+    }
+
     fn lowerImport(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const statement = self.tree.importStatement(node).?;
         const path = self.tree.tokenTextFromSource(self.source, statement.path_token);
@@ -855,6 +892,7 @@ const Context = struct {
             .file_index = self.file_index,
             .tree = self.tree,
             .source = self.source,
+            .module_aliases = self.module_aliases.items,
         };
         return lowerer.lower(node);
     }
@@ -894,12 +932,39 @@ const Context = struct {
         }
     }
 
+    fn seedGlobalModuleAliases(self: *Context) !void {
+        self.module_aliases.clearRetainingCapacity();
+        for (self.graph.semantic.module_aliases.items) |alias| {
+            const declaration = self.graph.declarations.items[@intFromEnum(alias.declaration)];
+            try self.module_aliases.append(.{ .name = declaration.name, .path = alias.path });
+        }
+    }
+
+    fn moduleAliasPath(self: *const Context, name: []const u8) ?primitives.StringRange {
+        var index = self.module_aliases.items.len;
+        while (index != 0) {
+            index -= 1;
+            const alias = self.module_aliases.items[index];
+            if (std.mem.eql(u8, self.graph.text(alias.name), name)) return alias.path;
+        }
+        return null;
+    }
+
+    fn modulePathForQualifier(self: *Context, token: syn.TokenIndex) !primitives.StringRange {
+        const spelling = self.tree.tokenTextFromSource(self.source, token);
+        return self.moduleAliasPath(spelling) orelse try self.writer.addString(spelling);
+    }
+
     fn pushScope(self: *Context) !void {
-        try self.scope_marks.append(self.bindings.items.len);
+        try self.scope_marks.append(.{
+            .bindings = self.bindings.items.len,
+            .module_aliases = self.module_aliases.items.len,
+        });
     }
     fn popScope(self: *Context) void {
         const mark = self.scope_marks.pop().?;
-        self.bindings.shrinkRetainingCapacity(mark);
+        self.bindings.shrinkRetainingCapacity(mark.bindings);
+        self.module_aliases.shrinkRetainingCapacity(mark.module_aliases);
     }
     fn lookupBinding(self: *const Context, name: []const u8) ?NamedBinding {
         var index = self.bindings.items.len;

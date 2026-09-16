@@ -4,6 +4,7 @@ const module_entities = @import("../module/entities.zig");
 const module_views = @import("../module/views.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
+const module_linker = @import("module_linker.zig");
 const resolution = @import("resolution.zig");
 const types = @import("types.zig");
 const callable = @import("../primitives/callable.zig");
@@ -1252,9 +1253,9 @@ pub const Resolver = struct {
             } else found = alias.target;
         }
         if (found) |target| return target;
-        // Transitional/compiler-generated qualifiers may still spell a module
-        // directly; source import aliases never take this fallback.
-        return self.findModuleBySpelling(qualifier);
+        // Local lexical imports are lowered to their original path spelling.
+        // Reuse the linker algorithm so every source import has one identity rule.
+        return module_linker.resolveImportPath(self.allocator, self.graph, self.modules, current_module, qualifier);
     }
 
     fn findModuleBySpelling(self: *Resolver, spelling: []const u8) !global_sg.GlobalModuleId {

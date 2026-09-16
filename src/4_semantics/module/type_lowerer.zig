@@ -4,6 +4,12 @@ const graph_mod = @import("graph.zig");
 const entities = @import("entities.zig");
 const views = @import("views.zig");
 const writer_mod = @import("writer.zig");
+const primitives = @import("../primitives/schema.zig");
+
+pub const LexicalModuleAlias = struct {
+    name: primitives.StringRange,
+    path: primitives.StringRange,
+};
 
 // Virtual is a language-level runtime type constructor. Its abstract
 // argument describes a vtable contract, unlike an ordinary generic argument
@@ -20,6 +26,7 @@ pub const Context = struct {
     file_index: u32,
     tree: *const syn.FileSyntaxTree,
     source: []const u8,
+    module_aliases: []const LexicalModuleAlias = &.{},
 
     pub fn lower(self: *Context, node: syn.NodeIndex) anyerror!entities.ModuleTypeId {
         const syntax_type = self.tree.syntaxType(node) orelse return error.ExpectedTypeSyntax;
@@ -78,7 +85,7 @@ pub const Context = struct {
 
         const name = try self.writer.addString(name_text);
         const module_path = if (qualifier_token) |token_index|
-            try self.writer.addString(self.tree.tokenTextFromSource(self.source, token_index))
+            try self.modulePathForQualifier(token_index)
         else
             null;
         const external = try self.writer.addExternalRef(.{
@@ -245,6 +252,17 @@ pub const Context = struct {
         for (self.graph.declarationsNamed(name)) |declaration|
             if (self.graph.declarations.items[@intFromEnum(declaration)].kind == .choice_option) return declaration;
         return null;
+    }
+
+    fn modulePathForQualifier(self: *Context, token: syn.TokenIndex) !primitives.StringRange {
+        const spelling = self.tree.tokenTextFromSource(self.source, token);
+        var index = self.module_aliases.len;
+        while (index != 0) {
+            index -= 1;
+            const alias = self.module_aliases[index];
+            if (std.mem.eql(u8, self.graph.text(alias.name), spelling)) return alias.path;
+        }
+        return self.writer.addString(spelling);
     }
 
     fn sourceRef(self: *const Context, node: syn.NodeIndex) @import("../primitives/schema.zig").SourceRef {
