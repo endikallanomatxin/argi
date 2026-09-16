@@ -1,7 +1,7 @@
 from pathlib import Path
 
-path = Path("src/3_syntax/syntaxer.zig")
-text = path.read_text()
+syntaxer = Path("src/3_syntax/syntaxer.zig")
+text = syntaxer.read_text()
 
 old_rhs = r'''    fn parsePipeRhs(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         const prev_pipe_rhs = self.parsing_pipe_rhs;
@@ -14,18 +14,18 @@ new_rhs = r'''    const PipePlaceholderAnalysis = struct {
         has_placeholder: bool = false,
         direct_shape: bool = false,
         first_placeholder: ?syn.TokenIndex = null,
-        invalid_placeholder: ?syn.TokenIndex = null,
+        invalid_token: ?syn.TokenIndex = null,
     };
 
     fn mergePipePlaceholderAnalysis(result: *PipePlaceholderAnalysis, child: PipePlaceholderAnalysis) void {
         if (!result.has_placeholder and child.has_placeholder) result.first_placeholder = child.first_placeholder;
         result.has_placeholder = result.has_placeholder or child.has_placeholder;
-        if (result.invalid_placeholder == null) result.invalid_placeholder = child.invalid_placeholder;
+        if (result.invalid_token == null) result.invalid_token = child.invalid_token;
     }
 
-    fn invalidatePipePlaceholderAnalysis(result: *PipePlaceholderAnalysis) void {
-        if (result.has_placeholder and result.invalid_placeholder == null)
-            result.invalid_placeholder = result.first_placeholder;
+    fn invalidatePipePlaceholderAnalysis(self: *Syntaxer, result: *PipePlaceholderAnalysis, node: syn.NodeIndex) void {
+        if (result.has_placeholder and result.invalid_token == null)
+            result.invalid_token = self.file.mainToken(node);
         result.direct_shape = false;
     }
 
@@ -43,22 +43,22 @@ new_rhs = r'''    const PipePlaceholderAnalysis = struct {
             .address_of, .address_of_mut => blk: {
                 const child_node = self.file.unaryOperand(node).?;
                 var result = self.analyzePipePlaceholder(child_node);
-                if (result.has_placeholder and (result.invalid_placeholder != null or !result.direct_shape))
-                    invalidatePipePlaceholderAnalysis(&result);
+                if (result.has_placeholder and (result.invalid_token != null or !result.direct_shape))
+                    self.invalidatePipePlaceholderAnalysis(&result, node);
                 break :blk result;
             },
             .struct_field_access => blk: {
                 const access = self.file.structFieldAccess(node).?;
                 var result = self.analyzePipePlaceholder(access.value);
-                if (result.has_placeholder and (result.invalid_placeholder != null or !result.direct_shape))
-                    invalidatePipePlaceholderAnalysis(&result);
+                if (result.has_placeholder and (result.invalid_token != null or !result.direct_shape))
+                    self.invalidatePipePlaceholderAnalysis(&result, node);
                 break :blk result;
             },
             .choice_payload_access => blk: {
                 const access = self.file.choicePayloadAccess(node).?;
                 var result = self.analyzePipePlaceholder(access.value);
-                if (result.has_placeholder and (result.invalid_placeholder != null or !result.direct_shape))
-                    invalidatePipePlaceholderAnalysis(&result);
+                if (result.has_placeholder and (result.invalid_token != null or !result.direct_shape))
+                    self.invalidatePipePlaceholderAnalysis(&result, node);
                 break :blk result;
             },
 
@@ -102,7 +102,8 @@ new_rhs = r'''    const PipePlaceholderAnalysis = struct {
             },
 
             // Composite operators are not substitution points. If a placeholder
-            // appears anywhere under one, diagnose the placeholder itself.
+            // appears anywhere under one, diagnose the first unsupported
+            // operator rather than the placeholder itself.
             .pipe_expression,
             .unwrap_or,
             .unwrap_or_do,
@@ -125,7 +126,7 @@ new_rhs = r'''    const PipePlaceholderAnalysis = struct {
                 const op = self.file.binaryOperation(node).?;
                 var result = self.analyzePipePlaceholder(op.lhs);
                 mergePipePlaceholderAnalysis(&result, self.analyzePipePlaceholder(op.rhs));
-                invalidatePipePlaceholderAnalysis(&result);
+                self.invalidatePipePlaceholderAnalysis(&result, node);
                 break :blk result;
             },
 
@@ -135,7 +136,7 @@ new_rhs = r'''    const PipePlaceholderAnalysis = struct {
             .dereference,
             => blk: {
                 var result = self.analyzePipePlaceholder(self.file.unaryOperand(node).?);
-                invalidatePipePlaceholderAnalysis(&result);
+                self.invalidatePipePlaceholderAnalysis(&result, node);
                 break :blk result;
             },
 
@@ -183,7 +184,7 @@ new_pipe = r'''    fn parsePipeExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex
                     "pipe right-hand side must use at least one argument placeholder",
                     .{},
                 );
-            } else if (placeholder.invalid_placeholder) |invalid| {
+            } else if (placeholder.invalid_token) |invalid| {
                 try self.diags.add(
                     self.file.tokenLocation(invalid),
                     .syntax,
@@ -198,6 +199,24 @@ new_pipe = r'''    fn parsePipeExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex
 '''
 if text.count(old_pipe) != 1:
     raise RuntimeError(f"parsePipeExpr anchor changed: {text.count(old_pipe)}")
-path.write_text(text.replace(old_pipe, new_pipe, 1))
+syntaxer.write_text(text.replace(old_pipe, new_pipe, 1))
+
+pipeline = Path("src/0_commands/frontend_pipeline.zig")
+text = pipeline.read_text()
+old = '''    pub fn semantizeGlobalFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !*const global_sg.GlobalSemanticGraph {
+        _ = try self.parseFiles(files);
+        try module_test_validate.validate(
+'''
+new = '''    pub fn semantizeGlobalFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !*const global_sg.GlobalSemanticGraph {
+        _ = try self.parseFiles(files);
+        // Syntax diagnostics are terminal for this compilation. Continuing into
+        // ModuleSema/GlobalSema can only manufacture secondary unresolved work
+        // and pollute the primary parser diagnostic with internal debug noise.
+        if (self.diagnostics.hasErrors()) return error.Reported;
+        try module_test_validate.validate(
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"frontend syntax barrier anchor changed: {text.count(old)}")
+pipeline.write_text(text.replace(old, new, 1))
 
 Path(".git/semantic-refactor-message").write_text("Validate pipe placeholder shapes in syntax\n")
