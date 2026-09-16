@@ -192,14 +192,14 @@ pub const Resolver = struct {
             self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input) catch |err| switch (err) {
                 error.NoMatchingGenericFunction => return .not_applicable,
                 error.DeferredGenericFunction => return .deferred,
-                error.AmbiguousGenericFunction => return err,
+                error.AmbiguousGenericFunction => return .invalid,
                 else => return .deferred,
             }
         else
             self.resolveImplicitGenericFunction(module_index, module, reference, input) catch |err| switch (err) {
                 error.NoMatchingGenericFunction => return .not_applicable,
                 error.DeferredGenericFunction => return .deferred,
-                error.AmbiguousGenericFunction => return err,
+                error.AmbiguousGenericFunction => return .invalid,
                 error.ConflictingGenericArgument => return err,
                 else => return .deferred,
             };
@@ -343,6 +343,7 @@ pub const Resolver = struct {
             module.text(reference.name),
             module_filter,
             input,
+            null,
         );
     }
 
@@ -354,7 +355,7 @@ pub const Resolver = struct {
         name: []const u8,
         input: global_sg.GlobalNodeId,
     ) !global_sg.GlobalFunctionId {
-        return self.resolveImplicitGenericFunctionFiltered(current_module, name, null, input);
+        return self.resolveImplicitGenericFunctionFiltered(current_module, name, null, input, null);
     }
 
     fn resolveImplicitGenericFunctionFiltered(
@@ -363,6 +364,7 @@ pub const Resolver = struct {
         name: []const u8,
         module_filter: ?global_sg.GlobalModuleId,
         input: global_sg.GlobalNodeId,
+        ambiguity_candidates: ?*std.ArrayList(global_sg.GlobalDeclId),
     ) !global_sg.GlobalFunctionId {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |literal| literal,
@@ -451,10 +453,16 @@ pub const Resolver = struct {
                         best_score = score;
                         best_specificity = specificity;
                         tied = false;
+                        if (ambiguity_candidates) |candidates| {
+                            candidates.clearRetainingCapacity();
+                            try candidates.append(self.allocator, declaration);
+                        }
                     },
                     .worse => {},
                     .tie => if (declaration != best.?) {
                         tied = true;
+                        if (ambiguity_candidates) |candidates|
+                            try candidates.append(self.allocator, declaration);
                     },
                 }
             }
@@ -462,6 +470,51 @@ pub const Resolver = struct {
         if (tied) return error.AmbiguousGenericFunction;
         const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else if (candidate_count == 1 and conflicting_candidates == 1) error.ConflictingGenericArgument else error.NoMatchingGenericFunction;
         return self.instantiate(declaration, best_arguments);
+    }
+
+    /// Re-run implicit generic selection transactionally for diagnostics and
+    /// report the declaration identities tied at the best rank. This keeps
+    /// diagnostics coupled to the real inference/specificity algorithm rather
+    /// than maintaining an approximate second overload matcher.
+    pub fn collectImplicitGenericAmbiguity(
+        self: *Resolver,
+        current_module: usize,
+        module: *const module_sg.ModuleSemanticGraph,
+        reference: module_entities.ExternalRef,
+        input: global_sg.GlobalNodeId,
+        candidates: *std.ArrayList(global_sg.GlobalDeclId),
+    ) !bool {
+        const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
+        var lengths: [pools.len]usize = undefined;
+        inline for (pools, 0..) |pool, index|
+            lengths[index] = @field(self.graph, pool.name).items.len;
+        const saved_stats = self.stats;
+        const saved_generic_stats = self.generics.stats;
+        const saved_core_stats = self.core.stats;
+        defer {
+            inline for (pools, 0..) |pool, index|
+                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            self.stats = saved_stats;
+            self.generics.stats = saved_generic_stats;
+            self.core.stats = saved_core_stats;
+        }
+
+        candidates.clearRetainingCapacity();
+        const module_filter = if (reference.module_path) |path|
+            try self.core.findModuleForQualifier(current_module, module.text(path))
+        else
+            null;
+        _ = self.resolveImplicitGenericFunctionFiltered(
+            current_module,
+            module.text(reference.name),
+            module_filter,
+            input,
+            candidates,
+        ) catch |err| return switch (err) {
+            error.AmbiguousGenericFunction => true,
+            else => false,
+        };
+        return false;
     }
 
     const ParameterizedSpecificity = struct {
