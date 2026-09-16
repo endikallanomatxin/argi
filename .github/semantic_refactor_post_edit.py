@@ -25,6 +25,16 @@ new = '''        const ForProtocol = struct {
 '''
 if text.count(old) != 1:
     raise RuntimeError(f"for protocol syntax anchor changed: {text.count(old)}")
+text = text.replace(old, new, 1)
+old = '''    fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
+        const core = self.core orelse return .deferred;
+'''
+new = '''    fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
+        @setEvalBranchQuota(5000);
+        const core = self.core orelse return .deferred;
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"for-each quota anchor changed: {text.count(old)}")
 control.write_text(text.replace(old, new, 1))
 
 subprocess.run([
