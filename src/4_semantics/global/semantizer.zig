@@ -1067,7 +1067,7 @@ fn diagnoseUnresolvedCopy(
 
 fn diagnoseUnresolvedCall(
     allocator: std.mem.Allocator,
-    graph: *const global_sg.GlobalSemanticGraph,
+    graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
     resolved: []const bool,
     reachable: ?*const reachability_mod.FunctionSet,
@@ -1151,6 +1151,60 @@ fn diagnoseUnresolvedCall(
                 try candidates.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
             }
             if (candidates.items.len == 0) continue;
+
+            // Reuse Core's matcher to distinguish a deterministic ambiguity
+            // from a genuine no-match. Resolution and diagnostics must agree
+            // on compatibility and scoring rather than maintaining parallel
+            // overload rules.
+            var diagnostic_core = core_mod.Resolver{
+                .allocator = allocator,
+                .graph = graph,
+                .modules = modules,
+                .offsets = offsets,
+            };
+            var best_matches: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
+            defer best_matches.deinit(allocator);
+            var best_score: ?u32 = null;
+            for (candidates.items) |candidate| {
+                const function = graph.functions.items[@intFromEnum(candidate)];
+                if (function.flags.is_abstract_dispatch) continue;
+                const score = switch (diagnostic_core.matchCallInput(function.input, input_id)) {
+                    .score => |value| value,
+                    .no_match, .deferred => continue,
+                };
+                if (best_score == null or score > best_score.?) {
+                    best_score = score;
+                    best_matches.clearRetainingCapacity();
+                    try best_matches.append(allocator, candidate);
+                } else if (score == best_score.?) {
+                    try best_matches.append(allocator, candidate);
+                }
+            }
+            if (best_matches.items.len > 1) {
+                var ambiguity = std.array_list.Managed(u8).init(allocator);
+                defer ambiguity.deinit();
+                try ambiguity.appendSlice("ambiguous call to '");
+                try ambiguity.appendSlice(name);
+                try ambiguity.appendSlice("' for arguments ");
+                try appendValueShape(&ambiguity, graph, input);
+                try ambiguity.appendSlice(". Possible overloads:");
+                for (best_matches.items) |candidate| {
+                    const function = graph.functions.items[@intFromEnum(candidate)];
+                    try ambiguity.appendSlice("\n  - ");
+                    try ambiguity.appendSlice(name);
+                    try ambiguity.append(' ');
+                    try appendFieldShape(&ambiguity, graph, function.input);
+                    try ambiguity.appendSlice(" -> ");
+                    try appendFieldShape(&ambiguity, graph, function.output);
+                }
+                try diagnostics.add(
+                    diagnosticLocation(graph, diagnostics, source),
+                    .semantic,
+                    "{s}",
+                    .{ambiguity.items},
+                );
+                return true;
+            }
 
             var message = std.array_list.Managed(u8).init(allocator);
             defer message.deinit();
