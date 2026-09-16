@@ -19,27 +19,9 @@ def replace_count(path: str, old: str, new: str, expected: int) -> None:
     file.write_text(text.replace(old, new))
 
 
-# Qualified references carry both semantic module identity (module_path) and
-# source provenance (the spelling the user wrote plus the exact source site).
-# The former is for lookup; the latter is for deterministic diagnostics.
-replace_once(
-    "src/4_semantics/module/entities.zig",
-    "pub const ExternalRef = struct {\n"
-    "    kind: ExternalKind,\n"
-    "    module_path: ?primitives.StringRange,\n"
-    "    name: primitives.StringRange,\n"
-    "    generic_arguments: ?GenericArgRange = null,\n"
-    "    source: primitives.SourceRef,\n"
-    "};\n",
-    "pub const ExternalRef = struct {\n"
-    "    kind: ExternalKind,\n"
-    "    module_path: ?primitives.StringRange,\n"
-    "    name: primitives.StringRange,\n"
-    "    module_qualifier: ?primitives.StringRange = null,\n"
-    "    generic_arguments: ?GenericArgRange = null,\n"
-    "    source: primitives.SourceRef,\n"
-    "};\n",
-)
+# Name uses previously lost their source site because pending nodes only carry a
+# relocation placeholder. Keep source provenance on the operation; module path
+# remains semantic identity, while source spelling stays in the source file.
 replace_once(
     "src/4_semantics/module/entities.zig",
     "    resolve_name_use: struct {\n"
@@ -51,7 +33,6 @@ replace_once(
     "        node: ModuleNodeId,\n"
     "        name: primitives.StringRange,\n"
     "        module_path: ?primitives.StringRange = null,\n"
-    "        module_qualifier: ?primitives.StringRange = null,\n"
     "        source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 },\n"
     "    },\n",
 )
@@ -70,34 +51,6 @@ replace_once(
 )
 replace_once(
     "src/4_semantics/module/body_lowerer.zig",
-    "        const module_path = if (call.module_qualifier) |token_index|\n"
-    "            try self.modulePathForQualifier(token_index)\n"
-    "        else\n"
-    "            null;\n"
-    "        const external = try self.writer.addExternalRef(.{\n"
-    "            .kind = .function,\n"
-    "            .module_path = module_path,\n"
-    "            .name = try self.writer.addString(name_text),\n"
-    "            .source = self.sourceRef(node),\n"
-    "        });\n",
-    "        const module_path = if (call.module_qualifier) |token_index|\n"
-    "            try self.modulePathForQualifier(token_index)\n"
-    "        else\n"
-    "            null;\n"
-    "        const module_qualifier = if (call.module_qualifier) |token_index|\n"
-    "            try self.writer.addString(self.tree.tokenTextFromSource(self.source, token_index))\n"
-    "        else\n"
-    "            null;\n"
-    "        const external = try self.writer.addExternalRef(.{\n"
-    "            .kind = .function,\n"
-    "            .module_path = module_path,\n"
-    "            .name = try self.writer.addString(name_text),\n"
-    "            .module_qualifier = module_qualifier,\n"
-    "            .source = self.sourceRef(node),\n"
-    "        });\n",
-)
-replace_once(
-    "src/4_semantics/module/body_lowerer.zig",
     "                    return self.pending(node, .{ .resolve_name_use = .{\n"
     "                        .node = self.nextNodeId(),\n"
     "                        .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.field_token)),\n"
@@ -107,44 +60,10 @@ replace_once(
     "                        .node = self.nextNodeId(),\n"
     "                        .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.field_token)),\n"
     "                        .module_path = module_path,\n"
-    "                        .module_qualifier = try self.writer.addString(qualifier),\n"
     "                        .source = self.sourceRef(node),\n"
     "                    } }, expected);\n",
 )
 
-replace_once(
-    "src/4_semantics/module/type_lowerer.zig",
-    "        const module_path = if (qualifier_token) |token_index|\n"
-    "            try self.modulePathForQualifier(token_index)\n"
-    "        else\n"
-    "            null;\n"
-    "        const external = try self.writer.addExternalRef(.{\n"
-    "            .kind = .type,\n"
-    "            .module_path = module_path,\n"
-    "            .name = name,\n"
-    "            .generic_arguments = generic_arguments,\n"
-    "            .source = self.sourceRef(node),\n"
-    "        });\n",
-    "        const module_path = if (qualifier_token) |token_index|\n"
-    "            try self.modulePathForQualifier(token_index)\n"
-    "        else\n"
-    "            null;\n"
-    "        const module_qualifier = if (qualifier_token) |token_index|\n"
-    "            try self.writer.addString(self.tree.tokenTextFromSource(self.source, token_index))\n"
-    "        else\n"
-    "            null;\n"
-    "        const external = try self.writer.addExternalRef(.{\n"
-    "            .kind = .type,\n"
-    "            .module_path = module_path,\n"
-    "            .name = name,\n"
-    "            .module_qualifier = module_qualifier,\n"
-    "            .generic_arguments = generic_arguments,\n"
-    "            .source = self.sourceRef(node),\n"
-    "        });\n",
-)
-
-# Once a name resolves, retain the real source site rather than the placeholder
-# node location installed by global relocation for pending nodes.
 replace_once(
     "src/4_semantics/global/expressions.zig",
     'const module_linker = @import("module_linker.zig");\n',
@@ -311,10 +230,11 @@ fn diagnoseUnresolvedQualifiedNames(
             };
             const target_index: usize = @intFromEnum(target);
             const name = module.text(value.name);
+            const source = globalSource(offsets[module_index], value.source);
             if (moduleBindingNameExists(&modules[target_index], name)) {
                 if (target_index == module_index or !std.mem.startsWith(u8, name, "_")) continue;
                 try diagnostics.add(
-                    diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], value.source)),
+                    diagnosticLocation(graph, diagnostics, source),
                     .semantic,
                     "value '{s}' is private to its module",
                     .{name},
@@ -322,10 +242,10 @@ fn diagnoseUnresolvedQualifiedNames(
                 return true;
             }
             try diagnostics.add(
-                diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], value.source)),
+                diagnosticLocation(graph, diagnostics, source),
                 .semantic,
                 "module '{s}' has no value '.{s}'",
-                .{ moduleQualifierText(module, path, value.module_qualifier), name },
+                .{ moduleQualifierText(graph, diagnostics, source, module, path, name), name },
             );
             return true;
         }
@@ -338,13 +258,56 @@ fn globalSource(o: globalizer.Offsets, source: primitives.SourceRef) primitives.
 }
 
 fn moduleQualifierText(
+    graph: *const global_sg.GlobalSemanticGraph,
+    diagnostics: *const diagnostics_mod.Diagnostics,
+    source: primitives.SourceRef,
     module: *const module_sg.ModuleSemanticGraph,
     path: primitives.StringRange,
-    qualifier: ?primitives.StringRange,
+    member_name: []const u8,
 ) []const u8 {
-    if (qualifier) |value| return module.text(value);
+    if (sourceQualifierText(graph, diagnostics, source, member_name)) |value| return value;
     const spelling = std.mem.trim(u8, module.text(path), "\"'");
     return std.fs.path.basename(spelling);
+}
+
+fn sourceQualifierText(
+    graph: *const global_sg.GlobalSemanticGraph,
+    diagnostics: *const diagnostics_mod.Diagnostics,
+    source: primitives.SourceRef,
+    member_name: []const u8,
+) ?[]const u8 {
+    const location = diagnosticLocation(graph, diagnostics, source);
+    const file_index: usize = @intFromEnum(location.file);
+    if (file_index >= diagnostics.source_files.len) return null;
+    const code = diagnostics.source_files[file_index].code;
+    const offset: usize = @intCast(location.offset);
+    if (offset > code.len) return null;
+
+    // Most member nodes point either at the qualifier (`dep.foo`) or at the
+    // member token itself. Handle both without storing duplicate source text in
+    // the compact semantic graph.
+    if (offset < code.len and std.mem.startsWith(u8, code[offset..], member_name)) {
+        if (offset != 0 and code[offset - 1] == '.') return identifierBefore(code, offset - 1);
+    }
+    if (offset < code.len and isIdentifierByte(code[offset])) {
+        var end = offset;
+        while (end < code.len and isIdentifierByte(code[end])) : (end += 1) {}
+        if (end < code.len and code[end] == '.') return code[offset..end];
+    }
+    if (offset < code.len and code[offset] == '.') return identifierBefore(code, offset);
+    return null;
+}
+
+fn identifierBefore(code: []const u8, dot: usize) ?[]const u8 {
+    if (dot == 0 or code[dot] != '.') return null;
+    var start = dot;
+    while (start != 0 and isIdentifierByte(code[start - 1])) : (start -= 1) {}
+    if (start == dot) return null;
+    return code[start..dot];
+}
+
+fn isIdentifierByte(value: u8) bool {
+    return std.ascii.isAlphanumeric(value) or value == '_';
 }
 
 fn moduleBindingNameExists(module: *const module_sg.ModuleSemanticGraph, name: []const u8) bool {
@@ -436,9 +399,10 @@ new_call = r'''fn diagnoseUnresolvedCall(
                 }
             else
                 null;
+            const source = globalSource(offsets[module_index], reference.source);
             const location = diagnosticLocation(graph, diagnostics, .{
-                .file_index = offsets[module_index].file_base + reference.source.file_index,
-                .offset = reference.source.offset + @as(u32, @intCast(name.len)),
+                .file_index = source.file_index,
+                .offset = source.offset + @as(u32, @intCast(name.len)),
             });
 
             if (reference.module_path) |path| {
@@ -453,7 +417,7 @@ new_call = r'''fn diagnoseUnresolvedCall(
                         location,
                         .semantic,
                         "module '{s}' has no function named '{s}'",
-                        .{ moduleQualifierText(module, path, reference.module_qualifier), name },
+                        .{ moduleQualifierText(graph, diagnostics, source, module, path, name), name },
                     );
                     return true;
                 }
