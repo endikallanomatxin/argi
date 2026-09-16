@@ -373,7 +373,7 @@ pub fn semantizeWithOptions(
                 return error.Reported;
             if (try diagnoseUnresolvedCopy(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
-            if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+            if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, &generic_functions, diagnostics))
                 return error.Reported;
         }
         dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
@@ -1072,6 +1072,7 @@ fn diagnoseUnresolvedCall(
     resolved: []const bool,
     reachable: ?*const reachability_mod.FunctionSet,
     offsets: []const globalizer.Offsets,
+    generic_functions: *generic_functions_mod.Resolver,
     diagnostics: *diagnostics_mod.Diagnostics,
 ) !bool {
     var flat: usize = 0;
@@ -1190,6 +1191,42 @@ fn diagnoseUnresolvedCall(
                 try ambiguity.appendSlice(". Possible overloads:");
                 for (best_matches.items) |candidate| {
                     const function = graph.functions.items[@intFromEnum(candidate)];
+                    try ambiguity.appendSlice("\n  - ");
+                    try ambiguity.appendSlice(name);
+                    try ambiguity.append(' ');
+                    try appendFieldShape(&ambiguity, graph, function.input);
+                    try ambiguity.appendSlice(" -> ");
+                    try appendFieldShape(&ambiguity, graph, function.output);
+                }
+                try diagnostics.add(
+                    diagnosticLocation(graph, diagnostics, source),
+                    .semantic,
+                    "{s}",
+                    .{ambiguity.items},
+                );
+                return true;
+            }
+
+            var generic_ties: std.ArrayList(global_sg.GlobalDeclId) = .empty;
+            defer generic_ties.deinit(allocator);
+            if (try generic_functions.collectImplicitGenericAmbiguity(
+                module_index,
+                module,
+                reference,
+                input_id,
+                &generic_ties,
+            )) {
+                var ambiguity = std.array_list.Managed(u8).init(allocator);
+                defer ambiguity.deinit();
+                try ambiguity.appendSlice("ambiguous call to '");
+                try ambiguity.appendSlice(name);
+                try ambiguity.appendSlice("' for arguments ");
+                try appendValueShape(&ambiguity, graph, input);
+                try ambiguity.appendSlice(". Possible overloads:");
+                for (generic_ties.items) |declaration_id| {
+                    const declaration = graph.declaration(declaration_id);
+                    const function_id = declaration.function_id orelse continue;
+                    const function = graph.functions.items[@intFromEnum(function_id)];
                     try ambiguity.appendSlice("\n  - ");
                     try ambiguity.appendSlice(name);
                     try ambiguity.append(' ');
