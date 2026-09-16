@@ -1661,7 +1661,7 @@ pub const SafetyChecker = struct {
         provenances: []const facts.OpaqueProvenance,
     ) !facts.ValueFacts {
         const value_type = ty orelse return value;
-        if (!self.typeContainsPointer(value_type)) return value.scalarOpaqueRead();
+        if (!self.typeContainsPointer(value_type)) return self.nonPointerOpaqueRead(value, value_type);
         // A projected pointer borrows its parent's generation. Conservative
         // parent facts must not turn that borrow into ownership of the parent.
         const projected = if (isPointer(self.graph, value_type)) value.referenceCopy() else value;
@@ -1695,6 +1695,45 @@ pub const SafetyChecker = struct {
                     self.variantPayloadTypeAt(value_type, variant.index),
                     provenances,
                 );
+                variants[index] = .{ .index = variant.index, .value = stored };
+            }
+            result.variants = variants;
+        }
+        return result;
+    }
+
+    /// Remove lifetime/ownership facts from a pointer-free opaque read while
+    /// preserving structural value facts. Choice discriminants and aggregate
+    /// projections describe the value itself, not the storage envelope that
+    /// happened to contain it.
+    fn nonPointerOpaqueRead(
+        self: *SafetyChecker,
+        value: facts.ValueFacts,
+        ty: graph_mod.GlobalTypeId,
+    ) !facts.ValueFacts {
+        var result = value.scalarOpaqueRead();
+        result.known_choice_variant = value.known_choice_variant;
+
+        if (value.fields.len != 0) {
+            const fields = try self.allocator.alloc(facts.FieldFacts, value.fields.len);
+            for (value.fields, 0..) |field, index| {
+                const stored = try self.allocator.create(facts.ValueFacts);
+                stored.* = if (self.fieldTypeAt(ty, field.index)) |field_ty|
+                    try self.nonPointerOpaqueRead(field.value.*, field_ty)
+                else
+                    field.value.scalarOpaqueRead();
+                fields[index] = .{ .index = field.index, .value = stored };
+            }
+            result.fields = fields;
+        }
+        if (value.variants.len != 0) {
+            const variants = try self.allocator.alloc(facts.VariantFacts, value.variants.len);
+            for (value.variants, 0..) |variant, index| {
+                const stored = try self.allocator.create(facts.ValueFacts);
+                stored.* = if (self.variantPayloadTypeAt(ty, variant.index)) |payload_ty|
+                    try self.nonPointerOpaqueRead(variant.value.*, payload_ty)
+                else
+                    variant.value.scalarOpaqueRead();
                 variants[index] = .{ .index = variant.index, .value = stored };
             }
             result.variants = variants;
@@ -2054,7 +2093,7 @@ pub const SafetyChecker = struct {
         } else try self.evaluate(function, access.value, state);
 
         if (resolved) |storage| {
-            if (!self.variantActive(state, storage, wanted)) {
+            if (choice.known_choice_variant != wanted and !self.variantActive(state, storage, wanted)) {
                 try self.report(source, "choice payload requires its variant to be proven active", .{});
                 return .{};
             }
