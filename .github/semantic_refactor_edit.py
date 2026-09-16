@@ -13,6 +13,22 @@ for old, new in (
     text = text.replace(old, new, 1)
 generic_functions.write_text(text)
 
+# Parameterized-type identity belongs to the generic type resolver. Constructor
+# dispatch asks this semantic query rather than interpreting declaration
+# metadata such as generic_parameter_count.
+generics_path = Path("src/4_semantics/global/generics.zig")
+text = generics_path.read_text()
+anchor = '''    fn findTypeParameterized(self: *Resolver, declaration: global_sg.GlobalDeclId) ?LocatedTypeParameterized {
+'''
+insert = '''    pub fn isParameterizedTypeDeclaration(self: *Resolver, declaration: global_sg.GlobalDeclId) bool {
+        return self.findTypeParameterized(declaration) != null;
+    }
+
+'''
+if text.count(anchor) != 1:
+    raise RuntimeError(f"parameterized type query anchor changed: {text.count(anchor)}")
+generics_path.write_text(text.replace(anchor, insert + anchor, 1))
+
 constructors = Path("src/4_semantics/global/constructors.zig")
 text = constructors.read_text()
 
@@ -44,7 +60,14 @@ old = '''        const declaration = self.graph.declarations.items[@intFromEnum(
 '''
 new = '''        const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
         const input = globalizer.globalNode(o, value.input);
-        if (declaration.generic_parameter_count != 0)
+        var generics = generic_mod.Resolver{
+            .allocator = self.core.allocator,
+            .graph = self.graph,
+            .modules = self.modules,
+            .offsets = self.offsets,
+            .core = self.core,
+        };
+        if (generics.isParameterizedTypeDeclaration(declaration_id))
             return self.resolveImplicitGenericCall(module_index, o, value, reference, declaration_id, input);
         const ty = declaration.type_id orelse return .deferred;
 
@@ -92,6 +115,40 @@ insert = '''    fn resolveImplicitGenericCall(
             .generics = &generics,
             .nested_call_context = self.abstracts,
         };
+
+        // Context can fully determine a generic constructor even when none of
+        // the runtime arguments mention its type parameter (for example an
+        // owning container whose element type appears only in `$&Container#`).
+        if (value.expected_type) |local_expected| {
+            const expected = globalizer.globalType(o, local_expected);
+            if (!self.graph.isTypeUnresolved(expected)) switch (self.graph.types.items[@intFromEnum(expected)]) {
+                .generic => |identity| if (identity.base == declaration_id) {
+                    _ = generics.ensureGenericInstance(expected) catch return .deferred;
+                    const initializer = try self.findGenericInitializer(
+                        &generics,
+                        &generic_functions,
+                        module_index,
+                        expected,
+                        identity.arguments,
+                        input,
+                    );
+                    if (initializer.function) |function_id| {
+                        const function = self.graph.functions.items[@intFromEnum(function_id)];
+                        const user_fields = global_sg.FieldRange{
+                            .start = function.input.start + 1,
+                            .len = function.input.len - 1,
+                        };
+                        if (!try self.core.completeCallInputFields(user_fields, input)) return .deferred;
+                        self.writeInitializer(o, value, reference, declaration_id, expected, function_id, input);
+                        committed = true;
+                        return .resolved;
+                    }
+                    if (initializer.has_visible_initializer) return .deferred;
+                },
+                else => {},
+            };
+        }
+
         const initializer = try self.findImplicitGenericInitializer(
             &generics,
             &generic_functions,
