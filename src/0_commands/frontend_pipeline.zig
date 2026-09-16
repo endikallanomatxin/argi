@@ -157,6 +157,10 @@ pub const FrontendPipeline = struct {
     /// sole semantic output API of the frontend.
     pub fn semantizeGlobalFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !*const global_sg.GlobalSemanticGraph {
         _ = try self.parseFiles(files);
+        // Syntax diagnostics are terminal for this compilation. Continuing into
+        // ModuleSema/GlobalSema can only manufacture secondary unresolved work
+        // and pollute the primary parser diagnostic with internal debug noise.
+        if (self.diagnostics.hasErrors()) return error.Reported;
         try module_test_validate.validate(
             self.syntax_files.items,
             self.source_db,
