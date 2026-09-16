@@ -14,7 +14,7 @@ pub const Stats = struct {
     choices: u32 = 0,
     nullable: u32 = 0,
     matches: u32 = 0,
-    array_loops: u32 = 0,
+    for_loops: u32 = 0,
 };
 
 pub const Resolver = struct {
@@ -576,7 +576,11 @@ pub const Resolver = struct {
         } });
 
         const old_body = self.graph.blocks.items[@intFromEnum(globalizer.globalBlock(o, value.body))];
-        const old_nodes = self.graph.node_refs.items[old_body.nodes.start..][0..old_body.nodes.len];
+        const old_nodes = try self.allocator.dupe(
+            global_sg.GlobalNodeId,
+            self.graph.node_refs.items[old_body.nodes.start..][0..old_body.nodes.len],
+        );
+        defer self.allocator.free(old_nodes);
         const body_start: u32 = @intCast(self.graph.node_refs.items.len);
         try self.graph.node_refs.append(self.allocator, item_declaration);
         try self.graph.node_refs.append(self.allocator, item_assignment);
@@ -611,7 +615,7 @@ pub const Resolver = struct {
                 .body = body_id,
             } },
         };
-        self.stats.array_loops += 1;
+        self.stats.for_loops += 1;
         committed = true;
         return .resolved;
     }
