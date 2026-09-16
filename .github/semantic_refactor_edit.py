@@ -124,6 +124,69 @@ if text.count(old) != 1:
     raise RuntimeError(f"abstract ordinary ambiguity anchor changed: {text.count(old)}")
 compat.write_text(text.replace(old, new, 1))
 
+control = Path("src/4_semantics/global/control.zig")
+text = control.read_text()
+old = '''    const SyntheticCallResult = union(enum) {
+        no_match,
+        deferred,
+        call: global_sg.GlobalNodeId,
+    };
+'''
+new = '''    const SyntheticCallResult = union(enum) {
+        no_match,
+        deferred,
+        invalid,
+        call: global_sg.GlobalNodeId,
+    };
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"synthetic result anchor changed: {text.count(old)}")
+text = text.replace(old, new, 1)
+
+old = '''        const function = switch (try core.matchUnqualifiedFunctionByName(module_index, name, input)) {
+            .function => |function| function,
+            .deferred => return .deferred,
+            .no_match => generic_functions.resolveImplicitGenericFunctionByName(module_index, name, input) catch |err| switch (err) {
+                error.NoMatchingGenericFunction => return .no_match,
+                error.DeferredGenericFunction => return .deferred,
+                error.ConflictingGenericArgument => return .no_match,
+                else => return err,
+            },
+        };
+'''
+new = '''        const function = switch (try core.matchUnqualifiedFunctionByName(module_index, name, input)) {
+            .function => |function| function,
+            .deferred => return .deferred,
+            .ambiguous => return .invalid,
+            .no_match => generic_functions.resolveImplicitGenericFunctionByName(module_index, name, input) catch |err| switch (err) {
+                error.NoMatchingGenericFunction => return .no_match,
+                error.DeferredGenericFunction => return .deferred,
+                error.AmbiguousGenericFunction => return .invalid,
+                error.ConflictingGenericArgument => return .no_match,
+                else => return err,
+            },
+        };
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"synthetic dispatch anchor changed: {text.count(old)}")
+text = text.replace(old, new, 1)
+
+# Every synthetic protocol call maps deterministic ambiguity back to the
+# enclosing for-each operation's common invalid state.
+old = '''            .call => |node| node,
+            .deferred => return .deferred,
+            .no_match => return .invalid,
+'''
+new = '''            .call => |node| node,
+            .deferred => return .deferred,
+            .no_match, .invalid => return .invalid,
+'''
+count = text.count(old)
+if count != 3:
+    raise RuntimeError(f"for synthetic result anchors changed: {count}")
+text = text.replace(old, new)
+control.write_text(text)
+
 semantizer = Path("src/4_semantics/global/semantizer.zig")
 text = semantizer.read_text()
 old = '''fn diagnoseUnresolvedCall(
