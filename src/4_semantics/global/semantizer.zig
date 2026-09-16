@@ -189,6 +189,7 @@ pub fn semantizeWithOptions(
         .offsets = relocation.offsets.items,
     };
     var expressions = expression_mod.Resolver{
+        .allocator = allocator,
         .graph = &relocation.graph,
         .modules = modules,
         .offsets = relocation.offsets.items,

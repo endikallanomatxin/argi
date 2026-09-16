@@ -29,7 +29,7 @@ pub fn link(
     }
 }
 
-fn resolveImportPath(
+pub fn resolveImportPath(
     allocator: std.mem.Allocator,
     graph: *const global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,

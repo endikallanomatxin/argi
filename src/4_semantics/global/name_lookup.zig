@@ -22,7 +22,7 @@ pub fn binding(
     return found;
 }
 
-fn bindingInModule(
+pub fn bindingInModule(
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     module_index: usize,

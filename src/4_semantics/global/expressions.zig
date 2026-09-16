@@ -5,6 +5,7 @@ const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
 const resolution = @import("resolution.zig");
 const name_lookup = @import("name_lookup.zig");
+const module_linker = @import("module_linker.zig");
 
 pub const Stats = struct {
     binding_uses: u32 = 0,
@@ -12,6 +13,7 @@ pub const Stats = struct {
 };
 
 pub const Resolver = struct {
+    allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
@@ -24,9 +26,8 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
-        _ = module;
         return switch (operation) {
-            .resolve_name_use => |value| resolution.Result.fromBool(self.resolveNameUse(module_index, o, value)),
+            .resolve_name_use => |value| resolution.Result.fromBool(try self.resolveNameUse(module_index, module, o, value)),
             .resolve_name_assignment => |value| resolution.Result.fromBool(self.resolveNameAssignment(module_index, o, value)),
             // Module values need a first-class representation before imports can
             // be materialized. The operation is nevertheless explicit now, so
@@ -36,8 +37,21 @@ pub const Resolver = struct {
         };
     }
 
-    fn resolveNameUse(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) bool {
-        const name = self.modules[module_index].text(value.name);
+    fn resolveNameUse(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !bool {
+        const name = module.text(value.name);
+        if (value.module_path) |path| {
+            const target = module_linker.resolveImportPath(
+                self.allocator,
+                self.graph,
+                self.modules,
+                module_index,
+                module.text(path),
+            ) catch return false;
+            const target_index: usize = @intFromEnum(target);
+            if (target_index != module_index and std.mem.startsWith(u8, name, "_")) return false;
+            const binding = name_lookup.bindingInModule(self.modules, self.offsets, target_index, name) orelse return false;
+            return self.patchNameUse(o, value.node, binding);
+        }
         if (name_lookup.binding(self.modules, self.offsets, module_index, name)) |binding|
             return self.patchNameUse(o, value.node, binding);
         return self.patchTypeExpression(module_index, o, value.node, name);
@@ -146,7 +160,7 @@ test "expression resolver preserves global binding reads and assignments" {
         emptyOffsets(0, 0),
         emptyOffsets(1, 2),
     };
-    var resolver: Resolver = .{ .graph = &graph, .modules = &.{ app, core }, .offsets = &offsets };
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{ app, core }, .offsets = &offsets };
 
     const read = module_entities.PendingOperation{ .resolve_name_use = .{
         .node = @enumFromInt(0),
@@ -182,7 +196,7 @@ test "expression resolver accepts duplicated global builtin storage" {
     try graph.nodes.append(allocator, .{ .source = .{ .file_index = 0, .offset = 3 }, .ty = null, .content = .{ .bool_literal = false } });
 
     const offsets = [_]globalizer.Offsets{emptyOffsets(0, 0)};
-    var resolver: Resolver = .{ .graph = &graph, .modules = &.{module}, .offsets = &offsets };
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{module}, .offsets = &offsets };
     const operation = module_entities.PendingOperation{ .resolve_name_use = .{
         .node = @enumFromInt(0),
         .name = name,
