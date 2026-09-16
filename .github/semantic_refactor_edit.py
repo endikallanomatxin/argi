@@ -63,9 +63,11 @@ text = text.replace(old, new, 1)
 
 old = "if (!try self.core.completeCallInputFields(user_fields, input)) return .deferred;"
 new = "if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, module, o, value.visible_bindings, value.owner_function)) return .deferred;"
-if text.count(old) != 3:
+# There are three initializer completions followed later by one structural-construction completion.
+# Only initializer calls need caller-context reach resolution.
+if text.count(old) != 4:
     raise RuntimeError(f"constructor completion anchors changed: {text.count(old)}")
-text = text.replace(old, new)
+text = text.replace(old, new, 3)
 constructors.write_text(text)
 
 generic_functions = Path("src/4_semantics/global/generic_functions.zig")
