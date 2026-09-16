@@ -6,6 +6,7 @@ const globalizer = @import("globalizer.zig");
 const resolution = @import("resolution.zig");
 const name_lookup = @import("name_lookup.zig");
 const module_linker = @import("module_linker.zig");
+const primitives = @import("../primitives/schema.zig");
 
 pub const Stats = struct {
     binding_uses: u32 = 0,
@@ -50,10 +51,10 @@ pub const Resolver = struct {
             const target_index: usize = @intFromEnum(target);
             if (target_index != module_index and std.mem.startsWith(u8, name, "_")) return false;
             const binding = name_lookup.bindingInModule(self.modules, self.offsets, target_index, name) orelse return false;
-            return self.patchNameUse(o, value.node, binding);
+            return self.patchNameUse(o, value.node, binding, value.source);
         }
         if (name_lookup.binding(self.modules, self.offsets, module_index, name)) |binding|
-            return self.patchNameUse(o, value.node, binding);
+            return self.patchNameUse(o, value.node, binding, value.source);
         return self.patchTypeExpression(module_index, o, value.node, name);
     }
 
@@ -80,9 +81,10 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         node: module_entities.ModuleNodeId,
         binding: global_sg.GlobalBindingId,
+        local_source: primitives.SourceRef,
     ) bool {
         const target = globalizer.globalNode(o, node);
-        const source = self.graph.nodes.items[@intFromEnum(target)].source;
+        const source: primitives.SourceRef = .{ .file_index = o.file_base + local_source.file_index, .offset = local_source.offset };
         const ty = if (self.graph.isBindingTypeUnresolved(binding)) null else self.graph.bindings.items[@intFromEnum(binding)].ty;
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = source,
@@ -144,8 +146,18 @@ test "expression resolver preserves global binding reads and assignments" {
     try app.strings.appendSlice(allocator, "value");
     try core.strings.appendSlice(allocator, "value");
     const name: module_sg.StringRange = .{ .start = 0, .len = 5 };
-    try app.declarations.append(allocator, .{ .kind = .binding, .name = name, .source_offset = 0, .module_file_index = 0, });
-    try core.declarations.append(allocator, .{ .kind = .binding, .name = name, .source_offset = 0, .module_file_index = 0, });
+    try app.declarations.append(allocator, .{
+        .kind = .binding,
+        .name = name,
+        .source_offset = 0,
+        .module_file_index = 0,
+    });
+    try core.declarations.append(allocator, .{
+        .kind = .binding,
+        .name = name,
+        .source_offset = 0,
+        .module_file_index = 0,
+    });
     try app.semantic.declaration_bindings.append(allocator, .{ .declaration = @enumFromInt(0), .binding = @enumFromInt(0) });
     try core.semantic.declaration_bindings.append(allocator, .{ .declaration = @enumFromInt(0), .binding = @enumFromInt(0) });
 

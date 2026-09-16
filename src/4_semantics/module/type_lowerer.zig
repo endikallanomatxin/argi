@@ -93,7 +93,10 @@ pub const Context = struct {
             .module_path = module_path,
             .name = name,
             .generic_arguments = generic_arguments,
-            .source = self.sourceRef(node),
+            .source = if (qualifier_token) |token_index| .{
+                .file_index = self.file_index,
+                .offset = self.tree.tokenLocation(token_index).offset,
+            } else self.sourceRef(node),
         });
         return self.writer.addExternalType(external);
     }
@@ -172,8 +175,7 @@ pub const Context = struct {
             if (length == null or element == null) return error.InvalidArrayArguments;
             return self.writer.addResolvedType(.{ .array = .{ .length = length.?, .element = element.? } });
         }
-        if (isRuntimeVirtualType(self.tree, self.source, generic))
-        {
+        if (isRuntimeVirtualType(self.tree, self.source, generic)) {
             if (arguments_literal.fields.len != 1) return error.InvalidVirtualArguments;
             const field = self.tree.structTypeField(arguments_literal.fields[0]) orelse return error.InvalidVirtualArguments;
             if (!std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, field.name_token), "abstract")) return error.InvalidVirtualArguments;
