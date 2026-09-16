@@ -451,7 +451,6 @@ fn resolvePendingPhase(
             write += 1;
             continue;
         }
-        pending_attempts.* += 1;
         const module_index: usize = @intCast(item.module_index);
         const operation_index: usize = @intCast(item.operation_index);
         const flat_index: usize = @intCast(item.flat_index);
@@ -460,6 +459,7 @@ fn resolvePendingPhase(
             write += 1;
             continue;
         }
+        pending_attempts.* += 1;
         const module = &modules[module_index];
         const operation = module.semantic.pending_operations.items[operation_index];
         const result = try resolvePendingOperation(
