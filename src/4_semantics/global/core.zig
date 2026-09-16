@@ -248,7 +248,28 @@ pub const Resolver = struct {
             try self.findModuleForQualifier(current_module, self.modules[current_module].text(path))
         else
             null;
-        const name = self.modules[current_module].text(reference.name);
+        return self.matchFunctionNamed(current_module, self.modules[current_module].text(reference.name), module_filter, input_node);
+    }
+
+    /// Resolve a compiler-synthesized, unqualified call using the same ordinary
+    /// overload rules as a source call. Semantic sugar must not manufacture a
+    /// module-local ExternalRef merely to enter dispatch.
+    pub fn matchUnqualifiedFunctionByName(
+        self: *Resolver,
+        current_module: usize,
+        name: []const u8,
+        input_node: global_sg.GlobalNodeId,
+    ) !FunctionMatch {
+        return self.matchFunctionNamed(current_module, name, null, input_node);
+    }
+
+    fn matchFunctionNamed(
+        self: *Resolver,
+        current_module: usize,
+        name: []const u8,
+        module_filter: ?global_sg.GlobalModuleId,
+        input_node: global_sg.GlobalNodeId,
+    ) !FunctionMatch {
         var best: ?global_sg.GlobalFunctionId = null;
         var best_score: u32 = 0;
         var tied = false;
