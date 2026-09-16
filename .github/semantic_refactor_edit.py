@@ -63,11 +63,93 @@ text = text.replace(old, new, 1)
 
 old = "if (!try self.core.completeCallInputFields(user_fields, input)) return .deferred;"
 new = "if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, module, o, value.visible_bindings, value.owner_function)) return .deferred;"
-# All four initializer paths need the caller's reach context. Structural field-wise
-# construction uses completeCallInputFields(fields, input) and remains unchanged.
 if text.count(old) != 4:
     raise RuntimeError(f"constructor completion anchors changed: {text.count(old)}")
 text = text.replace(old, new)
+
+# Focused trace for the explicit generic constructor path. This is intentionally
+# transient: the workflow only commits if the focused test passes.
+old = '''        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {
+            error.UnknownGlobalDeclaration => return .not_applicable,
+            else => return err,
+        };
+'''
+new = '''        const trace = std.mem.eql(u8, module.text(reference.name), "DynamicArray");
+        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {
+            error.UnknownGlobalDeclaration => {
+                if (trace) std.debug.print("[constructor-stage] declaration=unknown\\n", .{});
+                return .not_applicable;
+            },
+            else => return err,
+        };
+        if (trace) std.debug.print("[constructor-stage] declaration={}\\n", .{@intFromEnum(declaration_id)});
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"constructor declaration trace anchor changed: {text.count(old)}")
+text = text.replace(old, new, 1)
+
+old = '''        _ = generics.ensureGenericInstance(ty) catch return .deferred;
+'''
+new = '''        _ = generics.ensureGenericInstance(ty) catch |err| {
+            if (trace) std.debug.print("[constructor-stage] ensureGenericInstance={s}\\n", .{@errorName(err)});
+            return .deferred;
+        };
+        if (trace) std.debug.print("[constructor-stage] generic-instance=ok type={}\\n", .{@intFromEnum(ty)});
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"constructor generic instance trace anchor changed: {text.count(old)}")
+text = text.replace(old, new, 1)
+
+old = '''        if (initializer.function) |function_id| {
+            const function = self.graph.functions.items[@intFromEnum(function_id)];
+'''
+new = '''        if (trace) std.debug.print("[constructor-stage] initializer function={} visible={}\\n", .{ initializer.function != null, initializer.has_visible_initializer });
+        if (initializer.function) |function_id| {
+            const function = self.graph.functions.items[@intFromEnum(function_id)];
+'''
+# The same text occurs in several constructor paths; target the explicit path by
+# inserting after the unique findGenericInitializer call instead.
+marker = '''        const initializer = try self.findGenericInitializer(
+            &generics,
+            &generic_functions,
+            module_index,
+            ty,
+            arguments,
+            input,
+        );
+'''
+if text.count(marker) != 1:
+    raise RuntimeError(f"explicit generic initializer trace anchor changed: {text.count(marker)}")
+text = text.replace(marker, marker + '''        if (trace) std.debug.print("[constructor-stage] initializer function={} visible={}\\n", .{ initializer.function != null, initializer.has_visible_initializer });
+''', 1)
+
+old = '''            if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, module, o, value.visible_bindings, value.owner_function)) return .deferred;
+            self.writeInitializer(o, value, reference, declaration_id, ty, function_id, input);
+            committed = true;
+            return .resolved;
+        }
+        if (initializer.has_visible_initializer) return .deferred;
+
+        const result = try self.writeStructuralConstruction(o, value, reference, ty, input);
+'''
+new = '''            const completed = try self.core.completeCallInputFieldsWithReach(user_fields, input, module, o, value.visible_bindings, value.owner_function);
+            if (trace) std.debug.print("[constructor-stage] complete-input={} fields={}\\n", .{ completed, user_fields.len });
+            if (!completed) return .deferred;
+            self.writeInitializer(o, value, reference, declaration_id, ty, function_id, input);
+            committed = true;
+            return .resolved;
+        }
+        if (initializer.has_visible_initializer) {
+            if (trace) std.debug.print("[constructor-stage] visible-init-without-selection\\n", .{});
+            return .deferred;
+        }
+
+        const result = try self.writeStructuralConstruction(o, value, reference, ty, input);
+        if (trace) std.debug.print("[constructor-stage] structural={s}\\n", .{@tagName(result)});
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"explicit generic completion trace anchor changed: {text.count(old)}")
+text = text.replace(old, new, 1)
 constructors.write_text(text)
 
 generic_functions = Path("src/4_semantics/global/generic_functions.zig")
