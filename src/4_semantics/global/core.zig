@@ -235,6 +235,7 @@ pub const Resolver = struct {
     pub const FunctionMatch = union(enum) {
         no_match,
         deferred,
+        ambiguous,
         function: global_sg.GlobalFunctionId,
     };
 
@@ -294,7 +295,7 @@ pub const Resolver = struct {
             } else if (score == best_score) tied = true;
         }
         if (best) |function| {
-            if (tied) return error.AmbiguousGlobalFunction;
+            if (tied) return .ambiguous;
             return .{ .function = function };
         }
         if (saw_deferred) return .deferred;
@@ -311,6 +312,7 @@ pub const Resolver = struct {
             .function => |function| function,
             .no_match => error.NoMatchingGlobalFunction,
             .deferred => error.DeferredGlobalFunction,
+            .ambiguous => error.AmbiguousGlobalFunction,
         };
     }
 
@@ -478,6 +480,7 @@ pub const Resolver = struct {
         const function = switch (try self.matchFunctionByName(module_index, reference, input)) {
             .no_match => return .not_applicable,
             .deferred => return .deferred,
+            .ambiguous => return .invalid,
             .function => |function| function,
         };
         if (!try self.completeCallInputWithReach(function, input, module, o, value.visible_bindings, value.owner_function)) return .deferred;
@@ -912,6 +915,11 @@ pub const Resolver = struct {
         };
         if (expected_pointer.mutability == .read_write and actual_pointer.mutability != .read_write) return false;
         if (types.equal(self.graph, actual_pointer.child, expected_pointer.child)) return true;
+        // `Any` is the wildcard value type. A reference to a concrete value is
+        // compatible with `&Any`/`$&Any`, subject to the mutability rule above.
+        // Do not recurse through pointer constructors here: that would make
+        // mutable pointer slots covariant (`&&Int32` -> `&&Any`).
+        if (types.isBuiltin(self.graph, expected_pointer.child, .Any)) return true;
         return switch (self.graph.types.items[@intFromEnum(actual_pointer.child)]) {
             .virtual => |abstract_type| types.equal(self.graph, abstract_type, expected_pointer.child),
             else => false,

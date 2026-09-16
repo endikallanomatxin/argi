@@ -465,6 +465,7 @@ pub const Resolver = struct {
     const SyntheticCallResult = union(enum) {
         no_match,
         deferred,
+        invalid,
         call: global_sg.GlobalNodeId,
     };
 
@@ -525,7 +526,7 @@ pub const Resolver = struct {
         const iterator_value = switch (conversion) {
             .call => |node| node,
             .deferred => return .deferred,
-            .no_match => return .invalid,
+            .no_match, .invalid => return .invalid,
         };
         const iterator_ty = self.graph.nodes.items[@intFromEnum(iterator_value)].ty orelse return .deferred;
         if (self.graph.isTypeUnresolved(iterator_ty)) return .deferred;
@@ -548,7 +549,7 @@ pub const Resolver = struct {
         const condition = switch (condition_result) {
             .call => |node| node,
             .deferred => return .deferred,
-            .no_match => return .invalid,
+            .no_match, .invalid => return .invalid,
         };
         const bool_ty = try self.builtin(.Bool);
         const condition_ty = self.graph.nodes.items[@intFromEnum(condition)].ty orelse return .deferred;
@@ -560,7 +561,7 @@ pub const Resolver = struct {
         const next_value = switch (next_result) {
             .call => |node| node,
             .deferred => return .deferred,
-            .no_match => return .invalid,
+            .no_match, .invalid => return .invalid,
         };
         const element_ty = self.graph.nodes.items[@intFromEnum(next_value)].ty orelse return .deferred;
         if (self.graph.isTypeUnresolved(element_ty)) return .deferred;
@@ -633,9 +634,11 @@ pub const Resolver = struct {
         const function = switch (try core.matchUnqualifiedFunctionByName(module_index, name, input)) {
             .function => |function| function,
             .deferred => return .deferred,
+            .ambiguous => return .invalid,
             .no_match => generic_functions.resolveImplicitGenericFunctionByName(module_index, name, input) catch |err| switch (err) {
                 error.NoMatchingGenericFunction => return .no_match,
                 error.DeferredGenericFunction => return .deferred,
+                error.AmbiguousGenericFunction => return .invalid,
                 error.ConflictingGenericArgument => return .no_match,
                 else => return err,
             },

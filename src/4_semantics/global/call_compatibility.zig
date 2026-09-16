@@ -50,6 +50,7 @@ pub fn tryResolveOrdinaryCall(
     const function = switch (try matchFunctionByName(compatibility, module_index, module, reference, input)) {
         .no_match => return .not_applicable,
         .deferred => return .deferred,
+        .ambiguous => return .invalid,
         .function => |function| function,
     };
     if (!try compatibility.core.completeCallInputFields(compatibility.core.graph.functions.items[@intFromEnum(function)].input, input)) return .deferred;
@@ -100,7 +101,7 @@ fn matchFunctionByName(
         } else if (score == best_score) tied = true;
     }
     if (best) |function| {
-        if (tied) return error.AmbiguousGlobalFunction;
+        if (tied) return .ambiguous;
         return .{ .function = function };
     }
     if (saw_deferred) return .deferred;
