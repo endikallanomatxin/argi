@@ -334,14 +334,40 @@ pub const Resolver = struct {
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
     ) !global_sg.GlobalFunctionId {
-        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
-            .struct_value_literal => |literal| literal,
-            else => return error.MissingGenericInputType,
-        };
         const module_filter = if (reference.module_path) |path|
             try self.core.findModuleForQualifier(current_module, module.text(path))
         else
             null;
+        return self.resolveImplicitGenericFunctionFiltered(
+            current_module,
+            module.text(reference.name),
+            module_filter,
+            input,
+        );
+    }
+
+    /// Compiler-generated calls participate in exactly the same generic
+    /// inference and declaration-specificity ordering as source calls.
+    pub fn resolveImplicitGenericFunctionByName(
+        self: *Resolver,
+        current_module: usize,
+        name: []const u8,
+        input: global_sg.GlobalNodeId,
+    ) !global_sg.GlobalFunctionId {
+        return self.resolveImplicitGenericFunctionFiltered(current_module, name, null, input);
+    }
+
+    fn resolveImplicitGenericFunctionFiltered(
+        self: *Resolver,
+        current_module: usize,
+        name: []const u8,
+        module_filter: ?global_sg.GlobalModuleId,
+        input: global_sg.GlobalNodeId,
+    ) !global_sg.GlobalFunctionId {
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |literal| literal,
+            else => return error.MissingGenericInputType,
+        };
         var best: ?global_sg.GlobalDeclId = null;
         var best_arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = 0, .len = 0 };
         var best_score: u32 = 0;
@@ -353,7 +379,7 @@ pub const Resolver = struct {
         for (self.modules, 0..) |*candidate_module, candidate_index| {
             for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
                 const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
-                if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), module.text(reference.name))) continue;
+                if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
                 if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
                 candidate_count += 1;
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);

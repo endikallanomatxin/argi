@@ -5,6 +5,8 @@ const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
 const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
+const generic_functions_mod = @import("generic_functions.zig");
+const abstract_mod = @import("abstracts.zig");
 const types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
 
@@ -21,6 +23,8 @@ pub const Resolver = struct {
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     core: ?*core_mod.Resolver = null,
+    generic_functions: ?*generic_functions_mod.Resolver = null,
+    abstracts: ?*abstract_mod.Resolver = null,
     stats: Stats = .{},
 
     pub fn materializeSugarTypes(self: *Resolver) !void {
@@ -52,7 +56,7 @@ pub const Resolver = struct {
             .resolve_nullable_test => |value| resolution.Result.fromBool(try self.resolveNullableTest(o, value)),
             .resolve_match => |value| try self.resolveMatch(module, o, value),
             .resolve_match_case => |value| resolution.Result.fromBool(self.matchCaseAlreadyResolved(o, value)),
-            .resolve_for_each => |value| resolution.Result.fromBool(try self.resolveForEach(module_index, o, value)),
+            .resolve_for_each => |value| try self.resolveForEach(module_index, o, value),
             else => .not_applicable,
         };
     }
@@ -458,76 +462,143 @@ pub const Resolver = struct {
         };
     }
 
-    fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !bool {
-        _ = module_index;
-        const iterable = globalizer.globalNode(o, value.iterable);
-        const iterable_ty = self.graph.nodes.items[@intFromEnum(iterable)].ty orelse return false;
-        const element_ty = types.arrayElement(self.graph, iterable_ty) orelse return false;
-        const length = types.arrayLength(self.graph, iterable_ty) orelse return false;
-        const uint_ty = try self.builtin(.UIntNative);
-        const bool_ty = try self.builtin(.Bool);
-        const source = self.graph.nodes.items[@intFromEnum(iterable)].source;
+    const SyntheticCallResult = union(enum) {
+        no_match,
+        deferred,
+        call: global_sg.GlobalNodeId,
+    };
 
-        const index_binding: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.graph.bindings.items.len)));
-        const index_name = try self.graph.addString(self.allocator, "$for_index");
-        const zero = try self.appendTypedIntNode(0, uint_ty, source);
+    fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
+        @setEvalBranchQuota(5000);
+        const core = self.core orelse return .deferred;
+        const generic_functions = self.generic_functions orelse return .deferred;
+        const abstracts = self.abstracts orelse return .deferred;
+        const iterable = globalizer.globalNode(o, value.iterable);
+        const iterable_ty = self.graph.nodes.items[@intFromEnum(iterable)].ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(iterable_ty)) return .deferred;
+
+        // Desugaring is speculative while downstream types/functions may still
+        // be unresolved. Roll every append-only GlobalSG pool back unless the
+        // complete iterator loop can be published atomically.
+        const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
+        var lengths: [pools.len]usize = undefined;
+        inline for (pools, 0..) |pool, index| lengths[index] = @field(self.graph, pool.name).items.len;
+        var committed = false;
+        defer if (!committed) {
+            inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+        };
+
+        const ForProtocol = struct {
+            iterable_contract: []const u8,
+            conversion: []const u8,
+            mutable: bool,
+        };
+        const protocol: ForProtocol = switch (value.mode) {
+            .value => .{ .iterable_contract = "Iterable", .conversion = "to_iterator", .mutable = false },
+            .borrow => .{ .iterable_contract = "ROPointerIterable", .conversion = "to_ro_pointer_iterator", .mutable = false },
+            .mut_borrow => .{ .iterable_contract = "RWPointerIterable", .conversion = "to_rw_pointer_iterator", .mutable = true },
+        };
+        const iterable_contract_name = protocol.iterable_contract;
+        const conversion_name = protocol.conversion;
+        const iterable_mutable = protocol.mutable;
+        const iterable_contract = self.visibleAbstract(module_index, iterable_contract_name) orelse return .deferred;
+        if (!try abstracts.implements(iterable_ty, iterable_contract)) return .invalid;
+
+        const source = self.graph.nodes.items[@intFromEnum(iterable)].source;
+        var iterable_declaration: ?global_sg.GlobalNodeId = null;
+        var iterable_place = iterable;
+        if (!self.addressable(iterable)) {
+            const binding: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.graph.bindings.items.len)));
+            try self.graph.bindings.append(self.allocator, .{
+                .name = try self.graph.addString(self.allocator, "$for_iterable"),
+                .source = source,
+                .ty = iterable_ty,
+                .initialization = iterable,
+                .mutability = if (iterable_mutable) .variable else .constant,
+            });
+            iterable_declaration = try self.appendNode(source, try self.builtin(.Void), .{ .binding_declaration = binding });
+            iterable_place = try self.appendNode(source, iterable_ty, .{ .binding_use = binding });
+        }
+
+        const iterable_reference = try self.appendAddress(iterable_place, iterable_ty, iterable_mutable, source);
+        const conversion = try self.syntheticCall(module_index, conversion_name, iterable_reference, source, core, generic_functions);
+        const iterator_value = switch (conversion) {
+            .call => |node| node,
+            .deferred => return .deferred,
+            .no_match => return .invalid,
+        };
+        const iterator_ty = self.graph.nodes.items[@intFromEnum(iterator_value)].ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(iterator_ty)) return .deferred;
+        const iterator_contract = self.visibleAbstract(module_index, "Iterator") orelse return .deferred;
+        if (!try abstracts.implements(iterator_ty, iterator_contract)) return .invalid;
+
+        const iterator_binding: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.graph.bindings.items.len)));
         try self.graph.bindings.append(self.allocator, .{
-            .name = index_name,
+            .name = try self.graph.addString(self.allocator, "$for_iterator"),
             .source = source,
-            .ty = uint_ty,
-            .initialization = zero,
+            .ty = iterator_ty,
+            .initialization = iterator_value,
             .mutability = .variable,
         });
-        const init = try self.appendNode(source, uint_ty, .{ .binding_declaration = index_binding });
-        const index_use_cond = try self.appendNode(source, uint_ty, .{ .binding_use = index_binding });
-        const length_node = try self.appendTypedIntNode(@intCast(length), uint_ty, source);
-        const condition = try self.appendNode(source, bool_ty, .{ .comparison = .{
-            .operator = .less_than,
-            .left = index_use_cond,
-            .right = length_node,
-        } });
+        const iterator_declaration = try self.appendNode(source, try self.builtin(.Void), .{ .binding_declaration = iterator_binding });
 
-        const index_use_body = try self.appendNode(source, uint_ty, .{ .binding_use = index_binding });
-        const access = try self.appendNode(source, element_ty, .{ .array_index = .{
-            .array_ptr = iterable,
-            .index = index_use_body,
-            .element_type = element_ty,
-            .array_type = iterable_ty,
-        } });
-        const item_binding = globalizer.globalBinding(o, value.binding);
-        const assigned_ty = try self.forBindingType(element_ty, value.mode);
-        self.graph.bindings.items[@intFromEnum(item_binding)].ty = assigned_ty;
-        const item_value = switch (value.mode) {
-            .value => access,
-            .borrow, .mut_borrow => try self.appendAddress(access, element_ty, value.mode == .mut_borrow, source),
+        const condition_iterator = try self.appendNode(source, iterator_ty, .{ .binding_use = iterator_binding });
+        const condition_self = try self.appendAddress(condition_iterator, iterator_ty, false, source);
+        const condition_result = try self.syntheticCall(module_index, "has_next", condition_self, source, core, generic_functions);
+        const condition = switch (condition_result) {
+            .call => |node| node,
+            .deferred => return .deferred,
+            .no_match => return .invalid,
         };
-        const item_assignment = try self.appendNode(source, assigned_ty, .{ .assignment = .{
+        const bool_ty = try self.builtin(.Bool);
+        const condition_ty = self.graph.nodes.items[@intFromEnum(condition)].ty orelse return .deferred;
+        if (!types.equal(self.graph, condition_ty, bool_ty)) return .invalid;
+
+        const next_iterator = try self.appendNode(source, iterator_ty, .{ .binding_use = iterator_binding });
+        const next_self = try self.appendAddress(next_iterator, iterator_ty, true, source);
+        const next_result = try self.syntheticCall(module_index, "next", next_self, source, core, generic_functions);
+        const next_value = switch (next_result) {
+            .call => |node| node,
+            .deferred => return .deferred,
+            .no_match => return .invalid,
+        };
+        const element_ty = self.graph.nodes.items[@intFromEnum(next_value)].ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(element_ty)) return .deferred;
+
+        const item_binding = globalizer.globalBinding(o, value.binding);
+        const old_binding_ty = self.graph.bindings.items[@intFromEnum(item_binding)].ty;
+        self.graph.bindings.items[@intFromEnum(item_binding)].ty = element_ty;
+        errdefer self.graph.bindings.items[@intFromEnum(item_binding)].ty = old_binding_ty;
+        const item_declaration = try self.appendNode(source, try self.builtin(.Void), .{ .binding_declaration = item_binding });
+        const item_assignment = try self.appendNode(source, element_ty, .{ .assignment = .{
             .binding = item_binding,
-            .value = item_value,
+            .value = next_value,
         } });
 
         const old_body = self.graph.blocks.items[@intFromEnum(globalizer.globalBlock(o, value.body))];
         const old_nodes = self.graph.node_refs.items[old_body.nodes.start..][0..old_body.nodes.len];
         const body_start: u32 = @intCast(self.graph.node_refs.items.len);
+        try self.graph.node_refs.append(self.allocator, item_declaration);
         try self.graph.node_refs.append(self.allocator, item_assignment);
         try self.graph.node_refs.appendSlice(self.allocator, old_nodes);
         const body_id: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
         try self.graph.blocks.append(self.allocator, .{
-            .nodes = .{ .start = body_start, .len = @intCast(old_nodes.len + 1) },
+            .nodes = .{ .start = body_start, .len = @intCast(old_nodes.len + 2) },
             .ret_val = old_body.ret_val,
         });
 
-        const index_use_inc = try self.appendNode(source, uint_ty, .{ .binding_use = index_binding });
-        const one = try self.appendTypedIntNode(1, uint_ty, source);
-        const add = try self.appendNode(source, uint_ty, .{ .binary_operation = .{
-            .operator = .addition,
-            .left = index_use_inc,
-            .right = one,
-        } });
-        const increment = try self.appendNode(source, uint_ty, .{ .assignment = .{
-            .binding = index_binding,
-            .value = add,
-        } });
+        var init = iterator_declaration;
+        if (iterable_declaration) |iterable_decl| {
+            const init_start: u32 = @intCast(self.graph.node_refs.items.len);
+            try self.graph.node_refs.append(self.allocator, iterable_decl);
+            try self.graph.node_refs.append(self.allocator, iterator_declaration);
+            const init_block: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
+            try self.graph.blocks.append(self.allocator, .{
+                .nodes = .{ .start = init_start, .len = 2 },
+                .ret_val = null,
+            });
+            init = try self.appendNode(source, try self.builtin(.Void), .{ .code_block = init_block });
+        }
 
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -536,12 +607,81 @@ pub const Resolver = struct {
             .content = .{ .for_statement = .{
                 .init = init,
                 .condition = condition,
-                .increment = increment,
+                .increment = null,
                 .body = body_id,
             } },
         };
         self.stats.array_loops += 1;
-        return true;
+        committed = true;
+        return .resolved;
+    }
+
+    fn syntheticCall(
+        self: *Resolver,
+        module_index: usize,
+        name: []const u8,
+        argument: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+        core: *core_mod.Resolver,
+        generic_functions: *generic_functions_mod.Resolver,
+    ) !SyntheticCallResult {
+        const input = try self.positionalInput(argument, source);
+        const function = switch (try core.matchUnqualifiedFunctionByName(module_index, name, input)) {
+            .function => |function| function,
+            .deferred => return .deferred,
+            .no_match => generic_functions.resolveImplicitGenericFunctionByName(module_index, name, input) catch |err| switch (err) {
+                error.NoMatchingGenericFunction => return .no_match,
+                error.DeferredGenericFunction => return .deferred,
+                error.ConflictingGenericArgument => return .no_match,
+                else => return err,
+            },
+        };
+        const fields = self.graph.functions.items[@intFromEnum(function)].input;
+        if (!try core.completeCallInputFields(fields, input)) return .deferred;
+        const output = try core.functionOutputType(function);
+        const call = try self.appendNode(source, output, .{ .function_call = .{
+            .callee = function,
+            .input = input,
+        } });
+        return .{ .call = call };
+    }
+
+    fn positionalInput(self: *Resolver, argument: global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.GlobalNodeId {
+        const start: u32 = @intCast(self.graph.value_fields.items.len);
+        try self.graph.value_fields.append(self.allocator, .{
+            .name = try self.graph.addString(self.allocator, ""),
+            .value = argument,
+        });
+        const input: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        try self.graph.nodes.append(self.allocator, .{
+            .source = source,
+            .ty = null,
+            .content = .{ .struct_value_literal = .{
+                .fields = .{ .start = start, .len = 1 },
+                .dispatch_prefix_positional_count = 1,
+            } },
+        });
+        return input;
+    }
+
+    fn visibleAbstract(self: *Resolver, module_index: usize, name: []const u8) ?global_sg.GlobalDeclId {
+        const core = self.core orelse return null;
+        var found: ?global_sg.GlobalDeclId = null;
+        for (self.graph.declarations.items, 0..) |declaration, raw| {
+            if (declaration.kind != .abstract_type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
+            const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (!core.declarationVisible(module_index, id, null)) continue;
+            if (found != null) return null;
+            found = id;
+        }
+        return found;
+    }
+
+    fn addressable(self: *Resolver, node: global_sg.GlobalNodeId) bool {
+        return switch (self.graph.nodes.items[@intFromEnum(node)].content) {
+            .binding_use, .struct_field_access, .choice_payload_access, .dereference => true,
+            else => false,
+        };
     }
 
     fn findChoiceType(self: *Resolver, expected: ?global_sg.GlobalTypeId, name: []const u8, payload_ty: ?global_sg.GlobalTypeId) ?global_sg.GlobalTypeId {
