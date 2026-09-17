@@ -10,7 +10,7 @@ def replace_once(path: Path, old: str, new: str, label: str) -> None:
     path.write_text(text.replace(old, new, 1))
 
 
-# Generic inference is called from several fixed-point paths, including
+# Generic inference is called from several fixed-point dispatch paths, including
 # constructor #reach probing. A binding whose type has not been inferred yet
 # carries a deliberately invalid poison GlobalTypeId; that is a deferred input,
 # not a type that may be indexed in graph.types.
