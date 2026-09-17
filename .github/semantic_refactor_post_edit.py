@@ -79,10 +79,23 @@ replace_once(
     "required-live pointer versus pointee distinction",
 )
 
+# Temporary codegen trace: semantic fixed-point acceptance can currently leave
+# a contextual child literal with a provisional scalar type. Identify the exact
+# aggregate field before deciding whether to repair sema or restore lowering
+# coercion. This cannot be committed because the focused test still fails.
+codegen = Path("src/5_codegen/global_codegen.zig")
+replace_once(
+    codegen,
+    '''            const value = (try self.visitNode(value_field.value)) orelse return CodegenError.ValueNotFound;\n            aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value.value_ref, hit.index, "struct.field");\n''',
+    '''            const value = (try self.visitNode(value_field.value)) orelse return CodegenError.ValueNotFound;\n            const expected_sem_ty = types.effectiveFieldType(hit.field);\n            const expected_llvm_ty = try self.toLLVMType(expected_sem_ty);\n            if (value.type_ref != expected_llvm_ty) {\n                const child = self.graph.node(value_field.value);\n                std.debug.print(\n                    "[struct-codegen-mismatch] field={s} value-node={} content={s} actual-sem={?} expected-sem={} actual-width={} expected-width={}\\n",\n                    .{\n                        name,\n                        @intFromEnum(value_field.value),\n                        @tagName(child.content),\n                        if (child.ty) |actual| @intFromEnum(actual) else null,\n                        @intFromEnum(expected_sem_ty),\n                        if (c.LLVMGetTypeKind(value.type_ref) == c.LLVMIntegerTypeKind) c.LLVMGetIntTypeWidth(value.type_ref) else 0,\n                        if (c.LLVMGetTypeKind(expected_llvm_ty) == c.LLVMIntegerTypeKind) c.LLVMGetIntTypeWidth(expected_llvm_ty) else 0,\n                    },\n                );\n            }\n            aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value.value_ref, hit.index, "struct.field");\n''',
+    "struct literal codegen mismatch trace",
+)
+
 subprocess.run([
     "zig", "fmt",
     "src/4_semantics/global/core.zig",
     "src/4_semantics/global/constructors.zig",
     "src/4_semantics/global/generic_functions.zig",
     "src/4_semantics/safety/checker.zig",
+    "src/5_codegen/global_codegen.zig",
 ], check=True)
