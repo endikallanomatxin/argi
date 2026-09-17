@@ -1,41 +1,96 @@
 from pathlib import Path
+import re
 import subprocess
 
 
-def replace_once(path: Path, old: str, new: str, label: str) -> None:
-    text = path.read_text()
+def replace_exact_count(text: str, old: str, new: str, expected: int, label: str) -> str:
     count = text.count(old)
-    if count != 1:
+    if count != expected:
         raise RuntimeError(f"{label} anchor changed: {count}")
-    path.write_text(text.replace(old, new, 1))
+    return text.replace(old, new)
 
 
-path = Path("src/4_semantics/global/generic_functions.zig")
-replace_once(
-    path,
-    '''        const name = module.text(reference.name);\n        var best: ?global_sg.GlobalDeclId = null;\n''',
-    '''        const name = module.text(reference.name);\n        std.debug.print("[explicit-generic] current_module={} name={s} args={}\\n", .{ current_module, name, arguments.len });\n        var best: ?global_sg.GlobalDeclId = null;\n''',
-    "explicit generic call trace",
+path = Path("src/4_semantics/global/constructors.zig")
+text = path.read_text()
+text = replace_exact_count(
+    text,
+    "parameterized.input, context, &bindings",
+    "parameterized.input, input, context, &bindings",
+    2,
+    "initializer reach call with local bindings",
 )
-replace_once(
-    path,
-    '''                const actual = self.graph.nodes.items[@intFromEnum(value.value)].ty orelse return false;\n                if (!try self.inferInputType(module_index, field.ty, actual, bindings)) return false;\n''',
-    '''                const actual = self.graph.nodes.items[@intFromEnum(value.value)].ty orelse return false;\n                std.debug.print(\n                    "[infer-input-field] candidate_module={} field={s} actual={} {any}\\n",\n                    .{ module_index, self.modules[module_index].text(field.name), @intFromEnum(actual), self.graph.types.items[@intFromEnum(actual)] },\n                );\n                if (!try self.inferInputType(module_index, field.ty, actual, bindings)) return false;\n''',
-    "input field inference trace",
+text = replace_exact_count(
+    text,
+    "parameterized.input, context, bindings",
+    "parameterized.input, input, context, bindings",
+    1,
+    "initializer reach call with forwarded bindings",
 )
-replace_once(
-    path,
-    '''                    const matched = self.inferInputType(module_index, field.ty, current_ty, bindings) catch |err| switch (err) {\n''',
-    '''                    std.debug.print(\n                        "[infer-reach-field] candidate_module={} field={s} root={s} actual={} {any}\\n",\n                        .{ module_index, candidate_module.text(field.name), root_name, @intFromEnum(current_ty), self.graph.types.items[@intFromEnum(current_ty)] },\n                    );\n                    const matched = self.inferInputType(module_index, field.ty, current_ty, bindings) catch |err| switch (err) {\n''',
-    "reach field inference trace",
+
+pattern = re.compile(
+    r"    fn inferInitializerReachBindings\(.*?\n    fn parameterizedReachType\(",
+    re.S,
 )
-replace_once(
-    path,
-    '''                const slot = &bindings.types[@intFromEnum(parameter)];\n                if (slot.*) |previous| {\n                    if (!global_types.equal(self.graph, previous, actual)) return error.ConflictingGenericArgument;\n                    return true;\n                }\n''',
-    '''                const slot = &bindings.types[@intFromEnum(parameter)];\n                if (slot.*) |previous| {\n                    if (!global_types.equal(self.graph, previous, actual)) {\n                        const parameter_info = self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter)];\n                        std.debug.print(\n                            "[generic-type-conflict] module={} parameter={} name={s} previous={} {any} actual={} {any}\\n",\n                            .{ module_index, @intFromEnum(parameter), self.modules[module_index].text(parameter_info.name), @intFromEnum(previous), self.graph.types.items[@intFromEnum(previous)], @intFromEnum(actual), self.graph.types.items[@intFromEnum(actual)] },\n                        );\n                        switch (self.graph.types.items[@intFromEnum(previous)]) {\n                            .declared => |declaration| std.debug.print("  previous-decl={} name={s}\\n", .{ @intFromEnum(declaration), self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name) }),\n                            else => {},\n                        }\n                        switch (self.graph.types.items[@intFromEnum(actual)]) {\n                            .declared => |declaration| std.debug.print("  actual-decl={} name={s}\\n", .{ @intFromEnum(declaration), self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name) }),\n                            else => {},\n                        }\n                        return error.ConflictingGenericArgument;\n                    }\n                    return true;\n                }\n''',
-    "named type parameter conflict trace",
-)
+replacement = '''    fn inferInitializerReachBindings(
+        self: *Resolver,
+        generic_functions: *generic_functions_mod.Resolver,
+        candidate_index: usize,
+        pattern: @import("../module/parameterized/ir.zig").ParameterizedTypeId,
+        input: global_sg.GlobalNodeId,
+        context: CallerContext,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |value| value,
+            else => return false,
+        };
+        const module = &self.modules[candidate_index];
+        const storage = &module.semantic.parameterized_storage.ir;
+        const shape = switch (storage.types.items[@intFromEnum(pattern)]) {
+            .resolved => |ty| switch (ty) {
+                .structural => |value| value,
+                else => return false,
+            },
+            else => return false,
+        };
+        if (shape.fields.len == 0) return false;
+        for (storage.fields.items[shape.fields.start + 1 ..][0 .. shape.fields.len - 1], 0..) |field, expected_position| {
+            // A supplied argument owns inference for its field. In particular,
+            // do not also infer the hidden abstract parameter from a #reach
+            // fallback such as `system.allocator`: an explicit concrete
+            // allocator must remain the dispatch type selected by the caller.
+            var supplied = false;
+            for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |value, supplied_position| {
+                const positional = supplied_position < literal.dispatch_prefix_positional_count or self.graph.text(value.name).len == 0;
+                if (if (positional)
+                    expected_position == supplied_position
+                else
+                    std.mem.eql(u8, module.text(field.name), self.graph.text(value.name)))
+                {
+                    supplied = true;
+                    break;
+                }
+            }
+            if (supplied) continue;
+
+            const default = field.default_value orelse continue;
+            const actual = self.parameterizedReachType(candidate_index, default, context) orelse continue;
+            if (!try generic_functions.inferInputType(candidate_index, field.ty, actual, bindings)) return false;
+        }
+        return true;
+    }
+
+    fn parameterizedReachType('''
+text, count = pattern.subn(replacement, text, count=1)
+if count != 1:
+    raise RuntimeError(f"initializer reach function anchor changed: {count}")
+path.write_text(text)
 subprocess.run(["zig", "fmt", str(path)], check=True)
+Path(".git/semantic-refactor-message").write_text("Preserve explicit initializer arguments over reach defaults")
 Path(".git/semantic-refactor-test-command").write_text(
-    "zig build test-programs -Dtest-filter=feature_tests/collections/23_dynamic_array_owning_push_fixed\n"
+    "status=0\n"
+    "zig build test-programs -Dtest-filter=feature_tests/collections/23_dynamic_array_owning_push_fixed || status=1\n"
+    "zig build test-programs -Dtest-filter=feature_tests/collections/24_dynamic_array_owning_assume_capacity || status=1\n"
+    "zig build test-programs -Dtest-filter=feature_tests/collections/30_dynamic_array_owning_growth_failure_atomic || status=1\n"
+    "exit $status\n"
 )
