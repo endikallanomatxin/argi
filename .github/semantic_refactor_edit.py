@@ -22,9 +22,15 @@ replace_once(
     "unresolved generic input guard",
 )
 
-# Temporary focused trace: identify the parameter/argument pair whose kind is
-# inconsistent after constructor probing advances past the unresolved binding.
+# Temporary focused traces: identify both the concrete generic identity being
+# materialized and the parameter/argument pair whose kinds disagree.
 generics = Path("src/4_semantics/global/generics.zig")
+replace_once(
+    generics,
+    '''        const located = self.findTypeParameterized(identity.base) orelse return false;\n        var bindings = try Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);\n''',
+    '''        const located = self.findTypeParameterized(identity.base) orelse return false;\n        const base_decl = self.graph.declarations.items[@intFromEnum(identity.base)];\n        std.debug.print(\n            "[generic-instance] base={s} base_decl={} module={} parameters={}+{} arguments={}+{}\\n",\n            .{ self.graph.text(base_decl.name), @intFromEnum(identity.base), located.module_index, located.parameterized.parameters.start, located.parameterized.parameters.len, identity.arguments.start, identity.arguments.len },\n        );\n        var bindings = try Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);\n''',
+    "generic instance source trace",
+)
 replace_once(
     generics,
     '''            switch (parameter.kind) {\n                .type => switch (argument.value) {\n                    .type => |value| bindings.types[param_raw] = value,\n                    else => return error.GenericArgumentKindMismatch,\n                },\n                .comptime_int => switch (argument.value) {\n                    .comptime_int => |value| bindings.ints[param_raw] = value,\n                    else => return error.GenericArgumentKindMismatch,\n                },\n            }\n''',
