@@ -54,6 +54,22 @@ if text.count(old) != 1:
     raise RuntimeError(f"initializer user binding body anchor changed: {text.count(old)}")
 text = text.replace(old, new, 1)
 
+# Generic index operators are selected after specialization. Their non-self
+# operands must therefore follow the same contextual-literal rules as ordinary
+# calls; exact type equality rejects e.g. `dyn[0]` when the index is UIntNative.
+generic_text = generic_functions.read_text()
+old = '''                for (1..count) |i| {\n                    const expected = self.graph.fields.items[candidate.input.start + @as(u32, @intCast(i))].ty;\n                    if (!global_types.equal(self.graph, expected, operand_types[i])) {\n                        matches = false;\n                        break;\n                    }\n                }\n'''
+new = '''                for (1..count) |i| {\n                    const expected = self.graph.fields.items[candidate.input.start + @as(u32, @intCast(i))].ty;\n                    if (!global_types.equal(self.graph, expected, operand_types[i]) and\n                        !self.core.contextualLiteralFits(operands[i], expected))\n                    {\n                        matches = false;\n                        break;\n                    }\n                }\n'''
+if generic_text.count(old) != 1:
+    raise RuntimeError(f"generic index contextual match anchor changed: {generic_text.count(old)}")
+generic_text = generic_text.replace(old, new, 1)
+
+old = '''        const input = try self.core.makeCallInput(function.?, operands[0..count]);\n'''
+new = '''        const selected = self.graph.functions.items[@intFromEnum(function.?)];\n        for (1..count) |i| {\n            const expected = self.graph.fields.items[selected.input.start + @as(u32, @intCast(i))].ty;\n            _ = self.core.coerceContextualValue(operands[i], expected);\n        }\n        const input = try self.core.makeCallInput(function.?, operands[0..count]);\n'''
+if generic_text.count(old) != 1:
+    raise RuntimeError(f"generic index contextual coercion anchor changed: {generic_text.count(old)}")
+generic_functions.write_text(generic_text.replace(old, new, 1))
+
 # Temporary focused diagnostics. The edit workflow only commits src/ when the
 # focused semantic test succeeds, so these prints never land in a failing run.
 old = '''                const arguments = generic_functions.appendBoundArguments(candidate_index, parameterized.parameters, &bindings) catch return null;\n                return generic_functions.instantiate(declaration, arguments) catch return null;\n'''
