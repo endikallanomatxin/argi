@@ -1,1 +1,1 @@
-zig build test-programs -Dtest-filter=feature_tests/functions/03_pipe_operator -Dtest-filter=feature_tests/functions/04_pipe_pointer -Dtest-filter=feature_tests/functions/05X_pipe_requires_parentheses -Dtest-filter=feature_tests/functions/06X_pipe_requires_placeholder -Dtest-filter=feature_tests/functions/07X_pipe_expression_placeholder_not_supported -Dtest-filter=feature_tests/functions/08_pipe_chain -Dtest-filter=feature_tests/functions/17_pipe_builtin_is_positional
+zig build test-programs -Dtest-filter=feature_tests/control_flow/04_for_dynamic_array
