@@ -10,8 +10,8 @@ def replace_once(path: Path, old: str, new: str, label: str) -> None:
     path.write_text(text.replace(old, new, 1))
 
 
-# Unresolved binding types carry a poison GlobalTypeId while GlobalSema reaches
-# its fixed point. Generic inference must defer rather than index that poison.
+# Generic inference can see construction-time poison IDs while GlobalSema is
+# still inferring binding types. They are deferred inputs, never indexable types.
 generic_functions = Path("src/4_semantics/global/generic_functions.zig")
 replace_once(
     generic_functions,
@@ -20,24 +20,35 @@ replace_once(
     "unresolved generic input guard",
 )
 
-# Temporary focused trace: when kinds disagree, identify every parameterized
-# descriptor whose parameter range owns the slot, including abstract metadata.
-generics = Path("src/4_semantics/global/generics.zig")
-old = '''            switch (parameter.kind) {\n                .type => switch (argument.value) {\n                    .type => |value| bindings.types[param_raw] = value,\n                    else => return error.GenericArgumentKindMismatch,\n                },\n                .comptime_int => switch (argument.value) {\n                    .comptime_int => |value| bindings.ints[param_raw] = value,\n                    else => return error.GenericArgumentKindMismatch,\n                },\n            }\n'''
-new = '''            switch (parameter.kind) {\n                .type => switch (argument.value) {\n                    .type => |value| bindings.types[param_raw] = value,\n                    else => {\n                        self.traceGenericParameterOwner(module_index, param_raw, parameter, argument, arguments);\n                        return error.GenericArgumentKindMismatch;\n                    },\n                },\n                .comptime_int => switch (argument.value) {\n                    .comptime_int => |value| bindings.ints[param_raw] = value,\n                    else => {\n                        self.traceGenericParameterOwner(module_index, param_raw, parameter, argument, arguments);\n                        return error.GenericArgumentKindMismatch;\n                    },\n                },\n            }\n'''
-replace_once(generics, old, new, "generic kind mismatch owner trace call")
+# Constrained type parameters such as `.t: Type: ImplicitlyCopyable` are stored
+# by syntaxing with the bound as field.type_node. Reuse the canonical classifier
+# in abstract implementation/default lowering instead of treating those as ints.
+lowerer = Path("src/4_semantics/module/parameterized/lowerer.zig")
+replace_once(
+    lowerer,
+    '''fn isTypeParameter(tree: *const syn.FileSyntaxTree, source: []const u8, field: syn.StructTypeField) bool {\n''',
+    '''pub fn isTypeParameter(tree: *const syn.FileSyntaxTree, source: []const u8, field: syn.StructTypeField) bool {\n''',
+    "export type parameter classifier",
+)
 
-anchor = '''    fn findGlobalArgument(\n        self: *Resolver,\n'''
-helper = '''    fn traceGenericParameterOwner(\n        self: *Resolver,\n        module_index: usize,\n        param_raw: u32,\n        parameter: parameterized_storage.ComptimeParameter,\n        argument: global_sg.GenericArgument,\n        arguments: primitives.Range(global_sg.GlobalGenericArgId),\n    ) void {\n        const module = &self.modules[module_index];\n        const storage = &module.semantic.parameterized_storage;\n        std.debug.print(\n            "[generic-kind-mismatch] module={} slot={} parameter={s} expected={s} argument={s} actual={s} args={}+{}\\n",\n            .{ module_index, param_raw, module.text(parameter.name), @tagName(parameter.kind), self.graph.text(argument.name), @tagName(argument.value), arguments.start, arguments.len },\n        );\n        for (storage.parameterized_types.items) |candidate| {\n            if (param_raw < candidate.parameters.start or param_raw >= candidate.parameters.start + candidate.parameters.len) continue;\n            const declaration = module.declarations.items[@intFromEnum(candidate.declaration)];\n            std.debug.print("[generic-kind-owner] type decl={} name={s} params={}+{}\\n", .{ @intFromEnum(candidate.declaration), module.text(declaration.name), candidate.parameters.start, candidate.parameters.len });\n        }\n        for (storage.parameterized_functions.items) |candidate| {\n            if (param_raw < candidate.parameters.start or param_raw >= candidate.parameters.start + candidate.parameters.len) continue;\n            const declaration = module.declarations.items[@intFromEnum(candidate.declaration)];\n            std.debug.print("[generic-kind-owner] function decl={} name={s} params={}+{}\\n", .{ @intFromEnum(candidate.declaration), module.text(declaration.name), candidate.parameters.start, candidate.parameters.len });\n        }\n        for (storage.abstract_definitions.items) |candidate| {\n            if (param_raw < candidate.parameters.start or param_raw >= candidate.parameters.start + candidate.parameters.len) continue;\n            const declaration = module.declarations.items[@intFromEnum(candidate.declaration)];\n            std.debug.print("[generic-kind-owner] abstract decl={} name={s} params={}+{}\\n", .{ @intFromEnum(candidate.declaration), module.text(declaration.name), candidate.parameters.start, candidate.parameters.len });\n        }\n        for (storage.abstract_requirements.items, 0..) |candidate, index| {\n            if (param_raw < candidate.parameters.start or param_raw >= candidate.parameters.start + candidate.parameters.len) continue;\n            std.debug.print("[generic-kind-owner] abstract-requirement index={} name={s} params={}+{}\\n", .{ index, module.text(candidate.name), candidate.parameters.start, candidate.parameters.len });\n        }\n        for (storage.parameterized_abstract_implementations.items, 0..) |candidate, index| {\n            if (param_raw < candidate.parameters.start or param_raw >= candidate.parameters.start + candidate.parameters.len) continue;\n            std.debug.print("[generic-kind-owner] abstract-implementation index={} ref={s} params={}+{} concrete-count={}\\n", .{ index, @tagName(candidate.abstract_ref), candidate.parameters.start, candidate.parameters.len, candidate.concrete_parameter_count });\n        }\n        for (storage.parameterized_abstract_defaults.items, 0..) |candidate, index| {\n            if (param_raw < candidate.parameters.start or param_raw >= candidate.parameters.start + candidate.parameters.len) continue;\n            std.debug.print("[generic-kind-owner] abstract-default index={} ref={s} params={}+{}\\n", .{ index, @tagName(candidate.abstract_ref), candidate.parameters.start, candidate.parameters.len });\n        }\n    }\n\n'''
-replace_once(generics, anchor, helper + anchor, "generic parameter owner trace helper")
+relations = Path("src/4_semantics/module/abstract_relation_lowerer.zig")
+replace_once(
+    relations,
+    '''                const kind: parameterized_storage.ComptimeParameterKind = if (field.type_node) |type_node|\n                    if (isTypeName(self.tree, self.source, type_node, "Type")) .type else .comptime_int\n                else\n                    .type;\n''',
+    '''                const kind: parameterized_storage.ComptimeParameterKind = if (parameterized_lowerer.isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;\n''',
+    "abstract relation generic parameter classifier",
+)
 
 subprocess.run([
     "zig", "fmt",
     "src/4_semantics/global/generic_functions.zig",
-    "src/4_semantics/global/generics.zig",
+    "src/4_semantics/module/parameterized/lowerer.zig",
+    "src/4_semantics/module/abstract_relation_lowerer.zig",
 ], check=True)
 
-Path(".git/semantic-refactor-message").write_text("Guard unresolved generic inference")
+Path(".git/semantic-refactor-message").write_text("Unify constrained generic parameter classification")
 Path(".git/semantic-refactor-test-command").write_text(
-    "zig build test-programs -Dtest-filter=feature_tests/control_flow/04_for_dynamic_array\n"
+    "zig build test-programs "
+    "-Dtest-filter=feature_tests/control_flow/04_for_dynamic_array "
+    "-Dtest-filter=feature_tests/control_flow/14_for_mut_borrowed_dynamic_array\n"
 )
