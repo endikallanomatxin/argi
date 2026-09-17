@@ -84,18 +84,45 @@ text, count = pattern.subn(lambda _: replacement, text, count=1)
 if count != 1:
     raise RuntimeError(f"initializer reach function anchor changed: {count}")
 
-# Generic initializers are instantiated through temporary resolvers. Give them
-# the same nested dispatch capabilities as the top-level resolver so their
-# bodies can resolve abstract methods and structural constructors after
-# specialization.
-needle = ".generics = &generics,\n"
-insertion = '''.generics = &generics,
+# The first two temporary generic resolvers already retain the abstract context.
+# Complete their callback wiring without duplicating that existing field.
+text = replace_exact_count(
+    text,
+    ".nested_call_context = self.abstracts,\n",
+    ".nested_call_context = self.abstracts,\n"
+    "            .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,\n"
+    "            .nested_constructor_context = self,\n"
+    "            .nested_constructor_resolver = Resolver.resolveNestedCall,\n",
+    2,
+    "existing temporary resolver context",
+)
+
+# The explicit generic-constructor path did not carry any nested dispatch state.
+old = '''        var generic_functions = generic_functions_mod.Resolver{
+            .allocator = self.core.allocator,
+            .graph = self.graph,
+            .modules = self.modules,
+            .offsets = self.offsets,
+            .core = self.core,
+            .generics = &generics,
+        };
+        const input = globalizer.globalNode(o, value.input);
+'''
+new = '''        var generic_functions = generic_functions_mod.Resolver{
+            .allocator = self.core.allocator,
+            .graph = self.graph,
+            .modules = self.modules,
+            .offsets = self.offsets,
+            .core = self.core,
+            .generics = &generics,
             .nested_call_context = self.abstracts,
             .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
             .nested_constructor_context = self,
             .nested_constructor_resolver = Resolver.resolveNestedCall,
+        };
+        const input = globalizer.globalNode(o, value.input);
 '''
-text = replace_exact_count(text, needle, insertion, 3, "temporary generic resolver dispatch")
+text = replace_exact_count(text, old, new, 1, "explicit generic constructor resolver")
 
 path.write_text(text)
 subprocess.run(["zig", "fmt", str(path)], check=True)
@@ -103,5 +130,6 @@ Path(".git/semantic-refactor-test-command").write_text(
     "zig build test-programs -Dtest-filter=feature_tests/collections/23_dynamic_array_owning_push_fixed && "
     "zig build test-programs -Dtest-filter=feature_tests/collections/24_dynamic_array_owning_insert_fixed && "
     "zig build test-programs -Dtest-filter=feature_tests/collections/30_dynamic_array_custom_allocator && "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/26_dynamic_array_owning_pop\n"
+    "zig build test-programs -Dtest-filter=feature_tests/collections/26_dynamic_array_owning_pop && "
+    "zig build test-programs -Dtest-filter=feature_tests/text/08_string_allocator_size\n"
 )
