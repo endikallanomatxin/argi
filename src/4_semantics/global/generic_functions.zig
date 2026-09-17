@@ -100,7 +100,9 @@ pub const Resolver = struct {
                 var matches = true;
                 for (1..count) |i| {
                     const expected = self.graph.fields.items[candidate.input.start + @as(u32, @intCast(i))].ty;
-                    if (!global_types.equal(self.graph, expected, operand_types[i])) {
+                    if (!global_types.equal(self.graph, expected, operand_types[i]) and
+                        !self.core.contextualLiteralFits(operands[i], expected))
+                    {
                         matches = false;
                         break;
                     }
@@ -203,7 +205,7 @@ pub const Resolver = struct {
                 error.ConflictingGenericArgument => return err,
                 else => return .deferred,
             };
-        if (!try self.core.completeCallInputFields(self.graph.functions.items[@intFromEnum(function)].input, input)) return .deferred;
+        if (!try self.core.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function)].input, input, module, o, value.visible_bindings, value.owner_function)) return .deferred;
         const output_ty = try self.core.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -766,7 +768,7 @@ pub const Resolver = struct {
         return .{ .start = start, .len = fields.len };
     }
 
-    fn inferInputType(
+    pub fn inferInputType(
         self: *Resolver,
         module_index: usize,
         pattern: ir.ParameterizedTypeId,
@@ -1298,7 +1300,7 @@ pub const Resolver = struct {
                 }
             } else if (local.resolved.content == .struct_value_literal) {
                 return self.instantiateStructValueWithExpected(id, local.resolved, expected);
-            } else if (local.resolved.content == .string_literal) {
+            } else if (local.resolved.content == .string_literal or local.resolved.content == .int_literal) {
                 const global = try self.instantiateNode(id);
                 const current = self.resolver.graph.nodes.items[@intFromEnum(global)].ty;
                 if (current == null or !global_types.equal(self.resolver.graph, current.?, expected))

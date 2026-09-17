@@ -957,11 +957,11 @@ pub const SafetyChecker = struct {
         for (summary.required_live_inputs) |path| {
             if (path.input_index >= arguments.len) continue;
             var value = try self.projectValueFacts(arguments[path.input_index], path.projections);
-            if (arguments[path.input_index].referenced_place) |base| {
+            if (path.projections.len != 0) if (arguments[path.input_index].referenced_place) |base| {
                 var target = base;
                 for (path.projections) |projection| target = try self.project(target, projection);
                 if (self.valueAtPlace(state, target)) |stored| value = stored;
-            }
+            };
             try self.requireLive(@enumFromInt(0), source, value, state);
         }
         return self.diagnostics.list.items.len == before;
