@@ -30,12 +30,12 @@ replace_once(
 )
 
 # Compiler-synthesized call inputs must uphold the same contextual typing
-# invariant as source calls. The old helper fetched the expected field type and
-# discarded it, leaving e.g. an Int32 literal inside a UIntNative parameter.
+# invariant as source calls. Trace index operands while the focused regression
+# still fails so we can tell whether contextualization reaches the offending node.
 replace_once(
     core,
     '''        for (nodes, 0..) |node, index| {\n            const field = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))].ty;\n            _ = field;\n            const source_field = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))];\n            try self.graph.value_fields.append(self.allocator, .{ .name = source_field.name, .value = node });\n        }\n''',
-    '''        for (nodes, 0..) |node, index| {\n            const source_field = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))];\n            _ = self.coerceContextualValue(node, source_field.ty);\n            try self.graph.value_fields.append(self.allocator, .{ .name = source_field.name, .value = node });\n        }\n''',
+    '''        for (nodes, 0..) |node, index| {\n            const source_field = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))];\n            const before = self.graph.nodes.items[@intFromEnum(node)].ty;\n            const coerced = self.coerceContextualValue(node, source_field.ty);\n            const after = self.graph.nodes.items[@intFromEnum(node)].ty;\n            if (std.mem.eql(u8, self.graph.text(source_field.name), "index")) {\n                std.debug.print(\n                    "[call-input-index] fn={} node={} content={s} expected={} before={?} coerced={} after={?}\\n",\n                    .{\n                        @intFromEnum(function_id),\n                        @intFromEnum(node),\n                        @tagName(self.graph.nodes.items[@intFromEnum(node)].content),\n                        @intFromEnum(source_field.ty),\n                        if (before) |ty| @intFromEnum(ty) else null,\n                        coerced,\n                        if (after) |ty| @intFromEnum(ty) else null,\n                    },\n                );\n            }\n            try self.graph.value_fields.append(self.allocator, .{ .name = source_field.name, .value = node });\n        }\n''',
     "synthetic call input contextualization",
 )
 
@@ -84,10 +84,22 @@ replace_once(
     "required-live pointer versus pointee distinction",
 )
 
+# Trace any aggregate whose semantic field type and emitted LLVM child disagree.
+# This diagnostic remains only in the failed edit workspace; successful edits
+# will remove it before committing source.
+codegen = Path("src/5_codegen/global_codegen.zig")
+replace_once(
+    codegen,
+    '''            const value = (try self.visitNode(value_field.value)) orelse return CodegenError.ValueNotFound;\n            aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value.value_ref, hit.index, "struct.field");\n''',
+    '''            const value = (try self.visitNode(value_field.value)) orelse return CodegenError.ValueNotFound;\n            const expected_sem_ty = types.effectiveFieldType(hit.field);\n            const expected_llvm_ty = try self.toLLVMType(expected_sem_ty);\n            if (value.type_ref != expected_llvm_ty) {\n                const child = self.graph.node(value_field.value);\n                std.debug.print(\n                    "[struct-codegen-mismatch] field={s} node={} content={s} node-ty={?} expected={}\\n",\n                    .{\n                        name,\n                        @intFromEnum(value_field.value),\n                        @tagName(child.content),\n                        if (child.ty) |actual| @intFromEnum(actual) else null,\n                        @intFromEnum(expected_sem_ty),\n                    },\n                );\n            }\n            aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value.value_ref, hit.index, "struct.field");\n''',
+    "struct literal codegen mismatch trace",
+)
+
 subprocess.run([
     "zig", "fmt",
     "src/4_semantics/global/core.zig",
     "src/4_semantics/global/constructors.zig",
     "src/4_semantics/global/generic_functions.zig",
     "src/4_semantics/safety/checker.zig",
+    "src/5_codegen/global_codegen.zig",
 ], check=True)
