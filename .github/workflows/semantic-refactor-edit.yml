@@ -1,6 +1,13 @@
 name: Verified semantic refactor edit
 
 on:
+  push:
+    branches:
+      - compact-semantic-graph-chatgpt
+    paths:
+      - .github/semantic_refactor_edit.py
+      - .github/semantic_refactor_post_edit.py
+      - .github/semantic_refactor_test_command
   workflow_dispatch:
 
 permissions:
