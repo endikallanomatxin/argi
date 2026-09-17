@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - compact-semantic-graph-chatgpt
+    paths-ignore:
+      - .github/semantic_refactor_edit.py
+      - .github/semantic_refactor_post_edit.py
+      - .github/semantic_refactor_test_command
+      - .github/workflows/semantic-refactor-edit.yml
   pull_request:
     branches:
       - compact-semantic-graph-chatgpt
