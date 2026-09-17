@@ -22,19 +22,23 @@ replace_once(
     "unresolved generic input guard",
 )
 
-# Temporary focused traces: identify both the concrete generic identity being
-# materialized and the parameter/argument pair whose kinds disagree.
+# Trace the syntax shape that classifies `t` generic parameters. DynamicArray's
+# source spells `.t: Type`, yet its stored parameter is currently comptime_int.
+lowerer = Path("src/4_semantics/module/parameterized/lowerer.zig")
+replace_once(
+    lowerer,
+    '''                const kind: parameterized_storage.ComptimeParameterKind = if (isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;\n                const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));\n''',
+    '''                const kind: parameterized_storage.ComptimeParameterKind = if (isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;\n                if (std.mem.eql(u8, name_text, "t")) {\n                    const first_line_end = std.mem.indexOfScalar(u8, self.source, '\\n') orelse self.source.len;\n                    const syntax_type = self.tree.syntaxType(value_type_node);\n                    std.debug.print(\n                        "[lower-param] file={} header={s} name={s} kind={s} builtin={} syntax={s}",\n                        .{ self.file_index, self.source[0..first_line_end], name_text, @tagName(kind), isTypeBuiltin(self.tree, self.source, value_type_node), if (syntax_type) |value| @tagName(value) else "none" },\n                    );\n                    if (syntax_type) |value| switch (value) {\n                        .name => |name| std.debug.print(" syntax-name={s}", .{self.tree.tokenTextFromSource(self.source, name.name_token)}),\n                        else => {},\n                    };\n                    std.debug.print("\\n", .{});\n                }\n                const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));\n''',
+    "generic parameter lowering trace",
+)
+
+# Keep a concise failure trace so the lowering result can be correlated with
+# the later generic argument bind.
 generics = Path("src/4_semantics/global/generics.zig")
 replace_once(
     generics,
-    '''        const located = self.findTypeParameterized(identity.base) orelse return false;\n        var bindings = try Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);\n''',
-    '''        const located = self.findTypeParameterized(identity.base) orelse return false;\n        const base_decl = self.graph.declarations.items[@intFromEnum(identity.base)];\n        std.debug.print(\n            "[generic-instance] base={s} base_decl={} module={} parameters={}+{} arguments={}+{}\\n",\n            .{ self.graph.text(base_decl.name), @intFromEnum(identity.base), located.module_index, located.parameterized.parameters.start, located.parameterized.parameters.len, identity.arguments.start, identity.arguments.len },\n        );\n        var bindings = try Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);\n''',
-    "generic instance source trace",
-)
-replace_once(
-    generics,
     '''            switch (parameter.kind) {\n                .type => switch (argument.value) {\n                    .type => |value| bindings.types[param_raw] = value,\n                    else => return error.GenericArgumentKindMismatch,\n                },\n                .comptime_int => switch (argument.value) {\n                    .comptime_int => |value| bindings.ints[param_raw] = value,\n                    else => return error.GenericArgumentKindMismatch,\n                },\n            }\n''',
-    '''            switch (parameter.kind) {\n                .type => switch (argument.value) {\n                    .type => |value| bindings.types[param_raw] = value,\n                    else => {\n                        std.debug.print(\n                            "[generic-kind-mismatch] module={} parameter={s} expected=type argument={s} actual={s} position={} range={}+{}\\n",\n                            .{ module_index, module.text(parameter.name), self.graph.text(argument.name), @tagName(argument.value), position, arguments.start, arguments.len },\n                        );\n                        return error.GenericArgumentKindMismatch;\n                    },\n                },\n                .comptime_int => switch (argument.value) {\n                    .comptime_int => |value| bindings.ints[param_raw] = value,\n                    else => {\n                        std.debug.print(\n                            "[generic-kind-mismatch] module={} parameter={s} expected=comptime_int argument={s} actual={s} position={} range={}+{}\\n",\n                            .{ module_index, module.text(parameter.name), self.graph.text(argument.name), @tagName(argument.value), position, arguments.start, arguments.len },\n                        );\n                        return error.GenericArgumentKindMismatch;\n                    },\n                },\n            }\n''',
+    '''            switch (parameter.kind) {\n                .type => switch (argument.value) {\n                    .type => |value| bindings.types[param_raw] = value,\n                    else => {\n                        std.debug.print("[generic-kind-mismatch] module={} parameter={s} expected=type actual={s}\\n", .{ module_index, module.text(parameter.name), @tagName(argument.value) });\n                        return error.GenericArgumentKindMismatch;\n                    },\n                },\n                .comptime_int => switch (argument.value) {\n                    .comptime_int => |value| bindings.ints[param_raw] = value,\n                    else => {\n                        std.debug.print("[generic-kind-mismatch] module={} parameter={s} expected=comptime_int actual={s}\\n", .{ module_index, module.text(parameter.name), @tagName(argument.value) });\n                        return error.GenericArgumentKindMismatch;\n                    },\n                },\n            }\n''',
     "generic kind mismatch trace",
 )
 
@@ -42,6 +46,7 @@ subprocess.run([
     "zig", "fmt",
     "src/4_semantics/global/generic_functions.zig",
     "src/4_semantics/global/generics.zig",
+    "src/4_semantics/module/parameterized/lowerer.zig",
 ], check=True)
 
 Path(".git/semantic-refactor-message").write_text("Guard unresolved generic inference")
