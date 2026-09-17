@@ -32,10 +32,6 @@ replace_once(
 path = Path("src/4_semantics/global/constructors.zig")
 text = path.read_text()
 
-# User arguments are a source of generic bindings, but concrete/contextually
-# typed fields are validation constraints, not inference failures. Give this
-# helper access to the generic resolver so it can instantiate the expected
-# field type before falling back to structural inference.
 old = "self.inferInitializerUserBindings(generic_functions, candidate_index, parameterized.input, input,"
 new = "self.inferInitializerUserBindings(generics, generic_functions, candidate_index, parameterized.input, input,"
 if text.count(old) != 3:
@@ -89,12 +85,27 @@ new = '''                if (valid) {\n                    std.debug.print("[gen
 if text.count(old) != 1:
     raise RuntimeError(f"generic reach trace anchor changed: {text.count(old)}")
 text = text.replace(old, new, 1)
-
 path.write_text(text)
+
+# Diagnose the now-semantic safety failure without changing safety behavior.
+checker = Path("src/4_semantics/safety/checker.zig")
+checker_text = checker.read_text()
+old = '''        const summary = engine.summaryFor(callee) orelse return null;\n        if (!try self.validateSummaryRequiredLive(source, summary, values, state)) return facts.ValueFacts{};\n'''
+new = '''        const summary = engine.summaryFor(callee) orelse return null;\n        if (!try self.validateSummaryRequiredLive(source, summary, values, state)) {\n            const declaration = self.graph.declarations.items[@intFromEnum(self.graph.functions.items[@intFromEnum(callee)].declaration)];\n            std.debug.print("[safety-dead-call] callee={} name={s} required={}\\n", .{ @intFromEnum(callee), self.graph.text(declaration.name), summary.required_live_inputs.len });\n            return facts.ValueFacts{};\n        }\n'''
+if checker_text.count(old) != 1:
+    raise RuntimeError(f"safety dead call trace anchor changed: {checker_text.count(old)}")
+checker_text = checker_text.replace(old, new, 1)
+
+old = '''        _ = function;\n        if (!state.tracker.dependenciesAreAlive(value)) try self.report(source, "reference depends on a root that has ended", .{});\n'''
+new = '''        _ = function;\n        if (!state.tracker.dependenciesAreAlive(value)) {\n            std.debug.print("[safety-dead-root] file={} offset={} deps={}\\n", .{ source.file_index, source.offset, value.dependencies.len });\n            for (value.dependencies) |dependency| {\n                const raw = @intFromEnum(dependency.root);\n                if (raw < state.tracker.roots.items.len)\n                    std.debug.print("  root={} state={s} owned={}\\n", .{ raw, @tagName(state.tracker.roots.items[raw].state), state.tracker.roots.items[raw].owned_resource })\n                else\n                    std.debug.print("  root={} state=missing\\n", .{raw});\n                for (state.storage_generations.items) |entry|\n                    if (entry.generation == dependency.root)\n                        std.debug.print("    storage binding={} projections={}\\n", .{ @intFromEnum(entry.storage.root), entry.storage.projections.len });\n            }\n            try self.report(source, "reference depends on a root that has ended", .{});\n        }\n'''
+if checker_text.count(old) != 1:
+    raise RuntimeError(f"safety dead root trace anchor changed: {checker_text.count(old)}")
+checker.write_text(checker_text.replace(old, new, 1))
 
 subprocess.run([
     "zig", "fmt",
     "src/4_semantics/global/core.zig",
     "src/4_semantics/global/constructors.zig",
     "src/4_semantics/global/generic_functions.zig",
+    "src/4_semantics/safety/checker.zig",
 ], check=True)
