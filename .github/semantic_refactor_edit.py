@@ -24,11 +24,11 @@ test = Path("tests/feature_tests/collections/18_dynamic_array_copy/main.rg")
 replace_once(
     test,
     '''    copied ::= ~copied_result..ok\n    #defer deinit(.self = $&copied, .allocator = system.allocator)\n\n    copied[0] = 99\n    push(.self = $&copied, .value = 30, .allocator = system.allocator)\n''',
-    '''    copied ::= ~copied_result..ok\n    #defer deinit(.self = $&copied, .allocator = system.allocator)\n\n    if arr[0] != 10 {\n        status_code = 11\n        return\n    }\n    if copied[0] != 10 {\n        status_code = 12\n        return\n    }\n    if copied[1] != 20 {\n        status_code = 13\n        return\n    }\n    if arr.allocation.data == copied.allocation.data {\n        status_code = 14\n        return\n    }\n\n    copied[0] = 99\n    if arr[0] != 10 {\n        status_code = 21\n        return\n    }\n    if copied[0] != 99 {\n        status_code = 22\n        return\n    }\n\n    push(.self = $&copied, .value = 30, .allocator = system.allocator)\n    if arr[0] != 10 {\n        status_code = 31\n        return\n    }\n''',
+    '''    copied ::= ~copied_result..ok\n    #defer deinit(.self = $&copied, .allocator = system.allocator)\n\n    if arr[0] != 10 {\n        status_code = 11\n        return\n    }\n    if copied[0] != 10 {\n        status_code = 12\n        return\n    }\n    if copied[1] != 20 {\n        status_code = 13\n        return\n    }\n    arr_address :: UIntNative = cast#(.to: UIntNative)(.value = arr.allocation.data)\n    copied_address :: UIntNative = cast#(.to: UIntNative)(.value = copied.allocation.data)\n    if arr_address == copied_address {\n        status_code = 14\n        return\n    }\n\n    copied[0] = 99\n    if arr[0] != 10 {\n        status_code = 21\n        return\n    }\n    if copied[0] != 99 {\n        status_code = 22\n        return\n    }\n\n    push(.self = $&copied, .value = 30, .allocator = system.allocator)\n    if arr[0] != 10 {\n        status_code = 31\n        return\n    }\n''',
     "dynamic array copy checkpoints",
 )
 
-Path(".git/semantic-refactor-message").write_text("Trace DynamicArray copy aliasing")
+Path(".git/semantic-refactor-message").write_text("Trace DynamicArray copy allocation addresses")
 Path(".git/semantic-refactor-test-command").write_text(
     "zig build test-programs -Dtest-filter=feature_tests/collections/18_dynamic_array_copy\n"
 )
