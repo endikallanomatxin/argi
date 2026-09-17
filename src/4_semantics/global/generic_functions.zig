@@ -252,7 +252,11 @@ pub const Resolver = struct {
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.allocator);
                 self.generics.bindGlobalArgumentsPartial(candidate_index, parameterized.parameters, arguments, &bindings) catch continue;
-                if (!try self.inferBindingsFromInput(candidate_index, parameterized.input, input, &bindings)) continue;
+                const input_inferred = self.inferBindingsFromInput(candidate_index, parameterized.input, input, &bindings) catch |err| switch (err) {
+                    error.ConflictingGenericArgument => continue,
+                    else => return err,
+                };
+                if (!input_inferred) continue;
                 if (reach_context) |context|
                     if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
                 const complete_arguments = self.appendBoundArguments(candidate_index, parameterized.parameters, &bindings) catch |err| switch (err) {

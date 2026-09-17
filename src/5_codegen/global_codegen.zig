@@ -1497,6 +1497,7 @@ pub const CodeGenerator = struct {
         const callee = self.graph.functions.items[@intFromEnum(call.callee)];
         if (callee.safety_primitive == .trusted_opaque_move or callee.safety_primitive == .trusted_opaque_move_in) return self.opaqueStore(call.input);
         if (callee.safety_primitive == .trusted_opaque_move_out) return self.opaqueTake(call.input);
+        if (callee.safety_primitive == .trusted_opaque_relocate) return self.opaqueRelocate(call.input);
         if (callee.safety_primitive == .trusted_opaque_drop) return self.opaqueDrop(call.input, callee);
         const symbol = self.functions.get(call.callee) orelse return CodegenError.SymbolNotFound;
         const input = (try self.visitNode(call.input)) orelse return CodegenError.ValueNotFound;
@@ -1580,6 +1581,36 @@ pub const CodeGenerator = struct {
         };
         const type_ref = try self.toLLVMType(child);
         return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, slot.value_ref, "opaque.take"), .type_ref = type_ref, .ty = child };
+    }
+
+    fn opaqueRelocate(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId) !?TypedValue {
+        const input = switch (self.graph.nodes.items[@intFromEnum(input_id)].content) {
+            .struct_value_literal => |literal| literal,
+            else => return CodegenError.InvalidType,
+        };
+        const fields = self.graph.value_fields.items[input.fields.start..][0..input.fields.len];
+        if (fields.len != 2) return CodegenError.InvalidType;
+
+        const source_node = fields[0].value;
+        const destination_node = fields[1].value;
+        const source = (try self.visitNode(source_node)) orelse return CodegenError.ValueNotFound;
+        const destination = (try self.visitNode(destination_node)) orelse return CodegenError.ValueNotFound;
+        const source_pointer_ty = self.graph.nodes.items[@intFromEnum(source_node)].ty orelse return CodegenError.InvalidType;
+        const destination_pointer_ty = self.graph.nodes.items[@intFromEnum(destination_node)].ty orelse return CodegenError.InvalidType;
+        const source_child = switch (self.graph.semanticType(source_pointer_ty)) {
+            .pointer => |pointer| pointer.child,
+            else => return CodegenError.InvalidType,
+        };
+        const destination_child = switch (self.graph.semanticType(destination_pointer_ty)) {
+            .pointer => |pointer| pointer.child,
+            else => return CodegenError.InvalidType,
+        };
+        if (!types.equal(self.graph, source_child, destination_child)) return CodegenError.InvalidType;
+
+        const type_ref = try self.toLLVMType(source_child);
+        const value = c.LLVMBuildLoad2(self.builder, type_ref, source.value_ref, "opaque.relocate");
+        _ = c.LLVMBuildStore(self.builder, value, destination.value_ref);
+        return null;
     }
 
     fn opaqueDrop(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId, primitive: graph_mod.Function) !?TypedValue {
