@@ -84,9 +84,14 @@ new = '''        const trace = std.mem.eql(u8, module.text(reference.name), "Dyn
         };
         if (trace) std.debug.print("[constructor-stage] declaration={}\\n", .{@intFromEnum(declaration_id)});
 '''
-if text.count(old) != 1:
-    raise RuntimeError(f"constructor declaration trace anchor changed: {text.count(old)}")
-text = text.replace(old, new, 1)
+count = text.count(old)
+if count != 2:
+    raise RuntimeError(f"constructor declaration trace anchor changed: {count}")
+first = text.find(old)
+second = text.find(old, first + len(old))
+if second < 0:
+    raise RuntimeError("explicit constructor declaration trace anchor not found")
+text = text[:second] + new + text[second + len(old):]
 
 old = '''        _ = generics.ensureGenericInstance(ty) catch return .deferred;
 '''
@@ -100,15 +105,6 @@ if text.count(old) != 1:
     raise RuntimeError(f"constructor generic instance trace anchor changed: {text.count(old)}")
 text = text.replace(old, new, 1)
 
-old = '''        if (initializer.function) |function_id| {
-            const function = self.graph.functions.items[@intFromEnum(function_id)];
-'''
-new = '''        if (trace) std.debug.print("[constructor-stage] initializer function={} visible={}\\n", .{ initializer.function != null, initializer.has_visible_initializer });
-        if (initializer.function) |function_id| {
-            const function = self.graph.functions.items[@intFromEnum(function_id)];
-'''
-# The same text occurs in several constructor paths; target the explicit path by
-# inserting after the unique findGenericInitializer call instead.
 marker = '''        const initializer = try self.findGenericInitializer(
             &generics,
             &generic_functions,
