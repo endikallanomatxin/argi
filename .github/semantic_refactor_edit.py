@@ -20,6 +20,28 @@ replace_once(
     "unresolved generic input guard",
 )
 
+# Focused trace for the next parity hole: generic DynamicArray deinit is not
+# selected. Record each parameterized deinit candidate, inference result and
+# final input match without changing dispatch semantics yet.
+replace_once(
+    generic_functions,
+    '''                const shape = switch (storage.types.items[@intFromEnum(parameterized.input)]) {\n                    .resolved => |ty| switch (ty) {\n                        .structural => |shape| shape,\n                        else => continue,\n                    },\n                    else => continue,\n                };\n                var matches = true;\n''',
+    '''                const shape = switch (storage.types.items[@intFromEnum(parameterized.input)]) {\n                    .resolved => |ty| switch (ty) {\n                        .structural => |shape| shape,\n                        else => continue,\n                    },\n                    else => continue,\n                };\n                if (std.mem.eql(u8, name, "deinit")) {\n                    std.debug.print(\n                        "[deinit-candidate] module={} decl={} params={}+{} fields={}\\n",\n                        .{ candidate_index, @intFromEnum(declaration), parameterized.parameters.start, parameterized.parameters.len, shape.fields.len },\n                    );\n                    for (storage.fields.items[shape.fields.start..][0..shape.fields.len]) |trace_field|\n                        std.debug.print("[deinit-field] module={} decl={} name={s} pattern={} default={}\\n", .{ candidate_index, @intFromEnum(declaration), candidate_module.text(trace_field.name), @intFromEnum(trace_field.ty), trace_field.default_value != null });\n                }\n                var matches = true;\n''',
+    "deinit candidate trace",
+)
+replace_once(
+    generic_functions,
+    '''                        _ = self.inferInputType(candidate_index, field.ty, actual, &bindings) catch |err| {\n                            if (err == error.ConflictingGenericArgument) {\n                                conflicting_candidates += 1;\n                                matches = false;\n                                break;\n                            }\n                            candidate_deferred = true;\n                            matches = false;\n                            break;\n                        };\n                        break;\n''',
+    '''                        const inferred = self.inferInputType(candidate_index, field.ty, actual, &bindings) catch |err| {\n                            if (err == error.ConflictingGenericArgument) {\n                                conflicting_candidates += 1;\n                                matches = false;\n                                break;\n                            }\n                            candidate_deferred = true;\n                            matches = false;\n                            break;\n                        };\n                        if (std.mem.eql(u8, name, "deinit"))\n                            std.debug.print(\n                                "[deinit-infer] module={} decl={} field={s} actual={} unresolved={} inferred={}\\n",\n                                .{ candidate_index, @intFromEnum(declaration), candidate_module.text(field.name), @intFromEnum(actual), self.graph.isTypeUnresolved(actual), inferred },\n                            );\n                        break;\n''',
+    "deinit inference trace",
+)
+replace_once(
+    generic_functions,
+    '''                if (arguments.items.len != parameterized.parameters.len) continue;\n                const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };\n                try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);\n                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {\n''',
+    '''                if (std.mem.eql(u8, name, "deinit"))\n                    std.debug.print("[deinit-bindings] module={} decl={} bound={}/{}\\n", .{ candidate_index, @intFromEnum(declaration), arguments.items.len, parameterized.parameters.len });\n                if (arguments.items.len != parameterized.parameters.len) continue;\n                const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };\n                try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);\n                const input_match = self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input);\n                if (std.mem.eql(u8, name, "deinit"))\n                    std.debug.print("[deinit-match] module={} decl={} result={s}\\n", .{ candidate_index, @intFromEnum(declaration), @tagName(input_match) });\n                const score = switch (input_match) {\n''',
+    "deinit binding and match trace",
+)
+
 # Constrained type parameters such as `.t: Type: ImplicitlyCopyable` are stored
 # by syntaxing with the bound as field.type_node. Reuse the canonical classifier
 # in abstract implementation/default lowering instead of treating those as ints.
