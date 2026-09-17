@@ -388,9 +388,8 @@ pub const Resolver = struct {
         if (nodes.len != function.input.len) return error.InvalidCallInputArity;
         const start: u32 = @intCast(self.graph.value_fields.items.len);
         for (nodes, 0..) |node, index| {
-            const field = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))].ty;
-            _ = field;
             const source_field = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))];
+            _ = self.coerceContextualValue(node, source_field.ty);
             try self.graph.value_fields.append(self.allocator, .{ .name = source_field.name, .value = node });
         }
         const ty = try self.structType(function.input);
@@ -965,7 +964,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn completeCallInputFieldsWithReach(self: *Resolver, expected_fields: global_sg.FieldRange, input_node: global_sg.GlobalNodeId, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, visible: module_entities.BindingRange, owner: ?module_entities.ModuleFunctionId) !bool {
+    pub fn completeCallInputFieldsWithReach(self: *Resolver, expected_fields: global_sg.FieldRange, input_node: global_sg.GlobalNodeId, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, visible: module_entities.BindingRange, owner: ?module_entities.ModuleFunctionId) !bool {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input_node)].content) {
             .struct_value_literal => |value| value,
             else => return false,
@@ -1168,7 +1167,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn contextualLiteralFits(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+    pub fn contextualLiteralFits(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
         if (self.integerLiteralFits(node, target)) return true;
         switch (self.graph.nodes.items[@intFromEnum(node)].content) {
             .string_literal => return switch (self.graph.types.items[@intFromEnum(target)]) {
