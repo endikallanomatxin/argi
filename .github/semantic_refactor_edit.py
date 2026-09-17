@@ -10,12 +10,9 @@ def replace_exact_count(text: str, old: str, new: str, expected: int, label: str
     return text.replace(old, new)
 
 
+# Generic constructor initializer fixes.
 path = Path("src/4_semantics/global/constructors.zig")
 text = path.read_text()
-
-# Reached defaults only infer omitted fields. An explicit constructor argument
-# already owns inference for that field and must not be overwritten by a
-# fallback such as `system.allocator`.
 text = replace_exact_count(
     text,
     "parameterized.input, context, &bindings",
@@ -84,6 +81,8 @@ text, count = pattern.subn(lambda _: replacement, text, count=1)
 if count != 1:
     raise RuntimeError(f"initializer reach function anchor changed: {count}")
 
+# Temporary generic resolvers used by constructor specialization need the same
+# nested dispatch facilities as the top-level generic resolver.
 text = replace_exact_count(
     text,
     ".nested_call_context = self.abstracts,\n",
@@ -120,27 +119,110 @@ new = '''        var generic_functions = generic_functions_mod.Resolver{
 '''
 text = replace_exact_count(text, old, new, 1, "explicit generic constructor resolver")
 path.write_text(text)
-subprocess.run(["zig", "fmt", str(path)], check=True)
 
-# Trace the nested call that prevents the selected initializer from
-# materializing. This is intentionally diagnostic-only and will not land unless
-# the focused test unexpectedly succeeds.
+
+# Static dispatch through a proven abstract bound. This deliberately does not
+# relax ordinary module visibility: only a concrete implementation of the
+# exact requirement signature can be selected.
+apath = Path("src/4_semantics/global/abstracts.zig")
+atext = apath.read_text()
+anchor = '''    pub fn resolveNestedCall(
+        self: *Resolver,
+        module_index: usize,
+        reference: module_entities.ExternalRef,
+        input: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+    ) anyerror!?global_sg.Node {
+        return self.makeVirtualCall(module_index, reference, input, source);
+    }
+'''
+addition = '''    pub fn resolveStaticRequirementCall(
+        self: *Resolver,
+        module_index: usize,
+        abstract_ref: ir.DeclarationRef,
+        concrete: global_sg.GlobalTypeId,
+        reference: module_entities.ExternalRef,
+        input: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+    ) !?global_sg.Node {
+        if (reference.module_path != null or reference.generic_arguments != null) return null;
+        const abstract_decl = try self.resolveDeclarationRef(module_index, abstract_ref, .abstract_type);
+        if (!try self.implements(concrete, abstract_decl)) return null;
+        const located = self.findAbstractDefinition(abstract_decl) orelse return null;
+        // Parameterized abstract requirements need their own abstract argument
+        // substitution. The current hidden local-abstract lowering only needs
+        // non-parameterized contracts such as Allocator.
+        if (located.definition.parameters.len != 0) return null;
+
+        const method_name = self.modules[module_index].text(reference.name);
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
+            if (!std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), method_name)) continue;
+            const instance = try self.requirementInstance(abstract_decl, concrete, located, requirement, @intCast(method_index));
+            const implementation = self.findConcreteMethod(method_name, instance.input) orelse continue;
+            const input_fields = global_types.fields(self.graph, instance.input) orelse continue;
+            if (self.core.scoreCallInput(input_fields, input) == null) continue;
+            if (!try self.core.completeCallInputFields(input_fields, input)) continue;
+            return .{
+                .source = source,
+                .ty = try self.core.functionOutputType(implementation),
+                .content = .{ .function_call = .{ .callee = implementation, .input = input } },
+            };
+        }
+        return null;
+    }
+
+''' + anchor
+atext = replace_exact_count(atext, anchor, addition, 1, "static abstract dispatch insertion")
+apath.write_text(atext)
+
+
+# During generic-body materialization, a hidden abstract type parameter has
+# already been specialized to a concrete type. Let calls satisfying that
+# parameter's requirement resolve statically to the concrete implementation.
 gpath = Path("src/4_semantics/global/generic_functions.zig")
 gtext = gpath.read_text()
-gtext = replace_exact_count(
-    gtext,
-    '''            const name = module.text(name_range);\n            if (module_path == null and std.mem.eql(u8, name, "cast"))\n''',
-    '''            const name = module.text(name_range);\n            std.debug.print("[generic-body-call] module={} name={s} args={}\\n", .{ self.module_index, name, arguments.len });\n            if (module_path == null and std.mem.eql(u8, name, "cast"))\n''',
-    1,
-    "generic body call entry",
-)
-old = '''                self.resolver.core.resolveFunctionByName(self.module_index, reference, input) catch
-                    self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, null) catch |err| {
-                    if (self.resolver.nested_constructor_context) |context| {
-                        if (self.resolver.nested_constructor_resolver) |resolve| {
-                            if (try resolve(context, self.module_index, reference, arguments, input, self.resolver.sourceFor(self.module_index, source))) |node|
+make_call_anchor = '''        fn makeNamedCall(
+            self: *InstanceContext,
+            name_range: primitives.StringRange,
+'''
+helper = '''        fn resolveConstrainedStaticCall(
+            self: *InstanceContext,
+            reference: module_entities.ExternalRef,
+            input: global_sg.GlobalNodeId,
+            source: primitives.SourceRef,
+        ) !?global_sg.Node {
+            const abstracts = self.resolver.nested_call_context orelse return null;
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage;
+            for (0..self.parameterized.parameters.len) |offset| {
+                const raw = self.parameterized.parameters.start + @as(u32, @intCast(offset));
+                const parameter = storage.comptime_parameters.items[raw];
+                const constraint_id = parameter.constraint orelse continue;
+                const concrete = self.substitutions.types[raw] orelse continue;
+                const constraint = storage.abstract_constraints.items[@intFromEnum(constraint_id)];
+                if (try abstracts.resolveStaticRequirementCall(
+                    self.module_index,
+                    constraint.abstract_ref,
+                    concrete,
+                    reference,
+                    input,
+                    self.resolver.sourceFor(self.module_index, source),
+                )) |node| return node;
+            }
+            return null;
+        }
+
+''' + make_call_anchor
+gtext = replace_exact_count(gtext, make_call_anchor, helper, 1, "constrained static call helper")
+old = '''                    if (self.resolver.nested_call_context) |context| {
+                        if (self.resolver.nested_call_resolver) |resolve| {
+                            if (try resolve(context, self.module_index, reference, input, self.resolver.sourceFor(self.module_index, source))) |node|
                                 return node;
                         }
+                    }
+'''
+new = '''                    if (arguments.len == 0) {
+                        if (try self.resolveConstrainedStaticCall(reference, input, source)) |node| return node;
                     }
                     if (self.resolver.nested_call_context) |context| {
                         if (self.resolver.nested_call_resolver) |resolve| {
@@ -148,44 +230,18 @@ old = '''                self.resolver.core.resolveFunctionByName(self.module_in
                                 return node;
                         }
                     }
-                    if (module_path == null and std.mem.eql(u8, name, "deinit") and
-                        self.parameterized.safety_primitive == .trusted_opaque_drop)
-                        return self.emptyValue(try self.resolver.generics.internType(.{ .builtin = .Void }), source);
-                    return err;
-                };
 '''
-new = '''                self.resolver.core.resolveFunctionByName(self.module_index, reference, input) catch
-                    self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, null) catch |err| {
-                    std.debug.print("[generic-body-fallback] name={s} generic-error={s}\\n", .{ name, @errorName(err) });
-                    if (self.resolver.nested_constructor_context) |context| {
-                        if (self.resolver.nested_constructor_resolver) |resolve| {
-                            if (try resolve(context, self.module_index, reference, arguments, input, self.resolver.sourceFor(self.module_index, source))) |node| {
-                                std.debug.print("[generic-body-constructor-hit] name={s}\\n", .{name});
-                                return node;
-                            }
-                            std.debug.print("[generic-body-constructor-miss] name={s}\\n", .{name});
-                        }
-                    }
-                    if (self.resolver.nested_call_context) |context| {
-                        if (self.resolver.nested_call_resolver) |resolve| {
-                            if (try resolve(context, self.module_index, reference, input, self.resolver.sourceFor(self.module_index, source))) |node| {
-                                std.debug.print("[generic-body-abstract-hit] name={s}\\n", .{name});
-                                return node;
-                            }
-                            std.debug.print("[generic-body-abstract-miss] name={s}\\n", .{name});
-                        }
-                    }
-                    if (module_path == null and std.mem.eql(u8, name, "deinit") and
-                        self.parameterized.safety_primitive == .trusted_opaque_drop)
-                        return self.emptyValue(try self.resolver.generics.internType(.{ .builtin = .Void }), source);
-                    std.debug.print("[generic-body-fail] name={s} error={s}\\n", .{ name, @errorName(err) });
-                    return err;
-                };
-'''
-gtext = replace_exact_count(gtext, old, new, 1, "generic body fallback trace")
+gtext = replace_exact_count(gtext, old, new, 1, "static dispatch fallback")
 gpath.write_text(gtext)
-subprocess.run(["zig", "fmt", str(gpath)], check=True)
+
+for p in (path, apath, gpath):
+    subprocess.run(["zig", "fmt", str(p)], check=True)
 
 Path(".git/semantic-refactor-test-command").write_text(
-    "zig build test-programs -Dtest-filter=feature_tests/collections/23_dynamic_array_owning_push_fixed\n"
+    "zig build test-programs -Dtest-filter=feature_tests/collections/23_dynamic_array_owning_push_fixed && "
+    "zig build test-programs -Dtest-filter=feature_tests/collections/24_dynamic_array_owning_insert_fixed && "
+    "zig build test-programs -Dtest-filter=feature_tests/collections/30_dynamic_array_custom_allocator && "
+    "zig build test-programs -Dtest-filter=feature_tests/collections/26_dynamic_array_owning_pop && "
+    "zig build test-programs -Dtest-filter=feature_tests/text/08_string_allocator_size && "
+    "zig build test-programs -Dtest-filter=feature_tests/modules/24_imported_generic_abstract_dispatch_prefers_concrete\n"
 )
