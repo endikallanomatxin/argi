@@ -10,10 +10,8 @@ def replace_once(path: Path, old: str, new: str, label: str) -> None:
     path.write_text(text.replace(old, new, 1))
 
 
-# Generic inference is called from several fixed-point dispatch paths, including
-# constructor #reach probing. A binding whose type has not been inferred yet
-# carries a deliberately invalid poison GlobalTypeId; that is a deferred input,
-# not a type that may be indexed in graph.types.
+# Unresolved binding types carry a poison GlobalTypeId while GlobalSema reaches
+# its fixed point. Generic inference must defer rather than index that poison.
 generic_functions = Path("src/4_semantics/global/generic_functions.zig")
 replace_once(
     generic_functions,
@@ -22,35 +20,23 @@ replace_once(
     "unresolved generic input guard",
 )
 
-# Compare DynamicArray's parameter range at creation time with the descriptor
-# later found by GlobalSema.
-lowerer = Path("src/4_semantics/module/parameterized/lowerer.zig")
-replace_once(
-    lowerer,
-    '''                    const params = try self.lowerParameters(payload.params, payload.params_struct);\n                    const body = try self.lowerType(payload.value, false);\n                    try self.graph.semantic.parameterized_storage.parameterized_types.append(self.allocator, .{\n''',
-    '''                    const params = try self.lowerParameters(payload.params, payload.params_struct);\n                    const body = try self.lowerType(payload.value, false);\n                    if (std.mem.eql(u8, self.graph.text(declaration.name), "DynamicArray")) {\n                        std.debug.print("[dynamic-range-lower] params={}+{} total={}\\n", .{ params.start, params.len, self.graph.semantic.parameterized_storage.comptime_parameters.items.len });\n                        for (params.start..params.start + params.len) |param_raw| {\n                            const param_entry = self.graph.semantic.parameterized_storage.comptime_parameters.items[param_raw];\n                            std.debug.print("[dynamic-range-lower] slot={} name={s} kind={s}\\n", .{ param_raw, self.graph.text(param_entry.name), @tagName(param_entry.kind) });\n                        }\n                    }\n                    try self.graph.semantic.parameterized_storage.parameterized_types.append(self.allocator, .{\n''',
-    "DynamicArray parameter range creation trace",
-)
-
+# Temporary focused trace: when kinds disagree, identify every parameterized
+# declaration whose parameter range owns the slot. This distinguishes type
+# materialization from generic-function dispatch without guessing from nearby
+# traces.
 generics = Path("src/4_semantics/global/generics.zig")
-replace_once(
-    generics,
-    '''        const located = self.findTypeParameterized(identity.base) orelse return false;\n        var bindings = try Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);\n''',
-    '''        const located = self.findTypeParameterized(identity.base) orelse return false;\n        const base_decl = self.graph.declarations.items[@intFromEnum(identity.base)];\n        if (std.mem.eql(u8, self.graph.text(base_decl.name), "DynamicArray")) {\n            const module = &self.modules[located.module_index];\n            std.debug.print("[dynamic-range-global] params={}+{} total={} args={}+{}\\n", .{ located.parameterized.parameters.start, located.parameterized.parameters.len, module.semantic.parameterized_storage.comptime_parameters.items.len, identity.arguments.start, identity.arguments.len });\n            for (located.parameterized.parameters.start..located.parameterized.parameters.start + located.parameterized.parameters.len) |param_raw| {\n                const parameter = module.semantic.parameterized_storage.comptime_parameters.items[param_raw];\n                std.debug.print("[dynamic-range-global] slot={} name={s} kind={s}\\n", .{ param_raw, module.text(parameter.name), @tagName(parameter.kind) });\n            }\n        }\n        var bindings = try Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);\n''',
-    "DynamicArray parameter range global trace",
-)
-replace_once(
-    generics,
-    '''            switch (parameter.kind) {\n                .type => switch (argument.value) {\n                    .type => |value| bindings.types[param_raw] = value,\n                    else => return error.GenericArgumentKindMismatch,\n                },\n                .comptime_int => switch (argument.value) {\n                    .comptime_int => |value| bindings.ints[param_raw] = value,\n                    else => return error.GenericArgumentKindMismatch,\n                },\n            }\n''',
-    '''            switch (parameter.kind) {\n                .type => switch (argument.value) {\n                    .type => |value| bindings.types[param_raw] = value,\n                    else => {\n                        std.debug.print("[generic-kind-mismatch] module={} slot={} parameter={s} expected=type actual={s}\\n", .{ module_index, param_raw, module.text(parameter.name), @tagName(argument.value) });\n                        return error.GenericArgumentKindMismatch;\n                    },\n                },\n                .comptime_int => switch (argument.value) {\n                    .comptime_int => |value| bindings.ints[param_raw] = value,\n                    else => {\n                        std.debug.print("[generic-kind-mismatch] module={} slot={} parameter={s} expected=comptime_int actual={s}\\n", .{ module_index, param_raw, module.text(parameter.name), @tagName(argument.value) });\n                        return error.GenericArgumentKindMismatch;\n                    },\n                },\n            }\n''',
-    "generic kind mismatch trace",
-)
+old = '''            switch (parameter.kind) {\n                .type => switch (argument.value) {\n                    .type => |value| bindings.types[param_raw] = value,\n                    else => return error.GenericArgumentKindMismatch,\n                },\n                .comptime_int => switch (argument.value) {\n                    .comptime_int => |value| bindings.ints[param_raw] = value,\n                    else => return error.GenericArgumentKindMismatch,\n                },\n            }\n'''
+new = '''            switch (parameter.kind) {\n                .type => switch (argument.value) {\n                    .type => |value| bindings.types[param_raw] = value,\n                    else => {\n                        self.traceGenericParameterOwner(module_index, param_raw, parameter, argument, arguments);\n                        return error.GenericArgumentKindMismatch;\n                    },\n                },\n                .comptime_int => switch (argument.value) {\n                    .comptime_int => |value| bindings.ints[param_raw] = value,\n                    else => {\n                        self.traceGenericParameterOwner(module_index, param_raw, parameter, argument, arguments);\n                        return error.GenericArgumentKindMismatch;\n                    },\n                },\n            }\n'''
+replace_once(generics, old, new, "generic kind mismatch owner trace call")
+
+anchor = '''    fn findGlobalArgument(\n        self: *Resolver,\n'''
+helper = '''    fn traceGenericParameterOwner(\n        self: *Resolver,\n        module_index: usize,\n        param_raw: u32,\n        parameter: parameterized_storage.ComptimeParameter,\n        argument: global_sg.GenericArgument,\n        arguments: primitives.Range(global_sg.GlobalGenericArgId),\n    ) void {\n        const module = &self.modules[module_index];\n        std.debug.print(\n            "[generic-kind-mismatch] module={} slot={} parameter={s} expected={s} argument={s} actual={s} args={}+{}\\n",\n            .{ module_index, param_raw, module.text(parameter.name), @tagName(parameter.kind), self.graph.text(argument.name), @tagName(argument.value), arguments.start, arguments.len },\n        );\n        for (module.semantic.parameterized_storage.parameterized_types.items) |candidate| {\n            if (param_raw < candidate.parameters.start or param_raw >= candidate.parameters.start + candidate.parameters.len) continue;\n            const declaration = module.declarations.items[@intFromEnum(candidate.declaration)];\n            std.debug.print(\n                "[generic-kind-owner] type decl={} name={s} params={}+{}\\n",\n                .{ @intFromEnum(candidate.declaration), module.text(declaration.name), candidate.parameters.start, candidate.parameters.len },\n            );\n        }\n        for (module.semantic.parameterized_storage.parameterized_functions.items) |candidate| {\n            if (param_raw < candidate.parameters.start or param_raw >= candidate.parameters.start + candidate.parameters.len) continue;\n            const declaration = module.declarations.items[@intFromEnum(candidate.declaration)];\n            std.debug.print(\n                "[generic-kind-owner] function decl={} name={s} params={}+{}\\n",\n                .{ @intFromEnum(candidate.declaration), module.text(declaration.name), candidate.parameters.start, candidate.parameters.len },\n            );\n        }\n    }\n\n'''
+replace_once(generics, anchor, helper + anchor, "generic parameter owner trace helper")
 
 subprocess.run([
     "zig", "fmt",
     "src/4_semantics/global/generic_functions.zig",
     "src/4_semantics/global/generics.zig",
-    "src/4_semantics/module/parameterized/lowerer.zig",
 ], check=True)
 
 Path(".git/semantic-refactor-message").write_text("Guard unresolved generic inference")
