@@ -22,7 +22,27 @@ replace_once(
     "unresolved generic input guard",
 )
 
-subprocess.run(["zig", "fmt", "src/4_semantics/global/generic_functions.zig"], check=True)
+# Temporary focused trace: identify the parameter/argument pair whose kind is
+# inconsistent after constructor probing advances past the unresolved binding.
+generics = Path("src/4_semantics/global/generics.zig")
+replace_once(
+    generics,
+    '''                    else => return error.GenericArgumentKindMismatch,\n''',
+    '''                    else => {\n                        std.debug.print(\n                            "[generic-kind-mismatch] module={} parameter={s} expected=type argument={s} actual={s} position={} range={}+{}\\n",\n                            .{ module_index, module.text(parameter.name), self.graph.text(argument.name), @tagName(argument.value), position, arguments.start, arguments.len },\n                        );\n                        return error.GenericArgumentKindMismatch;\n                    },\n''',
+    "type generic kind mismatch trace",
+)
+replace_once(
+    generics,
+    '''                    else => return error.GenericArgumentKindMismatch,\n''',
+    '''                    else => {\n                        std.debug.print(\n                            "[generic-kind-mismatch] module={} parameter={s} expected=comptime_int argument={s} actual={s} position={} range={}+{}\\n",\n                            .{ module_index, module.text(parameter.name), self.graph.text(argument.name), @tagName(argument.value), position, arguments.start, arguments.len },\n                        );\n                        return error.GenericArgumentKindMismatch;\n                    },\n''',
+    "integer generic kind mismatch trace",
+)
+
+subprocess.run([
+    "zig", "fmt",
+    "src/4_semantics/global/generic_functions.zig",
+    "src/4_semantics/global/generics.zig",
+], check=True)
 
 Path(".git/semantic-refactor-message").write_text("Guard unresolved generic inference")
 Path(".git/semantic-refactor-test-command").write_text(
