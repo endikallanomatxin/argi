@@ -29,6 +29,16 @@ replace_once(
     "contextual literal predicate visibility",
 )
 
+# Compiler-synthesized call inputs must uphold the same contextual typing
+# invariant as source calls. The old helper fetched the expected field type and
+# discarded it, leaving e.g. an Int32 literal inside a UIntNative parameter.
+replace_once(
+    core,
+    '''        for (nodes, 0..) |node, index| {\n            const field = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))].ty;\n            _ = field;\n            const source_field = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))];\n            try self.graph.value_fields.append(self.allocator, .{ .name = source_field.name, .value = node });\n        }\n''',
+    '''        for (nodes, 0..) |node, index| {\n            const source_field = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))];\n            _ = self.coerceContextualValue(node, source_field.ty);\n            try self.graph.value_fields.append(self.allocator, .{ .name = source_field.name, .value = node });\n        }\n''',
+    "synthetic call input contextualization",
+)
+
 constructors = Path("src/4_semantics/global/constructors.zig")
 text = constructors.read_text()
 
@@ -52,18 +62,13 @@ constructors.write_text(text.replace(old, new, 1))
 
 # Generic index operators are selected after specialization. Their non-self
 # operands follow contextual-literal rules too; exact equality would reject
-# `dyn[0]` when the specialized index type is UIntNative.
+# `dyn[0]` when the specialized index type is UIntNative. Actual coercion is
+# centralized in core.makeCallInput for all synthesized calls.
 generic_text = generic_functions.read_text()
 old = '''                for (1..count) |i| {\n                    const expected = self.graph.fields.items[candidate.input.start + @as(u32, @intCast(i))].ty;\n                    if (!global_types.equal(self.graph, expected, operand_types[i])) {\n                        matches = false;\n                        break;\n                    }\n                }\n'''
 new = '''                for (1..count) |i| {\n                    const expected = self.graph.fields.items[candidate.input.start + @as(u32, @intCast(i))].ty;\n                    if (!global_types.equal(self.graph, expected, operand_types[i]) and\n                        !self.core.contextualLiteralFits(operands[i], expected))\n                    {\n                        matches = false;\n                        break;\n                    }\n                }\n'''
 if generic_text.count(old) != 1:
     raise RuntimeError(f"generic index contextual match anchor changed: {generic_text.count(old)}")
-generic_text = generic_text.replace(old, new, 1)
-
-old = '''        const input = try self.core.makeCallInput(function.?, operands[0..count]);\n'''
-new = '''        const selected = self.graph.functions.items[@intFromEnum(function.?)];\n        for (1..count) |i| {\n            const expected = self.graph.fields.items[selected.input.start + @as(u32, @intCast(i))].ty;\n            _ = self.core.coerceContextualValue(operands[i], expected);\n        }\n        const input = try self.core.makeCallInput(function.?, operands[0..count]);\n'''
-if generic_text.count(old) != 1:
-    raise RuntimeError(f"generic index contextual coercion anchor changed: {generic_text.count(old)}")
 generic_functions.write_text(generic_text.replace(old, new, 1))
 
 # A zero-projection required-live path means the argument value itself must be
@@ -79,23 +84,10 @@ replace_once(
     "required-live pointer versus pointee distinction",
 )
 
-# Temporary codegen trace: semantic fixed-point acceptance can currently leave
-# a contextual child literal with a provisional scalar type. Identify the exact
-# aggregate field before deciding whether to repair sema or restore lowering
-# coercion. This cannot be committed because the focused test still fails.
-codegen = Path("src/5_codegen/global_codegen.zig")
-replace_once(
-    codegen,
-    '''            const value = (try self.visitNode(value_field.value)) orelse return CodegenError.ValueNotFound;\n            aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value.value_ref, hit.index, "struct.field");\n''',
-    '''            const value = (try self.visitNode(value_field.value)) orelse return CodegenError.ValueNotFound;\n            const expected_sem_ty = types.effectiveFieldType(hit.field);\n            const expected_llvm_ty = try self.toLLVMType(expected_sem_ty);\n            if (value.type_ref != expected_llvm_ty) {\n                const child = self.graph.node(value_field.value);\n                std.debug.print(\n                    "[struct-codegen-mismatch] field={s} value-node={} content={s} actual-sem={?} expected-sem={} actual-width={} expected-width={}\\n",\n                    .{\n                        name,\n                        @intFromEnum(value_field.value),\n                        @tagName(child.content),\n                        if (child.ty) |actual| @intFromEnum(actual) else null,\n                        @intFromEnum(expected_sem_ty),\n                        if (c.LLVMGetTypeKind(value.type_ref) == c.LLVMIntegerTypeKind) c.LLVMGetIntTypeWidth(value.type_ref) else 0,\n                        if (c.LLVMGetTypeKind(expected_llvm_ty) == c.LLVMIntegerTypeKind) c.LLVMGetIntTypeWidth(expected_llvm_ty) else 0,\n                    },\n                );\n            }\n            aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value.value_ref, hit.index, "struct.field");\n''',
-    "struct literal codegen mismatch trace",
-)
-
 subprocess.run([
     "zig", "fmt",
     "src/4_semantics/global/core.zig",
     "src/4_semantics/global/constructors.zig",
     "src/4_semantics/global/generic_functions.zig",
     "src/4_semantics/safety/checker.zig",
-    "src/5_codegen/global_codegen.zig",
 ], check=True)
