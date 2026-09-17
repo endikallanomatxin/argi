@@ -19,6 +19,12 @@ pub const Stats = struct {
     nodes: u32 = 0,
 };
 
+const ReachInferenceContext = struct {
+    module: *const module_sg.ModuleSemanticGraph,
+    offsets: globalizer.Offsets,
+    visible_bindings: module_entities.BindingRange,
+};
+
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -190,15 +196,16 @@ pub const Resolver = struct {
             self.stats.calls += 1;
             return .resolved;
         }
+        const reach_context: ReachInferenceContext = .{ .module = module, .offsets = o, .visible_bindings = value.visible_bindings };
         const function = if (local_args) |args|
-            self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input) catch |err| switch (err) {
+            self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input, reach_context) catch |err| switch (err) {
                 error.NoMatchingGenericFunction => return .not_applicable,
                 error.DeferredGenericFunction => return .deferred,
                 error.AmbiguousGenericFunction => return .invalid,
                 else => return .deferred,
             }
         else
-            self.resolveImplicitGenericFunction(module_index, module, reference, input) catch |err| switch (err) {
+            self.resolveImplicitGenericFunction(module_index, module, reference, input, reach_context) catch |err| switch (err) {
                 error.NoMatchingGenericFunction => return .not_applicable,
                 error.DeferredGenericFunction => return .deferred,
                 error.AmbiguousGenericFunction => return .invalid,
@@ -224,6 +231,7 @@ pub const Resolver = struct {
         reference: module_entities.ExternalRef,
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
         input: global_sg.GlobalNodeId,
+        reach_context: ?ReachInferenceContext,
     ) !global_sg.GlobalFunctionId {
         const module_filter = if (reference.module_path) |path|
             try self.core.findModuleForQualifier(current_module, module.text(path))
@@ -245,7 +253,12 @@ pub const Resolver = struct {
                 defer bindings.deinit(self.allocator);
                 self.generics.bindGlobalArgumentsPartial(candidate_index, parameterized.parameters, arguments, &bindings) catch continue;
                 if (!try self.inferBindingsFromInput(candidate_index, parameterized.input, input, &bindings)) continue;
-                const complete_arguments = try self.appendBoundArguments(candidate_index, parameterized.parameters, &bindings);
+                if (reach_context) |context|
+                    if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
+                const complete_arguments = self.appendBoundArguments(candidate_index, parameterized.parameters, &bindings) catch |err| switch (err) {
+                    error.MissingGenericArgument => continue,
+                    else => return err,
+                };
                 const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
                     .no_match => continue,
                     .deferred => {
@@ -307,6 +320,89 @@ pub const Resolver = struct {
         return true;
     }
 
+    fn inferBindingsFromReachDefaults(
+        self: *Resolver,
+        module_index: usize,
+        pattern: ir.ParameterizedTypeId,
+        input: global_sg.GlobalNodeId,
+        bindings: *generic_mod.Resolver.Bindings,
+        context: ReachInferenceContext,
+    ) !bool {
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |value| value,
+            else => return true,
+        };
+        const candidate_module = &self.modules[module_index];
+        const storage = &candidate_module.semantic.parameterized_storage.ir;
+        const shape = switch (storage.types.items[@intFromEnum(pattern)]) {
+            .resolved => |resolved| switch (resolved) {
+                .structural => |value| value,
+                else => return true,
+            },
+            else => return true,
+        };
+
+        for (storage.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, position| {
+            var supplied = false;
+            for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |value, supplied_position| {
+                const positional = supplied_position < literal.dispatch_prefix_positional_count or self.graph.text(value.name).len == 0;
+                if (if (positional) position == supplied_position else std.mem.eql(u8, candidate_module.text(field.name), self.graph.text(value.name))) {
+                    supplied = true;
+                    break;
+                }
+            }
+            if (supplied) continue;
+            const default_id = field.default_value orelse continue;
+            const default_node = switch (storage.nodes.items[@intFromEnum(default_id)]) {
+                .resolved => |node| node,
+                .pending => continue,
+            };
+            const reach_id = switch (default_node.content) {
+                .reach_directive => |reach| reach,
+                else => continue,
+            };
+            const reach = storage.reaches.items[@intFromEnum(reach_id)];
+            const scope = context.module.semantic.binding_refs.items[context.visible_bindings.start..][0..context.visible_bindings.len];
+
+            var inferred = false;
+            for (storage.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len]) |alternative| {
+                if (alternative.segments.len == 0) continue;
+                const segments = storage.reach_segments.items[alternative.segments.start..][0..alternative.segments.len];
+                const root_name = candidate_module.text(segments[0]);
+                var scope_index = scope.len;
+                while (scope_index > 0) {
+                    scope_index -= 1;
+                    const binding_id = globalizer.globalBinding(context.offsets, scope[scope_index]);
+                    if (self.graph.isBindingTypeUnresolved(binding_id)) continue;
+                    const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
+                    if (!std.mem.eql(u8, self.graph.text(binding.name), root_name)) continue;
+                    var current_ty = binding.ty;
+                    var valid = !self.graph.isTypeUnresolved(current_ty);
+                    for (segments[1..]) |segment| {
+                        if (!valid) break;
+                        const hit = global_types.findField(self.graph, current_ty, candidate_module.text(segment)) orelse {
+                            valid = false;
+                            break;
+                        };
+                        current_ty = hit.field.storage_type orelse hit.field.ty;
+                        if (self.graph.isTypeUnresolved(current_ty)) valid = false;
+                    }
+                    if (!valid) continue;
+                    const matched = self.inferInputType(module_index, field.ty, current_ty, bindings) catch |err| switch (err) {
+                        error.ConflictingGenericArgument => return false,
+                        else => continue,
+                    };
+                    if (matched) {
+                        inferred = true;
+                        break;
+                    }
+                }
+                if (inferred) break;
+            }
+        }
+        return true;
+    }
+
     pub fn appendBoundArguments(
         self: *Resolver,
         module_index: usize,
@@ -335,6 +431,7 @@ pub const Resolver = struct {
         module: *const module_sg.ModuleSemanticGraph,
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
+        reach_context: ?ReachInferenceContext,
     ) !global_sg.GlobalFunctionId {
         const module_filter = if (reference.module_path) |path|
             try self.core.findModuleForQualifier(current_module, module.text(path))
@@ -345,6 +442,7 @@ pub const Resolver = struct {
             module.text(reference.name),
             module_filter,
             input,
+            reach_context,
             null,
         );
     }
@@ -357,7 +455,7 @@ pub const Resolver = struct {
         name: []const u8,
         input: global_sg.GlobalNodeId,
     ) !global_sg.GlobalFunctionId {
-        return self.resolveImplicitGenericFunctionFiltered(current_module, name, null, input, null);
+        return self.resolveImplicitGenericFunctionFiltered(current_module, name, null, input, null, null);
     }
 
     fn resolveImplicitGenericFunctionFiltered(
@@ -366,6 +464,7 @@ pub const Resolver = struct {
         name: []const u8,
         module_filter: ?global_sg.GlobalModuleId,
         input: global_sg.GlobalNodeId,
+        reach_context: ?ReachInferenceContext,
         ambiguity_candidates: ?*std.ArrayList(global_sg.GlobalDeclId),
     ) !global_sg.GlobalFunctionId {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
@@ -425,6 +524,8 @@ pub const Resolver = struct {
                     if (candidate_deferred) saw_deferred = true;
                     continue;
                 }
+                if (reach_context) |context|
+                    if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
                 var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
                 defer arguments.deinit(self.allocator);
                 for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
@@ -511,6 +612,7 @@ pub const Resolver = struct {
             module.text(reference.name),
             module_filter,
             input,
+            null,
             candidates,
         ) catch |err| return switch (err) {
             error.AmbiguousGenericFunction => true,
@@ -775,6 +877,8 @@ pub const Resolver = struct {
         actual: global_sg.GlobalTypeId,
         bindings: *generic_mod.Resolver.Bindings,
     ) anyerror!bool {
+        const actual_raw: usize = @intFromEnum(actual);
+        if (actual_raw >= self.graph.types.items.len or self.graph.isTypeUnresolved(actual)) return false;
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage.ir;
         switch (storage.types.items[@intFromEnum(pattern)]) {
@@ -1697,10 +1801,10 @@ pub const Resolver = struct {
             };
             const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = module_path, .name = name_range, .source = source };
             const function = if (arguments.len != 0)
-                try self.resolver.resolveExplicitGenericFunction(self.module_index, module, reference, arguments, input)
+                try self.resolver.resolveExplicitGenericFunction(self.module_index, module, reference, arguments, input, null)
             else
                 self.resolver.core.resolveFunctionByName(self.module_index, reference, input) catch
-                    self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input) catch |err| {
+                    self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, null) catch |err| {
                     if (self.resolver.nested_call_context) |context| {
                         if (self.resolver.nested_call_resolver) |resolve| {
                             if (try resolve(context, self.module_index, reference, input, self.resolver.sourceFor(self.module_index, source))) |node|

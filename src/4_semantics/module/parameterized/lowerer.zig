@@ -912,7 +912,7 @@ fn isTypeBuiltin(tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.
     return std.mem.eql(u8, tree.tokenTextFromSource(source, ty.name.name_token), "Type");
 }
 
-fn isTypeParameter(tree: *const syn.FileSyntaxTree, source: []const u8, field: syn.StructTypeField) bool {
+pub fn isTypeParameter(tree: *const syn.FileSyntaxTree, source: []const u8, field: syn.StructTypeField) bool {
     const type_node = field.type_node orelse return true;
     if (isTypeBuiltin(tree, source, type_node)) return true;
 

@@ -1015,11 +1015,16 @@ pub const Resolver = struct {
                 const binding_id = globalizer.globalBinding(o, scope[scope_index]);
                 const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
                 if (!std.mem.eql(u8, self.graph.text(binding.name), root_name)) continue;
+                if (self.graph.isBindingTypeUnresolved(binding_id) or self.graph.isTypeUnresolved(binding.ty)) continue;
                 var current_ty = binding.ty;
                 var hits: std.ArrayList(types.FieldHit) = .empty;
                 defer hits.deinit(self.allocator);
                 var valid = true;
                 for (segments[1..]) |segment| {
+                    if (self.graph.isTypeUnresolved(current_ty)) {
+                        valid = false;
+                        break;
+                    }
                     const hit = types.findField(self.graph, current_ty, self.graph.text(segment)) orelse {
                         valid = false;
                         break;
@@ -1027,6 +1032,7 @@ pub const Resolver = struct {
                     try hits.append(self.allocator, hit);
                     current_ty = hit.field.storage_type orelse hit.field.ty;
                 }
+                if (self.graph.isTypeUnresolved(current_ty)) valid = false;
                 if (!valid or (!types.equal(self.graph, current_ty, expected) and !self.callTypesCompatible(current_ty, expected))) continue;
                 var node: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
                 try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = binding.ty, .content = .{ .binding_use = binding_id } });
