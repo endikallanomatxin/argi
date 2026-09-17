@@ -27,15 +27,9 @@ replace_once(
 generics = Path("src/4_semantics/global/generics.zig")
 replace_once(
     generics,
-    '''                    else => return error.GenericArgumentKindMismatch,\n''',
-    '''                    else => {\n                        std.debug.print(\n                            "[generic-kind-mismatch] module={} parameter={s} expected=type argument={s} actual={s} position={} range={}+{}\\n",\n                            .{ module_index, module.text(parameter.name), self.graph.text(argument.name), @tagName(argument.value), position, arguments.start, arguments.len },\n                        );\n                        return error.GenericArgumentKindMismatch;\n                    },\n''',
-    "type generic kind mismatch trace",
-)
-replace_once(
-    generics,
-    '''                    else => return error.GenericArgumentKindMismatch,\n''',
-    '''                    else => {\n                        std.debug.print(\n                            "[generic-kind-mismatch] module={} parameter={s} expected=comptime_int argument={s} actual={s} position={} range={}+{}\\n",\n                            .{ module_index, module.text(parameter.name), self.graph.text(argument.name), @tagName(argument.value), position, arguments.start, arguments.len },\n                        );\n                        return error.GenericArgumentKindMismatch;\n                    },\n''',
-    "integer generic kind mismatch trace",
+    '''            switch (parameter.kind) {\n                .type => switch (argument.value) {\n                    .type => |value| bindings.types[param_raw] = value,\n                    else => return error.GenericArgumentKindMismatch,\n                },\n                .comptime_int => switch (argument.value) {\n                    .comptime_int => |value| bindings.ints[param_raw] = value,\n                    else => return error.GenericArgumentKindMismatch,\n                },\n            }\n''',
+    '''            switch (parameter.kind) {\n                .type => switch (argument.value) {\n                    .type => |value| bindings.types[param_raw] = value,\n                    else => {\n                        std.debug.print(\n                            "[generic-kind-mismatch] module={} parameter={s} expected=type argument={s} actual={s} position={} range={}+{}\\n",\n                            .{ module_index, module.text(parameter.name), self.graph.text(argument.name), @tagName(argument.value), position, arguments.start, arguments.len },\n                        );\n                        return error.GenericArgumentKindMismatch;\n                    },\n                },\n                .comptime_int => switch (argument.value) {\n                    .comptime_int => |value| bindings.ints[param_raw] = value,\n                    else => {\n                        std.debug.print(\n                            "[generic-kind-mismatch] module={} parameter={s} expected=comptime_int argument={s} actual={s} position={} range={}+{}\\n",\n                            .{ module_index, module.text(parameter.name), self.graph.text(argument.name), @tagName(argument.value), position, arguments.start, arguments.len },\n                        );\n                        return error.GenericArgumentKindMismatch;\n                    },\n                },\n            }\n''',
+    "generic kind mismatch trace",
 )
 
 subprocess.run([
