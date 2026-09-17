@@ -50,10 +50,10 @@ jobs:
         timeout-minutes: 8
         shell: bash
         run: |
-          if [[ -f .github/semantic_refactor_test_command ]]; then
-            bash -euo pipefail -c "$(cat .github/semantic_refactor_test_command)"
-          elif [[ -f .git/semantic-refactor-test-command ]]; then
+          if [[ -f .git/semantic-refactor-test-command ]]; then
             bash -euo pipefail -c "$(cat .git/semantic-refactor-test-command)"
+          elif [[ -f .github/semantic_refactor_test_command ]]; then
+            bash -euo pipefail -c "$(cat .github/semantic_refactor_test_command)"
           fi
       - name: Commit verified source edit
         shell: bash
