@@ -237,6 +237,8 @@ pub fn semantizeWithOptions(
     defer abstracts.deinit();
     generic_functions.nested_call_context = &abstracts;
     generic_functions.nested_call_resolver = abstract_mod.Resolver.resolveNestedCall;
+    generic_functions.nested_constructor_context = &constructors;
+    generic_functions.nested_constructor_resolver = constructor_mod.Resolver.resolveNestedCall;
     var errors = error_mod.Resolver{
         .allocator = allocator,
         .graph = &relocation.graph,

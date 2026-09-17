@@ -44,6 +44,53 @@ pub const Resolver = struct {
         visible: module_entities.BindingRange,
     };
 
+    /// Resolve a constructor encountered while materializing a generic
+    /// function body. Only non-parameterized declarations are handled here;
+    /// parameterized construction still needs the caller's generic/reach
+    /// context and remains on the normal constructor path. Structural
+    /// construction is never allowed to bypass a visible initializer.
+    pub fn resolveNestedCall(
+        context_ptr: *anyopaque,
+        module_index: usize,
+        reference: module_entities.ExternalRef,
+        arguments: primitives.Range(global_sg.GlobalGenericArgId),
+        input: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+    ) anyerror!?global_sg.Node {
+        const self: *Resolver = @ptrCast(@alignCast(context_ptr));
+        if (arguments.len != 0) return null;
+
+        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {
+            error.UnknownGlobalDeclaration => return null,
+            else => return err,
+        };
+        const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
+        var generics = generic_mod.Resolver{
+            .allocator = self.core.allocator,
+            .graph = self.graph,
+            .modules = self.modules,
+            .offsets = self.offsets,
+            .core = self.core,
+        };
+        if (generics.isParameterizedTypeDeclaration(declaration_id)) return null;
+        const ty = declaration.type_id orelse return null;
+
+        const initializer = self.findInitializer(module_index, ty, input);
+        if (initializer.has_visible_initializer) return null;
+
+        const fields = types.fields(self.graph, ty) orelse return null;
+        switch (self.core.matchCallInput(fields, input)) {
+            .score => {},
+            .no_match, .deferred => return null,
+        }
+        if (!try self.core.completeCallInputFields(fields, input)) return null;
+        self.graph.nodes.items[@intFromEnum(input)].ty = ty;
+        var node = self.graph.nodes.items[@intFromEnum(input)];
+        node.source = source;
+        self.core.stats.calls += 1;
+        return node;
+    }
+
     pub fn tryResolve(
         self: *Resolver,
         module_index: usize,

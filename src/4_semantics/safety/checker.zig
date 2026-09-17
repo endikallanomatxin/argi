@@ -3435,9 +3435,31 @@ fn collectDependencyRoots(value: facts.ValueFacts, roots: *std.array_list.Manage
 }
 
 fn valueDependsOnDeadRoot(value: facts.ValueFacts, state: *const SafetyChecker.FunctionState) bool {
-    for (value.dependencies) |dependency| if (!state.tracker.isAlive(dependency.root)) return true;
-    for (value.fields) |field| if (valueDependsOnDeadRoot(field.value.*, state)) return true;
-    for (value.variants) |variant| if (valueDependsOnDeadRoot(variant.value.*, state)) return true;
+    return valueDependsOnDeadRootWithOwners(value, value, state);
+}
+
+fn valueDependsOnDeadRootWithOwners(
+    value: facts.ValueFacts,
+    owners: facts.ValueFacts,
+    state: *const SafetyChecker.FunctionState,
+) bool {
+    for (value.dependencies) |dependency| {
+        const root = state.tracker.roots.items[@intFromEnum(dependency.root)];
+        if (root.state == .alive) continue;
+        // A resource that only exists on one choice branch can become
+        // conditional/maybe-alive after joins. It is still safe to escape when
+        // the escaping aggregate itself carries ownership of that exact root.
+        // Keeping the ownership envelope from the outer value is important:
+        // nested fields may depend on a root whose owned_roots fact is stored
+        // on an ancestor aggregate. Borrowed dependencies have no such proof.
+        if ((root.state == .conditional or root.state == .maybe_alive) and
+            root.owned_resource and valueContainsOwnedRoot(owners, dependency.root)) continue;
+        return true;
+    }
+    for (value.fields) |field|
+        if (valueDependsOnDeadRootWithOwners(field.value.*, owners, state)) return true;
+    for (value.variants) |variant|
+        if (valueDependsOnDeadRootWithOwners(variant.value.*, owners, state)) return true;
     return false;
 }
 
@@ -4197,4 +4219,54 @@ test "direct call summaries annotate auto deinit transitions" {
 
     try std.testing.expectEqual(address, graph.nodes.items[@intFromEnum(initializes_call)].content.function_call.initializes_auto_deinit.?);
     try std.testing.expectEqual(address, graph.nodes.items[@intFromEnum(consumes_call)].content.function_call.consumes_auto_deinit.?);
+}
+
+test "conditional owned roots may escape through nested aggregate fields" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+
+    const root = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(root)].state = .maybe_alive;
+    state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
+    const child = facts.ValueFacts{ .dependencies = &.{.{ .root = root }} };
+    const value = facts.ValueFacts{
+        .owned_roots = &.{root},
+        .fields = &.{.{ .index = 0, .value = &child }},
+    };
+    try std.testing.expect(!valueDependsOnDeadRoot(value, &state));
+}
+
+test "conditional borrowed roots still cannot escape" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+
+    const root = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(root)].state = .maybe_alive;
+    state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
+    const child = facts.ValueFacts{ .dependencies = &.{.{ .root = root }} };
+    const value = facts.ValueFacts{ .fields = &.{.{ .index = 0, .value = &child }} };
+    try std.testing.expect(valueDependsOnDeadRoot(value, &state));
+}
+
+test "dead owned roots still cannot escape" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+
+    const root = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(root)].state = .dead;
+    state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
+    const value = facts.ValueFacts{
+        .dependencies = &.{.{ .root = root }},
+        .owned_roots = &.{root},
+    };
+    try std.testing.expect(valueDependsOnDeadRoot(value, &state));
 }

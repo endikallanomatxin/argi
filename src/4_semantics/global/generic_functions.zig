@@ -34,6 +34,8 @@ pub const Resolver = struct {
     generics: *generic_mod.Resolver,
     nested_call_context: ?*abstract_mod.Resolver = null,
     nested_call_resolver: ?*const fn (*abstract_mod.Resolver, usize, module_entities.ExternalRef, global_sg.GlobalNodeId, primitives.SourceRef) anyerror!?global_sg.Node = null,
+    nested_constructor_context: ?*anyopaque = null,
+    nested_constructor_resolver: ?*const fn (*anyopaque, usize, module_entities.ExternalRef, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, primitives.SourceRef) anyerror!?global_sg.Node = null,
     stats: Stats = .{},
 
     pub fn tryResolve(
@@ -1809,6 +1811,12 @@ pub const Resolver = struct {
             else
                 self.resolver.core.resolveFunctionByName(self.module_index, reference, input) catch
                     self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, null) catch |err| {
+                    if (self.resolver.nested_constructor_context) |context| {
+                        if (self.resolver.nested_constructor_resolver) |resolve| {
+                            if (try resolve(context, self.module_index, reference, arguments, input, self.resolver.sourceFor(self.module_index, source))) |node|
+                                return node;
+                        }
+                    }
                     if (self.resolver.nested_call_context) |context| {
                         if (self.resolver.nested_call_resolver) |resolve| {
                             if (try resolve(context, self.module_index, reference, input, self.resolver.sourceFor(self.module_index, source))) |node|
