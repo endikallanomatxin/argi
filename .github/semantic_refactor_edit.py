@@ -84,8 +84,6 @@ text, count = pattern.subn(lambda _: replacement, text, count=1)
 if count != 1:
     raise RuntimeError(f"initializer reach function anchor changed: {count}")
 
-# The first two temporary generic resolvers already retain the abstract context.
-# Complete their callback wiring without duplicating that existing field.
 text = replace_exact_count(
     text,
     ".nested_call_context = self.abstracts,\n",
@@ -96,8 +94,6 @@ text = replace_exact_count(
     2,
     "existing temporary resolver context",
 )
-
-# The explicit generic-constructor path did not carry any nested dispatch state.
 old = '''        var generic_functions = generic_functions_mod.Resolver{
             .allocator = self.core.allocator,
             .graph = self.graph,
@@ -123,13 +119,73 @@ new = '''        var generic_functions = generic_functions_mod.Resolver{
         const input = globalizer.globalNode(o, value.input);
 '''
 text = replace_exact_count(text, old, new, 1, "explicit generic constructor resolver")
-
 path.write_text(text)
 subprocess.run(["zig", "fmt", str(path)], check=True)
+
+# Trace the nested call that prevents the selected initializer from
+# materializing. This is intentionally diagnostic-only and will not land unless
+# the focused test unexpectedly succeeds.
+gpath = Path("src/4_semantics/global/generic_functions.zig")
+gtext = gpath.read_text()
+gtext = replace_exact_count(
+    gtext,
+    '''            const name = module.text(name_range);\n            if (module_path == null and std.mem.eql(u8, name, "cast"))\n''',
+    '''            const name = module.text(name_range);\n            std.debug.print("[generic-body-call] module={} name={s} args={}\\n", .{ self.module_index, name, arguments.len });\n            if (module_path == null and std.mem.eql(u8, name, "cast"))\n''',
+    1,
+    "generic body call entry",
+)
+old = '''                self.resolver.core.resolveFunctionByName(self.module_index, reference, input) catch
+                    self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, null) catch |err| {
+                    if (self.resolver.nested_constructor_context) |context| {
+                        if (self.resolver.nested_constructor_resolver) |resolve| {
+                            if (try resolve(context, self.module_index, reference, arguments, input, self.resolver.sourceFor(self.module_index, source))) |node|
+                                return node;
+                        }
+                    }
+                    if (self.resolver.nested_call_context) |context| {
+                        if (self.resolver.nested_call_resolver) |resolve| {
+                            if (try resolve(context, self.module_index, reference, input, self.resolver.sourceFor(self.module_index, source))) |node|
+                                return node;
+                        }
+                    }
+                    if (module_path == null and std.mem.eql(u8, name, "deinit") and
+                        self.parameterized.safety_primitive == .trusted_opaque_drop)
+                        return self.emptyValue(try self.resolver.generics.internType(.{ .builtin = .Void }), source);
+                    return err;
+                };
+'''
+new = '''                self.resolver.core.resolveFunctionByName(self.module_index, reference, input) catch
+                    self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, null) catch |err| {
+                    std.debug.print("[generic-body-fallback] name={s} generic-error={s}\\n", .{ name, @errorName(err) });
+                    if (self.resolver.nested_constructor_context) |context| {
+                        if (self.resolver.nested_constructor_resolver) |resolve| {
+                            if (try resolve(context, self.module_index, reference, arguments, input, self.resolver.sourceFor(self.module_index, source))) |node| {
+                                std.debug.print("[generic-body-constructor-hit] name={s}\\n", .{name});
+                                return node;
+                            }
+                            std.debug.print("[generic-body-constructor-miss] name={s}\\n", .{name});
+                        }
+                    }
+                    if (self.resolver.nested_call_context) |context| {
+                        if (self.resolver.nested_call_resolver) |resolve| {
+                            if (try resolve(context, self.module_index, reference, input, self.resolver.sourceFor(self.module_index, source))) |node| {
+                                std.debug.print("[generic-body-abstract-hit] name={s}\\n", .{name});
+                                return node;
+                            }
+                            std.debug.print("[generic-body-abstract-miss] name={s}\\n", .{name});
+                        }
+                    }
+                    if (module_path == null and std.mem.eql(u8, name, "deinit") and
+                        self.parameterized.safety_primitive == .trusted_opaque_drop)
+                        return self.emptyValue(try self.resolver.generics.internType(.{ .builtin = .Void }), source);
+                    std.debug.print("[generic-body-fail] name={s} error={s}\\n", .{ name, @errorName(err) });
+                    return err;
+                };
+'''
+gtext = replace_exact_count(gtext, old, new, 1, "generic body fallback trace")
+gpath.write_text(gtext)
+subprocess.run(["zig", "fmt", str(gpath)], check=True)
+
 Path(".git/semantic-refactor-test-command").write_text(
-    "zig build test-programs -Dtest-filter=feature_tests/collections/23_dynamic_array_owning_push_fixed && "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/24_dynamic_array_owning_insert_fixed && "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/30_dynamic_array_custom_allocator && "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/26_dynamic_array_owning_pop && "
-    "zig build test-programs -Dtest-filter=feature_tests/text/08_string_allocator_size\n"
+    "zig build test-programs -Dtest-filter=feature_tests/collections/23_dynamic_array_owning_push_fixed\n"
 )
