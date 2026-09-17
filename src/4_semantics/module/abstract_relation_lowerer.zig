@@ -206,10 +206,7 @@ const Context = struct {
             for (literal.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
                 const name_text = self.tree.tokenTextFromSource(self.source, field.name_token);
-                const kind: parameterized_storage.ComptimeParameterKind = if (field.type_node) |type_node|
-                    if (isTypeName(self.tree, self.source, type_node, "Type")) .type else .comptime_int
-                else
-                    .type;
+                const kind: parameterized_storage.ComptimeParameterKind = if (parameterized_lowerer.isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
                 const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
                 try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
                     .name = try self.writer.addString(name_text),
