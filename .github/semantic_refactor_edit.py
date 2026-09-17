@@ -11,6 +11,9 @@ def replace_once(path: Path, old: str, new: str, label: str) -> None:
 
 
 Path(".github/semantic_refactor_post_edit.py").write_text("# no-op diagnostic run\n")
+
+# Real resolver fix under verification: a conflicting inferred binding rejects
+# only that explicit-generic overload, just like implicit generic selection.
 path = Path("src/4_semantics/global/generic_functions.zig")
 replace_once(
     path,
@@ -20,15 +23,23 @@ replace_once(
 )
 subprocess.run(["zig", "fmt", str(path)], check=True)
 
-test = Path("tests/feature_tests/collections/18_dynamic_array_copy/main.rg")
-replace_once(
-    test,
-    '''    copied ::= ~copied_result..ok\n    #defer deinit(.self = $&copied, .allocator = system.allocator)\n\n    copied[0] = 99\n    push(.self = $&copied, .value = 30, .allocator = system.allocator)\n''',
-    '''    copied ::= ~copied_result..ok\n    #defer deinit(.self = $&copied, .allocator = system.allocator)\n\n    if arr[0] != 10 {\n        status_code = 11\n        return\n    }\n    if copied[0] != 10 {\n        status_code = 12\n        return\n    }\n    if copied[1] != 20 {\n        status_code = 13\n        return\n    }\n    arr_address :: UIntNative = cast#(.to: UIntNative)(.value = arr.allocation.data)\n    copied_address :: UIntNative = cast#(.to: UIntNative)(.value = copied.allocation.data)\n    if arr_address == copied_address {\n        status_code = 14\n        return\n    }\n\n    copied[0] = 99\n    if arr[0] != 10 {\n        status_code = 21\n        return\n    }\n    if copied[0] != 99 {\n        status_code = 22\n        return\n    }\n\n    push(.self = $&copied, .value = 30, .allocator = system.allocator)\n    if arr[0] != 10 {\n        status_code = 31\n        return\n    }\n''',
-    "dynamic array copy checkpoints",
-)
+# Diagnostic only: stop the infallible DynamicArray copy after allocating its
+# independent output. If the source array is still corrupted, the loop is not
+# responsible.
+dynamic = Path("core/lists/DynamicArray.rg")
+text = dynamic.read_text()
+copy_start = text.index("copy #(.t: Type: InfalliblyCopyable) (")
+loop_start = text.index("    i :: UIntNative = 0\n", copy_start)
+text = text[:loop_start] + "    result = ..ok ~out\n    return\n\n" + text[loop_start:]
+dynamic.write_text(text)
 
-Path(".git/semantic-refactor-message").write_text("Trace DynamicArray copy allocation addresses")
+# Diagnostic only: observe the source immediately after the shortened copy.
+test = Path("tests/feature_tests/collections/18_dynamic_array_copy/main.rg")
+text = test.read_text()
+tail_start = text.index("    copied ::= ~copied_result..ok\n")
+test.write_text(text[:tail_start] + '''    copied ::= ~copied_result..ok\n    #defer deinit(.self = $&copied, .allocator = system.allocator)\n\n    if arr[0] != 10 {\n        status_code = 11\n        return\n    }\n\n    status_code = 0\n}\n''')
+
+Path(".git/semantic-refactor-message").write_text("Keep explicit generic conflicts candidate-local")
 Path(".git/semantic-refactor-test-command").write_text(
     "zig build test-programs -Dtest-filter=feature_tests/collections/18_dynamic_array_copy\n"
 )
