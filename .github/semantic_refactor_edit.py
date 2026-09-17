@@ -40,7 +40,15 @@ replace_once(
     "wire nested constructor resolver",
 )
 
-subprocess.run(["zig", "fmt", str(generic_functions), str(constructors), str(semantizer)], check=True)
+checker = Path("src/4_semantics/safety/checker.zig")
+replace_once(
+    checker,
+    '''fn valueDependsOnDeadRoot(value: facts.ValueFacts, state: *const SafetyChecker.FunctionState) bool {\n    for (value.dependencies) |dependency| if (!state.tracker.isAlive(dependency.root)) return true;\n    for (value.fields) |field| if (valueDependsOnDeadRoot(field.value.*, state)) return true;\n    for (value.variants) |variant| if (valueDependsOnDeadRoot(variant.value.*, state)) return true;\n    return false;\n}\n''',
+    '''fn valueDependsOnDeadRoot(value: facts.ValueFacts, state: *const SafetyChecker.FunctionState) bool {\n    for (value.dependencies) |dependency| {\n        if (!state.tracker.isAlive(dependency.root)) {\n            const root = state.tracker.roots.items[@intFromEnum(dependency.root)];\n            std.debug.print(\n                "[escape-root] root={} state={s} owned-resource={} owned-here={} deps={} fields={} variants={}\\n",\n                .{ @intFromEnum(dependency.root), @tagName(root.state), root.owned_resource, containsRoot(value.owned_roots, dependency.root), value.dependencies.len, value.fields.len, value.variants.len },\n            );\n            return true;\n        }\n    }\n    for (value.fields) |field| if (valueDependsOnDeadRoot(field.value.*, state)) return true;\n    for (value.variants) |variant| if (valueDependsOnDeadRoot(variant.value.*, state)) return true;\n    return false;\n}\n''',
+    "trace escaping root state",
+)
+
+subprocess.run(["zig", "fmt", str(generic_functions), str(constructors), str(semantizer), str(checker)], check=True)
 Path(".git/semantic-refactor-message").write_text("Resolve structural constructors in generic bodies")
 Path(".git/semantic-refactor-test-command").write_text(
     "zig build test-programs -Dtest-filter=feature_tests/collections/26_dynamic_array_owning_pop\n"
