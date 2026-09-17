@@ -1,16 +1,47 @@
 from pathlib import Path
 import subprocess
 
-path = Path("src/4_semantics/global/generic_functions.zig")
-text = path.read_text()
-start_marker = '''            const function = if (arguments.len != 0)\n'''
-end_marker = '''            if (!try self.resolver.core.completeCallInputFields'''
-start = text.index(start_marker, text.index("fn makeNamedCall("))
-end = text.index(end_marker, start)
-replacement = '''            const function = if (arguments.len != 0)\n                try self.resolver.resolveExplicitGenericFunction(self.module_index, module, reference, arguments, input, null)\n            else blk: {\n                const ordinary = self.resolver.core.resolveFunctionByName(self.module_index, reference, input) catch |core_err| {\n                    std.debug.print("[generic-body-call] name={s} core={s}\\n", .{ name, @errorName(core_err) });\n                    const generic = self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, null) catch |err| {\n                        std.debug.print("[generic-body-call] name={s} generic={s}\\n", .{ name, @errorName(err) });\n                        if (self.resolver.nested_call_context) |context| {\n                            if (self.resolver.nested_call_resolver) |resolve| {\n                                if (try resolve(context, self.module_index, reference, input, self.resolver.sourceFor(self.module_index, source))) |node|\n                                    return node;\n                            }\n                        }\n                        if (module_path == null and std.mem.eql(u8, name, "deinit") and\n                            self.parameterized.safety_primitive == .trusted_opaque_drop)\n                            return self.emptyValue(try self.resolver.generics.internType(.{ .builtin = .Void }), source);\n                        return err;\n                    };\n                    break :blk generic;\n                };\n                break :blk ordinary;\n            };\n'''
-path.write_text(text[:start] + replacement + text[end:])
-subprocess.run(["zig", "fmt", str(path)], check=True)
-Path(".git/semantic-refactor-message").write_text("Trace nested generic body calls")
+
+def replace_once(path: Path, old: str, new: str, label: str) -> None:
+    text = path.read_text()
+    count = text.count(old)
+    if count != 1:
+        raise RuntimeError(f"{label} anchor changed: {count}")
+    path.write_text(text.replace(old, new, 1))
+
+
+generic_functions = Path("src/4_semantics/global/generic_functions.zig")
+replace_once(
+    generic_functions,
+    '''    nested_call_context: ?*abstract_mod.Resolver = null,\n    nested_call_resolver: ?*const fn (*abstract_mod.Resolver, usize, module_entities.ExternalRef, global_sg.GlobalNodeId, primitives.SourceRef) anyerror!?global_sg.Node = null,\n    stats: Stats = .{},\n''',
+    '''    nested_call_context: ?*abstract_mod.Resolver = null,\n    nested_call_resolver: ?*const fn (*abstract_mod.Resolver, usize, module_entities.ExternalRef, global_sg.GlobalNodeId, primitives.SourceRef) anyerror!?global_sg.Node = null,\n    nested_constructor_context: ?*anyopaque = null,\n    nested_constructor_resolver: ?*const fn (*anyopaque, usize, module_entities.ExternalRef, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, primitives.SourceRef) anyerror!?global_sg.Node = null,\n    stats: Stats = .{},\n''',
+    "nested constructor callback fields",
+)
+replace_once(
+    generic_functions,
+    '''                self.resolver.core.resolveFunctionByName(self.module_index, reference, input) catch\n                    self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, null) catch |err| {\n                    if (self.resolver.nested_call_context) |context| {\n''',
+    '''                self.resolver.core.resolveFunctionByName(self.module_index, reference, input) catch\n                    self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, null) catch |err| {\n                    if (self.resolver.nested_constructor_context) |context| {\n                        if (self.resolver.nested_constructor_resolver) |resolve| {\n                            if (try resolve(context, self.module_index, reference, arguments, input, self.resolver.sourceFor(self.module_index, source))) |node|\n                                return node;\n                        }\n                    }\n                    if (self.resolver.nested_call_context) |context| {\n''',
+    "nested constructor fallback",
+)
+
+constructors = Path("src/4_semantics/global/constructors.zig")
+replace_once(
+    constructors,
+    '''    pub fn tryResolve(\n        self: *Resolver,\n''',
+    '''    /// Resolve a constructor encountered while materializing a generic\n    /// function body. Only non-parameterized declarations are handled here;\n    /// parameterized construction still needs the caller's generic/reach\n    /// context and remains on the normal constructor path. Structural\n    /// construction is never allowed to bypass a visible initializer.\n    pub fn resolveNestedCall(\n        opaque: *anyopaque,\n        module_index: usize,\n        reference: module_entities.ExternalRef,\n        arguments: primitives.Range(global_sg.GlobalGenericArgId),\n        input: global_sg.GlobalNodeId,\n        source: primitives.SourceRef,\n    ) anyerror!?global_sg.Node {\n        const self: *Resolver = @ptrCast(@alignCast(opaque));\n        if (arguments.len != 0) return null;\n\n        const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {\n            error.UnknownGlobalDeclaration => return null,\n            else => return err,\n        };\n        const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];\n        var generics = generic_mod.Resolver{\n            .allocator = self.core.allocator,\n            .graph = self.graph,\n            .modules = self.modules,\n            .offsets = self.offsets,\n            .core = self.core,\n        };\n        if (generics.isParameterizedTypeDeclaration(declaration_id)) return null;\n        const ty = declaration.type_id orelse return null;\n\n        const initializer = self.findInitializer(module_index, ty, input);\n        if (initializer.has_visible_initializer) return null;\n\n        const fields = types.fields(self.graph, ty) orelse return null;\n        switch (self.core.matchCallInput(fields, input)) {\n            .score => {},\n            .no_match, .deferred => return null,\n        }\n        if (!try self.core.completeCallInputFields(fields, input)) return null;\n        self.graph.nodes.items[@intFromEnum(input)].ty = ty;\n        var node = self.graph.nodes.items[@intFromEnum(input)];\n        node.source = source;\n        self.core.stats.calls += 1;\n        return node;\n    }\n\n    pub fn tryResolve(\n        self: *Resolver,\n''',
+    "nested structural constructor resolver",
+)
+
+semantizer = Path("src/4_semantics/global/semantizer.zig")
+replace_once(
+    semantizer,
+    '''    generic_functions.nested_call_context = &abstracts;\n    generic_functions.nested_call_resolver = abstract_mod.Resolver.resolveNestedCall;\n''',
+    '''    generic_functions.nested_call_context = &abstracts;\n    generic_functions.nested_call_resolver = abstract_mod.Resolver.resolveNestedCall;\n    generic_functions.nested_constructor_context = &constructors;\n    generic_functions.nested_constructor_resolver = constructor_mod.Resolver.resolveNestedCall;\n''',
+    "wire nested constructor resolver",
+)
+
+subprocess.run(["zig", "fmt", str(generic_functions), str(constructors), str(semantizer)], check=True)
+Path(".git/semantic-refactor-message").write_text("Resolve structural constructors in generic bodies")
 Path(".git/semantic-refactor-test-command").write_text(
     "zig build test-programs -Dtest-filter=feature_tests/collections/26_dynamic_array_owning_pop\n"
 )
