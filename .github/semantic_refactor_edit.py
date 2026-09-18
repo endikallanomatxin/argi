@@ -919,12 +919,15 @@ rtext = replace_once(
     }
 ''',
     '''    fn includeBinding(self: *State, binding: graph_mod.GlobalBindingId, reason: []const u8) !void {
-        const record = self.graph.bindings.items[@intFromEnum(binding)];
-        if (std.mem.eql(u8, self.graph.text(record.name), "c_to")) {
-            std.debug.print(
-                "[reach-binding] id={} reason={s} current-function={?} source={}:{}\\n",
-                .{ @intFromEnum(binding), reason, if (self.current_function) |id| @intFromEnum(id) else null, record.source.file_index, record.source.offset },
-            );
+        const raw: usize = @intFromEnum(binding);
+        if (raw < self.graph.bindings.items.len) {
+            const record = self.graph.bindings.items[raw];
+            if (std.mem.eql(u8, self.graph.text(record.name), "c_to")) {
+                std.debug.print(
+                    "[reach-binding] id={} reason={s} current-function={?} source={}:{}\\n",
+                    .{ raw, reason, if (self.current_function) |id| @intFromEnum(id) else null, record.source.file_index, record.source.offset },
+                );
+            }
         }
         try self.functions.bindings.put(binding, {});
     }
