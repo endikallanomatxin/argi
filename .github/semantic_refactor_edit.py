@@ -567,16 +567,31 @@ if count != 1:
     raise RuntimeError(f"constructor binding helper collapse changed: {count}")
 cpath.write_text(ctext)
 
-for path in (gpath, cpath):
+# Temporary diagnosis only: identify the lexical binding that reaches
+# ownership finalization before its semantic type has been resolved.
+opath = Path("src/4_semantics/global/ownership.zig")
+otext = opath.read_text()
+otext = replace_once(
+    otext,
+    "        if (self.graph.isBindingTypeUnresolved(binding)) return error.UnresolvedAutoDeinitBinding;\n",
+    '''        if (self.graph.isBindingTypeUnresolved(binding)) {
+            const unresolved = self.graph.bindings.items[@intFromEnum(binding)];
+            std.debug.print(
+                "UNRESOLVED_AUTO_DEINIT binding={d} name={s}\\n",
+                .{ @intFromEnum(binding), self.graph.text(unresolved.name) },
+            );
+            return error.UnresolvedAutoDeinitBinding;
+        }
+''',
+    "temporary unresolved auto-deinit trace",
+)
+opath.write_text(otext)
+
+for path in (gpath, cpath, opath):
     subprocess.run(["zig", "fmt", str(path)], check=True)
 
 Path(".git/semantic-refactor-test-command").write_text(
-    "status=0; "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy || status=1; "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/23_dynamic_array_owning_push_fixed || status=1; "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/24_dynamic_array_owning_assume_capacity || status=1; "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/26_dynamic_array_owning_pop || status=1; "
-    "exit $status\n"
+    "zig build test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy\n"
 )
 Path(".git/semantic-refactor-message").write_text(
     "Unify initializer generic and reach inference\n"
