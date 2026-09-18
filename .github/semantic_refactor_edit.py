@@ -33,11 +33,9 @@ test_code = '''test "generic argument identity uses semantic type equality" {
     try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
     try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(1) } });
 
-    try std.testing.expect(genericArgumentsEqual(
-        &graph,
-        .{ .start = 0, .len = 1 },
-        .{ .start = 1, .len = 1 },
-    ));
+    const first: primitives.Range(graph_mod.GlobalGenericArgId) = .{ .start = 0, .len = 1 };
+    const second: primitives.Range(graph_mod.GlobalGenericArgId) = .{ .start = 1, .len = 1 };
+    try std.testing.expect(genericArgumentsEqual(&graph, first, second));
 }
 
 ''' + test_anchor
