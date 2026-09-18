@@ -280,7 +280,7 @@ text = path.read_text()
 text = replace_once(
     text,
     'const globalizer = @import("globalizer.zig");\n',
-    'const globalizer = @import("globalizer.zig");\nconst reach_context = @import("reach_context.zig");\n',
+    'const globalizer = @import("globalizer.zig");\nconst reach_context_mod = @import("reach_context.zig");\n',
     "generic reach import",
 )
 old = '''const ReachInferenceContext = struct {
@@ -289,7 +289,7 @@ old = '''const ReachInferenceContext = struct {
     visible_bindings: module_entities.BindingRange,
 };
 '''
-text = replace_once(text, old, 'const ReachInferenceContext = reach_context.Context;\n', "generic reach context alias")
+text = replace_once(text, old, 'const ReachInferenceContext = reach_context_mod.Context;\n', "generic reach context alias")
 text = replace_once(
     text,
     '        const reach_context: ReachInferenceContext = .{ .module = module, .offsets = o, .visible_bindings = value.visible_bindings };\n',
