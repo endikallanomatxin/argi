@@ -360,6 +360,30 @@ new_input = '''    pub fn inferBindingsFromInput(
 '''
 gtext = replace_once(gtext, old_input, new_input, "shared generic inference")
 
+# Resolved boolean literals are intrinsically Bool even when ModuleSema did not
+# need to persist an explicit type slot. A monomorphized binding initialized by
+# such a literal must not become a permanently unresolved GlobalSG binding.
+gtext = replace_once(
+    gtext,
+    '''            const ty = if (node.ty) |value|
+                try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions, null)
+            else if (node.content == .string_literal)
+                self.resolver.core.defaultStringLiteralType()
+            else
+                null;
+''',
+    '''            const ty = if (node.ty) |value|
+                try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions, null)
+            else if (node.content == .bool_literal)
+                try self.resolver.generics.internType(.{ .builtin = .Bool })
+            else if (node.content == .string_literal)
+                self.resolver.core.defaultStringLiteralType()
+            else
+                null;
+''',
+    "intrinsic bool literal type",
+)
+
 old_init = '''    /// Infer the implicit abstract arguments of a constructor's `init` from
     /// its destination and supplied fields, then materialize its runtime body.
     pub fn instantiateInitializer(
@@ -759,7 +783,43 @@ dtext = dtext.replace(
 )
 dpath.write_text(dtext)
 
-for path in (gpath, cpath, opath, spath, dpath):
+corepath = Path("src/4_semantics/global/core.zig")
+coretext = corepath.read_text()
+candidate_anchor = '''            const score = switch (self.matchCallInput(function.input, input_node)) {
+                .no_match => continue,
+                .deferred => {
+                    saw_deferred = true;
+                    continue;
+                },
+                .score => |score| score,
+            };
+'''
+if coretext.count(candidate_anchor) != 1:
+    raise RuntimeError(f"ordinary candidate trace anchor changed: {coretext.count(candidate_anchor)}")
+coretext = coretext.replace(
+    candidate_anchor,
+    candidate_anchor + '''            if (std.mem.eql(u8, name, "deinit")) {
+                std.debug.print(
+                    "[deinit-candidate] fn={} decl={} score={} generic={} module={} input-len={}\\n",
+                    .{
+                        raw,
+                        @intFromEnum(function.declaration),
+                        score,
+                        function.flags.is_generic_instantiation,
+                        @intFromEnum(self.graph.moduleForDeclaration(function.declaration).?),
+                        function.input.len,
+                    },
+                );
+                for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
+                    std.debug.print("  field[{}]={s} ty={}\\n", .{ index, self.graph.text(field.name), @intFromEnum(field.ty) });
+                }
+            }
+''',
+    1,
+)
+corepath.write_text(coretext)
+
+for path in (gpath, cpath, opath, spath, dpath, corepath):
     subprocess.run(["zig", "fmt", str(path)], check=True)
 
 Path(".git/semantic-refactor-test-command").write_text(
