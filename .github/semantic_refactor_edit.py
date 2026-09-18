@@ -448,16 +448,42 @@ new_call = '''                selected = (try generic_functions.instantiateIniti
 '''
 ctext = replace_once(ctext, old_call, new_call, "non-generic type initializer context")
 
-ctext = ctext.replace(
-'''        if (!try self.populateInitializerBindings(
+# The generic resolver remains necessary while probing because the probe
+# instantiates the candidate input for scoring. Materialization no longer
+# needs it: binding inference is delegated entirely to generic_functions.
+ctext = replace_once(
+    ctext,
+    '''        result.function = try self.materializeGenericInitializer(
             generics,
             generic_functions,
 ''',
-'''        if (!try self.populateInitializerBindings(
+    '''        result.function = try self.materializeGenericInitializer(
             generic_functions,
 ''',
+    "materialize initializer caller generic resolver",
 )
-if "self.populateInitializerBindings(\n            generics,\n            generic_functions," in ctext:
+ctext = replace_once(
+    ctext,
+    '''    fn materializeGenericInitializer(
+        self: *Resolver,
+        generics: *generic_mod.Resolver,
+        generic_functions: *generic_functions_mod.Resolver,
+''',
+    '''    fn materializeGenericInitializer(
+        self: *Resolver,
+        generic_functions: *generic_functions_mod.Resolver,
+''',
+    "materialize initializer generic resolver parameter",
+)
+
+ctext, populate_call_count = re.subn(
+    r'''(self\.populateInitializerBindings\(\n\s*)generics,\n(\s*generic_functions,)''',
+    r'''\1\2''',
+    ctext,
+)
+if populate_call_count != 2:
+    raise RuntimeError(f"populate initializer call cleanup changed: {populate_call_count}")
+if re.search(r'''self\.populateInitializerBindings\(\n\s*generics,''', ctext):
     raise RuntimeError("populate initializer call still passes generics")
 
 pattern = re.compile(
