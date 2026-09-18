@@ -305,6 +305,8 @@ subprocess.run(["zig", "fmt", str(constructors_path)], check=True)
 Path(".git/semantic-refactor-test-command").write_text(
     "status=0; "
     "timeout 60s ./zig-out/bin/argi build tests/feature_tests/collections/34_dynamic_array_string_copy || status=1; "
+    "timeout 60s zig build test-programs -Dtest-filter=feature_tests/text/02_string_copy || status=1; "
+    "timeout 60s zig build test-programs -Dtest-filter=feature_tests/collections/18_dynamic_array_copy || status=1; "
     "timeout 60s zig build test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy || status=1; "
     "timeout 60s zig build test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup || status=1; "
     "exit $status\\n"
