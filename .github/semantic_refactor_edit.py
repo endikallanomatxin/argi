@@ -857,13 +857,102 @@ coretext = coretext.replace(
                 for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
                     std.debug.print("  field[{}]={s} ty={}\\n", .{ index, self.graph.text(field.name), @intFromEnum(field.ty) });
                 }
+                if (function.flags.is_generic_instantiation) {
+                    const function_id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+                    for (self.graph.generic_function_instances.items) |instance| {
+                        if (instance.function != function_id) continue;
+                        for (self.graph.generic_arguments.items[instance.arguments.start..][0..instance.arguments.len], 0..) |argument, index| {
+                            switch (argument.value) {
+                                .type => |ty| std.debug.print(
+                                    "  arg[{}]={s} type={} unresolved={}\\n",
+                                    .{ index, self.graph.text(argument.name), @intFromEnum(ty), self.graph.isTypeUnresolved(ty) },
+                                ),
+                                .comptime_int => |value| std.debug.print(
+                                    "  arg[{}]={s} int={}\\n",
+                                    .{ index, self.graph.text(argument.name), value },
+                                ),
+                            }
+                        }
+                    }
+                }
             }
 ''',
     1,
 )
 corepath.write_text(coretext)
 
-for path in (gpath, tpath, gipath, cpath, opath, spath, dpath, corepath):
+rpath = Path("src/4_semantics/global/reachability.zig")
+rtext = rpath.read_text()
+rtext = replace_once(
+    rtext,
+    '''    changed: bool = false,
+
+    fn includeFunction''',
+    '''    changed: bool = false,
+    current_function: ?graph_mod.GlobalFunctionId = null,
+
+    fn includeFunction''',
+    "reachability diagnostic current function",
+)
+rtext = replace_once(
+    rtext,
+    '''    fn walkFunction(self: *State, function_id: graph_mod.GlobalFunctionId) anyerror!void {
+        if ((try self.visited_functions.getOrPut(function_id)).found_existing) return;
+        const function = self.graph.functions.items[@intFromEnum(function_id)];
+''',
+    '''    fn walkFunction(self: *State, function_id: graph_mod.GlobalFunctionId) anyerror!void {
+        if ((try self.visited_functions.getOrPut(function_id)).found_existing) return;
+        const previous_function = self.current_function;
+        self.current_function = function_id;
+        defer self.current_function = previous_function;
+        const function = self.graph.functions.items[@intFromEnum(function_id)];
+''',
+    "reachability diagnostic function context",
+)
+rtext = replace_once(
+    rtext,
+    '''    fn includeBindingRange(self: *State, range: graph_mod.BindingRange) !void {
+        for (0..range.len) |offset| {
+            const raw = range.start + @as(u32, @intCast(offset));
+            try self.functions.bindings.put(@enumFromInt(raw), {});
+        }
+    }
+''',
+    '''    fn includeBinding(self: *State, binding: graph_mod.GlobalBindingId, reason: []const u8) !void {
+        const record = self.graph.bindings.items[@intFromEnum(binding)];
+        if (std.mem.eql(u8, self.graph.text(record.name), "c_to")) {
+            std.debug.print(
+                "[reach-binding] id={} reason={s} current-function={?} source={}:{}\\n",
+                .{ @intFromEnum(binding), reason, if (self.current_function) |id| @intFromEnum(id) else null, record.source.file_index, record.source.offset },
+            );
+        }
+        try self.functions.bindings.put(binding, {});
+    }
+
+    fn includeBindingRange(self: *State, range: graph_mod.BindingRange) !void {
+        for (0..range.len) |offset| {
+            const raw = range.start + @as(u32, @intCast(offset));
+            try self.includeBinding(@enumFromInt(raw), "interface");
+        }
+    }
+''',
+    "reachability diagnostic binding helper",
+)
+for old, new, label in (
+    ("try self.functions.bindings.put(binding, {})", 'try self.includeBinding(binding, "use")', "binding use reach trace"),
+    ("try self.functions.bindings.put(binding_id, {})", 'try self.includeBinding(binding_id, "declaration")', "binding declaration reach trace"),
+    ("try self.functions.bindings.put(value.binding, {})", 'try self.includeBinding(value.binding, "value")', "binding value reach trace first"),
+):
+    if old not in rtext:
+        raise RuntimeError(f"{label} anchor missing")
+    rtext = rtext.replace(old, new, 1)
+# The second value.binding occurrence belongs to auto-deinit.
+if "try self.functions.bindings.put(value.binding, {})" not in rtext:
+    raise RuntimeError("binding auto-deinit reach trace anchor missing")
+rtext = rtext.replace("try self.functions.bindings.put(value.binding, {})", 'try self.includeBinding(value.binding, "auto-deinit")', 1)
+rpath.write_text(rtext)
+
+for path in (gpath, tpath, gipath, cpath, opath, spath, dpath, corepath, rpath):
     subprocess.run(["zig", "fmt", str(path)], check=True)
 
 Path(".git/semantic-refactor-test-command").write_text(
