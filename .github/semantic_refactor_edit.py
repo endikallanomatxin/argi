@@ -289,6 +289,33 @@ new_input = '''    pub fn inferBindingsFromInput(
         return true;
     }
 
+    pub fn inferInitializerInputBindings(
+        self: *Resolver,
+        module_index: usize,
+        pattern: ir.ParameterizedTypeId,
+        input: global_sg.GlobalNodeId,
+        context: ReachInferenceContext,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        if (!try self.inferBindingsFromInputFields(
+            module_index,
+            pattern,
+            input,
+            bindings,
+            1,
+            true,
+        )) return false;
+
+        return self.inferBindingsFromReachDefaultFields(
+            module_index,
+            pattern,
+            input,
+            bindings,
+            context,
+            1,
+        );
+    }
+
     pub fn inferInitializerBindings(
         self: *Resolver,
         module_index: usize,
@@ -319,22 +346,12 @@ new_input = '''    pub fn inferBindingsFromInput(
             bindings,
         )) return false;
 
-        if (!try self.inferBindingsFromInputFields(
+        return self.inferInitializerInputBindings(
             module_index,
             pattern,
             input,
-            bindings,
-            1,
-            true,
-        )) return false;
-
-        return self.inferBindingsFromReachDefaultFields(
-            module_index,
-            pattern,
-            input,
-            bindings,
             context,
-            1,
+            bindings,
         );
     }
 '''
@@ -485,6 +502,39 @@ if populate_call_count != 2:
     raise RuntimeError(f"populate initializer call cleanup changed: {populate_call_count}")
 if re.search(r'''self\.populateInitializerBindings\(\n\s*generics,''', ctext):
     raise RuntimeError("populate initializer call still passes generics")
+
+ctext = replace_once(
+    ctext,
+    '''        if (!try self.inferInitializerUserBindings(generics, generic_functions, candidate_index, parameterized.input, input, &bindings))
+            return .{ .owns_type = true };
+        if (!try self.inferInitializerReachBindings(generic_functions, candidate_index, parameterized.input, input, context, &bindings))
+            return .{ .owns_type = true };
+''',
+    '''        if (!try generic_functions.inferInitializerInputBindings(
+            candidate_index,
+            parameterized.input,
+            input,
+            context,
+            &bindings,
+        )) return .{ .owns_type = true };
+''',
+    "implicit initializer probe inference",
+)
+ctext = replace_once(
+    ctext,
+    '''                if (!try self.inferInitializerUserBindings(generics, generic_functions, candidate_index, parameterized.input, input, &bindings)) return null;
+                if (!try self.inferInitializerReachBindings(generic_functions, candidate_index, parameterized.input, input, context, &bindings)) return null;
+''',
+    '''                if (!try generic_functions.inferInitializerInputBindings(
+                    candidate_index,
+                    parameterized.input,
+                    input,
+                    context,
+                    &bindings,
+                )) return null;
+''',
+    "implicit initializer materialization inference",
+)
 
 pattern = re.compile(
     r'''    fn populateInitializerBindings\(.*?\n    fn scoreInitializerInput\(''',
