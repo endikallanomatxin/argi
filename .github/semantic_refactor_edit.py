@@ -885,32 +885,6 @@ rpath = Path("src/4_semantics/global/reachability.zig")
 rtext = rpath.read_text()
 rtext = replace_once(
     rtext,
-    '''    changed: bool = false,
-
-    fn includeFunction''',
-    '''    changed: bool = false,
-    current_function: ?graph_mod.GlobalFunctionId = null,
-
-    fn includeFunction''',
-    "reachability diagnostic current function",
-)
-rtext = replace_once(
-    rtext,
-    '''    fn walkFunction(self: *State, function_id: graph_mod.GlobalFunctionId) anyerror!void {
-        if ((try self.visited_functions.getOrPut(function_id)).found_existing) return;
-        const function = self.graph.functions.items[@intFromEnum(function_id)];
-''',
-    '''    fn walkFunction(self: *State, function_id: graph_mod.GlobalFunctionId) anyerror!void {
-        if ((try self.visited_functions.getOrPut(function_id)).found_existing) return;
-        const previous_function = self.current_function;
-        self.current_function = function_id;
-        defer self.current_function = previous_function;
-        const function = self.graph.functions.items[@intFromEnum(function_id)];
-''',
-    "reachability diagnostic function context",
-)
-rtext = replace_once(
-    rtext,
     '''    fn includeBindingRange(self: *State, range: graph_mod.BindingRange) !void {
         for (0..range.len) |offset| {
             const raw = range.start + @as(u32, @intCast(offset));
@@ -918,41 +892,65 @@ rtext = replace_once(
         }
     }
 ''',
-    '''    fn includeBinding(self: *State, binding: graph_mod.GlobalBindingId, reason: []const u8) !void {
-        const raw: usize = @intFromEnum(binding);
-        if (raw < self.graph.bindings.items.len) {
-            const record = self.graph.bindings.items[raw];
-            if (std.mem.eql(u8, self.graph.text(record.name), "c_to")) {
-                std.debug.print(
-                    "[reach-binding] id={} reason={s} current-function={?} source={}:{}\\n",
-                    .{ raw, reason, if (self.current_function) |id| @intFromEnum(id) else null, record.source.file_index, record.source.offset },
-                );
-            }
-        }
-        try self.functions.bindings.put(binding, {});
-    }
-
-    fn includeBindingRange(self: *State, range: graph_mod.BindingRange) !void {
+    '''    fn includeBindingRange(self: *State, range: graph_mod.BindingRange) !void {
         for (0..range.len) |offset| {
             const raw = range.start + @as(u32, @intCast(offset));
-            try self.includeBinding(@enumFromInt(raw), "interface");
+            try self.functions.bindings.put(self.graph.binding_refs.items[raw], {});
         }
     }
 ''',
-    "reachability diagnostic binding helper",
+    "reachability binding-ref range",
 )
-for old, new, label in (
-    ("try self.functions.bindings.put(binding, {})", 'try self.includeBinding(binding, "use")', "binding use reach trace"),
-    ("try self.functions.bindings.put(binding_id, {})", 'try self.includeBinding(binding_id, "declaration")', "binding declaration reach trace"),
-    ("try self.functions.bindings.put(value.binding, {})", 'try self.includeBinding(value.binding, "value")', "binding value reach trace first"),
-):
-    if old not in rtext:
-        raise RuntimeError(f"{label} anchor missing")
-    rtext = rtext.replace(old, new, 1)
-# The second value.binding occurrence belongs to auto-deinit.
-if "try self.functions.bindings.put(value.binding, {})" not in rtext:
-    raise RuntimeError("binding auto-deinit reach trace anchor missing")
-rtext = rtext.replace("try self.functions.bindings.put(value.binding, {})", 'try self.includeBinding(value.binding, "auto-deinit")', 1)
+rtext = replace_once(
+    rtext,
+    '''test "reachability roots select main or one test" {
+''',
+    '''test "function binding ranges dereference binding refs" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+
+    const main_name = try graph.addString(allocator, "main");
+    const unrelated_name = try graph.addString(allocator, "unrelated");
+    const parameter_name = try graph.addString(allocator, "parameter");
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.bindings.append(allocator, .{
+        .name = unrelated_name,
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(0),
+        .mutability = .constant,
+    });
+    try graph.bindings.append(allocator, .{
+        .name = parameter_name,
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(0),
+        .mutability = .constant,
+    });
+    try graph.binding_refs.append(allocator, @enumFromInt(1));
+    try graph.declarations.append(allocator, .{
+        .kind = .function,
+        .name = main_name,
+        .source = .{ .file_index = 0, .offset = 0 },
+        .function_id = @enumFromInt(0),
+    });
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+        .input_bindings = .{ .start = 0, .len = 1 },
+    });
+
+    var executable = try roots(allocator, &graph, null);
+    defer executable.deinit();
+    _ = try expand(allocator, &graph, &executable);
+    try std.testing.expect(!executable.containsBinding(@enumFromInt(0)));
+    try std.testing.expect(executable.containsBinding(@enumFromInt(1)));
+}
+
+test "reachability roots select main or one test" {
+''',
+    "reachability binding-ref regression test",
+)
 rpath.write_text(rtext)
 
 for path in (gpath, tpath, gipath, cpath, opath, spath, dpath, corepath, rpath):
@@ -960,8 +958,8 @@ for path in (gpath, tpath, gipath, cpath, opath, spath, dpath, corepath, rpath):
 
 Path(".git/semantic-refactor-test-command").write_text(
     "status=0; "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy || status=1; "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup || status=1; "
+    "timeout 60s zig build test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy || status=1; "
+    "timeout 60s zig build test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup || status=1; "
     "exit $status\n"
 )
 Path(".git/semantic-refactor-message").write_text(
