@@ -704,8 +704,8 @@ new_loop = '''        var finalized_any = false;
         }
 '''
 stext = replace_once(stext, old_loop, new_loop, "stable ownership finalization loop")
-# Temporary diagnostics for the two remaining structural blockers.
-stext = spath.read_text()
+# Temporary diagnostics for the two remaining structural blockers. Keep
+# operating on the already transformed text so the readiness loop is preserved.
 stext = replace_once(
     stext,
     '''    if (relocation.graph.hasUnresolvedBindingTypes()) {
