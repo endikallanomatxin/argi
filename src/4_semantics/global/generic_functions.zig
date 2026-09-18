@@ -5,6 +5,7 @@ const parameterized_storage = @import("../module/parameterized/storage.zig");
 const ir = @import("../module/parameterized/ir.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
+const reach_context_mod = @import("reach_context.zig");
 const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
@@ -19,11 +20,7 @@ pub const Stats = struct {
     nodes: u32 = 0,
 };
 
-const ReachInferenceContext = struct {
-    module: *const module_sg.ModuleSemanticGraph,
-    offsets: globalizer.Offsets,
-    visible_bindings: module_entities.BindingRange,
-};
+const ReachInferenceContext = reach_context_mod.Context;
 
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
@@ -198,23 +195,23 @@ pub const Resolver = struct {
             self.stats.calls += 1;
             return .resolved;
         }
-        const reach_context: ReachInferenceContext = .{ .module = module, .offsets = o, .visible_bindings = value.visible_bindings };
+        const reach: ReachInferenceContext = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
         const function = if (local_args) |args|
-            self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input, reach_context) catch |err| switch (err) {
+            self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input, reach) catch |err| switch (err) {
                 error.NoMatchingGenericFunction => return .not_applicable,
                 error.DeferredGenericFunction => return .deferred,
                 error.AmbiguousGenericFunction => return .invalid,
                 else => return .deferred,
             }
         else
-            self.resolveImplicitGenericFunction(module_index, module, reference, input, reach_context) catch |err| switch (err) {
+            self.resolveImplicitGenericFunction(module_index, module, reference, input, reach) catch |err| switch (err) {
                 error.NoMatchingGenericFunction => return .not_applicable,
                 error.DeferredGenericFunction => return .deferred,
                 error.AmbiguousGenericFunction => return .invalid,
                 error.ConflictingGenericArgument => return err,
                 else => return .deferred,
             };
-        if (!try self.core.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function)].input, input, module, o, value.visible_bindings, value.owner_function)) return .deferred;
+        if (!try self.core.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function)].input, input, reach)) return .deferred;
         const output_ty = try self.core.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -368,17 +365,16 @@ pub const Resolver = struct {
                 else => continue,
             };
             const reach = storage.reaches.items[@intFromEnum(reach_id)];
-            const scope = context.module.semantic.binding_refs.items[context.visible_bindings.start..][0..context.visible_bindings.len];
 
             var inferred = false;
             for (storage.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len]) |alternative| {
                 if (alternative.segments.len == 0) continue;
                 const segments = storage.reach_segments.items[alternative.segments.start..][0..alternative.segments.len];
                 const root_name = candidate_module.text(segments[0]);
-                var scope_index = scope.len;
+                var scope_index = context.bindingCount();
                 while (scope_index > 0) {
                     scope_index -= 1;
-                    const binding_id = globalizer.globalBinding(context.offsets, scope[scope_index]);
+                    const binding_id = context.bindingAt(scope_index);
                     if (self.graph.isBindingTypeUnresolved(binding_id)) continue;
                     const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
                     if (!std.mem.eql(u8, self.graph.text(binding.name), root_name)) continue;
@@ -460,8 +456,9 @@ pub const Resolver = struct {
         current_module: usize,
         name: []const u8,
         input: global_sg.GlobalNodeId,
+        reach: ?ReachInferenceContext,
     ) !global_sg.GlobalFunctionId {
-        return self.resolveImplicitGenericFunctionFiltered(current_module, name, null, input, null, null);
+        return self.resolveImplicitGenericFunctionFiltered(current_module, name, null, input, reach, null);
     }
 
     fn resolveImplicitGenericFunctionFiltered(

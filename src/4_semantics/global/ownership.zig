@@ -6,6 +6,8 @@ const globalizer = @import("globalizer.zig");
 const resolution = @import("resolution.zig");
 const name_lookup = @import("name_lookup.zig");
 const core_mod = @import("core.zig");
+const dispatch_mod = @import("dispatch.zig");
+const reach_context = @import("reach_context.zig");
 const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
 
@@ -20,7 +22,12 @@ pub const Stats = struct {
 
 const Deferred = struct { marker: global_sg.GlobalNodeId, value: global_sg.GlobalNodeId };
 const Kept = struct { marker: global_sg.GlobalNodeId, binding: global_sg.GlobalBindingId };
-const AutoNode = struct { binding: global_sg.GlobalBindingId, node: global_sg.GlobalNodeId };
+const AutoNode = struct { binding: global_sg.GlobalBindingId, node: ?global_sg.GlobalNodeId };
+const ResolvedDestructor = struct {
+    function: global_sg.GlobalFunctionId,
+    input: global_sg.GlobalNodeId,
+    self_field_index: u32,
+};
 
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
@@ -28,6 +35,7 @@ pub const Resolver = struct {
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     core: *core_mod.Resolver,
+    dispatch: ?*dispatch_mod.Resolver = null,
     deferred: std.ArrayList(Deferred) = .empty,
     kept: std.ArrayList(Kept) = .empty,
     auto_nodes: std.ArrayList(AutoNode) = .empty,
@@ -58,16 +66,33 @@ pub const Resolver = struct {
     }
 
     pub fn finalize(self: *Resolver) !void {
-        for (self.graph.functions.items) |function| if (function.body) |body|
-            try self.finalizeFunctionBody(body);
+        for (self.graph.functions.items, 0..) |function, raw| {
+            if (function.body == null) continue;
+            const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            try self.finalizeFunctionBody(id);
+        }
     }
 
-    pub fn finalizeFunctionBody(self: *Resolver, body: global_sg.GlobalBlockId) !void {
+    pub fn finalizeFunctionBody(self: *Resolver, function_id: global_sg.GlobalFunctionId) !void {
+        const function = self.graph.functions.items[@intFromEnum(function_id)];
+        const body = function.body orelse return;
+        var visible: std.ArrayList(global_sg.GlobalBindingId) = .empty;
+        defer visible.deinit(self.allocator);
+        try visible.appendSlice(
+            self.allocator,
+            self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len],
+        );
+        try visible.appendSlice(
+            self.allocator,
+            self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len],
+        );
+
         var active: std.ArrayList(global_sg.GlobalBindingId) = .empty;
         defer active.deinit(self.allocator);
         var defers: std.ArrayList(global_sg.GlobalNodeId) = .empty;
         defer defers.deinit(self.allocator);
-        try self.finalizeBlock(body, &active, &defers);
+        const module = self.graph.moduleForDeclaration(function.declaration) orelse return error.MissingFunctionModule;
+        try self.finalizeBlock(body, &active, &defers, &visible, function_id, @intCast(@intFromEnum(module)));
     }
 
     fn resolveDefer(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
@@ -124,7 +149,7 @@ pub const Resolver = struct {
 
     fn resolveExplicitDeinit(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
         const binding = globalizer.globalBinding(o, value.binding);
-        _ = try self.autoDeinitNode(binding);
+        _ = self.autoDeinitNode(binding);
         self.stats.deinit_checks += 1;
         return true;
     }
@@ -227,6 +252,9 @@ pub const Resolver = struct {
         block_id: global_sg.GlobalBlockId,
         inherited_active: *std.ArrayList(global_sg.GlobalBindingId),
         inherited_defers: *std.ArrayList(global_sg.GlobalNodeId),
+        inherited_visible: *std.ArrayList(global_sg.GlobalBindingId),
+        owner_function: global_sg.GlobalFunctionId,
+        module_index: usize,
     ) anyerror!void {
         const original = self.graph.blocks.items[@intFromEnum(block_id)];
         var active: std.ArrayList(global_sg.GlobalBindingId) = .empty;
@@ -237,6 +265,9 @@ pub const Resolver = struct {
         defer defers.deinit(self.allocator);
         try defers.appendSlice(self.allocator, inherited_defers.items);
         const defer_base = defers.items.len;
+        var visible: std.ArrayList(global_sg.GlobalBindingId) = .empty;
+        defer visible.deinit(self.allocator);
+        try visible.appendSlice(self.allocator, inherited_visible.items);
 
         var rebuilt: std.ArrayList(global_sg.GlobalNodeId) = .empty;
         defer rebuilt.deinit(self.allocator);
@@ -257,20 +288,30 @@ pub const Resolver = struct {
                 continue;
             }
             switch (node.content) {
-                .binding_declaration => |binding| try active.append(self.allocator, binding),
-                .return_statement => |*ret| ret.cleanup = try self.appendCleanup(active.items, defers.items),
-                .code_block => |child| try self.finalizeBlock(child, &active, &defers),
-                .if_statement => |statement| {
-                    try self.finalizeBlock(statement.then_block, &active, &defers);
-                    if (statement.else_block) |child| try self.finalizeBlock(child, &active, &defers);
+                .binding_declaration => |binding| {
+                    try visible.append(self.allocator, binding);
+                    try self.prepareAutoDeinit(
+                        binding,
+                        reach_context.Context.fromGlobal(visible.items, owner_function),
+                        module_index,
+                    );
+                    try active.append(self.allocator, binding);
                 },
-                .while_statement => |statement| try self.finalizeBlock(statement.body, &active, &defers),
-                .for_statement => |statement| try self.finalizeBlock(statement.body, &active, &defers),
+                .return_statement => |*ret| ret.cleanup = try self.appendCleanup(active.items, defers.items),
+                .code_block => |child| try self.finalizeBlock(child, &active, &defers, &visible, owner_function, module_index),
+                .if_statement => |statement| {
+                    try self.finalizeBlock(statement.then_block, &active, &defers, &visible, owner_function, module_index);
+                    if (statement.else_block) |child|
+                        try self.finalizeBlock(child, &active, &defers, &visible, owner_function, module_index);
+                },
+                .while_statement => |statement| try self.finalizeBlock(statement.body, &active, &defers, &visible, owner_function, module_index),
+                .for_statement => |statement| try self.finalizeBlock(statement.body, &active, &defers, &visible, owner_function, module_index),
                 .switch_statement => |switch_id| {
                     const sw = self.graph.switches.items[@intFromEnum(switch_id)];
                     for (self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]) |case|
-                        try self.finalizeBlock(case.body, &active, &defers);
-                    if (sw.default_block) |child| try self.finalizeBlock(child, &active, &defers);
+                        try self.finalizeBlock(case.body, &active, &defers, &visible, owner_function, module_index);
+                    if (sw.default_block) |child|
+                        try self.finalizeBlock(child, &active, &defers, &visible, owner_function, module_index);
                 },
                 else => {},
             }
@@ -287,7 +328,7 @@ pub const Resolver = struct {
         i = active.items.len;
         while (i > active_base) {
             i -= 1;
-            if (try self.autoDeinitNode(active.items[i])) |node| try local_cleanup.append(self.allocator, node);
+            if (self.autoDeinitNode(active.items[i])) |node| try local_cleanup.append(self.allocator, node);
         }
         try rebuilt.appendSlice(self.allocator, local_cleanup.items);
 
@@ -313,7 +354,7 @@ pub const Resolver = struct {
         i = active.len;
         while (i != 0) {
             i -= 1;
-            if (try self.autoDeinitNode(active[i])) |node| {
+            if (self.autoDeinitNode(active[i])) |node| {
                 try self.graph.node_refs.append(self.allocator, node);
                 count += 1;
             }
@@ -322,56 +363,109 @@ pub const Resolver = struct {
         return .{ .start = start, .len = count };
     }
 
-    fn autoDeinitNode(self: *Resolver, binding: global_sg.GlobalBindingId) !?global_sg.GlobalNodeId {
+    fn autoDeinitNode(self: *const Resolver, binding: global_sg.GlobalBindingId) ?global_sg.GlobalNodeId {
         for (self.auto_nodes.items) |entry| if (entry.binding == binding) return entry.node;
-        if (self.graph.isBindingTypeUnresolved(binding)) return null;
+        return null;
+    }
+
+    fn prepareAutoDeinit(
+        self: *Resolver,
+        binding: global_sg.GlobalBindingId,
+        context: reach_context.Context,
+        module_index: usize,
+    ) !void {
+        for (self.auto_nodes.items) |entry| if (entry.binding == binding) return;
+        if (self.graph.isBindingTypeUnresolved(binding)) return error.UnresolvedAutoDeinitBinding;
         const record = self.graph.bindings.items[@intFromEnum(binding)];
-        const descriptor = try self.buildAutoDeinit(binding, record.ty) orelse return null;
-        const auto_id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));
-        try self.graph.auto_deinits.append(self.allocator, descriptor);
-        const node: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
-        try self.graph.nodes.append(self.allocator, .{
-            .source = record.source,
-            .ty = try self.builtin(.Void),
-            .content = .{ .auto_deinit_binding = auto_id },
-        });
-        try self.auto_nodes.append(self.allocator, .{ .binding = binding, .node = node });
-        self.stats.auto_deinits += 1;
-        return node;
+        const target = try self.appendNode(record.source, record.ty, .{ .binding_use = binding });
+        const descriptor = try self.buildAutoDeinit(binding, target, record.ty, context, module_index);
+        var cleanup_node: ?global_sg.GlobalNodeId = null;
+        if (descriptor) |resolved| {
+            const auto_id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));
+            try self.graph.auto_deinits.append(self.allocator, resolved);
+            cleanup_node = try self.appendNode(record.source, try self.builtin(.Void), .{ .auto_deinit_binding = auto_id });
+            self.stats.auto_deinits += 1;
+        }
+        try self.auto_nodes.append(self.allocator, .{ .binding = binding, .node = cleanup_node });
     }
 
     fn buildAutoDeinit(
         self: *Resolver,
         binding: global_sg.GlobalBindingId,
+        target: global_sg.GlobalNodeId,
         ty: global_sg.GlobalTypeId,
+        context: reach_context.Context,
+        module_index: usize,
     ) !?global_sg.AutoDeinit {
-        // A reference does not own its pointee. Its cleanup belongs to the
-        // pointee's storage owner, including when the reference is writable.
+        // References never own their pointee.
         if (self.graph.semanticType(ty) == .pointer) return null;
-        if (global_types.deinitFunction(self.graph, ty)) |function| return .{ .binding = binding, .deinit_fn = function };
+        if (try self.resolveDestructor(target, context, module_index)) |resolved| {
+            return .{
+                .binding = binding,
+                .deinit_fn = resolved.function,
+                .input = resolved.input,
+                .self_field_index = resolved.self_field_index,
+            };
+        }
+
         const fields = global_types.fields(self.graph, ty) orelse return null;
         const start: u32 = @intCast(self.graph.auto_deinit_fields.items.len);
         var count: u32 = 0;
         for (0..fields.len) |index| {
-            const field_ty = self.graph.fields.items[fields.start + @as(u32, @intCast(index))].ty;
-            if (try self.appendAutoField(@intCast(index), field_ty)) count += 1;
+            const field = self.graph.fields.items[fields.start + @as(u32, @intCast(index))];
+            const projected = try self.appendNode(
+                self.graph.nodes.items[@intFromEnum(target)].source,
+                field.ty,
+                .{ .struct_field_access = .{
+                    .value = target,
+                    .field_name = field.name,
+                    .field_index = @intCast(index),
+                } },
+            );
+            if (try self.appendAutoField(@intCast(index), projected, field.ty, context, module_index)) count += 1;
         }
         if (count == 0) return null;
-        return .{ .binding = binding, .deinit_fn = null, .fields = .{ .start = start, .len = count } };
+        return .{
+            .binding = binding,
+            .deinit_fn = null,
+            .fields = .{ .start = start, .len = count },
+        };
     }
 
-    fn appendAutoField(self: *Resolver, field_index: u32, ty: global_sg.GlobalTypeId) !bool {
+    fn appendAutoField(
+        self: *Resolver,
+        field_index: u32,
+        target: global_sg.GlobalNodeId,
+        ty: global_sg.GlobalTypeId,
+        context: reach_context.Context,
+        module_index: usize,
+    ) !bool {
         if (self.graph.semanticType(ty) == .pointer) return false;
-        if (global_types.deinitFunction(self.graph, ty)) |function| {
-            try self.graph.auto_deinit_fields.append(self.allocator, .{ .field_index = field_index, .deinit_fn = function });
+        if (try self.resolveDestructor(target, context, module_index)) |resolved| {
+            try self.graph.auto_deinit_fields.append(self.allocator, .{
+                .field_index = field_index,
+                .deinit_fn = resolved.function,
+                .input = resolved.input,
+                .self_field_index = resolved.self_field_index,
+            });
             return true;
         }
+
         const fields = global_types.fields(self.graph, ty) orelse return false;
         const child_start: u32 = @intCast(self.graph.auto_deinit_fields.items.len);
         var child_count: u32 = 0;
         for (0..fields.len) |index| {
-            const child_ty = self.graph.fields.items[fields.start + @as(u32, @intCast(index))].ty;
-            if (try self.appendAutoField(@intCast(index), child_ty)) child_count += 1;
+            const field = self.graph.fields.items[fields.start + @as(u32, @intCast(index))];
+            const projected = try self.appendNode(
+                self.graph.nodes.items[@intFromEnum(target)].source,
+                field.ty,
+                .{ .struct_field_access = .{
+                    .value = target,
+                    .field_name = field.name,
+                    .field_index = @intCast(index),
+                } },
+            );
+            if (try self.appendAutoField(@intCast(index), projected, field.ty, context, module_index)) child_count += 1;
         }
         if (child_count == 0) return false;
         try self.graph.auto_deinit_fields.append(self.allocator, .{
@@ -380,6 +474,145 @@ pub const Resolver = struct {
             .fields = .{ .start = child_start, .len = child_count },
         });
         return true;
+    }
+
+    fn resolveDestructor(
+        self: *Resolver,
+        target: global_sg.GlobalNodeId,
+        context: reach_context.Context,
+        module_index: usize,
+    ) !?ResolvedDestructor {
+        const target_ty = self.graph.nodes.items[@intFromEnum(target)].ty orelse return null;
+        const dispatch = self.dispatch orelse return error.MissingOwnershipDispatch;
+        const pointer_ty = try self.core.pointerType(target_ty, .read_write);
+        const source = self.graph.nodes.items[@intFromEnum(target)].source;
+        const address = try self.appendNode(source, pointer_ty, .{ .address_of = target });
+
+        var receiver_names = std.StringHashMap(void).init(self.allocator);
+        defer receiver_names.deinit();
+        try self.collectDestructorReceiverNames(module_index, &receiver_names);
+
+        var selected: ?ResolvedDestructor = null;
+        var names = receiver_names.keyIterator();
+        while (names.next()) |name_ptr| {
+            const input = try self.singleNamedInput(name_ptr.*, address, source);
+            const call = dispatch.resolveImplicitFunction(
+                module_index,
+                "deinit",
+                input,
+                context,
+            ) catch |err| switch (err) {
+                error.DeferredImplicitFunction => continue,
+                error.AmbiguousImplicitFunction => return err,
+                else => return err,
+            } orelse continue;
+            const self_index = self.findReceiverIndex(call.function, call.input, target) orelse continue;
+            const candidate = ResolvedDestructor{
+                .function = call.function,
+                .input = call.input,
+                .self_field_index = self_index,
+            };
+            if (selected) |previous| {
+                if (previous.function != candidate.function or previous.self_field_index != candidate.self_field_index)
+                    return error.AmbiguousImplicitDestructor;
+            } else {
+                selected = candidate;
+            }
+        }
+        return selected;
+    }
+
+    fn collectDestructorReceiverNames(
+        self: *Resolver,
+        module_index: usize,
+        names: *std.StringHashMap(void),
+    ) !void {
+        for (self.graph.functions.items) |function| {
+            if (!function.flags.is_deinit) continue;
+            if (!self.core.declarationVisible(module_index, function.declaration, null)) continue;
+            for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field| {
+                const pointer = switch (self.graph.semanticType(field.ty)) {
+                    .pointer => |value| value,
+                    else => continue,
+                };
+                if (pointer.mutability != .read_write) continue;
+                try names.put(self.graph.text(field.name), {});
+            }
+        }
+
+        for (self.modules, 0..) |*candidate_module, candidate_index| {
+            const storage = &candidate_module.semantic.parameterized_storage;
+            for (storage.parameterized_functions.items) |function| {
+                if (!function.is_deinit) continue;
+                const declaration = globalizer.globalDecl(self.offsets[candidate_index], function.declaration);
+                if (!self.core.declarationVisible(module_index, declaration, null)) continue;
+                const shape = switch (storage.ir.types.items[@intFromEnum(function.input)]) {
+                    .resolved => |ty| switch (ty) {
+                        .structural => |value| value,
+                        else => continue,
+                    },
+                    else => continue,
+                };
+                for (storage.ir.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
+                    const pointer = switch (storage.ir.types.items[@intFromEnum(field.ty)]) {
+                        .resolved => |ty| switch (ty) {
+                            .pointer => |value| value,
+                            else => continue,
+                        },
+                        else => continue,
+                    };
+                    if (pointer.mutability != .read_write) continue;
+                    try names.put(candidate_module.text(field.name), {});
+                }
+            }
+        }
+    }
+
+    fn singleNamedInput(
+        self: *Resolver,
+        name: []const u8,
+        value: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+    ) !global_sg.GlobalNodeId {
+        const field_start: u32 = @intCast(self.graph.value_fields.items.len);
+        try self.graph.value_fields.append(self.allocator, .{
+            .name = try self.graph.addString(self.allocator, name),
+            .value = value,
+        });
+        return self.appendNode(source, null, .{ .struct_value_literal = .{
+            .fields = .{ .start = field_start, .len = 1 },
+        } });
+    }
+
+    fn findReceiverIndex(
+        self: *const Resolver,
+        function_id: global_sg.GlobalFunctionId,
+        input: global_sg.GlobalNodeId,
+        target: global_sg.GlobalNodeId,
+    ) ?u32 {
+        const function = self.graph.functions.items[@intFromEnum(function_id)];
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |value| value,
+            else => return null,
+        };
+        if (literal.fields.len != function.input.len) return null;
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, index| {
+            const node = self.graph.nodes.items[@intFromEnum(field.value)];
+            if (node.content != .address_of or node.content.address_of != target) continue;
+            return @intCast(index);
+        }
+        return null;
+    }
+
+    fn appendNode(
+        self: *Resolver,
+        source: primitives.SourceRef,
+        ty: ?global_sg.GlobalTypeId,
+        content: global_sg.Node.Content,
+    ) !global_sg.GlobalNodeId {
+        const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = ty, .content = content });
+        return id;
     }
 
     fn findUnaryFunction(self: *Resolver, name: []const u8, ty: global_sg.GlobalTypeId) ?global_sg.GlobalFunctionId {

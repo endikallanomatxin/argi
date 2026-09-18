@@ -1,5 +1,7 @@
 const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
+const global_sg = @import("graph.zig");
+const reach_context = @import("reach_context.zig");
 const globalizer = @import("globalizer.zig");
 const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
@@ -53,6 +55,73 @@ pub const Resolver = struct {
 
         const control_result = try self.control.tryResolve(module_index, module, o, operation);
         return if (control_result.allowsFallback()) .deferred else control_result;
+    }
+
+    pub const ImplicitFunctionCall = struct {
+        function: global_sg.GlobalFunctionId,
+        input: global_sg.GlobalNodeId,
+    };
+
+    pub fn resolveImplicitFunction(
+        self: *Resolver,
+        module_index: usize,
+        name: []const u8,
+        input: global_sg.GlobalNodeId,
+        reach: reach_context.Context,
+    ) !?ImplicitFunctionCall {
+        const ordinary = try self.core.matchUnqualifiedFunctionByName(module_index, name, input);
+        switch (ordinary) {
+            .function => |function| {
+                if (!try self.core.completeCallInputFieldsWithReach(
+                    self.core.graph.functions.items[@intFromEnum(function)].input,
+                    input,
+                    reach,
+                )) return error.DeferredImplicitFunction;
+                return .{ .function = function, .input = input };
+            },
+            .deferred => return error.DeferredImplicitFunction,
+            .ambiguous => return error.AmbiguousImplicitFunction,
+            .no_match => {},
+        }
+
+        const compatibility = call_compatibility.Abstract{ .core = self.core, .abstracts = self.abstracts };
+        const abstract_ordinary = try call_compatibility.matchUnqualifiedFunctionByName(
+            compatibility,
+            module_index,
+            name,
+            input,
+        );
+        switch (abstract_ordinary) {
+            .function => |function| {
+                if (!try self.core.completeCallInputFieldsWithReach(
+                    self.core.graph.functions.items[@intFromEnum(function)].input,
+                    input,
+                    reach,
+                )) return error.DeferredImplicitFunction;
+                return .{ .function = function, .input = input };
+            },
+            .deferred => return error.DeferredImplicitFunction,
+            .ambiguous => return error.AmbiguousImplicitFunction,
+            .no_match => {},
+        }
+
+        const function = self.generic_functions.resolveImplicitGenericFunctionByName(
+            module_index,
+            name,
+            input,
+            reach,
+        ) catch |err| switch (err) {
+            error.NoMatchingGenericFunction, error.ConflictingGenericArgument => return null,
+            error.DeferredGenericFunction => return error.DeferredImplicitFunction,
+            error.AmbiguousGenericFunction => return error.AmbiguousImplicitFunction,
+            else => return err,
+        };
+        if (!try self.core.completeCallInputFieldsWithReach(
+            self.core.graph.functions.items[@intFromEnum(function)].input,
+            input,
+            reach,
+        )) return error.DeferredImplicitFunction;
+        return .{ .function = function, .input = input };
     }
 
     pub fn resolveIndex(

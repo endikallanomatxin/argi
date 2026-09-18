@@ -4,6 +4,7 @@ const module_entities = @import("../module/entities.zig");
 const module_views = @import("../module/views.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
+const reach_context = @import("reach_context.zig");
 const module_linker = @import("module_linker.zig");
 const resolution = @import("resolution.zig");
 const types = @import("types.zig");
@@ -482,7 +483,8 @@ pub const Resolver = struct {
             .ambiguous => return .invalid,
             .function => |function| function,
         };
-        if (!try self.completeCallInputWithReach(function, input, module, o, value.visible_bindings, value.owner_function)) return .deferred;
+        const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
+        if (!try self.completeCallInputWithReach(function, input, reach)) return .deferred;
         const output = try self.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -940,8 +942,17 @@ pub const Resolver = struct {
         return self.completeCallInputFields(function.input, input_node);
     }
 
-    fn completeCallInputWithReach(self: *Resolver, function_id: global_sg.GlobalFunctionId, input_node: global_sg.GlobalNodeId, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, visible: module_entities.BindingRange, owner: ?module_entities.ModuleFunctionId) !bool {
-        return self.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function_id)].input, input_node, module, o, visible, owner);
+    fn completeCallInputWithReach(
+        self: *Resolver,
+        function_id: global_sg.GlobalFunctionId,
+        input_node: global_sg.GlobalNodeId,
+        context: reach_context.Context,
+    ) !bool {
+        return self.completeCallInputFieldsWithReach(
+            self.graph.functions.items[@intFromEnum(function_id)].input,
+            input_node,
+            context,
+        );
     }
 
     pub fn completeCallInputFields(self: *Resolver, expected_fields: global_sg.FieldRange, input_node: global_sg.GlobalNodeId) !bool {
@@ -964,7 +975,12 @@ pub const Resolver = struct {
         return true;
     }
 
-    pub fn completeCallInputFieldsWithReach(self: *Resolver, expected_fields: global_sg.FieldRange, input_node: global_sg.GlobalNodeId, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, visible: module_entities.BindingRange, owner: ?module_entities.ModuleFunctionId) !bool {
+    pub fn completeCallInputFieldsWithReach(
+        self: *Resolver,
+        expected_fields: global_sg.FieldRange,
+        input_node: global_sg.GlobalNodeId,
+        context: reach_context.Context,
+    ) !bool {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input_node)].content) {
             .struct_value_literal => |value| value,
             else => return false,
@@ -983,11 +999,11 @@ pub const Resolver = struct {
             if (node == null) {
                 const fallback = expected.default_value orelse return false;
                 node = if (self.graph.nodes.items[@intFromEnum(fallback)].content == .reach_directive)
-                    try self.resolveReachedDefault(module, o, visible, fallback, expected.ty)
+                    try self.resolveReachedDefault(context, fallback, expected.ty)
                 else
                     fallback;
                 if (node == null and self.graph.nodes.items[@intFromEnum(fallback)].content == .reach_directive)
-                    node = try self.propagateReachedDefault(owner, o, expected, fallback);
+                    node = try self.propagateReachedDefault(context.ownerFunction(), expected, fallback);
             }
             const value = node orelse return false;
             _ = self.coerceContextualLiteral(value, expected.ty);
@@ -995,24 +1011,30 @@ pub const Resolver = struct {
         }
         const ty = try self.structType(expected_fields);
         self.graph.nodes.items[@intFromEnum(input_node)].ty = ty;
-        self.graph.nodes.items[@intFromEnum(input_node)].content.struct_value_literal = .{ .fields = .{ .start = start, .len = expected_fields.len } };
+        self.graph.nodes.items[@intFromEnum(input_node)].content.struct_value_literal = .{
+            .fields = .{ .start = start, .len = expected_fields.len },
+        };
         published = true;
         return true;
     }
 
-    fn resolveReachedDefault(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, visible: module_entities.BindingRange, default_node: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) !?global_sg.GlobalNodeId {
+    fn resolveReachedDefault(
+        self: *Resolver,
+        context: reach_context.Context,
+        default_node: global_sg.GlobalNodeId,
+        expected: global_sg.GlobalTypeId,
+    ) !?global_sg.GlobalNodeId {
         const reach_id = self.graph.nodes.items[@intFromEnum(default_node)].content.reach_directive;
         const reach = self.graph.reaches.items[@intFromEnum(reach_id)];
         const source = self.graph.nodes.items[@intFromEnum(default_node)].source;
-        const scope = module.semantic.binding_refs.items[visible.start..][0..visible.len];
         for (self.graph.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len]) |alternative| {
             if (alternative.segments.len == 0) continue;
             const segments = self.graph.reach_segments.items[alternative.segments.start..][0..alternative.segments.len];
             const root_name = self.graph.text(segments[0]);
-            var scope_index = scope.len;
+            var scope_index = context.bindingCount();
             while (scope_index > 0) {
                 scope_index -= 1;
-                const binding_id = globalizer.globalBinding(o, scope[scope_index]);
+                const binding_id = context.bindingAt(scope_index);
                 const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
                 if (!std.mem.eql(u8, self.graph.text(binding.name), root_name)) continue;
                 if (self.graph.isBindingTypeUnresolved(binding_id) or self.graph.isTypeUnresolved(binding.ty)) continue;
@@ -1035,13 +1057,21 @@ pub const Resolver = struct {
                 if (self.graph.isTypeUnresolved(current_ty)) valid = false;
                 if (!valid or (!types.equal(self.graph, current_ty, expected) and !self.callTypesCompatible(current_ty, expected))) continue;
                 var node: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
-                try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = binding.ty, .content = .{ .binding_use = binding_id } });
+                try self.graph.nodes.append(self.allocator, .{
+                    .source = source,
+                    .ty = binding.ty,
+                    .content = .{ .binding_use = binding_id },
+                });
                 for (hits.items) |hit| {
                     const next: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
                     try self.graph.nodes.append(self.allocator, .{
                         .source = source,
                         .ty = hit.field.storage_type orelse hit.field.ty,
-                        .content = .{ .struct_field_access = .{ .value = node, .field_name = hit.field.name, .field_index = hit.index } },
+                        .content = .{ .struct_field_access = .{
+                            .value = node,
+                            .field_name = hit.field.name,
+                            .field_index = hit.index,
+                        } },
                     });
                     node = next;
                 }
@@ -1051,9 +1081,9 @@ pub const Resolver = struct {
         return null;
     }
 
-    fn propagateReachedDefault(self: *Resolver, owner_local: ?module_entities.ModuleFunctionId, o: globalizer.Offsets, reached_field: global_sg.Field, default_node: global_sg.GlobalNodeId) !?global_sg.GlobalNodeId {
-        const owner_id = globalizer.globalFunction(o, owner_local orelse return null);
-        const owner = &self.graph.functions.items[@intFromEnum(owner_id)];
+    fn propagateReachedDefault(self: *Resolver, owner_id: ?global_sg.GlobalFunctionId, reached_field: global_sg.Field, default_node: global_sg.GlobalNodeId) !?global_sg.GlobalNodeId {
+        const resolved_owner = owner_id orelse return null;
+        const owner = &self.graph.functions.items[@intFromEnum(resolved_owner)];
         const owner_name = self.graph.text(self.graph.declarations.items[@intFromEnum(owner.declaration)].name);
         if (std.mem.eql(u8, owner_name, "main")) return null;
 
@@ -1124,7 +1154,7 @@ pub const Resolver = struct {
         return id;
     }
 
-    fn pointerType(self: *Resolver, child: global_sg.GlobalTypeId, mutability: primitives.PointerMutability) !global_sg.GlobalTypeId {
+    pub fn pointerType(self: *Resolver, child: global_sg.GlobalTypeId, mutability: primitives.PointerMutability) !global_sg.GlobalTypeId {
         for (self.graph.types.items, 0..) |ty, raw| switch (ty) {
             .pointer => |pointer| if (pointer.mutability == mutability and types.equal(self.graph, pointer.child, child))
                 return @enumFromInt(@as(u32, @intCast(raw))),

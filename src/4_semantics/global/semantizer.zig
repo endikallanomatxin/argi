@@ -246,14 +246,6 @@ pub fn semantizeWithOptions(
         .offsets = relocation.offsets.items,
         .core = &core,
     };
-    var ownership = ownership_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .core = &core,
-    };
-    defer ownership.deinit();
     var dispatch = dispatch_mod.Resolver{
         .core = &core,
         .generic_functions = &generic_functions,
@@ -262,6 +254,15 @@ pub fn semantizeWithOptions(
         .control = &control,
         .errors = &errors,
     };
+    var ownership = ownership_mod.Resolver{
+        .allocator = allocator,
+        .graph = &relocation.graph,
+        .modules = modules,
+        .offsets = relocation.offsets.items,
+        .core = &core,
+        .dispatch = &dispatch,
+    };
+    defer ownership.deinit();
 
     try core.resolveExternalTypes();
     try generics.resolveExternalTypes();
@@ -343,7 +344,8 @@ pub fn semantizeWithOptions(
             }
             if (function.body) |body| {
                 if ((try finalized_functions.getOrPut(id)).found_existing) continue;
-                try ownership.finalizeFunctionBody(body);
+                _ = body;
+                try ownership.finalizeFunctionBody(id);
                 finalized_any = true;
             }
         }
