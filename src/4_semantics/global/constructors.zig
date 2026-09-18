@@ -4,6 +4,7 @@ const module_entities = @import("../module/entities.zig");
 const primitives = @import("../primitives/schema.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
+const reach_context = @import("reach_context.zig");
 const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
@@ -162,7 +163,7 @@ pub const Resolver = struct {
                 .start = function.input.start + 1,
                 .len = function.input.len - 1,
             };
-            if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, module, o, value.visible_bindings, value.owner_function)) return .deferred;
+            if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function))) return .deferred;
             self.writeInitializer(o, value, reference, declaration_id, ty, selected, input);
             return .resolved;
         }
@@ -239,7 +240,7 @@ pub const Resolver = struct {
                             .start = function.input.start + 1,
                             .len = function.input.len - 1,
                         };
-                        if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, module, o, value.visible_bindings, value.owner_function)) return .deferred;
+                        if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function))) return .deferred;
                         self.writeInitializer(o, value, reference, declaration_id, expected, function_id, input);
                         committed = true;
                         return .resolved;
@@ -265,7 +266,7 @@ pub const Resolver = struct {
                 .start = function.input.start + 1,
                 .len = function.input.len - 1,
             };
-            if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, module, o, value.visible_bindings, value.owner_function)) return .deferred;
+            if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function))) return .deferred;
             self.writeInitializer(o, value, reference, declaration_id, ty, function_id, input);
             committed = true;
             return .resolved;
@@ -345,7 +346,7 @@ pub const Resolver = struct {
                 .start = function.input.start + 1,
                 .len = function.input.len - 1,
             };
-            if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, module, o, value.visible_bindings, value.owner_function)) return .deferred;
+            if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function))) return .deferred;
             self.writeInitializer(o, value, reference, declaration_id, ty, function_id, input);
             committed = true;
             return .resolved;

@@ -3,6 +3,7 @@ const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
+const reach_context = @import("reach_context.zig");
 const resolution = @import("resolution.zig");
 const types = @import("types.zig");
 const core_mod = @import("core.zig");
@@ -53,7 +54,8 @@ pub fn tryResolveOrdinaryCall(
         .ambiguous => return .invalid,
         .function => |function| function,
     };
-    if (!try compatibility.core.completeCallInputFields(compatibility.core.graph.functions.items[@intFromEnum(function)].input, input)) return .deferred;
+    const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
+    if (!try compatibility.core.completeCallInputFieldsWithReach(compatibility.core.graph.functions.items[@intFromEnum(function)].input, input, reach)) return .deferred;
     const output = try compatibility.core.functionOutputType(function);
     const target = globalizer.globalNode(o, value.node);
     compatibility.core.graph.nodes.items[@intFromEnum(target)] = .{
@@ -76,7 +78,31 @@ fn matchFunctionByName(
         try compatibility.core.findModuleForQualifier(current_module, module.text(path))
     else
         null;
-    const name = module.text(reference.name);
+    return matchFunctionNamed(
+        compatibility,
+        current_module,
+        module.text(reference.name),
+        module_filter,
+        input_node,
+    );
+}
+
+pub fn matchUnqualifiedFunctionByName(
+    compatibility: Abstract,
+    current_module: usize,
+    name: []const u8,
+    input_node: global_sg.GlobalNodeId,
+) !core_mod.Resolver.FunctionMatch {
+    return matchFunctionNamed(compatibility, current_module, name, null, input_node);
+}
+
+fn matchFunctionNamed(
+    compatibility: Abstract,
+    current_module: usize,
+    name: []const u8,
+    module_filter: ?global_sg.GlobalModuleId,
+    input_node: global_sg.GlobalNodeId,
+) !core_mod.Resolver.FunctionMatch {
     var best: ?global_sg.GlobalFunctionId = null;
     var best_score: u32 = 0;
     var tied = false;

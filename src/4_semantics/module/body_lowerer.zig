@@ -172,6 +172,7 @@ const Context = struct {
                 .name = field.name,
                 .source = field.source,
                 .ty = field.ty,
+                .initialization = field.default_value,
                 .mutability = mutability,
             });
             try result.append(id);
