@@ -211,14 +211,23 @@ constructors = replace_once(
         module_index: usize,
         constructed_ty: global_sg.GlobalTypeId,
         input: global_sg.GlobalNodeId,
-        context: reach_context.Context,
+        context: ?reach_context.Context,
     ) InitializerLookup {
 ''',
     "initializer reach context",
 )
+nested_initializer_call = '''        const initializer = self.findInitializer(module_index, ty, input);
+'''
+if constructors.count(nested_initializer_call) != 2:
+    raise RuntimeError(f"initializer caller count changed: {constructors.count(nested_initializer_call)}")
 constructors = constructors.replace(
-    '''        const initializer = self.findInitializer(module_index, ty, input);
+    nested_initializer_call,
+    '''        const initializer = self.findInitializer(module_index, ty, input, null);
 ''',
+    1,
+)
+constructors = constructors.replace(
+    nested_initializer_call,
     '''        const initializer = self.findInitializer(
             module_index,
             ty,
@@ -235,8 +244,8 @@ constructors = replace_once(
             else
                 self.core.matchCallInput(user_fields, input);
 ''',
-    '''            const score_match = if (!function.flags.is_abstract_dispatch)
-                self.core.matchCallInputWithReach(user_fields, input, context) catch .deferred
+    '''            const score_match = if (!function.flags.is_abstract_dispatch and context != null)
+                self.core.matchCallInputWithReach(user_fields, input, context.?) catch .deferred
             else if (self.abstracts) |abstracts|
                 call_compatibility.matchInput(.{ .core = self.core, .abstracts = abstracts }, user_fields, input)
             else
