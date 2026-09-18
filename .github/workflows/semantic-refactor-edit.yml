@@ -29,12 +29,10 @@ jobs:
           version: 0.16.0
       - name: Install LLVM 21
         run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
           sudo apt-get update
-          sudo apt-get install -y wget ca-certificates gnupg
-          wget -q https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 21
-          sudo apt-get install -y llvm-21-dev clang-21
+          sudo apt-get install -y --no-install-recommends llvm-21-dev
       - name: Apply semantic edit
         run: |
           python3 .github/semantic_refactor_edit.py
