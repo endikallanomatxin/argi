@@ -484,38 +484,14 @@ fn sameShallowType(graph: *const global_sg.GlobalSemanticGraph, a: global_sg.Glo
     return switch (a) {
         .builtin => |value| value == b.builtin,
         .declared => |value| value == b.declared,
-        .pointer => |value| value.child == b.pointer.child and value.mutability == b.pointer.mutability,
-        .array => |value| value.length == b.array.length and value.element == b.array.element,
-        .nullable => |value| value == b.nullable,
-        .inferred_errable => |value| value == b.inferred_errable,
-        .generic => |value| value.base == b.generic.base and genericArgumentsEqual(graph, value.arguments, b.generic.arguments),
-        .virtual => |value| value == b.virtual,
+        .pointer => |value| value.mutability == b.pointer.mutability and global_types.equal(graph, value.child, b.pointer.child),
+        .array => |value| value.length == b.array.length and global_types.equal(graph, value.element, b.array.element),
+        .nullable => |value| global_types.equal(graph, value, b.nullable),
+        .inferred_errable => |value| global_types.equal(graph, value, b.inferred_errable),
+        .generic => |value| value.base == b.generic.base and global_types.genericArgumentsEqual(graph, value.arguments, b.generic.arguments),
+        .virtual => |value| global_types.equal(graph, value, b.virtual),
         .inferred_choice, .structural, .structural_choice => false,
     };
-}
-
-fn genericArgumentsEqual(
-    graph: *const global_sg.GlobalSemanticGraph,
-    a: primitives.Range(global_sg.GlobalGenericArgId),
-    b: primitives.Range(global_sg.GlobalGenericArgId),
-) bool {
-    if (a.len != b.len) return false;
-    for (0..a.len) |offset| {
-        const left = graph.generic_arguments.items[a.start + @as(u32, @intCast(offset))];
-        const right = graph.generic_arguments.items[b.start + @as(u32, @intCast(offset))];
-        if (!std.mem.eql(u8, graph.text(left.name), graph.text(right.name))) return false;
-        switch (left.value) {
-            .type => |left_type| switch (right.value) {
-                .type => |right_type| if (!global_types.equal(graph, left_type, right_type)) return false,
-                else => return false,
-            },
-            .comptime_int => |left_int| switch (right.value) {
-                .comptime_int => |right_int| if (left_int != right_int) return false,
-                else => return false,
-            },
-        }
-    }
-    return true;
 }
 
 test "generic type identity is independent of argument pool position" {

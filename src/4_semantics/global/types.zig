@@ -331,7 +331,7 @@ fn genericVariants(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
     };
 }
 
-fn genericArgumentsEqual(graph: *const graph_mod.GlobalSemanticGraph, a: anytype, b: @TypeOf(a)) bool {
+pub fn genericArgumentsEqual(graph: *const graph_mod.GlobalSemanticGraph, a: anytype, b: @TypeOf(a)) bool {
     if (a.len != b.len) return false;
     for (0..a.len) |index| {
         const left = graph.generic_arguments.items[a.start + @as(u32, @intCast(index))];
@@ -372,6 +372,24 @@ fn variantRangesEqual(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.
         if (!equal(graph, left.payload_type.?, right.payload_type.?)) return false;
     }
     return true;
+}
+
+test "generic argument identity uses semantic type equality" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+
+    // Globalization can leave distinct IDs for the same semantic type. Generic
+    // identity must not depend on those construction-time IDs.
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    const name = try graph.addString(allocator, "t");
+    try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
+    try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(1) } });
+
+    const first: primitives.Range(graph_mod.GlobalGenericArgId) = .{ .start = 0, .len = 1 };
+    const second: primitives.Range(graph_mod.GlobalGenericArgId) = .{ .start = 1, .len = 1 };
+    try std.testing.expect(genericArgumentsEqual(&graph, first, second));
 }
 
 test "global semantic types expose structural fields and variants" {
