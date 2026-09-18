@@ -14,6 +14,24 @@ def replace_count(text: str, old: str, new: str, expected: int, label: str) -> s
         raise RuntimeError(f"{label}: expected {expected} anchors, found {count}")
     return text.replace(old, new)
 
+# Regular function interface bindings must retain field defaults. Parameterized
+# lowering already preserves this relation; dropping it here leaves output
+# bindings such as `status_code: Int32 = 0` uninitialized at runtime.
+body_path = Path("src/4_semantics/module/body_lowerer.zig")
+body_text = body_path.read_text()
+body_text = replace_once(
+    body_text,
+    '''                .ty = field.ty,
+                .mutability = mutability,
+''',
+    '''                .ty = field.ty,
+                .initialization = field.default_value,
+                .mutability = mutability,
+''',
+    "regular interface binding default",
+)
+body_path.write_text(body_text)
+
 # Shared lexical reach context. Module-origin calls and already-globalized
 # compiler-synthesized calls must resolve #reach through one abstraction.
 reach = Path("src/4_semantics/global/reach_context.zig")
@@ -1022,6 +1040,7 @@ path.write_text(text)
 Path(".github/semantic_refactor_post_edit.py").write_text("")
 
 for p in (
+    body_path,
     reach,
     Path("src/4_semantics/global/core.zig"),
     Path("src/4_semantics/global/generic_functions.zig"),
@@ -1041,8 +1060,11 @@ Path(".git/semantic-refactor-test-command").write_text(
     "zig build test-programs -Dtest-filter=feature_tests/collections/24_dynamic_array_owning_insert_fixed && "
     "zig build test-programs -Dtest-filter=feature_tests/collections/26_dynamic_array_owning_pop && "
     "zig build test-programs -Dtest-filter=feature_tests/collections/30_dynamic_array_custom_allocator && "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/31_dynamic_array_owning_pop_auto_deinit\n"
+    "zig build test-programs -Dtest-filter=feature_tests/collections/27_dynamic_array_owning_pop_preserves_rest && "
+    "zig build test-programs -Dtest-filter=feature_tests/collections/28_dynamic_array_owning_growth && "
+    "zig build test-programs -Dtest-filter=feature_tests/collections/31_dynamic_array_owning_pop_auto_deinit && "
+    "zig build test-programs -Dtest-filter=feature_tests/collections/32_dynamic_array_borrowing_owner\n"
 )
 Path(".git/semantic-refactor-message").write_text(
-    "Resolve auto-deinit through lexical call dispatch\n"
+    "Resolve lexical cleanup dispatch and preserve interface defaults\n"
 )
