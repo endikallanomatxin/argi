@@ -704,19 +704,66 @@ new_loop = '''        var finalized_any = false;
         }
 '''
 stext = replace_once(stext, old_loop, new_loop, "stable ownership finalization loop")
+# Temporary diagnostics for the two remaining structural blockers.
+stext = spath.read_text()
+stext = replace_once(
+    stext,
+    '''    if (relocation.graph.hasUnresolvedBindingTypes()) {
+        std.debug.print("global sema unresolved binding types remain\\n", .{});
+        return error.UnsupportedGlobalSemantic;
+    }
+''',
+    '''    if (relocation.graph.hasUnresolvedBindingTypes()) {
+        std.debug.print("global sema unresolved binding types remain\\n", .{});
+        const limit = @min(relocation.graph.binding_type_resolution.items.len, relocation.graph.bindings.items.len);
+        for (relocation.graph.binding_type_resolution.items[0..limit], 0..) |state, raw| {
+            if (state != .unresolved) continue;
+            const binding = relocation.graph.bindings.items[raw];
+            std.debug.print(
+                "[unresolved-binding] id={} name={s} init={?} source={}:{}\\n",
+                .{ raw, relocation.graph.text(binding.name), if (binding.initialization) |id| @intFromEnum(id) else null, binding.source.file_index, binding.source.offset },
+            );
+            if (binding.initialization) |initialization| {
+                const node = relocation.graph.nodes.items[@intFromEnum(initialization)];
+                std.debug.print(
+                    "  init-ty={?} unresolved={} tag={s}\\n",
+                    .{ if (node.ty) |ty| @intFromEnum(ty) else null, if (node.ty) |ty| relocation.graph.isTypeUnresolved(ty) else false, @tagName(node.content) },
+                );
+            }
+        }
+        return error.UnsupportedGlobalSemantic;
+    }
+''',
+    "temporary unresolved binding dump",
+)
 spath.write_text(stext)
 
-for path in (gpath, cpath, opath, spath):
+dpath = Path("src/4_semantics/global/dispatch.zig")
+dtext = dpath.read_text()
+if not dtext.startswith('const std = @import("std");'):
+    dtext = 'const std = @import("std");\n' + dtext
+dtext = replace_once(
+    dtext,
+    '''            .ambiguous => return error.AmbiguousImplicitFunction,
+            .no_match => {},
+''',
+    '''            .ambiguous => {
+                std.debug.print("[implicit-ambiguous] phase=ordinary module={} name={s} input={}\\n", .{ module_index, name, @intFromEnum(input) });
+                return error.AmbiguousImplicitFunction;
+            },
+            .no_match => {},
+''',
+    "temporary ordinary ambiguity trace",
+)
+dpath.write_text(dtext)
+
+for path in (gpath, cpath, opath, spath, dpath):
     subprocess.run(["zig", "fmt", str(path)], check=True)
 
 Path(".git/semantic-refactor-test-command").write_text(
     "status=0; "
     "zig build test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy || status=1; "
     "zig build test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup || status=1; "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/36_dynamic_array_owning_mutations || status=1; "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/23_dynamic_array_owning_push_fixed || status=1; "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/24_dynamic_array_owning_assume_capacity || status=1; "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/26_dynamic_array_owning_pop || status=1; "
     "exit $status\n"
 )
 Path(".git/semantic-refactor-message").write_text(
