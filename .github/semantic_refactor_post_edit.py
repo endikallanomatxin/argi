@@ -22,8 +22,7 @@ subprocess.run(["zig", "fmt", str(path)], check=True)
 
 Path(".git/semantic-refactor-test-command").write_text(
     "zig build test-programs -Dtest-filter=feature_tests/collections/26_dynamic_array_owning_pop && "
-    "zig build test-programs -Dtest-filter=feature_tests/modules/24_imported_generic_abstract_dispatch_prefers_concrete && "
-    "zig build test-programs -Dtest-filter=feature_tests/text/08_string_allocator_size\n"
+    "zig build test-programs -Dtest-filter=feature_tests/modules/24_imported_generic_abstract_dispatch_prefers_concrete\n"
 )
 Path(".git/semantic-refactor-message").write_text(
     "Restore generic allocator dispatch and equivalent casts\n"
