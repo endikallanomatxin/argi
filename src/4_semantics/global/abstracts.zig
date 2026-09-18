@@ -210,6 +210,42 @@ pub const Resolver = struct {
         return found;
     }
 
+    pub fn resolveStaticRequirementCall(
+        self: *Resolver,
+        module_index: usize,
+        abstract_ref: ir.DeclarationRef,
+        concrete: global_sg.GlobalTypeId,
+        reference: module_entities.ExternalRef,
+        input: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+    ) !?global_sg.Node {
+        if (reference.module_path != null or reference.generic_arguments != null) return null;
+        const abstract_decl = try self.resolveDeclarationRef(module_index, abstract_ref, .abstract_type);
+        if (!try self.implements(concrete, abstract_decl)) return null;
+        const located = self.findAbstractDefinition(abstract_decl) orelse return null;
+        // Parameterized abstract requirements need their own abstract argument
+        // substitution. The current hidden local-abstract lowering only needs
+        // non-parameterized contracts such as Allocator.
+        if (located.definition.parameters.len != 0) return null;
+
+        const method_name = self.modules[module_index].text(reference.name);
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
+            if (!std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), method_name)) continue;
+            const instance = try self.requirementInstance(abstract_decl, concrete, located, requirement, @intCast(method_index));
+            const implementation = self.findConcreteMethod(method_name, instance.input) orelse continue;
+            const input_fields = global_types.fields(self.graph, instance.input) orelse continue;
+            if (self.core.scoreCallInput(input_fields, input) == null) continue;
+            if (!try self.core.completeCallInputFields(input_fields, input)) continue;
+            return .{
+                .source = source,
+                .ty = try self.core.functionOutputType(implementation),
+                .content = .{ .function_call = .{ .callee = implementation, .input = input } },
+            };
+        }
+        return null;
+    }
+
     pub fn resolveNestedCall(
         self: *Resolver,
         module_index: usize,

@@ -1782,6 +1782,32 @@ pub const Resolver = struct {
             };
         }
 
+        fn resolveConstrainedStaticCall(
+            self: *InstanceContext,
+            reference: module_entities.ExternalRef,
+            input: global_sg.GlobalNodeId,
+            source: primitives.SourceRef,
+        ) !?global_sg.Node {
+            const abstracts = self.resolver.nested_call_context orelse return null;
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage;
+            for (0..self.parameterized.parameters.len) |offset| {
+                const raw = self.parameterized.parameters.start + @as(u32, @intCast(offset));
+                const parameter = storage.comptime_parameters.items[raw];
+                const constraint_id = parameter.constraint orelse continue;
+                const concrete = self.substitutions.types[raw] orelse continue;
+                const constraint = storage.abstract_constraints.items[@intFromEnum(constraint_id)];
+                if (try abstracts.resolveStaticRequirementCall(
+                    self.module_index,
+                    constraint.abstract_ref,
+                    concrete,
+                    reference,
+                    input,
+                    self.resolver.sourceFor(self.module_index, source),
+                )) |node| return node;
+            }
+            return null;
+        }
+
         fn makeNamedCall(
             self: *InstanceContext,
             name_range: primitives.StringRange,
@@ -1816,6 +1842,9 @@ pub const Resolver = struct {
                             if (try resolve(context, self.module_index, reference, arguments, input, self.resolver.sourceFor(self.module_index, source))) |node|
                                 return node;
                         }
+                    }
+                    if (arguments.len == 0) {
+                        if (try self.resolveConstrainedStaticCall(reference, input, source)) |node| return node;
                     }
                     if (self.resolver.nested_call_context) |context| {
                         if (self.resolver.nested_call_resolver) |resolve| {
