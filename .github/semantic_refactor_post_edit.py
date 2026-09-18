@@ -197,3 +197,36 @@ generic_path.write_text(generic)
 
 for path in (core_path, dispatch_path, generic_path):
     subprocess.run(["zig", "fmt", str(path)], check=True)
+
+
+constructors_path = Path("src/4_semantics/global/constructors.zig")
+constructors = constructors_path.read_text()
+constructors = replace_once(
+    constructors,
+    '''        const initializer = self.findInitializer(module_index, ty, input);
+''',
+    '''        const initializer = self.findInitializer(module_index, ty, input);
+        if (std.mem.eql(u8, module.text(reference.name), "String")) {
+            std.debug.print(
+                "[string-constructor] target={} input={} initializer={?} visible={}\\n",
+                .{
+                    @intFromEnum(globalizer.globalNode(o, value.node)),
+                    @intFromEnum(input),
+                    if (initializer.function) |function| @intFromEnum(function) else null,
+                    initializer.has_visible_initializer,
+                },
+            );
+        }
+''',
+    "string constructor trace",
+)
+constructors_path.write_text(constructors)
+subprocess.run(["zig", "fmt", str(constructors_path)], check=True)
+
+Path(".git/semantic-refactor-test-command").write_text(
+    "status=0; "
+    "timeout 60s ./zig-out/bin/argi build tests/feature_tests/collections/34_dynamic_array_string_copy || status=1; "
+    "timeout 60s zig build test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy || status=1; "
+    "timeout 60s zig build test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup || status=1; "
+    "exit $status\\n"
+)
