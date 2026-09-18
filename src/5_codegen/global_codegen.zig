@@ -985,6 +985,10 @@ pub const CodeGenerator = struct {
         const source = self.graph.nodes.items[@intFromEnum(cast.value)].ty orelse return CodegenError.InvalidType;
         const target = cast.target_type;
         const target_ref = try self.toLLVMType(target);
+        if (types.equal(self.graph, source, target)) {
+            if (value.type_ref != target_ref) return CodegenError.InvalidType;
+            return .{ .value_ref = value.value_ref, .type_ref = target_ref, .ty = target };
+        }
         const source_ptr = self.isPointer(source);
         const target_ptr = self.isPointer(target);
         const source_native = types.isBuiltin(self.graph, source, .UIntNative);

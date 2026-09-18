@@ -151,6 +151,9 @@ pub const Resolver = struct {
                     .core = self.core,
                     .generics = &generics,
                     .nested_call_context = self.abstracts,
+                    .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
+                    .nested_constructor_context = self,
+                    .nested_constructor_resolver = Resolver.resolveNestedCall,
                 };
                 selected = (try generic_functions.instantiateInitializer(self.graph.functions.items[@intFromEnum(selected)].declaration, ty, input)) orelse return .deferred;
             }
@@ -209,6 +212,9 @@ pub const Resolver = struct {
             .core = self.core,
             .generics = &generics,
             .nested_call_context = self.abstracts,
+            .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
+            .nested_constructor_context = self,
+            .nested_constructor_resolver = Resolver.resolveNestedCall,
         };
 
         // Context can fully determine a generic constructor even when none of
@@ -319,6 +325,10 @@ pub const Resolver = struct {
             .offsets = self.offsets,
             .core = self.core,
             .generics = &generics,
+            .nested_call_context = self.abstracts,
+            .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
+            .nested_constructor_context = self,
+            .nested_constructor_resolver = Resolver.resolveNestedCall,
         };
         const input = globalizer.globalNode(o, value.input);
         const initializer = try self.findGenericInitializer(
@@ -563,7 +573,7 @@ pub const Resolver = struct {
         defer bindings.deinit(self.core.allocator);
         if (!try self.inferInitializerUserBindings(generics, generic_functions, candidate_index, parameterized.input, input, &bindings))
             return .{ .owns_type = true };
-        if (!try self.inferInitializerReachBindings(generic_functions, candidate_index, parameterized.input, context, &bindings))
+        if (!try self.inferInitializerReachBindings(generic_functions, candidate_index, parameterized.input, input, context, &bindings))
             return .{ .owns_type = true };
         const input_ty = generics.instantiateParameterizedType(candidate_index, parameterized.input, &bindings, null) catch
             return .{ .owns_type = true };
@@ -599,7 +609,7 @@ pub const Resolver = struct {
                 );
                 defer bindings.deinit(self.core.allocator);
                 if (!try self.inferInitializerUserBindings(generics, generic_functions, candidate_index, parameterized.input, input, &bindings)) return null;
-                if (!try self.inferInitializerReachBindings(generic_functions, candidate_index, parameterized.input, context, &bindings)) return null;
+                if (!try self.inferInitializerReachBindings(generic_functions, candidate_index, parameterized.input, input, context, &bindings)) return null;
                 const input_ty = generics.instantiateParameterizedType(candidate_index, parameterized.input, &bindings, null) catch return null;
                 const fields = types.fields(self.graph, input_ty) orelse return null;
                 if (fields.len == 0) return null;
@@ -796,7 +806,7 @@ pub const Resolver = struct {
             bindings,
         )) return false;
         if (!try self.inferInitializerUserBindings(generics, generic_functions, candidate_index, parameterized.input, input, bindings)) return false;
-        return self.inferInitializerReachBindings(generic_functions, candidate_index, parameterized.input, context, bindings);
+        return self.inferInitializerReachBindings(generic_functions, candidate_index, parameterized.input, input, context, bindings);
     }
 
     fn inferInitializerUserBindings(
@@ -846,9 +856,14 @@ pub const Resolver = struct {
         generic_functions: *generic_functions_mod.Resolver,
         candidate_index: usize,
         pattern: @import("../module/parameterized/ir.zig").ParameterizedTypeId,
+        input: global_sg.GlobalNodeId,
         context: CallerContext,
         bindings: *generic_mod.Resolver.Bindings,
     ) !bool {
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |value| value,
+            else => return false,
+        };
         const module = &self.modules[candidate_index];
         const storage = &module.semantic.parameterized_storage.ir;
         const shape = switch (storage.types.items[@intFromEnum(pattern)]) {
@@ -859,7 +874,21 @@ pub const Resolver = struct {
             else => return false,
         };
         if (shape.fields.len == 0) return false;
-        for (storage.fields.items[shape.fields.start + 1 ..][0 .. shape.fields.len - 1]) |field| {
+        for (storage.fields.items[shape.fields.start + 1 ..][0 .. shape.fields.len - 1], 0..) |field, expected_position| {
+            var supplied = false;
+            for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |value, supplied_position| {
+                const positional = supplied_position < literal.dispatch_prefix_positional_count or self.graph.text(value.name).len == 0;
+                if (if (positional)
+                    expected_position == supplied_position
+                else
+                    std.mem.eql(u8, module.text(field.name), self.graph.text(value.name)))
+                {
+                    supplied = true;
+                    break;
+                }
+            }
+            if (supplied) continue;
+
             const default = field.default_value orelse continue;
             const actual = self.parameterizedReachType(candidate_index, default, context) orelse continue;
             if (!try generic_functions.inferInputType(candidate_index, field.ty, actual, bindings)) return false;
