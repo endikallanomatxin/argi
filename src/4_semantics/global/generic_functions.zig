@@ -1212,7 +1212,7 @@ pub const Resolver = struct {
     ) ?global_sg.GlobalFunctionId {
         for (self.graph.generic_function_instances.items) |instance| {
             if (instance.parameterized_declaration != declaration) continue;
-            if (argumentRangesEqual(self.graph, instance.arguments, arguments)) return instance.function;
+            if (global_types.genericArgumentsEqual(self.graph, instance.arguments, arguments)) return instance.function;
         }
         return null;
     }
@@ -2080,30 +2080,6 @@ pub const Resolver = struct {
         }
     };
 };
-
-fn argumentRangesEqual(
-    graph: *const global_sg.GlobalSemanticGraph,
-    a: primitives.Range(global_sg.GlobalGenericArgId),
-    b: primitives.Range(global_sg.GlobalGenericArgId),
-) bool {
-    if (a.len != b.len) return false;
-    for (0..a.len) |offset| {
-        const left = graph.generic_arguments.items[a.start + @as(u32, @intCast(offset))];
-        const right = graph.generic_arguments.items[b.start + @as(u32, @intCast(offset))];
-        if (!std.mem.eql(u8, graph.text(left.name), graph.text(right.name))) return false;
-        switch (left.value) {
-            .type => |left_ty| switch (right.value) {
-                .type => |right_ty| if (left_ty != right_ty) return false,
-                else => return false,
-            },
-            .comptime_int => |left_int| switch (right.value) {
-                .comptime_int => |right_int| if (left_int != right_int) return false,
-                else => return false,
-            },
-        }
-    }
-    return true;
-}
 
 test "generic function monomorphization uses stable GlobalFunctionId identity" {
     try std.testing.expect(@sizeOf(global_sg.GlobalFunctionId) == 4);
