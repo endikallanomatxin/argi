@@ -201,12 +201,82 @@ for path in (core_path, dispatch_path, generic_path):
 
 constructors_path = Path("src/4_semantics/global/constructors.zig")
 constructors = constructors_path.read_text()
+
 constructors = replace_once(
     constructors,
+    '''    fn findInitializer(self: *Resolver, module_index: usize, constructed_ty: global_sg.GlobalTypeId, input: global_sg.GlobalNodeId) InitializerLookup {
+''',
+    '''    fn findInitializer(
+        self: *Resolver,
+        module_index: usize,
+        constructed_ty: global_sg.GlobalTypeId,
+        input: global_sg.GlobalNodeId,
+        context: reach_context.Context,
+    ) InitializerLookup {
+''',
+    "initializer reach context",
+)
+constructors = constructors.replace(
     '''        const initializer = self.findInitializer(module_index, ty, input);
 ''',
-    '''        const initializer = self.findInitializer(module_index, ty, input);
-        if (std.mem.eql(u8, module.text(reference.name), "String")) {
+    '''        const initializer = self.findInitializer(
+            module_index,
+            ty,
+            input,
+            reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function),
+        );
+''',
+    1,
+)
+constructors = replace_once(
+    constructors,
+    '''            const score_match = if (self.abstracts) |abstracts|
+                call_compatibility.matchInput(.{ .core = self.core, .abstracts = abstracts }, user_fields, input)
+            else
+                self.core.matchCallInput(user_fields, input);
+''',
+    '''            const score_match = if (!function.flags.is_abstract_dispatch)
+                self.core.matchCallInputWithReach(user_fields, input, context) catch .deferred
+            else if (self.abstracts) |abstracts|
+                call_compatibility.matchInput(.{ .core = self.core, .abstracts = abstracts }, user_fields, input)
+            else
+                self.core.matchCallInput(user_fields, input);
+''',
+    "concrete initializer reach ranking",
+)
+constructors = replace_once(
+    constructors,
+    '''            } else if (score == best_score) {
+                tied = true;
+            }
+''',
+    '''            } else if (score == best_score) {
+                const selected = self.graph.functions.items[@intFromEnum(result.function.?)];
+                if (selected.declaration == function.declaration and
+                    selected.flags.is_abstract_dispatch != function.flags.is_abstract_dispatch)
+                {
+                    if (selected.flags.is_abstract_dispatch and !function.flags.is_abstract_dispatch)
+                        result.function = @enumFromInt(@as(u32, @intCast(raw)));
+                    tied = false;
+                } else {
+                    tied = true;
+                }
+            }
+''',
+    "initializer template-instance tie",
+)
+trace_anchor = '''        const initializer = self.findInitializer(
+            module_index,
+            ty,
+            input,
+            reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function),
+        );
+'''
+if constructors.count(trace_anchor) < 1:
+    raise RuntimeError("string constructor trace anchor missing")
+constructors = constructors.replace(
+    trace_anchor,
+    trace_anchor + '''        if (std.mem.eql(u8, module.text(reference.name), "String")) {
             std.debug.print(
                 "[string-constructor] target={} input={} initializer={?} visible={}\\n",
                 .{
@@ -218,7 +288,7 @@ constructors = replace_once(
             );
         }
 ''',
-    "string constructor trace",
+    1,
 )
 constructors_path.write_text(constructors)
 subprocess.run(["zig", "fmt", str(constructors_path)], check=True)
