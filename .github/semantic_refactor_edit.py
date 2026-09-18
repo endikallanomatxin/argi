@@ -134,7 +134,10 @@ new_input = '''    pub fn inferBindingsFromInput(
         input: global_sg.GlobalNodeId,
         bindings: *generic_mod.Resolver.Bindings,
     ) !bool {
-        return self.inferBindingsFromInputFields(module_index, pattern, input, bindings, 0, false);
+        // Once prior arguments have determined a field's concrete type,
+        // a contextual literal is compatibility information, not new generic
+        // evidence (e.g. Int32 literal 0 passed to UIntNative).
+        return self.inferBindingsFromInputFields(module_index, pattern, input, bindings, 0, true);
     }
 
     fn inferBindingsFromInputFields(
