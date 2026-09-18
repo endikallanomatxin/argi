@@ -963,5 +963,5 @@ Path(".git/semantic-refactor-test-command").write_text(
     "exit $status\n"
 )
 Path(".git/semantic-refactor-message").write_text(
-    "Unify initializer inference and stage ownership finalization\n"
+    "Unify initializer inference and fix staged ownership reachability\n"
 )
