@@ -878,8 +878,14 @@ replacement = r'''    fn autoDeinitNode(self: *const Resolver, binding: global_s
         for (self.graph.functions.items) |function| {
             if (!function.flags.is_deinit) continue;
             if (!self.core.declarationVisible(module_index, function.declaration, null)) continue;
-            for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field|
+            for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field| {
+                const pointer = switch (self.graph.semanticType(field.ty)) {
+                    .pointer => |value| value,
+                    else => continue,
+                };
+                if (pointer.mutability != .read_write) continue;
                 try names.put(self.graph.text(field.name), {});
+            }
         }
 
         for (self.modules, 0..) |*candidate_module, candidate_index| {
@@ -895,8 +901,17 @@ replacement = r'''    fn autoDeinitNode(self: *const Resolver, binding: global_s
                     },
                     else => continue,
                 };
-                for (storage.ir.fields.items[shape.fields.start..][0..shape.fields.len]) |field|
+                for (storage.ir.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
+                    const pointer = switch (storage.ir.types.items[@intFromEnum(field.ty)]) {
+                        .resolved => |ty| switch (ty) {
+                            .pointer => |value| value,
+                            else => continue,
+                        },
+                        else => continue,
+                    };
+                    if (pointer.mutability != .read_write) continue;
                     try names.put(candidate_module.text(field.name), {});
+                }
             }
         }
     }
