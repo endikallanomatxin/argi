@@ -360,29 +360,45 @@ new_input = '''    pub fn inferBindingsFromInput(
 '''
 gtext = replace_once(gtext, old_input, new_input, "shared generic inference")
 
-# Resolved boolean literals are intrinsically Bool even when ModuleSema did not
-# need to persist an explicit type slot. A monomorphized binding initialized by
-# such a literal must not become a permanently unresolved GlobalSG binding.
-gtext = replace_once(
-    gtext,
-    '''            const ty = if (node.ty) |value|
-                try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions, null)
-            else if (node.content == .string_literal)
-                self.resolver.core.defaultStringLiteralType()
-            else
-                null;
+# Construction-time identity is reflexive for the exact same unresolved slot,
+# while distinct resolved IDs still compare by semantic equality. Do not change
+# global_types.equal: ordinary semantic matching intentionally treats unresolved
+# types as not-yet-comparable.
+tpath = Path("src/4_semantics/global/types.zig")
+ttext = tpath.read_text()
+ttext = replace_once(
+    ttext,
+    '''pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTypeId, b: graph_mod.GlobalTypeId) bool {
 ''',
-    '''            const ty = if (node.ty) |value|
-                try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions, null)
-            else if (node.content == .bool_literal)
-                try self.resolver.generics.internType(.{ .builtin = .Bool })
-            else if (node.content == .string_literal)
-                self.resolver.core.defaultStringLiteralType()
-            else
-                null;
+    '''pub fn identityEqual(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTypeId, b: graph_mod.GlobalTypeId) bool {
+    return a == b or equal(graph, a, b);
+}
+
+pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTypeId, b: graph_mod.GlobalTypeId) bool {
 ''',
-    "intrinsic bool literal type",
+    "construction type identity helper",
 )
+ttext = replace_once(
+    ttext,
+    '''                .type => |right_ty| if (!equal(graph, left_ty, right_ty)) return false,
+''',
+    '''                .type => |right_ty| if (!identityEqual(graph, left_ty, right_ty)) return false,
+''',
+    "generic argument construction identity",
+)
+tpath.write_text(ttext)
+
+gipath = Path("src/4_semantics/global/generics.zig")
+gitext = gipath.read_text()
+for old, new, label in (
+    ("global_types.equal(graph, value.child, b.pointer.child)", "global_types.identityEqual(graph, value.child, b.pointer.child)", "pointer child construction identity"),
+    ("global_types.equal(graph, value.element, b.array.element)", "global_types.identityEqual(graph, value.element, b.array.element)", "array element construction identity"),
+    ("global_types.equal(graph, value, b.nullable)", "global_types.identityEqual(graph, value, b.nullable)", "nullable construction identity"),
+    ("global_types.equal(graph, value, b.inferred_errable)", "global_types.identityEqual(graph, value, b.inferred_errable)", "errable construction identity"),
+    ("global_types.equal(graph, value, b.virtual)", "global_types.identityEqual(graph, value, b.virtual)", "virtual construction identity"),
+):
+    gitext = replace_once(gitext, old, new, label)
+gipath.write_text(gitext)
 
 old_init = '''    /// Infer the implicit abstract arguments of a constructor's `init` from
     /// its destination and supplied fields, then materialize its runtime body.
@@ -743,9 +759,11 @@ stext = replace_once(
         for (relocation.graph.binding_type_resolution.items[0..limit], 0..) |state, raw| {
             if (state != .unresolved) continue;
             const binding = relocation.graph.bindings.items[raw];
+            const binding_id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
+            const binding_reachable = if (reachable) |set| set.containsBinding(binding_id) else true;
             std.debug.print(
-                "[unresolved-binding] id={} name={s} init={?} source={}:{}\\n",
-                .{ raw, relocation.graph.text(binding.name), if (binding.initialization) |id| @intFromEnum(id) else null, binding.source.file_index, binding.source.offset },
+                "[unresolved-binding] id={} name={s} init={?} source={}:{} reachable={}\\n",
+                .{ raw, relocation.graph.text(binding.name), if (binding.initialization) |id| @intFromEnum(id) else null, binding.source.file_index, binding.source.offset, binding_reachable },
             );
             if (binding.initialization) |initialization| {
                 const node = relocation.graph.nodes.items[@intFromEnum(initialization)];
@@ -753,6 +771,32 @@ stext = replace_once(
                     "  init-ty={?} unresolved={} tag={s}\\n",
                     .{ if (node.ty) |ty| @intFromEnum(ty) else null, if (node.ty) |ty| relocation.graph.isTypeUnresolved(ty) else false, @tagName(node.content) },
                 );
+                var flat: usize = 0;
+                for (modules, 0..) |*candidate_module, candidate_module_index| {
+                    for (candidate_module.semantic.pending_operations.items, 0..) |operation, operation_index| {
+                        defer flat += 1;
+                        const target = switch (operation) {
+                            .resolve_call => |pending| globalizer.globalNode(relocation.offsets.items[candidate_module_index], pending.node),
+                            else => continue,
+                        };
+                        if (target != initialization) continue;
+                        const owner = if (operation_index < candidate_module.semantic.pending_owner_functions.items.len)
+                            if (candidate_module.semantic.pending_owner_functions.items[operation_index]) |local|
+                                globalizer.globalFunction(relocation.offsets.items[candidate_module_index], local)
+                            else
+                                null
+                        else
+                            null;
+                        const owner_reachable = if (reachable) |set|
+                            if (owner) |function| set.contains(function) else true
+                        else
+                            true;
+                        std.debug.print(
+                            "  [binding-pending] flat={} module={} resolved={} invalid={} owner={?} owner-reachable={}\\n",
+                            .{ flat, candidate_module_index, resolved[flat], invalid[flat], if (owner) |function| @intFromEnum(function) else null, owner_reachable },
+                        );
+                    }
+                }
             }
         }
         return error.UnsupportedGlobalSemantic;
@@ -819,7 +863,7 @@ coretext = coretext.replace(
 )
 corepath.write_text(coretext)
 
-for path in (gpath, cpath, opath, spath, dpath, corepath):
+for path in (gpath, tpath, gipath, cpath, opath, spath, dpath, corepath):
     subprocess.run(["zig", "fmt", str(path)], check=True)
 
 Path(".git/semantic-refactor-test-command").write_text(
