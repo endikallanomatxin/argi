@@ -64,7 +64,7 @@ pub const Context = union(enum) {
 
     pub fn bindingCount(self: Context) usize {
         return switch (self) {
-            .module => |value| value.visible_bindings.len,
+            .module => |value| @intCast(value.visible_bindings.len),
             .global => |value| value.visible_bindings.len,
         };
     }
@@ -577,8 +577,14 @@ text = replace_once(
 text = replace_once(
     text,
     '    core: *core_mod.Resolver,\n',
-    '    core: *core_mod.Resolver,\n    dispatch: *dispatch_mod.Resolver,\n',
+    '    core: *core_mod.Resolver,\n    dispatch: ?*dispatch_mod.Resolver = null,\n',
     "ownership dispatch field",
+)
+text = replace_once(
+    text,
+    '        _ = try self.autoDeinitNode(binding);\n',
+    '        _ = self.autoDeinitNode(binding);\n',
+    "legacy deinit cache lookup",
 )
 old = '''    pub fn finalize(self: *Resolver) !void {
         for (self.graph.functions.items) |function| if (function.body) |body|
@@ -620,7 +626,7 @@ new = '''    pub fn finalize(self: *Resolver) !void {
         var defers: std.ArrayList(global_sg.GlobalNodeId) = .empty;
         defer defers.deinit(self.allocator);
         const module = self.graph.moduleForDeclaration(function.declaration) orelse return error.MissingFunctionModule;
-        try self.finalizeBlock(body, &active, &defers, &visible, function_id, @intFromEnum(module));
+        try self.finalizeBlock(body, &active, &defers, &visible, function_id, @intCast(@intFromEnum(module)));
     }
 '''
 text = replace_once(text, old, new, "ownership function finalization context")
@@ -825,6 +831,7 @@ replacement = r'''    fn autoDeinitNode(self: *const Resolver, binding: global_s
         module_index: usize,
     ) !?ResolvedDestructor {
         const target_ty = self.graph.nodes.items[@intFromEnum(target)].ty orelse return null;
+        const dispatch = self.dispatch orelse return error.MissingOwnershipDispatch;
         const pointer_ty = try self.core.pointerType(target_ty, .read_write);
         const source = self.graph.nodes.items[@intFromEnum(target)].source;
         const address = try self.appendNode(source, pointer_ty, .{ .address_of = target });
@@ -837,7 +844,7 @@ replacement = r'''    fn autoDeinitNode(self: *const Resolver, binding: global_s
         var names = receiver_names.keyIterator();
         while (names.next()) |name_ptr| {
             const input = try self.singleNamedInput(name_ptr.*, address, source);
-            const call = self.dispatch.resolveImplicitFunction(
+            const call = dispatch.resolveImplicitFunction(
                 module_index,
                 "deinit",
                 input,
