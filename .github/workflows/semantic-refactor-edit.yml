@@ -15,11 +15,12 @@ permissions:
 
 concurrency:
   group: semantic-refactor-edit
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   apply:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,6 +41,7 @@ jobs:
             python3 .github/semantic_refactor_post_edit.py
           fi
       - name: Build compiler
+        timeout-minutes: 5
         run: zig build
       - name: Run internal tests
         timeout-minutes: 5
