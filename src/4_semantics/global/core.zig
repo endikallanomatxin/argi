@@ -289,18 +289,6 @@ pub const Resolver = struct {
                 },
                 .score => |score| score,
             };
-            if (std.mem.eql(u8, name, "deinit")) {
-                std.debug.print("[deinit-candidate] fn={} decl={} score={} generic={} input-len={}\n", .{
-                    raw,
-                    @intFromEnum(function.declaration),
-                    score,
-                    function.flags.is_generic_instantiation,
-                    function.input.len,
-                });
-                for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
-                    std.debug.print("  field[{}]={s} ty={}\n", .{ index, self.graph.text(field.name), @intFromEnum(field.ty) });
-                }
-            }
             if (best == null or score > best_score) {
                 best = @enumFromInt(@as(u32, @intCast(raw)));
                 best_score = score;
