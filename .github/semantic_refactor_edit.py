@@ -742,18 +742,20 @@ dpath = Path("src/4_semantics/global/dispatch.zig")
 dtext = dpath.read_text()
 if not dtext.startswith('const std = @import("std");'):
     dtext = 'const std = @import("std");\n' + dtext
-dtext = replace_once(
-    dtext,
-    '''            .ambiguous => return error.AmbiguousImplicitFunction,
+ordinary_anchor = '''            .ambiguous => return error.AmbiguousImplicitFunction,
             .no_match => {},
-''',
+'''
+if dtext.count(ordinary_anchor) < 1:
+    raise RuntimeError("temporary ordinary ambiguity trace anchor missing")
+dtext = dtext.replace(
+    ordinary_anchor,
     '''            .ambiguous => {
                 std.debug.print("[implicit-ambiguous] phase=ordinary module={} name={s} input={}\\n", .{ module_index, name, @intFromEnum(input) });
                 return error.AmbiguousImplicitFunction;
             },
             .no_match => {},
 ''',
-    "temporary ordinary ambiguity trace",
+    1,
 )
 dpath.write_text(dtext)
 
