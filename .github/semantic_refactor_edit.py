@@ -296,7 +296,18 @@ text = replace_once(
     '        const reach: ReachInferenceContext = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);\n',
     "generic source reach context",
 )
-text = replace_count(text, 'reach_context)', 'reach)', 2, "generic source inference context uses")
+text = replace_once(
+    text,
+    'self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input, reach_context)',
+    'self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input, reach)',
+    "generic explicit source inference context",
+)
+text = replace_once(
+    text,
+    'self.resolveImplicitGenericFunction(module_index, module, reference, input, reach_context)',
+    'self.resolveImplicitGenericFunction(module_index, module, reference, input, reach)',
+    "generic implicit source inference context",
+)
 text = replace_once(
     text,
     '        if (!try self.core.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function)].input, input, module, o, value.visible_bindings, value.owner_function)) return .deferred;\n',
