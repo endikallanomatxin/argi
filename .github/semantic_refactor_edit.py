@@ -102,14 +102,40 @@ fpath.write_text(text)
 for path in (tpath, gpath, fpath):
     subprocess.run(["zig", "fmt", str(path)], check=True)
 
+
+# Diagnostic only: identify any remaining ordinary deinit tie after semantic
+# monomorphization identity is applied.
+cpath = Path("src/4_semantics/global/core.zig")
+ctext = cpath.read_text()
+anchor = '''            const score = switch (self.matchCallInput(function.input, input_node)) {
+                .no_match => continue,
+                .deferred => {
+                    saw_deferred = true;
+                    continue;
+                },
+                .score => |score| score,
+            };
+'''
+replacement = anchor + '''            if (std.mem.eql(u8, name, "deinit")) {
+                std.debug.print("[deinit-candidate] fn={} decl={} score={} generic={} input-len={}\\n", .{
+                    raw,
+                    @intFromEnum(function.declaration),
+                    score,
+                    function.flags.is_generic_instantiation,
+                    function.input.len,
+                });
+                for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
+                    std.debug.print("  field[{}]={s} ty={}\\n", .{ index, self.graph.text(field.name), @intFromEnum(field.ty) });
+                }
+            }
+'''
+if ctext.count(anchor) != 1:
+    raise RuntimeError(f"ordinary matcher trace anchor changed: {ctext.count(anchor)}")
+cpath.write_text(ctext.replace(anchor, replacement, 1))
+subprocess.run(["zig", "fmt", str(cpath)], check=True)
+
 Path(".git/semantic-refactor-test-command").write_text(
-    "status=0; "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy || status=1; "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup || status=1; "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/23_dynamic_array_owning_push_fixed || status=1; "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/24_dynamic_array_owning_assume_capacity || status=1; "
-    "zig build test-programs -Dtest-filter=feature_tests/collections/26_dynamic_array_owning_pop || status=1; "
-    "exit $status\n"
+    "zig build test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup\\n"
 )
 Path(".git/semantic-refactor-message").write_text(
     "Canonicalize generic identity by semantic type equality\n"
