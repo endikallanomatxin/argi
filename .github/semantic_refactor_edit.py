@@ -567,32 +567,155 @@ if count != 1:
     raise RuntimeError(f"constructor binding helper collapse changed: {count}")
 cpath.write_text(ctext)
 
-# Temporary diagnosis only: identify the lexical binding that reaches
-# ownership finalization before its semantic type has been resolved.
+# Ownership cleanup is a commit phase. A function whose lexical bindings still
+# await type inference must remain untouched and be retried after the next
+# GlobalSema fixed-point round.
 opath = Path("src/4_semantics/global/ownership.zig")
 otext = opath.read_text()
-otext = replace_once(
-    otext,
-    "        if (self.graph.isBindingTypeUnresolved(binding)) return error.UnresolvedAutoDeinitBinding;\n",
-    '''        if (self.graph.isBindingTypeUnresolved(binding)) {
-            const unresolved = self.graph.bindings.items[@intFromEnum(binding)];
-            std.debug.print(
-                "UNRESOLVED_AUTO_DEINIT binding={d} name={s}\\n",
-                .{ @intFromEnum(binding), self.graph.text(unresolved.name) },
-            );
-            return error.UnresolvedAutoDeinitBinding;
+old_finalize = '''    pub fn finalize(self: *Resolver) !void {
+        for (self.graph.functions.items, 0..) |function, raw| {
+            if (function.body == null) continue;
+            const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            try self.finalizeFunctionBody(id);
         }
-''',
-    "temporary unresolved auto-deinit trace",
-)
+    }
+
+    pub fn finalizeFunctionBody(self: *Resolver, function_id: global_sg.GlobalFunctionId) !void {
+        const function = self.graph.functions.items[@intFromEnum(function_id)];
+        const body = function.body orelse return;
+'''
+new_finalize = '''    pub fn finalize(self: *Resolver) !void {
+        const count = self.graph.functions.items.len;
+        for (0..count) |raw| {
+            const function = self.graph.functions.items[raw];
+            if (function.body == null) continue;
+            const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            _ = try self.finalizeFunctionBody(id);
+        }
+    }
+
+    pub fn finalizeFunctionBody(self: *Resolver, function_id: global_sg.GlobalFunctionId) !bool {
+        const function = self.graph.functions.items[@intFromEnum(function_id)];
+        const body = function.body orelse return true;
+        if (!self.functionReadyForCleanup(function, body)) return false;
+'''
+otext = replace_once(otext, old_finalize, new_finalize, "ownership finalization readiness")
+
+old_end = '''        const module = self.graph.moduleForDeclaration(function.declaration) orelse return error.MissingFunctionModule;
+        try self.finalizeBlock(body, &active, &defers, &visible, function_id, @intCast(@intFromEnum(module)));
+    }
+
+    fn resolveDefer'''
+new_end = '''        const module = self.graph.moduleForDeclaration(function.declaration) orelse return error.MissingFunctionModule;
+        try self.finalizeBlock(body, &active, &defers, &visible, function_id, @intCast(@intFromEnum(module)));
+        return true;
+    }
+
+    fn functionReadyForCleanup(
+        self: *const Resolver,
+        function: global_sg.Function,
+        body: global_sg.GlobalBlockId,
+    ) bool {
+        for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]) |binding|
+            if (self.graph.isBindingTypeUnresolved(binding)) return false;
+        for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding|
+            if (self.graph.isBindingTypeUnresolved(binding)) return false;
+        return self.blockReadyForCleanup(body);
+    }
+
+    fn blockReadyForCleanup(self: *const Resolver, block_id: global_sg.GlobalBlockId) bool {
+        const block = self.graph.blocks.items[@intFromEnum(block_id)];
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
+            const node = self.graph.nodes.items[@intFromEnum(node_id)];
+            switch (node.content) {
+                .binding_declaration => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
+                .binding_use => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
+                .assignment => |assignment| if (self.graph.isBindingTypeUnresolved(assignment.binding)) return false,
+                .code_block => |child| if (!self.blockReadyForCleanup(child)) return false,
+                .if_statement => |statement| {
+                    if (!self.blockReadyForCleanup(statement.then_block)) return false;
+                    if (statement.else_block) |child|
+                        if (!self.blockReadyForCleanup(child)) return false;
+                },
+                .while_statement => |statement| if (!self.blockReadyForCleanup(statement.body)) return false,
+                .for_statement => |statement| {
+                    if (statement.init) |init| {
+                        const init_node = self.graph.nodes.items[@intFromEnum(init)];
+                        if (init_node.content == .code_block and !self.blockReadyForCleanup(init_node.content.code_block))
+                            return false;
+                    }
+                    if (!self.blockReadyForCleanup(statement.body)) return false;
+                },
+                .switch_statement => |switch_id| {
+                    const sw = self.graph.switches.items[@intFromEnum(switch_id)];
+                    for (self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]) |case| {
+                        if (case.payload_binding) |binding|
+                            if (self.graph.isBindingTypeUnresolved(binding)) return false;
+                        if (!self.blockReadyForCleanup(case.body)) return false;
+                    }
+                    if (sw.default_block) |child|
+                        if (!self.blockReadyForCleanup(child)) return false;
+                },
+                else => {},
+            }
+        }
+        return true;
+    }
+
+    fn resolveDefer'''
+otext = replace_once(otext, old_end, new_end, "ownership readiness helpers")
 opath.write_text(otext)
 
-for path in (gpath, cpath, opath):
+# Finalize a stable snapshot only. Cleanup may instantiate additional functions;
+# those are resolved/finalized in the next fixed-point round. A function is
+# marked finalized only after readiness and cleanup commit both succeed.
+spath = Path("src/4_semantics/global/semantizer.zig")
+stext = spath.read_text()
+old_loop = '''        var finalized_any = false;
+        for (relocation.graph.functions.items, 0..) |function, raw| {
+            const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (reachable) |set| {
+                if (!set.contains(id)) continue;
+            }
+            if (function.body) |body| {
+                if ((try finalized_functions.getOrPut(id)).found_existing) continue;
+                _ = body;
+                try ownership.finalizeFunctionBody(id);
+                finalized_any = true;
+            }
+        }
+'''
+new_loop = '''        var finalized_any = false;
+        const finalization_count = relocation.graph.functions.items.len;
+        var raw: usize = 0;
+        while (raw < finalization_count) : (raw += 1) {
+            const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (finalized_functions.contains(id)) continue;
+            if (reachable) |set| {
+                if (!set.contains(id)) continue;
+            }
+            if (relocation.graph.functions.items[raw].body == null) continue;
+            if (!try ownership.finalizeFunctionBody(id)) continue;
+            try finalized_functions.put(id, {});
+            finalized_any = true;
+        }
+'''
+stext = replace_once(stext, old_loop, new_loop, "stable ownership finalization loop")
+spath.write_text(stext)
+
+for path in (gpath, cpath, opath, spath):
     subprocess.run(["zig", "fmt", str(path)], check=True)
 
 Path(".git/semantic-refactor-test-command").write_text(
-    "zig build test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy\n"
+    "status=0; "
+    "zig build test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy || status=1; "
+    "zig build test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup || status=1; "
+    "zig build test-programs -Dtest-filter=feature_tests/collections/36_dynamic_array_owning_mutations || status=1; "
+    "zig build test-programs -Dtest-filter=feature_tests/collections/23_dynamic_array_owning_push_fixed || status=1; "
+    "zig build test-programs -Dtest-filter=feature_tests/collections/24_dynamic_array_owning_assume_capacity || status=1; "
+    "zig build test-programs -Dtest-filter=feature_tests/collections/26_dynamic_array_owning_pop || status=1; "
+    "exit $status\n"
 )
 Path(".git/semantic-refactor-message").write_text(
-    "Unify initializer generic and reach inference\n"
+    "Unify initializer inference and stage ownership finalization\n"
 )
