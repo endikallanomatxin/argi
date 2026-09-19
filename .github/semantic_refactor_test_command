@@ -1,1 +1,1 @@
-zig build test-programs -Dtest-filter=feature_tests/types/258_abstract_associated_comptime_values
+zig build test-programs -Dtest-filter=feature_tests/types/255X_conflicting_abstract_associated_args -Dtest-filter=feature_tests/types/256X_abstract_associated_arg_mismatch -Dtest-filter=feature_tests/types/257X_abstract_impl_template_checks_associated_args -Dtest-filter=feature_tests/types/258_abstract_associated_comptime_values -Dtest-filter=feature_tests/types/259X_abstract_associated_comptime_mismatch 
