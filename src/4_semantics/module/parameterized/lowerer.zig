@@ -775,13 +775,13 @@ pub const Context = struct {
                         return self.addResolvedNode(node, try self.parameterizedBuiltin(.Type), .{ .type_literal = value });
                     },
                     .comptime_int => {
-                        const parameter = self.graph.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter_binding.id)];
+                        const parameter_record = self.graph.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter_binding.id)];
                         return self.addPending(
                             node,
                             .comptime_parameter,
                             &.{},
                             null,
-                            parameter.value_type,
+                            parameter_record.value_type,
                             .{ .comptime_parameter = parameter_binding.id },
                         );
                     },
