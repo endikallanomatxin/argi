@@ -42,19 +42,41 @@ jobs:
           fi
       - name: Build compiler
         timeout-minutes: 5
-        run: zig build
+        shell: bash
+        run: |
+          set -o pipefail
+          zig build 2>&1 | tee .git/semantic-refactor-ci-report
       - name: Run internal tests
         timeout-minutes: 5
-        run: zig build test-internal
+        shell: bash
+        run: |
+          set -o pipefail
+          zig build test-internal 2>&1 | tee -a .git/semantic-refactor-ci-report
       - name: Run focused semantic tests
         timeout-minutes: 8
         shell: bash
         run: |
+          set -o pipefail
           if [[ -f .git/semantic-refactor-test-command ]]; then
-            bash -euo pipefail -c "$(cat .git/semantic-refactor-test-command)"
+            bash -euo pipefail -c "$(cat .git/semantic-refactor-test-command)" 2>&1 | tee -a .git/semantic-refactor-ci-report
           elif [[ -f .github/semantic_refactor_test_command ]]; then
-            bash -euo pipefail -c "$(cat .github/semantic_refactor_test_command)"
+            bash -euo pipefail -c "$(cat .github/semantic_refactor_test_command)" 2>&1 | tee -a .git/semantic-refactor-ci-report
           fi
+      - name: Publish failed semantic debug report
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "head=$GITHUB_SHA"
+            echo "run_id=$GITHUB_RUN_ID"
+            echo
+            cat .git/semantic-refactor-ci-report 2>/dev/null || true
+          } > .github/semantic_refactor_ci_report.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/semantic_refactor_ci_report.txt
+          git commit -m "Record semantic refactor CI failure"
+          git push origin HEAD:compact-semantic-graph-chatgpt
       - name: Commit verified source edit
         shell: bash
         run: |
