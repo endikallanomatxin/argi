@@ -21,6 +21,7 @@ pub const CodegenError = error{
     CompilationFailed,
     ExpressionNotFound,
     InvalidType,
+    NonConstantGlobalInitializer,
     Reported,
 };
 
@@ -295,7 +296,13 @@ pub const CodeGenerator = struct {
         try self.global_bindings.put(binding, .in_progress);
         const storage = self.bindings.get(binding) orelse return CodegenError.SymbolNotFound;
         if (record.initialization) |initialization| {
-            const value = try self.globalConstant(initialization);
+            const value = self.globalConstant(initialization) catch |err| switch (err) {
+                error.NonConstantGlobalInitializer => {
+                    try self.report(record.source, "module-level binding '{s}' must use a constant initializer for now", .{self.graph.text(record.name)});
+                    return CodegenError.Reported;
+                },
+                else => return err,
+            };
             if (value.type_ref != storage.type_ref) return CodegenError.InvalidType;
             c.LLVMSetInitializer(storage.ref, value.value_ref);
         }
@@ -306,6 +313,7 @@ pub const CodeGenerator = struct {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
             .int_literal, .float_literal, .char_literal, .bool_literal, .string_literal => self.emitLiteral(node_id),
+            .binary_operation => |operation| self.globalBinaryConstant(operation),
             .binding_use => |binding| blk: {
                 try self.ensureGlobalInitialized(binding);
                 const storage = self.bindings.get(binding) orelse return CodegenError.SymbolNotFound;
@@ -322,8 +330,52 @@ pub const CodeGenerator = struct {
                 const storage = self.bindings.get(binding) orelse return CodegenError.SymbolNotFound;
                 break :blk .{ .value_ref = storage.ref, .type_ref = c.LLVMPointerType(storage.type_ref, 0), .ty = node.ty };
             },
-            else => CodegenError.InvalidType,
+            else => CodegenError.NonConstantGlobalInitializer,
         };
+    }
+
+    fn globalBinaryConstant(self: *CodeGenerator, operation: anytype) CodegenError!TypedValue {
+        const left = try self.globalConstant(operation.left);
+        const right = try self.globalConstant(operation.right);
+        if (left.type_ref != right.type_ref) return CodegenError.InvalidType;
+        const ty = left.ty orelse return CodegenError.InvalidType;
+        if (self.isFloat(ty)) {
+            var loses_info: c.LLVMBool = 0;
+            const a = c.LLVMConstRealGetDouble(left.value_ref, &loses_info);
+            const b = c.LLVMConstRealGetDouble(right.value_ref, &loses_info);
+            const result = switch (operation.operator) {
+                .addition => a + b,
+                .subtraction => a - b,
+                .multiplication => a * b,
+                .division => a / b,
+                .modulo => @rem(a, b),
+            };
+            return .{ .value_ref = c.LLVMConstReal(left.type_ref, result), .type_ref = left.type_ref, .ty = ty };
+        }
+        if (c.LLVMGetTypeKind(left.type_ref) != c.LLVMIntegerTypeKind or c.LLVMGetIntTypeWidth(left.type_ref) > 64)
+            return CodegenError.InvalidType;
+        const unsigned = self.isUnsigned(ty);
+        const a = c.LLVMConstIntGetZExtValue(left.value_ref);
+        const b = c.LLVMConstIntGetZExtValue(right.value_ref);
+        const result: u64 = if (unsigned) switch (operation.operator) {
+            .addition => a +% b,
+            .subtraction => a -% b,
+            .multiplication => a *% b,
+            .division => if (b != 0) a / b else return CodegenError.InvalidType,
+            .modulo => if (b != 0) a % b else return CodegenError.InvalidType,
+        } else blk: {
+            const signed_a = c.LLVMConstIntGetSExtValue(left.value_ref);
+            const signed_b = c.LLVMConstIntGetSExtValue(right.value_ref);
+            const signed_result: i64 = switch (operation.operator) {
+                .addition => signed_a +% signed_b,
+                .subtraction => signed_a -% signed_b,
+                .multiplication => signed_a *% signed_b,
+                .division => if (signed_b != 0 and !(signed_a == std.math.minInt(i64) and signed_b == -1)) @divTrunc(signed_a, signed_b) else return CodegenError.InvalidType,
+                .modulo => if (signed_b != 0 and !(signed_a == std.math.minInt(i64) and signed_b == -1)) @rem(signed_a, signed_b) else return CodegenError.InvalidType,
+            };
+            break :blk @bitCast(signed_result);
+        };
+        return .{ .value_ref = c.LLVMConstInt(left.type_ref, result, 0), .type_ref = left.type_ref, .ty = ty };
     }
 
     fn generateFunctionBody(self: *CodeGenerator, id: graph_mod.GlobalFunctionId) !void {
