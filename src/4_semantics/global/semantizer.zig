@@ -1117,6 +1117,29 @@ fn diagnoseUnresolvedCopy(
     return false;
 }
 
+fn appendAmbiguousCallPrefix(
+    message: *std.array_list.Managed(u8),
+    graph: *const global_sg.GlobalSemanticGraph,
+    diagnostics: *const diagnostics_mod.Diagnostics,
+    source: primitives.SourceRef,
+    module: *const module_sg.ModuleSemanticGraph,
+    reference: module_entities.ExternalRef,
+) !void {
+    const name = module.text(reference.name);
+    if (reference.module_path) |path| {
+        try message.appendSlice("module-qualified call '");
+        try message.appendSlice(moduleQualifierText(graph, diagnostics, source, module, path, name));
+        try message.append('.');
+    } else {
+        try message.appendSlice("ambiguous call to '");
+    }
+    try message.appendSlice(name);
+    if (reference.module_path != null)
+        try message.appendSlice("' is ambiguous for arguments ")
+    else
+        try message.appendSlice("' for arguments ");
+}
+
 fn diagnoseUnresolvedCall(
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -1236,9 +1259,7 @@ fn diagnoseUnresolvedCall(
             if (best_matches.items.len > 1) {
                 var ambiguity = std.array_list.Managed(u8).init(allocator);
                 defer ambiguity.deinit();
-                try ambiguity.appendSlice("ambiguous call to '");
-                try ambiguity.appendSlice(name);
-                try ambiguity.appendSlice("' for arguments ");
+                try appendAmbiguousCallPrefix(&ambiguity, graph, diagnostics, source, module, reference);
                 try appendValueShape(&ambiguity, graph, input);
                 try ambiguity.appendSlice(". Possible overloads:");
                 for (best_matches.items) |candidate| {
@@ -1251,7 +1272,7 @@ fn diagnoseUnresolvedCall(
                     try appendFieldShape(&ambiguity, graph, function.output);
                 }
                 try diagnostics.add(
-                    diagnosticLocation(graph, diagnostics, source),
+                    if (reference.module_path != null) location else diagnosticLocation(graph, diagnostics, source),
                     .semantic,
                     "{s}",
                     .{ambiguity.items},
@@ -1270,9 +1291,7 @@ fn diagnoseUnresolvedCall(
             )) {
                 var ambiguity = std.array_list.Managed(u8).init(allocator);
                 defer ambiguity.deinit();
-                try ambiguity.appendSlice("ambiguous call to '");
-                try ambiguity.appendSlice(name);
-                try ambiguity.appendSlice("' for arguments ");
+                try appendAmbiguousCallPrefix(&ambiguity, graph, diagnostics, source, module, reference);
                 try appendValueShape(&ambiguity, graph, input);
                 try ambiguity.appendSlice(". Possible overloads:");
                 for (generic_ties.items) |declaration_id| {
@@ -1287,7 +1306,7 @@ fn diagnoseUnresolvedCall(
                     try appendFieldShape(&ambiguity, graph, function.output);
                 }
                 try diagnostics.add(
-                    diagnosticLocation(graph, diagnostics, source),
+                    if (reference.module_path != null) location else diagnosticLocation(graph, diagnostics, source),
                     .semantic,
                     "{s}",
                     .{ambiguity.items},
