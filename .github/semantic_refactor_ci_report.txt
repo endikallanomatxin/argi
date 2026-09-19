@@ -1,11 +1,11 @@
-head=90518746653e9eb0e8d3df4fe4e7c558e7f4a5f2
-run_id=35461648390
+head=5963642dc744a1d8c304a754e74a9c96839be3f6
+run_id=35461716202
 
 test-internal
 +- run test w
 [generic-constraint] fn=2 decl=1 param=Contract concrete=1 abstract=Contract satisfied=true
 [generic-constraint] fn=3 decl=1 param=Contract concrete=3 abstract=Contract satisfied=true
-failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir=./.zig-cache --seed=0xd9e6831 --listen=-
+failed command: ./.zig-cache/o/5446fdb87a2a7be55e2cc71bbe0ef7c7/test --cache-dir=./.zig-cache --seed=0xa6ed3598 --listen=-
 
 [string-constructor] target=3413 input=3412 initializer=102 visible=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
@@ -30,10 +30,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -42,8 +51,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -53,10 +68,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -65,8 +89,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -76,10 +106,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -88,8 +127,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -99,10 +144,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -111,8 +165,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -122,10 +182,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -134,8 +203,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -145,10 +220,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -157,8 +241,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -168,10 +258,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -180,8 +279,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -191,10 +296,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -203,8 +317,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [generic-constraint] fn=224 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
 [generic-constraint] fn=225 decl=249 param=Allocator concrete=427 abstract=Allocator satisfied=true
 [generic-constraint] fn=226 decl=95 param=Allocator concrete=427 abstract=Allocator satisfied=true
@@ -220,10 +340,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -232,8 +361,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 /home/runner/work/argi/argi/tests/feature_tests/collections/34_dynamic_array_string_copy/main.rg:12:27: error: no overload of 'copy' accepts arguments (.self: &<type>, .allocator: $&CAllocator). Available signatures:
   - copy (.self: &String, .allocator: $&Allocator) -> (.result: <type>)
   - copy (.self: &Path, .allocator: $&Allocator) -> (.result: <type>)
@@ -264,10 +399,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -276,8 +420,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -287,10 +437,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -299,8 +458,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -310,10 +475,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -322,8 +496,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -333,10 +513,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -345,8 +534,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -356,10 +551,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -368,8 +572,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -379,10 +589,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -391,8 +610,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -402,10 +627,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -414,8 +648,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -425,10 +665,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -437,8 +686,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -448,10 +703,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -460,8 +724,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -471,10 +741,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -483,8 +762,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -494,10 +779,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -506,8 +800,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [generic-constraint] fn=227 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
 [generic-constraint] fn=228 decl=249 param=Allocator concrete=427 abstract=Allocator satisfied=true
 [generic-constraint] fn=229 decl=95 param=Allocator concrete=427 abstract=Allocator satisfied=true
@@ -521,10 +821,19 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=6
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [copy-candidate] decl=161 source=copying.rg:841 params=1
 [copy-candidate-param] t kind=type constraint=0
 [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -533,8 +842,14 @@ failed command: ./.zig-cache/o/22da45cc57f6ef1dcba377c847de60e0/test --cache-dir
 [copy-candidate-param] Allocator kind=type constraint=20
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+[constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+[constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+[constraint-associated-type-result] matched=true
 /home/runner/work/argi/argi/tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup/main.rg:52:20: error: no overload of 'copy' accepts arguments (.self: &<type>, .allocator: $&FailFourthAllocator). Available signatures:
   - copy (.self: &String, .allocator: $&Allocator) -> (.result: <type>)
   - copy (.self: &Path, .allocator: $&Allocator) -> (.result: <type>)
@@ -567,10 +882,19 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -579,8 +903,14 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -590,10 +920,19 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -602,8 +941,14 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -613,10 +958,19 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -625,8 +979,14 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -636,10 +996,19 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -648,8 +1017,14 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -659,10 +1034,19 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -671,8 +1055,14 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -682,10 +1072,19 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -694,8 +1093,14 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -705,10 +1110,19 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -717,8 +1131,14 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -728,10 +1148,19 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -740,8 +1169,14 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [generic-constraint] fn=224 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
        [generic-constraint] fn=225 decl=249 param=Allocator concrete=427 abstract=Allocator satisfied=true
        [generic-constraint] fn=226 decl=95 param=Allocator concrete=427 abstract=Allocator satisfied=true
@@ -757,10 +1192,19 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -769,32 +1213,38 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        tests/feature_tests/collections/34_dynamic_array_string_copy/main.rg:12:27: error: no overload of 'copy' accepts arguments (.self: &<type>, .allocator: $&CAllocator). Available signatures:
          - copy (.self: &String, .allocator: $&Allocator) -> (.result: <type>)
          - copy (.self: &Path, .allocator: $&Allocator) -> (.result: <type>)
              copied_result ::= copy(.self = &array, .allocator = system.allocator)
                                    ^
        expected 0, found 1
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e5a4 in expectEqualInner__anon_43187 (std.zig)
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8e5 in expectEqual (std.zig)
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e93e in expectEqualInner__anon_43125 (std.zig)
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f071 in expectEqual (test.zig)
-       /home/runner/work/argi/argi/tests/test.zig:199:5: 0x122f145 in expectSuccessfulBuild (test.zig)
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e584 in expectEqualInner__anon_43279 (std.zig)
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8c5 in expectEqual (std.zig)
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e91e in expectEqualInner__anon_43217 (std.zig)
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f051 in expectEqual (test.zig)
+       /home/runner/work/argi/argi/tests/test.zig:199:5: 0x122f125 in expectSuccessfulBuild (test.zig)
            try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
            ^
-       /home/runner/work/argi/argi/tests/test.zig:2173:5: 0x122f862 in test.feature_tests/collections/34_dynamic_array_string_copy (test.zig)
+       /home/runner/work/argi/argi/tests/test.zig:2173:5: 0x122f842 in test.feature_tests/collections/34_dynamic_array_string_copy (test.zig)
            try expectSuccessfulBuild(test_path);
            ^
-failed command: ./.zig-cache/o/452e941361b51751f1f88bc7fc97c49b/test --cache-dir=./.zig-cache --seed=0x55d5139f --listen=-
+failed command: ./.zig-cache/o/8b733d3d0b30b092e2b654978f021796/test --cache-dir=./.zig-cache --seed=0x9924f24d --listen=-
 
 Build Summary: 7/9 steps succeeded (1 failed); 0/1 tests passed (1 failed)
 test-programs transitive failure
 +- run test 0 pass, 1 fail (1 total)
 
 error: the following build command failed with exit code 1:
-.zig-cache/o/8a6fe926a82f8ab317b4f77dea369d29/build /home/runner/work/_temp/7cdd83af-e5c8-4952-87b0-2512f5953429/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/7cdd83af-e5c8-4952-87b0-2512f5953429/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0x55d5139f -Z107c5fde6836a227 test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy
+.zig-cache/o/6644619764fcedc55e3f770fd8c86cb8/build /home/runner/work/_temp/7cf5e47b-484d-451b-b535-3a8554bb5c76/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/7cf5e47b-484d-451b-b535-3a8554bb5c76/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0x9924f24d -Zf1e782bef7d86738 test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy
 test-programs
 +- run test 0 pass, 1 fail (1 total)
 error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_cleanup' failed:
@@ -824,10 +1274,19 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -836,8 +1295,14 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -847,10 +1312,19 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -859,8 +1333,14 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -870,10 +1350,19 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -882,8 +1371,14 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -893,10 +1388,19 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -905,8 +1409,14 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -916,10 +1426,19 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -928,8 +1447,14 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -939,10 +1464,19 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -951,8 +1485,14 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -962,10 +1502,19 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -974,8 +1523,14 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -985,10 +1540,19 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -997,8 +1561,14 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -1008,10 +1578,19 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -1020,8 +1599,14 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -1031,10 +1616,19 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -1043,8 +1637,14 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -1054,10 +1654,19 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -1066,8 +1675,14 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [generic-constraint] fn=227 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
        [generic-constraint] fn=228 decl=249 param=Allocator concrete=427 abstract=Allocator satisfied=true
        [generic-constraint] fn=229 decl=95 param=Allocator concrete=427 abstract=Allocator satisfied=true
@@ -1081,10 +1696,19 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=6
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=null
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [copy-candidate] decl=161 source=copying.rg:841 params=1
        [copy-candidate-param] t kind=type constraint=0
        [copy-candidate] decl=252 source=string.rg:3411 params=1
@@ -1093,29 +1717,35 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [copy-candidate-param] Allocator kind=type constraint=20
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
+       [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
+       [constraint-associated-type] name=reasons target_offset=0 pattern_param=40 actual=397 existing=397
+       [constraint-associated-type-result] matched=true
        tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup/main.rg:52:20: error: no overload of 'copy' accepts arguments (.self: &<type>, .allocator: $&FailFourthAllocator). Available signatures:
          - copy (.self: &String, .allocator: $&Allocator) -> (.result: <type>)
          - copy (.self: &Path, .allocator: $&Allocator) -> (.result: <type>)
              copied ::= copy(.self = &source, .allocator = $&failing)
                             ^
        expected 0, found 1
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e5a4 in expectEqualInner__anon_43179 (std.zig)
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8e5 in expectEqual (std.zig)
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e93e in expectEqualInner__anon_43117 (std.zig)
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f071 in expectEqual (test.zig)
-       /home/runner/work/argi/argi/tests/test.zig:199:5: 0x122f145 in expectSuccessfulBuild (test.zig)
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e584 in expectEqualInner__anon_43274 (std.zig)
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8c5 in expectEqual (std.zig)
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e91e in expectEqualInner__anon_43212 (std.zig)
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f051 in expectEqual (test.zig)
+       /home/runner/work/argi/argi/tests/test.zig:199:5: 0x122f125 in expectSuccessfulBuild (test.zig)
            try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
            ^
-       /home/runner/work/argi/argi/tests/test.zig:2179:5: 0x122f862 in test.feature_tests/collections/35_dynamic_array_fallible_copy_cleanup (test.zig)
+       /home/runner/work/argi/argi/tests/test.zig:2179:5: 0x122f842 in test.feature_tests/collections/35_dynamic_array_fallible_copy_cleanup (test.zig)
            try expectSuccessfulBuild(test_path);
            ^
-failed command: ./.zig-cache/o/81c15c1f1fa68d7732fa180f53efc5d7/test --cache-dir=./.zig-cache --seed=0x9c6ca880 --listen=-
+failed command: ./.zig-cache/o/9a6008e11b61bc48dad323fd27913a44/test --cache-dir=./.zig-cache --seed=0xa2be6259 --listen=-
 
 Build Summary: 7/9 steps succeeded (1 failed); 0/1 tests passed (1 failed)
 test-programs transitive failure
 +- run test 0 pass, 1 fail (1 total)
 
 error: the following build command failed with exit code 1:
-.zig-cache/o/8a6fe926a82f8ab317b4f77dea369d29/build /home/runner/work/_temp/7cdd83af-e5c8-4952-87b0-2512f5953429/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/7cdd83af-e5c8-4952-87b0-2512f5953429/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0x9c6ca880 -Z9c9b5584b4f2bee9 test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup
+.zig-cache/o/6644619764fcedc55e3f770fd8c86cb8/build /home/runner/work/_temp/7cf5e47b-484d-451b-b535-3a8554bb5c76/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/7cf5e47b-484d-451b-b535-3a8554bb5c76/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0xa2be6259 -Zdeb72c6a1ac5ca57 test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup
