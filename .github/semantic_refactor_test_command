@@ -1,78 +1,39 @@
 python3 - <<'PY'
 from pathlib import Path
-p = Path("src/4_semantics/module/semantizer.zig")
+p = Path("src/0_commands/frontend_pipeline.zig")
 s = p.read_text()
 repls = {
-'    var graph = try module_sg.build(allocator, module_dir, files);':
-'''    var graph = module_sg.build(allocator, module_dir, files) catch |err| {
-        std.debug.print("MODULE_STAGE graph: {s}\\n", .{@errorName(err)});
-        return err;
-    };''',
-'    const module_aliases = try module_alias_lowerer.lower(allocator, &graph, files);':
-'''    const module_aliases = module_alias_lowerer.lower(allocator, &graph, files) catch |err| {
-        std.debug.print("MODULE_STAGE aliases: {s}\\n", .{@errorName(err)});
-        return err;
-    };''',
-'    const initializers = try initializer_lowerer.lower(allocator, &graph, files);':
-'''    const initializers = initializer_lowerer.lower(allocator, &graph, files) catch |err| {
-        std.debug.print("MODULE_STAGE initializers: {s}\\n", .{@errorName(err)});
-        return err;
-    };''',
-'    try lowerNominalLayouts(allocator, &graph, files);':
-'''    lowerNominalLayouts(allocator, &graph, files) catch |err| {
-        std.debug.print("MODULE_STAGE nominal-layouts: {s}\\n", .{@errorName(err)});
-        return err;
-    };''',
-'    try canonicalize_storage.run(allocator, &graph);':
-'''    canonicalize_storage.run(allocator, &graph) catch |err| {
-        std.debug.print("MODULE_STAGE canonicalize: {s}\\n", .{@errorName(err)});
-        return err;
-    };''',
-'    try lowerOperatorMetadata(allocator, &graph, files);':
-'''    lowerOperatorMetadata(allocator, &graph, files) catch |err| {
-        std.debug.print("MODULE_STAGE operators: {s}\\n", .{@errorName(err)});
-        return err;
-    };''',
-'    const global_roots = try global_roots_lowerer.lower(allocator, &graph);':
-'''    const global_roots = global_roots_lowerer.lower(allocator, &graph) catch |err| {
-        std.debug.print("MODULE_STAGE global-roots: {s}\\n", .{@errorName(err)});
-        return err;
-    };''',
-'    const parameterized_stats = try parameterized_lowerer.lowerWithAbstractCatalog(allocator, &graph, files, abstract_names);':
-'''    const parameterized_stats = parameterized_lowerer.lowerWithAbstractCatalog(allocator, &graph, files, abstract_names) catch |err| {
-        std.debug.print("MODULE_STAGE parameterized: {s}\\n", .{@errorName(err)});
-        return err;
-    };''',
-'    const bodies = try body_lowerer.lowerMissingFunctions(allocator, &graph, files);':
-'''    const bodies = body_lowerer.lowerMissingFunctions(allocator, &graph, files) catch |err| {
-        std.debug.print("MODULE_STAGE bodies: {s}\\n", .{@errorName(err)});
-        return err;
-    };''',
-'    const generic_operators = try generic_operator_lowerer.lower(&graph, files);':
-'''    const generic_operators = generic_operator_lowerer.lower(&graph, files) catch |err| {
-        std.debug.print("MODULE_STAGE generic-operators: {s}\\n", .{@errorName(err)});
-        return err;
-    };''',
-'    const identity_stats = function_identity_lowerer.lower(&graph, files);':
-'''    const identity_stats = function_identity_lowerer.lower(&graph, files) catch |err| {
-        std.debug.print("MODULE_STAGE identities: {s}\\n", .{@errorName(err)});
-        return err;
-    };''',
-'    const relation_stats = try abstract_relation_lowerer.lower(allocator, &graph, files);':
-'''    const relation_stats = abstract_relation_lowerer.lower(allocator, &graph, files) catch |err| {
-        std.debug.print("MODULE_STAGE abstract-relations: {s}\\n", .{@errorName(err)});
-        return err;
-    };''',
-'    const generic_calls = try generic_call_args_lowerer.lower(allocator, &graph, files);':
-'''    const generic_calls = generic_call_args_lowerer.lower(allocator, &graph, files) catch |err| {
-        std.debug.print("MODULE_STAGE generic-calls: {s}\\n", .{@errorName(err)});
-        return err;
-    };''',
-'    try complete_verify.verifyModule(&graph);':
-'''    complete_verify.verifyModule(&graph) catch |err| {
-        std.debug.print("MODULE_STAGE verify: {s}\\n", .{@errorName(err)});
-        return err;
-    };''',
+'        try self.buildGlobalGraph();':
+'''        self.buildGlobalGraph() catch |err| {
+            std.debug.print("FRONTEND_STAGE global-graph: {s}\\n", .{@errorName(err)});
+            return err;
+        };''',
+'        try self.analyzeGlobalSafety();':
+'''        self.analyzeGlobalSafety() catch |err| {
+            std.debug.print("FRONTEND_STAGE safety: {s}\\n", .{@errorName(err)});
+            return err;
+        };''',
+'            const result = try module_semantizer.buildWithAbstractCatalog(self.allocator, group.dir, group.files.items, abstract_names.items);':
+'''            const result = module_semantizer.buildWithAbstractCatalog(self.allocator, group.dir, group.files.items, abstract_names.items) catch |err| {
+                std.debug.print("FRONTEND_STAGE module-sema {s}: {s}\\n", .{ group.dir, @errorName(err) });
+                return err;
+            };''',
+'        const result = try global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{':
+'''        const result = global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{''',
+'        });\n        self.global_graph = result.graph;':
+'''        }) catch |err| {
+            std.debug.print("FRONTEND_STAGE global-sema: {s}\\n", .{@errorName(err)});
+            return err;
+        };
+        self.global_graph = result.graph;''',
+'        try global_once_verify.verify(':
+'''        global_once_verify.verify(''',
+'            self.options.semantizer.selected_test_name,\n        );':
+'''            self.options.semantizer.selected_test_name,
+        ) catch |err| {
+            std.debug.print("FRONTEND_STAGE once-verify: {s}\\n", .{@errorName(err)});
+            return err;
+        };''',
 }
 for old,new in repls.items():
     if old not in s:
