@@ -176,6 +176,25 @@ pub const Context = struct {
             if (length == null or element == null) return error.InvalidArrayArguments;
             return self.writer.addResolvedType(.{ .array = .{ .length = length.?, .element = element.? } });
         }
+        if (base == .name and base.name.qualifier_token == null and
+            std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Errable"))
+        {
+            var result_type: ?entities.ModuleTypeId = null;
+            var has_reasons = false;
+            for (arguments_literal.fields) |field_node| {
+                const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericArgument;
+                const name = self.tree.tokenTextFromSource(self.source, field.name_token);
+                if (std.mem.eql(u8, name, "t")) {
+                    if (result_type != null or field.type_node == null) return error.InvalidGenericArgument;
+                    result_type = try self.lower(field.type_node.?);
+                } else if (std.mem.eql(u8, name, "reasons")) {
+                    has_reasons = true;
+                }
+            }
+            // Omitting `.reasons` is the explicit spelling of an open error
+            // set. Keep it as sugar until GlobalSema materializes and grows it.
+            if (!has_reasons) return self.writer.addResolvedType(.{ .inferred_errable = result_type orelse return error.InvalidGenericArgument });
+        }
         if (isRuntimeVirtualType(self.tree, self.source, generic)) {
             if (arguments_literal.fields.len != 1) return error.InvalidVirtualArguments;
             const field = self.tree.structTypeField(arguments_literal.fields[0]) orelse return error.InvalidVirtualArguments;

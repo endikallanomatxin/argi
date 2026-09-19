@@ -502,6 +502,24 @@ fn lowerGenericType(
     const literal = tree.structTypeLiteral(generic.arguments) orelse return null;
     if (std.mem.eql(u8, base_name, "Array")) return lowerArrayGeneric(allocator, graph, tree, source, module_file_index, literal);
     if (std.mem.eql(u8, base_name, "choice_union")) return lowerChoiceUnion(allocator, graph, tree, source, module_file_index, literal);
+    if (std.mem.eql(u8, base_name, "Errable")) {
+        var result_node: ?syn.NodeIndex = null;
+        var has_reasons = false;
+        for (literal.fields) |field_node| {
+            const field = tree.structTypeField(field_node) orelse return null;
+            const name = tree.tokenTextFromSource(source, field.name_token);
+            if (std.mem.eql(u8, name, "t")) {
+                if (result_node != null or field.type_node == null) return null;
+                result_node = field.type_node;
+            } else if (std.mem.eql(u8, name, "reasons")) {
+                has_reasons = true;
+            }
+        }
+        if (!has_reasons) {
+            const child = try lowerType(allocator, graph, tree, source, module_file_index, result_node orelse return null) orelse return null;
+            return try appendType(allocator, graph, .{ .inferred_errable = child });
+        }
+    }
     if (std.mem.eql(u8, base_name, "Virtual")) return null;
     const reference = findTypeReference(graph, module_file_index, tree.tokenLocation(base.name.name_token).offset) orelse return null;
     const declaration_id = switch (reference.resolution) {
