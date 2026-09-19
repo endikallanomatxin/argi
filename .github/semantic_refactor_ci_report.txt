@@ -1,19 +1,701 @@
-head=67dda2a047dda7f3ac96ab38a117d8a5a5afe913
-run_id=35461508490
+head=446e01cdaaa29cf9e21c3d5bf6ce6c26a706dbc5
+run_id=35461566431
 
-install
-+- install argi
-   +- compile exe argi Debug native 1 errors
-src/4_semantics/module/parameterized/lowerer.zig:224:30: error: invalid left-hand side to assignment
-                    .type => if (!isTypeBuiltin(self.tree, self.source, value_type_node))
-                             ^~
-error: 1 compilation errors
-failed command: /home/runner/work/_temp/7fbd670d-4261-42f0-afff-9b165aca0e87/zig-x86_64-linux-0.16.0/zig build-exe -lLLVM-21 -ODebug -L /usr/lib/llvm-21/lib --dep llvm_c -Mroot=/home/runner/work/argi/argi/src/main.zig -ODebug -Mllvm_c=.zig-cache/o/97133e26f48b2218dcdab836b8719dd9/llvm-c.zig -lc --cache-dir .zig-cache --global-cache-dir .zig-cache --name argi --zig-lib-dir /home/runner/work/_temp/7fbd670d-4261-42f0-afff-9b165aca0e87/zig-x86_64-linux-0.16.0/lib/ --listen=-
+test-internal
++- run test w
+[generic-constraint] fn=2 decl=1 param=Contract concrete=1 abstract=Contract satisfied=true
+[generic-constraint] fn=3 decl=1 param=Contract concrete=3 abstract=Contract satisfied=true
+failed command: ./.zig-cache/o/a0897146b80debf991c44e48f57ce891/test --cache-dir=./.zig-cache --seed=0x2272b169 --listen=-
 
-Build Summary: 3/6 steps succeeded (1 failed)
-install transitive failure
-+- install argi transitive failure
-   +- compile exe argi Debug native 1 errors
+[string-constructor] target=3413 input=3412 initializer=102 visible=true
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[generic-constraint] fn=224 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
+[generic-constraint] fn=225 decl=249 param=Allocator concrete=427 abstract=Allocator satisfied=true
+[generic-constraint] fn=226 decl=95 param=Allocator concrete=427 abstract=Allocator satisfied=true
+[generic-constraint] fn=230 decl=167 param=Allocator concrete=145 abstract=Allocator satisfied=true
+[generic-constraint] fn=232 decl=103 param=Allocator concrete=427 abstract=Allocator satisfied=true
+[generic-constraint] fn=233 decl=102 param=Allocator concrete=145 abstract=Allocator satisfied=true
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+/home/runner/work/argi/argi/tests/feature_tests/collections/34_dynamic_array_string_copy/main.rg:12:27: error: no overload of 'copy' accepts arguments (.self: &<type>, .allocator: $&CAllocator). Available signatures:
+  - copy (.self: &String, .allocator: $&Allocator) -> (.result: <type>)
+  - copy (.self: &Path, .allocator: $&Allocator) -> (.result: <type>)
+      copied_result ::= copy(.self = &array, .allocator = system.allocator)
+                            ^
+[string-constructor] target=3503 input=3502 initializer=102 visible=true
+[string-constructor] target=3507 input=3506 initializer=228 visible=true
+[string-constructor] target=3511 input=3510 initializer=228 visible=true
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[generic-constraint] fn=227 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
+[generic-constraint] fn=228 decl=249 param=Allocator concrete=427 abstract=Allocator satisfied=true
+[generic-constraint] fn=229 decl=95 param=Allocator concrete=427 abstract=Allocator satisfied=true
+[generic-constraint] fn=233 decl=167 param=Allocator concrete=145 abstract=Allocator satisfied=true
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=3
+[copy-candidate-param] Allocator kind=type constraint=4
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=5
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=6
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=0
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+/home/runner/work/argi/argi/tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup/main.rg:52:20: error: no overload of 'copy' accepts arguments (.self: &<type>, .allocator: $&FailFourthAllocator). Available signatures:
+  - copy (.self: &String, .allocator: $&Allocator) -> (.result: <type>)
+  - copy (.self: &Path, .allocator: $&Allocator) -> (.result: <type>)
+      copied ::= copy(.self = &source, .allocator = $&failing)
+                     ^
+test-programs
++- run test 0 pass, 1 fail (1 total)
+error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed:
+       argi build tests/feature_tests/collections/34_dynamic_array_string_copy failed:
+       [string-constructor] target=3413 input=3412 initializer=102 visible=true
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [generic-constraint] fn=224 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
+       [generic-constraint] fn=225 decl=249 param=Allocator concrete=427 abstract=Allocator satisfied=true
+       [generic-constraint] fn=226 decl=95 param=Allocator concrete=427 abstract=Allocator satisfied=true
+       [generic-constraint] fn=230 decl=167 param=Allocator concrete=145 abstract=Allocator satisfied=true
+       [generic-constraint] fn=232 decl=103 param=Allocator concrete=427 abstract=Allocator satisfied=true
+       [generic-constraint] fn=233 decl=102 param=Allocator concrete=145 abstract=Allocator satisfied=true
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       tests/feature_tests/collections/34_dynamic_array_string_copy/main.rg:12:27: error: no overload of 'copy' accepts arguments (.self: &<type>, .allocator: $&CAllocator). Available signatures:
+         - copy (.self: &String, .allocator: $&Allocator) -> (.result: <type>)
+         - copy (.self: &Path, .allocator: $&Allocator) -> (.result: <type>)
+             copied_result ::= copy(.self = &array, .allocator = system.allocator)
+                                   ^
+       expected 0, found 1
+       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e5a4 in expectEqualInner__anon_43187 (std.zig)
+       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8e5 in expectEqual (std.zig)
+       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e93e in expectEqualInner__anon_43125 (std.zig)
+       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f071 in expectEqual (test.zig)
+       /home/runner/work/argi/argi/tests/test.zig:199:5: 0x122f145 in expectSuccessfulBuild (test.zig)
+           try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+           ^
+       /home/runner/work/argi/argi/tests/test.zig:2173:5: 0x122f862 in test.feature_tests/collections/34_dynamic_array_string_copy (test.zig)
+           try expectSuccessfulBuild(test_path);
+           ^
+failed command: ./.zig-cache/o/452e941361b51751f1f88bc7fc97c49b/test --cache-dir=./.zig-cache --seed=0xace83f92 --listen=-
+
+Build Summary: 7/9 steps succeeded (1 failed); 0/1 tests passed (1 failed)
+test-programs transitive failure
++- run test 0 pass, 1 fail (1 total)
 
 error: the following build command failed with exit code 1:
-.zig-cache/o/2729ebdfef2e5dcab5d439c66956e2d1/build /home/runner/work/_temp/7fbd670d-4261-42f0-afff-9b165aca0e87/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/7fbd670d-4261-42f0-afff-9b165aca0e87/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0xc96c901e -Z35d08a213ff3b481
+.zig-cache/o/8a6fe926a82f8ab317b4f77dea369d29/build /home/runner/work/_temp/587068e5-e951-451a-a395-a195bacee3f3/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/587068e5-e951-451a-a395-a195bacee3f3/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0xace83f92 -Z03dd7b9c76aa23c4 test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy
+test-programs
++- run test 0 pass, 1 fail (1 total)
+error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_cleanup' failed:
+       argi build tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup failed:
+       [string-constructor] target=3503 input=3502 initializer=102 visible=true
+       [string-constructor] target=3507 input=3506 initializer=228 visible=true
+       [string-constructor] target=3511 input=3510 initializer=228 visible=true
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [generic-constraint] fn=227 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
+       [generic-constraint] fn=228 decl=249 param=Allocator concrete=427 abstract=Allocator satisfied=true
+       [generic-constraint] fn=229 decl=95 param=Allocator concrete=427 abstract=Allocator satisfied=true
+       [generic-constraint] fn=233 decl=167 param=Allocator concrete=145 abstract=Allocator satisfied=true
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=3
+       [copy-candidate-param] Allocator kind=type constraint=4
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=5
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=6
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=0
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup/main.rg:52:20: error: no overload of 'copy' accepts arguments (.self: &<type>, .allocator: $&FailFourthAllocator). Available signatures:
+         - copy (.self: &String, .allocator: $&Allocator) -> (.result: <type>)
+         - copy (.self: &Path, .allocator: $&Allocator) -> (.result: <type>)
+             copied ::= copy(.self = &source, .allocator = $&failing)
+                            ^
+       expected 0, found 1
+       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e5a4 in expectEqualInner__anon_43179 (std.zig)
+       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8e5 in expectEqual (std.zig)
+       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e93e in expectEqualInner__anon_43117 (std.zig)
+       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f071 in expectEqual (test.zig)
+       /home/runner/work/argi/argi/tests/test.zig:199:5: 0x122f145 in expectSuccessfulBuild (test.zig)
+           try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+           ^
+       /home/runner/work/argi/argi/tests/test.zig:2179:5: 0x122f862 in test.feature_tests/collections/35_dynamic_array_fallible_copy_cleanup (test.zig)
+           try expectSuccessfulBuild(test_path);
+           ^
+failed command: ./.zig-cache/o/81c15c1f1fa68d7732fa180f53efc5d7/test --cache-dir=./.zig-cache --seed=0x392ce82b --listen=-
+
+Build Summary: 7/9 steps succeeded (1 failed); 0/1 tests passed (1 failed)
+test-programs transitive failure
++- run test 0 pass, 1 fail (1 total)
+
+error: the following build command failed with exit code 1:
+.zig-cache/o/8a6fe926a82f8ab317b4f77dea369d29/build /home/runner/work/_temp/587068e5-e951-451a-a395-a195bacee3f3/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/587068e5-e951-451a-a395-a195bacee3f3/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0x392ce82b -Z9fb3cc97f375b420 test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup
