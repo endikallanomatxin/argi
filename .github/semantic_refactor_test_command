@@ -1,37 +1,41 @@
 python3 - <<'PY'
 from pathlib import Path
-p = Path("src/0_commands/frontend_pipeline.zig")
+p = Path("src/4_semantics/safety/checker.zig")
 s = p.read_text()
 s=s.replace(
-'        _ = try self.parseFiles(files);',
-'''        std.debug.print("TRACE before parse\\n", .{});
-        _ = try self.parseFiles(files);
-        std.debug.print("TRACE after parse\\n", .{});''',1)
+'        try self.validateNominalChoiceLayouts();',
+'''        std.debug.print("SAFETY before layouts\\n", .{});
+        try self.validateNominalChoiceLayouts();
+        std.debug.print("SAFETY after layouts\\n", .{});''',1)
 s=s.replace(
-'        try module_test_validate.validate(',
-'''        std.debug.print("TRACE before test-validate\\n", .{});
-        try module_test_validate.validate(''',1)
-needle='''            self.options.semantizer.selected_test_name,
-        );
-        try self.validateFunctionSignatures();'''
-repl='''            self.options.semantizer.selected_test_name,
-        );
-        std.debug.print("TRACE after test-validate\\n", .{});
-        std.debug.print("TRACE before signature-validate\\n", .{});
-        try self.validateFunctionSignatures();
-        std.debug.print("TRACE after signature-validate\\n", .{});'''
-if needle not in s: raise SystemExit("missing validate/signature anchor")
-s=s.replace(needle,repl,1)
-s=s.replace(
-'        try self.buildGlobalGraph();',
-'''        std.debug.print("TRACE before global-graph\\n", .{});
-        try self.buildGlobalGraph();
-        std.debug.print("TRACE after global-graph\\n", .{});''',1)
-s=s.replace(
-'        try self.analyzeGlobalSafety();',
-'''        std.debug.print("TRACE before safety\\n", .{});
-        try self.analyzeGlobalSafety();
-        std.debug.print("TRACE after safety\\n", .{});''',1)
+'        try inference.inferOutputFixedPoint();',
+'''        std.debug.print("SAFETY before summaries\\n", .{});
+        try inference.inferOutputFixedPoint();
+        std.debug.print("SAFETY after summaries\\n", .{});''',1)
+old='''            const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            var state = FunctionState.init(self.allocator);
+            defer state.deinit();
+            try self.seedFunctionInputs(function, &state);
+            try self.call_stack.append(id);
+            defer _ = self.call_stack.pop();
+            try self.validateBlock(id, function.body.?, &state, null);
+            if (state.reachable) try self.rejectEscapingOutputBindings(id, &state);'''
+new='''            const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
+            const function_name = self.graph.text(declaration.name);
+            std.debug.print("SAFETY function {d} {s} before-seed\\n", .{ raw, function_name });
+            var state = FunctionState.init(self.allocator);
+            defer state.deinit();
+            try self.seedFunctionInputs(function, &state);
+            std.debug.print("SAFETY function {d} {s} before-block\\n", .{ raw, function_name });
+            try self.call_stack.append(id);
+            defer _ = self.call_stack.pop();
+            try self.validateBlock(id, function.body.?, &state, null);
+            std.debug.print("SAFETY function {d} {s} after-block\\n", .{ raw, function_name });
+            if (state.reachable) try self.rejectEscapingOutputBindings(id, &state);
+            std.debug.print("SAFETY function {d} {s} done\\n", .{ raw, function_name });'''
+if old not in s: raise SystemExit("missing safety function anchor")
+s=s.replace(old,new,1)
 p.write_text(s)
 PY
 timeout 35s zig build test-programs -Dtest-filter=feature_tests/polymorphism/06_generic_structs_multi
