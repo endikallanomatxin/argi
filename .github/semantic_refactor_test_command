@@ -34,4 +34,4 @@ s=s.replace(
         std.debug.print("TRACE after safety\\n", .{});''',1)
 p.write_text(s)
 PY
-zig build test-programs -Dtest-filter=feature_tests/polymorphism/06_generic_structs_multi
+timeout 35s zig build test-programs -Dtest-filter=feature_tests/polymorphism/06_generic_structs_multi
