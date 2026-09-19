@@ -121,7 +121,7 @@ pub const Resolver = struct {
             changed = true;
         }
         for (self.graph.nodes.items) |*node| switch (node.content) {
-            .binding_use => |binding_id| {
+            .binding_declaration, .binding_use => |binding_id| {
                 if (self.graph.isBindingTypeUnresolved(binding_id)) continue;
                 const inferred = self.graph.bindings.items[@intFromEnum(binding_id)].ty;
                 // An unresolved type is unequal even to itself in semantic

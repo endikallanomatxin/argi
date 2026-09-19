@@ -322,6 +322,7 @@ pub fn semantizeWithOptions(
 
             if (relocation.graph.reconcileTypeResolution()) changed = true;
             if (relocation.graph.reconcileBindingTypeResolution()) changed = true;
+            if (try abstracts.materializeRuntimeBindingDefaults()) changed = true;
             if (core.materializeStringLiteralTypes()) changed = true;
             if (core.materializeBindingTypes()) changed = true;
             if (relocation.graph.reconcileBindingTypeResolution()) {
@@ -366,9 +367,12 @@ pub fn semantizeWithOptions(
 
     if (reachable) |set| try retireDormantBindingResolution(&relocation.graph, set, try core.builtin(.Any));
 
-    if (options.diagnostics) |diagnostics|
+    if (options.diagnostics) |diagnostics| {
         if (try diagnosePrivateFields(&relocation.graph, modules, reachable, relocation.offsets.items, diagnostics))
             return error.Reported;
+        if (try diagnoseAbstractRuntimeBindings(&relocation.graph, &abstracts, diagnostics))
+            return error.Reported;
+    }
 
     const remaining = worklists.remaining(reachable);
     var resolved_count: usize = 0;
@@ -772,6 +776,27 @@ fn diagnosePrivateFields(
             );
             return true;
         }
+    }
+    return false;
+}
+
+fn diagnoseAbstractRuntimeBindings(
+    graph: *const global_sg.GlobalSemanticGraph,
+    abstracts: *abstract_mod.Resolver,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    for (graph.bindings.items, 0..) |binding, raw| {
+        const binding_id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
+        const abstract_use = abstracts.runtimeBindingAbstract(binding_id) orelse continue;
+        if (try abstracts.hasDefaultDeclaration(abstract_use.declaration)) continue;
+        const name = graph.text(graph.declarations.items[@intFromEnum(abstract_use.declaration)].name);
+        try diagnostics.add(
+            diagnosticLocation(graph, diagnostics, binding.source),
+            .semantic,
+            "cannot use abstract '{s}' as a type for a symbol. Use a concrete type or add a default concrete type to the abstract type ('{s} defaultsto <Type>')",
+            .{ name, name },
+        );
+        return true;
     }
     return false;
 }
