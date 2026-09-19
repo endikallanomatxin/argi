@@ -557,7 +557,10 @@ pub const Resolver = struct {
             const lhs = left_storage.abstract_arguments.items[left.arguments.start + @as(u32, @intCast(offset))];
             const rhs = right_storage.abstract_arguments.items[right.arguments.start + @as(u32, @intCast(offset))];
             switch (lhs) {
-                .none => if (rhs != .none) return false,
+                .none => switch (rhs) {
+                    .none => {},
+                    else => return false,
+                },
                 .comptime_int => |value| switch (rhs) {
                     .comptime_int => |other| if (value != other) return false,
                     else => return false,
