@@ -1,1 +1,1 @@
-zig build test-programs -Dtest-filter=feature_tests/functions/16X_function_signature_requires_explicit_types
+zig build test-programs -Dtest-filter=feature_tests/control_flow/03_for_array
