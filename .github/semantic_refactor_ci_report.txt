@@ -1,13 +1,52 @@
-head=58f3d59b02fa6d3dcfdd0576aaef00d39bd935ae
-run_id=35461242396
+head=9cd855b797506dab80cab42a3b98b8fb5b2ee110
+run_id=35461343212
 
 test-internal
 +- run test w
 [generic-constraint] fn=2 decl=1 param=Contract concrete=1 abstract=Contract satisfied=true
 [generic-constraint] fn=3 decl=1 param=Contract concrete=3 abstract=Contract satisfied=true
-failed command: ./.zig-cache/o/ca45a555d84a8c1a84d33d99753e2790/test --cache-dir=./.zig-cache --seed=0xf13726f4 --listen=-
+failed command: ./.zig-cache/o/fefca1798b3a598983831a52a0b8cb1e/test --cache-dir=./.zig-cache --seed=0x219c40ae --listen=-
 
 [string-constructor] target=3413 input=3412 initializer=102 visible=true
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=2
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=3
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=2
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=3
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=2
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=3
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
 [parameterized-copy] module=6 fn=241 decl=161 source=copying.rg:841 generic=true
 [parameterized-copy-arg] t=type:40
 [generic-constraint] fn=224 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
@@ -22,6 +61,45 @@ failed command: ./.zig-cache/o/ca45a555d84a8c1a84d33d99753e2790/test --cache-dir
 [string-constructor] target=3503 input=3502 initializer=102 visible=true
 [string-constructor] target=3507 input=3506 initializer=228 visible=true
 [string-constructor] target=3511 input=3510 initializer=228 visible=true
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=2
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=3
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=2
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=3
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
+[copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=2
+[copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate-param] element_reasons kind=type constraint=null
+[copy-candidate-param] Allocator kind=type constraint=3
+[copy-candidate] decl=161 source=copying.rg:841 params=1
+[copy-candidate-param] t kind=type constraint=null
+[copy-candidate] decl=252 source=string.rg:3411 params=1
+[copy-candidate-param] Allocator kind=type constraint=22
+[copy-candidate] decl=382 source=Path.rg:2480 params=1
+[copy-candidate-param] Allocator kind=type constraint=20
 [parameterized-copy] module=6 fn=242 decl=161 source=copying.rg:841 generic=true
 [parameterized-copy-arg] t=type:40
 [generic-constraint] fn=227 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
@@ -42,24 +120,24 @@ test-programs
 +- run test 0 pass, 1 fail (1 total)
 error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed:
        expected 0, found 3
-       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e5a4 in expectEqualInner__anon_43248 (std.zig)
-       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8e5 in expectEqual (std.zig)
-       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e93e in expectEqualInner__anon_43186 (std.zig)
-       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f51a in expectEqual (test.zig)
-       /home/runner/work/argi/argi/tests/test.zig:267:5: 0x122f610 in runExpect (test.zig)
+       /home/runner/work/_temp/18db1683-102c-441b-a822-7d21bade6888/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e5d4 in expectEqualInner__anon_43387 (std.zig)
+       /home/runner/work/_temp/18db1683-102c-441b-a822-7d21bade6888/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e915 in expectEqual (std.zig)
+       /home/runner/work/_temp/18db1683-102c-441b-a822-7d21bade6888/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e96e in expectEqualInner__anon_43325 (std.zig)
+       /home/runner/work/_temp/18db1683-102c-441b-a822-7d21bade6888/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f54a in expectEqual (test.zig)
+       /home/runner/work/argi/argi/tests/test.zig:267:5: 0x122f640 in runExpect (test.zig)
            try expectEqual(std.process.Child.Term{ .exited = expected_code }, result.term);
            ^
-       /home/runner/work/argi/argi/tests/test.zig:2174:5: 0x122f8c3 in test.feature_tests/collections/34_dynamic_array_string_copy (test.zig)
+       /home/runner/work/argi/argi/tests/test.zig:2174:5: 0x122f8f3 in test.feature_tests/collections/34_dynamic_array_string_copy (test.zig)
            try runExpect(test_path, 0);
            ^
-failed command: ./.zig-cache/o/4e9ecfdb6ec3a1060c3c2fe0874cceab/test --cache-dir=./.zig-cache --seed=0xe9e515f4 --listen=-
+failed command: ./.zig-cache/o/d7abd825c0e7359c3aed2c64869f4c20/test --cache-dir=./.zig-cache --seed=0xd6d43537 --listen=-
 
 Build Summary: 7/9 steps succeeded (1 failed); 0/1 tests passed (1 failed)
 test-programs transitive failure
 +- run test 0 pass, 1 fail (1 total)
 
 error: the following build command failed with exit code 1:
-.zig-cache/o/2729ebdfef2e5dcab5d439c66956e2d1/build /home/runner/work/_temp/74ddfb80-39da-4c4b-80b3-c6c8acf8a7ce/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/74ddfb80-39da-4c4b-80b3-c6c8acf8a7ce/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0xe9e515f4 -Z583f8907e9aa2109 test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy
+.zig-cache/o/303346524407a4ac7b552882c878d852/build /home/runner/work/_temp/479b389e-4aa8-4d1f-98ab-e17b00535814/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/479b389e-4aa8-4d1f-98ab-e17b00535814/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0xd6d43537 -Z099ca7b7f105711a test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy
 test-programs
 +- run test 0 pass, 1 fail (1 total)
 error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_cleanup' failed:
@@ -67,6 +145,45 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [string-constructor] target=3503 input=3502 initializer=102 visible=true
        [string-constructor] target=3507 input=3506 initializer=228 visible=true
        [string-constructor] target=3511 input=3510 initializer=228 visible=true
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=2
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=null
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=3
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=null
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=2
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=null
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=3
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=null
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
+       [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
+       [copy-candidate-param] t kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=2
+       [copy-candidate] decl=97 source=DynamicArray.rg:3390 params=3
+       [copy-candidate-param] t kind=type constraint=null
+       [copy-candidate-param] element_reasons kind=type constraint=null
+       [copy-candidate-param] Allocator kind=type constraint=3
+       [copy-candidate] decl=161 source=copying.rg:841 params=1
+       [copy-candidate-param] t kind=type constraint=null
+       [copy-candidate] decl=252 source=string.rg:3411 params=1
+       [copy-candidate-param] Allocator kind=type constraint=22
+       [copy-candidate] decl=382 source=Path.rg:2480 params=1
+       [copy-candidate-param] Allocator kind=type constraint=20
        [parameterized-copy] module=6 fn=242 decl=161 source=copying.rg:841 generic=true
        [parameterized-copy-arg] t=type:40
        [generic-constraint] fn=227 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
@@ -84,21 +201,21 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
                      deinit#(.t: t)(.allocator = allocator, .self = $&out)
                                    ^
        expected 0, found 1
-       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e5a4 in expectEqualInner__anon_43238 (std.zig)
-       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8e5 in expectEqual (std.zig)
-       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e93e in expectEqualInner__anon_43176 (std.zig)
-       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f071 in expectEqual (test.zig)
-       /home/runner/work/argi/argi/tests/test.zig:199:5: 0x122f145 in expectSuccessfulBuild (test.zig)
+       /home/runner/work/_temp/18db1683-102c-441b-a822-7d21bade6888/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e5d4 in expectEqualInner__anon_43383 (std.zig)
+       /home/runner/work/_temp/18db1683-102c-441b-a822-7d21bade6888/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e915 in expectEqual (std.zig)
+       /home/runner/work/_temp/18db1683-102c-441b-a822-7d21bade6888/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e96e in expectEqualInner__anon_43321 (std.zig)
+       /home/runner/work/_temp/18db1683-102c-441b-a822-7d21bade6888/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f0a1 in expectEqual (test.zig)
+       /home/runner/work/argi/argi/tests/test.zig:199:5: 0x122f175 in expectSuccessfulBuild (test.zig)
            try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
            ^
-       /home/runner/work/argi/argi/tests/test.zig:2179:5: 0x122f862 in test.feature_tests/collections/35_dynamic_array_fallible_copy_cleanup (test.zig)
+       /home/runner/work/argi/argi/tests/test.zig:2179:5: 0x122f892 in test.feature_tests/collections/35_dynamic_array_fallible_copy_cleanup (test.zig)
            try expectSuccessfulBuild(test_path);
            ^
-failed command: ./.zig-cache/o/26002073c876dc69dfe8f82c1c5ed9b0/test --cache-dir=./.zig-cache --seed=0x26ce45ba --listen=-
+failed command: ./.zig-cache/o/a2d137b9047d2a3b6653e5a30b5668d4/test --cache-dir=./.zig-cache --seed=0x4776968d --listen=-
 
 Build Summary: 7/9 steps succeeded (1 failed); 0/1 tests passed (1 failed)
 test-programs transitive failure
 +- run test 0 pass, 1 fail (1 total)
 
 error: the following build command failed with exit code 1:
-.zig-cache/o/2729ebdfef2e5dcab5d439c66956e2d1/build /home/runner/work/_temp/74ddfb80-39da-4c4b-80b3-c6c8acf8a7ce/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/74ddfb80-39da-4c4b-80b3-c6c8acf8a7ce/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0x26ce45ba -Z1e4bd703fb659cd7 test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup
+.zig-cache/o/303346524407a4ac7b552882c878d852/build /home/runner/work/_temp/479b389e-4aa8-4d1f-98ab-e17b00535814/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/479b389e-4aa8-4d1f-98ab-e17b00535814/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0x4776968d -Ze129290ad731a609 test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup
