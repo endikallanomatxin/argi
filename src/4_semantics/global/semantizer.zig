@@ -1642,8 +1642,10 @@ fn argumentFieldLocation(
         if (file.source[cursor] != '.') continue;
         const name_start = cursor + 1;
         const name_end = name_start + field_name.len;
-        if (name_end <= end and std.mem.eql(u8, file.source[name_start..name_end], field_name))
-            return .{ .file = value_location.file, .offset = @intCast(cursor) };
+        if (name_end <= end and std.mem.eql(u8, file.source[name_start..name_end], field_name)) {
+            const argument_start = if (cursor > line_start and file.source[cursor - 1] == '(') cursor - 1 else cursor;
+            return .{ .file = value_location.file, .offset = @intCast(argument_start) };
+        }
     }
     return value_location;
 }
