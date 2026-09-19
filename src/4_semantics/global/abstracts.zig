@@ -18,6 +18,11 @@ pub const Stats = struct {
     defaults: u32 = 0,
 };
 
+pub const AbstractUse = struct {
+    declaration: global_sg.GlobalDeclId,
+    arguments: primitives.Range(global_sg.GlobalGenericArgId),
+};
+
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -680,6 +685,61 @@ pub const Resolver = struct {
             }
         }
         return null;
+    }
+
+    pub fn runtimeBindingAbstract(self: *const Resolver, binding_id: global_sg.GlobalBindingId) ?AbstractUse {
+        if (self.isFunctionInterfaceBinding(binding_id)) return null;
+        const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
+        if (self.graph.isBindingTypeUnresolved(binding_id) or self.graph.isTypeUnresolved(binding.ty)) return null;
+        return self.abstractUse(binding.ty);
+    }
+
+    pub fn hasDefaultDeclaration(self: *Resolver, abstract_decl: global_sg.GlobalDeclId) !bool {
+        for (self.modules, 0..) |*module, module_index| {
+            for (module.semantic.parameterized_storage.abstract_defaults.items) |default|
+                if (try self.resolveDeclarationRef(module_index, default.abstract_ref, .abstract_type) == abstract_decl) return true;
+            for (module.semantic.parameterized_storage.parameterized_abstract_defaults.items) |default|
+                if (try self.resolveDeclarationRef(module_index, default.abstract_ref, .abstract_type) == abstract_decl) return true;
+        }
+        return false;
+    }
+
+    pub fn materializeRuntimeBindingDefaults(self: *Resolver) !bool {
+        var changed = false;
+        for (self.graph.bindings.items, 0..) |*binding, raw| {
+            const binding_id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
+            const abstract_use = self.runtimeBindingAbstract(binding_id) orelse continue;
+            const concrete = (try self.defaultType(abstract_use.declaration, abstract_use.arguments)) orelse continue;
+            if (self.graph.isTypeUnresolved(concrete)) continue;
+            if (binding.ty == concrete or global_types.equal(self.graph, binding.ty, concrete)) continue;
+            binding.ty = concrete;
+            changed = true;
+        }
+        return changed;
+    }
+
+    fn abstractUse(self: *const Resolver, ty: global_sg.GlobalTypeId) ?AbstractUse {
+        return switch (self.graph.types.items[@intFromEnum(ty)]) {
+            .declared => |declaration| if (self.findAbstractDefinition(declaration) != null)
+                .{ .declaration = declaration, .arguments = .{ .start = 0, .len = 0 } }
+            else
+                null,
+            .generic => |generic| if (self.findAbstractDefinition(generic.base) != null)
+                .{ .declaration = generic.base, .arguments = generic.arguments }
+            else
+                null,
+            else => null,
+        };
+    }
+
+    fn isFunctionInterfaceBinding(self: *const Resolver, binding_id: global_sg.GlobalBindingId) bool {
+        for (self.graph.functions.items) |function| {
+            for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]) |candidate|
+                if (candidate == binding_id) return true;
+            for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |candidate|
+                if (candidate == binding_id) return true;
+        }
+        return false;
     }
 
     pub fn validateGenericFunctionInstances(self: *Resolver) !void {
