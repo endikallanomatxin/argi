@@ -771,6 +771,17 @@ constraint_helpers = '''    fn implementsDepth(
         if (constraint.arguments.len == 0) return true;
 
         const located = self.findAbstractDefinition(abstract_decl) orelse return false;
+        std.debug.print(
+            "[constraint-associated] module={} constraint={} concrete={} abstract={} requested={} abstract_params={}\\n",
+            .{
+                module_index,
+                @intFromEnum(constraint_id),
+                @intFromEnum(concrete),
+                @intFromEnum(abstract_decl),
+                constraint.arguments.len,
+                located.definition.parameters.len,
+            },
+        );
         for (self.modules, 0..) |*implementation_module, implementation_module_index| {
             const implementation_storage = &implementation_module.semantic.parameterized_storage;
             for (implementation_storage.abstract_implementations.items) |implementation| {
@@ -781,6 +792,15 @@ constraint_helpers = '''    fn implementsDepth(
                 );
                 if (candidate_abstract != abstract_decl) continue;
                 const candidate_type = globalizer.globalType(self.offsets[implementation_module_index], implementation.ty);
+                std.debug.print(
+                    "[constraint-associated-candidate] module={} candidate_type={} args={} type_match={}\\n",
+                    .{
+                        implementation_module_index,
+                        @intFromEnum(candidate_type),
+                        implementation.arguments.len,
+                        global_types.equal(self.graph, concrete, candidate_type),
+                    },
+                );
                 if (!global_types.equal(self.graph, concrete, candidate_type)) continue;
                 return self.matchDirectConstraintArguments(
                     module_index,
