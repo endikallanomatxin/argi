@@ -1627,7 +1627,7 @@ pub const CodeGenerator = struct {
             .pointer => |pointer| pointer.child,
             else => return CodegenError.InvalidType,
         };
-        const destructor = types.deinitFunction(self.graph, child) orelse return null;
+        const destructor = (try types.deinitFunctionForInput(self.graph, child, primitive.input)) orelse return null;
         const self_field = self.graph.functions.items[@intFromEnum(destructor)].input;
         var self_index: u32 = 0;
         for (self.graph.fields.items[self_field.start..][0..self_field.len], 0..) |field, index| {

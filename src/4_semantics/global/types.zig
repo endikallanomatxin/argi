@@ -127,6 +127,41 @@ pub fn deinitFunction(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod
     return null;
 }
 
+/// Opaque drops need the destructor for the concrete allocator supplied with
+/// the slot. The value type alone can have several valid destructor instances.
+pub fn deinitFunctionForInput(graph: *const graph_mod.GlobalSemanticGraph, value_type: graph_mod.GlobalTypeId, supplied: graph_mod.FieldRange) error{AmbiguousOpaqueDestructor}!?graph_mod.GlobalFunctionId {
+    var found: ?graph_mod.GlobalFunctionId = null;
+    for (graph.functions.items, 0..) |function, raw| {
+        if (!function.flags.is_deinit) continue;
+        var self_matches = false;
+        var arguments_match = true;
+        for (graph.fields.items[function.input.start..][0..function.input.len]) |expected| {
+            const name = graph.text(expected.name);
+            if (std.mem.eql(u8, name, "self")) {
+                const child = switch (graph.semanticType(expected.ty)) {
+                    .pointer => |pointer| pointer.child,
+                    else => expected.ty,
+                };
+                self_matches = equal(graph, child, value_type);
+                continue;
+            }
+            var provided = false;
+            for (graph.fields.items[supplied.start..][0..supplied.len]) |actual| {
+                if (!std.mem.eql(u8, name, graph.text(actual.name))) continue;
+                provided = true;
+                if (!equal(graph, expected.ty, actual.ty)) arguments_match = false;
+                break;
+            }
+            if (!provided and expected.default_value == null) arguments_match = false;
+            if (!arguments_match) break;
+        }
+        if (!self_matches or !arguments_match) continue;
+        if (found != null) return error.AmbiguousOpaqueDestructor;
+        found = @enumFromInt(@as(u32, @intCast(raw)));
+    }
+    return found;
+}
+
 pub fn genericInstance(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GenericInstance {
     if (graph.isTypeUnresolved(ty)) return null;
     for (graph.generic_instances.items) |instance| if (instance.type_id == ty) return instance;
@@ -394,6 +429,45 @@ test "generic argument identity uses semantic type equality" {
     const first: primitives.Range(graph_mod.GlobalGenericArgId) = .{ .start = 0, .len = 1 };
     const second: primitives.Range(graph_mod.GlobalGenericArgId) = .{ .start = 1, .len = 1 };
     try std.testing.expect(genericArgumentsEqual(&graph, first, second));
+}
+
+test "opaque destructor selection uses the supplied allocator type" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+
+    const slot_name = try graph.addString(allocator, "slot");
+    const self_name = try graph.addString(allocator, "self");
+    const allocator_name = try graph.addString(allocator, "allocator");
+    const deinit_name = try graph.addString(allocator, "deinit");
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Int32 },
+        .{ .builtin = .Int64 },
+        .{ .builtin = .UInt8 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } },
+        .{ .pointer = .{ .child = @enumFromInt(2), .mutability = .read_write } },
+    });
+    try graph.fields.appendSlice(allocator, &.{
+        .{ .name = slot_name, .ty = @enumFromInt(3), .source = source },
+        .{ .name = allocator_name, .ty = @enumFromInt(4), .source = source },
+        .{ .name = allocator_name, .ty = @enumFromInt(5), .source = source },
+        .{ .name = self_name, .ty = @enumFromInt(3), .source = source },
+        .{ .name = allocator_name, .ty = @enumFromInt(5), .source = source },
+        .{ .name = allocator_name, .ty = @enumFromInt(4), .source = source },
+        .{ .name = self_name, .ty = @enumFromInt(3), .source = source },
+    });
+    try graph.declarations.append(allocator, .{ .kind = .function, .name = deinit_name, .source = source });
+    try graph.functions.appendSlice(allocator, &.{
+        .{ .declaration = @enumFromInt(0), .input = .{ .start = 3, .len = 2 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_deinit = true } },
+        .{ .declaration = @enumFromInt(0), .input = .{ .start = 5, .len = 2 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_deinit = true } },
+    });
+
+    try std.testing.expectEqual(@as(graph_mod.GlobalFunctionId, @enumFromInt(1)), (try deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 0, .len = 2 })).?);
+    try std.testing.expectEqual(@as(graph_mod.GlobalFunctionId, @enumFromInt(0)), (try deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 2, .len = 1 })).?);
+    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 5, .len = 2 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_deinit = true } });
+    try std.testing.expectError(error.AmbiguousOpaqueDestructor, deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 0, .len = 2 }));
 }
 
 test "global semantic types expose structural fields and variants" {

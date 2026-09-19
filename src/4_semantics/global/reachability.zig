@@ -152,7 +152,7 @@ const State = struct {
                 if (callee.safety_primitive == .trusted_opaque_drop and callee.input.len != 0) {
                     const slot_ty = self.graph.fields.items[callee.input.start].ty;
                     if (self.graph.resolvedSemanticType(slot_ty)) |semantic| switch (semantic) {
-                        .pointer => |pointer| if (types.deinitFunction(self.graph, pointer.child)) |destructor|
+                        .pointer => |pointer| if (try types.deinitFunctionForInput(self.graph, pointer.child, callee.input)) |destructor|
                             try self.includeFunction(destructor),
                         else => {},
                     };
