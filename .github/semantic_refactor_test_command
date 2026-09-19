@@ -1,1 +1,1 @@
-zig build test-programs -Dtest-filter=feature_tests/polymorphism/11_abstract_instantiation -Dtest-filter=feature_tests/polymorphism/12X_abstract_instantiation_missing_default
+zig build test-programs -Dtest-filter=feature_tests/polymorphism/06_generic_structs_multi
