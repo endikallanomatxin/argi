@@ -234,13 +234,13 @@ lower_params_new = '''    fn lowerParameters(self: *Context, params: []const syn
             for (literal.fields, 0..) |field_node, offset| {
                 const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
                 const value_type_node = field.type_node orelse return error.InvalidGenericParameter;
-                const parameter = &self.graph.semantic.parameterized_storage.comptime_parameters.items[
+                const parameter_record = &self.graph.semantic.parameterized_storage.comptime_parameters.items[
                     start + @as(u32, @intCast(offset))
                 ];
-                switch (parameter.kind) {
-                    .comptime_int => parameter.value_type = try self.lowerType(value_type_node, false),
+                switch (parameter_record.kind) {
+                    .comptime_int => parameter_record.value_type = try self.lowerType(value_type_node, false),
                     .type => if (!isTypeBuiltin(self.tree, self.source, value_type_node))
-                        parameter.constraint = try self.lowerAbstractConstraint(value_type_node),
+                        parameter_record.constraint = try self.lowerAbstractConstraint(value_type_node),
                 }
             }
         } else {
