@@ -491,6 +491,25 @@ pub fn semantizeWithOptions(
         return error.UnsupportedGlobalSemantic;
     }
 
+    if (options.diagnostics) |diagnostics|
+        if (try abstracts.findGenericTypeConstraintFailure()) |failure| {
+            var actual_name = std.array_list.Managed(u8).init(allocator);
+            defer actual_name.deinit();
+            try appendTypeName(&actual_name, &relocation.graph, failure.actual);
+            try diagnostics.add(
+                diagnosticLocation(&relocation.graph, diagnostics, failure.source),
+                .semantic,
+                "type '{s}' does not implement abstract '{s}' required by generic type parameter '.{s}' of '{s}'",
+                .{
+                    actual_name.items,
+                    relocation.graph.text(relocation.graph.declaration(failure.abstract_decl).name),
+                    failure.parameter_name,
+                    relocation.graph.text(relocation.graph.declaration(failure.generic_decl).name),
+                },
+            );
+            return error.Reported;
+        };
+
     try abstracts.closeVirtualMethodRegistries();
 
     // Construction-only resolution metadata must disappear before the graph is
