@@ -264,6 +264,8 @@ pub fn semantizeWithOptions(
         .dispatch = &dispatch,
     };
     defer ownership.deinit();
+    generic_functions.ownership_context = &ownership;
+    generic_functions.register_defer = ownership_mod.Resolver.registerParameterizedDefer;
 
     try core.resolveExternalTypes();
     try generics.resolveExternalTypes();
