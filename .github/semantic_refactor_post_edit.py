@@ -476,8 +476,18 @@ constraint_method = '''    fn inferAndValidateConstraints(
                 const constraint_id = parameter.constraint orelse continue;
                 if (parameter.kind != .type) continue;
                 const concrete = bindings.types[raw] orelse continue;
-                if (!try abstracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings))
-                    return false;
+                const constraint_ok = try abstracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings);
+                std.debug.print(
+                    "[generic-constraint-infer] module={} param={s} concrete={} constraint={} ok={}\\n",
+                    .{
+                        module_index,
+                        self.modules[module_index].text(parameter.name),
+                        @intFromEnum(concrete),
+                        @intFromEnum(constraint_id),
+                        constraint_ok,
+                    },
+                );
+                if (!constraint_ok) return false;
             }
 
             var after: usize = 0;
@@ -496,8 +506,18 @@ constraint_method = '''    fn inferAndValidateConstraints(
             const constraint_id = parameter.constraint orelse continue;
             if (parameter.kind != .type) return false;
             const concrete = bindings.types[raw] orelse return false;
-            if (!try abstracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings))
-                return false;
+            const constraint_ok = try abstracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings);
+            std.debug.print(
+                "[generic-constraint-final] module={} param={s} concrete={} constraint={} ok={}\\n",
+                .{
+                    module_index,
+                    self.modules[module_index].text(parameter.name),
+                    @intFromEnum(concrete),
+                    @intFromEnum(constraint_id),
+                    constraint_ok,
+                },
+            );
+            if (!constraint_ok) return false;
         }
         return true;
     }
@@ -601,6 +621,45 @@ generic = replace_once(
                 candidate_count += 1;
 ''',
     "copy candidate constraint metadata trace",
+)
+
+generic = replace_once(
+    generic,
+    '''                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+                    .no_match => continue,
+                    .deferred => {
+                        saw_deferred = true;
+                        continue;
+                    },
+                    .score => |score| score,
+                };
+                const specificity = self.parameterizedInputSpecificity(candidate_index, parameterized.input, input);
+''',
+    '''                const input_match = self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input);
+                if (std.mem.eql(u8, name, "copy")) {
+                    std.debug.print(
+                        "[copy-candidate-match] decl={} result={s}\\n",
+                        .{
+                            @intFromEnum(declaration),
+                            switch (input_match) {
+                                .no_match => "no_match",
+                                .deferred => "deferred",
+                                .score => "score",
+                            },
+                        },
+                    );
+                }
+                const score = switch (input_match) {
+                    .no_match => continue,
+                    .deferred => {
+                        saw_deferred = true;
+                        continue;
+                    },
+                    .score => |score| score,
+                };
+                const specificity = self.parameterizedInputSpecificity(candidate_index, parameterized.input, input);
+''',
+    "implicit generic final input match trace",
 )
 
 generic_path.write_text(generic)
