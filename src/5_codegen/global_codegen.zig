@@ -578,7 +578,7 @@ pub const CodeGenerator = struct {
             }
             return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, temp, "union.literal.value"), .type_ref = type_ref, .ty = ty };
         }
-        var aggregate = c.LLVMGetUndef(type_ref);
+        var aggregate = c.LLVMConstNull(type_ref);
         for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |value_field| {
             const name = self.graph.text(value_field.name);
             const hit = types.findField(self.graph, ty, name) orelse return CodegenError.InvalidType;
@@ -1183,8 +1183,20 @@ pub const CodeGenerator = struct {
 
     fn traceMetadata(self: *CodeGenerator, source: primitives.SourceRef, context_node: ?graph_mod.GlobalNodeId, context_pointer: ?llvm.c.LLVMValueRef) !TraceMetadata {
         if (source.file_index >= self.graph.files.items.len) return CodegenError.InvalidType;
-        const path = self.graph.text(self.graph.files.items[source.file_index].path);
-        const file_id = self.diags.source_db.findPath(path) orelse return CodegenError.InvalidType;
+        const graph_file = self.graph.files.items[source.file_index];
+        const name = self.graph.text(graph_file.path);
+        const module_dir = self.graph.text(self.graph.modules.items[@intFromEnum(graph_file.module)].dir);
+        // Global graph file names are module-relative; the source database
+        // retains the paths used to load the complete folder hierarchy.
+        const file_id = blk: {
+            for (self.diags.source_files, 0..) |file, index| {
+                if (std.mem.eql(u8, std.fs.path.basename(file.path), name) and
+                    std.mem.eql(u8, std.fs.path.dirname(file.path) orelse ".", module_dir))
+                    break :blk self.diags.source_db.fileId(index);
+            }
+            return CodegenError.InvalidType;
+        };
+        const path = self.diags.source_db.path(file_id);
         const position = self.diags.source_db.lineColumn(file_id, source.offset);
         const file = self.diags.source_db.get(file_id);
         const line_start = file.line_starts[position.line - 1];
