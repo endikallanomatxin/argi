@@ -183,6 +183,7 @@ pub const PendingOperation = union(enum) {
         node: ModuleNodeId,
         value: ModuleNodeId,
         field_name: primitives.StringRange,
+        source: primitives.SourceRef,
     },
     resolve_binary: struct {
         node: ModuleNodeId,

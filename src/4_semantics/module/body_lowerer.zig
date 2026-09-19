@@ -493,6 +493,7 @@ const Context = struct {
             .node = self.nextNodeId(),
             .value = value.node,
             .field_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.field_token)),
+            .source = .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(access.field_token).offset },
         } }, expected);
     }
 
