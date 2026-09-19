@@ -235,8 +235,10 @@ pub const Resolver = struct {
         for (0..expected.len) |index| {
             const lhs = self.graph.fields.items[expected.start + @as(u32, @intCast(index))];
             const rhs = self.graph.fields.items[actual.start + @as(u32, @intCast(index))];
-            if (!std.mem.eql(u8, self.graph.text(lhs.name), self.graph.text(rhs.name)) or
-                !global_types.equal(self.graph, lhs.ty, rhs.ty)) return false;
+            // Abstract requirements describe positional callable types. Parameter
+            // labels are documentation/call-site names and implementations may
+            // choose their own labels (e.g. '.who' versus '.self').
+            if (!global_types.equal(self.graph, lhs.ty, rhs.ty)) return false;
         }
         return true;
     }
