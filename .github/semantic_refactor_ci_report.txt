@@ -1,5 +1,5 @@
-head=3854b72a6a611cd081d035ce3e51b46dc7727fb9
-run_id=35461885494
+head=26e1d725a22376ba51422e0f0eb9e67960519af3
+run_id=35462093102
 
 test-internal
 +- run test w
@@ -29,7 +29,7 @@ test-internal
 [generic-constraint-final] module=0 param=Contract concrete=3 constraint=0 ok=true
 [generic-constraint] fn=2 decl=1 param=Contract concrete=1 abstract=Contract satisfied=true
 [generic-constraint] fn=3 decl=1 param=Contract concrete=3 abstract=Contract satisfied=true
-failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir=./.zig-cache --seed=0xa3e29d04 --listen=-
+failed command: ./.zig-cache/o/71535a0092737e3e91b5113855e7fdb7/test --cache-dir=./.zig-cache --seed=0xa0edcc9 --listen=-
 
 [generic-constraint-infer] module=6 param=Allocator concrete=427 constraint=1 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=1 ok=true
@@ -110,6 +110,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:873
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:427
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -124,6 +128,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -167,6 +172,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:873
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:427
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -181,6 +190,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -224,6 +234,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:873
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:427
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -238,6 +252,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -281,6 +296,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:873
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:427
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -295,6 +314,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -338,6 +358,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:873
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:427
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -352,6 +376,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -395,6 +420,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:873
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:427
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -409,6 +438,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -452,6 +482,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:873
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:427
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -466,6 +500,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [generic-constraint-infer] module=6 param=Allocator concrete=91 constraint=2 ok=false
 [generic-constraint-infer] module=7 param=Allocator concrete=91 constraint=2 ok=false
 [generic-constraint-infer] module=18 param=Allocator concrete=91 constraint=21 ok=false
@@ -725,6 +760,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:873
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:427
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -739,6 +778,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [generic-constraint] fn=224 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
 [generic-constraint] fn=225 decl=249 param=Allocator concrete=427 abstract=Allocator satisfied=true
 [generic-constraint] fn=226 decl=95 param=Allocator concrete=427 abstract=Allocator satisfied=true
@@ -788,6 +828,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:873
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:427
 [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -802,6 +846,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 /home/runner/work/argi/argi/tests/feature_tests/collections/34_dynamic_array_string_copy/main.rg:12:27: error: no overload of 'copy' accepts arguments (.self: &<type>, .allocator: $&CAllocator). Available signatures:
   - copy (.self: &String, .allocator: $&Allocator) -> (.result: <type>)
   - copy (.self: &Path, .allocator: $&Allocator) -> (.result: <type>)
@@ -880,6 +925,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:885
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:869
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -894,6 +943,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -937,6 +987,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:885
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:869
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -951,6 +1005,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -994,6 +1049,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:885
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:869
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -1008,6 +1067,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -1051,6 +1111,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:885
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:869
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -1065,6 +1129,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -1108,6 +1173,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:885
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:869
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -1122,6 +1191,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -1165,6 +1235,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:885
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:869
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -1179,6 +1253,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -1222,6 +1297,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:885
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:869
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -1236,6 +1315,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [generic-constraint-infer] module=6 param=Allocator concrete=91 constraint=2 ok=false
 [generic-constraint-infer] module=7 param=Allocator concrete=91 constraint=2 ok=false
 [generic-constraint-infer] module=18 param=Allocator concrete=91 constraint=21 ok=false
@@ -1383,6 +1463,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:885
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:869
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -1397,6 +1481,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -1440,6 +1525,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:885
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:869
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -1454,6 +1543,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -1497,6 +1587,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:885
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:869
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -1511,6 +1605,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
 [copy-candidate-param] t kind=type constraint=3
 [copy-candidate-param] Allocator kind=type constraint=4
@@ -1554,6 +1649,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:885
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:869
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -1568,6 +1667,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 [generic-constraint] fn=227 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
 [generic-constraint] fn=228 decl=249 param=Allocator concrete=427 abstract=Allocator satisfied=true
 [generic-constraint] fn=229 decl=95 param=Allocator concrete=427 abstract=Allocator satisfied=true
@@ -1615,6 +1715,10 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
 [copy-candidate-match] decl=382 result=no_match
+[copy-selected] decl=97 args=3
+[copy-selected-arg] t=type:885
+[copy-selected-arg] element_reasons=type:397
+[copy-selected-arg] Allocator=type:869
 [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
 [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
 [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -1629,6 +1733,7 @@ failed command: ./.zig-cache/o/74801347f37270f52100a6fc4a4aca7d/test --cache-dir
 [constraint-associated-type-result] matched=true
 [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
 [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+[copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
 /home/runner/work/argi/argi/tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup/main.rg:52:20: error: no overload of 'copy' accepts arguments (.self: &<type>, .allocator: $&FailFourthAllocator). Available signatures:
   - copy (.self: &String, .allocator: $&Allocator) -> (.result: <type>)
   - copy (.self: &Path, .allocator: $&Allocator) -> (.result: <type>)
@@ -1717,6 +1822,10 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:873
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:427
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -1731,6 +1840,7 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -1774,6 +1884,10 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:873
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:427
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -1788,6 +1902,7 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -1831,6 +1946,10 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:873
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:427
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -1845,6 +1964,7 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -1888,6 +2008,10 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:873
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:427
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -1902,6 +2026,7 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -1945,6 +2070,10 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:873
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:427
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -1959,6 +2088,7 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -2002,6 +2132,10 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:873
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:427
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -2016,6 +2150,7 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -2059,6 +2194,10 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:873
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:427
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -2073,6 +2212,7 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [generic-constraint-infer] module=6 param=Allocator concrete=91 constraint=2 ok=false
        [generic-constraint-infer] module=7 param=Allocator concrete=91 constraint=2 ok=false
        [generic-constraint-infer] module=18 param=Allocator concrete=91 constraint=21 ok=false
@@ -2332,6 +2472,10 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:873
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:427
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -2346,6 +2490,7 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [generic-constraint] fn=224 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
        [generic-constraint] fn=225 decl=249 param=Allocator concrete=427 abstract=Allocator satisfied=true
        [generic-constraint] fn=226 decl=95 param=Allocator concrete=427 abstract=Allocator satisfied=true
@@ -2395,6 +2540,10 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [generic-constraint-infer] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=427 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:873
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:427
        [constraint-associated] module=6 constraint=5 concrete=873 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -2409,30 +2558,39 @@ error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=873 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=427 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        tests/feature_tests/collections/34_dynamic_array_string_copy/main.rg:12:27: error: no overload of 'copy' accepts arguments (.self: &<type>, .allocator: $&CAllocator). Available signatures:
          - copy (.self: &String, .allocator: $&Allocator) -> (.result: <type>)
          - copy (.self: &Path, .allocator: $&Allocator) -> (.result: <type>)
              copied_result ::= copy(.self = &array, .allocator = system.allocator)
                                    ^
        expected 0, found 1
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e5a4 in expectEqualInner__anon_43187 (std.zig)
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8e5 in expectEqual (std.zig)
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e93e in expectEqualInner__anon_43125 (std.zig)
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f071 in expectEqual (test.zig)
+       /home/runner/work/_temp/0d310f69-ea0c-4856-88ac-a032783192e7/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e5a4 in expectEqualInner__anon_43184 (std.zig)
+                       return error.TestExpectedEqual;
+                       ^
+       /home/runner/work/_temp/0d310f69-ea0c-4856-88ac-a032783192e7/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8e5 in expectEqual (std.zig)
+           return expectEqualInner(T, expected, actual);
+           ^
+       /home/runner/work/_temp/0d310f69-ea0c-4856-88ac-a032783192e7/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e93e in expectEqualInner__anon_43122 (std.zig)
+                       inline else => |val, tag| try expectEqual(val, @field(actual, @tagName(tag))),
+                                                 ^
+       /home/runner/work/_temp/0d310f69-ea0c-4856-88ac-a032783192e7/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f071 in expectEqual (test.zig)
+           return expectEqualInner(T, expected, actual);
+           ^
        /home/runner/work/argi/argi/tests/test.zig:199:5: 0x122f145 in expectSuccessfulBuild (test.zig)
            try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
            ^
        /home/runner/work/argi/argi/tests/test.zig:2173:5: 0x122f862 in test.feature_tests/collections/34_dynamic_array_string_copy (test.zig)
            try expectSuccessfulBuild(test_path);
            ^
-failed command: ./.zig-cache/o/452e941361b51751f1f88bc7fc97c49b/test --cache-dir=./.zig-cache --seed=0x9e6ba7e1 --listen=-
+failed command: ./.zig-cache/o/d8c5c67d86be5f1a9e93ada3a2bdd56f/test --cache-dir=./.zig-cache --seed=0x9c038948 --listen=-
 
 Build Summary: 7/9 steps succeeded (1 failed); 0/1 tests passed (1 failed)
 test-programs transitive failure
 +- run test 0 pass, 1 fail (1 total)
 
 error: the following build command failed with exit code 1:
-.zig-cache/o/8a6fe926a82f8ab317b4f77dea369d29/build /home/runner/work/_temp/57fb621f-939f-4796-8dd6-afce2d442107/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/57fb621f-939f-4796-8dd6-afce2d442107/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0x9e6ba7e1 -Z83712de8a071e633 test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy
+.zig-cache/o/8a6fe926a82f8ab317b4f77dea369d29/build /home/runner/work/_temp/0d310f69-ea0c-4856-88ac-a032783192e7/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/0d310f69-ea0c-4856-88ac-a032783192e7/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0x9c038948 -Z03903161cb5adf05 test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy
 test-programs
 +- run test 0 pass, 1 fail (1 total)
 error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_cleanup' failed:
@@ -2510,6 +2668,10 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:885
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:869
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -2524,6 +2686,7 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -2567,6 +2730,10 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:885
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:869
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -2581,6 +2748,7 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -2624,6 +2792,10 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:885
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:869
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -2638,6 +2810,7 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -2681,6 +2854,10 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:885
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:869
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -2695,6 +2872,7 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -2738,6 +2916,10 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:885
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:869
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -2752,6 +2934,7 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -2795,6 +2978,10 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:885
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:869
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -2809,6 +2996,7 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -2852,6 +3040,10 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:885
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:869
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -2866,6 +3058,7 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [generic-constraint-infer] module=6 param=Allocator concrete=91 constraint=2 ok=false
        [generic-constraint-infer] module=7 param=Allocator concrete=91 constraint=2 ok=false
        [generic-constraint-infer] module=18 param=Allocator concrete=91 constraint=21 ok=false
@@ -3013,6 +3206,10 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:885
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:869
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -3027,6 +3224,7 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -3070,6 +3268,10 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:885
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:869
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -3084,6 +3286,7 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -3127,6 +3330,10 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:885
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:869
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -3141,6 +3348,7 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [copy-candidate] decl=96 source=DynamicArray.rg:2139 params=2
        [copy-candidate-param] t kind=type constraint=3
        [copy-candidate-param] Allocator kind=type constraint=4
@@ -3184,6 +3392,10 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:885
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:869
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -3198,6 +3410,7 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        [generic-constraint] fn=227 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
        [generic-constraint] fn=228 decl=249 param=Allocator concrete=427 abstract=Allocator satisfied=true
        [generic-constraint] fn=229 decl=95 param=Allocator concrete=427 abstract=Allocator satisfied=true
@@ -3245,6 +3458,10 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [generic-constraint-infer] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [generic-constraint-final] module=20 param=Allocator concrete=869 constraint=20 ok=true
        [copy-candidate-match] decl=382 result=no_match
+       [copy-selected] decl=97 args=3
+       [copy-selected-arg] t=type:885
+       [copy-selected-arg] element_reasons=type:397
+       [copy-selected-arg] Allocator=type:869
        [constraint-associated] module=6 constraint=5 concrete=885 abstract=159 requested=1 abstract_params=1
        [constraint-associated-candidate] module=18 candidate_type=215 args=1 type_match=true
        [constraint-associated-match] impl_args=1 abstract_params=1 requested=1
@@ -3259,27 +3476,36 @@ error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_clean
        [constraint-associated-type-result] matched=true
        [generic-constraint-final] module=6 param=t concrete=885 constraint=5 ok=true
        [generic-constraint-final] module=6 param=Allocator concrete=869 constraint=6 ok=true
+       [copy-instantiate-error] decl=97 err=UnknownGlobalDeclaration
        tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup/main.rg:52:20: error: no overload of 'copy' accepts arguments (.self: &<type>, .allocator: $&FailFourthAllocator). Available signatures:
          - copy (.self: &String, .allocator: $&Allocator) -> (.result: <type>)
          - copy (.self: &Path, .allocator: $&Allocator) -> (.result: <type>)
              copied ::= copy(.self = &source, .allocator = $&failing)
                             ^
        expected 0, found 1
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e5a4 in expectEqualInner__anon_43179 (std.zig)
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8e5 in expectEqual (std.zig)
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e93e in expectEqualInner__anon_43117 (std.zig)
-       /home/runner/work/_temp/6f9e3a11-3f0b-40f2-88d8-4b1c48ab7d0a/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f071 in expectEqual (test.zig)
+       /home/runner/work/_temp/0d310f69-ea0c-4856-88ac-a032783192e7/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e5a4 in expectEqualInner__anon_43189 (std.zig)
+                       return error.TestExpectedEqual;
+                       ^
+       /home/runner/work/_temp/0d310f69-ea0c-4856-88ac-a032783192e7/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8e5 in expectEqual (std.zig)
+           return expectEqualInner(T, expected, actual);
+           ^
+       /home/runner/work/_temp/0d310f69-ea0c-4856-88ac-a032783192e7/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e93e in expectEqualInner__anon_43127 (std.zig)
+                       inline else => |val, tag| try expectEqual(val, @field(actual, @tagName(tag))),
+                                                 ^
+       /home/runner/work/_temp/0d310f69-ea0c-4856-88ac-a032783192e7/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f071 in expectEqual (test.zig)
+           return expectEqualInner(T, expected, actual);
+           ^
        /home/runner/work/argi/argi/tests/test.zig:199:5: 0x122f145 in expectSuccessfulBuild (test.zig)
            try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
            ^
        /home/runner/work/argi/argi/tests/test.zig:2179:5: 0x122f862 in test.feature_tests/collections/35_dynamic_array_fallible_copy_cleanup (test.zig)
            try expectSuccessfulBuild(test_path);
            ^
-failed command: ./.zig-cache/o/81c15c1f1fa68d7732fa180f53efc5d7/test --cache-dir=./.zig-cache --seed=0xc62aeeb3 --listen=-
+failed command: ./.zig-cache/o/1ebcf580e1999809a95f90b86f9cb27b/test --cache-dir=./.zig-cache --seed=0x10331685 --listen=-
 
 Build Summary: 7/9 steps succeeded (1 failed); 0/1 tests passed (1 failed)
 test-programs transitive failure
 +- run test 0 pass, 1 fail (1 total)
 
 error: the following build command failed with exit code 1:
-.zig-cache/o/8a6fe926a82f8ab317b4f77dea369d29/build /home/runner/work/_temp/57fb621f-939f-4796-8dd6-afce2d442107/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/57fb621f-939f-4796-8dd6-afce2d442107/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0xc62aeeb3 -Zd85219db98ee4c98 test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup
+.zig-cache/o/8a6fe926a82f8ab317b4f77dea369d29/build /home/runner/work/_temp/0d310f69-ea0c-4856-88ac-a032783192e7/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/0d310f69-ea0c-4856-88ac-a032783192e7/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0x10331685 -Ze2510053e702bfe3 test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup
