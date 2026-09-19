@@ -140,6 +140,7 @@ pub const ResolvedNode = primitives.Node(Ids);
 
 pub const PendingExpressionKind = enum(u8) {
     unknown_identifier,
+    comptime_parameter,
     pipe,
     unwrap_or,
     unwrap_or_do,
@@ -176,6 +177,7 @@ pub const PendingExpressionKind = enum(u8) {
 
 pub const PendingExpressionDetail = union(enum(u8)) {
     none,
+    comptime_parameter: ComptimeParameterId,
     binary: primitives.BinaryOperator,
     comparison: primitives.ComparisonOperator,
     logical: primitives.LogicalOperator,

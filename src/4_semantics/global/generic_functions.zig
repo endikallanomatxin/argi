@@ -1839,6 +1839,7 @@ pub const Resolver = struct {
 
             return switch (value.kind) {
                 .unknown_identifier => if (value.name) |name| self.resolveName(.{ .name = name, .source = value.source }) else error.UnknownParameterizedName,
+                .comptime_parameter => self.resolveComptimeParameter(value),
                 .generic_call => blk: {
                     const name = value.name orelse return error.GenericParameterizedCallWithoutName;
                     const args = try self.resolver.generics.instantiateParameterizedArguments(self.module_index, value.generic_arguments, self.substitutions, null);
@@ -1877,6 +1878,26 @@ pub const Resolver = struct {
                 .explicit_cast,
                 .other,
                 => error.ParameterizedExpressionRequiresGlobalResolver,
+            };
+        }
+
+        fn resolveComptimeParameter(self: *InstanceContext, value: ir.PendingExpression) !global_sg.Node {
+            const parameter: ir.ComptimeParameterId = switch (value.detail) {
+                .comptime_parameter => |id| id,
+                else => return error.InvalidParameterizedComptimeParameter,
+            };
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage;
+            const definition = storage.comptime_parameters.items[@intFromEnum(parameter)];
+            if (definition.kind != .comptime_int) return error.InvalidParameterizedComptimeParameter;
+            const number = self.substitutions.ints[@intFromEnum(parameter)] orelse return error.UnboundComptimeParameter;
+            const ty = if (definition.value_type) |parameterized_type|
+                try self.resolver.generics.instantiateParameterizedType(self.module_index, parameterized_type, self.substitutions, null)
+            else
+                try self.resolver.generics.internType(.{ .builtin = .Int32 });
+            return .{
+                .source = self.resolver.sourceFor(self.module_index, value.source),
+                .ty = ty,
+                .content = .{ .int_literal = number },
             };
         }
 

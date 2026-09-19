@@ -769,9 +769,22 @@ pub const Context = struct {
                 return self.addResolvedNode(node, ty, .{ .binding_use = binding });
             }
             if (self.parameter(name)) |parameter_binding| {
-                if (parameter_binding.kind == .type) {
-                    const value = try self.addType(.{ .parameter = parameter_binding.id });
-                    return self.addResolvedNode(node, try self.parameterizedBuiltin(.Type), .{ .type_literal = value });
+                switch (parameter_binding.kind) {
+                    .type => {
+                        const value = try self.addType(.{ .parameter = parameter_binding.id });
+                        return self.addResolvedNode(node, try self.parameterizedBuiltin(.Type), .{ .type_literal = value });
+                    },
+                    .comptime_int => {
+                        const parameter = self.graph.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter_binding.id)];
+                        return self.addPending(
+                            node,
+                            .comptime_parameter,
+                            &.{},
+                            null,
+                            parameter.value_type,
+                            .{ .comptime_parameter = parameter_binding.id },
+                        );
+                    },
                 }
             }
             return self.addPending(node, .unknown_identifier, &.{}, try self.writer.addString(name), null, .none);
