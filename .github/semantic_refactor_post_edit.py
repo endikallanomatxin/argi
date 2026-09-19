@@ -239,8 +239,10 @@ lower_params_new = '''    fn lowerParameters(self: *Context, params: []const syn
                 ];
                 switch (parameter_record.kind) {
                     .comptime_int => parameter_record.value_type = try self.lowerType(value_type_node, false),
-                    .type => if (!isTypeBuiltin(self.tree, self.source, value_type_node))
-                        parameter_record.constraint = try self.lowerAbstractConstraint(value_type_node),
+                    .type => {
+                        if (!isTypeBuiltin(self.tree, self.source, value_type_node))
+                            parameter_record.constraint = try self.lowerAbstractConstraint(value_type_node);
+                    },
                 }
             }
         } else {
