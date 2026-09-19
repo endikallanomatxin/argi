@@ -363,6 +363,10 @@ pub fn semantizeWithOptions(
 
     if (reachable) |set| try retireDormantBindingResolution(&relocation.graph, set, try core.builtin(.Any));
 
+    if (options.diagnostics) |diagnostics|
+        if (try diagnosePrivateFields(&relocation.graph, modules, reachable, relocation.offsets.items, diagnostics))
+            return error.Reported;
+
     const remaining = worklists.remaining(reachable);
     var resolved_count: usize = 0;
     for (resolved) |done| if (done) {
@@ -684,6 +688,49 @@ fn diagnoseUnresolvedQualifiedTypes(
                 diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], reference.source)),
                 .semantic,
                 "type '{s}' is private to its module",
+                .{name},
+            );
+            return true;
+        }
+    }
+    return false;
+}
+
+fn diagnosePrivateFields(
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    reachable: ?*const reachability_mod.FunctionSet,
+    offsets: []const globalizer.Offsets,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
+            const access = switch (operation) {
+                .resolve_field => |value| value,
+                else => continue,
+            };
+            const name = module.text(access.field_name);
+            if (!std.mem.startsWith(u8, name, "_")) continue;
+            if (reachable) |set| {
+                if (operation_index < module.semantic.pending_owner_functions.items.len) {
+                    if (module.semantic.pending_owner_functions.items[operation_index]) |owner| {
+                        if (!set.contains(globalizer.globalFunction(offsets[module_index], owner))) continue;
+                    }
+                }
+            }
+            const target = globalizer.globalNode(offsets[module_index], access.node);
+            const node = graph.node(target);
+            if (node.content != .struct_field_access) continue;
+            const value = node.content.struct_field_access.value;
+            const value_ty = graph.node(value).ty orelse continue;
+            const field = global_types.findField(graph, value_ty, name) orelse continue;
+            if (field.field.source.file_index >= graph.files.items.len) continue;
+            const owner_module = graph.files.items[field.field.source.file_index].module;
+            if (@intFromEnum(owner_module) == module_index) continue;
+            try diagnostics.add(
+                diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], access.source)),
+                .semantic,
+                "field '{s}' is private to its module",
                 .{name},
             );
             return true;
