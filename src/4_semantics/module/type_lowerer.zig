@@ -138,9 +138,10 @@ pub const Context = struct {
             const name = try self.writer.addString(name_text);
             const id = try self.writer.addVariant(.{
                 .name = name,
+                .qualifier = if (variant.module_qualifier) |qualifier| try self.modulePathForQualifier(qualifier) else null,
                 .payload_type = payload_type,
                 .option_decl = option_decl,
-                .source = self.sourceRef(variant_node),
+                .source = .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(variant.name_token).offset },
                 .value = @intCast(count),
             });
             if (first == null) first = id;

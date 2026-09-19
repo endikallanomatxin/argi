@@ -125,6 +125,7 @@ const Context = struct {
                 }
                 _ = try self.writer.addVariant(.{
                     .name = try self.writer.addString(name_text),
+                    .qualifier = if (variant.module_qualifier) |qualifier| try self.writer.addString(self.tree.tokenTextFromSource(self.source, qualifier)) else null,
                     .payload_type = if (variant.payload_type) |payload| try self.lowerType(payload) else null,
                     .option_decl = option_decl,
                     .source = self.sourceRef(variant_node),

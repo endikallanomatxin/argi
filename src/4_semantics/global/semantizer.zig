@@ -189,6 +189,7 @@ pub fn semantizeWithOptions(
         .modules = modules,
         .offsets = relocation.offsets.items,
     };
+    if (try resolveQualifiedChoiceOptions(&core, options.diagnostics)) return error.Reported;
     var expressions = expression_mod.Resolver{
         .allocator = allocator,
         .graph = &relocation.graph,
@@ -692,6 +693,40 @@ fn diagnoseUnresolvedQualifiedTypes(
             );
             return true;
         }
+    }
+    return false;
+}
+
+fn resolveQualifiedChoiceOptions(core: *core_mod.Resolver, diagnostics: ?*diagnostics_mod.Diagnostics) !bool {
+    const graph = core.graph;
+    for (graph.variants.items) |*variant| {
+        const qualifier = variant.qualifier orelse continue;
+        const source = variant.source;
+        if (source.file_index >= graph.files.items.len) return error.InvalidChoiceOptionSource;
+        const module_index: usize = @intFromEnum(graph.files.items[source.file_index].module);
+        const target = try core.findModuleForQualifier(module_index, graph.text(qualifier));
+        const name = graph.text(variant.name);
+        const declarations = graph.modules.items[@intFromEnum(target)].declarations;
+        var found: ?global_sg.GlobalDeclId = null;
+        for (declarations.start..declarations.start + declarations.len) |raw| {
+            const declaration = graph.declarations.items[raw];
+            if (declaration.kind == .choice_option and std.mem.eql(u8, graph.text(declaration.name), name)) {
+                found = @enumFromInt(@as(u32, @intCast(raw)));
+                break;
+            }
+        }
+        if (diagnostics) |diags| {
+            if (found != null and @intFromEnum(target) != module_index and std.mem.startsWith(u8, name, "_")) {
+                try diags.add(diagnosticLocation(graph, diags, source), .semantic, "choice option '{s}' is private to its module", .{name});
+                return true;
+            }
+            if (found == null) {
+                try diags.add(diagnosticLocation(graph, diags, source), .semantic, "module '{s}' has no choice option '..{s}'", .{ graph.text(qualifier), name });
+                return true;
+            }
+        }
+        variant.option_decl = found orelse return error.UnknownChoiceOption;
+        variant.qualifier = null;
     }
     return false;
 }
