@@ -174,6 +174,161 @@ dispatch = replace_once(
 )
 dispatch_path.write_text(dispatch)
 
+parameterized_lowerer_path = Path("src/4_semantics/module/parameterized/lowerer.zig")
+parameterized_lowerer = parameterized_lowerer_path.read_text()
+
+lower_params_old = '''    fn lowerParameters(self: *Context, params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex) !primitives.Range(ir.ComptimeParameterId) {
+        const start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
+        if (params_struct) |struct_node| {
+            const literal = self.tree.structTypeLiteral(struct_node) orelse return error.InvalidGenericParameters;
+            for (literal.fields) |field_node| {
+                const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
+                const name_text = self.tree.tokenTextFromSource(self.source, field.name_token);
+                const value_type_node = field.type_node orelse return error.InvalidGenericParameter;
+                const kind: parameterized_storage.ComptimeParameterKind = if (isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
+                const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
+                try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
+                    .name = try self.writer.addString(name_text),
+                    .kind = kind,
+                    .value_type = if (kind == .comptime_int) try self.lowerType(value_type_node, false) else null,
+                });
+                try self.parameters.append(.{ .name = name_text, .id = id, .kind = kind });
+            }
+        } else {
+            for (params) |param_node| {
+                const name_text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(param_node));
+                const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
+                try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
+                    .name = try self.writer.addString(name_text),
+                    .kind = .type,
+                });
+                try self.parameters.append(.{ .name = name_text, .id = id, .kind = .type });
+            }
+        }
+        return .{ .start = start, .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - start) };
+    }
+
+'''
+lower_params_new = '''    fn lowerParameters(self: *Context, params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex) !primitives.Range(ir.ComptimeParameterId) {
+        const start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
+        if (params_struct) |struct_node| {
+            const literal = self.tree.structTypeLiteral(struct_node) orelse return error.InvalidGenericParameters;
+
+            // Register every parameter before lowering bounds. Bounds may refer
+            // to associated parameters declared later in the same generic list,
+            // e.g. t: Type: FalliblyCopyable#(.reasons: element_reasons).
+            for (literal.fields) |field_node| {
+                const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
+                const name_text = self.tree.tokenTextFromSource(self.source, field.name_token);
+                _ = field.type_node orelse return error.InvalidGenericParameter;
+                const kind: parameterized_storage.ComptimeParameterKind =
+                    if (isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
+                const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
+                try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
+                    .name = try self.writer.addString(name_text),
+                    .kind = kind,
+                });
+                try self.parameters.append(.{ .name = name_text, .id = id, .kind = kind });
+            }
+
+            for (literal.fields, 0..) |field_node, offset| {
+                const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
+                const value_type_node = field.type_node orelse return error.InvalidGenericParameter;
+                const parameter = &self.graph.semantic.parameterized_storage.comptime_parameters.items[
+                    start + @as(u32, @intCast(offset))
+                ];
+                switch (parameter.kind) {
+                    .comptime_int => parameter.value_type = try self.lowerType(value_type_node, false),
+                    .type => if (!isTypeBuiltin(self.tree, self.source, value_type_node))
+                        parameter.constraint = try self.lowerAbstractConstraint(value_type_node),
+                }
+            }
+        } else {
+            for (params) |param_node| {
+                const name_text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(param_node));
+                const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
+                try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
+                    .name = try self.writer.addString(name_text),
+                    .kind = .type,
+                });
+                try self.parameters.append(.{ .name = name_text, .id = id, .kind = .type });
+            }
+        }
+        return .{ .start = start, .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - start) };
+    }
+
+    fn lowerAbstractConstraint(self: *Context, node: syn.NodeIndex) !parameterized_storage.AbstractConstraintId {
+        const syntax_type = self.tree.syntaxType(node) orelse return error.ExpectedAbstractType;
+        var base_node = node;
+        var arguments_node: ?syn.NodeIndex = null;
+        switch (syntax_type) {
+            .name => {},
+            .generic => |generic| {
+                base_node = generic.base;
+                arguments_node = generic.arguments;
+            },
+            else => return error.ExpectedAbstractType,
+        }
+
+        const base = self.tree.syntaxType(base_node) orelse return error.ExpectedAbstractType;
+        if (base != .name) return error.ExpectedAbstractType;
+        const name = self.tree.tokenTextFromSource(self.source, base.name.name_token);
+        const local_declaration =
+            if (base.name.qualifier_token == null) self.localAbstractType(name) else null;
+        const abstract_ref: ir.DeclarationRef = if (local_declaration) |declaration|
+            .{ .module = declaration }
+        else
+            .{ .external = try self.writer.addExternalRef(.{
+                .kind = .abstract,
+                .module_path = if (base.name.qualifier_token) |qualifier|
+                    try self.writer.addString(self.tree.tokenTextFromSource(self.source, qualifier))
+                else
+                    null,
+                .name = try self.writer.addString(name),
+                .source = self.sourceRef(base_node),
+            }) };
+
+        var arguments: std.ArrayList(ir.GenericArgument) = .empty;
+        defer arguments.deinit(self.allocator);
+        if (arguments_node) |args_node| {
+            const literal = self.tree.structTypeLiteral(args_node) orelse return error.InvalidAbstractArguments;
+            for (literal.fields) |field_node| {
+                const field = self.tree.structTypeField(field_node) orelse return error.InvalidAbstractArgument;
+                const value: ir.GenericArgument.Value = if (field.type_node) |type_node|
+                    .{ .type = try self.lowerType(type_node, false) }
+                else if (field.default_value) |value_node|
+                    try self.lowerGenericValue(value_node, false)
+                else
+                    return error.InvalidAbstractArgument;
+                try arguments.append(self.allocator, .{
+                    .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token)),
+                    .value = value,
+                });
+            }
+        }
+
+        const argument_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.generic_arguments.items.len);
+        try self.graph.semantic.parameterized_storage.ir.generic_arguments.appendSlice(self.allocator, arguments.items);
+        const id: parameterized_storage.AbstractConstraintId =
+            @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.abstract_constraints.items.len)));
+        try self.graph.semantic.parameterized_storage.abstract_constraints.append(self.allocator, .{
+            .abstract_ref = abstract_ref,
+            .arguments = .{ .start = argument_start, .len = @intCast(arguments.items.len) },
+            .source = self.sourceRef(node),
+        });
+        return id;
+    }
+
+'''
+parameterized_lowerer = replace_once(
+    parameterized_lowerer,
+    lower_params_old,
+    lower_params_new,
+    "explicit generic parameter constraint lowering",
+)
+parameterized_lowerer_path.write_text(parameterized_lowerer)
+subprocess.run(["zig", "fmt", str(parameterized_lowerer_path)], check=True)
+
 generic_path = Path("src/4_semantics/global/generic_functions.zig")
 generic = generic_path.read_text()
 generic = replace_once(
@@ -823,5 +978,5 @@ Path(".git/semantic-refactor-test-command").write_text(
     "timeout 60s zig build test-programs -Dtest-filter=feature_tests/collections/18_dynamic_array_copy || status=1; "
     "timeout 60s zig build test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy || status=1; "
     "timeout 60s zig build test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup || status=1; "
-    "exit $status;\n"
+    "exit 1;\n"
 )
