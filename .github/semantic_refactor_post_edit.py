@@ -326,6 +326,35 @@ constructors = constructors.replace(
 constructors_path.write_text(constructors)
 subprocess.run(["zig", "fmt", str(constructors_path)], check=True)
 
+
+abstracts_path = Path("src/4_semantics/global/abstracts.zig")
+abstracts = abstracts_path.read_text()
+abstracts = replace_once(
+    abstracts,
+    '''                const concrete = bindings.types[param_raw] orelse return error.AbstractConstraintRequiresTypeParameter;
+                if (!try self.implements(concrete, abstract_decl)) return error.GenericAbstractConstraintNotSatisfied;
+''',
+    '''                const concrete = bindings.types[param_raw] orelse return error.AbstractConstraintRequiresTypeParameter;
+                const satisfied = try self.implements(concrete, abstract_decl);
+                const abstract_name = self.graph.text(self.graph.declarations.items[@intFromEnum(abstract_decl)].name);
+                std.debug.print(
+                    "[generic-constraint] fn={} decl={} param={s} concrete={} abstract={s} satisfied={}\\n",
+                    .{
+                        @intFromEnum(instance.function),
+                        @intFromEnum(instance.parameterized_declaration),
+                        module.text(parameter.name),
+                        @intFromEnum(concrete),
+                        abstract_name,
+                        satisfied,
+                    },
+                );
+                if (!satisfied) return error.GenericAbstractConstraintNotSatisfied;
+''',
+    "generic constraint validation trace",
+)
+abstracts_path.write_text(abstracts)
+subprocess.run(["zig", "fmt", str(abstracts_path)], check=True)
+
 Path(".git/semantic-refactor-test-command").write_text(
     "status=0; "
     "timeout 60s ./zig-out/bin/argi build tests/feature_tests/collections/34_dynamic_array_string_copy || status=1; "
@@ -334,5 +363,5 @@ Path(".git/semantic-refactor-test-command").write_text(
     "timeout 60s zig build test-programs -Dtest-filter=feature_tests/collections/18_dynamic_array_copy || status=1; "
     "timeout 60s zig build test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy || status=1; "
     "timeout 60s zig build test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup || status=1; "
-    "exit $status\\n"
+    "exit $status;\n"
 )
