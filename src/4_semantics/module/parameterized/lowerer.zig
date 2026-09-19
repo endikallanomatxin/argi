@@ -195,18 +195,37 @@ pub const Context = struct {
         const start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
         if (params_struct) |struct_node| {
             const literal = self.tree.structTypeLiteral(struct_node) orelse return error.InvalidGenericParameters;
+
+            // Register every parameter before lowering bounds. Bounds may refer
+            // to associated parameters declared later in the same generic list,
+            // e.g. t: Type: FalliblyCopyable#(.reasons: element_reasons).
             for (literal.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
                 const name_text = self.tree.tokenTextFromSource(self.source, field.name_token);
-                const value_type_node = field.type_node orelse return error.InvalidGenericParameter;
-                const kind: parameterized_storage.ComptimeParameterKind = if (isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
+                _ = field.type_node orelse return error.InvalidGenericParameter;
+                const kind: parameterized_storage.ComptimeParameterKind =
+                    if (isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
                 const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
                 try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
                     .name = try self.writer.addString(name_text),
                     .kind = kind,
-                    .value_type = if (kind == .comptime_int) try self.lowerType(value_type_node, false) else null,
                 });
                 try self.parameters.append(.{ .name = name_text, .id = id, .kind = kind });
+            }
+
+            for (literal.fields, 0..) |field_node, offset| {
+                const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
+                const value_type_node = field.type_node orelse return error.InvalidGenericParameter;
+                const parameter_record = &self.graph.semantic.parameterized_storage.comptime_parameters.items[
+                    start + @as(u32, @intCast(offset))
+                ];
+                switch (parameter_record.kind) {
+                    .comptime_int => parameter_record.value_type = try self.lowerType(value_type_node, false),
+                    .type => {
+                        if (!isTypeBuiltin(self.tree, self.source, value_type_node))
+                            parameter_record.constraint = try self.lowerAbstractConstraint(value_type_node);
+                    },
+                }
             }
         } else {
             for (params) |param_node| {
@@ -220,6 +239,68 @@ pub const Context = struct {
             }
         }
         return .{ .start = start, .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - start) };
+    }
+
+    pub fn lowerAbstractConstraint(self: *Context, node: syn.NodeIndex) !parameterized_storage.AbstractConstraintId {
+        const syntax_type = self.tree.syntaxType(node) orelse return error.ExpectedAbstractType;
+        var base_node = node;
+        var arguments_node: ?syn.NodeIndex = null;
+        switch (syntax_type) {
+            .name => {},
+            .generic => |generic| {
+                base_node = generic.base;
+                arguments_node = generic.arguments;
+            },
+            else => return error.ExpectedAbstractType,
+        }
+
+        const base = self.tree.syntaxType(base_node) orelse return error.ExpectedAbstractType;
+        if (base != .name) return error.ExpectedAbstractType;
+        const name = self.tree.tokenTextFromSource(self.source, base.name.name_token);
+        const local_declaration =
+            if (base.name.qualifier_token == null) self.localAbstractType(name) else null;
+        const abstract_ref: ir.DeclarationRef = if (local_declaration) |declaration|
+            .{ .module = declaration }
+        else
+            .{ .external = try self.writer.addExternalRef(.{
+                .kind = .abstract,
+                .module_path = if (base.name.qualifier_token) |qualifier|
+                    try self.writer.addString(self.tree.tokenTextFromSource(self.source, qualifier))
+                else
+                    null,
+                .name = try self.writer.addString(name),
+                .source = self.sourceRef(base_node),
+            }) };
+
+        var arguments: std.ArrayList(ir.GenericArgument) = .empty;
+        defer arguments.deinit(self.allocator);
+        if (arguments_node) |args_node| {
+            const literal = self.tree.structTypeLiteral(args_node) orelse return error.InvalidAbstractArguments;
+            for (literal.fields) |field_node| {
+                const field = self.tree.structTypeField(field_node) orelse return error.InvalidAbstractArgument;
+                const value: ir.GenericArgument.Value = if (field.type_node) |type_node|
+                    .{ .type = try self.lowerType(type_node, false) }
+                else if (field.default_value) |value_node|
+                    try self.lowerGenericValue(value_node, false)
+                else
+                    return error.InvalidAbstractArgument;
+                try arguments.append(self.allocator, .{
+                    .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token)),
+                    .value = value,
+                });
+            }
+        }
+
+        const argument_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.generic_arguments.items.len);
+        try self.graph.semantic.parameterized_storage.ir.generic_arguments.appendSlice(self.allocator, arguments.items);
+        const id: parameterized_storage.AbstractConstraintId =
+            @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.abstract_constraints.items.len)));
+        try self.graph.semantic.parameterized_storage.abstract_constraints.append(self.allocator, .{
+            .abstract_ref = abstract_ref,
+            .arguments = .{ .start = argument_start, .len = @intCast(arguments.items.len) },
+            .source = self.sourceRef(node),
+        });
+        return id;
     }
 
     fn lowerLocalAbstractParameters(self: *Context, input: syn.NodeIndex) !primitives.Range(ir.ComptimeParameterId) {
@@ -341,6 +422,20 @@ pub const Context = struct {
         if (base != .name) return error.InvalidGenericParameterizedBase;
         const name = base.name;
         const base_text = self.tree.tokenTextFromSource(self.source, name.name_token);
+        if (name.qualifier_token == null and std.mem.eql(u8, base_text, "choice_union")) {
+            const literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidChoiceUnionArguments;
+            if (literal.fields.len != 2) return error.InvalidChoiceUnionArguments;
+            var left: ?ir.ParameterizedTypeId = null;
+            var right: ?ir.ParameterizedTypeId = null;
+            for (literal.fields) |field_node| {
+                const field = self.tree.structTypeField(field_node) orelse return error.InvalidChoiceUnionArguments;
+                if (field.default_value != null) return error.InvalidChoiceUnionArguments;
+                const ty = try self.lowerType(field.type_node orelse return error.InvalidChoiceUnionArguments, allow_self);
+                const argument_name = self.tree.tokenTextFromSource(self.source, field.name_token);
+                if (std.mem.eql(u8, argument_name, "a") and left == null) left = ty else if (std.mem.eql(u8, argument_name, "b") and right == null) right = ty else return error.InvalidChoiceUnionArguments;
+            }
+            return self.addType(.{ .choice_union = .{ .left = left.?, .right = right.? } });
+        }
         if (name.qualifier_token == null and std.mem.eql(u8, base_text, "Array")) {
             const literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidArrayArguments;
             var length: ?ir.ParameterizedIntExprId = null;

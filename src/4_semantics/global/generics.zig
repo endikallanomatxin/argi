@@ -264,8 +264,38 @@ pub const Resolver = struct {
                 .length = @intCast(try self.evalInt(module_index, value.length, bindings)),
                 .element = try self.instantiateParameterizedType(module_index, value.element, bindings, self_type),
             } }),
+            .choice_union => |value| self.instantiateChoiceUnion(module_index, value.left, value.right, bindings, self_type),
             .resolved => |value| self.instantiateResolvedParameterizedType(module_index, value, bindings, self_type),
         };
+    }
+
+    fn instantiateChoiceUnion(self: *Resolver, module_index: usize, left: ir.ParameterizedTypeId, right: ir.ParameterizedTypeId, bindings: *Bindings, self_type: ?global_sg.GlobalTypeId) !global_sg.GlobalTypeId {
+        const left_type = try self.instantiateParameterizedType(module_index, left, bindings, self_type);
+        const right_type = try self.instantiateParameterizedType(module_index, right, bindings, self_type);
+        var variants: std.ArrayList(global_sg.ChoiceVariant) = .empty;
+        defer variants.deinit(self.allocator);
+        for ([_]global_sg.GlobalTypeId{ left_type, right_type }) |ty| {
+            const range = global_types.variants(self.graph, ty) orelse return error.InvalidChoiceUnionType;
+            for (self.graph.variants.items[range.start..][0..range.len]) |variant| {
+                if (variant.option_decl != null) return error.InvalidChoiceUnionType;
+                var duplicate = false;
+                for (variants.items) |existing| {
+                    if (!std.mem.eql(u8, self.graph.text(existing.name), self.graph.text(variant.name))) continue;
+                    if (existing.payload_type != variant.payload_type) return error.IncompatibleChoiceUnionVariant;
+                    duplicate = true;
+                    break;
+                }
+                if (!duplicate) try variants.append(self.allocator, variant);
+            }
+        }
+        std.mem.sort(global_sg.ChoiceVariant, variants.items, self.graph, struct {
+            fn lessThan(graph: *global_sg.GlobalSemanticGraph, a: global_sg.ChoiceVariant, b: global_sg.ChoiceVariant) bool {
+                return std.mem.order(u8, graph.text(a.name), graph.text(b.name)) == .lt;
+            }
+        }.lessThan);
+        const start: u32 = @intCast(self.graph.variants.items.len);
+        try self.graph.variants.appendSlice(self.allocator, variants.items);
+        return self.internType(.{ .structural_choice = .{ .variants = .{ .start = start, .len = @intCast(variants.items.len) }, .layout = .regular } });
     }
 
     fn instantiateExternalType(
@@ -484,12 +514,12 @@ fn sameShallowType(graph: *const global_sg.GlobalSemanticGraph, a: global_sg.Glo
     return switch (a) {
         .builtin => |value| value == b.builtin,
         .declared => |value| value == b.declared,
-        .pointer => |value| value.mutability == b.pointer.mutability and global_types.equal(graph, value.child, b.pointer.child),
-        .array => |value| value.length == b.array.length and global_types.equal(graph, value.element, b.array.element),
-        .nullable => |value| global_types.equal(graph, value, b.nullable),
-        .inferred_errable => |value| global_types.equal(graph, value, b.inferred_errable),
+        .pointer => |value| value.mutability == b.pointer.mutability and global_types.identityEqual(graph, value.child, b.pointer.child),
+        .array => |value| value.length == b.array.length and global_types.identityEqual(graph, value.element, b.array.element),
+        .nullable => |value| global_types.identityEqual(graph, value, b.nullable),
+        .inferred_errable => |value| global_types.identityEqual(graph, value, b.inferred_errable),
         .generic => |value| value.base == b.generic.base and global_types.genericArgumentsEqual(graph, value.arguments, b.generic.arguments),
-        .virtual => |value| global_types.equal(graph, value, b.virtual),
+        .virtual => |value| global_types.identityEqual(graph, value, b.virtual),
         .inferred_choice, .structural, .structural_choice => false,
     };
 }

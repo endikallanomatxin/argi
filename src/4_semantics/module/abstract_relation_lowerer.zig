@@ -203,16 +203,38 @@ const Context = struct {
         const start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
         if (params_struct) |node| {
             const literal = self.tree.structTypeLiteral(node) orelse return error.InvalidGenericParameters;
+
+            // Register every relation parameter before lowering its metadata.
+            // Bounds may reference associated parameters declared later.
             for (literal.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
                 const name_text = self.tree.tokenTextFromSource(self.source, field.name_token);
-                const kind: parameterized_storage.ComptimeParameterKind = if (parameterized_lowerer.isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
+                _ = field.type_node orelse return error.InvalidGenericParameter;
+                const kind: parameterized_storage.ComptimeParameterKind =
+                    if (parameterized_lowerer.isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
                 const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
                 try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
                     .name = try self.writer.addString(name_text),
                     .kind = kind,
                 });
                 try self.params.append(.{ .name = name_text, .id = id, .kind = kind });
+            }
+
+            for (literal.fields, 0..) |field_node, offset| {
+                const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
+                const value_type_node = field.type_node orelse return error.InvalidGenericParameter;
+                const parameter_record = &self.graph.semantic.parameterized_storage.comptime_parameters.items[
+                    start + @as(u32, @intCast(offset))
+                ];
+                var lowerer = self.parameterizedContext();
+                defer lowerer.bindings.deinit();
+                switch (parameter_record.kind) {
+                    .comptime_int => parameter_record.value_type = try lowerer.lowerType(value_type_node, false),
+                    .type => {
+                        if (!isTypeName(self.tree, self.source, value_type_node, "Type"))
+                            parameter_record.constraint = try lowerer.lowerAbstractConstraint(value_type_node);
+                    },
+                }
             }
         } else {
             for (params) |param| {

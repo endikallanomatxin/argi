@@ -258,6 +258,7 @@ pub const Resolver = struct {
                 if (!input_inferred) continue;
                 if (reach_context) |context|
                     if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
+                if (!try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings)) continue;
                 const complete_arguments = self.appendBoundArguments(candidate_index, parameterized.parameters, &bindings) catch |err| switch (err) {
                     error.MissingGenericArgument => continue,
                     else => return err,
@@ -299,22 +300,51 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         bindings: *generic_mod.Resolver.Bindings,
     ) !bool {
+        // Once prior arguments have determined a field's concrete type,
+        // a contextual literal is compatibility information, not new generic
+        // evidence (e.g. Int32 literal 0 passed to UIntNative).
+        return self.inferBindingsFromInputFields(module_index, pattern, input, bindings, 0, true);
+    }
+
+    fn inferBindingsFromInputFields(
+        self: *Resolver,
+        module_index: usize,
+        pattern: ir.ParameterizedTypeId,
+        input: global_sg.GlobalNodeId,
+        bindings: *generic_mod.Resolver.Bindings,
+        field_offset: u32,
+        allow_contextual_concrete: bool,
+    ) !bool {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
-            .struct_value_literal => |literal| literal,
+            .struct_value_literal => |value| value,
             else => return false,
         };
-        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+        const module = &self.modules[module_index];
+        const storage = &module.semantic.parameterized_storage.ir;
         const shape = switch (storage.types.items[@intFromEnum(pattern)]) {
             .resolved => |ty| switch (ty) {
-                .structural => |shape| shape,
+                .structural => |value| value,
                 else => return false,
             },
             else => return false,
         };
-        for (storage.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, position| {
+        if (field_offset > shape.fields.len) return false;
+
+        const fields = storage.fields.items[shape.fields.start + field_offset ..][0 .. shape.fields.len - field_offset];
+        for (fields, 0..) |field, expected_position| {
             for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |value, supplied_position| {
                 const positional = supplied_position < literal.dispatch_prefix_positional_count or self.graph.text(value.name).len == 0;
-                if (if (positional) position != supplied_position else !std.mem.eql(u8, self.modules[module_index].text(field.name), self.graph.text(value.name))) continue;
+                if (if (positional)
+                    expected_position != supplied_position
+                else
+                    !std.mem.eql(u8, module.text(field.name), self.graph.text(value.name))) continue;
+
+                if (allow_contextual_concrete) {
+                    if (self.generics.instantiateParameterizedType(module_index, field.ty, bindings, null)) |expected| {
+                        if (self.core.contextualLiteralFits(value.value, expected)) break;
+                    } else |_| {}
+                }
+
                 const actual = self.graph.nodes.items[@intFromEnum(value.value)].ty orelse return false;
                 if (!try self.inferInputType(module_index, field.ty, actual, bindings)) return false;
                 break;
@@ -331,6 +361,18 @@ pub const Resolver = struct {
         bindings: *generic_mod.Resolver.Bindings,
         context: ReachInferenceContext,
     ) !bool {
+        return self.inferBindingsFromReachDefaultFields(module_index, pattern, input, bindings, context, 0);
+    }
+
+    fn inferBindingsFromReachDefaultFields(
+        self: *Resolver,
+        module_index: usize,
+        pattern: ir.ParameterizedTypeId,
+        input: global_sg.GlobalNodeId,
+        bindings: *generic_mod.Resolver.Bindings,
+        context: ReachInferenceContext,
+        field_offset: u32,
+    ) !bool {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |value| value,
             else => return true,
@@ -344,17 +386,24 @@ pub const Resolver = struct {
             },
             else => return true,
         };
+        if (field_offset > shape.fields.len) return false;
 
-        for (storage.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, position| {
+        const fields = storage.fields.items[shape.fields.start + field_offset ..][0 .. shape.fields.len - field_offset];
+        for (fields, 0..) |field, expected_position| {
             var supplied = false;
             for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |value, supplied_position| {
                 const positional = supplied_position < literal.dispatch_prefix_positional_count or self.graph.text(value.name).len == 0;
-                if (if (positional) position == supplied_position else std.mem.eql(u8, candidate_module.text(field.name), self.graph.text(value.name))) {
+                if (if (positional)
+                    expected_position == supplied_position
+                else
+                    std.mem.eql(u8, candidate_module.text(field.name), self.graph.text(value.name)))
+                {
                     supplied = true;
                     break;
                 }
             }
             if (supplied) continue;
+
             const default_id = field.default_value orelse continue;
             const default_node = switch (storage.nodes.items[@intFromEnum(default_id)]) {
                 .resolved => |node| node,
@@ -401,6 +450,126 @@ pub const Resolver = struct {
                 }
                 if (inferred) break;
             }
+        }
+        return true;
+    }
+
+    pub fn inferInitializerInputBindings(
+        self: *Resolver,
+        module_index: usize,
+        pattern: ir.ParameterizedTypeId,
+        input: global_sg.GlobalNodeId,
+        context: ReachInferenceContext,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        if (!try self.inferBindingsFromInputFields(
+            module_index,
+            pattern,
+            input,
+            bindings,
+            1,
+            true,
+        )) return false;
+
+        return self.inferBindingsFromReachDefaultFields(
+            module_index,
+            pattern,
+            input,
+            bindings,
+            context,
+            1,
+        );
+    }
+
+    pub fn inferInitializerBindings(
+        self: *Resolver,
+        module_index: usize,
+        pattern: ir.ParameterizedTypeId,
+        destination_type: global_sg.GlobalTypeId,
+        input: global_sg.GlobalNodeId,
+        context: ReachInferenceContext,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+        const shape = switch (storage.types.items[@intFromEnum(pattern)]) {
+            .resolved => |resolved| switch (resolved) {
+                .structural => |value| value,
+                else => return false,
+            },
+            else => return false,
+        };
+        if (shape.fields.len == 0) return false;
+
+        const destination_pointer = try self.generics.internType(.{ .pointer = .{
+            .child = destination_type,
+            .mutability = .read_write,
+        } });
+        if (!try self.inferInputType(
+            module_index,
+            storage.fields.items[shape.fields.start].ty,
+            destination_pointer,
+            bindings,
+        )) return false;
+
+        return self.inferInitializerInputBindings(
+            module_index,
+            pattern,
+            input,
+            context,
+            bindings,
+        );
+    }
+
+    fn inferAndValidateConstraints(
+        self: *Resolver,
+        module_index: usize,
+        parameters: primitives.Range(ir.ComptimeParameterId),
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        const abstracts = self.nested_call_context orelse return true;
+        const storage = &self.modules[module_index].semantic.parameterized_storage;
+
+        var made_progress = true;
+        while (made_progress) {
+            made_progress = false;
+            var before: usize = 0;
+            for (parameters.start..parameters.start + parameters.len) |raw| {
+                const parameter = storage.comptime_parameters.items[raw];
+                before += switch (parameter.kind) {
+                    .type => @intFromBool(bindings.types[raw] != null),
+                    .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                };
+            }
+
+            for (parameters.start..parameters.start + parameters.len) |raw| {
+                const parameter = storage.comptime_parameters.items[raw];
+                const constraint_id = parameter.constraint orelse continue;
+                if (parameter.kind != .type) continue;
+                const concrete = bindings.types[raw] orelse continue;
+                const constraint_ok = try abstracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings);
+
+                if (!constraint_ok) return false;
+            }
+
+            var after: usize = 0;
+            for (parameters.start..parameters.start + parameters.len) |raw| {
+                const parameter = storage.comptime_parameters.items[raw];
+                after += switch (parameter.kind) {
+                    .type => @intFromBool(bindings.types[raw] != null),
+                    .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                };
+            }
+            made_progress = after > before;
+        }
+
+        for (parameters.start..parameters.start + parameters.len) |raw| {
+            const parameter = storage.comptime_parameters.items[raw];
+            const constraint_id = parameter.constraint orelse continue;
+            if (parameter.kind != .type) return false;
+            const concrete = bindings.types[raw] orelse return false;
+            const constraint_ok = try abstracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings);
+
+            if (!constraint_ok) return false;
         }
         return true;
     }
@@ -529,6 +698,7 @@ pub const Resolver = struct {
                 }
                 if (reach_context) |context|
                     if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
+                if (!try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings)) continue;
                 var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
                 defer arguments.deinit(self.allocator);
                 for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
@@ -733,6 +903,12 @@ pub const Resolver = struct {
                 var result: ParameterizedSpecificity = .{ .structure = 1 };
                 result.add(self.parameterizedIntSpecificity(module_index, array.length));
                 result.add(self.parameterizedTypeSpecificity(module_index, array.element));
+                break :blk result;
+            },
+            .choice_union => |value| blk: {
+                var result: ParameterizedSpecificity = .{ .structure = 1 };
+                result.add(self.parameterizedTypeSpecificity(module_index, value.left));
+                result.add(self.parameterizedTypeSpecificity(module_index, value.right));
                 break :blk result;
             },
             .resolved => |resolved| self.resolvedPatternSpecificity(module_index, resolved),
@@ -1076,44 +1252,38 @@ pub const Resolver = struct {
         };
     }
 
-    /// Infer the implicit abstract arguments of a constructor's `init` from
-    /// its destination and supplied fields, then materialize its runtime body.
+    /// Materialize a constructor initializer through the same generic
+    /// inference used by every other generic call. Field 0 is the compiler
+    /// supplied destination; source arguments and #reach defaults start at 1.
     pub fn instantiateInitializer(
         self: *Resolver,
         declaration: global_sg.GlobalDeclId,
         destination_type: global_sg.GlobalTypeId,
         input: global_sg.GlobalNodeId,
+        context: ReachInferenceContext,
     ) !?global_sg.GlobalFunctionId {
         const located = self.findParameterized(declaration) orelse return null;
         const module = &self.modules[located.module_index];
-        const storage = &module.semantic.parameterized_storage.ir;
-        const shape = switch (storage.types.items[@intFromEnum(located.parameterized.input)]) {
-            .resolved => |ty| switch (ty) {
-                .structural => |value| value,
-                else => return null,
-            },
-            else => return null,
-        };
-        if (shape.fields.len == 0) return null;
-        const supplied = switch (self.graph.node(input).content) {
-            .struct_value_literal => |value| value,
-            else => return null,
-        };
-        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
+        var bindings = try generic_mod.Resolver.Bindings.init(
+            self.allocator,
+            module.semantic.parameterized_storage.comptime_parameters.items.len,
+        );
         defer bindings.deinit(self.allocator);
-        const destination_pointer = try self.generics.internType(.{ .pointer = .{ .child = destination_type, .mutability = .read_write } });
-        if (!try self.inferInputType(located.module_index, storage.fields.items[shape.fields.start].ty, destination_pointer, &bindings)) return null;
-        for (storage.fields.items[shape.fields.start + 1 ..][0 .. shape.fields.len - 1]) |field| {
-            for (self.graph.value_fields.items[supplied.fields.start..][0..supplied.fields.len]) |value| {
-                if (!std.mem.eql(u8, module.text(field.name), self.graph.text(value.name))) continue;
-                const actual = self.graph.node(value.value).ty orelse return null;
-                // Concrete fields are checked by the contextual matcher after
-                // instantiation; their literal types need not match yet.
-                _ = self.inferInputType(located.module_index, field.ty, actual, &bindings) catch return null;
-                break;
-            }
-        }
-        const arguments = self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings) catch return null;
+        if (!try self.inferInitializerBindings(
+            located.module_index,
+            located.parameterized.input,
+            destination_type,
+            input,
+            context,
+            &bindings,
+        )) return null;
+        if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &bindings))
+            return null;
+        const arguments = self.appendBoundArguments(
+            located.module_index,
+            located.parameterized.parameters,
+            &bindings,
+        ) catch return null;
         return try self.instantiate(declaration, arguments);
     }
 
@@ -1140,6 +1310,8 @@ pub const Resolver = struct {
         var substitutions = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer substitutions.deinit(self.allocator);
         try self.generics.bindGlobalArguments(located.module_index, located.parameterized.parameters, arguments, &substitutions);
+        if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &substitutions))
+            return error.GenericAbstractConstraintNotSatisfied;
 
         const input_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions, null);
         const output_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions, null);
@@ -1829,11 +2001,21 @@ pub const Resolver = struct {
                 if (try self.resolveEmptyTypeInitializer(name, source)) |node| return node;
             };
             const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = module_path, .name = name_range, .source = source };
+            // Calls in an instantiated body can reach the instance's concrete
+            // input bindings, including parameters inferred from generic args.
+            const input_bindings = self.resolver.graph.functions.items[@intFromEnum(self.function.?)].input_bindings;
+            const visible = try self.resolver.allocator.dupe(global_sg.GlobalBindingId, self.resolver.graph.binding_refs.items[input_bindings.start..][0..input_bindings.len]);
+            defer self.resolver.allocator.free(visible);
+            const nested_reach = ReachInferenceContext.fromGlobal(visible, self.function);
             const function = if (arguments.len != 0)
-                try self.resolver.resolveExplicitGenericFunction(self.module_index, module, reference, arguments, input, null)
-            else
-                self.resolver.core.resolveFunctionByName(self.module_index, reference, input) catch
-                    self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, null) catch |err| {
+                try self.resolver.resolveExplicitGenericFunction(self.module_index, module, reference, arguments, input, nested_reach)
+            else blk: {
+                const ordinary = if (module_path == null)
+                    try self.resolver.core.matchUnqualifiedFunctionByNameWithReach(self.module_index, name, input, nested_reach)
+                else
+                    try self.resolver.core.matchFunctionByName(self.module_index, reference, input);
+                if (ordinary == .function) break :blk ordinary.function;
+                break :blk self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, nested_reach) catch |err| {
                     if (self.resolver.nested_constructor_context) |context| {
                         if (self.resolver.nested_constructor_resolver) |resolve| {
                             if (try resolve(context, self.module_index, reference, arguments, input, self.resolver.sourceFor(self.module_index, source))) |node|
@@ -1854,7 +2036,12 @@ pub const Resolver = struct {
                         return self.emptyValue(try self.resolver.generics.internType(.{ .builtin = .Void }), source);
                     return err;
                 };
-            if (!try self.resolver.core.completeCallInputFields(self.resolver.graph.functions.items[@intFromEnum(function)].input, input)) return error.IncompleteParameterizedCallInput;
+            };
+            if (!try self.resolver.core.completeCallInputFieldsWithReach(
+                self.resolver.graph.functions.items[@intFromEnum(function)].input,
+                input,
+                nested_reach,
+            )) return error.IncompleteParameterizedCallInput;
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = try self.resolver.core.functionOutputType(function),

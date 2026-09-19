@@ -69,7 +69,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         reach: reach_context.Context,
     ) !?ImplicitFunctionCall {
-        const ordinary = try self.core.matchUnqualifiedFunctionByName(module_index, name, input);
+        const ordinary = try self.core.matchUnqualifiedFunctionByNameWithReach(module_index, name, input, reach);
         switch (ordinary) {
             .function => |function| {
                 if (!try self.core.completeCallInputFieldsWithReach(

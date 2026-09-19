@@ -458,12 +458,13 @@ pub const Resolver = struct {
         return null;
     }
 
-    pub fn implements(
+    fn implementsDepth(
         self: *Resolver,
         concrete: global_sg.GlobalTypeId,
         abstract_decl: global_sg.GlobalDeclId,
+        depth: u8,
     ) !bool {
-        self.stats.checks += 1;
+        if (depth >= 64) return false;
         for (self.modules, 0..) |*module, module_index| {
             for (module.semantic.parameterized_storage.abstract_implementations.items) |implementation| {
                 const candidate_abstract = try self.resolveDeclarationRef(module_index, implementation.abstract_ref, .abstract_type);
@@ -473,17 +474,178 @@ pub const Resolver = struct {
                     self.stats.concrete_hits += 1;
                     return true;
                 }
+                const inherited = switch (self.graph.types.items[@intFromEnum(candidate_type)]) {
+                    .declared => |declaration| declaration,
+                    else => continue,
+                };
+                if (inherited == abstract_decl or self.findAbstractDefinition(inherited) == null) continue;
+                if (try self.implementsDepth(concrete, inherited, depth + 1)) {
+                    self.stats.concrete_hits += 1;
+                    return true;
+                }
             }
             for (module.semantic.parameterized_storage.parameterized_abstract_implementations.items) |parameterized| {
                 const candidate_abstract = try self.resolveDeclarationRef(module_index, parameterized.abstract_ref, .abstract_type);
                 if (candidate_abstract != abstract_decl) continue;
-                if (try self.matchesImplementationParameterized(module_index, concrete, parameterized)) {
+                if (self.matchesImplementationParameterized(module_index, concrete, parameterized) catch false) {
                     self.stats.parameterized_hits += 1;
                     return true;
                 }
             }
         }
         return false;
+    }
+
+    pub fn inferConstraintBindings(
+        self: *Resolver,
+        module_index: usize,
+        constraint_id: parameterized_storage.AbstractConstraintId,
+        concrete: global_sg.GlobalTypeId,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        const module = &self.modules[module_index];
+        const storage = &module.semantic.parameterized_storage;
+        const constraint = storage.abstract_constraints.items[@intFromEnum(constraint_id)];
+        const abstract_decl = try self.resolveDeclarationRef(module_index, constraint.abstract_ref, .abstract_type);
+        if (!try self.implementsDepth(concrete, abstract_decl, 0)) return false;
+        if (constraint.arguments.len == 0) return true;
+
+        const located = self.findAbstractDefinition(abstract_decl) orelse return false;
+
+        for (self.modules, 0..) |*implementation_module, implementation_module_index| {
+            const implementation_storage = &implementation_module.semantic.parameterized_storage;
+            for (implementation_storage.abstract_implementations.items) |implementation| {
+                const candidate_abstract = try self.resolveDeclarationRef(
+                    implementation_module_index,
+                    implementation.abstract_ref,
+                    .abstract_type,
+                );
+                if (candidate_abstract != abstract_decl) continue;
+                const candidate_type = globalizer.globalType(self.offsets[implementation_module_index], implementation.ty);
+
+                if (!global_types.equal(self.graph, concrete, candidate_type)) continue;
+                return self.matchDirectConstraintArguments(
+                    module_index,
+                    constraint,
+                    located,
+                    implementation_module_index,
+                    implementation,
+                    bindings,
+                );
+            }
+        }
+        return false;
+    }
+
+    fn matchDirectConstraintArguments(
+        self: *Resolver,
+        constraint_module_index: usize,
+        constraint: parameterized_storage.AbstractConstraint,
+        located: LocatedAbstractDefinition,
+        implementation_module_index: usize,
+        implementation: parameterized_storage.AbstractImplementation,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        if (implementation.arguments.len != located.definition.parameters.len) return false;
+        const constraint_module = &self.modules[constraint_module_index];
+        const constraint_ir = &constraint_module.semantic.parameterized_storage.ir;
+        const target_module = &self.modules[located.module_index];
+        const target_storage = &target_module.semantic.parameterized_storage;
+        const implementation_storage = &self.modules[implementation_module_index].semantic.parameterized_storage;
+
+        for (constraint_ir.generic_arguments.items[constraint.arguments.start..][0..constraint.arguments.len], 0..) |requested, requested_position| {
+            const requested_name = constraint_module.text(requested.name);
+            var target_offset: ?usize = null;
+            if (requested_name.len == 0) {
+                if (requested_position < located.definition.parameters.len) target_offset = requested_position;
+            } else {
+                for (0..located.definition.parameters.len) |offset| {
+                    const raw = located.definition.parameters.start + @as(u32, @intCast(offset));
+                    const parameter = target_storage.comptime_parameters.items[raw];
+                    if (std.mem.eql(u8, target_module.text(parameter.name), requested_name)) {
+                        target_offset = offset;
+                        break;
+                    }
+                }
+            }
+            const offset = target_offset orelse return false;
+            const associated = implementation_storage.abstract_arguments.items[
+                implementation.arguments.start + @as(u32, @intCast(offset))
+            ];
+            switch (requested.value) {
+                .type => |pattern| {
+                    const actual = switch (associated) {
+                        .type => |local| globalizer.globalType(self.offsets[implementation_module_index], local),
+                        else => {
+                            return false;
+                        },
+                    };
+                    const matched = try self.inferConstraintTypePattern(constraint_module_index, pattern, actual, bindings);
+
+                    if (!matched) return false;
+                },
+                .comptime_int => |pattern| {
+                    const actual = switch (associated) {
+                        .comptime_int => |value| value,
+                        else => return false,
+                    };
+                    if (!try self.inferConstraintIntPattern(constraint_module_index, pattern, actual, bindings))
+                        return false;
+                },
+            }
+        }
+        return true;
+    }
+
+    fn inferConstraintTypePattern(
+        self: *Resolver,
+        module_index: usize,
+        pattern: ir.ParameterizedTypeId,
+        actual: global_sg.GlobalTypeId,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        const ir_storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+        switch (ir_storage.types.items[@intFromEnum(pattern)]) {
+            .parameter => |parameter| {
+                const slot = &bindings.types[@intFromEnum(parameter)];
+                if (slot.*) |previous|
+                    return global_types.equal(self.graph, previous, actual);
+                slot.* = actual;
+                return true;
+            },
+            else => {},
+        }
+        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return false;
+        return global_types.equal(self.graph, expected, actual);
+    }
+
+    fn inferConstraintIntPattern(
+        self: *Resolver,
+        module_index: usize,
+        pattern: ir.ParameterizedIntExprId,
+        actual: i64,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        const ir_storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+        return switch (ir_storage.int_expressions.items[@intFromEnum(pattern)]) {
+            .literal => |value| value == actual,
+            .parameter => |parameter| blk: {
+                const slot = &bindings.ints[@intFromEnum(parameter)];
+                if (slot.*) |previous| break :blk previous == actual;
+                slot.* = actual;
+                break :blk true;
+            },
+            .binary => (self.generics.evalInt(module_index, pattern, bindings) catch return false) == actual,
+        };
+    }
+
+    pub fn implements(
+        self: *Resolver,
+        concrete: global_sg.GlobalTypeId,
+        abstract_decl: global_sg.GlobalDeclId,
+    ) !bool {
+        self.stats.checks += 1;
+        return self.implementsDepth(concrete, abstract_decl, 0);
     }
 
     pub fn defaultType(
@@ -515,7 +677,9 @@ pub const Resolver = struct {
         for (self.graph.generic_function_instances.items) |instance| {
             const owner = self.graph.moduleForDeclaration(instance.parameterized_declaration) orelse return error.InvalidGenericFunctionOwner;
             const module_index: usize = @intFromEnum(owner);
-            const parameterized = self.findFunctionParameterized(module_index, instance.parameterized_declaration) orelse continue;
+            const parameterized = self.findFunctionParameterized(module_index, instance.parameterized_declaration) orelse {
+                continue;
+            };
             const module = &self.modules[module_index];
             var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
             defer bindings.deinit(self.allocator);
@@ -528,7 +692,8 @@ pub const Resolver = struct {
                 const constraint = module.semantic.parameterized_storage.abstract_constraints.items[@intFromEnum(constraint_id)];
                 const abstract_decl = try self.resolveDeclarationRef(module_index, constraint.abstract_ref, .abstract_type);
                 const concrete = bindings.types[param_raw] orelse return error.AbstractConstraintRequiresTypeParameter;
-                if (!try self.implements(concrete, abstract_decl)) return error.GenericAbstractConstraintNotSatisfied;
+                const satisfied = try self.implements(concrete, abstract_decl);
+                if (!satisfied) return error.GenericAbstractConstraintNotSatisfied;
             }
         }
     }
