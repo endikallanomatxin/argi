@@ -38,6 +38,14 @@ pub const RequirementFailure = struct {
     output: global_sg.GlobalTypeId,
 };
 
+pub const GenericTypeConstraintFailure = struct {
+    generic_decl: global_sg.GlobalDeclId,
+    abstract_decl: global_sg.GlobalDeclId,
+    actual: global_sg.GlobalTypeId,
+    parameter_name: []const u8,
+    source: primitives.SourceRef,
+};
+
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -453,6 +461,11 @@ pub const Resolver = struct {
         definition: parameterized_storage.AbstractDefinition,
     };
 
+    const LocatedParameterizedType = struct {
+        module_index: usize,
+        parameterized: parameterized_storage.ParameterizedType,
+    };
+
     const RequirementInstance = struct {
         declaration: global_sg.GlobalDeclId,
         method_index: u32,
@@ -477,6 +490,19 @@ pub const Resolver = struct {
             .input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings, self_type),
             .output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings, self_type),
         };
+    }
+
+    fn findParameterizedType(self: *const Resolver, declaration: global_sg.GlobalDeclId) ?LocatedParameterizedType {
+        const owner = self.graph.moduleForDeclaration(declaration) orelse return null;
+        const module_index: usize = @intFromEnum(owner);
+        const base = self.offsets[module_index].declaration_base;
+        const raw = @intFromEnum(declaration);
+        if (raw < base) return null;
+        const local: module_entities.ModuleDeclId = @enumFromInt(raw - base);
+        for (self.modules[module_index].semantic.parameterized_storage.parameterized_types.items) |parameterized|
+            if (parameterized.declaration == local)
+                return .{ .module_index = module_index, .parameterized = parameterized };
+        return null;
     }
 
     fn findAbstractDefinition(self: *const Resolver, declaration: global_sg.GlobalDeclId) ?LocatedAbstractDefinition {
@@ -527,6 +553,57 @@ pub const Resolver = struct {
             }
         }
         return false;
+    }
+
+    pub fn findGenericTypeConstraintFailure(self: *Resolver) !?GenericTypeConstraintFailure {
+        for (self.graph.types.items) |ty| {
+            const identity = switch (ty) {
+                .generic => |value| value,
+                else => continue,
+            };
+            const located = self.findParameterizedType(identity.base) orelse continue;
+            const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+            var bindings = try generic_mod.Resolver.Bindings.init(
+                self.allocator,
+                storage.comptime_parameters.items.len,
+            );
+            defer bindings.deinit(self.allocator);
+            self.generics.bindGlobalArguments(
+                located.module_index,
+                located.parameterized.parameters,
+                identity.arguments,
+                &bindings,
+            ) catch continue;
+
+            for (located.parameterized.parameters.start..
+                located.parameterized.parameters.start + located.parameterized.parameters.len) |raw|
+            {
+                const parameter = storage.comptime_parameters.items[raw];
+                const constraint_id = parameter.constraint orelse continue;
+                if (parameter.kind != .type) continue;
+                const actual = bindings.types[raw] orelse continue;
+                if (try self.inferConstraintBindings(
+                    located.module_index,
+                    constraint_id,
+                    actual,
+                    &bindings,
+                )) continue;
+
+                const constraint = storage.abstract_constraints.items[@intFromEnum(constraint_id)];
+                return .{
+                    .generic_decl = identity.base,
+                    .abstract_decl = try self.resolveDeclarationRef(
+                        located.module_index,
+                        constraint.abstract_ref,
+                        .abstract_type,
+                    ),
+                    .actual = actual,
+                    .parameter_name = self.modules[located.module_index].text(parameter.name),
+                    .source = self.sourceFor(located.module_index, constraint.source),
+                };
+            }
+        }
+        return null;
     }
 
     pub fn findConcreteRequirementFailure(self: *Resolver) !?RequirementFailure {
