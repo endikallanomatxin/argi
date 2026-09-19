@@ -124,11 +124,11 @@ pub fn variantView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.Mod
 }
 
 fn compatibilityVariant(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleVariantId, variant: graph_mod.ChoiceVariant) !entities.ChoiceVariant {
-    if (variant.qualifier != null) return error.UnresolvedChoiceQualifier;
     if (variant.module_file_index >= graph.file_offsets.items.len) return error.InvalidModuleFileIndex;
     const semantic = findVariantSemantic(graph, id);
     return .{
         .name = variant.name,
+        .qualifier = variant.qualifier,
         .payload_type = variant.payload_type,
         .option_decl = if (semantic) |value| value.option_decl else null,
         .source = .{ .file_index = variant.module_file_index, .offset = variant.source_offset },

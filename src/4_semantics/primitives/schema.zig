@@ -159,6 +159,7 @@ pub fn Field(comptime Ids: type) type {
 pub fn ChoiceVariant(comptime Ids: type) type {
     return struct {
         name: StringRange,
+        qualifier: ?StringRange = null,
         payload_type: ?Ids.TypeId = null,
         option_decl: ?Ids.DeclId = null,
         source: SourceRef,

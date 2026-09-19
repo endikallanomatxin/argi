@@ -222,6 +222,7 @@ fn appendVariants(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanti
         const value = try module_views.variantView(module, @enumFromInt(@as(u32, @intCast(index))));
         try result.variants.append(allocator, .{
             .name = try relocateString(module, value.name, o.string_base),
+            .qualifier = if (value.qualifier) |qualifier| try relocateString(module, qualifier, o.string_base) else null,
             .payload_type = if (value.payload_type) |id| globalType(o, id) else null,
             .option_decl = if (value.option_decl) |id| globalDecl(o, id) else null,
             .source = globalSource(o, value.source),
