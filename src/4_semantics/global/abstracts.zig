@@ -1083,7 +1083,7 @@ pub const Resolver = struct {
         module_index: usize,
         parameters: primitives.Range(ir.ComptimeParameterId),
         bindings: *generic_mod.Resolver.Bindings,
-    ) !bool {
+    ) anyerror!bool {
         const storage = &self.modules[module_index].semantic.parameterized_storage;
         var made_progress = true;
         while (made_progress) {
