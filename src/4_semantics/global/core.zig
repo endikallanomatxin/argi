@@ -93,12 +93,13 @@ pub const Resolver = struct {
         for (self.graph.nodes.items) |*node| switch (node.content) {
             .address_of => |value| {
                 const child = self.graph.nodes.items[@intFromEnum(value)].ty orelse continue;
+                if (self.graph.isTypeUnresolved(child)) continue;
                 const mutability = if (node.ty) |old| switch (self.graph.types.items[@intFromEnum(old)]) {
                     .pointer => |pointer| pointer.mutability,
                     else => continue,
                 } else continue;
                 const pointer_type = try self.pointerType(child, mutability);
-                if (node.ty != null and types.equal(self.graph, node.ty.?, pointer_type)) continue;
+                if (node.ty != null and (node.ty.? == pointer_type or types.equal(self.graph, node.ty.?, pointer_type))) continue;
                 node.ty = pointer_type;
                 changed = true;
             },
