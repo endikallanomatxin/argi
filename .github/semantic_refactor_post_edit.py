@@ -623,9 +623,7 @@ generic = replace_once(
     "copy candidate constraint metadata trace",
 )
 
-generic = replace_once(
-    generic,
-    '''                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+match_trace_old = '''                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
                     .no_match => continue,
                     .deferred => {
                         saw_deferred = true;
@@ -634,8 +632,8 @@ generic = replace_once(
                     .score => |score| score,
                 };
                 const specificity = self.parameterizedInputSpecificity(candidate_index, parameterized.input, input);
-''',
-    '''                const input_match = self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input);
+'''
+match_trace_new = '''                const input_match = self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input);
                 if (std.mem.eql(u8, name, "copy")) {
                     std.debug.print(
                         "[copy-candidate-match] decl={} result={s}\\n",
@@ -658,9 +656,14 @@ generic = replace_once(
                     .score => |score| score,
                 };
                 const specificity = self.parameterizedInputSpecificity(candidate_index, parameterized.input, input);
-''',
-    "implicit generic final input match trace",
-)
+'''
+if generic.count(match_trace_old) != 2:
+    raise RuntimeError(f"generic input match occurrence count changed: {generic.count(match_trace_old)}")
+before, sep, after = generic.rpartition(match_trace_old)
+if not sep:
+    raise RuntimeError("implicit generic input match anchor missing")
+generic = before + match_trace_new + after
+
 
 generic_path.write_text(generic)
 
