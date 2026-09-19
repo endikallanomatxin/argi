@@ -291,6 +291,121 @@ generic = replace_once(
 ''',
     "nested generic reach completion",
 )
+constraint_method_anchor = '''    pub fn appendBoundArguments(
+'''
+constraint_method = '''    fn inferAndValidateConstraints(
+        self: *Resolver,
+        module_index: usize,
+        parameters: primitives.Range(ir.ComptimeParameterId),
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        const abstracts = self.nested_call_context orelse return true;
+        const storage = &self.modules[module_index].semantic.parameterized_storage;
+
+        var made_progress = true;
+        while (made_progress) {
+            made_progress = false;
+            var before: usize = 0;
+            for (parameters.start..parameters.start + parameters.len) |raw| {
+                const parameter = storage.comptime_parameters.items[raw];
+                before += switch (parameter.kind) {
+                    .type => @intFromBool(bindings.types[raw] != null),
+                    .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                };
+            }
+
+            for (parameters.start..parameters.start + parameters.len) |raw| {
+                const parameter = storage.comptime_parameters.items[raw];
+                const constraint_id = parameter.constraint orelse continue;
+                if (parameter.kind != .type) continue;
+                const concrete = bindings.types[raw] orelse continue;
+                if (!try abstracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings))
+                    return false;
+            }
+
+            var after: usize = 0;
+            for (parameters.start..parameters.start + parameters.len) |raw| {
+                const parameter = storage.comptime_parameters.items[raw];
+                after += switch (parameter.kind) {
+                    .type => @intFromBool(bindings.types[raw] != null),
+                    .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                };
+            }
+            made_progress = after > before;
+        }
+
+        for (parameters.start..parameters.start + parameters.len) |raw| {
+            const parameter = storage.comptime_parameters.items[raw];
+            const constraint_id = parameter.constraint orelse continue;
+            if (parameter.kind != .type) return false;
+            const concrete = bindings.types[raw] orelse return false;
+            if (!try abstracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings))
+                return false;
+        }
+        return true;
+    }
+
+'''
+if constraint_method_anchor not in generic:
+    raise RuntimeError("generic constraint method anchor missing")
+generic = generic.replace(constraint_method_anchor, constraint_method + constraint_method_anchor, 1)
+
+generic = replace_once(
+    generic,
+    '''                if (reach_context) |context|
+                    if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
+                const complete_arguments = self.appendBoundArguments(candidate_index, parameterized.parameters, &bindings) catch |err| switch (err) {
+''',
+    '''                if (reach_context) |context|
+                    if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
+                if (!try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings)) continue;
+                const complete_arguments = self.appendBoundArguments(candidate_index, parameterized.parameters, &bindings) catch |err| switch (err) {
+''',
+    "explicit generic constraint selection",
+)
+
+generic = replace_once(
+    generic,
+    '''                if (reach_context) |context|
+                    if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
+                var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
+''',
+    '''                if (reach_context) |context|
+                    if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
+                if (!try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings)) continue;
+                var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
+''',
+    "implicit generic constraint selection",
+)
+
+generic = replace_once(
+    generic,
+    '''        const arguments = self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings) catch return null;
+        return try self.instantiate(declaration, arguments);
+''',
+    '''        if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &bindings))
+            return null;
+        const arguments = self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings) catch return null;
+        return try self.instantiate(declaration, arguments);
+''',
+    "initializer generic constraint inference",
+)
+
+generic = replace_once(
+    generic,
+    '''        try self.generics.bindGlobalArguments(located.module_index, located.parameterized.parameters, arguments, &substitutions);
+
+        const input_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions, null);
+''',
+    '''        try self.generics.bindGlobalArguments(located.module_index, located.parameterized.parameters, arguments, &substitutions);
+        if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &substitutions))
+            return error.GenericAbstractConstraintNotSatisfied;
+
+        const input_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions, null);
+''',
+    "generic instantiation constraint backstop",
+)
+
 generic_path.write_text(generic)
 
 for path in (core_path, dispatch_path, generic_path):
