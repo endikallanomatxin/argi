@@ -273,6 +273,23 @@ pub fn semantizeWithOptions(
     _ = try generics.materializeKnownTypes();
     try control.materializeSugarTypes();
 
+    if (options.diagnostics) |diagnostics|
+        if (try abstracts.findConcreteImplementationConflict()) |conflict| {
+            var concrete_name = std.array_list.Managed(u8).init(allocator);
+            defer concrete_name.deinit();
+            try appendTypeName(&concrete_name, &relocation.graph, conflict.concrete);
+            try diagnostics.add(
+                diagnosticLocation(&relocation.graph, diagnostics, conflict.source),
+                .semantic,
+                "conflicting implementations of abstract '{s}' for type '{s}' produce different associated arguments",
+                .{
+                    relocation.graph.text(relocation.graph.declaration(conflict.abstract_decl).name),
+                    concrete_name.items,
+                },
+            );
+            return error.Reported;
+        };
+
     const total = totalPending(modules);
     const resolved = try allocator.alloc(bool, total);
     defer allocator.free(resolved);

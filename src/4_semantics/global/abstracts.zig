@@ -23,6 +23,12 @@ pub const AbstractUse = struct {
     arguments: primitives.Range(global_sg.GlobalGenericArgId),
 };
 
+pub const ImplementationConflict = struct {
+    abstract_decl: global_sg.GlobalDeclId,
+    concrete: global_sg.GlobalTypeId,
+    source: primitives.SourceRef,
+};
+
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -499,6 +505,74 @@ pub const Resolver = struct {
             }
         }
         return false;
+    }
+
+    pub fn findConcreteImplementationConflict(self: *Resolver) !?ImplementationConflict {
+        for (self.modules, 0..) |*left_module, left_module_index| {
+            const left_storage = &left_module.semantic.parameterized_storage;
+            for (left_storage.abstract_implementations.items, 0..) |left, left_index| {
+                const left_abstract = try self.resolveDeclarationRef(left_module_index, left.abstract_ref, .abstract_type);
+                const left_type = globalizer.globalType(self.offsets[left_module_index], left.ty);
+
+                for (self.modules, 0..) |*right_module, right_module_index| {
+                    const right_storage = &right_module.semantic.parameterized_storage;
+                    for (right_storage.abstract_implementations.items, 0..) |right, right_index| {
+                        if (right_module_index < left_module_index or
+                            (right_module_index == left_module_index and right_index <= left_index)) continue;
+
+                        const right_abstract = try self.resolveDeclarationRef(right_module_index, right.abstract_ref, .abstract_type);
+                        if (right_abstract != left_abstract) continue;
+                        const right_type = globalizer.globalType(self.offsets[right_module_index], right.ty);
+                        if (!global_types.equal(self.graph, left_type, right_type)) continue;
+                        if (try self.directImplementationArgumentsEqual(
+                            left_module_index,
+                            left,
+                            right_module_index,
+                            right,
+                        )) continue;
+
+                        return .{
+                            .abstract_decl = left_abstract,
+                            .concrete = left_type,
+                            .source = self.sourceFor(right_module_index, right.source),
+                        };
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    fn directImplementationArgumentsEqual(
+        self: *Resolver,
+        left_module_index: usize,
+        left: parameterized_storage.AbstractImplementation,
+        right_module_index: usize,
+        right: parameterized_storage.AbstractImplementation,
+    ) !bool {
+        if (left.arguments.len != right.arguments.len) return false;
+        const left_storage = &self.modules[left_module_index].semantic.parameterized_storage;
+        const right_storage = &self.modules[right_module_index].semantic.parameterized_storage;
+        for (0..left.arguments.len) |offset| {
+            const lhs = left_storage.abstract_arguments.items[left.arguments.start + @as(u32, @intCast(offset))];
+            const rhs = right_storage.abstract_arguments.items[right.arguments.start + @as(u32, @intCast(offset))];
+            switch (lhs) {
+                .none => if (rhs != .none) return false,
+                .comptime_int => |value| switch (rhs) {
+                    .comptime_int => |other| if (value != other) return false,
+                    else => return false,
+                },
+                .type => |local| switch (rhs) {
+                    .type => |other_local| {
+                        const left_type = globalizer.globalType(self.offsets[left_module_index], local);
+                        const right_type = globalizer.globalType(self.offsets[right_module_index], other_local);
+                        if (!global_types.equal(self.graph, left_type, right_type)) return false;
+                    },
+                    else => return false,
+                },
+            }
+        }
+        return true;
     }
 
     pub fn inferConstraintBindings(
