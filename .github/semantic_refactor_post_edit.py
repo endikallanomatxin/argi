@@ -416,6 +416,36 @@ generic = replace_once(
     "generic instantiation constraint backstop",
 )
 
+generic = replace_once(
+    generic,
+    '''                const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
+                if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
+                if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
+                candidate_count += 1;
+''',
+    '''                const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
+                if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
+                if (std.mem.eql(u8, name, "copy")) {
+                    const decl_record = self.graph.declarations.items[@intFromEnum(declaration)];
+                    const file = self.graph.files.items[decl_record.source.file_index];
+                    std.debug.print(
+                        "[copy-candidate] decl={} source={s}:{} params={}\\n",
+                        .{ @intFromEnum(declaration), self.graph.text(file.path), decl_record.source.offset, parameterized.parameters.len },
+                    );
+                    for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw_param| {
+                        const p = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw_param];
+                        std.debug.print(
+                            "[copy-candidate-param] {s} kind={s} constraint={?}\\n",
+                            .{ candidate_module.text(p.name), @tagName(p.kind), if (p.constraint) |id| @intFromEnum(id) else null },
+                        );
+                    }
+                }
+                if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
+                candidate_count += 1;
+''',
+    "copy candidate constraint metadata trace",
+)
+
 generic_path.write_text(generic)
 
 for path in (core_path, dispatch_path, generic_path):
@@ -740,6 +770,25 @@ abstracts = replace_once(
 ''',
     "transitive abstract implementation resolution",
 )
+abstracts = replace_once(
+    abstracts,
+    '''            const parameterized = self.findFunctionParameterized(module_index, instance.parameterized_declaration) orelse continue;
+            const module = &self.modules[module_index];
+''',
+    '''            const parameterized = self.findFunctionParameterized(module_index, instance.parameterized_declaration) orelse {
+                const decl = self.graph.declarations.items[@intFromEnum(instance.parameterized_declaration)];
+                const file = self.graph.files.items[decl.source.file_index];
+                std.debug.print(
+                    "[generic-instance-unmatched] fn={} decl={} source={s}:{}\\n",
+                    .{ @intFromEnum(instance.function), @intFromEnum(instance.parameterized_declaration), self.graph.text(file.path), decl.source.offset },
+                );
+                continue;
+            };
+            const module = &self.modules[module_index];
+''',
+    "generic instance parameterized lookup trace",
+)
+
 abstracts = replace_once(
     abstracts,
     '''                const concrete = bindings.types[param_raw] orelse return error.AbstractConstraintRequiresTypeParameter;
