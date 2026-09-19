@@ -1,3 +1,104 @@
-head=5027975be71e5ece2b2686e48b11f4c2e498b0e0
-run_id=35458607172
+head=58f3d59b02fa6d3dcfdd0576aaef00d39bd935ae
+run_id=35461242396
 
+test-internal
++- run test w
+[generic-constraint] fn=2 decl=1 param=Contract concrete=1 abstract=Contract satisfied=true
+[generic-constraint] fn=3 decl=1 param=Contract concrete=3 abstract=Contract satisfied=true
+failed command: ./.zig-cache/o/ca45a555d84a8c1a84d33d99753e2790/test --cache-dir=./.zig-cache --seed=0xf13726f4 --listen=-
+
+[string-constructor] target=3413 input=3412 initializer=102 visible=true
+[parameterized-copy] module=6 fn=241 decl=161 source=copying.rg:841 generic=true
+[parameterized-copy-arg] t=type:40
+[generic-constraint] fn=224 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
+[generic-constraint] fn=225 decl=249 param=Allocator concrete=427 abstract=Allocator satisfied=true
+[generic-constraint] fn=226 decl=95 param=Allocator concrete=427 abstract=Allocator satisfied=true
+[generic-constraint] fn=230 decl=167 param=Allocator concrete=145 abstract=Allocator satisfied=true
+[generic-constraint] fn=232 decl=103 param=Allocator concrete=427 abstract=Allocator satisfied=true
+[generic-constraint] fn=233 decl=102 param=Allocator concrete=145 abstract=Allocator satisfied=true
+[generic-constraint] fn=237 decl=96 param=Allocator concrete=427 abstract=Allocator satisfied=true
+[generic-constraint] fn=244 decl=251 param=Allocator concrete=427 abstract=Allocator satisfied=true
+✔ Build completed
+[string-constructor] target=3503 input=3502 initializer=102 visible=true
+[string-constructor] target=3507 input=3506 initializer=228 visible=true
+[string-constructor] target=3511 input=3510 initializer=228 visible=true
+[parameterized-copy] module=6 fn=242 decl=161 source=copying.rg:841 generic=true
+[parameterized-copy-arg] t=type:40
+[generic-constraint] fn=227 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
+[generic-constraint] fn=228 decl=249 param=Allocator concrete=427 abstract=Allocator satisfied=true
+[generic-constraint] fn=229 decl=95 param=Allocator concrete=427 abstract=Allocator satisfied=true
+[generic-constraint] fn=233 decl=167 param=Allocator concrete=145 abstract=Allocator satisfied=true
+[generic-constraint] fn=237 decl=96 param=Allocator concrete=869 abstract=Allocator satisfied=true
+[generic-constraint] fn=238 decl=94 param=Allocator concrete=869 abstract=Allocator satisfied=true
+[generic-constraint] fn=243 decl=103 param=Allocator concrete=869 abstract=Allocator satisfied=true
+[generic-constraint] fn=244 decl=102 param=Allocator concrete=869 abstract=Allocator satisfied=true
+[generic-constraint] fn=246 decl=167 param=Allocator concrete=869 abstract=Allocator satisfied=true
+[generic-constraint] fn=247 decl=95 param=Allocator concrete=869 abstract=Allocator satisfied=true
+[generic-constraint] fn=249 decl=251 param=Allocator concrete=427 abstract=Allocator satisfied=true
+/home/runner/work/argi/argi/zig-out/lib/argi/core/lists/DynamicArray.rg:84:27: error: cannot end a root while opaque storage hides a dependency on it
+              deinit#(.t: t)(.allocator = allocator, .self = $&out)
+                            ^
+test-programs
++- run test 0 pass, 1 fail (1 total)
+error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed:
+       expected 0, found 3
+       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e5a4 in expectEqualInner__anon_43248 (std.zig)
+       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8e5 in expectEqual (std.zig)
+       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e93e in expectEqualInner__anon_43186 (std.zig)
+       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f51a in expectEqual (test.zig)
+       /home/runner/work/argi/argi/tests/test.zig:267:5: 0x122f610 in runExpect (test.zig)
+           try expectEqual(std.process.Child.Term{ .exited = expected_code }, result.term);
+           ^
+       /home/runner/work/argi/argi/tests/test.zig:2174:5: 0x122f8c3 in test.feature_tests/collections/34_dynamic_array_string_copy (test.zig)
+           try runExpect(test_path, 0);
+           ^
+failed command: ./.zig-cache/o/4e9ecfdb6ec3a1060c3c2fe0874cceab/test --cache-dir=./.zig-cache --seed=0xe9e515f4 --listen=-
+
+Build Summary: 7/9 steps succeeded (1 failed); 0/1 tests passed (1 failed)
+test-programs transitive failure
++- run test 0 pass, 1 fail (1 total)
+
+error: the following build command failed with exit code 1:
+.zig-cache/o/2729ebdfef2e5dcab5d439c66956e2d1/build /home/runner/work/_temp/74ddfb80-39da-4c4b-80b3-c6c8acf8a7ce/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/74ddfb80-39da-4c4b-80b3-c6c8acf8a7ce/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0xe9e515f4 -Z583f8907e9aa2109 test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy
+test-programs
++- run test 0 pass, 1 fail (1 total)
+error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_cleanup' failed:
+       argi build tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup failed:
+       [string-constructor] target=3503 input=3502 initializer=102 visible=true
+       [string-constructor] target=3507 input=3506 initializer=228 visible=true
+       [string-constructor] target=3511 input=3510 initializer=228 visible=true
+       [parameterized-copy] module=6 fn=242 decl=161 source=copying.rg:841 generic=true
+       [parameterized-copy-arg] t=type:40
+       [generic-constraint] fn=227 decl=94 param=Allocator concrete=427 abstract=Allocator satisfied=true
+       [generic-constraint] fn=228 decl=249 param=Allocator concrete=427 abstract=Allocator satisfied=true
+       [generic-constraint] fn=229 decl=95 param=Allocator concrete=427 abstract=Allocator satisfied=true
+       [generic-constraint] fn=233 decl=167 param=Allocator concrete=145 abstract=Allocator satisfied=true
+       [generic-constraint] fn=237 decl=96 param=Allocator concrete=869 abstract=Allocator satisfied=true
+       [generic-constraint] fn=238 decl=94 param=Allocator concrete=869 abstract=Allocator satisfied=true
+       [generic-constraint] fn=243 decl=103 param=Allocator concrete=869 abstract=Allocator satisfied=true
+       [generic-constraint] fn=244 decl=102 param=Allocator concrete=869 abstract=Allocator satisfied=true
+       [generic-constraint] fn=246 decl=167 param=Allocator concrete=869 abstract=Allocator satisfied=true
+       [generic-constraint] fn=247 decl=95 param=Allocator concrete=869 abstract=Allocator satisfied=true
+       [generic-constraint] fn=249 decl=251 param=Allocator concrete=427 abstract=Allocator satisfied=true
+       zig-out/lib/argi/core/lists/DynamicArray.rg:84:27: error: cannot end a root while opaque storage hides a dependency on it
+                     deinit#(.t: t)(.allocator = allocator, .self = $&out)
+                                   ^
+       expected 0, found 1
+       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e5a4 in expectEqualInner__anon_43238 (std.zig)
+       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8e5 in expectEqual (std.zig)
+       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e93e in expectEqualInner__anon_43176 (std.zig)
+       /home/runner/work/_temp/04fba581-95d3-4540-b860-1038e505cd2f/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f071 in expectEqual (test.zig)
+       /home/runner/work/argi/argi/tests/test.zig:199:5: 0x122f145 in expectSuccessfulBuild (test.zig)
+           try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+           ^
+       /home/runner/work/argi/argi/tests/test.zig:2179:5: 0x122f862 in test.feature_tests/collections/35_dynamic_array_fallible_copy_cleanup (test.zig)
+           try expectSuccessfulBuild(test_path);
+           ^
+failed command: ./.zig-cache/o/26002073c876dc69dfe8f82c1c5ed9b0/test --cache-dir=./.zig-cache --seed=0x26ce45ba --listen=-
+
+Build Summary: 7/9 steps succeeded (1 failed); 0/1 tests passed (1 failed)
+test-programs transitive failure
++- run test 0 pass, 1 fail (1 total)
+
+error: the following build command failed with exit code 1:
+.zig-cache/o/2729ebdfef2e5dcab5d439c66956e2d1/build /home/runner/work/_temp/74ddfb80-39da-4c4b-80b3-c6c8acf8a7ce/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/74ddfb80-39da-4c4b-80b3-c6c8acf8a7ce/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0x26ce45ba -Z1e4bd703fb659cd7 test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup
