@@ -824,6 +824,10 @@ constraint_helpers = '''    fn implementsDepth(
         implementation: parameterized_storage.AbstractImplementation,
         bindings: *generic_mod.Resolver.Bindings,
     ) !bool {
+        std.debug.print(
+            "[constraint-associated-match] impl_args={} abstract_params={} requested={}\\n",
+            .{ implementation.arguments.len, located.definition.parameters.len, constraint.arguments.len },
+        );
         if (implementation.arguments.len != located.definition.parameters.len) return false;
         const constraint_module = &self.modules[constraint_module_index];
         const constraint_ir = &constraint_module.semantic.parameterized_storage.ir;
@@ -854,10 +858,28 @@ constraint_helpers = '''    fn implementsDepth(
                 .type => |pattern| {
                     const actual = switch (associated) {
                         .type => |local| globalizer.globalType(self.offsets[implementation_module_index], local),
-                        else => return false,
+                        else => {
+                            std.debug.print("[constraint-associated-type] associated={s} expected=type\\n", .{@tagName(associated)});
+                            return false;
+                        },
                     };
-                    if (!try self.inferConstraintTypePattern(constraint_module_index, pattern, actual, bindings))
-                        return false;
+                    const pattern_record = constraint_ir.types.items[@intFromEnum(pattern)];
+                    if (pattern_record == .parameter) {
+                        const raw_parameter = @intFromEnum(pattern_record.parameter);
+                        std.debug.print(
+                            "[constraint-associated-type] name={s} target_offset={} pattern_param={} actual={} existing={?}\\n",
+                            .{
+                                requested_name,
+                                offset,
+                                raw_parameter,
+                                @intFromEnum(actual),
+                                if (bindings.types[raw_parameter]) |bound| @intFromEnum(bound) else null,
+                            },
+                        );
+                    }
+                    const matched = try self.inferConstraintTypePattern(constraint_module_index, pattern, actual, bindings);
+                    std.debug.print("[constraint-associated-type-result] matched={}\\n", .{matched});
+                    if (!matched) return false;
                 },
                 .comptime_int => |pattern| {
                     const actual = switch (associated) {
