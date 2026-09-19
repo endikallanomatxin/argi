@@ -539,6 +539,11 @@ pub const Resolver = struct {
                 }) != null) continue;
 
                 const located = self.findAbstractDefinition(abstract_decl) orelse continue;
+                // Requirement instantiation below currently substitutes only
+                // Self. Parameterized abstract contracts need their associated
+                // argument bindings threaded into the requirement instance;
+                // those are validated through the generic-constraint path.
+                if (located.definition.parameters.len != 0) continue;
                 const requirement_storage = &self.modules[located.module_index].semantic.parameterized_storage;
                 for (requirement_storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
                     const instance = try self.requirementInstance(
