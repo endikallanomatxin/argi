@@ -168,9 +168,43 @@ pub const FrontendPipeline = struct {
             self.options.semantizer.include_tests,
             self.options.semantizer.selected_test_name,
         );
+        try self.validateFunctionSignatures();
+        if (self.diagnostics.hasErrors()) return error.Reported;
         try self.buildGlobalGraph();
         try self.analyzeGlobalSafety();
         return &self.global_graph.?;
+    }
+
+    fn validateFunctionSignatures(self: *FrontendPipeline) !void {
+        for (self.syntax_files.items) |*file| {
+            const source = self.source_db.get(file.file_id).source;
+            for (file.roots) |root| {
+                const function = file.functionDeclaration(root) orelse continue;
+                try self.validateFunctionSignatureFields(file, source, function.input, "input");
+                try self.validateFunctionSignatureFields(file, source, function.output, "output");
+            }
+        }
+    }
+
+    fn validateFunctionSignatureFields(
+        self: *FrontendPipeline,
+        file: *const st.FileSyntaxTree,
+        source: []const u8,
+        node: st.NodeIndex,
+        direction: []const u8,
+    ) !void {
+        const literal = file.structTypeLiteral(node) orelse return;
+        for (literal.fields) |field_node| {
+            const field = file.structTypeField(field_node) orelse continue;
+            if (field.type_node != null or field.inferred_result) continue;
+            const name = file.tokenTextFromSource(source, field.name_token);
+            try self.diagnostics.add(
+                file.tokenLocation(field.name_token),
+                .semantic,
+                "function {s} field '.{s}' requires an explicit type",
+                .{ direction, name },
+            );
+        }
     }
 
     fn analyzeGlobalSafety(self: *FrontendPipeline) !void {
