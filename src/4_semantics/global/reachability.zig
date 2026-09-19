@@ -110,7 +110,7 @@ const State = struct {
     fn includeBindingRange(self: *State, range: graph_mod.BindingRange) !void {
         for (0..range.len) |offset| {
             const raw = range.start + @as(u32, @intCast(offset));
-            try self.functions.bindings.put(@enumFromInt(raw), {});
+            try self.functions.bindings.put(self.graph.binding_refs.items[raw], {});
         }
     }
 
@@ -293,6 +293,48 @@ const State = struct {
         }
     }
 };
+
+test "function binding ranges dereference binding refs" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+
+    const main_name = try graph.addString(allocator, "main");
+    const unrelated_name = try graph.addString(allocator, "unrelated");
+    const parameter_name = try graph.addString(allocator, "parameter");
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.bindings.append(allocator, .{
+        .name = unrelated_name,
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(0),
+        .mutability = .constant,
+    });
+    try graph.bindings.append(allocator, .{
+        .name = parameter_name,
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(0),
+        .mutability = .constant,
+    });
+    try graph.binding_refs.append(allocator, @enumFromInt(1));
+    try graph.declarations.append(allocator, .{
+        .kind = .function,
+        .name = main_name,
+        .source = .{ .file_index = 0, .offset = 0 },
+        .function_id = @enumFromInt(0),
+    });
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+        .input_bindings = .{ .start = 0, .len = 1 },
+    });
+
+    var executable = try roots(allocator, &graph, null);
+    defer executable.deinit();
+    _ = try expand(allocator, &graph, &executable);
+    try std.testing.expect(!executable.containsBinding(@enumFromInt(0)));
+    try std.testing.expect(executable.containsBinding(@enumFromInt(1)));
+}
 
 test "reachability roots select main or one test" {
     const allocator = std.testing.allocator;

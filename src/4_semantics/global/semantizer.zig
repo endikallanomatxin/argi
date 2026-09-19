@@ -337,17 +337,18 @@ pub fn semantizeWithOptions(
             }
         }
         var finalized_any = false;
-        for (relocation.graph.functions.items, 0..) |function, raw| {
+        const finalization_count = relocation.graph.functions.items.len;
+        var raw: usize = 0;
+        while (raw < finalization_count) : (raw += 1) {
             const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (finalized_functions.contains(id)) continue;
             if (reachable) |set| {
                 if (!set.contains(id)) continue;
             }
-            if (function.body) |body| {
-                if ((try finalized_functions.getOrPut(id)).found_existing) continue;
-                _ = body;
-                try ownership.finalizeFunctionBody(id);
-                finalized_any = true;
-            }
+            if (relocation.graph.functions.items[raw].body == null) continue;
+            if (!try ownership.finalizeFunctionBody(id)) continue;
+            try finalized_functions.put(id, {});
+            finalized_any = true;
         }
         const reached_cleanup = if (reachable) |set|
             try reachability_mod.expand(allocator, &relocation.graph, set)

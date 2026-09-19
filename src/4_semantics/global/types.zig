@@ -149,6 +149,10 @@ pub fn isBuiltin(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
     };
 }
 
+pub fn identityEqual(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTypeId, b: graph_mod.GlobalTypeId) bool {
+    return a == b or equal(graph, a, b);
+}
+
 pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTypeId, b: graph_mod.GlobalTypeId) bool {
     if (graph.isTypeUnresolved(a) or graph.isTypeUnresolved(b)) return false;
     if (a == b) return true;
@@ -339,7 +343,7 @@ pub fn genericArgumentsEqual(graph: *const graph_mod.GlobalSemanticGraph, a: any
         if (!std.mem.eql(u8, graph.text(left.name), graph.text(right.name))) return false;
         switch (left.value) {
             .type => |left_ty| switch (right.value) {
-                .type => |right_ty| if (!equal(graph, left_ty, right_ty)) return false,
+                .type => |right_ty| if (!identityEqual(graph, left_ty, right_ty)) return false,
                 else => return false,
             },
             .comptime_int => |left_int| switch (right.value) {

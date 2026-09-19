@@ -26,6 +26,10 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
             try require(verify.idFits(value.length, storage.int_expressions.items.len));
             try require(verify.idFits(value.element, storage.types.items.len));
         },
+        .choice_union => |value| {
+            try require(verify.idFits(value.left, storage.types.items.len));
+            try require(verify.idFits(value.right, storage.types.items.len));
+        },
         .resolved => |resolved| try payload.semanticType(ir.Ids, resolved, bounds),
     };
 

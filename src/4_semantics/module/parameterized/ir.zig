@@ -94,6 +94,7 @@ pub const Type = union(enum) {
         length: ParameterizedIntExprId,
         element: ParameterizedTypeId,
     },
+    choice_union: struct { left: ParameterizedTypeId, right: ParameterizedTypeId },
     resolved: primitives.SemanticType(Ids),
 };
 
@@ -271,15 +272,15 @@ pub const Storage = struct {
 
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         inline for (.{
-            &self.int_expressions, &self.types,              &self.declarations,          &self.functions,
-            &self.variants,        &self.fields,             &self.generic_arguments,     &self.bindings,
-            &self.unresolved_binding_types,
-            &self.nodes,           &self.blocks,             &self.value_fields,          &self.switch_cases,
-            &self.switches,        &self.auto_deinit_fields, &self.auto_deinits,          &self.virtual_registries,
-            &self.virtualizes,     &self.virtual_calls,      &self.reach_segments,        &self.reach_alternatives,
-            &self.reaches,         &self.nullable_unwraps,   &self.testing_expect_errors, &self.error_propagations,
-            &self.error_contexts,  &self.pending,            &self.match_cases,           &self.node_refs,
-            &self.type_refs,       &self.binding_refs,       &self.function_refs,         &self.virtual_registry_refs,
+            &self.int_expressions,          &self.types,          &self.declarations,       &self.functions,
+            &self.variants,                 &self.fields,         &self.generic_arguments,  &self.bindings,
+            &self.unresolved_binding_types, &self.nodes,          &self.blocks,             &self.value_fields,
+            &self.switch_cases,             &self.switches,       &self.auto_deinit_fields, &self.auto_deinits,
+            &self.virtual_registries,       &self.virtualizes,    &self.virtual_calls,      &self.reach_segments,
+            &self.reach_alternatives,       &self.reaches,        &self.nullable_unwraps,   &self.testing_expect_errors,
+            &self.error_propagations,       &self.error_contexts, &self.pending,            &self.match_cases,
+            &self.node_refs,                &self.type_refs,      &self.binding_refs,       &self.function_refs,
+            &self.virtual_registry_refs,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }

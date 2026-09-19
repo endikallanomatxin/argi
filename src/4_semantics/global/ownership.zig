@@ -66,16 +66,19 @@ pub const Resolver = struct {
     }
 
     pub fn finalize(self: *Resolver) !void {
-        for (self.graph.functions.items, 0..) |function, raw| {
+        const count = self.graph.functions.items.len;
+        for (0..count) |raw| {
+            const function = self.graph.functions.items[raw];
             if (function.body == null) continue;
             const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            try self.finalizeFunctionBody(id);
+            _ = try self.finalizeFunctionBody(id);
         }
     }
 
-    pub fn finalizeFunctionBody(self: *Resolver, function_id: global_sg.GlobalFunctionId) !void {
+    pub fn finalizeFunctionBody(self: *Resolver, function_id: global_sg.GlobalFunctionId) !bool {
         const function = self.graph.functions.items[@intFromEnum(function_id)];
-        const body = function.body orelse return;
+        const body = function.body orelse return true;
+        if (!self.functionReadyForCleanup(function, body)) return false;
         var visible: std.ArrayList(global_sg.GlobalBindingId) = .empty;
         defer visible.deinit(self.allocator);
         try visible.appendSlice(
@@ -93,6 +96,58 @@ pub const Resolver = struct {
         defer defers.deinit(self.allocator);
         const module = self.graph.moduleForDeclaration(function.declaration) orelse return error.MissingFunctionModule;
         try self.finalizeBlock(body, &active, &defers, &visible, function_id, @intCast(@intFromEnum(module)));
+        return true;
+    }
+
+    fn functionReadyForCleanup(
+        self: *const Resolver,
+        function: global_sg.Function,
+        body: global_sg.GlobalBlockId,
+    ) bool {
+        for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]) |binding|
+            if (self.graph.isBindingTypeUnresolved(binding)) return false;
+        for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding|
+            if (self.graph.isBindingTypeUnresolved(binding)) return false;
+        return self.blockReadyForCleanup(body);
+    }
+
+    fn blockReadyForCleanup(self: *const Resolver, block_id: global_sg.GlobalBlockId) bool {
+        const block = self.graph.blocks.items[@intFromEnum(block_id)];
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
+            const node = self.graph.nodes.items[@intFromEnum(node_id)];
+            switch (node.content) {
+                .binding_declaration => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
+                .binding_use => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
+                .assignment => |assignment| if (self.graph.isBindingTypeUnresolved(assignment.binding)) return false,
+                .code_block => |child| if (!self.blockReadyForCleanup(child)) return false,
+                .if_statement => |statement| {
+                    if (!self.blockReadyForCleanup(statement.then_block)) return false;
+                    if (statement.else_block) |child|
+                        if (!self.blockReadyForCleanup(child)) return false;
+                },
+                .while_statement => |statement| if (!self.blockReadyForCleanup(statement.body)) return false,
+                .for_statement => |statement| {
+                    if (statement.init) |init| {
+                        const init_node = self.graph.nodes.items[@intFromEnum(init)];
+                        if (init_node.content == .code_block and !self.blockReadyForCleanup(init_node.content.code_block))
+                            return false;
+                    }
+                    if (!self.blockReadyForCleanup(statement.body)) return false;
+                },
+                .switch_statement => |switch_id| {
+                    const sw = self.graph.switches.items[@intFromEnum(switch_id)];
+                    for (self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]) |case| {
+                        if (case.payload_binding) |binding|
+                            if (self.graph.isBindingTypeUnresolved(binding)) return false;
+                        if (!self.blockReadyForCleanup(case.body)) return false;
+                    }
+                    if (sw.default_block) |child|
+                        if (!self.blockReadyForCleanup(child)) return false;
+                },
+                else => {},
+            }
+        }
+        return true;
     }
 
     fn resolveDefer(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
