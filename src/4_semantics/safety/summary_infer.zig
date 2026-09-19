@@ -2184,16 +2184,17 @@ pub const Infer = struct {
         node_id: graph_mod.GlobalNodeId,
         fields_range: primitives.Range(graph_mod.GlobalValueFieldId),
     ) !facts.ValueEffect {
-        const node = self.graph.node(node_id);
-        const ty = node.ty orelse return .{};
+        if (self.graph.node(node_id).ty == null) return .{};
         const source_fields = self.graph.value_fields.items[fields_range.start..][0..fields_range.len];
         const output_fields = try self.allocator.alloc(facts.OutputFieldEffect, source_fields.len);
         var result: facts.ValueEffect = .{};
         for (source_fields, 0..) |field, position| {
-            const hit = types.findField(self.graph, ty, self.graph.text(field.name)) orelse return error.InvalidType;
             const value = try self.allocator.create(facts.ValueEffect);
             value.* = try self.inferExpression(function_id, field.value);
-            output_fields[position] = .{ .index = hit.index, .value = value };
+            // Aggregate safety facts are storage-position based. This mirrors
+            // the runtime checker and the pre-GlobalSG safety model; source
+            // field labels may differ from the contextual storage field names.
+            output_fields[position] = .{ .index = @intCast(position), .value = value };
             result = try self.mergeValueEffects(result, value.*);
             result.variants = &.{};
             result.known_choice_variant = null;
