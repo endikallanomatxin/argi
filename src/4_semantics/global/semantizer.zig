@@ -1514,7 +1514,13 @@ fn diagnoseUnresolvedCall(
 
             if (candidates.items.len == 1 and diagnostic_core.callInputNamesMatch(graph.functions.items[@intFromEnum(candidates.items[0])].input, input)) {
                 const function = graph.functions.items[@intFromEnum(candidates.items[0])];
-                var missing_abstract: ?struct { actual: global_sg.GlobalTypeId, declaration: global_sg.GlobalDeclId, field: global_sg.Field, source: primitives.SourceRef } = null;
+                var missing_abstract: ?struct {
+                    actual: global_sg.GlobalTypeId,
+                    abstract_type: global_sg.GlobalTypeId,
+                    declaration: global_sg.GlobalDeclId,
+                    field: global_sg.Field,
+                    source: primitives.SourceRef,
+                } = null;
                 var other_mismatch = false;
                 for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, field_index| {
                     var argument: ?global_sg.GlobalNodeId = null;
@@ -1534,26 +1540,104 @@ fn diagnoseUnresolvedCall(
                         continue;
                     };
                     if (global_types.equal(graph, actual, field.ty) or diagnostic_core.callTypesCompatible(actual, field.ty)) continue;
-                    const declaration = switch (graph.resolvedSemanticType(field.ty) orelse {
+
+                    var expected_abstract_type = field.ty;
+                    var actual_concrete = actual;
+                    switch (graph.semanticType(field.ty)) {
+                        .pointer => |expected_pointer| {
+                            const actual_pointer = switch (graph.semanticType(actual)) {
+                                .pointer => |value| value,
+                                else => {
+                                    other_mismatch = true;
+                                    continue;
+                                },
+                            };
+                            if (expected_pointer.mutability == .read_write and actual_pointer.mutability != .read_write) {
+                                other_mismatch = true;
+                                continue;
+                            }
+                            expected_abstract_type = expected_pointer.child;
+                            actual_concrete = actual_pointer.child;
+                        },
+                        else => {},
+                    }
+
+                    const declaration = abstracts.abstractDeclarationForType(expected_abstract_type) orelse {
                         other_mismatch = true;
                         continue;
-                    }) {
-                        .declared => |value| value,
-                        else => {
-                            other_mismatch = true;
-                            continue;
-                        },
                     };
-                    if (graph.declaration(declaration).kind != .abstract_type or try abstracts.implements(actual, declaration)) {
+                    if (abstracts.concreteImplements(actual_concrete, expected_abstract_type)) {
                         other_mismatch = true;
                         continue;
                     }
-                    if (missing_abstract != null) other_mismatch = true else missing_abstract = .{ .actual = actual, .declaration = declaration, .field = field, .source = graph.node(supplied_node).source };
+                    if (missing_abstract != null) {
+                        other_mismatch = true;
+                    } else {
+                        missing_abstract = .{
+                            .actual = actual_concrete,
+                            .abstract_type = expected_abstract_type,
+                            .declaration = declaration,
+                            .field = field,
+                            .source = graph.node(supplied_node).source,
+                        };
+                    }
                 }
                 if (!other_mismatch) if (missing_abstract) |missing| {
                     var actual_name = std.array_list.Managed(u8).init(allocator);
                     defer actual_name.deinit();
                     try appendTypeName(&actual_name, graph, missing.actual);
+                    var message = std.array_list.Managed(u8).init(allocator);
+                    defer message.deinit();
+                    try appendFormatted(
+                        &message,
+                        allocator,
+                        "type '{s}' does not implement abstract '{s}' required by parameter '.{s}' of '{s}'",
+                        .{
+                            actual_name.items,
+                            graph.text(graph.declaration(missing.declaration).name),
+                            graph.text(missing.field.name),
+                            name,
+                        },
+                    );
+                    if (try abstracts.requirementFailureForAbstractType(
+                        missing.actual,
+                        missing.abstract_type,
+                        missing.source,
+                    )) |requirement_failure| {
+                        try message.appendSlice(":\nmissing function: ");
+                        try message.appendSlice(requirement_failure.method_name);
+                        try message.append(' ');
+                        const required_input = global_types.fields(graph, requirement_failure.input) orelse return false;
+                        try appendFieldShape(&message, graph, required_input);
+
+                        var candidate_count: usize = 0;
+                        for (graph.functions.items) |candidate| {
+                            const declaration = graph.declaration(candidate.declaration);
+                            if (std.mem.eql(u8, graph.text(declaration.name), requirement_failure.method_name))
+                                candidate_count += 1;
+                        }
+                        if (candidate_count != 0) {
+                            try message.appendSlice("\npossible overloads:");
+                            for (graph.functions.items) |candidate| {
+                                const candidate_declaration = graph.declaration(candidate.declaration);
+                                if (!std.mem.eql(u8, graph.text(candidate_declaration.name), requirement_failure.method_name)) continue;
+                                try message.appendSlice("\n  - ");
+                                try message.appendSlice(requirement_failure.method_name);
+                                try message.append(' ');
+                                try appendFieldShape(&message, graph, candidate.input);
+                                try message.appendSlice(" -> ");
+                                try appendFieldShape(&message, graph, candidate.output);
+                                const candidate_location = diagnosticLocation(graph, diagnostics, candidate_declaration.source);
+                                const position = diagnostics.lineColumn(candidate_location);
+                                try appendFormatted(
+                                    &message,
+                                    allocator,
+                                    "\n      file: {s}:{d}:{d}",
+                                    .{ diagnostics.path(candidate_location), position.line, position.column },
+                                );
+                            }
+                        }
+                    }
                     try diagnostics.add(
                         argumentFieldLocation(
                             graph,
@@ -1562,8 +1646,8 @@ fn diagnoseUnresolvedCall(
                             graph.text(missing.field.name),
                         ),
                         .semantic,
-                        "type '{s}' does not implement abstract '{s}' required by parameter '.{s}' of '{s}'",
-                        .{ actual_name.items, graph.text(graph.declaration(missing.declaration).name), graph.text(missing.field.name), name },
+                        "{s}",
+                        .{message.items},
                     );
                     return true;
                 };

@@ -297,6 +297,78 @@ pub const Resolver = struct {
         return self.makeVirtualCall(module_index, reference, input, source);
     }
 
+    pub fn abstractDeclarationForType(self: *const Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalDeclId {
+        return self.abstractDeclFromType(ty);
+    }
+
+    pub fn requirementFailureForAbstractType(
+        self: *Resolver,
+        concrete: global_sg.GlobalTypeId,
+        abstract_type: global_sg.GlobalTypeId,
+        source: primitives.SourceRef,
+    ) !?RequirementFailure {
+        const abstract_use = self.abstractUse(abstract_type) orelse return null;
+        const located = self.findAbstractDefinition(abstract_use.declaration) orelse return null;
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        var bindings = try generic_mod.Resolver.Bindings.init(
+            self.allocator,
+            storage.comptime_parameters.items.len,
+        );
+        defer bindings.deinit(self.allocator);
+
+        if (abstract_use.arguments.len != 0) {
+            if (abstract_use.arguments.len != located.definition.parameters.len) return null;
+            for (0..located.definition.parameters.len) |offset| {
+                const raw = located.definition.parameters.start + @as(u32, @intCast(offset));
+                const parameter = storage.comptime_parameters.items[raw];
+                const argument = self.graph.generic_arguments.items[
+                    abstract_use.arguments.start + @as(u32, @intCast(offset))
+                ];
+                switch (argument.value) {
+                    .type => |value| if (parameter.kind == .type) {
+                        bindings.types[raw] = value;
+                    },
+                    .comptime_int => |value| if (parameter.kind == .comptime_int) {
+                        bindings.ints[raw] = value;
+                    },
+                }
+            }
+        }
+
+        for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
+            const input = self.generics.instantiateParameterizedType(
+                located.module_index,
+                requirement.input,
+                &bindings,
+                concrete,
+            ) catch |err| switch (err) {
+                error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => continue,
+                else => return err,
+            };
+            const output = self.generics.instantiateParameterizedType(
+                located.module_index,
+                requirement.output,
+                &bindings,
+                concrete,
+            ) catch |err| switch (err) {
+                error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => null,
+                else => return err,
+            };
+            const method_name = self.modules[located.module_index].text(requirement.name);
+            if (output) |resolved_output|
+                if (self.findConcreteMethod(method_name, input, resolved_output) != null) continue;
+            return .{
+                .abstract_decl = abstract_use.declaration,
+                .concrete = concrete,
+                .source = source,
+                .method_name = method_name,
+                .input = input,
+                .output = output orelse input,
+            };
+        }
+        return null;
+    }
+
     pub fn concreteImplements(self: *Resolver, concrete: global_sg.GlobalTypeId, abstract_type: global_sg.GlobalTypeId) bool {
         const identity = switch (self.graph.types.items[@intFromEnum(abstract_type)]) {
             .declared => |declaration| blk: {
@@ -1375,6 +1447,7 @@ pub const Resolver = struct {
         };
         return switch (self.graph.types.items[@intFromEnum(abstract_ty)]) {
             .declared => |declaration| if (self.findAbstractDefinition(declaration) != null) declaration else null,
+            .generic => |generic| if (self.findAbstractDefinition(generic.base) != null) generic.base else null,
             else => null,
         };
     }
