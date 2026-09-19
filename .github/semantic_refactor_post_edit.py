@@ -380,12 +380,22 @@ generic = replace_once(
 
 generic = replace_once(
     generic,
-    '''        const arguments = self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings) catch return null;
+    '''        )) return null;
+        const arguments = self.appendBoundArguments(
+            located.module_index,
+            located.parameterized.parameters,
+            &bindings,
+        ) catch return null;
         return try self.instantiate(declaration, arguments);
 ''',
-    '''        if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &bindings))
+    '''        )) return null;
+        if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &bindings))
             return null;
-        const arguments = self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings) catch return null;
+        const arguments = self.appendBoundArguments(
+            located.module_index,
+            located.parameterized.parameters,
+            &bindings,
+        ) catch return null;
         return try self.instantiate(declaration, arguments);
 ''',
     "initializer generic constraint inference",
