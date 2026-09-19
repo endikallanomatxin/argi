@@ -5,6 +5,9 @@ on:
     branches:
       - compact-semantic-graph-chatgpt
     paths:
+      - src/**
+      - core/**
+      - tests/**
       - .github/semantic_refactor_test_command
       - .github/workflows/semantic-refactor-edit.yml
   workflow_dispatch:
