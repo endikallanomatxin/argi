@@ -1,1 +1,1 @@
-zig build test-programs -Dtest-filter=feature_tests/polymorphism/06_generic_structs_multi
+zig build test-programs -Dtest-filter=feature_tests/types/258_abstract_associated_comptime_values

@@ -538,6 +538,38 @@ pub const Resolver = struct {
                     bindings,
                 );
             }
+
+            for (implementation_storage.parameterized_abstract_implementations.items) |implementation| {
+                const candidate_abstract = try self.resolveDeclarationRef(
+                    implementation_module_index,
+                    implementation.abstract_ref,
+                    .abstract_type,
+                );
+                if (candidate_abstract != abstract_decl) continue;
+
+                var implementation_bindings = try generic_mod.Resolver.Bindings.init(
+                    self.allocator,
+                    implementation_storage.comptime_parameters.items.len,
+                );
+                defer implementation_bindings.deinit(self.allocator);
+                if (!try self.bindParameterizedImplementation(
+                    implementation_module_index,
+                    concrete,
+                    implementation,
+                    &implementation_bindings,
+                )) continue;
+
+                return self.matchParameterizedConstraintArguments(
+                    module_index,
+                    constraint,
+                    located,
+                    implementation_module_index,
+                    implementation,
+                    concrete,
+                    &implementation_bindings,
+                    bindings,
+                );
+            }
         }
         return false;
     }
@@ -594,6 +626,89 @@ pub const Resolver = struct {
                         .comptime_int => |value| value,
                         else => return false,
                     };
+                    if (!try self.inferConstraintIntPattern(constraint_module_index, pattern, actual, bindings))
+                        return false;
+                },
+            }
+        }
+        return true;
+    }
+
+    fn matchParameterizedConstraintArguments(
+        self: *Resolver,
+        constraint_module_index: usize,
+        constraint: parameterized_storage.AbstractConstraint,
+        located: LocatedAbstractDefinition,
+        implementation_module_index: usize,
+        implementation: parameterized_storage.ParameterizedAbstractImplementation,
+        concrete: global_sg.GlobalTypeId,
+        implementation_bindings: *generic_mod.Resolver.Bindings,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        const constraint_module = &self.modules[constraint_module_index];
+        const constraint_ir = &constraint_module.semantic.parameterized_storage.ir;
+        const target_module = &self.modules[located.module_index];
+        const target_storage = &target_module.semantic.parameterized_storage;
+        const implementation_module = &self.modules[implementation_module_index];
+        const implementation_ir = &implementation_module.semantic.parameterized_storage.ir;
+
+        for (constraint_ir.generic_arguments.items[constraint.arguments.start..][0..constraint.arguments.len], 0..) |requested, requested_position| {
+            const requested_name = constraint_module.text(requested.name);
+            var target_offset: ?usize = null;
+            if (requested_name.len == 0) {
+                if (requested_position < located.definition.parameters.len) target_offset = requested_position;
+            } else {
+                for (0..located.definition.parameters.len) |offset| {
+                    const raw = located.definition.parameters.start + @as(u32, @intCast(offset));
+                    const target_parameter = target_storage.comptime_parameters.items[raw];
+                    if (std.mem.eql(u8, target_module.text(target_parameter.name), requested_name)) {
+                        target_offset = offset;
+                        break;
+                    }
+                }
+            }
+            const offset = target_offset orelse return false;
+            const target_raw = located.definition.parameters.start + @as(u32, @intCast(offset));
+            const target_parameter = target_storage.comptime_parameters.items[target_raw];
+            const target_name = target_module.text(target_parameter.name);
+
+            var associated: ?ir.GenericArgument = null;
+            for (implementation_ir.generic_arguments.items[implementation.arguments.start..][0..implementation.arguments.len], 0..) |candidate, candidate_position| {
+                const candidate_name = implementation_module.text(candidate.name);
+                if ((candidate_name.len == 0 and candidate_position == offset) or
+                    std.mem.eql(u8, candidate_name, target_name))
+                {
+                    associated = candidate;
+                    break;
+                }
+            }
+            const actual_argument = associated orelse return false;
+
+            switch (requested.value) {
+                .type => |pattern| {
+                    const actual_pattern = switch (actual_argument.value) {
+                        .type => |value| value,
+                        else => return false,
+                    };
+                    const actual = self.generics.instantiateParameterizedType(
+                        implementation_module_index,
+                        actual_pattern,
+                        implementation_bindings,
+                        concrete,
+                    ) catch return false;
+                    if (!try self.inferConstraintTypePattern(constraint_module_index, pattern, actual, bindings))
+                        return false;
+                },
+                .comptime_int => |pattern| {
+                    const actual_pattern = switch (actual_argument.value) {
+                        .comptime_int => |value| value,
+                        else => return false,
+                    };
+                    const actual = self.generics.evalInt(
+                        implementation_module_index,
+                        actual_pattern,
+                        implementation_bindings,
+                    ) catch return false;
                     if (!try self.inferConstraintIntPattern(constraint_module_index, pattern, actual, bindings))
                         return false;
                 },
@@ -852,9 +967,20 @@ pub const Resolver = struct {
         const module = &self.modules[module_index];
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
+        return self.bindParameterizedImplementation(module_index, concrete, parameterized, &bindings);
+    }
+
+    fn bindParameterizedImplementation(
+        self: *Resolver,
+        module_index: usize,
+        concrete: global_sg.GlobalTypeId,
+        parameterized: parameterized_storage.ParameterizedAbstractImplementation,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        const module = &self.modules[module_index];
 
         if (parameterized.concrete_type_pattern) |pattern|
-            return self.inferConstraintTypePattern(module_index, pattern, concrete, &bindings);
+            return self.inferConstraintTypePattern(module_index, pattern, concrete, bindings);
 
         const concrete_name = parameterized.concrete_name orelse return false;
         const wanted = module.text(concrete_name);
@@ -869,7 +995,7 @@ pub const Resolver = struct {
         if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(identity.base)].name), wanted)) return false;
         if (identity.arguments.len != parameterized.concrete_parameter_count) return false;
 
-        try self.generics.bindGlobalArguments(module_index, parameterized.parameters, identity.arguments, &bindings);
+        try self.generics.bindGlobalArguments(module_index, parameterized.parameters, identity.arguments, bindings);
         return true;
     }
 
