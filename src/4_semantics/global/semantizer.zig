@@ -382,7 +382,7 @@ pub fn semantizeWithOptions(
                 return error.Reported;
             if (try diagnoseUnresolvedCopy(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
-            if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, &generic_functions, diagnostics))
+            if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, &generic_functions, &abstracts, diagnostics))
                 return error.Reported;
         }
         dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
@@ -1148,6 +1148,7 @@ fn diagnoseUnresolvedCall(
     reachable: ?*const reachability_mod.FunctionSet,
     offsets: []const globalizer.Offsets,
     generic_functions: *generic_functions_mod.Resolver,
+    abstracts: *abstract_mod.Resolver,
     diagnostics: *diagnostics_mod.Diagnostics,
 ) !bool {
     var flat: usize = 0;
@@ -1312,6 +1313,58 @@ fn diagnoseUnresolvedCall(
                     .{ambiguity.items},
                 );
                 return true;
+            }
+
+            if (candidates.items.len == 1 and diagnostic_core.callInputNamesMatch(graph.functions.items[@intFromEnum(candidates.items[0])].input, input)) {
+                const function = graph.functions.items[@intFromEnum(candidates.items[0])];
+                var missing_abstract: ?struct { actual: global_sg.GlobalTypeId, declaration: global_sg.GlobalDeclId, field: global_sg.Field, source: primitives.SourceRef } = null;
+                var other_mismatch = false;
+                for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, field_index| {
+                    var argument: ?global_sg.GlobalNodeId = null;
+                    for (graph.value_fields.items[input.fields.start..][0..input.fields.len], 0..) |supplied, supplied_index| {
+                        if (supplied_index < input.dispatch_prefix_positional_count or graph.text(supplied.name).len == 0) {
+                            if (supplied_index == field_index) argument = supplied.value;
+                        } else if (std.mem.eql(u8, graph.text(supplied.name), graph.text(field.name))) {
+                            argument = supplied.value;
+                        }
+                    }
+                    const supplied_node = argument orelse {
+                        if (field.default_value == null) other_mismatch = true;
+                        continue;
+                    };
+                    const actual = graph.node(supplied_node).ty orelse {
+                        other_mismatch = true;
+                        continue;
+                    };
+                    if (global_types.equal(graph, actual, field.ty) or diagnostic_core.callTypesCompatible(actual, field.ty)) continue;
+                    const declaration = switch (graph.resolvedSemanticType(field.ty) orelse {
+                        other_mismatch = true;
+                        continue;
+                    }) {
+                        .declared => |value| value,
+                        else => {
+                            other_mismatch = true;
+                            continue;
+                        },
+                    };
+                    if (graph.declaration(declaration).kind != .abstract_type or try abstracts.implements(actual, declaration)) {
+                        other_mismatch = true;
+                        continue;
+                    }
+                    if (missing_abstract != null) other_mismatch = true else missing_abstract = .{ .actual = actual, .declaration = declaration, .field = field, .source = graph.node(supplied_node).source };
+                }
+                if (!other_mismatch) if (missing_abstract) |missing| {
+                    var actual_name = std.array_list.Managed(u8).init(allocator);
+                    defer actual_name.deinit();
+                    try appendTypeName(&actual_name, graph, missing.actual);
+                    try diagnostics.add(
+                        diagnosticLocation(graph, diagnostics, missing.source),
+                        .semantic,
+                        "type '{s}' does not implement abstract '{s}' required by parameter '.{s}' of '{s}'",
+                        .{ actual_name.items, graph.text(graph.declaration(missing.declaration).name), graph.text(missing.field.name), name },
+                    );
+                    return true;
+                };
             }
 
             var message = std.array_list.Managed(u8).init(allocator);
