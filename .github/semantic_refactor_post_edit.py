@@ -183,10 +183,34 @@ generic = replace_once(
 ''',
     '''            if (std.mem.eql(u8, name, "copy")) {
                 const selected = self.resolver.graph.functions.items[@intFromEnum(function)];
+                const decl = self.resolver.graph.declarations.items[@intFromEnum(selected.declaration)];
+                const file = self.resolver.graph.files.items[decl.source.file_index];
                 std.debug.print(
-                    "[parameterized-copy] module={} fn={} decl={} generic={}\\n",
-                    .{ self.module_index, @intFromEnum(function), @intFromEnum(selected.declaration), selected.flags.is_generic_instantiation },
+                    "[parameterized-copy] module={} fn={} decl={} source={s}:{} generic={}\\n",
+                    .{
+                        self.module_index,
+                        @intFromEnum(function),
+                        @intFromEnum(selected.declaration),
+                        self.resolver.graph.text(file.path),
+                        decl.source.offset,
+                        selected.flags.is_generic_instantiation,
+                    },
                 );
+                for (self.resolver.graph.generic_function_instances.items) |instance| {
+                    if (instance.function != function) continue;
+                    for (self.resolver.graph.generic_arguments.items[instance.arguments.start..][0..instance.arguments.len]) |arg| {
+                        switch (arg.value) {
+                            .type => |ty| std.debug.print(
+                                "[parameterized-copy-arg] {s}=type:{}\\n",
+                                .{ self.resolver.graph.text(arg.name), @intFromEnum(ty) },
+                            ),
+                            .comptime_int => |value| std.debug.print(
+                                "[parameterized-copy-arg] {s}=int:{}\\n",
+                                .{ self.resolver.graph.text(arg.name), value },
+                            ),
+                        }
+                    }
+                }
             }
             if (!try self.resolver.core.completeCallInputFields(self.resolver.graph.functions.items[@intFromEnum(function)].input, input)) return error.IncompleteParameterizedCallInput;
             return .{
