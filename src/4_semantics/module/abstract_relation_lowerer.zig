@@ -97,15 +97,46 @@ const Context = struct {
         const params = try self.lowerParams(relation.generic_params, relation.generic_params_struct);
         const parsed = try self.abstractReference(relation.abstract_type, true);
         defer self.allocator.free(parsed.module_arguments);
-        const concrete_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, relation.concrete_name_token));
+        const concrete_name_text = self.tree.tokenTextFromSource(self.source, relation.concrete_name_token);
+        const concrete_name = try self.writer.addString(concrete_name_text);
         try self.graph.semantic.parameterized_storage.parameterized_abstract_implementations.append(self.allocator, .{
             .abstract_ref = parsed.reference,
             .parameters = params,
+            .concrete_type_pattern = try self.lowerCompactConcretePattern(concrete_name_text),
             .concrete_name = concrete_name,
             .concrete_parameter_count = params.len,
             .arguments = parsed.parameterized_arguments,
             .source = self.sourceRef(node),
         });
+    }
+
+    fn lowerCompactConcretePattern(self: *Context, concrete_name: []const u8) !?ir.ParameterizedTypeId {
+        // Array's nominal generic surface is deliberately compacted into the
+        // semantic array shape. Preserve that shape in abstract implementation
+        // templates so conformance does not depend on a nominal GlobalTypeId.
+        if (!std.mem.eql(u8, concrete_name, "Array")) return null;
+
+        var length_parameter: ?ir.ComptimeParameterId = null;
+        var element_parameter: ?ir.ComptimeParameterId = null;
+        for (self.params.items) |param| {
+            if (std.mem.eql(u8, param.name, "n") and param.kind == .comptime_int)
+                length_parameter = param.id
+            else if (std.mem.eql(u8, param.name, "t") and param.kind == .type)
+                element_parameter = param.id;
+        }
+        const length = length_parameter orelse return error.InvalidArrayAbstractImplementation;
+        const element = element_parameter orelse return error.InvalidArrayAbstractImplementation;
+
+        const length_id: ir.ParameterizedIntExprId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.int_expressions.items.len)));
+        try self.graph.semantic.parameterized_storage.ir.int_expressions.append(self.allocator, .{ .parameter = length });
+        const element_id: ir.ParameterizedTypeId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.types.items.len)));
+        try self.graph.semantic.parameterized_storage.ir.types.append(self.allocator, .{ .parameter = element });
+        const array_id: ir.ParameterizedTypeId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.types.items.len)));
+        try self.graph.semantic.parameterized_storage.ir.types.append(self.allocator, .{ .array = .{
+            .length = length_id,
+            .element = element_id,
+        } });
+        return array_id;
     }
 
     fn lowerDefault(self: *Context, node: syn.NodeIndex, relation: syn.AbstractDefaultsTo) !void {
