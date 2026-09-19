@@ -293,7 +293,9 @@ pub fn semantizeWithOptions(
         if (try abstracts.findConcreteRequirementFailure()) |failure| {
             var message = std.array_list.Managed(u8).init(allocator);
             defer message.deinit();
-            try message.writer().print(
+            try appendFormatted(
+                &message,
+                allocator,
                 "type does not implement abstract '{s}':\n  missing function: {s} ",
                 .{
                     relocation.graph.text(relocation.graph.declaration(failure.abstract_decl).name),
@@ -313,13 +315,15 @@ pub fn semantizeWithOptions(
                 for (relocation.graph.functions.items) |function| {
                     const declaration = relocation.graph.declaration(function.declaration);
                     if (!std.mem.eql(u8, relocation.graph.text(declaration.name), failure.method_name)) continue;
-                    try message.writer().print("\n  - {s} ", .{failure.method_name});
+                    try appendFormatted(&message, allocator, "\n  - {s} ", .{failure.method_name});
                     try appendFieldShape(&message, &relocation.graph, function.input);
                     try message.appendSlice(" -> ");
                     try appendFieldShape(&message, &relocation.graph, function.output);
                     const function_location = diagnosticLocation(&relocation.graph, diagnostics, declaration.source);
                     const position = diagnostics.lineColumn(function_location);
-                    try message.writer().print(
+                    try appendFormatted(
+                        &message,
+                        allocator,
                         "\n      file: {s}:{d}:{d}",
                         .{ diagnostics.path(function_location), position.line, position.column },
                     );
@@ -1547,6 +1551,17 @@ fn diagnoseUnresolvedCall(
         }
     }
     return false;
+}
+
+fn appendFormatted(
+    buffer: *std.array_list.Managed(u8),
+    allocator: std.mem.Allocator,
+    comptime fmt: []const u8,
+    args: anytype,
+) !void {
+    const text = try std.fmt.allocPrint(allocator, fmt, args);
+    defer allocator.free(text);
+    try buffer.appendSlice(text);
 }
 
 fn appendValueShape(buffer: *std.array_list.Managed(u8), graph: *const global_sg.GlobalSemanticGraph, literal: anytype) !void {
