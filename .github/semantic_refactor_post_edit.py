@@ -792,6 +792,72 @@ generic = replace_once(
     "implicit generic instantiate trace",
 )
 
+generic = replace_once(
+    generic,
+    '''        try self.generics.bindGlobalArguments(located.module_index, located.parameterized.parameters, arguments, &substitutions);
+        if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &substitutions))
+            return error.GenericAbstractConstraintNotSatisfied;
+
+        const input_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions, null);
+        const output_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions, null);
+''',
+    '''        self.generics.bindGlobalArguments(located.module_index, located.parameterized.parameters, arguments, &substitutions) catch |err| {
+            std.debug.print("[instantiate-stage] decl={} stage=bind-arguments err={s}\\n", .{ @intFromEnum(declaration), @errorName(err) });
+            return err;
+        };
+        const constraints_ok = self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &substitutions) catch |err| {
+            std.debug.print("[instantiate-stage] decl={} stage=constraints err={s}\\n", .{ @intFromEnum(declaration), @errorName(err) });
+            return err;
+        };
+        if (!constraints_ok) return error.GenericAbstractConstraintNotSatisfied;
+
+        const input_ty = self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions, null) catch |err| {
+            std.debug.print("[instantiate-stage] decl={} stage=input-type err={s}\\n", .{ @intFromEnum(declaration), @errorName(err) });
+            return err;
+        };
+        const output_ty = self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions, null) catch |err| {
+            std.debug.print("[instantiate-stage] decl={} stage=output-type err={s}\\n", .{ @intFromEnum(declaration), @errorName(err) });
+            return err;
+        };
+''',
+    "generic instantiation stage trace types",
+)
+
+generic = replace_once(
+    generic,
+    '''        const input_bindings = try context.instantiateBindingRange(located.parameterized.input_bindings);
+        const output_bindings = try context.instantiateBindingRange(located.parameterized.output_bindings);
+''',
+    '''        const input_bindings = context.instantiateBindingRange(located.parameterized.input_bindings) catch |err| {
+            std.debug.print("[instantiate-stage] decl={} stage=input-bindings err={s}\\n", .{ @intFromEnum(declaration), @errorName(err) });
+            return err;
+        };
+        const output_bindings = context.instantiateBindingRange(located.parameterized.output_bindings) catch |err| {
+            std.debug.print("[instantiate-stage] decl={} stage=output-bindings err={s}\\n", .{ @intFromEnum(declaration), @errorName(err) });
+            return err;
+        };
+''',
+    "generic instantiation stage trace bindings",
+)
+
+generic = replace_once(
+    generic,
+    '''        if (located.parameterized.body) |body| {
+            const instantiated_body = try context.instantiateBlock(body);
+            self.graph.functions.items[@intFromEnum(function_id)].body = instantiated_body;
+        }
+''',
+    '''        if (located.parameterized.body) |body| {
+            const instantiated_body = context.instantiateBlock(body) catch |err| {
+                std.debug.print("[instantiate-stage] decl={} stage=body err={s}\\n", .{ @intFromEnum(declaration), @errorName(err) });
+                return err;
+            };
+            self.graph.functions.items[@intFromEnum(function_id)].body = instantiated_body;
+        }
+''',
+    "generic instantiation stage trace body",
+)
+
 generic_path.write_text(generic)
 
 for path in (core_path, dispatch_path, generic_path):
