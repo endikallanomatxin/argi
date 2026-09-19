@@ -1744,13 +1744,16 @@ fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.G
             try buffer.append(')');
         },
         .pointer => |pointer| {
-            try buffer.appendSlice(if (pointer.mutability == .read_write) "        .declared => |declaration| try buffer.appendSlice(graph.text(graph.declaration(declaration).name)),
-        .pointer => |pointer| {
             try buffer.appendSlice(if (pointer.mutability == .read_write) "$&" else "&");
             try appendTypeName(buffer, graph, pointer.child);
         },
-        else => try buffer.appendSlice("<type>")," else "&");
-            try appendTypeName(buffer, graph, pointer.child);
+        .array => |array| {
+            try buffer.appendSlice("Array#(.n = ");
+            var storage: [32]u8 = undefined;
+            try buffer.appendSlice(try std.fmt.bufPrint(&storage, "{d}", .{array.length}));
+            try buffer.appendSlice(", .t: ");
+            try appendTypeName(buffer, graph, array.element);
+            try buffer.append(')');
         },
         else => try buffer.appendSlice("<type>"),
     }
