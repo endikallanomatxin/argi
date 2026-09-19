@@ -3,35 +3,32 @@ from pathlib import Path
 p = Path("src/0_commands/frontend_pipeline.zig")
 s = p.read_text()
 repls = {
+'        _ = try self.parseFiles(files);':
+'''        _ = self.parseFiles(files) catch |err| {
+            std.debug.print("EARLY_STAGE parse: {s}\\n", .{@errorName(err)});
+            return err;
+        };''',
+'        try module_test_validate.validate(':
+'''        module_test_validate.validate(''',
+'            self.options.semantizer.selected_test_name,\n        );':
+'''            self.options.semantizer.selected_test_name,
+        ) catch |err| {
+            std.debug.print("EARLY_STAGE test-validate: {s}\\n", .{@errorName(err)});
+            return err;
+        };''',
+'        try self.validateFunctionSignatures();':
+'''        self.validateFunctionSignatures() catch |err| {
+            std.debug.print("EARLY_STAGE signature-validate: {s}\\n", .{@errorName(err)});
+            return err;
+        };''',
 '        try self.buildGlobalGraph();':
 '''        self.buildGlobalGraph() catch |err| {
-            std.debug.print("FRONTEND_STAGE global-graph: {s}\\n", .{@errorName(err)});
+            std.debug.print("EARLY_STAGE global-graph: {s}\\n", .{@errorName(err)});
             return err;
         };''',
 '        try self.analyzeGlobalSafety();':
 '''        self.analyzeGlobalSafety() catch |err| {
-            std.debug.print("FRONTEND_STAGE safety: {s}\\n", .{@errorName(err)});
-            return err;
-        };''',
-'            const result = try module_semantizer.buildWithAbstractCatalog(self.allocator, group.dir, group.files.items, abstract_names.items);':
-'''            const result = module_semantizer.buildWithAbstractCatalog(self.allocator, group.dir, group.files.items, abstract_names.items) catch |err| {
-                std.debug.print("FRONTEND_STAGE module-sema {s}: {s}\\n", .{ group.dir, @errorName(err) });
-                return err;
-            };''',
-'        const result = try global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{':
-'''        const result = global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{''',
-'        });\n        self.global_graph = result.graph;':
-'''        }) catch |err| {
-            std.debug.print("FRONTEND_STAGE global-sema: {s}\\n", .{@errorName(err)});
-            return err;
-        };
-        self.global_graph = result.graph;''',
-'        try global_once_verify.verify(':
-'''        global_once_verify.verify(''',
-'            self.options.semantizer.selected_test_name,\n        );':
-'''            self.options.semantizer.selected_test_name,
-        ) catch |err| {
-            std.debug.print("FRONTEND_STAGE once-verify: {s}\\n", .{@errorName(err)});
+            std.debug.print("EARLY_STAGE safety: {s}\\n", .{@errorName(err)});
             return err;
         };''',
 }
