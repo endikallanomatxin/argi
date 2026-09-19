@@ -936,6 +936,10 @@ pub const Resolver = struct {
         return null;
     }
 
+    pub fn typeAbstractUse(self: *const Resolver, ty: global_sg.GlobalTypeId) ?AbstractUse {
+        return self.abstractUse(ty);
+    }
+
     pub fn runtimeBindingAbstract(self: *const Resolver, binding_id: global_sg.GlobalBindingId) ?AbstractUse {
         if (self.isFunctionInterfaceBinding(binding_id)) return null;
         const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
