@@ -632,6 +632,22 @@ pub const Resolver = struct {
         return self.resolveImplicitGenericFunctionFiltered(current_module, name, null, input, reach, null);
     }
 
+    pub fn hasVisibleParameterizedFunctionName(
+        self: *const Resolver,
+        current_module: usize,
+        name: []const u8,
+        module_filter: ?global_sg.GlobalModuleId,
+    ) bool {
+        for (self.modules, 0..) |*candidate_module, candidate_index| {
+            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
+                if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
+                if (self.core.declarationVisible(current_module, declaration, module_filter)) return true;
+            }
+        }
+        return false;
+    }
+
     fn resolveImplicitGenericFunctionFiltered(
         self: *Resolver,
         current_module: usize,
