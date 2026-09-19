@@ -153,10 +153,19 @@ pub const Resolver = struct {
     fn resolveDefer(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
         const marker = globalizer.globalNode(o, value.node);
         const deferred_value = globalizer.globalNode(o, value.value);
+        try self.registerDefer(marker, deferred_value);
+        return true;
+    }
+
+    pub fn registerParameterizedDefer(context: *anyopaque, marker: global_sg.GlobalNodeId, deferred_value: global_sg.GlobalNodeId) anyerror!void {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        try self.registerDefer(marker, deferred_value);
+    }
+
+    fn registerDefer(self: *Resolver, marker: global_sg.GlobalNodeId, deferred_value: global_sg.GlobalNodeId) !void {
         try self.deferred.append(self.allocator, .{ .marker = marker, .value = deferred_value });
         try self.makeNoop(marker, self.graph.nodes.items[@intFromEnum(deferred_value)].source);
         self.stats.defers += 1;
-        return true;
     }
 
     fn resolveKeep(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {

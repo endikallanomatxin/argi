@@ -33,6 +33,8 @@ pub const Resolver = struct {
     nested_call_resolver: ?*const fn (*abstract_mod.Resolver, usize, module_entities.ExternalRef, global_sg.GlobalNodeId, primitives.SourceRef) anyerror!?global_sg.Node = null,
     nested_constructor_context: ?*anyopaque = null,
     nested_constructor_resolver: ?*const fn (*anyopaque, usize, module_entities.ExternalRef, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, primitives.SourceRef) anyerror!?global_sg.Node = null,
+    ownership_context: ?*anyopaque = null,
+    register_defer: ?*const fn (*anyopaque, global_sg.GlobalNodeId, global_sg.GlobalNodeId) anyerror!void = null,
     stats: Stats = .{},
 
     pub fn tryResolve(
@@ -1549,6 +1551,19 @@ pub const Resolver = struct {
                 .content = .break_statement,
             });
             self.node_map[@intFromEnum(id)] = global;
+            if (local == .pending) {
+                const pending = storage.pending.items[@intFromEnum(local.pending)];
+                if (pending == .resolve_expression and pending.resolve_expression.kind == .defer_value) {
+                    const expression = pending.resolve_expression;
+                    if (expression.operands.len != 1) return error.InvalidParameterizedDefer;
+                    const deferred_value = try self.instantiateNode(storage.node_refs.items[expression.operands.start]);
+                    const context = self.resolver.ownership_context orelse return error.ParameterizedDeferWithoutOwnershipResolver;
+                    const register = self.resolver.register_defer orelse return error.ParameterizedDeferWithoutOwnershipResolver;
+                    try register(context, global, deferred_value);
+                    self.resolver.stats.nodes += 1;
+                    return global;
+                }
+            }
             const instantiated: global_sg.Node = switch (local) {
                 .resolved => |node| try self.instantiateResolvedNode(node),
                 .pending => |pending| try self.instantiatePendingNode(storage.pending.items[@intFromEnum(pending)]),
