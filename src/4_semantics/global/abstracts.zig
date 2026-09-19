@@ -613,6 +613,15 @@ pub const Resolver = struct {
                 slot.* = actual;
                 return true;
             },
+            .array => |array| {
+                const actual_array = switch (self.graph.types.items[@intFromEnum(actual)]) {
+                    .array => |value| value,
+                    else => return false,
+                };
+                if (!try self.inferConstraintIntPattern(module_index, array.length, @intCast(actual_array.length), bindings))
+                    return false;
+                return self.inferConstraintTypePattern(module_index, array.element, actual_array.element, bindings);
+            },
             else => {},
         }
         const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return false;
@@ -781,9 +790,14 @@ pub const Resolver = struct {
         parameterized: parameterized_storage.ParameterizedAbstractImplementation,
     ) !bool {
         const module = &self.modules[module_index];
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+
+        if (parameterized.concrete_type_pattern) |pattern|
+            return self.inferConstraintTypePattern(module_index, pattern, concrete, &bindings);
+
         const concrete_name = parameterized.concrete_name orelse return false;
         const wanted = module.text(concrete_name);
-
         const identity = switch (self.graph.types.items[@intFromEnum(concrete)]) {
             .generic => |value| value,
             .declared => |decl| {
@@ -795,13 +809,7 @@ pub const Resolver = struct {
         if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(identity.base)].name), wanted)) return false;
         if (identity.arguments.len != parameterized.concrete_parameter_count) return false;
 
-        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
-        defer bindings.deinit(self.allocator);
         try self.generics.bindGlobalArguments(module_index, parameterized.parameters, identity.arguments, &bindings);
-        if (parameterized.concrete_type_pattern) |pattern| {
-            const expected = try self.generics.instantiateParameterizedType(module_index, pattern, &bindings, concrete);
-            if (!global_types.equal(self.graph, expected, concrete)) return false;
-        }
         return true;
     }
 
