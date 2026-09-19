@@ -298,12 +298,159 @@ pub const Resolver = struct {
     }
 
     pub fn concreteImplements(self: *Resolver, concrete: global_sg.GlobalTypeId, abstract_type: global_sg.GlobalTypeId) bool {
-        const declaration = switch (self.graph.types.items[@intFromEnum(abstract_type)]) {
-            .declared => |value| value,
+        const identity = switch (self.graph.types.items[@intFromEnum(abstract_type)]) {
+            .declared => |declaration| blk: {
+                if (self.findAbstractDefinition(declaration) == null) return false;
+                return self.implements(concrete, declaration) catch false;
+            },
+            .generic => |value| value,
             else => return false,
         };
-        if (self.findAbstractDefinition(declaration) == null) return false;
-        return self.implements(concrete, declaration) catch false;
+        if (self.findAbstractDefinition(identity.base) == null) return false;
+        return self.implementsParameterizedAbstractType(concrete, identity.base, identity.arguments) catch false;
+    }
+
+    fn implementsParameterizedAbstractType(
+        self: *Resolver,
+        concrete: global_sg.GlobalTypeId,
+        abstract_decl: global_sg.GlobalDeclId,
+        expected_arguments: primitives.Range(global_sg.GlobalGenericArgId),
+    ) !bool {
+        const located = self.findAbstractDefinition(abstract_decl) orelse return false;
+        for (self.modules, 0..) |*module, module_index| {
+            const storage = &module.semantic.parameterized_storage;
+            for (storage.abstract_implementations.items) |implementation| {
+                const candidate_abstract = try self.resolveDeclarationRef(module_index, implementation.abstract_ref, .abstract_type);
+                if (candidate_abstract != abstract_decl) continue;
+                const candidate_type = globalizer.globalType(self.offsets[module_index], implementation.ty);
+                if (!global_types.equal(self.graph, concrete, candidate_type)) continue;
+                if (self.directAbstractArgumentsMatchGlobal(
+                    located,
+                    module_index,
+                    implementation,
+                    expected_arguments,
+                )) return true;
+            }
+
+            for (storage.parameterized_abstract_implementations.items) |implementation| {
+                const candidate_abstract = try self.resolveDeclarationRef(module_index, implementation.abstract_ref, .abstract_type);
+                if (candidate_abstract != abstract_decl) continue;
+                var bindings = try generic_mod.Resolver.Bindings.init(
+                    self.allocator,
+                    storage.comptime_parameters.items.len,
+                );
+                defer bindings.deinit(self.allocator);
+                if (!try self.bindParameterizedImplementation(module_index, concrete, implementation, &bindings)) continue;
+                if (try self.parameterizedAbstractArgumentsMatchGlobal(
+                    located,
+                    module_index,
+                    implementation,
+                    concrete,
+                    &bindings,
+                    expected_arguments,
+                )) return true;
+            }
+        }
+        return false;
+    }
+
+    fn directAbstractArgumentsMatchGlobal(
+        self: *const Resolver,
+        located: LocatedAbstractDefinition,
+        implementation_module_index: usize,
+        implementation: parameterized_storage.AbstractImplementation,
+        expected_arguments: primitives.Range(global_sg.GlobalGenericArgId),
+    ) bool {
+        if (implementation.arguments.len != located.definition.parameters.len or
+            expected_arguments.len != located.definition.parameters.len) return false;
+        const implementation_storage = &self.modules[implementation_module_index].semantic.parameterized_storage;
+        for (0..located.definition.parameters.len) |offset| {
+            const expected = self.graph.generic_arguments.items[
+                expected_arguments.start + @as(u32, @intCast(offset))
+            ];
+            const actual = implementation_storage.abstract_arguments.items[
+                implementation.arguments.start + @as(u32, @intCast(offset))
+            ];
+            switch (actual) {
+                .none => return false,
+                .type => |local| switch (expected.value) {
+                    .type => |wanted| {
+                        const actual_type = globalizer.globalType(self.offsets[implementation_module_index], local);
+                        if (!global_types.equal(self.graph, actual_type, wanted)) return false;
+                    },
+                    else => return false,
+                },
+                .comptime_int => |value| switch (expected.value) {
+                    .comptime_int => |wanted| if (value != wanted) return false,
+                    else => return false,
+                },
+            }
+        }
+        return true;
+    }
+
+    fn parameterizedAbstractArgumentsMatchGlobal(
+        self: *Resolver,
+        located: LocatedAbstractDefinition,
+        implementation_module_index: usize,
+        implementation: parameterized_storage.ParameterizedAbstractImplementation,
+        concrete: global_sg.GlobalTypeId,
+        bindings: *generic_mod.Resolver.Bindings,
+        expected_arguments: primitives.Range(global_sg.GlobalGenericArgId),
+    ) !bool {
+        if (expected_arguments.len != located.definition.parameters.len) return false;
+        const target_module = &self.modules[located.module_index];
+        const target_storage = &target_module.semantic.parameterized_storage;
+        const implementation_module = &self.modules[implementation_module_index];
+        const implementation_ir = &implementation_module.semantic.parameterized_storage.ir;
+
+        for (0..located.definition.parameters.len) |offset| {
+            const target_raw = located.definition.parameters.start + @as(u32, @intCast(offset));
+            const target_parameter = target_storage.comptime_parameters.items[target_raw];
+            const target_name = target_module.text(target_parameter.name);
+            var associated: ?ir.GenericArgument = null;
+            for (implementation_ir.generic_arguments.items[implementation.arguments.start..][0..implementation.arguments.len], 0..) |candidate, candidate_position| {
+                const candidate_name = implementation_module.text(candidate.name);
+                if ((candidate_name.len == 0 and candidate_position == offset) or
+                    std.mem.eql(u8, candidate_name, target_name))
+                {
+                    associated = candidate;
+                    break;
+                }
+            }
+            const actual_argument = associated orelse return false;
+            const expected = self.graph.generic_arguments.items[
+                expected_arguments.start + @as(u32, @intCast(offset))
+            ];
+            switch (actual_argument.value) {
+                .type => |pattern| {
+                    const wanted = switch (expected.value) {
+                        .type => |value| value,
+                        else => return false,
+                    };
+                    const actual = self.generics.instantiateParameterizedType(
+                        implementation_module_index,
+                        pattern,
+                        bindings,
+                        concrete,
+                    ) catch return false;
+                    if (!global_types.equal(self.graph, actual, wanted)) return false;
+                },
+                .comptime_int => |pattern| {
+                    const wanted = switch (expected.value) {
+                        .comptime_int => |value| value,
+                        else => return false,
+                    };
+                    const actual = self.generics.evalInt(
+                        implementation_module_index,
+                        pattern,
+                        bindings,
+                    ) catch return false;
+                    if (actual != wanted) return false;
+                },
+            }
+        }
+        return true;
     }
 
     /// Abstract fields use static backing storage. Once an assignment selects
