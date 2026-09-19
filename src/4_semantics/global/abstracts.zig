@@ -979,8 +979,10 @@ pub const Resolver = struct {
     ) !bool {
         const module = &self.modules[module_index];
 
-        if (parameterized.concrete_type_pattern) |pattern|
-            return self.inferConstraintTypePattern(module_index, pattern, concrete, bindings);
+        if (parameterized.concrete_type_pattern) |pattern| {
+            if (!try self.inferConstraintTypePattern(module_index, pattern, concrete, bindings)) return false;
+            return self.validateParameterizedImplementationConstraints(module_index, parameterized.parameters, bindings);
+        }
 
         const concrete_name = parameterized.concrete_name orelse return false;
         const wanted = module.text(concrete_name);
@@ -996,6 +998,54 @@ pub const Resolver = struct {
         if (identity.arguments.len != parameterized.concrete_parameter_count) return false;
 
         try self.generics.bindGlobalArguments(module_index, parameterized.parameters, identity.arguments, bindings);
+        return self.validateParameterizedImplementationConstraints(module_index, parameterized.parameters, bindings);
+    }
+
+    fn validateParameterizedImplementationConstraints(
+        self: *Resolver,
+        module_index: usize,
+        parameters: primitives.Range(ir.ComptimeParameterId),
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        const storage = &self.modules[module_index].semantic.parameterized_storage;
+        var made_progress = true;
+        while (made_progress) {
+            made_progress = false;
+            var before: usize = 0;
+            for (parameters.start..parameters.start + parameters.len) |raw| {
+                const parameter = storage.comptime_parameters.items[raw];
+                before += switch (parameter.kind) {
+                    .type => @intFromBool(bindings.types[raw] != null),
+                    .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                };
+            }
+
+            for (parameters.start..parameters.start + parameters.len) |raw| {
+                const parameter = storage.comptime_parameters.items[raw];
+                const constraint_id = parameter.constraint orelse continue;
+                if (parameter.kind != .type) return false;
+                const bound = bindings.types[raw] orelse continue;
+                if (!try self.inferConstraintBindings(module_index, constraint_id, bound, bindings)) return false;
+            }
+
+            var after: usize = 0;
+            for (parameters.start..parameters.start + parameters.len) |raw| {
+                const parameter = storage.comptime_parameters.items[raw];
+                after += switch (parameter.kind) {
+                    .type => @intFromBool(bindings.types[raw] != null),
+                    .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                };
+            }
+            made_progress = after > before;
+        }
+
+        for (parameters.start..parameters.start + parameters.len) |raw| {
+            const parameter = storage.comptime_parameters.items[raw];
+            const constraint_id = parameter.constraint orelse continue;
+            if (parameter.kind != .type) return false;
+            const bound = bindings.types[raw] orelse return false;
+            if (!try self.inferConstraintBindings(module_index, constraint_id, bound, bindings)) return false;
+        }
         return true;
     }
 
