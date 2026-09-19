@@ -1289,7 +1289,41 @@ fn diagnoseUnresolvedCall(
                 if (!functionDeclarationVisibleForDiagnostic(graph, module_index, function.declaration, qualified_module)) continue;
                 try candidates.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
             }
-            if (candidates.items.len == 0) continue;
+            if (candidates.items.len == 0) {
+                if (generic_functions.hasVisibleParameterizedFunctionName(module_index, name, qualified_module)) {
+                    var generic_ties: std.ArrayList(global_sg.GlobalDeclId) = .empty;
+                    defer generic_ties.deinit(allocator);
+                    if (try generic_functions.collectImplicitGenericAmbiguity(
+                        module_index,
+                        module,
+                        reference,
+                        input_id,
+                        &generic_ties,
+                    )) {
+                        var ambiguity = std.array_list.Managed(u8).init(allocator);
+                        defer ambiguity.deinit();
+                        try appendAmbiguousCallPrefix(&ambiguity, graph, diagnostics, source, module, reference);
+                        try appendValueShape(&ambiguity, graph, input);
+                        try ambiguity.appendSlice(". Possible overloads:");
+                        try diagnostics.add(
+                            if (reference.module_path != null) location else diagnosticLocation(graph, diagnostics, source),
+                            .semantic,
+                            "{s}",
+                            .{ambiguity.items},
+                        );
+                        return true;
+                    }
+
+                    try diagnostics.add(
+                        if (reference.module_path != null) location else diagnosticLocation(graph, diagnostics, source),
+                        .semantic,
+                        "no function named '{s}' exists",
+                        .{name},
+                    );
+                    return true;
+                }
+                continue;
+            }
 
             // Reuse Core's matcher to distinguish a deterministic ambiguity
             // from a genuine no-match. Resolution and diagnostics must agree
