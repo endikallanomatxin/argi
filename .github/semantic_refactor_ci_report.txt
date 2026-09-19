@@ -1,0 +1,91 @@
+head=f33a8c7a3714b5e73b33df02a04218d4db8680e7
+run_id=35457967813
+
+[string-constructor] target=3413 input=3412 initializer=102 visible=true
+[deinit-candidate] fn=42 decl=180 score=4 generic=false module=9 input-len=1
+  field[0]=self ty=157
+[deinit-candidate] fn=42 decl=180 score=4 generic=false module=9 input-len=1
+  field[0]=self ty=157
+[parameterized-copy] module=6 fn=241 decl=161 source=copying.rg:841 generic=true
+[parameterized-copy-arg] t=type:40
+[deinit-candidate] fn=42 decl=180 score=4 generic=false module=9 input-len=1
+  field[0]=self ty=157
+✔ Build completed
+[string-constructor] target=3503 input=3502 initializer=102 visible=true
+[string-constructor] target=3507 input=3506 initializer=228 visible=true
+[string-constructor] target=3511 input=3510 initializer=228 visible=true
+[deinit-candidate] fn=42 decl=180 score=4 generic=false module=9 input-len=1
+  field[0]=self ty=157
+[parameterized-copy] module=6 fn=242 decl=161 source=copying.rg:841 generic=true
+[parameterized-copy-arg] t=type:40
+[deinit-candidate] fn=42 decl=180 score=4 generic=false module=9 input-len=1
+  field[0]=self ty=157
+[deinit-candidate] fn=42 decl=180 score=4 generic=false module=9 input-len=1
+  field[0]=self ty=157
+[deinit-candidate] fn=42 decl=180 score=4 generic=false module=9 input-len=1
+  field[0]=self ty=157
+/home/runner/work/argi/argi/zig-out/lib/argi/core/lists/DynamicArray.rg:84:27: error: cannot end a root while opaque storage hides a dependency on it
+              deinit#(.t: t)(.allocator = allocator, .self = $&out)
+                            ^
+test-programs
++- run test 0 pass, 1 fail (1 total)
+error: 'test.test.feature_tests/collections/34_dynamic_array_string_copy' failed:
+       expected 0, found 3
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e584 in expectEqualInner__anon_43279 (std.zig)
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8c5 in expectEqual (std.zig)
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e91e in expectEqualInner__anon_43217 (std.zig)
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f4fa in expectEqual (test.zig)
+       /home/runner/work/argi/argi/tests/test.zig:267:5: 0x122f5f0 in runExpect (test.zig)
+           try expectEqual(std.process.Child.Term{ .exited = expected_code }, result.term);
+           ^
+       /home/runner/work/argi/argi/tests/test.zig:2174:5: 0x122f8a3 in test.feature_tests/collections/34_dynamic_array_string_copy (test.zig)
+           try runExpect(test_path, 0);
+           ^
+failed command: ./.zig-cache/o/8b733d3d0b30b092e2b654978f021796/test --cache-dir=./.zig-cache --seed=0x95719a80 --listen=-
+
+Build Summary: 7/9 steps succeeded (1 failed); 0/1 tests passed (1 failed)
+test-programs transitive failure
++- run test 0 pass, 1 fail (1 total)
+
+error: the following build command failed with exit code 1:
+.zig-cache/o/6644619764fcedc55e3f770fd8c86cb8/build /home/runner/work/_temp/afa0e46b-37ef-4bd9-8d84-d4914676baaf/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/afa0e46b-37ef-4bd9-8d84-d4914676baaf/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0x95719a80 -Z5916f913d6795e33 test-programs -Dtest-filter=feature_tests/collections/34_dynamic_array_string_copy
+test-programs
++- run test 0 pass, 1 fail (1 total)
+error: 'test.test.feature_tests/collections/35_dynamic_array_fallible_copy_cleanup' failed:
+       argi build tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup failed:
+       [string-constructor] target=3503 input=3502 initializer=102 visible=true
+       [string-constructor] target=3507 input=3506 initializer=228 visible=true
+       [string-constructor] target=3511 input=3510 initializer=228 visible=true
+       [deinit-candidate] fn=42 decl=180 score=4 generic=false module=9 input-len=1
+         field[0]=self ty=157
+       [parameterized-copy] module=6 fn=242 decl=161 source=copying.rg:841 generic=true
+       [parameterized-copy-arg] t=type:40
+       [deinit-candidate] fn=42 decl=180 score=4 generic=false module=9 input-len=1
+         field[0]=self ty=157
+       [deinit-candidate] fn=42 decl=180 score=4 generic=false module=9 input-len=1
+         field[0]=self ty=157
+       [deinit-candidate] fn=42 decl=180 score=4 generic=false module=9 input-len=1
+         field[0]=self ty=157
+       zig-out/lib/argi/core/lists/DynamicArray.rg:84:27: error: cannot end a root while opaque storage hides a dependency on it
+                     deinit#(.t: t)(.allocator = allocator, .self = $&out)
+                                   ^
+       expected 0, found 1
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:118:17: 0x122e584 in expectEqualInner__anon_43274 (std.zig)
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122e8c5 in expectEqual (std.zig)
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:182:43: 0x122e91e in expectEqualInner__anon_43212 (std.zig)
+       /home/runner/work/_temp/0491bc14-b4c7-4a53-9b0c-413a2ad6dfff/zig-x86_64-linux-0.16.0/lib/std/testing.zig:83:5: 0x122f051 in expectEqual (test.zig)
+       /home/runner/work/argi/argi/tests/test.zig:199:5: 0x122f125 in expectSuccessfulBuild (test.zig)
+           try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+           ^
+       /home/runner/work/argi/argi/tests/test.zig:2179:5: 0x122f842 in test.feature_tests/collections/35_dynamic_array_fallible_copy_cleanup (test.zig)
+           try expectSuccessfulBuild(test_path);
+           ^
+failed command: ./.zig-cache/o/9a6008e11b61bc48dad323fd27913a44/test --cache-dir=./.zig-cache --seed=0xb3103f20 --listen=-
+
+Build Summary: 7/9 steps succeeded (1 failed); 0/1 tests passed (1 failed)
+test-programs transitive failure
++- run test 0 pass, 1 fail (1 total)
+
+error: the following build command failed with exit code 1:
+.zig-cache/o/6644619764fcedc55e3f770fd8c86cb8/build /home/runner/work/_temp/afa0e46b-37ef-4bd9-8d84-d4914676baaf/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/afa0e46b-37ef-4bd9-8d84-d4914676baaf/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0xb3103f20 -Z890541f692626ae7 test-programs -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup
+bash: line 1: exit: 1n: numeric argument required
