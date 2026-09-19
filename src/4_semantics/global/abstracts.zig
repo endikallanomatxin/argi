@@ -618,34 +618,86 @@ pub const Resolver = struct {
                 }) != null) continue;
 
                 const located = self.findAbstractDefinition(abstract_decl) orelse continue;
-                // Requirement instantiation below currently substitutes only
-                // Self. Parameterized abstract contracts need their associated
-                // argument bindings threaded into the requirement instance;
-                // those are validated through the generic-constraint path.
-                if (located.definition.parameters.len != 0) continue;
                 const requirement_storage = &self.modules[located.module_index].semantic.parameterized_storage;
+                var bindings = try generic_mod.Resolver.Bindings.init(
+                    self.allocator,
+                    requirement_storage.comptime_parameters.items.len,
+                );
+                defer bindings.deinit(self.allocator);
+                try self.bindDirectAbstractArguments(
+                    module_index,
+                    implementation,
+                    located,
+                    &bindings,
+                );
+
                 for (requirement_storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
-                    const instance = try self.requirementInstance(
-                        abstract_decl,
+                    const input = self.generics.instantiateParameterizedType(
+                        located.module_index,
+                        requirement.input,
+                        &bindings,
                         concrete,
-                        located,
-                        requirement,
-                        @intCast(method_index),
-                    );
+                    ) catch |err| switch (err) {
+                        error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => continue,
+                        else => return err,
+                    };
+                    const output = self.generics.instantiateParameterizedType(
+                        located.module_index,
+                        requirement.output,
+                        &bindings,
+                        concrete,
+                    ) catch |err| switch (err) {
+                        error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => null,
+                        else => return err,
+                    };
                     const method_name = self.modules[located.module_index].text(requirement.name);
-                    if (self.findConcreteMethod(method_name, instance.input, instance.output) != null) continue;
+                    if (output) |resolved_output|
+                        if (self.findConcreteMethod(method_name, input, resolved_output) != null) continue;
                     return .{
                         .abstract_decl = abstract_decl,
                         .concrete = concrete,
                         .source = self.sourceFor(module_index, implementation.source),
                         .method_name = method_name,
-                        .input = instance.input,
-                        .output = instance.output,
+                        .input = input,
+                        .output = output orelse input,
                     };
                 }
             }
         }
         return null;
+    }
+
+    fn bindDirectAbstractArguments(
+        self: *Resolver,
+        implementation_module_index: usize,
+        implementation: parameterized_storage.AbstractImplementation,
+        located: LocatedAbstractDefinition,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !void {
+        const definition_storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        const implementation_storage = &self.modules[implementation_module_index].semantic.parameterized_storage;
+        const count = @min(located.definition.parameters.len, implementation.arguments.len);
+        for (0..count) |offset| {
+            const parameter_raw = located.definition.parameters.start + @as(u32, @intCast(offset));
+            const parameter = definition_storage.comptime_parameters.items[parameter_raw];
+            const argument = implementation_storage.abstract_arguments.items[
+                implementation.arguments.start + @as(u32, @intCast(offset))
+            ];
+            switch (argument) {
+                .none => {},
+                .type => |local| {
+                    if (parameter.kind != .type) continue;
+                    bindings.types[parameter_raw] = globalizer.globalType(
+                        self.offsets[implementation_module_index],
+                        local,
+                    );
+                },
+                .comptime_int => |value| {
+                    if (parameter.kind != .comptime_int) continue;
+                    bindings.ints[parameter_raw] = value;
+                },
+            }
+        }
     }
 
     pub fn findConcreteImplementationConflict(self: *Resolver) !?ImplementationConflict {
