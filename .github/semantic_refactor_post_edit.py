@@ -665,6 +665,44 @@ if not sep:
 generic = before + match_trace_new + after
 
 
+generic = replace_once(
+    generic,
+    '''        if (tied) return error.AmbiguousGenericFunction;
+        const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else if (candidate_count == 1 and conflicting_candidates == 1) error.ConflictingGenericArgument else error.NoMatchingGenericFunction;
+        return self.instantiate(declaration, best_arguments);
+''',
+    '''        if (tied) return error.AmbiguousGenericFunction;
+        const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else if (candidate_count == 1 and conflicting_candidates == 1) error.ConflictingGenericArgument else error.NoMatchingGenericFunction;
+        if (std.mem.eql(u8, name, "copy")) {
+            std.debug.print(
+                "[copy-selected] decl={} args={}\\n",
+                .{ @intFromEnum(declaration), best_arguments.len },
+            );
+            for (self.graph.generic_arguments.items[best_arguments.start..][0..best_arguments.len]) |argument| {
+                switch (argument.value) {
+                    .type => |ty| std.debug.print(
+                        "[copy-selected-arg] {s}=type:{}\\n",
+                        .{ self.graph.text(argument.name), @intFromEnum(ty) },
+                    ),
+                    .comptime_int => |value| std.debug.print(
+                        "[copy-selected-arg] {s}=int:{}\\n",
+                        .{ self.graph.text(argument.name), value },
+                    ),
+                }
+            }
+        }
+        const instantiated = self.instantiate(declaration, best_arguments) catch |err| {
+            if (std.mem.eql(u8, name, "copy"))
+                std.debug.print("[copy-instantiate-error] decl={} err={s}\\n", .{ @intFromEnum(declaration), @errorName(err) });
+            return err;
+        };
+        if (std.mem.eql(u8, name, "copy"))
+            std.debug.print("[copy-instantiated] decl={} fn={}\\n", .{ @intFromEnum(declaration), @intFromEnum(instantiated) });
+        return instantiated;
+''',
+    "implicit generic instantiate trace",
+)
+
 generic_path.write_text(generic)
 
 for path in (core_path, dispatch_path, generic_path):
