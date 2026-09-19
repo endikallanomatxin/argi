@@ -1635,8 +1635,37 @@ fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.G
     switch (graph.semanticType(ty)) {
         .builtin => |builtin| try buffer.appendSlice(@tagName(builtin)),
         .declared => |declaration| try buffer.appendSlice(graph.text(graph.declaration(declaration).name)),
+        .generic => |generic| {
+            try buffer.appendSlice(graph.text(graph.declaration(generic.base).name));
+            try buffer.appendSlice("#(");
+            for (graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len], 0..) |argument, index| {
+                if (index != 0) try buffer.appendSlice(", ");
+                const name = graph.text(argument.name);
+                if (name.len != 0) {
+                    try buffer.append('.');
+                    try buffer.appendSlice(name);
+                }
+                switch (argument.value) {
+                    .type => |value| {
+                        if (name.len != 0) try buffer.appendSlice(": ");
+                        try appendTypeName(buffer, graph, value);
+                    },
+                    .comptime_int => |value| {
+                        if (name.len != 0) try buffer.appendSlice(" = ");
+                        var storage: [32]u8 = undefined;
+                        try buffer.appendSlice(try std.fmt.bufPrint(&storage, "{d}", .{value}));
+                    },
+                }
+            }
+            try buffer.append(')');
+        },
+        .pointer => |pointer| {
+            try buffer.appendSlice(if (pointer.mutability == .read_write) "        .declared => |declaration| try buffer.appendSlice(graph.text(graph.declaration(declaration).name)),
         .pointer => |pointer| {
             try buffer.appendSlice(if (pointer.mutability == .read_write) "$&" else "&");
+            try appendTypeName(buffer, graph, pointer.child);
+        },
+        else => try buffer.appendSlice("<type>")," else "&");
             try appendTypeName(buffer, graph, pointer.child);
         },
         else => try buffer.appendSlice("<type>"),
