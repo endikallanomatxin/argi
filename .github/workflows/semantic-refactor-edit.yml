@@ -1,30 +1,27 @@
-name: Verified semantic refactor edit
+name: Focused semantic refactor test
 
 on:
   push:
     branches:
       - compact-semantic-graph-chatgpt
     paths:
-      - .github/semantic_refactor_edit.py
-      - .github/semantic_refactor_post_edit.py
       - .github/semantic_refactor_test_command
+      - .github/workflows/semantic-refactor-edit.yml
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: semantic-refactor-edit
+  group: semantic-refactor-focused
   cancel-in-progress: true
 
 jobs:
-  apply:
+  focused:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
@@ -34,58 +31,28 @@ jobs:
           echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends llvm-21-dev
-      - name: Apply semantic edit
-        run: |
-          python3 .github/semantic_refactor_edit.py
-          if [[ -f .github/semantic_refactor_post_edit.py ]]; then
-            python3 .github/semantic_refactor_post_edit.py
-          fi
-      - name: Build compiler
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          set -o pipefail
-          zig build 2>&1 | tee .git/semantic-refactor-ci-report
-      - name: Run internal tests
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          set -o pipefail
-          zig build test-internal 2>&1 | tee -a .git/semantic-refactor-ci-report
-      - name: Run focused semantic tests
+      - name: Run focused semantic test
         timeout-minutes: 8
         shell: bash
         run: |
           set -o pipefail
-          if [[ -f .git/semantic-refactor-test-command ]]; then
-            bash -euo pipefail -c "$(cat .git/semantic-refactor-test-command)" 2>&1 | tee -a .git/semantic-refactor-ci-report
-          elif [[ -f .github/semantic_refactor_test_command ]]; then
-            bash -euo pipefail -c "$(cat .github/semantic_refactor_test_command)" 2>&1 | tee -a .git/semantic-refactor-ci-report
-          fi
-      - name: Publish failed semantic debug report
-        if: failure()
+          bash -euo pipefail -c "$(cat .github/semantic_refactor_test_command)" 2>&1 | tee focused-semantic-test.log
+      - name: Summarize focused result
+        if: always()
         shell: bash
         run: |
           {
-            echo "head=$GITHUB_SHA"
-            echo "run_id=$GITHUB_RUN_ID"
+            echo "### Focused semantic refactor test"
             echo
-            cat .git/semantic-refactor-ci-report 2>/dev/null || true
-          } > .github/semantic_refactor_ci_report.txt
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/semantic_refactor_ci_report.txt
-          git commit -m "Record semantic refactor CI failure"
-          git push origin HEAD:compact-semantic-graph-chatgpt
-      - name: Commit verified source edit
-        shell: bash
-        run: |
-          if git diff --quiet -- src tests; then
-            echo "No source changes to commit"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src tests
-          git commit -m "$(cat .git/semantic-refactor-message)"
-          git push origin HEAD:compact-semantic-graph-chatgpt
+            echo '~~~text'
+            grep -E "Build Summary:|run test [0-9]+ pass|error: 'test\.test\.|indexed semantizing failed" focused-semantic-test.log 2>/dev/null | tail -80 || true
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload focused-test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-semantic-test
+          path: focused-semantic-test.log
+          if-no-files-found: ignore
+          retention-days: 7
