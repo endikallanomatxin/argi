@@ -338,6 +338,21 @@ pub fn semantizeWithOptions(
             );
             return error.Reported;
         }
+
+        for (relocation.graph.functions.items) |function| {
+            for (relocation.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
+                const abstract_use = abstracts.typeAbstractUse(field.ty) orelse continue;
+                if ((try abstracts.defaultType(abstract_use.declaration, abstract_use.arguments)) != null) continue;
+                const declaration = relocation.graph.declaration(function.declaration);
+                try diagnostics.add(
+                    diagnosticLocation(&relocation.graph, diagnostics, declaration.source),
+                    .codegen,
+                    "error generating function {s}: InvalidType",
+                    .{relocation.graph.text(declaration.name)},
+                );
+                return error.Reported;
+            }
+        }
     }
 
     const total = totalPending(modules);
@@ -1521,7 +1536,12 @@ fn diagnoseUnresolvedCall(
                     defer actual_name.deinit();
                     try appendTypeName(&actual_name, graph, missing.actual);
                     try diagnostics.add(
-                        diagnosticLocation(graph, diagnostics, missing.source),
+                        argumentFieldLocation(
+                            graph,
+                            diagnostics,
+                            missing.source,
+                            graph.text(missing.field.name),
+                        ),
                         .semantic,
                         "type '{s}' does not implement abstract '{s}' required by parameter '.{s}' of '{s}'",
                         .{ actual_name.items, graph.text(graph.declaration(missing.declaration).name), graph.text(missing.field.name), name },
@@ -1602,6 +1622,30 @@ fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.G
         },
         else => try buffer.appendSlice("<type>"),
     }
+}
+
+fn argumentFieldLocation(
+    graph: *const global_sg.GlobalSemanticGraph,
+    diagnostics: *const diagnostics_mod.Diagnostics,
+    value_source: primitives.SourceRef,
+    field_name: []const u8,
+) tok.Location {
+    const value_location = diagnosticLocation(graph, diagnostics, value_source);
+    const file = diagnostics.source_db.get(value_location.file);
+    const end = @min(@as(usize, value_location.offset), file.source.len);
+    var line_start = end;
+    while (line_start > 0 and file.source[line_start - 1] != '\n') line_start -= 1;
+
+    var cursor = end;
+    while (cursor > line_start) {
+        cursor -= 1;
+        if (file.source[cursor] != '.') continue;
+        const name_start = cursor + 1;
+        const name_end = name_start + field_name.len;
+        if (name_end <= end and std.mem.eql(u8, file.source[name_start..name_end], field_name))
+            return .{ .file = value_location.file, .offset = @intCast(cursor) };
+    }
+    return value_location;
 }
 
 fn diagnosticLocation(graph: *const global_sg.GlobalSemanticGraph, diagnostics: *const diagnostics_mod.Diagnostics, source: @import("../primitives/schema.zig").SourceRef) tok.Location {
