@@ -217,6 +217,80 @@ generic = replace_once(
 ''',
     "parameterized copy callee trace",
 )
+generic = replace_once(
+    generic,
+    '''            const function = if (arguments.len != 0)
+                try self.resolver.resolveExplicitGenericFunction(self.module_index, module, reference, arguments, input, null)
+            else
+                self.resolver.core.resolveFunctionByName(self.module_index, reference, input) catch
+                    self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, null) catch |err| {
+                    if (self.resolver.nested_constructor_context) |context| {
+                        if (self.resolver.nested_constructor_resolver) |resolve| {
+                            if (try resolve(context, self.module_index, reference, arguments, input, self.resolver.sourceFor(self.module_index, source))) |node|
+                                return node;
+                        }
+                    }
+                    if (arguments.len == 0) {
+                        if (try self.resolveConstrainedStaticCall(reference, input, source)) |node| return node;
+                    }
+                    if (self.resolver.nested_call_context) |context| {
+                        if (self.resolver.nested_call_resolver) |resolve| {
+                            if (try resolve(context, self.module_index, reference, input, self.resolver.sourceFor(self.module_index, source))) |node|
+                                return node;
+                        }
+                    }
+                    if (module_path == null and std.mem.eql(u8, name, "deinit") and
+                        self.parameterized.safety_primitive == .trusted_opaque_drop)
+                        return self.emptyValue(try self.resolver.generics.internType(.{ .builtin = .Void }), source);
+                    return err;
+                };
+''',
+    '''            const nested_reach = ReachInferenceContext.fromGlobal(&.{}, self.function);
+            const function = if (arguments.len != 0)
+                try self.resolver.resolveExplicitGenericFunction(self.module_index, module, reference, arguments, input, nested_reach)
+            else blk: {
+                const ordinary = if (module_path == null)
+                    try self.resolver.core.matchUnqualifiedFunctionByNameWithReach(self.module_index, name, input, nested_reach)
+                else
+                    try self.resolver.core.matchFunctionByName(self.module_index, reference, input);
+                if (ordinary == .function) break :blk ordinary.function;
+                break :blk self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, nested_reach) catch |err| {
+                    if (self.resolver.nested_constructor_context) |context| {
+                        if (self.resolver.nested_constructor_resolver) |resolve| {
+                            if (try resolve(context, self.module_index, reference, arguments, input, self.resolver.sourceFor(self.module_index, source))) |node|
+                                return node;
+                        }
+                    }
+                    if (arguments.len == 0) {
+                        if (try self.resolveConstrainedStaticCall(reference, input, source)) |node| return node;
+                    }
+                    if (self.resolver.nested_call_context) |context| {
+                        if (self.resolver.nested_call_resolver) |resolve| {
+                            if (try resolve(context, self.module_index, reference, input, self.resolver.sourceFor(self.module_index, source))) |node|
+                                return node;
+                        }
+                    }
+                    if (module_path == null and std.mem.eql(u8, name, "deinit") and
+                        self.parameterized.safety_primitive == .trusted_opaque_drop)
+                        return self.emptyValue(try self.resolver.generics.internType(.{ .builtin = .Void }), source);
+                    return err;
+                };
+            };
+''',
+    "nested generic reach resolution",
+)
+generic = replace_once(
+    generic,
+    '''            if (!try self.resolver.core.completeCallInputFields(self.resolver.graph.functions.items[@intFromEnum(function)].input, input)) return error.IncompleteParameterizedCallInput;
+''',
+    '''            if (!try self.resolver.core.completeCallInputFieldsWithReach(
+                self.resolver.graph.functions.items[@intFromEnum(function)].input,
+                input,
+                nested_reach,
+            )) return error.IncompleteParameterizedCallInput;
+''',
+    "nested generic reach completion",
+)
 generic_path.write_text(generic)
 
 for path in (core_path, dispatch_path, generic_path):
