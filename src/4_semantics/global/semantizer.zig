@@ -273,7 +273,7 @@ pub fn semantizeWithOptions(
     _ = try generics.materializeKnownTypes();
     try control.materializeSugarTypes();
 
-    if (options.diagnostics) |diagnostics|
+    if (options.diagnostics) |diagnostics| {
         if (try abstracts.findConcreteImplementationConflict()) |conflict| {
             var concrete_name = std.array_list.Managed(u8).init(allocator);
             defer concrete_name.deinit();
@@ -288,7 +288,53 @@ pub fn semantizeWithOptions(
                 },
             );
             return error.Reported;
-        };
+        }
+
+        if (try abstracts.findConcreteRequirementFailure()) |failure| {
+            var message = std.array_list.Managed(u8).init(allocator);
+            defer message.deinit();
+            try message.writer().print(
+                "type does not implement abstract '{s}':\n  missing function: {s} ",
+                .{
+                    relocation.graph.text(relocation.graph.declaration(failure.abstract_decl).name),
+                    failure.method_name,
+                },
+            );
+            const expected_input = global_types.fields(&relocation.graph, failure.input) orelse return error.InvalidAbstractRequirementInput;
+            try appendFieldShape(&message, &relocation.graph, expected_input);
+
+            var candidate_count: usize = 0;
+            for (relocation.graph.functions.items) |function| {
+                const declaration = relocation.graph.declaration(function.declaration);
+                if (std.mem.eql(u8, relocation.graph.text(declaration.name), failure.method_name)) candidate_count += 1;
+            }
+            if (candidate_count != 0) {
+                try message.appendSlice("\n  possible overloads:");
+                for (relocation.graph.functions.items) |function| {
+                    const declaration = relocation.graph.declaration(function.declaration);
+                    if (!std.mem.eql(u8, relocation.graph.text(declaration.name), failure.method_name)) continue;
+                    try message.writer().print("\n  - {s} ", .{failure.method_name});
+                    try appendFieldShape(&message, &relocation.graph, function.input);
+                    try message.appendSlice(" -> ");
+                    try appendFieldShape(&message, &relocation.graph, function.output);
+                    const function_location = diagnosticLocation(&relocation.graph, diagnostics, declaration.source);
+                    const position = diagnostics.lineColumn(function_location);
+                    try message.writer().print(
+                        "\n      file: {s}:{d}:{d}",
+                        .{ diagnostics.path(function_location), position.line, position.column },
+                    );
+                }
+            }
+
+            try diagnostics.add(
+                diagnosticLocation(&relocation.graph, diagnostics, failure.source),
+                .semantic,
+                "{s}",
+                .{message.items},
+            );
+            return error.Reported;
+        }
+    }
 
     const total = totalPending(modules);
     const resolved = try allocator.alloc(bool, total);
