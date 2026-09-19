@@ -29,6 +29,15 @@ pub const ImplementationConflict = struct {
     source: primitives.SourceRef,
 };
 
+pub const RequirementFailure = struct {
+    abstract_decl: global_sg.GlobalDeclId,
+    concrete: global_sg.GlobalTypeId,
+    source: primitives.SourceRef,
+    method_name: []const u8,
+    input: global_sg.GlobalTypeId,
+    output: global_sg.GlobalTypeId,
+};
+
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -166,7 +175,7 @@ pub const Resolver = struct {
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
             const instance = try self.requirementInstance(abstract_decl, concrete, located, requirement, @intCast(method_index));
-            const implementation = self.findConcreteMethod(self.modules[located.module_index].text(requirement.name), instance.input) orelse return null;
+            const implementation = self.findConcreteMethod(self.modules[located.module_index].text(requirement.name), instance.input, instance.output) orelse return null;
             try methods.append(self.allocator, implementation);
         }
         const method_start: u32 = @intCast(self.graph.function_refs.items.len);
@@ -197,28 +206,39 @@ pub const Resolver = struct {
         };
     }
 
-    fn findConcreteMethod(self: *Resolver, name: []const u8, expected_input: global_sg.GlobalTypeId) ?global_sg.GlobalFunctionId {
-        const expected_fields = global_types.fields(self.graph, expected_input) orelse return null;
+    fn findConcreteMethod(
+        self: *Resolver,
+        name: []const u8,
+        expected_input: global_sg.GlobalTypeId,
+        expected_output: global_sg.GlobalTypeId,
+    ) ?global_sg.GlobalFunctionId {
+        const expected_inputs = global_types.fields(self.graph, expected_input) orelse return null;
+        const expected_outputs = global_types.fields(self.graph, expected_output) orelse return null;
         var found: ?global_sg.GlobalFunctionId = null;
         for (self.graph.functions.items, 0..) |function, raw| {
             const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
-            if (!std.mem.eql(u8, self.graph.text(declaration.name), name) or function.input.len != expected_fields.len) continue;
-            var compatible = true;
-            for (0..expected_fields.len) |index| {
-                const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(index))];
-                const actual = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))];
-                if (!std.mem.eql(u8, self.graph.text(expected.name), self.graph.text(actual.name)) or
-                    !global_types.equal(self.graph, expected.ty, actual.ty))
-                {
-                    compatible = false;
-                    break;
-                }
-            }
-            if (!compatible) continue;
+            if (!std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
+            if (!self.fieldRangesEqual(expected_inputs, function.input) or
+                !self.fieldRangesEqual(expected_outputs, function.output)) continue;
             if (found != null) return null;
             found = @enumFromInt(@as(u32, @intCast(raw)));
         }
         return found;
+    }
+
+    fn fieldRangesEqual(
+        self: *const Resolver,
+        expected: global_sg.FieldRange,
+        actual: global_sg.FieldRange,
+    ) bool {
+        if (expected.len != actual.len) return false;
+        for (0..expected.len) |index| {
+            const lhs = self.graph.fields.items[expected.start + @as(u32, @intCast(index))];
+            const rhs = self.graph.fields.items[actual.start + @as(u32, @intCast(index))];
+            if (!std.mem.eql(u8, self.graph.text(lhs.name), self.graph.text(rhs.name)) or
+                !global_types.equal(self.graph, lhs.ty, rhs.ty)) return false;
+        }
+        return true;
     }
 
     pub fn resolveStaticRequirementCall(
@@ -244,7 +264,7 @@ pub const Resolver = struct {
         for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
             if (!std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), method_name)) continue;
             const instance = try self.requirementInstance(abstract_decl, concrete, located, requirement, @intCast(method_index));
-            const implementation = self.findConcreteMethod(method_name, instance.input) orelse continue;
+            const implementation = self.findConcreteMethod(method_name, instance.input, instance.output) orelse continue;
             const input_fields = global_types.fields(self.graph, instance.input) orelse continue;
             if (self.core.scoreCallInput(input_fields, input) == null) continue;
             if (!try self.core.completeCallInputFields(input_fields, input)) continue;
@@ -505,6 +525,43 @@ pub const Resolver = struct {
             }
         }
         return false;
+    }
+
+    pub fn findConcreteRequirementFailure(self: *Resolver) !?RequirementFailure {
+        for (self.modules, 0..) |*module, module_index| {
+            const storage = &module.semantic.parameterized_storage;
+            for (storage.abstract_implementations.items) |implementation| {
+                const abstract_decl = try self.resolveDeclarationRef(module_index, implementation.abstract_ref, .abstract_type);
+                const concrete = globalizer.globalType(self.offsets[module_index], implementation.ty);
+                if (self.findAbstractDefinition(switch (self.graph.types.items[@intFromEnum(concrete)]) {
+                    .declared => |declaration| declaration,
+                    else => continue,
+                }) != null) continue;
+
+                const located = self.findAbstractDefinition(abstract_decl) orelse continue;
+                const requirement_storage = &self.modules[located.module_index].semantic.parameterized_storage;
+                for (requirement_storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
+                    const instance = try self.requirementInstance(
+                        abstract_decl,
+                        concrete,
+                        located,
+                        requirement,
+                        @intCast(method_index),
+                    );
+                    const method_name = self.modules[located.module_index].text(requirement.name);
+                    if (self.findConcreteMethod(method_name, instance.input, instance.output) != null) continue;
+                    return .{
+                        .abstract_decl = abstract_decl,
+                        .concrete = concrete,
+                        .source = self.sourceFor(module_index, implementation.source),
+                        .method_name = method_name,
+                        .input = instance.input,
+                        .output = instance.output,
+                    };
+                }
+            }
+        }
+        return null;
     }
 
     pub fn findConcreteImplementationConflict(self: *Resolver) !?ImplementationConflict {
