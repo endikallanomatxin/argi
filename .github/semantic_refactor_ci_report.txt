@@ -1,17 +1,14 @@
-head=8001b5f6126d08dc834b6ececbae39f419948a85
-run_id=35461447176
+head=67dda2a047dda7f3ac96ab38a117d8a5a5afe913
+run_id=35461508490
 
 install
 +- install argi
    +- compile exe argi Debug native 1 errors
-src/4_semantics/module/parameterized/lowerer.zig:219:23: error: local constant shadows declaration of 'parameter'
-                const parameter = &self.graph.semantic.parameterized_storage.comptime_parameters.items[
-                      ^~~~~~~~~
-src/4_semantics/module/parameterized/lowerer.zig:947:5: note: declared here
-    fn parameter(self: *Context, name: []const u8) ?ParameterBinding {
-    ^~
+src/4_semantics/module/parameterized/lowerer.zig:224:30: error: invalid left-hand side to assignment
+                    .type => if (!isTypeBuiltin(self.tree, self.source, value_type_node))
+                             ^~
 error: 1 compilation errors
-failed command: /home/runner/work/_temp/b67df126-7abd-46e1-b55a-b9af1093b205/zig-x86_64-linux-0.16.0/zig build-exe -lLLVM-21 -ODebug -L /usr/lib/llvm-21/lib --dep llvm_c -Mroot=/home/runner/work/argi/argi/src/main.zig -ODebug -Mllvm_c=.zig-cache/o/597cb26544b8c21124b658c2f4d28a4f/llvm-c.zig -lc --cache-dir .zig-cache --global-cache-dir .zig-cache --name argi --zig-lib-dir /home/runner/work/_temp/b67df126-7abd-46e1-b55a-b9af1093b205/zig-x86_64-linux-0.16.0/lib/ --listen=-
+failed command: /home/runner/work/_temp/7fbd670d-4261-42f0-afff-9b165aca0e87/zig-x86_64-linux-0.16.0/zig build-exe -lLLVM-21 -ODebug -L /usr/lib/llvm-21/lib --dep llvm_c -Mroot=/home/runner/work/argi/argi/src/main.zig -ODebug -Mllvm_c=.zig-cache/o/97133e26f48b2218dcdab836b8719dd9/llvm-c.zig -lc --cache-dir .zig-cache --global-cache-dir .zig-cache --name argi --zig-lib-dir /home/runner/work/_temp/7fbd670d-4261-42f0-afff-9b165aca0e87/zig-x86_64-linux-0.16.0/lib/ --listen=-
 
 Build Summary: 3/6 steps succeeded (1 failed)
 install transitive failure
@@ -19,4 +16,4 @@ install transitive failure
    +- compile exe argi Debug native 1 errors
 
 error: the following build command failed with exit code 1:
-.zig-cache/o/303346524407a4ac7b552882c878d852/build /home/runner/work/_temp/b67df126-7abd-46e1-b55a-b9af1093b205/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/b67df126-7abd-46e1-b55a-b9af1093b205/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0xc1a14081 -Z9e3df17a2ba767dd
+.zig-cache/o/2729ebdfef2e5dcab5d439c66956e2d1/build /home/runner/work/_temp/7fbd670d-4261-42f0-afff-9b165aca0e87/zig-x86_64-linux-0.16.0/zig /home/runner/work/_temp/7fbd670d-4261-42f0-afff-9b165aca0e87/zig-x86_64-linux-0.16.0/lib /home/runner/work/argi/argi .zig-cache .zig-cache --seed 0xc96c901e -Z35d08a213ff3b481
