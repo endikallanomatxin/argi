@@ -2,40 +2,36 @@ python3 - <<'PY'
 from pathlib import Path
 p = Path("src/0_commands/frontend_pipeline.zig")
 s = p.read_text()
-repls = {
-'        _ = try self.parseFiles(files);':
-'''        _ = self.parseFiles(files) catch |err| {
-            std.debug.print("EARLY_STAGE parse: {s}\\n", .{@errorName(err)});
-            return err;
-        };''',
-'        try module_test_validate.validate(':
-'''        module_test_validate.validate(''',
-'            self.options.semantizer.selected_test_name,\n        );':
-'''            self.options.semantizer.selected_test_name,
-        ) catch |err| {
-            std.debug.print("EARLY_STAGE test-validate: {s}\\n", .{@errorName(err)});
-            return err;
-        };''',
-'        try self.validateFunctionSignatures();':
-'''        self.validateFunctionSignatures() catch |err| {
-            std.debug.print("EARLY_STAGE signature-validate: {s}\\n", .{@errorName(err)});
-            return err;
-        };''',
-'        try self.buildGlobalGraph();':
-'''        self.buildGlobalGraph() catch |err| {
-            std.debug.print("EARLY_STAGE global-graph: {s}\\n", .{@errorName(err)});
-            return err;
-        };''',
-'        try self.analyzeGlobalSafety();':
-'''        self.analyzeGlobalSafety() catch |err| {
-            std.debug.print("EARLY_STAGE safety: {s}\\n", .{@errorName(err)});
-            return err;
-        };''',
-}
-for old,new in repls.items():
-    if old not in s:
-        raise SystemExit(f"missing anchor: {old}")
-    s=s.replace(old,new,1)
+s=s.replace(
+'        _ = try self.parseFiles(files);',
+'''        std.debug.print("TRACE before parse\\n", .{});
+        _ = try self.parseFiles(files);
+        std.debug.print("TRACE after parse\\n", .{});''',1)
+s=s.replace(
+'        try module_test_validate.validate(',
+'''        std.debug.print("TRACE before test-validate\\n", .{});
+        try module_test_validate.validate(''',1)
+needle='''            self.options.semantizer.selected_test_name,
+        );
+        try self.validateFunctionSignatures();'''
+repl='''            self.options.semantizer.selected_test_name,
+        );
+        std.debug.print("TRACE after test-validate\\n", .{});
+        std.debug.print("TRACE before signature-validate\\n", .{});
+        try self.validateFunctionSignatures();
+        std.debug.print("TRACE after signature-validate\\n", .{});'''
+if needle not in s: raise SystemExit("missing validate/signature anchor")
+s=s.replace(needle,repl,1)
+s=s.replace(
+'        try self.buildGlobalGraph();',
+'''        std.debug.print("TRACE before global-graph\\n", .{});
+        try self.buildGlobalGraph();
+        std.debug.print("TRACE after global-graph\\n", .{});''',1)
+s=s.replace(
+'        try self.analyzeGlobalSafety();',
+'''        std.debug.print("TRACE before safety\\n", .{});
+        try self.analyzeGlobalSafety();
+        std.debug.print("TRACE after safety\\n", .{});''',1)
 p.write_text(s)
 PY
 zig build test-programs -Dtest-filter=feature_tests/polymorphism/06_generic_structs_multi
