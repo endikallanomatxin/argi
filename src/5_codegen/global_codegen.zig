@@ -630,14 +630,16 @@ pub const CodeGenerator = struct {
             }
             return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, temp, "union.literal.value"), .type_ref = type_ref, .ty = ty };
         }
+        if (literal.fields.len > range.len) return CodegenError.InvalidType;
         var aggregate = c.LLVMConstNull(type_ref);
-        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |value_field| {
-            const name = self.graph.text(value_field.name);
-            const hit = types.findField(self.graph, ty, name) orelse return CodegenError.InvalidType;
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |value_field, position| {
             const value = (try self.visitNode(value_field.value)) orelse return CodegenError.ValueNotFound;
-            aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value.value_ref, hit.index, "struct.field");
+            // Ordinary struct storage is positional. Source labels are useful
+            // for semantic matching, but once a literal has a concrete storage
+            // type its LLVM layout follows the field order. C unions remain
+            // name-selected above because only one member is active.
+            aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value.value_ref, @intCast(position), "struct.field");
         }
-        _ = range;
         return .{ .value_ref = aggregate, .type_ref = type_ref, .ty = ty };
     }
 
