@@ -1979,13 +1979,35 @@ pub const Resolver = struct {
             if ((variant.variant.payload_type == null) != (payload == null)) return error.ParameterizedChoicePayloadMismatch;
             if (payload) |node| {
                 const actual = self.resolver.graph.nodes.items[@intFromEnum(node)].ty orelse return error.UntypedParameterizedChoicePayload;
-                if (!global_types.equal(self.resolver.graph, actual, variant.variant.payload_type.?)) return error.ParameterizedChoicePayloadMismatch;
+                if (!global_types.equal(self.resolver.graph, actual, variant.variant.payload_type.?) and
+                    !self.matchesPendingNullable(actual, variant.variant.payload_type.?)) return error.ParameterizedChoicePayloadMismatch;
             }
             return .{
                 .source = self.resolver.sourceFor(self.module_index, value.source),
                 .ty = expected,
                 .content = .{ .choice_literal = .{ .choice_type = expected, .variant = variant.id, .payload = payload } },
             };
+        }
+
+        fn matchesPendingNullable(self: *InstanceContext, actual: global_sg.GlobalTypeId, expected: global_sg.GlobalTypeId) bool {
+            // A nested generic call can return a materialized ?T while this
+            // instance has just interned the corresponding nullable sugar.
+            // The fixed-point pass materializes `expected` after instantiation.
+            const child = switch (self.resolver.graph.types.items[@intFromEnum(expected)]) {
+                .nullable => |value| value,
+                else => return false,
+            };
+            const variants = global_types.variants(self.resolver.graph, actual) orelse return false;
+            if (variants.len != 2) return false;
+            const none = global_types.findVariant(self.resolver.graph, actual, "none") orelse return false;
+            if (none.variant.payload_type != null) return false;
+            const some = global_types.findVariant(self.resolver.graph, actual, "some") orelse return false;
+            const payload = some.variant.payload_type orelse return false;
+            const fields = global_types.fields(self.resolver.graph, payload) orelse return false;
+            if (fields.len != 1) return false;
+            const field = self.resolver.graph.fields.items[fields.start];
+            return std.mem.eql(u8, self.resolver.graph.text(field.name), "value") and
+                global_types.equal(self.resolver.graph, field.ty, child);
         }
 
         fn resolveMatch(self: *InstanceContext, value: ir.PendingExpression, expression: global_sg.GlobalNodeId) !global_sg.Node {

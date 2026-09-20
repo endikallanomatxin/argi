@@ -27,18 +27,26 @@ pub const Resolver = struct {
     abstracts: ?*abstract_mod.Resolver = null,
     stats: Stats = .{},
 
-    pub fn materializeSugarTypes(self: *Resolver) !void {
+    pub fn materializeSugarTypes(self: *Resolver) !bool {
         // Work over the original length: materializing nullable payload structs
         // appends helper types but those helpers are already final.
         const original_len = self.graph.types.items.len;
+        var changed = false;
         for (0..original_len) |raw| {
             const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(raw)));
             switch (self.graph.types.items[raw]) {
-                .nullable => |child| try self.materializeNullable(id, child),
-                .inferred_errable => |child| try self.materializeInferredErrable(id, child),
+                .nullable => |child| {
+                    try self.materializeNullable(id, child);
+                    changed = true;
+                },
+                .inferred_errable => |child| {
+                    try self.materializeInferredErrable(id, child);
+                    changed = true;
+                },
                 else => {},
             }
         }
+        return changed;
     }
 
     pub fn tryResolve(
@@ -821,7 +829,8 @@ test "global control resolver materializes nullable into an explicit choice shap
     try graph.types.append(allocator, .{ .builtin = .Int32 });
     try graph.types.append(allocator, .{ .nullable = @enumFromInt(0) });
     var resolver = Resolver{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    try resolver.materializeSugarTypes();
+    try std.testing.expect(try resolver.materializeSugarTypes());
+    try std.testing.expect(!try resolver.materializeSugarTypes());
     const variants = types.variants(&graph, @enumFromInt(1)).?;
     try std.testing.expectEqual(@as(u32, 2), variants.len);
     try std.testing.expectEqualStrings("some", graph.text(graph.variants.items[variants.start + 1].name));
@@ -842,7 +851,7 @@ test "inferred errable keeps an open reason choice and concrete trace field" {
         .type_id = @enumFromInt(1),
     });
     var resolver = Resolver{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    try resolver.materializeSugarTypes();
+    _ = try resolver.materializeSugarTypes();
     const error_variant = types.findVariant(&graph, @enumFromInt(2), "error").?;
     const payload_ty = error_variant.variant.payload_type.?;
     const reason = types.findField(&graph, payload_ty, "reason").?;
