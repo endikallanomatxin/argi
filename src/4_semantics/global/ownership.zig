@@ -694,11 +694,18 @@ pub const Resolver = struct {
         return switch (self.graph.types.items[@intFromEnum(ty)]) {
             .builtin, .pointer, .virtual => true,
             .array => |array| self.triviallyCopyable(array.element),
-            .structural, .declared => blk: {
+            .structural => blk: {
                 const fields = global_types.fields(self.graph, ty) orelse break :blk false;
                 for (self.graph.fields.items[fields.start..][0..fields.len]) |field|
                     if (!self.triviallyCopyable(field.ty)) break :blk false;
                 break :blk true;
+            },
+            .declared => blk: {
+                if (global_types.fields(self.graph, ty)) |fields|
+                    break :blk self.fieldsTriviallyCopyable(fields);
+                if (global_types.variants(self.graph, ty)) |variants|
+                    break :blk self.variantsTriviallyCopyable(variants);
+                break :blk false;
             },
             .generic => blk: {
                 const instance = global_types.genericInstance(self.graph, ty) orelse break :blk false;
