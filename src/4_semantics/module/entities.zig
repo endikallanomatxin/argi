@@ -213,6 +213,7 @@ pub const PendingOperation = union(enum) {
         node: ModuleNodeId,
         value: ModuleNodeId,
         mutability: primitives.PointerMutability,
+        collapse_existing_pointer: bool = false,
     },
     resolve_choice_literal: struct {
         node: ModuleNodeId,
