@@ -28,6 +28,11 @@ const BindingName = struct {
     id: ir.ParameterizedBindingId,
 };
 
+const AbstractParameterBinding = struct {
+    node: syn.NodeIndex,
+    id: ir.ComptimeParameterId,
+};
+
 pub fn lower(
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
@@ -48,10 +53,12 @@ pub fn lowerWithAbstractCatalog(
         .files = files,
         .writer = writer_mod.Writer.init(allocator, graph),
         .parameters = std.array_list.Managed(ParameterBinding).init(allocator),
+        .abstract_parameters = std.array_list.Managed(AbstractParameterBinding).init(allocator),
         .bindings = std.array_list.Managed(BindingName).init(allocator),
         .abstract_names = abstract_names,
     };
     defer ctx.parameters.deinit();
+    defer ctx.abstract_parameters.deinit();
     defer ctx.bindings.deinit();
     return ctx.lowerDeclarations();
 }
@@ -62,6 +69,7 @@ pub const Context = struct {
     files: []const graph_mod.FileInput,
     writer: writer_mod.Writer,
     parameters: std.array_list.Managed(ParameterBinding),
+    abstract_parameters: std.array_list.Managed(AbstractParameterBinding),
     bindings: std.array_list.Managed(BindingName),
     abstract_names: []const []const u8 = &.{},
     file_index: u32 = 0,
@@ -83,6 +91,7 @@ pub const Context = struct {
                     const payload = self.genericTypePayload(declaration_node) orelse continue;
                     if (!hasGenericParameters(payload.params, payload.params_struct)) continue;
                     self.parameters.clearRetainingCapacity();
+                    self.abstract_parameters.clearRetainingCapacity();
                     const params = try self.lowerParameters(payload.params, payload.params_struct);
                     const body = try self.lowerType(payload.value, false);
                     try self.graph.semantic.parameterized_storage.parameterized_types.append(self.allocator, .{
@@ -95,6 +104,7 @@ pub const Context = struct {
                 .function => {
                     const function = self.tree.functionDeclaration(declaration_node) orelse continue;
                     self.parameters.clearRetainingCapacity();
+                    self.abstract_parameters.clearRetainingCapacity();
                     self.bindings.clearRetainingCapacity();
                     const explicit = hasGenericParameters(function.generic_params, function.generic_params_struct);
                     const parameter_start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
@@ -138,6 +148,7 @@ pub const Context = struct {
                 .abstract_type => {
                     const abstract = self.tree.abstractDeclaration(declaration_node) orelse continue;
                     self.parameters.clearRetainingCapacity();
+                    self.abstract_parameters.clearRetainingCapacity();
                     const params = try self.lowerParameters(abstract.generic_params, abstract.generic_params_struct);
                     const req_start: u32 = @intCast(self.graph.semantic.parameterized_storage.abstract_requirements.items.len);
                     for (abstract.requires_functions) |requirement_node| {
@@ -314,30 +325,9 @@ pub const Context = struct {
         switch (syntax_type) {
             .name => |name| {
                 const text = self.tree.tokenTextFromSource(self.source, name.name_token);
-                const local_declaration = if (name.qualifier_token == null) self.localAbstractType(text) else null;
-                if (local_declaration == null and !self.knownAbstract(text)) return;
                 if (self.parameter(text) != null) return;
-                const abstract_ref: ir.DeclarationRef = if (local_declaration) |declaration|
-                    .{ .module = declaration }
-                else
-                    .{ .external = try self.writer.addExternalRef(.{
-                        .kind = .abstract,
-                        .module_path = if (name.qualifier_token) |qualifier| try self.writer.addString(self.tree.tokenTextFromSource(self.source, qualifier)) else null,
-                        .name = try self.writer.addString(text),
-                        .source = self.sourceRef(node),
-                    }) };
-                const constraint: parameterized_storage.AbstractConstraintId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.abstract_constraints.items.len)));
-                try self.graph.semantic.parameterized_storage.abstract_constraints.append(self.allocator, .{
-                    .abstract_ref = abstract_ref,
-                    .source = self.sourceRef(node),
-                });
-                const parameter_id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
-                try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
-                    .name = try self.writer.addString(text),
-                    .kind = .type,
-                    .constraint = constraint,
-                });
-                try self.parameters.append(.{ .name = text, .id = parameter_id, .kind = .type });
+                if (!self.syntaxNamesAbstract(name)) return;
+                _ = try self.registerAbstractParameter(node, text);
             },
             .pointer => |pointer| try self.collectLocalAbstractParameters(pointer.child),
             .nullable, .inferred_errable => |child| try self.collectLocalAbstractParameters(child),
@@ -352,13 +342,64 @@ pub const Context = struct {
             },
             .generic => |generic| {
                 if (type_lowerer.isRuntimeVirtualType(self.tree, self.source, generic)) return;
+
+                // Associated arguments can themselves contain abstract types.
+                // Register those first so lowerAbstractConstraint can refer to
+                // their hidden parameters while lowering the outer contract.
                 const arguments = self.tree.structTypeLiteral(generic.arguments) orelse return;
                 for (arguments.fields) |field_node| {
                     const field = self.tree.structTypeField(field_node) orelse continue;
                     if (field.type_node) |ty| try self.collectLocalAbstractParameters(ty);
                 }
+
+                const base = self.tree.syntaxType(generic.base) orelse return;
+                if (base != .name or self.parameter(self.tree.tokenTextFromSource(self.source, base.name.name_token)) != null) return;
+                if (!self.syntaxNamesAbstract(base.name)) return;
+                _ = try self.registerAbstractParameter(
+                    node,
+                    self.tree.tokenTextFromSource(self.source, base.name.name_token),
+                );
             },
         }
+    }
+
+    fn syntaxNamesAbstract(self: *const Context, name: syn.TypeName) bool {
+        const text = self.tree.tokenTextFromSource(self.source, name.name_token);
+        if (name.qualifier_token == null and self.localAbstractType(text) != null) return true;
+        return self.knownAbstract(text);
+    }
+
+    fn registerAbstractParameter(self: *Context, node: syn.NodeIndex, abstract_name: []const u8) !ir.ComptimeParameterId {
+        if (self.abstractParameter(node)) |existing| return existing;
+
+        const constraint = try self.lowerAbstractConstraint(node);
+        const parameter_id: ir.ComptimeParameterId =
+            @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
+        const synthetic_name = try std.fmt.allocPrint(
+            self.allocator,
+            "__abstract_{s}_{d}",
+            .{ abstract_name, @intFromEnum(parameter_id) },
+        );
+        defer self.allocator.free(synthetic_name);
+
+        try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
+            .name = try self.writer.addString(synthetic_name),
+            .kind = .type,
+            .constraint = constraint,
+        });
+        try self.parameters.append(.{
+            .name = try self.writer.addString(synthetic_name) catch unreachable,
+            .id = parameter_id,
+            .kind = .type,
+        });
+        try self.abstract_parameters.append(.{ .node = node, .id = parameter_id });
+        return parameter_id;
+    }
+
+    fn abstractParameter(self: *const Context, node: syn.NodeIndex) ?ir.ComptimeParameterId {
+        for (self.abstract_parameters.items) |binding|
+            if (binding.node == node) return binding.id;
+        return null;
     }
 
     fn knownAbstract(self: *const Context, name: []const u8) bool {
@@ -367,6 +408,8 @@ pub const Context = struct {
     }
 
     pub fn lowerType(self: *Context, node: syn.NodeIndex, allow_self: bool) anyerror!ir.ParameterizedTypeId {
+        if (self.abstractParameter(node)) |parameter|
+            return self.addType(.{ .parameter = parameter });
         const syntax_type = self.tree.syntaxType(node) orelse return error.ExpectedParameterizedType;
         return switch (syntax_type) {
             .name => |name| self.lowerNamedType(node, name.name_token, name.qualifier_token, allow_self),
