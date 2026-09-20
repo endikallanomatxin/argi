@@ -103,6 +103,10 @@ const State = struct {
         const function = self.graph.functions.items[@intFromEnum(function_id)];
         try self.includeBindingRange(function.input_bindings);
         try self.includeBindingRange(function.output_bindings);
+        // Entry wrappers and omitted call arguments evaluate input defaults
+        // outside the function body, so their callees are reachable as well.
+        for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field|
+            if (field.default_value) |value| try self.walkNode(value);
         const body = function.body orelse return;
         try self.walkBlock(body);
     }

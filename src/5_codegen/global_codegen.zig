@@ -1968,12 +1968,13 @@ pub const CodeGenerator = struct {
         const entry = c.LLVMAppendBasicBlock(wrapper, "entry");
         c.LLVMPositionBuilderAtEnd(self.builder, entry);
         try self.ensureRuntimeArgGlobals();
+        try self.ensureRuntimeArgFunctions();
         _ = c.LLVMBuildStore(self.builder, c.LLVMGetParam(wrapper, 0), self.runtime_argc_global.?);
         _ = c.LLVMBuildStore(self.builder, c.LLVMGetParam(wrapper, 1), self.runtime_argv_global.?);
         const function = self.graph.functions.items[@intFromEnum(main)];
         const input_type = try self.fieldsLLVMType(function.input);
-        const empty = c.LLVMGetUndef(input_type);
-        var args = [_]llvm.c.LLVMValueRef{empty};
+        const input = try self.entryInputValue(function.input, input_type);
+        var args = [_]llvm.c.LLVMValueRef{input};
         const result = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 1, "argi.main");
         const status = c.LLVMBuildExtractValue(self.builder, result, 0, "status");
         _ = c.LLVMBuildRet(self.builder, status);
@@ -1986,9 +1987,11 @@ pub const CodeGenerator = struct {
         const wrapper = c.LLVMAddFunction(self.module, "main", fn_type);
         const entry = c.LLVMAppendBasicBlock(wrapper, "entry");
         c.LLVMPositionBuilderAtEnd(self.builder, entry);
+        try self.ensureRuntimeArgGlobals();
+        try self.ensureRuntimeArgFunctions();
         const function = self.graph.functions.items[@intFromEnum(test_function)];
         const input_type = try self.fieldsLLVMType(function.input);
-        var args = [_]llvm.c.LLVMValueRef{c.LLVMGetUndef(input_type)};
+        var args = [_]llvm.c.LLVMValueRef{try self.entryInputValue(function.input, input_type)};
         const output = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 1, "test");
         if (function.output.len != 1) return CodegenError.InvalidType;
         const result_ty = types.effectiveFieldType(self.graph.fields.items[function.output.start]);
@@ -2016,6 +2019,16 @@ pub const CodeGenerator = struct {
         _ = c.LLVMBuildRet(self.builder, exit_code);
     }
 
+    fn entryInputValue(self: *CodeGenerator, fields: graph_mod.FieldRange, input_type: llvm.c.LLVMTypeRef) !llvm.c.LLVMValueRef {
+        var input = c.LLVMGetUndef(input_type);
+        for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
+            const default = field.default_value orelse return CodegenError.InvalidType;
+            const value = (try self.visitNode(default)) orelse return CodegenError.ValueNotFound;
+            input = c.LLVMBuildInsertValue(self.builder, input, value.value_ref, @intCast(index), "entry.default");
+        }
+        return input;
+    }
+
     fn ensureRuntimeArgGlobals(self: *CodeGenerator) !void {
         if (self.runtime_argc_global == null) {
             self.runtime_argc_global = c.LLVMAddGlobal(self.module, c.LLVMInt32Type(), "argi.runtime.argc");
@@ -2026,6 +2039,30 @@ pub const CodeGenerator = struct {
             self.runtime_argv_global = c.LLVMAddGlobal(self.module, argv_type, "argi.runtime.argv");
             c.LLVMSetInitializer(self.runtime_argv_global.?, c.LLVMConstNull(argv_type));
         }
+    }
+
+    fn ensureRuntimeArgFunctions(self: *CodeGenerator) !void {
+        const insertion_block = c.LLVMGetInsertBlock(self.builder) orelse return CodegenError.InvalidType;
+        const native_ty = try self.nativeUIntType();
+        const fn_type = c.LLVMFunctionType(native_ty, null, 0, 0);
+        const argc = c.LLVMGetNamedFunction(self.module, "argi_runtime_argc") orelse
+            c.LLVMAddFunction(self.module, "argi_runtime_argc", fn_type);
+        if (c.LLVMGetFirstBasicBlock(argc) == null) {
+            const entry = c.LLVMAppendBasicBlock(argc, "entry");
+            c.LLVMPositionBuilderAtEnd(self.builder, entry);
+            const count = c.LLVMBuildLoad2(self.builder, c.LLVMInt32Type(), self.runtime_argc_global.?, "runtime.argc");
+            _ = c.LLVMBuildRet(self.builder, c.LLVMBuildZExt(self.builder, count, native_ty, "runtime.argc.native"));
+        }
+        const argv = c.LLVMGetNamedFunction(self.module, "argi_runtime_argv") orelse
+            c.LLVMAddFunction(self.module, "argi_runtime_argv", fn_type);
+        if (c.LLVMGetFirstBasicBlock(argv) == null) {
+            const entry = c.LLVMAppendBasicBlock(argv, "entry");
+            c.LLVMPositionBuilderAtEnd(self.builder, entry);
+            const argv_type = c.LLVMPointerType(c.LLVMPointerType(c.LLVMInt8Type(), 0), 0);
+            const address = c.LLVMBuildLoad2(self.builder, argv_type, self.runtime_argv_global.?, "runtime.argv");
+            _ = c.LLVMBuildRet(self.builder, c.LLVMBuildPtrToInt(self.builder, address, native_ty, "runtime.argv.address"));
+        }
+        c.LLVMPositionBuilderAtEnd(self.builder, insertion_block);
     }
 
     pub fn collectStats(self: *const CodeGenerator) !Stats {
