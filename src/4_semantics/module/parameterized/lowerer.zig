@@ -326,7 +326,7 @@ pub const Context = struct {
             .name => |name| {
                 const text = self.tree.tokenTextFromSource(self.source, name.name_token);
                 if (self.parameter(text) != null) return;
-                if (!self.syntaxNamesAbstract(name)) return;
+                if (!self.syntaxNameIsAbstract(text, name.qualifier_token)) return;
                 _ = try self.registerAbstractParameter(node, text);
             },
             .pointer => |pointer| try self.collectLocalAbstractParameters(pointer.child),
@@ -354,18 +354,19 @@ pub const Context = struct {
 
                 const base = self.tree.syntaxType(generic.base) orelse return;
                 if (base != .name or self.parameter(self.tree.tokenTextFromSource(self.source, base.name.name_token)) != null) return;
-                if (!self.syntaxNamesAbstract(base.name)) return;
-                _ = try self.registerAbstractParameter(
-                    node,
-                    self.tree.tokenTextFromSource(self.source, base.name.name_token),
-                );
+                const base_text = self.tree.tokenTextFromSource(self.source, base.name.name_token);
+                if (!self.syntaxNameIsAbstract(base_text, base.name.qualifier_token)) return;
+                _ = try self.registerAbstractParameter(node, base_text);
             },
         }
     }
 
-    fn syntaxNamesAbstract(self: *const Context, name: syn.TypeName) bool {
-        const text = self.tree.tokenTextFromSource(self.source, name.name_token);
-        if (name.qualifier_token == null and self.localAbstractType(text) != null) return true;
+    fn syntaxNameIsAbstract(
+        self: *const Context,
+        text: []const u8,
+        qualifier: ?syn.TokenIndex,
+    ) bool {
+        if (qualifier == null and self.localAbstractType(text) != null) return true;
         return self.knownAbstract(text);
     }
 
@@ -386,11 +387,6 @@ pub const Context = struct {
             .name = try self.writer.addString(synthetic_name),
             .kind = .type,
             .constraint = constraint,
-        });
-        try self.parameters.append(.{
-            .name = try self.writer.addString(synthetic_name) catch unreachable,
-            .id = parameter_id,
-            .kind = .type,
         });
         try self.abstract_parameters.append(.{ .node = node, .id = parameter_id });
         return parameter_id;
