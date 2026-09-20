@@ -809,7 +809,7 @@ pub const Resolver = struct {
                         literal.elements.start + @as(u32, @intCast(raw_index))
                     ];
                     self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] =
-                        self.graph.node(selected).*;
+                        self.graph.node(selected);
                     self.stats.indexes += 1;
                     return .resolved;
                 },
