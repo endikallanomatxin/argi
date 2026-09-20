@@ -1877,6 +1877,7 @@ pub const Resolver = struct {
                 .dereference => self.resolveDereference(operands.items, value.source),
                 .pointer_store => self.resolvePointerStore(operands.items, value.source),
                 .move_value => self.resolveMove(operands.items, value.source),
+                .error_propagation => self.resolveErrorPropagation(operands.items, value.source),
                 .pipe => if (operands.items.len != 0) self.resolver.graph.nodes.items[@intFromEnum(operands.items[operands.items.len - 1])] else error.InvalidParameterizedPipe,
                 .struct_value,
                 .list_value,
@@ -1884,7 +1885,6 @@ pub const Resolver = struct {
                 .nullable_test,
                 .unwrap_or,
                 .unwrap_or_do,
-                .error_propagation,
                 .error_context,
                 .for_each,
                 .match_case,
@@ -1894,6 +1894,51 @@ pub const Resolver = struct {
                 .explicit_cast,
                 .other,
                 => error.ParameterizedExpressionRequiresGlobalResolver,
+            };
+        }
+
+        fn resolveErrorPropagation(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {
+            if (operands.len != 1) return error.InvalidParameterizedErrorPropagation;
+            const errable = operands[0];
+            const errable_ty = self.resolver.graph.node(errable).ty orelse return error.UntypedParameterizedErrorPropagation;
+            const ok = global_types.findVariant(self.resolver.graph, errable_ty, "ok") orelse return error.InvalidParameterizedErrorPropagation;
+            const err = global_types.findVariant(self.resolver.graph, errable_ty, "error") orelse return error.InvalidParameterizedErrorPropagation;
+            const void_ty = try self.resolver.generics.internType(.{ .builtin = .Void });
+            const ok_payload = ok.variant.payload_type orelse void_ty;
+            const error_payload = err.variant.payload_type orelse void_ty;
+            const function_id = self.function orelse return error.ParameterizedErrorPropagationOutsideFunction;
+            const function = self.resolver.graph.functions.items[@intFromEnum(function_id)];
+            if (function.output.len != 1) return error.InvalidParameterizedErrorPropagation;
+            const propagated_ty = global_types.effectiveFieldType(self.resolver.graph.fields.items[function.output.start]);
+            const propagated_error = global_types.findVariant(self.resolver.graph, propagated_ty, "error") orelse return error.InvalidParameterizedErrorPropagation;
+            const propagated_error_payload = propagated_error.variant.payload_type orelse error_payload;
+            if (!global_types.equal(self.resolver.graph, error_payload, propagated_error_payload)) return error.IncompatibleParameterizedErrorPayload;
+            const ok_fields = global_types.fields(self.resolver.graph, ok_payload);
+            const result_ty = if (ok_fields) |fields|
+                if (fields.len == 1) global_types.effectiveFieldType(self.resolver.graph.fields.items[fields.start]) else ok_payload
+            else
+                ok_payload;
+            const id: global_sg.GlobalErrorPropagationId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.error_propagations.items.len)));
+            const empty = try self.resolver.graph.addString(self.resolver.allocator, "");
+            try self.resolver.graph.error_propagations.append(self.resolver.allocator, .{
+                .errable_value = errable,
+                .cleanup_nodes = .{ .start = @intCast(self.resolver.graph.node_refs.items.len), .len = 0 },
+                .ok_variant = ok.id,
+                .ok_value_field_index = if (ok_fields) |fields| if (fields.len == 1) 0 else null else null,
+                .error_variant = err.id,
+                .propagated_errable_type = propagated_ty,
+                .propagated_error_variant = propagated_error.id,
+                .ok_payload_type = ok_payload,
+                .error_payload_type = error_payload,
+                .propagated_error_payload_type = propagated_error_payload,
+                .diagnostic_line = 0,
+                .diagnostic_column = 0,
+                .diagnostic_source_line = empty,
+            });
+            return .{
+                .source = self.resolver.sourceFor(self.module_index, source),
+                .ty = result_ty,
+                .content = .{ .error_propagation = id },
             };
         }
 
