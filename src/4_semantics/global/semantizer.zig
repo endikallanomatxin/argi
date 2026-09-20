@@ -1616,14 +1616,16 @@ fn diagnoseUnresolvedCall(
                         var candidate_count: usize = 0;
                         for (graph.functions.items) |candidate| {
                             const declaration = graph.declaration(candidate.declaration);
-                            if (std.mem.eql(u8, graph.text(declaration.name), requirement_failure.method_name))
-                                candidate_count += 1;
+                            if (!std.mem.eql(u8, graph.text(declaration.name), requirement_failure.method_name)) continue;
+                            if (!abstracts.requirementCandidateInputMatches(requirement_failure.input, candidate)) continue;
+                            candidate_count += 1;
                         }
                         if (candidate_count != 0) {
                             try message.appendSlice("\npossible overloads:");
                             for (graph.functions.items) |candidate| {
                                 const candidate_declaration = graph.declaration(candidate.declaration);
                                 if (!std.mem.eql(u8, graph.text(candidate_declaration.name), requirement_failure.method_name)) continue;
+                                if (!abstracts.requirementCandidateInputMatches(requirement_failure.input, candidate)) continue;
                                 try message.appendSlice("\n  - ");
                                 try message.appendSlice(requirement_failure.method_name);
                                 try message.append(' ');
