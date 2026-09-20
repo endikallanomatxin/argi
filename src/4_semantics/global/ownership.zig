@@ -194,6 +194,13 @@ pub const Resolver = struct {
         const source = globalizer.globalNode(o, value.value);
         const target = globalizer.globalNode(o, value.node);
         const ty = self.graph.nodes.items[@intFromEnum(source)].ty orelse return false;
+        // Index syntax can resolve to an operator call after lowering has
+        // inserted an implicit copy. The call already produces a fresh value;
+        // copying its result would require a spurious copy of owned outputs.
+        if (self.graph.nodes.items[@intFromEnum(source)].content == .function_call) {
+            self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(source)];
+            return true;
+        }
         if (self.triviallyCopyable(ty)) {
             const original = self.graph.nodes.items[@intFromEnum(source)];
             self.graph.nodes.items[@intFromEnum(target)] = original;
