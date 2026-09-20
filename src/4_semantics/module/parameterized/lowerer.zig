@@ -362,7 +362,7 @@ pub const Context = struct {
     }
 
     fn syntaxNameIsAbstract(
-        self: *const Context,
+        self: *Context,
         text: []const u8,
         qualifier: ?syn.TokenIndex,
     ) bool {

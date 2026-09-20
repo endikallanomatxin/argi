@@ -283,6 +283,7 @@ const Context = struct {
 
     fn lowerParameterizedType(self: *Context, node: syn.NodeIndex) !ir.ParameterizedTypeId {
         var lowerer = self.parameterizedContext();
+        defer lowerer.abstract_parameters.deinit();
         defer lowerer.bindings.deinit();
         return lowerer.lowerType(node, false);
     }
@@ -294,6 +295,7 @@ const Context = struct {
             .files = self.files,
             .writer = self.writer,
             .parameters = self.params,
+            .abstract_parameters = .init(self.allocator),
             .bindings = .init(self.allocator),
             .file_index = self.file_index,
             .tree = self.tree,
