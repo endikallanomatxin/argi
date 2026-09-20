@@ -220,7 +220,7 @@ pub const Resolver = struct {
 
         for (operands, 0..) |operand, offset| {
             const field = storage.fields.items[shape.fields.start + @as(u32, @intCast(offset))];
-            var pattern = field.ty;
+            const pattern = field.ty;
 
             if (offset == 0) {
                 if (!try self.inferInputTypeWithImplicitAddress(
