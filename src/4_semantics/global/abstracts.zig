@@ -226,12 +226,33 @@ pub const Resolver = struct {
         for (self.graph.functions.items, 0..) |function, raw| {
             const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
             if (!std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
-            if (!self.fieldRangesEqual(expected_inputs, function.input) or
+            if (!self.inputFieldsSatisfyRequirement(expected_inputs, function.input) or
                 !self.fieldRangesEqual(expected_outputs, function.output)) continue;
             if (found != null) return null;
             found = @enumFromInt(@as(u32, @intCast(raw)));
         }
         return found;
+    }
+
+    fn inputFieldsSatisfyRequirement(
+        self: *const Resolver,
+        required: global_sg.FieldRange,
+        implementation: global_sg.FieldRange,
+    ) bool {
+        if (implementation.len < required.len) return false;
+        for (0..required.len) |index| {
+            const expected = self.graph.fields.items[required.start + @as(u32, @intCast(index))];
+            const actual = self.graph.fields.items[implementation.start + @as(u32, @intCast(index))];
+            if (!global_types.equal(self.graph, expected.ty, actual.ty)) return false;
+        }
+        // Implementations may expose additional optional/reached parameters:
+        // callers satisfying the abstract contract must still be able to invoke
+        // the function using only the requirement's inputs.
+        for (required.len..implementation.len) |index| {
+            const extra = self.graph.fields.items[implementation.start + @as(u32, @intCast(index))];
+            if (extra.default_value == null) return false;
+        }
+        return true;
     }
 
     fn fieldRangesEqual(
