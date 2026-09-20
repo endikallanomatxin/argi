@@ -29,6 +29,27 @@ pub const Abstract = struct {
         if (expected_pointer.mutability == .read_write and actual_pointer.mutability != .read_write) return false;
         return self.abstracts.concreteImplements(actual_pointer.child, expected_pointer.child);
     }
+
+    fn compatibleTypes(self: @This(), actual: global_sg.GlobalTypeId, expected: global_sg.GlobalTypeId) bool {
+        if (self.compatible(actual, expected)) return true;
+        return self.abstracts.concreteImplements(actual, expected);
+    }
+
+    fn compatibilityCallback(
+        context: *const anyopaque,
+        actual: global_sg.GlobalTypeId,
+        expected: global_sg.GlobalTypeId,
+    ) bool {
+        const self: *const Abstract = @ptrCast(@alignCast(context));
+        return self.compatibleTypes(actual, expected);
+    }
+
+    pub fn additionalTypeCompatibility(self: *const @This()) core_mod.Resolver.AdditionalTypeCompatibility {
+        return .{
+            .context = self,
+            .compatible = compatibilityCallback,
+        };
+    }
 };
 
 /// Retry an ordinary non-generic call only for compatibility that Core does
@@ -48,14 +69,26 @@ pub fn tryResolveOrdinaryCall(
     const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
     if (reference.generic_arguments != null) return .not_applicable;
     const input = globalizer.globalNode(o, value.input);
-    const function = switch (try matchFunctionByName(compatibility, module_index, module, reference, input)) {
+    const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
+    const function = switch (try matchFunctionByName(
+        compatibility,
+        module_index,
+        module,
+        reference,
+        input,
+        reach,
+    )) {
         .no_match => return .not_applicable,
         .deferred => return .deferred,
         .ambiguous => return .invalid,
         .function => |function| function,
     };
-    const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
-    if (!try compatibility.core.completeCallInputFieldsWithReach(compatibility.core.graph.functions.items[@intFromEnum(function)].input, input, reach)) return .deferred;
+    if (!try compatibility.core.completeCallInputFieldsWithReachCompatibility(
+        compatibility.core.graph.functions.items[@intFromEnum(function)].input,
+        input,
+        reach,
+        compatibility.additionalTypeCompatibility(),
+    )) return .deferred;
     const output = try compatibility.core.functionOutputType(function);
     const target = globalizer.globalNode(o, value.node);
     compatibility.core.graph.nodes.items[@intFromEnum(target)] = .{
@@ -73,6 +106,7 @@ fn matchFunctionByName(
     module: *const module_sg.ModuleSemanticGraph,
     reference: module_entities.ExternalRef,
     input_node: global_sg.GlobalNodeId,
+    reach: reach_context.Context,
 ) !core_mod.Resolver.FunctionMatch {
     const module_filter = if (reference.module_path) |path|
         try compatibility.core.findModuleForQualifier(current_module, module.text(path))
@@ -84,16 +118,18 @@ fn matchFunctionByName(
         module.text(reference.name),
         module_filter,
         input_node,
+        reach,
     );
 }
 
-pub fn matchUnqualifiedFunctionByName(
+pub fn matchUnqualifiedFunctionByNameWithReach(
     compatibility: Abstract,
     current_module: usize,
     name: []const u8,
     input_node: global_sg.GlobalNodeId,
+    reach: reach_context.Context,
 ) !core_mod.Resolver.FunctionMatch {
-    return matchFunctionNamed(compatibility, current_module, name, null, input_node);
+    return matchFunctionNamed(compatibility, current_module, name, null, input_node, reach);
 }
 
 fn matchFunctionNamed(
@@ -102,6 +138,7 @@ fn matchFunctionNamed(
     name: []const u8,
     module_filter: ?global_sg.GlobalModuleId,
     input_node: global_sg.GlobalNodeId,
+    reach: reach_context.Context,
 ) !core_mod.Resolver.FunctionMatch {
     var best: ?global_sg.GlobalFunctionId = null;
     var best_score: u32 = 0;
@@ -112,7 +149,12 @@ fn matchFunctionNamed(
         const declaration = compatibility.core.graph.declarations.items[@intFromEnum(function.declaration)];
         if (!std.mem.eql(u8, compatibility.core.graph.text(declaration.name), name)) continue;
         if (!compatibility.core.declarationVisible(current_module, function.declaration, module_filter)) continue;
-        const score = switch (matchInput(compatibility, function.input, input_node)) {
+        const score = switch (try matchInputWithReach(
+            compatibility,
+            function.input,
+            input_node,
+            reach,
+        )) {
             .no_match => continue,
             .deferred => {
                 saw_deferred = true;
@@ -172,6 +214,39 @@ pub fn matchInput(
         } else if (expected.default_value == null) return .no_match;
     }
     return .{ .score = score };
+}
+
+
+pub fn matchInputWithReach(
+    compatibility: Abstract,
+    expected_fields: global_sg.FieldRange,
+    input_node: global_sg.GlobalNodeId,
+    reach: reach_context.Context,
+) !core_mod.Resolver.CallInputMatch {
+    const base = matchInput(compatibility, expected_fields, input_node);
+    if (base != .score) return base;
+    const graph = compatibility.core.graph;
+    const literal = switch (graph.nodes.items[@intFromEnum(input_node)].content) {
+        .struct_value_literal => |value| value,
+        else => return .no_match,
+    };
+    for (0..expected_fields.len) |offset| {
+        const expected = graph.fields.items[expected_fields.start + @as(u32, @intCast(offset))];
+        if (callArgument(graph, literal, offset, expected.name) != null) continue;
+        const fallback = expected.default_value orelse return .no_match;
+        if (graph.nodes.items[@intFromEnum(fallback)].content != .reach_directive) continue;
+        switch (try compatibility.core.probeReachedDefaultWithCompatibility(
+            reach,
+            expected,
+            fallback,
+            compatibility.additionalTypeCompatibility(),
+        )) {
+            .available => {},
+            .deferred => return .deferred,
+            .unavailable => return .no_match,
+        }
+    }
+    return base;
 }
 
 fn contextualLiteralFits(compatibility: Abstract, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {

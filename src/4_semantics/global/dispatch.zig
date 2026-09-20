@@ -72,10 +72,11 @@ pub const Resolver = struct {
         const ordinary = try self.core.matchUnqualifiedFunctionByNameWithReach(module_index, name, input, reach);
         switch (ordinary) {
             .function => |function| {
-                if (!try self.core.completeCallInputFieldsWithReach(
+                if (!try self.core.completeCallInputFieldsWithReachCompatibility(
                     self.core.graph.functions.items[@intFromEnum(function)].input,
                     input,
                     reach,
+                    compatibility.additionalTypeCompatibility(),
                 )) return error.DeferredImplicitFunction;
                 return .{ .function = function, .input = input };
             },
@@ -85,11 +86,12 @@ pub const Resolver = struct {
         }
 
         const compatibility = call_compatibility.Abstract{ .core = self.core, .abstracts = self.abstracts };
-        const abstract_ordinary = try call_compatibility.matchUnqualifiedFunctionByName(
+        const abstract_ordinary = try call_compatibility.matchUnqualifiedFunctionByNameWithReach(
             compatibility,
             module_index,
             name,
             input,
+            reach,
         );
         switch (abstract_ordinary) {
             .function => |function| {
