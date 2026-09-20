@@ -2,19 +2,28 @@ python3 - <<'PY'
 from pathlib import Path
 p = Path("src/4_semantics/global/verify.zig")
 s = p.read_text()
-s = s.replace("try require(", "try requireAt(@src(), ")
-old = '''fn require(ok: bool) !void {
-    if (!ok) return error.InvalidGlobalSemanticGraph;
-}'''
-new = '''fn requireAt(src: std.builtin.SourceLocation, ok: bool) !void {
-    if (!ok) {
-        std.debug.print("GLOBAL_VERIFY_FAIL {s}:{d}\\n", .{ src.file, src.line });
+needle = "    try require(generic_count == graph.generic_instances.items.len);"
+repl = '''    if (generic_count != graph.generic_instances.items.len) {
+        std.debug.print("GENERIC_COUNT types={d} instances={d}\\n", .{ generic_count, graph.generic_instances.items.len });
+        for (graph.types.items, 0..) |ty, raw| switch (ty) {
+            .generic => |generic| {
+                var has_instance = false;
+                for (graph.generic_instances.items) |instance| if (@intFromEnum(instance.type_id) == raw) {
+                    has_instance = true;
+                    break;
+                };
+                if (!has_instance) {
+                    const decl = graph.declaration(generic.base);
+                    std.debug.print("ORPHAN_GENERIC type={d} base={s} args={d}\\n", .{ raw, graph.text(decl.name), generic.arguments.len });
+                }
+            },
+            else => {},
+        };
         return error.InvalidGlobalSemanticGraph;
-    }
-}'''
-if old not in s:
-    raise SystemExit("missing require anchor")
-s = s.replace(old, new, 1)
+    }'''
+if needle not in s:
+    raise SystemExit("missing generic count anchor")
+s=s.replace(needle,repl,1)
 p.write_text(s)
 PY
 zig build test-programs -Dtest-filter=feature_tests/polymorphism/08_abstract
