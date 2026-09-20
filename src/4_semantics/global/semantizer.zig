@@ -1363,6 +1363,52 @@ fn diagnoseUnresolvedCall(
                     return true;
                 }
             } else if (!visibleFunctionNameExists(graph, module_index, null, name)) {
+                // A type constructor with a visible initializer is still a
+                // constructor call when its arguments fail overload matching.
+                // Report the initializer signatures instead of treating the
+                // type name as a missing function.
+                for (graph.declarations.items, 0..) |declaration, raw_decl| {
+                    if (declaration.kind != .type or !std.mem.eql(u8, graph.text(declaration.name), name)) continue;
+                    const type_id = declaration.type_id orelse continue;
+                    var constructor_core = core_mod.Resolver{
+                        .allocator = allocator,
+                        .graph = graph,
+                        .modules = modules,
+                        .offsets = offsets,
+                    };
+                    if (!constructor_core.declarationVisible(module_index, @enumFromInt(@as(u32, @intCast(raw_decl))), null)) continue;
+                    const input_id = globalizer.globalNode(offsets[module_index], call.input);
+                    const input = switch (graph.node(input_id).content) {
+                        .struct_value_literal => |value| value,
+                        else => continue,
+                    };
+                    var message = std.array_list.Managed(u8).init(allocator);
+                    defer message.deinit();
+                    for (graph.functions.items) |function| {
+                        const init_decl = graph.declaration(function.declaration);
+                        if (!std.mem.eql(u8, graph.text(init_decl.name), "init") or function.input.len == 0) continue;
+                        if (!constructor_core.declarationVisible(module_index, function.declaration, null)) continue;
+                        const receiver = graph.fields.items[function.input.start].ty;
+                        const pointer = switch (graph.types.items[@intFromEnum(receiver)]) {
+                            .pointer => |value| value,
+                            else => continue,
+                        };
+                        if (!global_types.equal(graph, pointer.child, type_id)) continue;
+                        if (message.items.len == 0) {
+                            try message.print("failed to initialize type '{s}': no visible 'init' overload accepts arguments ", .{name});
+                            try appendValueShape(&message, graph, input);
+                            try message.appendSlice(". Available overloads:");
+                        }
+                        try message.appendSlice("\n  - init ");
+                        try appendFieldShape(&message, graph, function.input);
+                        try message.appendSlice(" -> ");
+                        try appendFieldShape(&message, graph, function.output);
+                    }
+                    if (message.items.len != 0) {
+                        try diagnostics.add(location, .semantic, "{s}", .{message.items});
+                        return true;
+                    }
+                }
                 try diagnostics.add(location, .semantic, "no function named '{s}' exists", .{name});
                 return true;
             }
