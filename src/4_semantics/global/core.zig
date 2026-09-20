@@ -865,7 +865,7 @@ pub const Resolver = struct {
             self.stats.indexes += 1;
             return .resolved;
         }
-        const operator: callable.OperatorKind = if (value.store_value == null) .get else .set;
+        const operator: callable.OperatorKind = value.operator;
         var operands: [3]global_sg.GlobalNodeId = undefined;
         operands[0] = collection;
         operands[1] = index;
