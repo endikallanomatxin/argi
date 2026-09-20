@@ -40,16 +40,14 @@ pub const Resolver = struct {
     };
 
     /// Resolve a constructor encountered while materializing a generic
-    /// function body. Only non-parameterized declarations are handled here;
-    /// parameterized construction still needs the caller's generic/reach
-    /// context and remains on the normal constructor path. Structural
-    /// construction is never allowed to bypass a visible initializer.
+    /// function body. Structural construction never bypasses a visible init.
     pub fn resolveNestedCall(
         context_ptr: *anyopaque,
         module_index: usize,
         reference: module_entities.ExternalRef,
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
         input: global_sg.GlobalNodeId,
+        reach: reach_context.Context,
         source: primitives.SourceRef,
     ) anyerror!?global_sg.Node {
         const self: *Resolver = @ptrCast(@alignCast(context_ptr));
@@ -70,7 +68,39 @@ pub const Resolver = struct {
         if (generics.isParameterizedTypeDeclaration(declaration_id)) return null;
         const ty = declaration.type_id orelse return null;
 
-        const initializer = self.findInitializer(module_index, ty, input, null);
+        const initializer = self.findInitializer(module_index, ty, input, reach);
+        if (initializer.function) |function_id| {
+            var selected = function_id;
+            if (self.graph.functions.items[@intFromEnum(selected)].flags.is_abstract_dispatch) {
+                var generic_functions = generic_functions_mod.Resolver{
+                    .allocator = self.core.allocator,
+                    .graph = self.graph,
+                    .modules = self.modules,
+                    .offsets = self.offsets,
+                    .core = self.core,
+                    .generics = &generics,
+                    .nested_call_context = self.abstracts,
+                    .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
+                    .nested_constructor_context = self,
+                    .nested_constructor_resolver = Resolver.resolveNestedCall,
+                };
+                selected = (try generic_functions.instantiateInitializer(
+                    self.graph.functions.items[@intFromEnum(selected)].declaration,
+                    ty,
+                    input,
+                    reach,
+                )) orelse return null;
+            }
+            const function = self.graph.functions.items[@intFromEnum(selected)];
+            const user_fields = global_sg.FieldRange{ .start = function.input.start + 1, .len = function.input.len - 1 };
+            if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, reach)) return null;
+            self.core.stats.calls += 1;
+            return .{
+                .source = source,
+                .ty = ty,
+                .content = .{ .type_initializer = .{ .type_decl = declaration_id, .init_fn = selected, .args = input } },
+            };
+        }
         if (initializer.has_visible_initializer) return null;
 
         const fields = types.fields(self.graph, ty) orelse return null;

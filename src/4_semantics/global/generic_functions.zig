@@ -32,7 +32,7 @@ pub const Resolver = struct {
     nested_call_context: ?*abstract_mod.Resolver = null,
     nested_call_resolver: ?*const fn (*abstract_mod.Resolver, usize, module_entities.ExternalRef, global_sg.GlobalNodeId, primitives.SourceRef) anyerror!?global_sg.Node = null,
     nested_constructor_context: ?*anyopaque = null,
-    nested_constructor_resolver: ?*const fn (*anyopaque, usize, module_entities.ExternalRef, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, primitives.SourceRef) anyerror!?global_sg.Node = null,
+    nested_constructor_resolver: ?*const fn (*anyopaque, usize, module_entities.ExternalRef, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, ReachInferenceContext, primitives.SourceRef) anyerror!?global_sg.Node = null,
     ownership_context: ?*anyopaque = null,
     register_defer: ?*const fn (*anyopaque, global_sg.GlobalNodeId, global_sg.GlobalNodeId) anyerror!void = null,
     stats: Stats = .{},
@@ -2158,7 +2158,7 @@ pub const Resolver = struct {
                 break :blk self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, nested_reach) catch |err| {
                     if (self.resolver.nested_constructor_context) |context| {
                         if (self.resolver.nested_constructor_resolver) |resolve| {
-                            if (try resolve(context, self.module_index, reference, arguments, input, self.resolver.sourceFor(self.module_index, source))) |node|
+                            if (try resolve(context, self.module_index, reference, arguments, input, nested_reach, self.resolver.sourceFor(self.module_index, source))) |node|
                                 return node;
                         }
                     }
