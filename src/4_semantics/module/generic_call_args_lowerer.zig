@@ -49,7 +49,17 @@ pub fn lower(
                     count += 1;
                 }
             }
-            graph.semantic.external_refs.items[@intFromEnum(external)].generic_arguments = .{ .start = start, .len = count };
+            const target_ref = &graph.semantic.external_refs.items[@intFromEnum(external)];
+            const target_name = graph.text(target_ref.name);
+            if (std.mem.eql(u8, target_name, "print") or std.mem.eql(u8, target_name, "flush_stdout")) {
+                std.debug.print("[generic-call-lower] {s} positional={d} structured={} assigned={d}\n", .{
+                    target_name,
+                    call.type_arguments.len,
+                    call.type_arguments_struct != null,
+                    count,
+                });
+            }
+            target_ref.generic_arguments = .{ .start = start, .len = count };
             stats.generic_calls += 1;
         }
     }
