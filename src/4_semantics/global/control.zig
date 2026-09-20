@@ -526,8 +526,13 @@ pub const Resolver = struct {
         const iterable_contract_name = protocol.iterable_contract;
         const conversion_name = protocol.conversion;
         const iterable_mutable = protocol.mutable;
+        const existing_reference = if (value.mode == .value) switch (self.graph.types.items[@intFromEnum(iterable_ty)]) {
+            .pointer => |pointer_type| pointer_type,
+            else => null,
+        } else null;
+        const contract_ty = if (existing_reference) |pointer_type| pointer_type.child else iterable_ty;
         const iterable_contract = self.visibleAbstract(module_index, iterable_contract_name) orelse return .deferred;
-        if (!try abstracts.implements(iterable_ty, iterable_contract)) return .invalid;
+        if (!try abstracts.implements(contract_ty, iterable_contract)) return .invalid;
 
         const source = self.graph.nodes.items[@intFromEnum(iterable)].source;
         var iterable_declaration: ?global_sg.GlobalNodeId = null;
@@ -545,7 +550,10 @@ pub const Resolver = struct {
             iterable_place = try self.appendNode(source, iterable_ty, .{ .binding_use = binding });
         }
 
-        const iterable_reference = try self.appendAddress(iterable_place, iterable_ty, iterable_mutable, source);
+        const iterable_reference = if (existing_reference != null)
+            iterable_place
+        else
+            try self.appendAddress(iterable_place, iterable_ty, iterable_mutable, source);
         const conversion = try self.syntheticCall(module_index, conversion_name, iterable_reference, source, core, generic_functions);
         const iterator_value = switch (conversion) {
             .call => |node| node,
