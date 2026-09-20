@@ -1,1 +1,1 @@
-zig build test-programs -Dtest-filter=feature_tests/collections/21_index_operator_reached_default
+zig build test-programs -Dtest-filter=feature_tests/io/02_reached_output_stream
