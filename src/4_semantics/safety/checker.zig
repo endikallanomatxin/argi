@@ -2093,8 +2093,12 @@ pub const SafetyChecker = struct {
         } else try self.evaluate(function, access.value, state);
 
         if (resolved) |storage| {
-            if (choice.known_choice_variant != wanted and !self.variantActive(state, storage, wanted)) {
-                try self.report(source, "choice payload requires its variant to be proven active", .{});
+            if (!self.variantActive(state, storage, wanted)) {
+                if (self.activeVariant(state, storage) != null) {
+                    try self.report(source, "choice payload '..{d}' is not active", .{wanted});
+                } else {
+                    try self.report(source, "choice payload '..{d}' requires its variant to be proven active", .{wanted});
+                }
                 return .{};
             }
         } else if (choice.known_choice_variant != wanted and !self.temporaryVariantActive(state, access.value, wanted)) {
@@ -2395,12 +2399,33 @@ pub const SafetyChecker = struct {
                 _ = state.places.orderedRemove(index);
             } else index += 1;
         }
+        var stored = false;
         for (state.places.items) |*entry| if (entry.storage.eql(storage)) {
             entry.initializedness = initializedness;
             entry.value = value;
-            return;
+            stored = true;
+            break;
         };
-        try state.places.append(.{ .storage = storage, .initializedness = initializedness, .value = value });
+        if (!stored)
+            try state.places.append(.{ .storage = storage, .initializedness = initializedness, .value = value });
+        if (initializedness == .initialized)
+            try self.recordKnownChoiceVariants(state, storage, value);
+    }
+
+    fn recordKnownChoiceVariants(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        storage: facts.Place,
+        value: facts.ValueFacts,
+    ) !void {
+        if (value.known_choice_variant) |variant_index|
+            self.setActiveVariant(state, storage, variant_index);
+        for (value.fields) |field|
+            try self.recordKnownChoiceVariants(
+                state,
+                try self.project(storage, .{ .field = field.index }),
+                field.value.*,
+            );
     }
 
     fn getPlace(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) ?*facts.PlaceFacts {
@@ -3236,9 +3261,14 @@ pub const SafetyChecker = struct {
     }
 
     fn variantActive(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, index: u32) bool {
+        return if (self.activeVariant(state, storage)) |active| active == index else false;
+    }
+
+    fn activeVariant(self: *SafetyChecker, state: *const FunctionState, storage: facts.Place) ?u32 {
         _ = self;
-        for (state.choice_active.items) |entry| if (entry.storage.eql(storage)) return entry.variant_index == index;
-        return false;
+        for (state.choice_active.items) |entry|
+            if (entry.storage.eql(storage)) return entry.variant_index;
+        return null;
     }
 
     fn staticIndex(self: *SafetyChecker, node: graph_mod.GlobalNodeId) ?usize {
