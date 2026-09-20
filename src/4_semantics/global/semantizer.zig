@@ -22,6 +22,7 @@ const ownership_mod = @import("ownership.zig");
 const resolution = @import("resolution.zig");
 const dispatch_mod = @import("dispatch.zig");
 const reachability_mod = @import("reachability.zig");
+const reach_context = @import("reach_context.zig");
 
 pub const Options = struct {
     selected_test_name: ?[]const u8 = null,
@@ -421,6 +422,7 @@ pub fn semantizeWithOptions(
             if (try abstracts.materializeAbstractFieldStorage()) changed = true;
             try control.materializeSugarTypes();
             if (try errors.inferFunctionErrorReasons()) changed = true;
+            if (try completePropagatedReachCalls(&core, modules, relocation.offsets.items)) changed = true;
             if (reachable) |set| {
                 if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
             }
@@ -545,6 +547,39 @@ pub fn semantizeWithOptions(
     try global_verify.verifyGlobal(&relocation.graph);
     stats.remaining = 0;
     return .{ .graph = relocation.takeGraph(allocator), .stats = stats };
+}
+
+fn completePropagatedReachCalls(
+    core: *core_mod.Resolver,
+    modules: []const module_sg.ModuleSemanticGraph,
+    offsets: []const globalizer.Offsets,
+) !bool {
+    // A callee can acquire reached inputs after its callers have resolved.
+    // Rebuild those call inputs until their shape follows the final signature.
+    var changed = false;
+    for (modules, offsets) |*module, offset| {
+        for (module.semantic.pending_operations.items) |operation| {
+            const call = switch (operation) {
+                .resolve_call => |value| value,
+                else => continue,
+            };
+            const node = core.graph.nodes.items[@intFromEnum(globalizer.globalNode(offset, call.node))];
+            const resolved = switch (node.content) {
+                .function_call => |value| value,
+                else => continue,
+            };
+            const input = core.graph.nodes.items[@intFromEnum(resolved.input)];
+            const literal = switch (input.content) {
+                .struct_value_literal => |value| value,
+                else => continue,
+            };
+            const fields = core.graph.functions.items[@intFromEnum(resolved.callee)].input;
+            if (literal.fields.len == fields.len) continue;
+            const context = reach_context.Context.fromModule(module, offset, call.visible_bindings, call.owner_function);
+            if (try core.completeCallInputFieldsWithReach(fields, resolved.input, context)) changed = true;
+        }
+    }
+    return changed;
 }
 
 fn resolvePendingPhase(
