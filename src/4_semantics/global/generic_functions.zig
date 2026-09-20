@@ -588,11 +588,11 @@ pub const Resolver = struct {
                     var valid = !self.graph.isTypeUnresolved(current_ty);
                     for (segments[1..]) |segment| {
                         if (!valid) break;
-                        const hit = global_types.findField(self.graph, current_ty, candidate_module.text(segment)) orelse {
+                        const step = self.core.reachedField(current_ty, candidate_module.text(segment)) orelse {
                             valid = false;
                             break;
                         };
-                        current_ty = hit.field.storage_type orelse hit.field.ty;
+                        current_ty = step.hit.field.storage_type orelse step.hit.field.ty;
                         if (self.graph.isTypeUnresolved(current_ty)) valid = false;
                     }
                     if (!valid) continue;

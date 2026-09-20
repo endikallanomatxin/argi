@@ -1066,6 +1066,26 @@ pub const Resolver = struct {
         return base;
     }
 
+    pub const ReachedField = struct {
+        hit: types.FieldHit,
+        dereference_child: ?global_sg.GlobalTypeId = null,
+    };
+
+    /// A reach path follows capability fields through references without
+    /// requiring explicit dereference syntax at each segment.
+    pub fn reachedField(
+        self: *const Resolver,
+        current_ty: global_sg.GlobalTypeId,
+        name: []const u8,
+    ) ?ReachedField {
+        const base_ty, const dereference_child = switch (self.graph.types.items[@intFromEnum(current_ty)]) {
+            .pointer => |pointer| .{ pointer.child, pointer.child },
+            else => .{ current_ty, null },
+        };
+        const hit = types.findField(self.graph, base_ty, name) orelse return null;
+        return .{ .hit = hit, .dereference_child = dereference_child };
+    }
+
     pub fn probeReachedDefaultWithCompatibility(
         self: *Resolver,
         context: reach_context.Context,
@@ -1100,11 +1120,11 @@ pub const Resolver = struct {
                         valid = false;
                         break;
                     }
-                    const hit = types.findField(self.graph, current_ty, self.graph.text(segment)) orelse {
+                    const step = self.reachedField(current_ty, self.graph.text(segment)) orelse {
                         valid = false;
                         break;
                     };
-                    current_ty = hit.field.storage_type orelse hit.field.ty;
+                    current_ty = step.hit.field.storage_type orelse step.hit.field.ty;
                 }
                 if (!valid) continue;
                 if (self.graph.isTypeUnresolved(current_ty)) {
@@ -1356,7 +1376,7 @@ pub const Resolver = struct {
                 if (!std.mem.eql(u8, self.graph.text(binding.name), root_name)) continue;
                 if (self.graph.isBindingTypeUnresolved(binding_id) or self.graph.isTypeUnresolved(binding.ty)) continue;
                 var current_ty = binding.ty;
-                var hits: std.ArrayList(types.FieldHit) = .empty;
+                var hits: std.ArrayList(ReachedField) = .empty;
                 defer hits.deinit(self.allocator);
                 var valid = true;
                 for (segments[1..]) |segment| {
@@ -1364,12 +1384,12 @@ pub const Resolver = struct {
                         valid = false;
                         break;
                     }
-                    const hit = types.findField(self.graph, current_ty, self.graph.text(segment)) orelse {
+                    const step = self.reachedField(current_ty, self.graph.text(segment)) orelse {
                         valid = false;
                         break;
                     };
-                    try hits.append(self.allocator, hit);
-                    current_ty = hit.field.storage_type orelse hit.field.ty;
+                    try hits.append(self.allocator, step);
+                    current_ty = step.hit.field.storage_type orelse step.hit.field.ty;
                 }
                 if (self.graph.isTypeUnresolved(current_ty)) valid = false;
                 if (!valid) continue;
@@ -1381,8 +1401,28 @@ pub const Resolver = struct {
                     .ty = binding.ty,
                     .content = .{ .binding_use = binding_id },
                 });
-                for (hits.items) |hit| {
-                    const next: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+                for (hits.items) |step| {
+                    if (step.dereference_child) |child| {
+                        const pointer_type = self.graph.nodes.items[@intFromEnum(node)].ty orelse return null;
+                        const dereferenced: global_sg.GlobalNodeId = @enumFromInt(
+                            @as(u32, @intCast(self.graph.nodes.items.len)),
+                        );
+                        try self.graph.nodes.append(self.allocator, .{
+                            .source = source,
+                            .ty = child,
+                            .content = .{ .dereference = .{
+                                .pointer = node,
+                                .ty = child,
+                                .pointer_type = pointer_type,
+                            } },
+                        });
+                        node = dereferenced;
+                    }
+
+                    const hit = step.hit;
+                    const next: global_sg.GlobalNodeId = @enumFromInt(
+                        @as(u32, @intCast(self.graph.nodes.items.len)),
+                    );
                     try self.graph.nodes.append(self.allocator, .{
                         .source = source,
                         .ty = hit.field.storage_type orelse hit.field.ty,
