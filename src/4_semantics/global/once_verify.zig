@@ -50,12 +50,14 @@ const State = struct {
     fn walkFunction(self: *State, function_id: graph_mod.GlobalFunctionId) anyerror!void {
         if (self.active_functions.contains(function_id)) return;
         const function = self.graph.functions.items[@intFromEnum(function_id)];
-        const body = function.body orelse return;
         try self.active_functions.put(function_id, {});
         defer _ = self.active_functions.remove(function_id);
         const previous = self.current_function;
         self.current_function = function_id;
         defer self.current_function = previous;
+        for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field|
+            if (field.default_value) |default| try self.walkNode(default);
+        const body = function.body orelse return;
         try self.walkBlock(body);
     }
 
@@ -220,15 +222,15 @@ const State = struct {
 
     fn walkCall(self: *State, call_node: graph_mod.GlobalNodeId, callee: graph_mod.GlobalFunctionId) anyerror!void {
         const function = self.graph.functions.items[@intFromEnum(callee)];
-        if (function.flags.is_once) try self.consumeOnce(call_node, callee);
+        if (function.flags.is_once and !try self.consumeOnce(call_node, callee)) return;
         try self.walkFunction(callee);
     }
 
-    fn consumeOnce(self: *State, call_node: graph_mod.GlobalNodeId, callee: graph_mod.GlobalFunctionId) anyerror!void {
+    fn consumeOnce(self: *State, call_node: graph_mod.GlobalNodeId, callee: graph_mod.GlobalFunctionId) anyerror!bool {
         const result = try self.seen_once.getOrPut(callee);
         if (!result.found_existing) {
             result.value_ptr.* = .{ .node = call_node, .caller = self.current_function };
-            return;
+            return true;
         }
 
         const declaration = self.graph.declarations.items[@intFromEnum(self.graph.functions.items[@intFromEnum(callee)].declaration)];
@@ -250,6 +252,7 @@ const State = struct {
             },
         );
         self.had_error = true;
+        return false;
     }
 
     fn location(self: *const State, source: @import("../primitives/schema.zig").SourceRef) tok.Location {
