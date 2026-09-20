@@ -227,7 +227,7 @@ pub const Resolver = struct {
             const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
             if (!std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
             if (!self.inputFieldsSatisfyRequirement(expected_inputs, function.input) or
-                !self.fieldRangesEqual(expected_outputs, function.output)) continue;
+                !self.outputFieldsSatisfyRequirement(expected_outputs, function.output)) continue;
             if (found != null) return null;
             found = @enumFromInt(@as(u32, @intCast(raw)));
         }
@@ -255,19 +255,19 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn fieldRangesEqual(
-        self: *const Resolver,
+    fn outputFieldsSatisfyRequirement(
+        self: *Resolver,
         expected: global_sg.FieldRange,
         actual: global_sg.FieldRange,
     ) bool {
         if (expected.len != actual.len) return false;
         for (0..expected.len) |index| {
-            const lhs = self.graph.fields.items[expected.start + @as(u32, @intCast(index))];
-            const rhs = self.graph.fields.items[actual.start + @as(u32, @intCast(index))];
-            // Abstract requirements describe positional callable types. Parameter
-            // labels are documentation/call-site names and implementations may
-            // choose their own labels (e.g. '.who' versus '.self').
-            if (!global_types.equal(self.graph, lhs.ty, rhs.ty)) return false;
+            const required = self.graph.fields.items[expected.start + @as(u32, @intCast(index))];
+            const implementation = self.graph.fields.items[actual.start + @as(u32, @intCast(index))];
+            // Outputs may specialize an abstract result to any concrete type
+            // that implements the same (possibly parameterized) abstract.
+            if (global_types.equal(self.graph, required.ty, implementation.ty)) continue;
+            if (!self.concreteImplements(implementation.ty, required.ty)) return false;
         }
         return true;
     }
