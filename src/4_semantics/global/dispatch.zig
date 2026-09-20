@@ -36,6 +36,16 @@ pub const Resolver = struct {
         };
         const trace_reach_call = @import("std").mem.eql(u8, trace_name, "flush_stdout") or
             @import("std").mem.eql(u8, trace_name, "print");
+        if (trace_reach_call) switch (operation) {
+            .resolve_call => |value| {
+                const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
+                if (reference.generic_arguments) |args|
+                    @import("std").debug.print("[dispatch-call] {s} generic_args=some({d})\n", .{ trace_name, args.len })
+                else
+                    @import("std").debug.print("[dispatch-call] {s} generic_args=null\n", .{trace_name});
+            },
+            else => {},
+        };
 
         const error_result = try self.errors.tryResolveCall(module_index, module, o, operation);
         if (trace_reach_call) @import("std").debug.print("[dispatch-call] {s} errors={s}\n", .{ trace_name, @tagName(error_result) });
