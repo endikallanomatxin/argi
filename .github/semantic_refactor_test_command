@@ -1,1 +1,20 @@
-zig build test-programs -Dtest-filter=feature_tests/polymorphism/08_abstract -Dtest-filter=feature_tests/polymorphism/33X_static_abstract_generic_field_requires_implementation -Dtest-filter=feature_tests/polymorphism/34X_static_abstract_generic_field_identity -Dtest-filter=feature_tests/control_flow/05X_for_requires_iterator_contract -Dtest-filter=feature_tests/collections/13X_iterator_abstract_missing_implements -Dtest-filter=feature_tests/collections/14_iterable_abstract -Dtest-filter=feature_tests/collections/15X_iterable_abstract_missing_implements
+python3 - <<'PY'
+from pathlib import Path
+p = Path("src/4_semantics/global/verify.zig")
+s = p.read_text()
+s = s.replace("try require(", "try requireAt(@src(), ")
+old = '''fn require(ok: bool) !void {
+    if (!ok) return error.InvalidGlobalSemanticGraph;
+}'''
+new = '''fn requireAt(src: std.builtin.SourceLocation, ok: bool) !void {
+    if (!ok) {
+        std.debug.print("GLOBAL_VERIFY_FAIL {s}:{d}\\n", .{ src.file, src.line });
+        return error.InvalidGlobalSemanticGraph;
+    }
+}'''
+if old not in s:
+    raise SystemExit("missing require anchor")
+s = s.replace(old, new, 1)
+p.write_text(s)
+PY
+zig build test-programs -Dtest-filter=feature_tests/polymorphism/08_abstract
