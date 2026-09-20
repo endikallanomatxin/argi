@@ -551,6 +551,10 @@ const Context = struct {
     }
 
     fn lowerIndex(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId, store: ?entities.ModuleNodeId) !Lowered {
+        return self.lowerIndexWithOperator(node, expected, store, if (store == null) .get else .set);
+    }
+
+    fn lowerIndexWithOperator(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId, store: ?entities.ModuleNodeId, operator: @import("../primitives/callable.zig").OperatorKind) !Lowered {
         const access = self.tree.indexAccess(node).?;
         const value = try self.lowerNode(access.value, null);
         const index = try self.lowerNode(access.index, try self.builtin(.Int32));
@@ -559,6 +563,7 @@ const Context = struct {
             .value = value.node,
             .index = index.node,
             .store_value = store,
+            .operator = operator,
         } }, expected);
     }
 
@@ -573,6 +578,7 @@ const Context = struct {
             .value = collection.node,
             .index = index.node,
             .store_value = value.node,
+            .operator = .set,
         } }, expected orelse value.ty);
     }
 
@@ -827,6 +833,8 @@ const Context = struct {
 
     fn lowerAddress(self: *Context, node: syn.NodeIndex) !Lowered {
         const address = self.tree.addressOf(node).?;
+        if (self.tree.tag(address.value) == .index_access)
+            return self.lowerIndexWithOperator(address.value, null, null, if (address.mutability == .read_write) .get_rw_pointer else .get_ro_pointer);
         const value = try self.lowerNode(address.value, null);
         const mutability = graph_mod.pointerMutabilityFromSyntax(address.mutability);
         if (value.ty) |child_ty| {

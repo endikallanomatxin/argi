@@ -1013,6 +1013,14 @@ pub const CodeGenerator = struct {
                 const pointer = c.LLVMBuildStructGEP2(self.builder, try self.toLLVMType(choice_ty), base.value_ref, index + 1, "choice.payload.addr");
                 break :blk .{ .value_ref = pointer, .type_ref = c.LLVMPointerType(try self.toLLVMType(access.payload_type), 0), .ty = access.payload_type };
             },
+            .array_index => |access| blk: {
+                const base = try self.addressablePointer(access.array_ptr);
+                const index = (try self.visitNode(access.index)) orelse return CodegenError.ValueNotFound;
+                const array_type = try self.toLLVMType(access.array_type);
+                const element_type = try self.toLLVMType(access.element_type);
+                const pointer = try self.arrayElementPointer(base.value_ref, array_type, index.value_ref);
+                break :blk .{ .value_ref = pointer, .type_ref = c.LLVMPointerType(element_type, 0), .ty = access.element_type };
+            },
             .dereference => |deref| (try self.visitNode(deref.pointer)) orelse return CodegenError.ValueNotFound,
             else => CodegenError.InvalidType,
         };

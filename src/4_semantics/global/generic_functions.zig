@@ -63,7 +63,7 @@ pub const Resolver = struct {
             .generic => |generic| generic,
             else => return .not_applicable,
         };
-        const operator: @import("../primitives/callable.zig").OperatorKind = if (value.store_value == null) .get else .set;
+        const operator = value.operator;
 
         // A generic container operator uses the container's parameters. This
         // covers value indexing without rebuilding parameterized unification in the
