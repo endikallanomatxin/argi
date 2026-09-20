@@ -308,13 +308,16 @@ pub fn semantizeWithOptions(
             var candidate_count: usize = 0;
             for (relocation.graph.functions.items) |function| {
                 const declaration = relocation.graph.declaration(function.declaration);
-                if (std.mem.eql(u8, relocation.graph.text(declaration.name), failure.method_name)) candidate_count += 1;
+                if (!std.mem.eql(u8, relocation.graph.text(declaration.name), failure.method_name)) continue;
+                if (!abstracts.requirementCandidateInputMatches(failure.input, function)) continue;
+                candidate_count += 1;
             }
             if (candidate_count != 0) {
                 try message.appendSlice("\n  possible overloads:");
                 for (relocation.graph.functions.items) |function| {
                     const declaration = relocation.graph.declaration(function.declaration);
                     if (!std.mem.eql(u8, relocation.graph.text(declaration.name), failure.method_name)) continue;
+                    if (!abstracts.requirementCandidateInputMatches(failure.input, function)) continue;
                     try appendFormatted(&message, allocator, "\n  - {s} ", .{failure.method_name});
                     try appendFieldShape(&message, &relocation.graph, function.input);
                     try message.appendSlice(" -> ");

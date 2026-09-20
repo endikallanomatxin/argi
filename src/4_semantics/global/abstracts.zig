@@ -272,6 +272,15 @@ pub const Resolver = struct {
         return true;
     }
 
+    pub fn requirementCandidateInputMatches(
+        self: *const Resolver,
+        expected_input: global_sg.GlobalTypeId,
+        function: global_sg.Function,
+    ) bool {
+        const expected_fields = global_types.fields(self.graph, expected_input) orelse return false;
+        return self.inputFieldsSatisfyRequirement(expected_fields, function.input);
+    }
+
     pub fn resolveStaticRequirementCall(
         self: *Resolver,
         module_index: usize,
