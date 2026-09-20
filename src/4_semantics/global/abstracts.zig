@@ -125,12 +125,8 @@ pub const Resolver = struct {
                 .virtual => |abstract_type| abstract_type,
                 else => pointee,
             };
-            const abstract_decl = switch (self.graph.types.items[@intFromEnum(abstract_ty)]) {
-                .declared => |declaration| declaration,
-                else => continue,
-            };
-            const located = self.findAbstractDefinition(abstract_decl) orelse continue;
-            if (located.definition.parameters.len != 0) continue;
+            const abstract_use = self.abstractUse(abstract_ty) orelse continue;
+            const located = self.findAbstractDefinition(abstract_use.declaration) orelse continue;
             const storage = &self.modules[located.module_index].semantic.parameterized_storage;
             for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
                 if (std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), method_name)) return true;
@@ -647,16 +643,18 @@ pub const Resolver = struct {
                 .virtual => |abstract_type| abstract_type,
                 else => pointee,
             };
-            const abstract_decl = switch (self.graph.types.items[@intFromEnum(abstract_ty)]) {
-                .declared => |declaration| declaration,
-                else => continue,
-            };
-            const located = self.findAbstractDefinition(abstract_decl) orelse continue;
-            if (located.definition.parameters.len != 0) continue;
+            const abstract_use = self.abstractUse(abstract_ty) orelse continue;
+            const located = self.findAbstractDefinition(abstract_use.declaration) orelse continue;
             const parameterized_forms_storage = &self.modules[located.module_index].semantic.parameterized_storage;
             for (parameterized_forms_storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
                 if (!std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), method_name)) continue;
-                const instance = try self.requirementInstance(abstract_decl, abstract_ty, located, requirement, @intCast(method_index));
+                const instance = (try self.requirementInstanceForAbstractUse(
+                    abstract_use,
+                    abstract_ty,
+                    located,
+                    requirement,
+                    @intCast(method_index),
+                )) orelse continue;
                 const input_ty = instance.input;
                 const output_ty = instance.output;
                 const input_fields = global_types.fields(self.graph, input_ty) orelse continue;
@@ -721,6 +719,54 @@ pub const Resolver = struct {
         input: global_sg.GlobalTypeId,
         output: global_sg.GlobalTypeId,
     };
+
+    fn bindAbstractUseArguments(
+        self: *const Resolver,
+        abstract_use: AbstractUse,
+        located: LocatedAbstractDefinition,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) bool {
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        if (abstract_use.arguments.len != located.definition.parameters.len) return false;
+        for (0..located.definition.parameters.len) |offset| {
+            const raw = located.definition.parameters.start + @as(u32, @intCast(offset));
+            const parameter = storage.comptime_parameters.items[raw];
+            const argument = self.graph.generic_arguments.items[
+                abstract_use.arguments.start + @as(u32, @intCast(offset))
+            ];
+            switch (argument.value) {
+                .type => |value| {
+                    if (parameter.kind != .type) return false;
+                    bindings.types[raw] = value;
+                },
+                .comptime_int => |value| {
+                    if (parameter.kind != .comptime_int) return false;
+                    bindings.ints[raw] = value;
+                },
+            }
+        }
+        return true;
+    }
+
+    fn requirementInstanceForAbstractUse(
+        self: *Resolver,
+        abstract_use: AbstractUse,
+        self_type: global_sg.GlobalTypeId,
+        located: LocatedAbstractDefinition,
+        requirement: parameterized_storage.AbstractRequirement,
+        method_index: u32,
+    ) !?RequirementInstance {
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+        if (!self.bindAbstractUseArguments(abstract_use, located, &bindings)) return null;
+        return .{
+            .declaration = abstract_use.declaration,
+            .method_index = method_index,
+            .input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings, self_type),
+            .output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings, self_type),
+        };
+    }
 
     fn requirementInstance(
         self: *Resolver,
