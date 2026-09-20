@@ -366,7 +366,11 @@ pub const Resolver = struct {
                 error.DeferredGenericFunction => return .deferred,
                 error.AmbiguousGenericFunction => return .invalid,
                 error.ConflictingGenericArgument => return err,
-                else => return .deferred,
+                else => {
+                    if (std.mem.eql(u8, name, "exercise"))
+                        std.debug.print("[generic-instance] exercise: {s}\n", .{@errorName(err)});
+                    return .deferred;
+                },
             };
         if (!try self.core.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function)].input, input, reach)) return .deferred;
         const output_ty = try self.core.functionOutputType(function);
