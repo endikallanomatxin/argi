@@ -511,7 +511,9 @@ pub const SafetyChecker = struct {
             },
             .explicit_cast => |cast| blk: {
                 const value = try self.evaluate(function, cast.value, state);
-                if (isPointer(self.graph, cast.target_type) and !isPointer(self.graph, self.graph.nodes.items[@intFromEnum(cast.value)].ty orelse cast.target_type) and value.integer_address) {
+                // An integer value cannot acquire reference provenance merely
+                // by casting it, even when its numeric value is zero.
+                if (isPointer(self.graph, cast.target_type) and !isPointer(self.graph, self.graph.nodes.items[@intFromEnum(cast.value)].ty orelse cast.target_type)) {
                     try self.report(node.source, "an integer address cannot establish a safe reference; use an explicit root establishment boundary", .{});
                     break :blk .{};
                 }
