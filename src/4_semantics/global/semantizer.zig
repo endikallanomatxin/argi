@@ -272,7 +272,7 @@ pub fn semantizeWithOptions(
     try generics.resolveExternalTypes();
     _ = relocation.graph.reconcileTypeResolution();
     _ = try generics.materializeKnownTypes();
-    try control.materializeSugarTypes();
+    _ = try control.materializeSugarTypes();
 
     if (options.diagnostics) |diagnostics| {
         if (try abstracts.findConcreteImplementationConflict()) |conflict| {
@@ -420,7 +420,10 @@ pub fn semantizeWithOptions(
             if (try core.materializeAddresses()) changed = true;
             if (try generics.materializeKnownTypes()) changed = true;
             if (try abstracts.materializeAbstractFieldStorage()) changed = true;
-            try control.materializeSugarTypes();
+            // Generic instantiation can intern nullable or inferred Errable
+            // types during this pass. Their materialization must schedule a
+            // further pass so pending uses can observe the final choice shape.
+            if (try control.materializeSugarTypes()) changed = true;
             if (try errors.inferFunctionErrorReasons()) changed = true;
             if (try completePropagatedReachCalls(&core, modules, relocation.offsets.items)) changed = true;
             if (reachable) |set| {
