@@ -551,6 +551,56 @@ pub const Resolver = struct {
         return true;
     }
 
+    const AbstractFieldAssignment = struct {
+        struct_type: global_sg.GlobalTypeId,
+        field_index: u32,
+        actual_type: global_sg.GlobalTypeId,
+        legacy_field_type: ?*global_sg.GlobalTypeId = null,
+    };
+
+    /// Normalize the two store representations GlobalSG may contain while the
+    /// compact refactor is in flight. Source field assignments are represented
+    /// as pointer_assignment(address_of(struct_field_access(...)), ...); older
+    /// synthesized paths may still use struct_field_store directly.
+    fn abstractFieldAssignment(
+        self: *Resolver,
+        node: *global_sg.Node,
+    ) ?AbstractFieldAssignment {
+        switch (node.content) {
+            .struct_field_store => |*store| {
+                const actual = self.graph.node(store.value).ty orelse return null;
+                return .{
+                    .struct_type = store.struct_type,
+                    .field_index = store.field_index,
+                    .actual_type = actual,
+                    .legacy_field_type = &store.field_type,
+                };
+            },
+            .pointer_assignment => |assignment| {
+                const addressed = switch (self.graph.node(assignment.pointer).content) {
+                    .address_of => |value| value,
+                    else => return null,
+                };
+                const access = switch (self.graph.node(addressed).content) {
+                    .struct_field_access => |value| value,
+                    else => return null,
+                };
+                const base_ty = self.graph.node(access.value).ty orelse return null;
+                const struct_ty = switch (self.graph.types.items[@intFromEnum(base_ty)]) {
+                    .pointer => |pointer| pointer.child,
+                    else => base_ty,
+                };
+                const actual = self.graph.node(assignment.value).ty orelse return null;
+                return .{
+                    .struct_type = struct_ty,
+                    .field_index = access.field_index,
+                    .actual_type = actual,
+                };
+            },
+            else => return null,
+        }
+    }
+
     /// Abstract fields use static backing storage. Once an assignment selects
     /// a concrete implementer, every later access and codegen operation must
     /// use that same representation; mixing implementers would make the
@@ -558,27 +608,30 @@ pub const Resolver = struct {
     pub fn materializeAbstractFieldStorage(self: *Resolver) !bool {
         var changed = false;
         for (self.graph.nodes.items) |*node| {
-            const store = switch (node.content) {
-                .struct_field_store => |*value| value,
-                else => continue,
-            };
-            const actual_ty = self.graph.node(store.value).ty orelse continue;
-            const fields = global_types.fields(self.graph, store.struct_type) orelse continue;
-            if (store.field_index >= fields.len) return error.InvalidAbstractFieldIndex;
-            const field = &self.graph.fields.items[fields.start + store.field_index];
-            if (global_types.equal(self.graph, field.ty, actual_ty)) continue;
-            if (!try self.abstractStorageCompatible(field.ty, actual_ty)) continue;
+            const assignment = self.abstractFieldAssignment(node) orelse continue;
+            const fields = global_types.fields(self.graph, assignment.struct_type) orelse continue;
+            if (assignment.field_index >= fields.len) return error.InvalidAbstractFieldIndex;
+            const field = &self.graph.fields.items[fields.start + assignment.field_index];
+            if (global_types.equal(self.graph, field.ty, assignment.actual_type)) continue;
+            if (!try self.abstractStorageCompatible(field.ty, assignment.actual_type)) continue;
             if (field.storage_type) |existing| {
-                if (!global_types.equal(self.graph, existing, actual_ty)) return error.ConflictingAbstractFieldStorage;
+                if (!global_types.equal(self.graph, existing, assignment.actual_type))
+                    return error.ConflictingAbstractFieldStorage;
             } else {
-                field.storage_type = actual_ty;
+                field.storage_type = assignment.actual_type;
                 changed = true;
             }
-            if (!global_types.equal(self.graph, store.field_type, actual_ty)) {
-                store.field_type = actual_ty;
-                changed = true;
+            if (assignment.legacy_field_type) |field_type| {
+                if (!global_types.equal(self.graph, field_type.*, assignment.actual_type)) {
+                    field_type.* = assignment.actual_type;
+                    changed = true;
+                }
             }
         }
+
+        // Access nodes keep the effective runtime representation in their
+        // type. This is what lets later reach traversal and codegen stay
+        // entirely static once the backing implementer is known.
         for (self.graph.nodes.items) |*node| {
             const access = switch (node.content) {
                 .struct_field_access => |value| value,
@@ -591,7 +644,9 @@ pub const Resolver = struct {
             };
             const fields = global_types.fields(self.graph, struct_ty) orelse continue;
             if (access.field_index >= fields.len) return error.InvalidAbstractFieldIndex;
-            const effective = global_types.effectiveFieldType(self.graph.fields.items[fields.start + access.field_index]);
+            const effective = global_types.effectiveFieldType(
+                self.graph.fields.items[fields.start + access.field_index],
+            );
             if (node.ty == null or !global_types.equal(self.graph, node.ty.?, effective)) {
                 node.ty = effective;
                 changed = true;
