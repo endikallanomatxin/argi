@@ -3,6 +3,7 @@ const std = @import("std");
 /// Projection vocabulary is independent of the graph representation.
 pub const Projection = union(enum) {
     field: u32,
+    variant: u32,
     static_index: usize,
     dynamic_index,
     dereference,
@@ -11,6 +12,7 @@ pub const Projection = union(enum) {
         if (std.meta.activeTag(left) != std.meta.activeTag(right)) return false;
         return switch (left) {
             .field => |index| index == right.field,
+            .variant => |index| index == right.variant,
             .static_index => |index| index == right.static_index,
             .dynamic_index, .dereference => true,
         };

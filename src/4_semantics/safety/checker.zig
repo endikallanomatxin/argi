@@ -1394,6 +1394,14 @@ pub const SafetyChecker = struct {
                     };
                     current = found orelse current;
                 },
+                .variant => |wanted| {
+                    var found: ?facts.ValueFacts = null;
+                    for (current.variants) |variant| if (variant.index == wanted) {
+                        found = variant.value.*;
+                        break;
+                    };
+                    current = found orelse current;
+                },
                 .static_index => |wanted| {
                     var found: ?facts.ValueFacts = null;
                     for (current.fields) |field| if (field.index == wanted) {
@@ -2369,6 +2377,12 @@ pub const SafetyChecker = struct {
                 break :blk value.referenced_place;
             },
             .struct_field_access => |access| if (try self.resolvePlace(access.value, state)) |base| try self.project(base, .{ .field = access.field_index }) else null,
+            .choice_payload_access => |access| blk: {
+                const base = try self.resolvePlace(access.value, state) orelse break :blk null;
+                const choice_ty = self.graph.nodes.items[@intFromEnum(access.value)].ty orelse break :blk null;
+                const index = variantIndex(self.graph, choice_ty, access.variant) orelse break :blk null;
+                break :blk try self.project(base, .{ .variant = index });
+            },
             .array_index => |access| if (try self.resolvePlace(access.array_ptr, state)) |base| try self.project(base, if (self.staticIndex(access.index)) |index| .{ .static_index = index } else .dynamic_index) else null,
             else => null,
         };
@@ -3734,6 +3748,21 @@ test "relocate primitive preserves owned root identity" {
     try std.testing.expectEqual(value_state.Initializedness.moved, checker.getPlace(&state, source_storage).?.initializedness);
     const destination_value = checker.getPlace(&state, destination).?.value;
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{root}, destination_value.owned_roots);
+}
+
+test "choice variant projection retains nested reference dependencies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+
+    const root: facts.ValidityRootId = @enumFromInt(1);
+    const reference = facts.ValueFacts{ .dependencies = &.{.{ .root = root }} };
+    const payload = facts.ValueFacts{ .fields = &.{.{ .index = 0, .value = &reference }} };
+    const choice = facts.ValueFacts{ .variants = &.{.{ .index = 1, .value = &payload }} };
+    const projected = try checker.projectValueFacts(choice, &.{ .{ .variant = 1 }, .{ .field = 0 } });
+    try std.testing.expectEqual(root, projected.dependencies[0].root);
 }
 
 test "opaque read envelopes distinguish scalar and reference values" {
