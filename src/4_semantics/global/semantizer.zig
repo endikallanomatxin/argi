@@ -455,6 +455,8 @@ pub fn semantizeWithOptions(
     if (reachable) |set| try retireDormantBindingResolution(&relocation.graph, set, try core.builtin(.Any));
 
     if (options.diagnostics) |diagnostics| {
+        if (try diagnoseUnresolvedPropagatedReach(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
+            return error.Reported;
         if (try diagnosePrivateFields(&relocation.graph, modules, reachable, relocation.offsets.items, diagnostics))
             return error.Reported;
         if (try diagnoseAbstractRuntimeBindings(&relocation.graph, &abstracts, diagnostics))
@@ -547,6 +549,64 @@ pub fn semantizeWithOptions(
     try global_verify.verifyGlobal(&relocation.graph);
     stats.remaining = 0;
     return .{ .graph = relocation.takeGraph(allocator), .stats = stats };
+}
+
+fn diagnoseUnresolvedPropagatedReach(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    offsets: []const globalizer.Offsets,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    for (modules, offsets) |*module, offset| {
+        for (module.semantic.pending_operations.items) |operation| {
+            const call = switch (operation) {
+                .resolve_call => |value| value,
+                else => continue,
+            };
+            const node = graph.node(globalizer.globalNode(offset, call.node));
+            const resolved = switch (node.content) {
+                .function_call => |value| value,
+                else => continue,
+            };
+            const input = switch (graph.node(resolved.input).content) {
+                .struct_value_literal => |value| value,
+                else => continue,
+            };
+            const function = graph.functions.items[@intFromEnum(resolved.callee)];
+            if (input.fields.len >= function.input.len) continue;
+            const field = graph.fields.items[function.input.start + input.fields.len];
+            const fallback = field.default_value orelse continue;
+            const reach_id = switch (graph.node(fallback).content) {
+                .reach_directive => |value| value,
+                else => continue,
+            };
+            const reach = graph.reaches.items[@intFromEnum(reach_id)];
+            var message = std.array_list.Managed(u8).init(allocator);
+            defer message.deinit();
+            try message.print("cannot resolve reached argument '.{s}' with alternatives [", .{graph.text(field.name)});
+            for (graph.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len], 0..) |alternative, index| {
+                if (index != 0) try message.appendSlice(", ");
+                for (graph.reach_segments.items[alternative.segments.start..][0..alternative.segments.len], 0..) |segment, segment_index| {
+                    if (segment_index != 0) try message.append('.');
+                    try message.appendSlice(graph.text(segment));
+                }
+            }
+            try message.appendSlice("] expected as '");
+            try appendTypeName(&message, graph, field.ty);
+            try message.append('\'');
+            const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
+            const source = globalSource(offset, reference.source);
+            try diagnostics.add(
+                diagnosticLocation(graph, diagnostics, .{ .file_index = source.file_index, .offset = source.offset + @as(u32, @intCast(module.text(reference.name).len)) }),
+                .semantic,
+                "{s}",
+                .{message.items},
+            );
+            return true;
+        }
+    }
+    return false;
 }
 
 fn completePropagatedReachCalls(
