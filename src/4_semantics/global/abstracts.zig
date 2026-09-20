@@ -1374,6 +1374,13 @@ pub const Resolver = struct {
     pub fn runtimeBindingAbstract(self: *const Resolver, binding_id: global_sg.GlobalBindingId) ?AbstractUse {
         if (self.isFunctionInterfaceBinding(binding_id)) return null;
         const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
+        if (binding.initialization) |initialization| switch (self.graph.node(initialization).content) {
+            // A virtual call carries a runtime implementation identity. Its
+            // inferred result may therefore remain abstract without selecting
+            // a static default concrete type.
+            .virtual_call => return null,
+            else => {},
+        };
         if (self.graph.isBindingTypeUnresolved(binding_id) or self.graph.isTypeUnresolved(binding.ty)) return null;
         return self.abstractUse(binding.ty);
     }
