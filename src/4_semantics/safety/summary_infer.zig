@@ -2278,7 +2278,7 @@ pub const Infer = struct {
             .choice_payload_access => |access| blk: {
                 const ty = self.graph.node(access.value).ty orelse break :blk &.{};
                 const index = self.variantIndex(ty, access.variant) orelse break :blk &.{};
-                break :blk try self.projectInputPaths(try self.inferInputPaths(function_id, access.value), .{ .field = index });
+                break :blk try self.projectInputPaths(try self.inferInputPaths(function_id, access.value), .{ .variant = index });
             },
             .array_index => |index| self.projectInputPaths(
                 try self.inferInputPaths(function_id, index.array_ptr),
@@ -2413,6 +2413,9 @@ pub const Infer = struct {
         switch (projection) {
             .field => |field_index| {
                 for (effect.fields) |field| if (field.index == field_index) return field.value.*;
+            },
+            .variant => |variant_index| {
+                for (effect.variants) |variant| if (variant.index == variant_index) return variant.value.*;
             },
             else => {},
         }
