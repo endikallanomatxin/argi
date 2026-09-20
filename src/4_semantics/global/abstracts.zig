@@ -181,7 +181,7 @@ pub const Resolver = struct {
         var methods: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
         defer methods.deinit(self.allocator);
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
-        for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
+        for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
             const instance = try self.requirementInstance(abstract_decl, concrete, located, requirement, @intCast(method_index));
             const implementation = self.findConcreteMethod(self.modules[located.module_index].text(requirement.name), instance.input, instance.output) orelse return null;
             try methods.append(self.allocator, implementation);
@@ -335,7 +335,7 @@ pub const Resolver = struct {
             }
         }
 
-        for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
+        for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
             const input = self.generics.instantiateParameterizedType(
                 located.module_index,
                 requirement.input,
