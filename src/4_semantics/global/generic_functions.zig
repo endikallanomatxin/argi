@@ -1869,6 +1869,7 @@ pub const Resolver = struct {
                 .index_store => self.resolveIndex(operands.items, value.source, true),
                 .field_access => if (value.name) |name| self.resolveField(operands.items[0], name, value.source) else error.InvalidParameterizedFieldAccess,
                 .choice_payload => if (value.name) |name| self.resolveChoicePayload(operands.items[0], name, value.source) else error.InvalidParameterizedChoicePayload,
+                .nullable_test => self.resolveNullableTest(operands.items, value.source),
                 .return_statement => self.resolveReturn(operands.items, value.source),
                 .if_statement => self.resolveIf(operands.items, value.source),
                 .while_statement => self.resolveWhile(operands.items, value.source),
@@ -1882,7 +1883,6 @@ pub const Resolver = struct {
                 .struct_value,
                 .list_value,
                 .choice_literal,
-                .nullable_test,
                 .unwrap_or,
                 .unwrap_or_do,
                 .error_context,
@@ -1939,6 +1939,27 @@ pub const Resolver = struct {
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = result_ty,
                 .content = .{ .error_propagation = id },
+            };
+        }
+
+        fn resolveNullableTest(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {
+            if (operands.len != 1) return error.InvalidParameterizedNullableTest;
+            const value = operands[0];
+            const choice_ty = self.resolver.graph.node(value).ty orelse return error.UntypedParameterizedNullableTest;
+            const some = global_types.findVariant(self.resolver.graph, choice_ty, "some") orelse return error.InvalidParameterizedNullableTest;
+            const int_ty = try self.resolver.generics.internType(.{ .builtin = .Int32 });
+            const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });
+            const global_source = self.resolver.sourceFor(self.module_index, source);
+            const tag: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.nodes.items.len)));
+            try self.resolver.graph.nodes.append(self.resolver.allocator, .{
+                .source = global_source,
+                .ty = int_ty,
+                .content = .{ .int_literal = some.variant.value },
+            });
+            return .{
+                .source = global_source,
+                .ty = bool_ty,
+                .content = .{ .comparison = .{ .operator = .equal, .left = value, .right = tag } },
             };
         }
 
