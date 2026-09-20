@@ -517,6 +517,10 @@ pub const SafetyChecker = struct {
                     try self.report(node.source, "an integer address cannot establish a safe reference; use an explicit root establishment boundary", .{});
                     break :blk .{};
                 }
+                // Converting a live reference to its numeric address observes
+                // the reference but the resulting integer carries no temporal
+                // dependency on the referenced root.
+                if (!isPointer(self.graph, cast.target_type)) break :blk .{};
                 break :blk value;
             },
             .binary_operation => |binary| blk: {

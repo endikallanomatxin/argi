@@ -2118,7 +2118,10 @@ pub const Infer = struct {
                     if (self.staticIndex(index.index)) |value| .{ .static_index = value } else .dynamic_index,
                 ),
             ),
-            .explicit_cast => |cast| try self.inferExpression(function_id, cast.value),
+            .explicit_cast => |cast| if (self.graph.types.items[@intFromEnum(cast.target_type)] == .pointer)
+                try self.inferExpression(function_id, cast.value)
+            else
+                .{},
             .function_call => |call| try self.inferCall(function_id, node_id, call.callee, call.input),
             .virtualize => |virtualize_id| try self.inferExpression(
                 function_id,
@@ -2270,7 +2273,10 @@ pub const Infer = struct {
             .address_of => |value| self.inferInputPaths(function_id, value),
             .move_value => |value| self.inferInputPaths(function_id, value),
             .dereference => |value| self.inferInputPaths(function_id, value.pointer),
-            .explicit_cast => |cast| self.inferInputPaths(function_id, cast.value),
+            .explicit_cast => |cast| if (self.graph.types.items[@intFromEnum(cast.target_type)] == .pointer)
+                self.inferInputPaths(function_id, cast.value)
+            else
+                &.{},
             .struct_field_access => |access| self.projectInputPaths(
                 try self.inferInputPaths(function_id, access.value),
                 .{ .field = access.field_index },
