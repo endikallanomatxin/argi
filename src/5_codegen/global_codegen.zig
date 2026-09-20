@@ -1989,8 +1989,31 @@ pub const CodeGenerator = struct {
         const function = self.graph.functions.items[@intFromEnum(test_function)];
         const input_type = try self.fieldsLLVMType(function.input);
         var args = [_]llvm.c.LLVMValueRef{c.LLVMGetUndef(input_type)};
-        _ = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 1, "test");
+        const output = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 1, "test");
+        if (function.output.len != 1) return CodegenError.InvalidType;
+        const result_ty = types.effectiveFieldType(self.graph.fields.items[function.output.start]);
+        const error_variant = types.findVariant(self.graph, result_ty, "error") orelse return CodegenError.InvalidType;
+        const error_payload_ty = error_variant.variant.payload_type orelse return CodegenError.InvalidType;
+        const reason_field = types.findField(self.graph, error_payload_ty, "reason") orelse return CodegenError.InvalidType;
+        const result = c.LLVMBuildExtractValue(self.builder, output, 0, "test.result");
+        const tag = c.LLVMBuildExtractValue(self.builder, result, 0, "test.tag");
+        const is_error = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, tag, c.LLVMConstInt(c.LLVMInt32Type(), error_variant.index, 0), "test.is_error");
+        const error_block = c.LLVMAppendBasicBlock(wrapper, "test.error");
+        const ok_block = c.LLVMAppendBasicBlock(wrapper, "test.ok");
+        _ = c.LLVMBuildCondBr(self.builder, is_error, error_block, ok_block);
+        c.LLVMPositionBuilderAtEnd(self.builder, ok_block);
         _ = c.LLVMBuildRet(self.builder, c.LLVMConstInt(i32_ty, 0, 0));
+        c.LLVMPositionBuilderAtEnd(self.builder, error_block);
+        const error_payload = c.LLVMBuildExtractValue(self.builder, result, error_variant.index + 1, "test.error.payload");
+        const reason = c.LLVMBuildExtractValue(self.builder, error_payload, reason_field.index, "test.error.reason");
+        const skipped = types.findVariant(self.graph, reason_field.field.ty, "test_skipped") orelse {
+            _ = c.LLVMBuildRet(self.builder, c.LLVMConstInt(i32_ty, 1, 0));
+            return;
+        };
+        const reason_tag = c.LLVMBuildExtractValue(self.builder, reason, 0, "test.error.reason.tag");
+        const is_skipped = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, reason_tag, c.LLVMConstInt(c.LLVMInt32Type(), skipped.index, 0), "test.is_skipped");
+        const exit_code = c.LLVMBuildSelect(self.builder, is_skipped, c.LLVMConstInt(i32_ty, 77, 0), c.LLVMConstInt(i32_ty, 1, 0), "test.exit");
+        _ = c.LLVMBuildRet(self.builder, exit_code);
     }
 
     fn ensureRuntimeArgGlobals(self: *CodeGenerator) !void {
