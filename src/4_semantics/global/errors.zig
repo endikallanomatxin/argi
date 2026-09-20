@@ -337,7 +337,10 @@ pub const Resolver = struct {
         const result_ty = unwrapSingleField(self.graph, ok_payload) orelse ok_payload;
 
         const target = globalizer.globalNode(o, value.node);
-        const propagated_ty = (try self.enclosingErrableType(target)) orelse return false;
+        const propagated_ty = if (value.owner_function) |local_owner|
+            (try self.functionErrableType(globalizer.globalFunction(o, local_owner))) orelse return false
+        else
+            (try self.enclosingErrableType(target)) orelse return false;
         const propagated_error = global_types.findVariant(self.graph, propagated_ty, "error") orelse err;
         const propagated_error_payload = propagated_error.variant.payload_type orelse error_payload;
         if (!self.errorPayloadCanPropagate(error_payload, propagated_error_payload))
@@ -402,17 +405,26 @@ pub const Resolver = struct {
     }
 
     fn enclosingErrableType(self: *Resolver, target: global_sg.GlobalNodeId) !?global_sg.GlobalTypeId {
-        for (self.graph.functions.items) |function| {
+        for (self.graph.functions.items, 0..) |function, raw| {
             const body = function.body orelse continue;
             if (!self.blockContains(body, target)) continue;
-            if (function.output.len == 0) return error.ErrorPropagationRequiresErrableReturn;
-            if (function.output.len == 1) {
-                const ty = self.graph.fields.items[function.output.start].ty;
-                if (global_types.findVariant(self.graph, ty, "error") != null) return ty;
-            }
-            return error.ErrorPropagationRequiresErrableReturn;
+            return self.functionErrableType(@enumFromInt(@as(u32, @intCast(raw))));
         }
         return null;
+    }
+
+    fn functionErrableType(
+        self: *Resolver,
+        function_id: global_sg.GlobalFunctionId,
+    ) !?global_sg.GlobalTypeId {
+        if (@intFromEnum(function_id) >= self.graph.functions.items.len) return null;
+        const function = self.graph.functions.items[@intFromEnum(function_id)];
+        if (function.output.len == 0) return error.ErrorPropagationRequiresErrableReturn;
+        if (function.output.len == 1) {
+            const ty = self.graph.fields.items[function.output.start].ty;
+            if (global_types.findVariant(self.graph, ty, "error") != null) return ty;
+        }
+        return error.ErrorPropagationRequiresErrableReturn;
     }
 
     fn errorPayloadCanPropagate(self: *const Resolver, source: global_sg.GlobalTypeId, target: global_sg.GlobalTypeId) bool {
