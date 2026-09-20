@@ -2,26 +2,28 @@ python3 - <<'PY'
 from pathlib import Path
 p=Path("src/4_semantics/global/control.zig")
 s=p.read_text()
-needle='''        const expected = if (value.expected_type) |id| globalizer.globalType(o, id) else self.graph.nodes.items[@intFromEnum(target)].ty;
-
-        // An explicit contextual type is authoritative.'''
-repl='''        const expected = if (value.expected_type) |id| globalizer.globalType(o, id) else self.graph.nodes.items[@intFromEnum(target)].ty;
-        if (expected) |debug_ty| {
-            const tag = @tagName(self.graph.types.items[@intFromEnum(debug_ty)]);
-            const has_variants = types.variants(self.graph, debug_ty) != null;
-            const has_instance = types.genericInstance(self.graph, debug_ty) != null;
-            std.debug.print("CHOICE_TRACE name={s} expected={d} tag={s} variants={} instance={} unresolved={} payload_ty={?d}\\n", .{
-                name,
-                @intFromEnum(debug_ty),
-                tag,
-                has_variants,
-                has_instance,
-                self.graph.isTypeUnresolved(debug_ty),
-                if (payload_ty) |pty| @intFromEnum(pty) else null,
-            });
-        }
-
-        // An explicit contextual type is authoritative.'''
+needle='''                    if (types.findVariant(self.graph, expected_ty, name)) |hit| {
+                        if (hit.variant.payload_type != null and payload == null) return .invalid;
+                        if (payload) |payload_node| if (hit.variant.payload_type) |expected_payload| {
+                            if (self.core) |core| _ = core.coerceContextualValue(payload_node, expected_payload);
+                            payload_ty = self.graph.nodes.items[@intFromEnum(payload_node)].ty;
+                        }'''
+repl='''                    if (types.findVariant(self.graph, expected_ty, name)) |hit| {
+                        if (hit.variant.payload_type != null and payload == null) return .invalid;
+                        if (payload) |payload_node| if (hit.variant.payload_type) |expected_payload| {
+                            std.debug.print("CHOICE_PAYLOAD expected={d} expected_tag={s} node_tag={s} node_ty={?d} fields={}\\n", .{
+                                @intFromEnum(expected_payload),
+                                @tagName(self.graph.types.items[@intFromEnum(expected_payload)]),
+                                @tagName(self.graph.nodes.items[@intFromEnum(payload_node)].content),
+                                if (self.graph.nodes.items[@intFromEnum(payload_node)].ty) |pty| @intFromEnum(pty) else null,
+                                if (types.fields(self.graph, expected_payload)) |r| r.len else 9999,
+                            });
+                            if (self.core) |core| _ = core.coerceContextualValue(payload_node, expected_payload);
+                            payload_ty = self.graph.nodes.items[@intFromEnum(payload_node)].ty;
+                            std.debug.print("CHOICE_PAYLOAD_AFTER node_ty={?d}\\n", .{
+                                if (payload_ty) |pty| @intFromEnum(pty) else null,
+                            });
+                        }'''
 if needle not in s: raise SystemExit("missing trace anchor")
 s=s.replace(needle,repl,1)
 p.write_text(s)
