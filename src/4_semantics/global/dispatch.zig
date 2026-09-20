@@ -30,28 +30,9 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
-        const trace_name = switch (operation) {
-            .resolve_call => |value| module.text(module.semantic.external_refs.items[@intFromEnum(value.callee)].name),
-            else => "",
-        };
-        const trace_reach_call = @import("std").mem.eql(u8, trace_name, "flush_stdout") or
-            @import("std").mem.eql(u8, trace_name, "print");
-        if (trace_reach_call) switch (operation) {
-            .resolve_call => |value| {
-                const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
-                if (reference.generic_arguments) |args|
-                    @import("std").debug.print("[dispatch-call] {s} generic_args=some({d})\n", .{ trace_name, args.len })
-                else
-                    @import("std").debug.print("[dispatch-call] {s} generic_args=null\n", .{trace_name});
-            },
-            else => {},
-        };
-
         const error_result = try self.errors.tryResolveCall(module_index, module, o, operation);
-        if (trace_reach_call) @import("std").debug.print("[dispatch-call] {s} errors={s}\n", .{ trace_name, @tagName(error_result) });
         if (!error_result.allowsFallback()) return error_result;
         const core_result = try self.core.tryResolve(module_index, module, o, operation);
-        if (trace_reach_call) @import("std").debug.print("[dispatch-call] {s} core={s}\n", .{ trace_name, @tagName(core_result) });
         if (core_result == .resolved or core_result == .invalid) return core_result;
 
         // Abstract compatibility is not a competing callable family: it is a
@@ -65,7 +46,6 @@ pub const Resolver = struct {
             o,
             operation,
         );
-        if (trace_reach_call) @import("std").debug.print("[dispatch-call] {s} abstract={s}\n", .{ trace_name, @tagName(abstract_ordinary_result) });
         if (abstract_ordinary_result == .resolved or abstract_ordinary_result == .invalid)
             return abstract_ordinary_result;
         if (core_result == .deferred or abstract_ordinary_result == .deferred)

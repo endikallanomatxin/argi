@@ -222,20 +222,17 @@ pub const Resolver = struct {
             const field = storage.fields.items[shape.fields.start + @as(u32, @intCast(offset))];
             var pattern = field.ty;
 
-            // Index syntax may implicitly borrow its receiver. Infer against
-            // the pointee pattern when the source expression is a value.
-            if (offset == 0) switch (storage.types.items[@intFromEnum(pattern)]) {
-                .resolved => |resolved| switch (resolved) {
-                    .pointer => |pointer| switch (self.graph.types.items[@intFromEnum(operand_types[offset])]) {
-                        .pointer => {},
-                        else => pattern = pointer.child,
-                    },
-                    else => {},
-                },
-                else => {},
-            };
+            if (offset == 0) {
+                if (!try self.inferInputTypeWithImplicitAddress(
+                    candidate_module_index,
+                    pattern,
+                    operand_types[offset],
+                    bindings,
+                )) return false;
+                continue;
+            }
 
-            if (offset != 0) {
+            {
                 if (self.generics.instantiateParameterizedType(
                     candidate_module_index,
                     pattern,
@@ -599,7 +596,12 @@ pub const Resolver = struct {
                         if (self.graph.isTypeUnresolved(current_ty)) valid = false;
                     }
                     if (!valid) continue;
-                    const matched = self.inferInputType(module_index, field.ty, current_ty, bindings) catch |err| switch (err) {
+                    const matched = self.inferInputTypeWithImplicitAddress(
+                        module_index,
+                        field.ty,
+                        current_ty,
+                        bindings,
+                    ) catch |err| switch (err) {
                         error.ConflictingGenericArgument => return false,
                         else => continue,
                     };
@@ -1223,6 +1225,36 @@ pub const Resolver = struct {
             global_field.default_value = marker;
         }
         return .{ .start = start, .len = fields.len };
+    }
+
+    /// Reach defaults and index receivers may synthesize an address when a
+    /// value is supplied for a reference parameter. Generic inference runs
+    /// before that address node exists, so infer from the pointee pattern in
+    /// that case and use ordinary inference for real pointer arguments.
+    fn inferInputTypeWithImplicitAddress(
+        self: *Resolver,
+        module_index: usize,
+        pattern: ir.ParameterizedTypeId,
+        actual: global_sg.GlobalTypeId,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) anyerror!bool {
+        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+        switch (storage.types.items[@intFromEnum(pattern)]) {
+            .resolved => |resolved| switch (resolved) {
+                .pointer => |pointer| switch (self.graph.types.items[@intFromEnum(actual)]) {
+                    .pointer => {},
+                    else => return self.inferInputType(
+                        module_index,
+                        pointer.child,
+                        actual,
+                        bindings,
+                    ),
+                },
+                else => {},
+            },
+            else => {},
+        }
+        return self.inferInputType(module_index, pattern, actual, bindings);
     }
 
     pub fn inferInputType(
