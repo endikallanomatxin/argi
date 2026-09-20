@@ -51,40 +51,19 @@ pub const Resolver = struct {
         };
     }
 
+    const ResolvedIndexOperator = struct {
+        function: global_sg.GlobalFunctionId,
+        addressed_receiver_type: ?global_sg.GlobalTypeId = null,
+    };
+
     fn resolveGenericIndex(
         self: *Resolver,
         module_index: usize,
+        module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         value: anytype,
     ) !resolution.Result {
-        // A concrete collection can still select a parameterized operator.
-        // When its type parameter occurs only in a #reach default, however,
-        // resolve_index currently has no visible-binding context to infer it
-        // from. Keep this path deferred until the ModuleSG operation carries
-        // that context; guessing a specialization would make overload and
-        // ownership resolution unsound.
         const collection = globalizer.globalNode(o, value.value);
-        const collection_ty = self.graph.nodes.items[@intFromEnum(collection)].ty orelse return .deferred;
-        const identity = switch (self.graph.types.items[@intFromEnum(collection_ty)]) {
-            .generic => |generic| generic,
-            else => return .not_applicable,
-        };
-        const operator = value.operator;
-
-        // A generic container operator uses the container's parameters. This
-        // covers value indexing without rebuilding parameterized unification in the
-        // ordinary-operation resolver; parameterized_storage with a different parameter
-        // list are rejected by instantiation or by the final operand match.
-        for (self.modules, 0..) |*candidate_module, candidate_module_index| {
-            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
-                if (parameterized.dispatch_kind == .abstract_contract) continue;
-                if (parameterized.operator != operator or parameterized.parameters.len != identity.arguments.len) continue;
-                if (!self.parameterizedIndexesBase(candidate_module_index, parameterized, identity.base)) continue;
-                const declaration = globalizer.globalDecl(self.offsets[candidate_module_index], parameterized.declaration);
-                _ = self.instantiate(declaration, identity.arguments) catch continue;
-            }
-        }
-
         const index = globalizer.globalNode(o, value.index);
         var operands: [3]global_sg.GlobalNodeId = undefined;
         operands[0] = collection;
@@ -94,89 +73,262 @@ pub const Resolver = struct {
             operands[2] = globalizer.globalNode(o, stored);
             count = 3;
         }
+
         var operand_types: [3]global_sg.GlobalTypeId = undefined;
-        for (operands[0..count], 0..) |node, i|
-            operand_types[i] = self.graph.nodes.items[@intFromEnum(node)].ty orelse return .deferred;
-        var function = self.core.resolveOperator(module_index, operator, operand_types[0..count]) catch null;
-        if (function == null) {
-            var addressed_function: ?global_sg.GlobalFunctionId = null;
-            var addressed_type: ?global_sg.GlobalTypeId = null;
-            for (self.graph.functions.items, 0..) |candidate, raw| {
-                if (raw >= self.graph.function_operators.items.len or self.graph.function_operators.items[raw] != operator) continue;
-                if (candidate.input.len != count) continue;
-                const expected_self = self.graph.fields.items[candidate.input.start].ty;
-                const child = switch (self.graph.types.items[@intFromEnum(expected_self)]) {
-                    .pointer => |pointer| pointer.child,
-                    else => continue,
+        for (operands[0..count], 0..) |node, offset| {
+            const ty = self.graph.nodes.items[@intFromEnum(node)].ty orelse return .deferred;
+            if (self.graph.isTypeUnresolved(ty)) return .deferred;
+            operand_types[offset] = ty;
+        }
+
+        const reach = ReachInferenceContext.fromModule(
+            module,
+            o,
+            value.visible_bindings,
+            value.owner_function,
+        );
+        const input = try self.makePositionalInput(operands[0..count]);
+
+        // Parameterized operators use the same inference ingredients as
+        // parameterized calls: explicit operands first, then omitted #reach
+        // defaults, then constraints. The receiver is the one index-specific
+        // detail: index syntax may implicitly take its address.
+        var instantiated = false;
+        for (self.modules, 0..) |*candidate_module, candidate_module_index| {
+            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                if (parameterized.dispatch_kind == .abstract_contract) continue;
+                if (parameterized.operator != value.operator) continue;
+                const declaration = globalizer.globalDecl(
+                    self.offsets[candidate_module_index],
+                    parameterized.declaration,
+                );
+                if (!self.core.declarationVisible(module_index, declaration, null)) continue;
+
+                var bindings = try generic_mod.Resolver.Bindings.init(
+                    self.allocator,
+                    candidate_module.semantic.parameterized_storage.comptime_parameters.items.len,
+                );
+                defer bindings.deinit(self.allocator);
+
+                if (!try self.inferIndexCandidate(
+                    candidate_module_index,
+                    parameterized,
+                    operands[0..count],
+                    operand_types[0..count],
+                    input,
+                    reach,
+                    &bindings,
+                )) continue;
+
+                const arguments = self.appendBoundArguments(
+                    candidate_module_index,
+                    parameterized.parameters,
+                    &bindings,
+                ) catch |err| switch (err) {
+                    error.MissingGenericArgument => continue,
+                    else => return err,
                 };
-                if (!global_types.equal(self.graph, child, collection_ty)) continue;
-                var matches = true;
-                for (1..count) |i| {
-                    const expected = self.graph.fields.items[candidate.input.start + @as(u32, @intCast(i))].ty;
-                    if (!global_types.equal(self.graph, expected, operand_types[i]) and
-                        !self.core.contextualLiteralFits(operands[i], expected))
-                    {
-                        matches = false;
-                        break;
-                    }
-                }
-                if (!matches) continue;
-                if (addressed_function != null) return .deferred;
-                addressed_function = @enumFromInt(@as(u32, @intCast(raw)));
-                addressed_type = expected_self;
+                _ = self.instantiate(declaration, arguments) catch continue;
+                instantiated = true;
             }
-            function = addressed_function orelse return .deferred;
-            const address: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        }
+        if (!instantiated) return .not_applicable;
+
+        const selected = self.resolveInstantiatedIndexOperator(
+            module_index,
+            value.operator,
+            operand_types[0],
+            operands[0..count],
+            operand_types[0..count],
+        ) orelse return .deferred;
+
+        if (selected.addressed_receiver_type) |receiver_ty| {
+            const address: global_sg.GlobalNodeId = @enumFromInt(
+                @as(u32, @intCast(self.graph.nodes.items.len)),
+            );
             try self.graph.nodes.append(self.allocator, .{
                 .source = self.graph.nodes.items[@intFromEnum(collection)].source,
-                .ty = addressed_type,
+                .ty = receiver_ty,
                 .content = .{ .address_of = collection },
             });
-            operands[0] = address;
+            const literal = self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal;
+            self.graph.value_fields.items[literal.fields.start].value = address;
         }
-        const input = try self.core.makeCallInput(function.?, operands[0..count]);
+
+        const function = self.graph.functions.items[@intFromEnum(selected.function)];
+        if (!try self.core.completeCallInputFieldsWithReach(function.input, input, reach))
+            return .deferred;
+
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = self.graph.nodes.items[@intFromEnum(collection)].source,
-            .ty = try self.core.functionOutputType(function.?),
-            .content = .{ .function_call = .{ .callee = function.?, .input = input } },
+            .ty = try self.core.functionOutputType(selected.function),
+            .content = .{ .function_call = .{
+                .callee = selected.function,
+                .input = input,
+            } },
         };
         self.stats.calls += 1;
         return .resolved;
     }
 
-    fn parameterizedIndexesBase(
+    fn makePositionalInput(
+        self: *Resolver,
+        nodes: []const global_sg.GlobalNodeId,
+    ) !global_sg.GlobalNodeId {
+        const start: u32 = @intCast(self.graph.value_fields.items.len);
+        const empty_name = try self.graph.addString(self.allocator, "");
+        for (nodes) |node|
+            try self.graph.value_fields.append(self.allocator, .{
+                .name = empty_name,
+                .value = node,
+            });
+
+        const id: global_sg.GlobalNodeId = @enumFromInt(
+            @as(u32, @intCast(self.graph.nodes.items.len)),
+        );
+        try self.graph.nodes.append(self.allocator, .{
+            .source = self.graph.nodes.items[@intFromEnum(nodes[0])].source,
+            .ty = null,
+            .content = .{ .struct_value_literal = .{
+                .fields = .{ .start = start, .len = @intCast(nodes.len) },
+                .dispatch_prefix_positional_count = @intCast(nodes.len),
+            } },
+        });
+        return id;
+    }
+
+    fn inferIndexCandidate(
+        self: *Resolver,
+        candidate_module_index: usize,
+        parameterized: parameterized_storage.ParameterizedFunction,
+        operands: []const global_sg.GlobalNodeId,
+        operand_types: []const global_sg.GlobalTypeId,
+        input: global_sg.GlobalNodeId,
+        reach: ReachInferenceContext,
+        bindings: *generic_mod.Resolver.Bindings,
+    ) !bool {
+        const storage = &self.modules[candidate_module_index].semantic.parameterized_storage.ir;
+        const shape = switch (storage.types.items[@intFromEnum(parameterized.input)]) {
+            .resolved => |resolved| switch (resolved) {
+                .structural => |value| value,
+                else => return false,
+            },
+            else => return false,
+        };
+        if (shape.fields.len < operands.len) return false;
+
+        for (operands, 0..) |operand, offset| {
+            const field = storage.fields.items[shape.fields.start + @as(u32, @intCast(offset))];
+            var pattern = field.ty;
+
+            // Index syntax may implicitly borrow its receiver. Infer against
+            // the pointee pattern when the source expression is a value.
+            if (offset == 0) switch (storage.types.items[@intFromEnum(pattern)]) {
+                .resolved => |resolved| switch (resolved) {
+                    .pointer => |pointer| switch (self.graph.types.items[@intFromEnum(operand_types[offset])]) {
+                        .pointer => {},
+                        else => pattern = pointer.child,
+                    },
+                    else => {},
+                },
+                else => {},
+            };
+
+            if (offset != 0) {
+                if (self.generics.instantiateParameterizedType(
+                    candidate_module_index,
+                    pattern,
+                    bindings,
+                    null,
+                )) |expected| {
+                    if (self.core.contextualLiteralFits(operand, expected)) continue;
+                } else |_| {}
+            }
+
+            if (!try self.inferInputType(
+                candidate_module_index,
+                pattern,
+                operand_types[offset],
+                bindings,
+            )) return false;
+        }
+
+        if (!try self.inferBindingsFromReachDefaults(
+            candidate_module_index,
+            parameterized.input,
+            input,
+            bindings,
+            reach,
+        )) return false;
+
+        return self.inferAndValidateConstraints(
+            candidate_module_index,
+            parameterized.parameters,
+            bindings,
+        );
+    }
+
+    fn resolveInstantiatedIndexOperator(
         self: *Resolver,
         module_index: usize,
-        parameterized: parameterized_storage.ParameterizedFunction,
-        base: global_sg.GlobalDeclId,
-    ) bool {
-        const module = &self.modules[module_index];
-        const storage = &module.semantic.parameterized_storage.ir;
-        const input = switch (storage.types.items[@intFromEnum(parameterized.input)]) {
-            .resolved => |ty| switch (ty) {
-                .structural => |shape| shape,
-                else => return false,
-            },
-            else => return false,
-        };
-        if (input.fields.len == 0) return false;
-        const self_field = storage.fields.items[input.fields.start];
-        const child = switch (storage.types.items[@intFromEnum(self_field.ty)]) {
-            .resolved => |ty| switch (ty) {
-                .pointer => |pointer| pointer.child,
-                else => return false,
-            },
-            else => return false,
-        };
-        const parameterized_base = switch (storage.types.items[@intFromEnum(child)]) {
-            .resolved => |ty| switch (ty) {
-                .generic => |generic| generic.base,
-                else => return false,
-            },
-            else => return false,
-        };
-        return (self.generics.resolveParameterizedDeclaration(module_index, parameterized_base) catch return false) == base;
+        operator: @import("../primitives/callable.zig").OperatorKind,
+        collection_ty: global_sg.GlobalTypeId,
+        operand_nodes: []const global_sg.GlobalNodeId,
+        operand_types: []const global_sg.GlobalTypeId,
+    ) ?ResolvedIndexOperator {
+        var chosen: ?ResolvedIndexOperator = null;
+
+        for (self.graph.functions.items, 0..) |candidate, raw| {
+            if (raw >= self.graph.function_operators.items.len or
+                self.graph.function_operators.items[raw] != operator) continue;
+            if (!self.core.declarationVisible(module_index, candidate.declaration, null)) continue;
+            if (candidate.input.len < operand_types.len) continue;
+
+            var defaults_available = true;
+            for (operand_types.len..candidate.input.len) |offset| {
+                if (self.graph.fields.items[candidate.input.start + @as(u32, @intCast(offset))].default_value == null) {
+                    defaults_available = false;
+                    break;
+                }
+            }
+            if (!defaults_available) continue;
+
+            const expected_receiver = self.graph.fields.items[candidate.input.start].ty;
+            var addressed_receiver_type: ?global_sg.GlobalTypeId = null;
+            if (!global_types.equal(self.graph, expected_receiver, collection_ty) and
+                !self.core.callTypesCompatible(collection_ty, expected_receiver))
+            {
+                const pointer = switch (self.graph.types.items[@intFromEnum(expected_receiver)]) {
+                    .pointer => |value| value,
+                    else => continue,
+                };
+                if (!global_types.equal(self.graph, pointer.child, collection_ty) and
+                    !self.core.callTypesCompatible(collection_ty, pointer.child)) continue;
+                addressed_receiver_type = expected_receiver;
+            }
+
+            var matches = true;
+            for (1..operand_types.len) |offset| {
+                const expected = self.graph.fields.items[
+                    candidate.input.start + @as(u32, @intCast(offset))
+                ].ty;
+                if (!global_types.equal(self.graph, expected, operand_types[offset]) and
+                    !self.core.callTypesCompatible(operand_types[offset], expected) and
+                    !self.core.contextualLiteralFits(operand_nodes[offset], expected))
+                {
+                    matches = false;
+                    break;
+                }
+            }
+            if (!matches) continue;
+            if (chosen != null) return null;
+            chosen = .{
+                .function = @enumFromInt(@as(u32, @intCast(raw))),
+                .addressed_receiver_type = addressed_receiver_type,
+            };
+        }
+        return chosen;
     }
 
     fn resolveModuleGenericCall(
