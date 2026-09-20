@@ -53,6 +53,20 @@ pub fn roots(
         // inspected while resolving an otherwise reachable caller.
         if (entrypoint or function.flags.uses_inferred_error_reasons)
             _ = try result.include(@enumFromInt(@as(u32, @intCast(raw))));
+        if (entrypoint) for (graph.fields.items[function.input.start..][0..function.input.len]) |field| {
+            if (field.default_value != null or !std.mem.eql(u8, graph.text(field.name), "system")) continue;
+            for (graph.functions.items, 0..) |candidate, candidate_raw| {
+                const candidate_declaration = graph.declaration(candidate.declaration);
+                if (!std.mem.eql(u8, graph.text(candidate_declaration.name), "init") or candidate.input.len != 1) continue;
+                const receiver = graph.fields.items[candidate.input.start].ty;
+                const pointer = switch (graph.types.items[@intFromEnum(receiver)]) {
+                    .pointer => |value| value,
+                    else => continue,
+                };
+                if (types.equal(graph, pointer.child, field.ty))
+                    _ = try result.include(@enumFromInt(@as(u32, @intCast(candidate_raw))));
+            }
+        };
     }
     return result;
 }
