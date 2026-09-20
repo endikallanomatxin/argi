@@ -804,7 +804,7 @@ pub const Resolver = struct {
         // selects the element without requiring an array type first.
         if (value.store_value == null) switch (self.graph.node(collection).content) {
             .list_literal => |literal| switch (self.graph.node(index).content) {
-                .int_literal => |raw_index| if (raw_index >= 0 and raw_index < literal.elements.len) {
+                .int_literal => |raw_index| if (raw_index >= 0 and raw_index < @as(i64, @intCast(literal.elements.len))) {
                     const selected = self.graph.node_refs.items[
                         literal.elements.start + @as(u32, @intCast(raw_index))
                     ];
