@@ -236,6 +236,7 @@ pub const PendingOperation = union(enum) {
     resolve_error_propagation: struct {
         node: ModuleNodeId,
         errable_value: ModuleNodeId,
+        source: primitives.SourceRef,
         context: ?ModuleNodeId = null,
         // Lexical owner breaks the dependency cycle when propagation appears
         // inside an unresolved enclosing expression (for example a call arg).

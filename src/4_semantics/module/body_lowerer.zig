@@ -527,6 +527,7 @@ const Context = struct {
         return self.pending(node, .{ .resolve_error_propagation = .{
             .node = self.nextNodeId(),
             .errable_value = child.node,
+            .source = self.sourceRef(node),
             .context = context,
             .owner_function = self.current_function,
         } }, expected);
@@ -539,6 +540,7 @@ const Context = struct {
         return self.pending(node, .{ .resolve_error_propagation = .{
             .node = self.nextNodeId(),
             .errable_value = value.node,
+            .source = self.sourceRef(node),
             .context = context.node,
         } }, expected);
     }
