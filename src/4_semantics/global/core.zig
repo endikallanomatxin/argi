@@ -657,6 +657,13 @@ pub const Resolver = struct {
         const child_node = globalizer.globalNode(o, value.value);
         const child = self.graph.nodes.items[@intFromEnum(child_node)].ty orelse return .deferred;
         if (self.graph.isTypeUnresolved(child)) return .deferred;
+        if (value.collapse_existing_pointer) switch (self.graph.types.items[@intFromEnum(child)]) {
+            .pointer => |pointer| if (value.mutability == .read_only or pointer.mutability == .read_write) {
+                self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = self.graph.node(child_node);
+                return .resolved;
+            },
+            else => {},
+        };
         const pointer_type = try self.pointerType(child, value.mutability);
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
