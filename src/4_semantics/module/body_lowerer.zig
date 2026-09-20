@@ -699,7 +699,7 @@ const Context = struct {
     fn nullableChild(self: *const Context, ty: entities.ModuleTypeId) ?entities.ModuleTypeId {
         const view = views.typeView(self.graph, ty) catch return null;
         return switch (view) {
-            .resolved => |resolved| switch (resolved) {
+            .resolved => |resolved_type| switch (resolved_type) {
                 .nullable => |child| child,
                 else => null,
             },
