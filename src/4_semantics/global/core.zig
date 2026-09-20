@@ -595,6 +595,27 @@ pub const Resolver = struct {
             self.stats.fields += 1;
             return true;
         }
+        if (self.graph.types.items[@intFromEnum(source_ty)] == .virtual) {
+            const field_index: u32 = if (std.mem.eql(u8, field_name, "data") or std.mem.eql(u8, field_name, "data_ptr"))
+                0
+            else if (std.mem.eql(u8, field_name, "vtable"))
+                1
+            else
+                return false;
+            const any = try self.builtin(.Any);
+            const pointer = try self.pointerType(any, .read_only);
+            self.graph.nodes.items[@intFromEnum(target)] = .{
+                .source = self.graph.nodes.items[@intFromEnum(source)].source,
+                .ty = pointer,
+                .content = .{ .struct_field_access = .{
+                    .value = source,
+                    .field_name = try self.graph.addString(self.allocator, field_name),
+                    .field_index = field_index,
+                } },
+            };
+            self.stats.fields += 1;
+            return true;
+        }
         const hit = types.findField(self.graph, source_ty, field_name) orelse return false;
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = self.graph.nodes.items[@intFromEnum(source)].source,
