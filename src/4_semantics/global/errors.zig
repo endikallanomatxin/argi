@@ -346,7 +346,10 @@ pub const Resolver = struct {
         if (!self.errorPayloadCanPropagate(error_payload, propagated_error_payload))
             return error.IncompatibleErrorPayload;
         try self.absorbErrorPayloadReasons(error_payload, propagated_error_payload);
-        const source = self.graph.nodes.items[@intFromEnum(errable)].source;
+        const source: primitives.SourceRef = .{
+            .file_index = o.file_base + value.source.file_index,
+            .offset = value.source.offset,
+        };
         const empty = try self.graph.addString(self.allocator, "");
         const cleanup: primitives.Range(global_sg.GlobalNodeId) = .{ .start = @intCast(self.graph.node_refs.items.len), .len = 0 };
 
