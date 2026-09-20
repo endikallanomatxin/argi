@@ -88,3 +88,35 @@ jobs:
           path: program-tests-${{ matrix.shard }}.log
           if-no-files-found: ignore
           retention-days: 7
+
+
+  full-program-suite:
+    name: programs / full-suite-diagnostic
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Install LLVM 21
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+          sudo apt-get install -y llvm-21-dev clang-21
+      - name: Run full program suite
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -o pipefail
+          zig build test-programs 2>&1 | tee "program-tests-full.log"
+      - name: Upload full program-test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: program-tests-full
+          path: program-tests-full.log
+          if-no-files-found: ignore
+          retention-days: 7
