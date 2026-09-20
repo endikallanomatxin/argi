@@ -199,6 +199,12 @@ pub const PendingOperation = union(enum) {
         right: ModuleNodeId,
     },
     resolve_index: struct {
+        // Keep the operation context available to GlobalSema. Parameterized
+        // index operators may infer a type only from a #reach default (for
+        // example `operator get[] #(.t: Type)` whose result is `#reach value`).
+        // The current lowering stores the owner separately, but does not yet
+        // carry visible bindings in this operation, so such candidates cannot
+        // be instantiated reliably.
         node: ModuleNodeId,
         value: ModuleNodeId,
         index: ModuleNodeId,
