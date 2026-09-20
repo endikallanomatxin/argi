@@ -15,8 +15,14 @@ const NamedBinding = struct {
     id: entities.ModuleBindingId,
     ty: ?entities.ModuleTypeId,
 };
+const RefinedValue = struct {
+    name: primitives.StringRange,
+    node: entities.ModuleNodeId,
+    ty: entities.ModuleTypeId,
+};
 const ScopeMark = struct {
     bindings: usize,
+    refinements: usize,
     module_aliases: usize,
 };
 pub const Lowered = struct { node: entities.ModuleNodeId, ty: ?entities.ModuleTypeId };
@@ -33,10 +39,12 @@ pub fn lowerMissingFunctions(
         .files = files,
         .writer = writer_mod.Writer.init(allocator, graph),
         .bindings = std.array_list.Managed(NamedBinding).init(allocator),
+        .refinements = std.array_list.Managed(RefinedValue).init(allocator),
         .module_aliases = std.array_list.Managed(type_lowerer.LexicalModuleAlias).init(allocator),
         .scope_marks = std.array_list.Managed(ScopeMark).init(allocator),
     };
     defer context.bindings.deinit();
+    defer context.refinements.deinit();
     defer context.module_aliases.deinit();
     defer context.scope_marks.deinit();
     return context.lowerFunctions();
@@ -56,11 +64,13 @@ pub fn lowerInitializerExpression(
         .files = files,
         .writer = writer_mod.Writer.init(allocator, graph),
         .bindings = std.array_list.Managed(NamedBinding).init(allocator),
+        .refinements = std.array_list.Managed(RefinedValue).init(allocator),
         .module_aliases = std.array_list.Managed(type_lowerer.LexicalModuleAlias).init(allocator),
         .scope_marks = std.array_list.Managed(ScopeMark).init(allocator),
         .expression_mode = .initializer,
     };
     defer context.bindings.deinit();
+    defer context.refinements.deinit();
     defer context.module_aliases.deinit();
     defer context.scope_marks.deinit();
     context.file_index = file_index;
@@ -78,6 +88,7 @@ const Context = struct {
     files: []const graph_mod.FileInput,
     writer: writer_mod.Writer,
     bindings: std.array_list.Managed(NamedBinding),
+    refinements: std.array_list.Managed(RefinedValue),
     module_aliases: std.array_list.Managed(type_lowerer.LexicalModuleAlias),
     scope_marks: std.array_list.Managed(ScopeMark),
     file_index: u32 = 0,
@@ -111,6 +122,7 @@ const Context = struct {
             if (declaration.generic_params.len != 0 or declaration.generic_params_struct != null) continue;
 
             self.bindings.clearRetainingCapacity();
+            self.refinements.clearRetainingCapacity();
             self.module_aliases.clearRetainingCapacity();
             self.scope_marks.clearRetainingCapacity();
             try self.seedGlobalModuleAliases();
@@ -301,6 +313,8 @@ const Context = struct {
 
     fn lowerIdentifier(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
+        if (self.lookupRefinement(text)) |refined|
+            return .{ .node = refined.node, .ty = refined.ty };
         if (self.lookupBinding(text)) |binding|
             return self.resolved(node, binding.ty, .{ .binding_use = binding.id });
         return self.pending(node, .{ .resolve_name_use = .{
@@ -634,13 +648,63 @@ const Context = struct {
     fn lowerIf(self: *Context, node: syn.NodeIndex) !Lowered {
         const statement = self.tree.ifStatement(node).?;
         const condition = try self.lowerNode(statement.condition, try self.builtin(.Bool));
+
+        const refinement_len = self.refinements.items.len;
+        if (try self.nullableIfRefinement(statement.condition)) |refined|
+            try self.refinements.append(refined);
         const then_block = try self.lowerBlock(statement.then_block);
+        self.refinements.shrinkRetainingCapacity(refinement_len);
+
         const else_block = if (statement.else_block) |child| try self.lowerBlock(child) else null;
         return self.resolved(node, try self.builtin(.Void), .{ .if_statement = .{
             .condition = condition.node,
             .then_block = then_block,
             .else_block = else_block,
         } });
+    }
+
+    fn nullableIfRefinement(self: *Context, condition: syn.NodeIndex) !?RefinedValue {
+        if (self.tree.tag(condition) != .nullable_test) return null;
+        const operand = self.tree.unaryOperand(condition) orelse return null;
+        if (self.tree.tag(operand) != .identifier) return null;
+
+        const name_text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(operand));
+        const binding = self.lookupBinding(name_text) orelse return null;
+        const binding_ty = binding.ty orelse return null;
+        const child_ty = self.nullableChild(binding_ty) orelse return null;
+
+        const source_use = try self.resolved(operand, binding_ty, .{ .binding_use = binding.id });
+        const some_name = try self.writer.addString("some");
+        const payload = try self.pending(condition, .{ .resolve_choice_payload = .{
+            .node = self.nextNodeId(),
+            .value = source_use.node,
+            .option_name = some_name,
+            .source = self.sourceRef(condition),
+        } }, null);
+        const value_name = try self.writer.addString("value");
+        const unwrapped = try self.pending(condition, .{ .resolve_field = .{
+            .node = self.nextNodeId(),
+            .value = payload.node,
+            .field_name = value_name,
+            .source = self.sourceRef(condition),
+        } }, child_ty);
+
+        return .{
+            .name = binding.name,
+            .node = unwrapped.node,
+            .ty = child_ty,
+        };
+    }
+
+    fn nullableChild(self: *const Context, ty: entities.ModuleTypeId) ?entities.ModuleTypeId {
+        const view = views.typeView(self.graph, ty) catch return null;
+        return switch (view) {
+            .resolved => |resolved| switch (resolved) {
+                .nullable => |child| child,
+                else => null,
+            },
+            .external => null,
+        };
     }
 
     fn lowerWhile(self: *Context, node: syn.NodeIndex) !Lowered {
@@ -962,13 +1026,24 @@ const Context = struct {
     fn pushScope(self: *Context) !void {
         try self.scope_marks.append(.{
             .bindings = self.bindings.items.len,
+            .refinements = self.refinements.items.len,
             .module_aliases = self.module_aliases.items.len,
         });
     }
     fn popScope(self: *Context) void {
         const mark = self.scope_marks.pop().?;
         self.bindings.shrinkRetainingCapacity(mark.bindings);
+        self.refinements.shrinkRetainingCapacity(mark.refinements);
         self.module_aliases.shrinkRetainingCapacity(mark.module_aliases);
+    }
+    fn lookupRefinement(self: *const Context, name: []const u8) ?RefinedValue {
+        var index = self.refinements.items.len;
+        while (index != 0) {
+            index -= 1;
+            if (std.mem.eql(u8, self.graph.text(self.refinements.items[index].name), name))
+                return self.refinements.items[index];
+        }
+        return null;
     }
     fn lookupBinding(self: *const Context, name: []const u8) ?NamedBinding {
         var index = self.bindings.items.len;
