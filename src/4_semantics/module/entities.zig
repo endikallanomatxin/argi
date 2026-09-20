@@ -237,6 +237,9 @@ pub const PendingOperation = union(enum) {
         node: ModuleNodeId,
         errable_value: ModuleNodeId,
         context: ?ModuleNodeId = null,
+        // Lexical owner breaks the dependency cycle when propagation appears
+        // inside an unresolved enclosing expression (for example a call arg).
+        owner_function: ?ModuleFunctionId = null,
     },
     resolve_for_each: struct {
         node: ModuleNodeId,

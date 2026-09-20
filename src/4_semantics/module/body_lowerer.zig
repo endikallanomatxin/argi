@@ -528,6 +528,7 @@ const Context = struct {
             .node = self.nextNodeId(),
             .errable_value = child.node,
             .context = context,
+            .owner_function = self.current_function,
         } }, expected);
     }
 
