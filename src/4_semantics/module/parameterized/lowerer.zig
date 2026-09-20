@@ -404,8 +404,8 @@ pub const Context = struct {
     }
 
     pub fn lowerType(self: *Context, node: syn.NodeIndex, allow_self: bool) anyerror!ir.ParameterizedTypeId {
-        if (self.abstractParameter(node)) |parameter|
-            return self.addType(.{ .parameter = parameter });
+        if (self.abstractParameter(node)) |abstract_parameter_id|
+            return self.addType(.{ .parameter = abstract_parameter_id });
         const syntax_type = self.tree.syntaxType(node) orelse return error.ExpectedParameterizedType;
         return switch (syntax_type) {
             .name => |name| self.lowerNamedType(node, name.name_token, name.qualifier_token, allow_self),
