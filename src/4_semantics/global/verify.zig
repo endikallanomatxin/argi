@@ -77,19 +77,29 @@ fn verifySymbols(graph: *const graph_mod.GlobalSemanticGraph) !void {
 }
 
 fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
-    var generic_count: usize = 0;
+    var materialized_generic_count: usize = 0;
     for (graph.types.items) |ty| switch (ty) {
-        .generic => generic_count += 1,
+        .generic => |generic| {
+            try require(verify.idFits(generic.base, graph.declarations.items.len));
+            switch (graph.declaration(generic.base).kind) {
+                .type => materialized_generic_count += 1,
+                // Parameterized abstract identities are semantic contracts, not
+                // runtime layouts. They intentionally have no GenericInstance.
+                .abstract_type => {},
+                else => return error.InvalidGlobalSemanticGraph,
+            }
+        },
         else => {},
     };
-    try require(generic_count == graph.generic_instances.items.len);
+    try require(materialized_generic_count == graph.generic_instances.items.len);
 
     for (graph.generic_instances.items, 0..) |instance, index| {
         try require(verify.idFits(instance.type_id, graph.types.items.len));
-        switch (graph.types.items[@intFromEnum(instance.type_id)]) {
-            .generic => {},
+        const generic = switch (graph.types.items[@intFromEnum(instance.type_id)]) {
+            .generic => |value| value,
             else => return error.InvalidGlobalSemanticGraph,
-        }
+        };
+        try require(graph.declaration(generic.base).kind == .type);
         for (graph.generic_instances.items[0..index]) |previous|
             try require(previous.type_id != instance.type_id);
         switch (instance.shape) {
@@ -99,6 +109,31 @@ fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
             .alias => |target| try require(verify.idFits(target, graph.types.items.len)),
         }
     }
+}
+
+test "parameterized abstract identities do not require runtime generic instances" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+
+    const name = try graph.addString(allocator, "Iterable");
+    try graph.declarations.append(allocator, .{
+        .kind = .abstract_type,
+        .name = name,
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    const arg_name = try graph.addString(allocator, "t");
+    try graph.generic_arguments.append(allocator, .{
+        .name = arg_name,
+        .value = .{ .type = @enumFromInt(0) },
+    });
+    try graph.types.append(allocator, .{ .generic = .{
+        .base = @enumFromInt(0),
+        .arguments = .{ .start = 0, .len = 1 },
+    } });
+
+    try verifyGenericInstances(&graph);
 }
 
 fn verifyGenericFunctionInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
