@@ -199,17 +199,16 @@ pub const PendingOperation = union(enum) {
         right: ModuleNodeId,
     },
     resolve_index: struct {
-        // Keep the operation context available to GlobalSema. Parameterized
-        // index operators may infer a type only from a #reach default (for
-        // example `operator get[] #(.t: Type)` whose result is `#reach value`).
-        // The current lowering stores the owner separately, but does not yet
-        // carry visible bindings in this operation, so such candidates cannot
-        // be instantiated reliably.
         node: ModuleNodeId,
         value: ModuleNodeId,
         index: ModuleNodeId,
         store_value: ?ModuleNodeId = null,
         operator: callable.OperatorKind = .get,
+        // Index operators participate in the same contextual resolution as
+        // ordinary calls: generic arguments and omitted #reach defaults may
+        // depend on bindings visible at the index expression.
+        visible_bindings: BindingRange = .{ .start = 0, .len = 0 },
+        owner_function: ?ModuleFunctionId = null,
     },
     resolve_dereference: struct {
         node: ModuleNodeId,

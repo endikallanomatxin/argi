@@ -883,9 +883,14 @@ pub const Resolver = struct {
         }
         var operand_types: [3]global_sg.GlobalTypeId = undefined;
         for (operands[0..count], 0..) |node, i| operand_types[i] = self.graph.nodes.items[@intFromEnum(node)].ty orelse return .deferred;
-        const function = self.resolveOperator(module_index, operator, operand_types[0..count]) catch switch (self.graph.types.items[@intFromEnum(collection_ty)]) {
-            .generic => return .not_applicable,
-            else => self.resolveAddressedIndexOperator(module_index, operator, collection_ty, operands[0..count], operand_types[0..count]) orelse return .deferred,
+        const function = self.resolveOperator(module_index, operator, operand_types[0..count]) catch blk: {
+            break :blk self.resolveAddressedIndexOperator(
+                module_index,
+                operator,
+                collection_ty,
+                operands[0..count],
+                operand_types[0..count],
+            ) orelse return .not_applicable;
         };
         const receiver_ty = self.graph.fields.items[self.graph.functions.items[@intFromEnum(function)].input.start].ty;
         if (!types.equal(self.graph, collection_ty, receiver_ty) and !self.callTypesCompatible(collection_ty, receiver_ty)) {
