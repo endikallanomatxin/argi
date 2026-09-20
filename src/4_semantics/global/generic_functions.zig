@@ -57,6 +57,12 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         value: anytype,
     ) !resolution.Result {
+        // A concrete collection can still select a parameterized operator.
+        // When its type parameter occurs only in a #reach default, however,
+        // resolve_index currently has no visible-binding context to infer it
+        // from. Keep this path deferred until the ModuleSG operation carries
+        // that context; guessing a specialization would make overload and
+        // ownership resolution unsound.
         const collection = globalizer.globalNode(o, value.value);
         const collection_ty = self.graph.nodes.items[@intFromEnum(collection)].ty orelse return .deferred;
         const identity = switch (self.graph.types.items[@intFromEnum(collection_ty)]) {
