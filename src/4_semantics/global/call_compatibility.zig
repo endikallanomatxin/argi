@@ -148,29 +148,13 @@ fn matchFunctionNamed(
         if (function.flags.is_abstract_dispatch) continue;
         const declaration = compatibility.core.graph.declarations.items[@intFromEnum(function.declaration)];
         if (!std.mem.eql(u8, compatibility.core.graph.text(declaration.name), name)) continue;
-        const visible = compatibility.core.declarationVisible(current_module, function.declaration, module_filter);
-        if (std.mem.eql(u8, name, "flush_stdout") or std.mem.eql(u8, name, "print")) {
-            const owner = compatibility.core.graph.moduleForDeclaration(function.declaration);
-            @import("std").debug.print(
-                "[reach-candidate] {s} raw={d} current={d} owner={any} visible={} abstract_dispatch={}\n",
-                .{ name, raw, current_module, owner, visible, function.flags.is_abstract_dispatch },
-            );
-        }
-        if (!visible) continue;
-        const reach_match = try matchInputWithReach(
+        if (!compatibility.core.declarationVisible(current_module, function.declaration, module_filter)) continue;
+        const score = switch (try matchInputWithReach(
             compatibility,
             function.input,
             input_node,
             reach,
-        );
-        if (std.mem.eql(u8, name, "flush_stdout") or std.mem.eql(u8, name, "print")) {
-            std.debug.print("[reach-call] {s} candidate={d} match={s}\n", .{
-                name,
-                raw,
-                @tagName(reach_match),
-            });
-        }
-        const score = switch (reach_match) {
+        )) {
             .no_match => continue,
             .deferred => {
                 saw_deferred = true;
