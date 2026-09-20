@@ -33,8 +33,12 @@ pub const Resolver = struct {
         const error_result = try self.errors.tryResolveCall(module_index, module, o, operation);
         if (!error_result.allowsFallback()) return error_result;
         const core_result = try self.core.tryResolve(module_index, module, o, operation);
-        if (!core_result.allowsFallback()) return core_result;
+        if (core_result == .resolved or core_result == .invalid) return core_result;
 
+        // Abstract compatibility is not a competing callable family: it is a
+        // richer matching policy for the same ordinary candidates. A Core
+        // "deferred" result must therefore not hide a candidate that becomes
+        // decidable once concrete-to-abstract compatibility is considered.
         const abstract_ordinary_result = try call_compatibility.tryResolveOrdinaryCall(
             .{ .core = self.core, .abstracts = self.abstracts },
             module_index,
@@ -42,7 +46,10 @@ pub const Resolver = struct {
             o,
             operation,
         );
-        if (!abstract_ordinary_result.allowsFallback()) return abstract_ordinary_result;
+        if (abstract_ordinary_result == .resolved or abstract_ordinary_result == .invalid)
+            return abstract_ordinary_result;
+        if (core_result == .deferred or abstract_ordinary_result == .deferred)
+            return .deferred;
 
         const generic_result = try self.generic_functions.tryResolve(module_index, module, o, operation);
         if (!generic_result.allowsFallback()) return generic_result;
@@ -79,11 +86,11 @@ pub const Resolver = struct {
                 )) return error.DeferredImplicitFunction;
                 return .{ .function = function, .input = input };
             },
-            .deferred => return error.DeferredImplicitFunction,
             .ambiguous => return error.AmbiguousImplicitFunction,
-            .no_match => {},
+            .deferred, .no_match => {},
         }
 
+        const ordinary_deferred = ordinary == .deferred;
         const compatibility = call_compatibility.Abstract{ .core = self.core, .abstracts = self.abstracts };
         const abstract_ordinary = try call_compatibility.matchUnqualifiedFunctionByNameWithReach(
             compatibility,
@@ -104,7 +111,7 @@ pub const Resolver = struct {
             },
             .deferred => return error.DeferredImplicitFunction,
             .ambiguous => return error.AmbiguousImplicitFunction,
-            .no_match => {},
+            .no_match => if (ordinary_deferred) return error.DeferredImplicitFunction,
         }
 
         const function = self.generic_functions.resolveImplicitGenericFunctionByName(
