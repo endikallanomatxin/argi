@@ -798,6 +798,26 @@ pub const Resolver = struct {
     fn resolveIndex(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
         const collection = globalizer.globalNode(o, value.value);
         const index = globalizer.globalNode(o, value.index);
+
+        // A list literal is a compile-time tuple-like value until context
+        // materializes it as an array. Direct literal indexing therefore
+        // selects the element without requiring an array type first.
+        if (value.store_value == null) switch (self.graph.node(collection).content) {
+            .list_literal => |literal| switch (self.graph.node(index).content) {
+                .int_literal => |raw_index| if (raw_index >= 0 and raw_index < literal.elements.len) {
+                    const selected = self.graph.node_refs.items[
+                        literal.elements.start + @as(u32, @intCast(raw_index))
+                    ];
+                    self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] =
+                        self.graph.node(selected).*;
+                    self.stats.indexes += 1;
+                    return .resolved;
+                },
+                else => {},
+            },
+            else => {},
+        };
+
         const collection_ty = self.graph.nodes.items[@intFromEnum(collection)].ty orelse return .deferred;
         if (types.arrayElement(self.graph, collection_ty)) |element_ty| {
             const target = globalizer.globalNode(o, value.node);
