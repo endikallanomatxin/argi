@@ -181,7 +181,7 @@ pub const Resolver = struct {
     fn resolveChoiceLiteral(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.option)];
         const name = module.text(reference.name);
-        const payload = if (value.payload) |id| globalizer.globalNode(o, id) else null;
+        var payload = if (value.payload) |id| globalizer.globalNode(o, id) else null;
         var payload_ty = if (payload) |id| self.graph.nodes.items[@intFromEnum(id)].ty else null;
         const target = globalizer.globalNode(o, value.node);
         if (self.graph.nodes.items[@intFromEnum(target)].content == .int_literal) return .resolved;
@@ -198,8 +198,10 @@ pub const Resolver = struct {
                     if (types.findVariant(self.graph, expected_ty, name)) |hit| {
                         if (hit.variant.payload_type != null and payload == null) return .invalid;
                         if (payload) |payload_node| if (hit.variant.payload_type) |expected_payload| {
-                            if (self.core) |core| _ = core.coerceContextualValue(payload_node, expected_payload);
-                            payload_ty = self.graph.nodes.items[@intFromEnum(payload_node)].ty;
+                            const normalized = self.normalizeChoicePayload(payload_node, expected_payload);
+                            payload = normalized;
+                            if (self.core) |core| _ = core.coerceContextualValue(normalized, expected_payload);
+                            payload_ty = self.graph.nodes.items[@intFromEnum(normalized)].ty;
                         };
                         if (!self.payloadCompatible(hit.variant.payload_type, payload_ty)) return .deferred;
                         break :blk expected_ty;
@@ -212,8 +214,10 @@ pub const Resolver = struct {
 
         const variant = types.findVariant(self.graph, choice_ty, name) orelse return .deferred;
         if (payload) |payload_node| if (variant.variant.payload_type) |expected_payload| {
-            if (self.core) |core| _ = core.coerceContextualValue(payload_node, expected_payload);
-            payload_ty = self.graph.nodes.items[@intFromEnum(payload_node)].ty;
+            const normalized = self.normalizeChoicePayload(payload_node, expected_payload);
+            payload = normalized;
+            if (self.core) |core| _ = core.coerceContextualValue(normalized, expected_payload);
+            payload_ty = self.graph.nodes.items[@intFromEnum(normalized)].ty;
         };
         if (!self.payloadCompatible(variant.variant.payload_type, payload_ty)) return .deferred;
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -227,6 +231,26 @@ pub const Resolver = struct {
         };
         self.stats.choices += 1;
         return .resolved;
+    }
+
+    fn normalizeChoicePayload(
+        self: *const Resolver,
+        payload: global_sg.GlobalNodeId,
+        expected: global_sg.GlobalTypeId,
+    ) global_sg.GlobalNodeId {
+        // Choice constructor arguments are lowered as an aggregate. Structural
+        // payloads consume that aggregate directly; scalar/non-structural
+        // payloads consume their single '.value' (or positional) argument.
+        if (types.fields(self.graph, expected) != null) return payload;
+        const literal = switch (self.graph.nodes.items[@intFromEnum(payload)].content) {
+            .struct_value_literal => |value| value,
+            else => return payload,
+        };
+        if (literal.fields.len != 1) return payload;
+        const field = self.graph.value_fields.items[literal.fields.start];
+        if (literal.dispatch_prefix_positional_count != 1 and
+            !std.mem.eql(u8, self.graph.text(field.name), "value")) return payload;
+        return field.value;
     }
 
     fn ensureInferredReasonVariant(self: *Resolver, ty: global_sg.GlobalTypeId, name: []const u8, source: primitives.SourceRef) !void {
