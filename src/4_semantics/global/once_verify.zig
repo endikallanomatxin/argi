@@ -13,7 +13,7 @@ pub fn verify(
         .allocator = allocator,
         .graph = graph,
         .diagnostics = diagnostics,
-        .seen_once = std.AutoHashMap(graph_mod.GlobalFunctionId, graph_mod.GlobalNodeId).init(allocator),
+        .seen_once = std.AutoHashMap(graph_mod.GlobalFunctionId, FirstUse).init(allocator),
         .active_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
     };
     defer state.seen_once.deinit();
@@ -42,8 +42,9 @@ const State = struct {
     allocator: std.mem.Allocator,
     graph: *const graph_mod.GlobalSemanticGraph,
     diagnostics: *diagnostics_mod.Diagnostics,
-    seen_once: std.AutoHashMap(graph_mod.GlobalFunctionId, graph_mod.GlobalNodeId),
+    seen_once: std.AutoHashMap(graph_mod.GlobalFunctionId, FirstUse),
     active_functions: std.AutoHashMap(graph_mod.GlobalFunctionId, void),
+    current_function: ?graph_mod.GlobalFunctionId = null,
     had_error: bool = false,
 
     fn walkFunction(self: *State, function_id: graph_mod.GlobalFunctionId) anyerror!void {
@@ -52,6 +53,9 @@ const State = struct {
         const body = function.body orelse return;
         try self.active_functions.put(function_id, {});
         defer _ = self.active_functions.remove(function_id);
+        const previous = self.current_function;
+        self.current_function = function_id;
+        defer self.current_function = previous;
         try self.walkBlock(body);
     }
 
@@ -223,12 +227,12 @@ const State = struct {
     fn consumeOnce(self: *State, call_node: graph_mod.GlobalNodeId, callee: graph_mod.GlobalFunctionId) anyerror!void {
         const result = try self.seen_once.getOrPut(callee);
         if (!result.found_existing) {
-            result.value_ptr.* = call_node;
+            result.value_ptr.* = .{ .node = call_node, .caller = self.current_function };
             return;
         }
 
         const declaration = self.graph.declarations.items[@intFromEnum(self.graph.functions.items[@intFromEnum(callee)].declaration)];
-        const first_node = self.graph.nodes.items[@intFromEnum(result.value_ptr.*)];
+        const first_node = self.graph.nodes.items[@intFromEnum(result.value_ptr.node)];
         const current_node = self.graph.nodes.items[@intFromEnum(call_node)];
         const first_location = self.location(first_node.source);
         const current_location = self.location(current_node.source);
@@ -236,12 +240,13 @@ const State = struct {
         try self.diagnostics.add(
             current_location,
             .semantic,
-            "once function '{s}' is consumed more than once from the reachable entrypoint graph (first use at {s}:{d}:{d})",
+            "once function '{s}' is consumed more than once from the reachable entrypoint graph (first use at {s}:{d}:{d} via '{s}')",
             .{
                 self.graph.text(declaration.name),
                 self.diagnostics.path(first_location),
                 first_position.line,
                 first_position.column,
+                if (result.value_ptr.caller) |caller| self.graph.text(self.graph.declaration(self.graph.functions.items[@intFromEnum(caller)].declaration).name) else "<entry>",
             },
         );
         self.had_error = true;
@@ -266,4 +271,9 @@ const State = struct {
             @intCast(@min(@as(usize, source.file_index), self.diagnostics.source_files.len - 1));
         return .{ .file = @enumFromInt(fallback), .offset = source.offset };
     }
+};
+
+const FirstUse = struct {
+    node: graph_mod.GlobalNodeId,
+    caller: ?graph_mod.GlobalFunctionId,
 };
