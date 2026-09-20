@@ -18,7 +18,7 @@ const NamedBinding = struct {
 const RefinedValue = struct {
     name: primitives.StringRange,
     node: entities.ModuleNodeId,
-    ty: entities.ModuleTypeId,
+    ty: ?entities.ModuleTypeId,
 };
 const ScopeMark = struct {
     bindings: usize,
@@ -679,10 +679,16 @@ const Context = struct {
 
         const name_text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(operand));
         const binding = self.lookupBinding(name_text) orelse return null;
-        const binding_ty = binding.ty orelse return null;
-        const child_ty = self.nullableChild(binding_ty) orelse return null;
+        const child_ty = if (binding.ty) |binding_ty| blk: {
+            if (self.nullableChild(binding_ty)) |child| break :blk child;
+            // An external type can resolve to ?T during GlobalSema. Keep the
+            // refinement as pending graph operations until its shape is known.
+            const view = views.typeView(self.graph, binding_ty) catch return null;
+            if (view == .resolved) return null;
+            break :blk null;
+        } else null;
 
-        const source_use = try self.resolved(operand, binding_ty, .{ .binding_use = binding.id });
+        const source_use = try self.resolved(operand, binding.ty, .{ .binding_use = binding.id });
         const some_name = try self.writer.addString("some");
         const payload = try self.pending(condition, .{ .resolve_choice_payload = .{
             .node = self.nextNodeId(),
