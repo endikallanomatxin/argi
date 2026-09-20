@@ -2022,11 +2022,39 @@ pub const CodeGenerator = struct {
     fn entryInputValue(self: *CodeGenerator, fields: graph_mod.FieldRange, input_type: llvm.c.LLVMTypeRef) !llvm.c.LLVMValueRef {
         var input = c.LLVMGetUndef(input_type);
         for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
-            const default = field.default_value orelse return CodegenError.InvalidType;
-            const value = (try self.visitNode(default)) orelse return CodegenError.ValueNotFound;
+            const value = if (field.default_value) |default|
+                (try self.visitNode(default)) orelse return CodegenError.ValueNotFound
+            else if (std.mem.eql(u8, self.graph.text(field.name), "system"))
+                try self.constructEntrySystem(field.ty)
+            else
+                return CodegenError.InvalidType;
             input = c.LLVMBuildInsertValue(self.builder, input, value.value_ref, @intCast(index), "entry.default");
         }
         return input;
+    }
+
+    fn constructEntrySystem(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) !TypedValue {
+        for (self.graph.functions.items, 0..) |candidate, raw| {
+            if (candidate.input.len != 1) continue;
+            const declaration = self.graph.declaration(candidate.declaration);
+            if (!std.mem.eql(u8, self.graph.text(declaration.name), "init")) continue;
+            const receiver = self.graph.fields.items[candidate.input.start].ty;
+            const pointer = switch (self.graph.types.items[@intFromEnum(receiver)]) {
+                .pointer => |value| value,
+                else => continue,
+            };
+            if (!types.equal(self.graph, pointer.child, ty)) continue;
+            const function_id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            const symbol = self.functions.get(function_id) orelse continue;
+            const type_ref = try self.toLLVMType(ty);
+            const storage = c.LLVMBuildAlloca(self.builder, type_ref, "entry.system");
+            const input_type = try self.fieldsLLVMType(candidate.input);
+            const input = c.LLVMBuildInsertValue(self.builder, c.LLVMGetUndef(input_type), storage, 0, "entry.system.pointer");
+            var args = [_]llvm.c.LLVMValueRef{input};
+            _ = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 1, "");
+            return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, storage, "entry.system.value"), .type_ref = type_ref, .ty = ty };
+        }
+        return CodegenError.SymbolNotFound;
     }
 
     fn ensureRuntimeArgGlobals(self: *CodeGenerator) !void {
