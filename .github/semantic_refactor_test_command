@@ -1,1 +1,48 @@
-zig build test-programs -Dtest-filter=feature_tests/types/41_nullable_sugar -Dtest-filter=feature_tests/types/44_nullable_if_some_narrowing
+python3 - <<'PY'
+from pathlib import Path
+p=Path("src/4_semantics/global/errors.zig")
+s=p.read_text()
+needle='''    fn resolve(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
+        const errable = globalizer.globalNode(o, value.errable_value);
+        const errable_ty = self.graph.nodes.items[@intFromEnum(errable)].ty orelse return false;
+        const ok = global_types.findVariant(self.graph, errable_ty, "ok") orelse return false;
+        const err = global_types.findVariant(self.graph, errable_ty, "error") orelse return false;'''
+repl='''    fn resolve(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
+        const errable = globalizer.globalNode(o, value.errable_value);
+        const errable_ty = self.graph.nodes.items[@intFromEnum(errable)].ty orelse {
+            std.debug.print("ERROR_TRACE missing errable type node={d}\\n", .{@intFromEnum(errable)});
+            return false;
+        };
+        std.debug.print("ERROR_TRACE errable={d} ty={d} tag={s} variants={}\\n", .{
+            @intFromEnum(errable),
+            @intFromEnum(errable_ty),
+            @tagName(self.graph.types.items[@intFromEnum(errable_ty)]),
+            global_types.variants(self.graph, errable_ty) != null,
+        });
+        const ok = global_types.findVariant(self.graph, errable_ty, "ok") orelse {
+            std.debug.print("ERROR_TRACE missing ok\\n", .{});
+            return false;
+        };
+        const err = global_types.findVariant(self.graph, errable_ty, "error") orelse {
+            std.debug.print("ERROR_TRACE missing error\\n", .{});
+            return false;
+        };'''
+if needle not in s: raise SystemExit("missing resolve anchor")
+s=s.replace(needle,repl,1)
+needle2='''        const target = globalizer.globalNode(o, value.node);
+        const propagated_ty = (try self.enclosingErrableType(target)) orelse return false;'''
+repl2='''        const target = globalizer.globalNode(o, value.node);
+        const propagated_ty = (try self.enclosingErrableType(target)) orelse {
+            std.debug.print("ERROR_TRACE no enclosing errable target={d}\\n", .{@intFromEnum(target)});
+            return false;
+        };
+        std.debug.print("ERROR_TRACE propagated={d} ok_payload={d} error_payload={d}\\n", .{
+            @intFromEnum(propagated_ty),
+            @intFromEnum(ok_payload),
+            @intFromEnum(error_payload),
+        });'''
+if needle2 not in s: raise SystemExit("missing propagated anchor")
+s=s.replace(needle2,repl2,1)
+p.write_text(s)
+PY
+zig build test-programs -Dtest-filter=feature_tests/types/35_error_propagation_call_argument
