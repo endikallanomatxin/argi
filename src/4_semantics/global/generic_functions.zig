@@ -46,7 +46,7 @@ pub const Resolver = struct {
     ) !resolution.Result {
         return switch (operation) {
             .resolve_call => |value| try self.resolveModuleGenericCall(module_index, module, o, value),
-            .resolve_index => |value| try self.resolveGenericIndex(module_index, o, value),
+            .resolve_index => |value| try self.resolveGenericIndex(module_index, module, o, value),
             else => .not_applicable,
         };
     }
