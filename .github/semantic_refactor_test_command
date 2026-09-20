@@ -1,1 +1,1 @@
-zig build test-programs -Dtest-filter=feature_tests/collections/01_list_literal_length -Dtest-filter=feature_tests/collections/02_list_literal_access -Dtest-filter=feature_tests/collections/05_list_literal_as_input_of_inlined_functions -Dtest-filter=feature_tests/collections/06_list_literal_as_input_of_inlined_functions_through_list_abstract_type
+zig build test-programs -Dtest-filter=feature_tests/collections/14_iterable_abstract
