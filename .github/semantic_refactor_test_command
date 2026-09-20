@@ -1,1 +1,1 @@
-zig build test-programs -Dtest-filter=feature_tests/collections/14_iterable_abstract
+zig build test-programs -Dtest-filter=feature_tests/polymorphism/22_generic_wrapper_abstract_conformance
