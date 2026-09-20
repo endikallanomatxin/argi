@@ -878,10 +878,10 @@ pub const Resolver = struct {
         for (operands[0..count], 0..) |node, i| operand_types[i] = self.graph.nodes.items[@intFromEnum(node)].ty orelse return .deferred;
         const function = self.resolveOperator(module_index, operator, operand_types[0..count]) catch switch (self.graph.types.items[@intFromEnum(collection_ty)]) {
             .generic => return .not_applicable,
-            else => self.resolveAddressedIndexOperator(module_index, operator, collection_ty, operand_types[0..count]) orelse return .deferred,
+            else => self.resolveAddressedIndexOperator(module_index, operator, collection_ty, operands[0..count], operand_types[0..count]) orelse return .deferred,
         };
         const receiver_ty = self.graph.fields.items[self.graph.functions.items[@intFromEnum(function)].input.start].ty;
-        if (!types.equal(self.graph, collection_ty, receiver_ty)) {
+        if (!types.equal(self.graph, collection_ty, receiver_ty) and !self.callTypesCompatible(collection_ty, receiver_ty)) {
             const address: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
             try self.graph.nodes.append(self.allocator, .{
                 .source = self.graph.node(collection).source,
@@ -901,7 +901,7 @@ pub const Resolver = struct {
         return .resolved;
     }
 
-    fn resolveAddressedIndexOperator(self: *Resolver, module_index: usize, operator: callable.OperatorKind, collection_ty: global_sg.GlobalTypeId, operand_types: []const global_sg.GlobalTypeId) ?global_sg.GlobalFunctionId {
+    fn resolveAddressedIndexOperator(self: *Resolver, module_index: usize, operator: callable.OperatorKind, collection_ty: global_sg.GlobalTypeId, operand_nodes: []const global_sg.GlobalNodeId, operand_types: []const global_sg.GlobalTypeId) ?global_sg.GlobalFunctionId {
         var chosen: ?global_sg.GlobalFunctionId = null;
         for (self.graph.functions.items, 0..) |candidate, raw| {
             if (raw >= self.graph.function_operators.items.len or self.graph.function_operators.items[raw] != operator) continue;
@@ -912,10 +912,15 @@ pub const Resolver = struct {
                 .pointer => |value| value,
                 else => continue,
             };
-            if (!types.equal(self.graph, pointer.child, collection_ty)) continue;
+            if (!types.equal(self.graph, collection_ty, receiver) and
+                !self.callTypesCompatible(collection_ty, receiver) and
+                !types.equal(self.graph, pointer.child, collection_ty)) continue;
             var matches = true;
             for (1..operand_types.len) |offset| {
-                if (!types.equal(self.graph, self.graph.fields.items[candidate.input.start + @as(u32, @intCast(offset))].ty, operand_types[offset])) {
+                const expected = self.graph.fields.items[candidate.input.start + @as(u32, @intCast(offset))].ty;
+                if (!types.equal(self.graph, expected, operand_types[offset]) and
+                    !self.callTypesCompatible(operand_types[offset], expected) and
+                    !self.contextualLiteralFits(operand_nodes[offset], expected)) {
                     matches = false;
                     break;
                 }
