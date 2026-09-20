@@ -1445,6 +1445,13 @@ pub const Resolver = struct {
                 return false;
             },
         };
+        // Void is represented by an empty aggregate value, but unlike normal
+        // structural types it has no field range. Context must therefore
+        // materialize the empty literal directly instead of asking for fields.
+        if (types.isBuiltin(self.graph, target, .Void) and literal.fields.len == 0) {
+            self.graph.nodes.items[@intFromEnum(node)].ty = target;
+            return true;
+        }
         const expected_fields = types.fields(self.graph, target) orelse return false;
         for (0..expected_fields.len) |offset| {
             const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(offset))];
