@@ -2383,7 +2383,32 @@ pub const Resolver = struct {
             defer self.resolver.allocator.free(visible);
             const nested_reach = ReachInferenceContext.fromGlobal(visible, self.function);
             const function = if (arguments.len != 0)
-                try self.resolver.resolveExplicitGenericFunction(self.module_index, module, reference, arguments, input, nested_reach)
+                self.resolver.resolveExplicitGenericFunction(
+                    self.module_index,
+                    module,
+                    reference,
+                    arguments,
+                    input,
+                    nested_reach,
+                ) catch |err| switch (err) {
+                    error.NoMatchingGenericFunction => {
+                        if (self.resolver.nested_constructor_context) |context| {
+                            if (self.resolver.nested_constructor_resolver) |resolve| {
+                                if (try resolve(
+                                    context,
+                                    self.module_index,
+                                    reference,
+                                    arguments,
+                                    input,
+                                    nested_reach,
+                                    self.resolver.sourceFor(self.module_index, source),
+                                )) |node| return node;
+                            }
+                        }
+                        return err;
+                    },
+                    else => return err,
+                }
             else blk: {
                 const ordinary = if (module_path == null)
                     try self.resolver.core.matchUnqualifiedFunctionByNameWithReach(self.module_index, name, input, nested_reach)
