@@ -368,7 +368,9 @@ pub const Resolver = struct {
                 error.ConflictingGenericArgument => return err,
                 else => return .deferred,
             };
-        if (!try self.core.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function)].input, input, reach)) return .deferred;
+        const completed = try self.core.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function)].input, input, reach);
+        if (std.mem.eql(u8, name, "exercise")) std.debug.print("[exercise] completed={}\n", .{completed});
+        if (!completed) return .deferred;
         const output_ty = try self.core.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -925,7 +927,9 @@ pub const Resolver = struct {
                 if (arguments.items.len != parameterized.parameters.len) continue;
                 const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };
                 try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
-                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+                const input_match = self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input);
+                if (trace_exercise) std.debug.print("[exercise] input_match={s}\n", .{@tagName(input_match)});
+                const score = switch (input_match) {
                     .no_match => continue,
                     .deferred => {
                         saw_deferred = true;
@@ -958,7 +962,10 @@ pub const Resolver = struct {
         }
         if (tied) return error.AmbiguousGenericFunction;
         const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else if (candidate_count == 1 and conflicting_candidates == 1) error.ConflictingGenericArgument else error.NoMatchingGenericFunction;
-        return self.instantiate(declaration, best_arguments);
+        if (std.mem.eql(u8, name, "exercise")) std.debug.print("[exercise] selected declaration={d}\n", .{@intFromEnum(declaration)});
+        const instantiated = try self.instantiate(declaration, best_arguments);
+        if (std.mem.eql(u8, name, "exercise")) std.debug.print("[exercise] instantiated function={d}\n", .{@intFromEnum(instantiated)});
+        return instantiated;
     }
 
     /// Re-run implicit generic selection transactionally for diagnostics and
