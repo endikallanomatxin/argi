@@ -220,6 +220,8 @@ pub const Resolver = struct {
         const expected_outputs = global_types.fields(self.graph, expected_output) orelse return null;
         var found: ?global_sg.GlobalFunctionId = null;
         for (self.graph.functions.items, 0..) |function, raw| {
+            const function_id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (self.isAbstractContractInstance(function_id)) continue;
             const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
             if (!std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
             if (!self.inputFieldsSatisfyRequirement(expected_inputs, function.input) or
@@ -228,6 +230,23 @@ pub const Resolver = struct {
             found = @enumFromInt(@as(u32, @intCast(raw)));
         }
         return found;
+    }
+
+    fn isAbstractContractInstance(
+        self: *Resolver,
+        function_id: global_sg.GlobalFunctionId,
+    ) bool {
+        for (self.graph.generic_function_instances.items) |instance| {
+            if (instance.function != function_id) continue;
+            const owner = self.graph.moduleForDeclaration(instance.parameterized_declaration) orelse return false;
+            const module_index: usize = @intFromEnum(owner);
+            const parameterized = self.findFunctionParameterized(
+                module_index,
+                instance.parameterized_declaration,
+            ) orelse return false;
+            return parameterized.dispatch_kind == .abstract_contract;
+        }
+        return false;
     }
 
     fn inputFieldsSatisfyRequirement(
