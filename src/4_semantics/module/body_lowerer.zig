@@ -855,14 +855,16 @@ const Context = struct {
 
     fn lowerAddress(self: *Context, node: syn.NodeIndex) !Lowered {
         const address = self.tree.addressOf(node).?;
-        const pipe_placeholder = self.tree.tag(address.value) == .pipe_placeholder;
         if (self.tree.tag(address.value) == .index_access)
             return self.lowerIndexWithOperator(address.value, null, null, if (address.mutability == .read_write) .get_rw_pointer else .get_ro_pointer);
         const value = try self.lowerNode(address.value, null);
         const mutability = graph_mod.pointerMutabilityFromSyntax(address.mutability);
         if (value.ty) |child_ty| {
-            if (pipe_placeholder) if (try self.pointerChild(child_ty)) |_| return value;
-            if (!pipe_placeholder or try views.typeView(self.graph, child_ty) != .external) {
+            // References are already borrowed values. Acquiring another
+            // reference preserves the existing reference instead of nesting it.
+            // Mutability legality is validated by the use site / safety pass.
+            if (try self.pointerChild(child_ty)) |_| return value;
+            if (try views.typeView(self.graph, child_ty) != .external) {
                 const ty = try self.writer.addResolvedType(.{ .pointer = .{ .child = child_ty, .mutability = mutability } });
                 return self.resolved(node, ty, .{ .address_of = value.node });
             }
@@ -871,7 +873,7 @@ const Context = struct {
             .node = self.nextNodeId(),
             .value = value.node,
             .mutability = mutability,
-            .collapse_existing_pointer = pipe_placeholder,
+            .collapse_existing_pointer = true,
         } }, null);
     }
 
