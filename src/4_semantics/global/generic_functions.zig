@@ -328,6 +328,99 @@ pub const Resolver = struct {
         return chosen;
     }
 
+    fn resolveNestedIndexCall(
+        self: *Resolver,
+        module_index: usize,
+        operator: @import("../primitives/callable.zig").OperatorKind,
+        operands: []const global_sg.GlobalNodeId,
+        reach: ReachInferenceContext,
+        source: primitives.SourceRef,
+    ) !?global_sg.Node {
+        if (operands.len < 2 or operands.len > 3) return null;
+
+        var operand_types: [3]global_sg.GlobalTypeId = undefined;
+        for (operands, 0..) |node, offset| {
+            const ty = self.graph.nodes.items[@intFromEnum(node)].ty orelse return null;
+            if (self.graph.isTypeUnresolved(ty)) return null;
+            operand_types[offset] = ty;
+        }
+
+        const input = try self.makePositionalInput(operands);
+        var instantiated = false;
+        for (self.modules, 0..) |*candidate_module, candidate_module_index| {
+            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                if (parameterized.dispatch_kind == .abstract_contract) continue;
+                if (parameterized.operator != operator) continue;
+                const declaration = globalizer.globalDecl(
+                    self.offsets[candidate_module_index],
+                    parameterized.declaration,
+                );
+                if (!self.core.declarationVisible(module_index, declaration, null)) continue;
+
+                var bindings = try generic_mod.Resolver.Bindings.init(
+                    self.allocator,
+                    candidate_module.semantic.parameterized_storage.comptime_parameters.items.len,
+                );
+                defer bindings.deinit(self.allocator);
+
+                if (!try self.inferIndexCandidate(
+                    candidate_module_index,
+                    parameterized,
+                    operands,
+                    operand_types[0..operands.len],
+                    input,
+                    reach,
+                    &bindings,
+                )) continue;
+
+                const arguments = self.appendBoundArguments(
+                    candidate_module_index,
+                    parameterized.parameters,
+                    &bindings,
+                ) catch |err| switch (err) {
+                    error.MissingGenericArgument => continue,
+                    else => return err,
+                };
+                _ = self.instantiate(declaration, arguments) catch continue;
+                instantiated = true;
+            }
+        }
+        if (!instantiated) return null;
+
+        const selected = self.resolveInstantiatedIndexOperator(
+            module_index,
+            operator,
+            operand_types[0],
+            operands,
+            operand_types[0..operands.len],
+        ) orelse return null;
+
+        if (selected.addressed_receiver_type) |receiver_ty| {
+            const address: global_sg.GlobalNodeId = @enumFromInt(
+                @as(u32, @intCast(self.graph.nodes.items.len)),
+            );
+            try self.graph.nodes.append(self.allocator, .{
+                .source = self.graph.nodes.items[@intFromEnum(operands[0])].source,
+                .ty = receiver_ty,
+                .content = .{ .address_of = operands[0] },
+            });
+            const literal = self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal;
+            self.graph.value_fields.items[literal.fields.start].value = address;
+        }
+
+        const function = self.graph.functions.items[@intFromEnum(selected.function)];
+        if (!try self.core.completeCallInputFieldsWithReach(function.input, input, reach)) return null;
+        self.stats.calls += 1;
+        return .{
+            .source = source,
+            .ty = try self.core.functionOutputType(selected.function),
+            .content = .{ .function_call = .{
+                .callee = selected.function,
+                .input = input,
+            } },
+        };
+    }
+
     fn resolveModuleGenericCall(
         self: *Resolver,
         module_index: usize,
@@ -2582,16 +2675,34 @@ pub const Resolver = struct {
         fn resolveIndex(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, store: bool) !global_sg.Node {
             if (operands.len < 2) return error.InvalidParameterizedIndex;
             const collection_ty = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedIndexUntyped;
-            const element = global_types.arrayElement(self.resolver.graph, collection_ty) orelse return error.ParameterizedIndexRequiresDispatch;
-            return if (store) .{
-                .source = self.resolver.sourceFor(self.module_index, source),
-                .ty = element,
-                .content = .{ .array_store = .{ .array_ptr = operands[0], .index = operands[1], .value = operands[2], .element_type = element, .array_type = collection_ty } },
-            } else .{
-                .source = self.resolver.sourceFor(self.module_index, source),
-                .ty = element,
-                .content = .{ .array_index = .{ .array_ptr = operands[0], .index = operands[1], .element_type = element, .array_type = collection_ty } },
-            };
+            if (global_types.arrayElement(self.resolver.graph, collection_ty)) |element| {
+                return if (store) .{
+                    .source = self.resolver.sourceFor(self.module_index, source),
+                    .ty = element,
+                    .content = .{ .array_store = .{ .array_ptr = operands[0], .index = operands[1], .value = operands[2], .element_type = element, .array_type = collection_ty } },
+                } else .{
+                    .source = self.resolver.sourceFor(self.module_index, source),
+                    .ty = element,
+                    .content = .{ .array_index = .{ .array_ptr = operands[0], .index = operands[1], .element_type = element, .array_type = collection_ty } },
+                };
+            }
+
+            const function_id = self.function orelse return error.ParameterizedIndexRequiresDispatch;
+            const input_bindings = self.resolver.graph.functions.items[@intFromEnum(function_id)].input_bindings;
+            const visible = try self.resolver.allocator.dupe(
+                global_sg.GlobalBindingId,
+                self.resolver.graph.binding_refs.items[input_bindings.start..][0..input_bindings.len],
+            );
+            defer self.resolver.allocator.free(visible);
+            const reach = ReachInferenceContext.fromGlobal(visible, self.function);
+            const operator: @import("../primitives/callable.zig").OperatorKind = if (store) .set else .get;
+            return (try self.resolver.resolveNestedIndexCall(
+                self.module_index,
+                operator,
+                operands,
+                reach,
+                self.resolver.sourceFor(self.module_index, source),
+            )) orelse error.ParameterizedIndexRequiresDispatch;
         }
 
         fn resolveReturn(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {
