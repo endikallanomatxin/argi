@@ -935,8 +935,10 @@ pub const Resolver = struct {
                 if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
                 candidate_count += 1;
                 const trace_exercise = std.mem.eql(u8, name, "exercise");
-                if (trace_exercise) {
-                    std.debug.print("[exercise] candidate module={d} params={d} visible={d}\n", .{
+                const trace_flush = std.mem.eql(u8, name, "flush");
+                const trace_candidate = trace_exercise or trace_flush;
+                if (trace_candidate) {
+                    std.debug.print("[generic-candidate] {s} module={d} params={d} visible={d}\n", .{ name,
                         candidate_index,
                         parameterized.parameters.len,
                         if (reach_context) |context| context.bindingCount() else 0,
@@ -945,7 +947,7 @@ pub const Resolver = struct {
                         var trace_index: usize = 0;
                         while (trace_index < context.bindingCount()) : (trace_index += 1) {
                             const trace_binding = self.graph.bindings.items[@intFromEnum(context.bindingAt(trace_index))];
-                            std.debug.print("[exercise] visible[{d}]={s} unresolved={} ty={d}\n", .{
+                            std.debug.print("[generic-candidate] {s} visible[{d}]={s} unresolved={} ty={d}\n", .{ name,
                                 trace_index,
                                 self.graph.text(trace_binding.name),
                                 self.graph.isBindingTypeUnresolved(context.bindingAt(trace_index)),
@@ -995,11 +997,11 @@ pub const Resolver = struct {
                 }
                 if (reach_context) |context| {
                     const reach_ok = try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context);
-                    if (trace_exercise) {
-                        std.debug.print("[exercise] reach_ok={}\n", .{reach_ok});
+                    if (trace_candidate) {
+                        std.debug.print("[generic-candidate] {s} reach_ok={}\n", .{ name, reach_ok });
                         for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
                             const parameter = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw];
-                            std.debug.print("[exercise] param {s} type={any}\n", .{
+                            std.debug.print("[generic-candidate] {s} param {s} type={any}\n", .{ name,
                                 candidate_module.text(parameter.name),
                                 bindings.types[raw],
                             });
@@ -1008,7 +1010,7 @@ pub const Resolver = struct {
                     if (!reach_ok) continue;
                 }
                 const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
-                if (trace_exercise) std.debug.print("[exercise] constraints_ok={}\n", .{constraints_ok});
+                if (trace_candidate) std.debug.print("[generic-candidate] {s} constraints_ok={}\n", .{ name, constraints_ok });
                 if (!constraints_ok) continue;
                 var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
                 defer arguments.deinit(self.allocator);
@@ -1020,12 +1022,12 @@ pub const Resolver = struct {
                     };
                     try arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, candidate_module.text(parameter.name)), .value = argument });
                 }
-                if (trace_exercise) std.debug.print("[exercise] arguments={d}/{d}\n", .{ arguments.items.len, parameterized.parameters.len });
+                if (trace_candidate) std.debug.print("[generic-candidate] {s} arguments={d}/{d}\n", .{ name, arguments.items.len, parameterized.parameters.len });
                 if (arguments.items.len != parameterized.parameters.len) continue;
                 const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };
                 try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
                 const input_match = self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input);
-                if (trace_exercise) std.debug.print("[exercise] input_match={s}\n", .{@tagName(input_match)});
+                if (trace_candidate) std.debug.print("[generic-candidate] {s} input_match={s}\n", .{ name, @tagName(input_match) });
                 const score = switch (input_match) {
                     .no_match => continue,
                     .deferred => {
