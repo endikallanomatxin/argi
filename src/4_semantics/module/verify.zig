@@ -210,6 +210,13 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.idFits(value.value, semantic.nodes.items.len));
         },
+        .resolve_reach => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.reach, semantic.reaches.items.len));
+            try require(verify.optionalIdFits(value.expected_type, views.typeCount(graph)));
+            try require(verify.rangeFits(value.visible_bindings, semantic.binding_refs.items.len));
+            try require(verify.optionalIdFits(value.owner_function, views.functionCount(graph)));
+        },
         .resolve_choice_literal => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.idFits(value.option, semantic.external_refs.items.len));
