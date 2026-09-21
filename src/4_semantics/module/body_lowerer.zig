@@ -1,5 +1,6 @@
 const std = @import("std");
 const literals = @import("../semantic_literals.zig");
+const tok = @import("../../2_tokens/token.zig");
 const syn = @import("../../3_syntax/syntax_tree.zig");
 const graph_mod = @import("graph.zig");
 const entities = @import("entities.zig");
@@ -305,7 +306,11 @@ const Context = struct {
             .bool_literal => |item| self.resolved(node, try self.builtin(.Bool), .{ .bool_literal = item }),
             .char_literal => |item| self.resolved(node, try self.builtin(.Char), .{ .char_literal = item }),
             .string_literal => blk: {
-                const text = try self.writer.addString(self.tree.tokenTextFromSource(self.source, literal.token));
+                const raw = self.tree.tokenTextFromSource(self.source, literal.token);
+                const decoded = try tok.decodeStringLiteral(self.allocator, raw);
+                defer if (std.mem.indexOfScalar(u8, raw, '\\') != null)
+                    self.allocator.free(decoded);
+                const text = try self.writer.addString(decoded);
                 break :blk try self.resolved(node, null, .{ .string_literal = text });
             },
         };
