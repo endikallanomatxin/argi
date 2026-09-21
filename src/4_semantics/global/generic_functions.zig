@@ -963,7 +963,10 @@ pub const Resolver = struct {
         if (tied) return error.AmbiguousGenericFunction;
         const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else if (candidate_count == 1 and conflicting_candidates == 1) error.ConflictingGenericArgument else error.NoMatchingGenericFunction;
         if (std.mem.eql(u8, name, "exercise")) std.debug.print("[exercise] selected declaration={d}\n", .{@intFromEnum(declaration)});
-        const instantiated = try self.instantiate(declaration, best_arguments);
+        const instantiated = self.instantiate(declaration, best_arguments) catch |err| {
+            if (std.mem.eql(u8, name, "exercise")) std.debug.print("[exercise] instantiate_error={s}\n", .{@errorName(err)});
+            return err;
+        };
         if (std.mem.eql(u8, name, "exercise")) std.debug.print("[exercise] instantiated function={d}\n", .{@intFromEnum(instantiated)});
         return instantiated;
     }
