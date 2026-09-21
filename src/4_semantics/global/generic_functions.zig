@@ -506,6 +506,8 @@ pub const Resolver = struct {
                     error.ConflictingGenericArgument => continue,
                     else => return err,
                 };
+                if (trace_abstract_arg)
+                    std.debug.print("[abstract-arg] {s} input_inferred={}\n", .{ name, input_inferred });
                 if (!input_inferred) continue;
                 if (reach_context) |context|
                     if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
@@ -514,7 +516,10 @@ pub const Resolver = struct {
                     error.MissingGenericArgument => continue,
                     else => return err,
                 };
-                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+                const match_result = self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input);
+                if (trace_abstract_arg)
+                    std.debug.print("[abstract-arg] {s} match={s}\n", .{ name, @tagName(match_result) });
+                const score = switch (match_result) {
                     .no_match => continue,
                     .deferred => {
                         saw_deferred = true;
@@ -929,6 +934,15 @@ pub const Resolver = struct {
                 if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
                 if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
                 candidate_count += 1;
+                const trace_abstract_arg =
+                    std.mem.eql(u8, name, "write_byte") or
+                    std.mem.eql(u8, name, "as_c_string");
+                if (trace_abstract_arg)
+                    std.debug.print("[abstract-arg] {s} candidate module={d} dispatch={s}\n", .{
+                        name,
+                        candidate_index,
+                        @tagName(parameterized.dispatch_kind),
+                    });
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.allocator);
                 const storage = &candidate_module.semantic.parameterized_storage.ir;
@@ -970,7 +984,10 @@ pub const Resolver = struct {
                 }
                 if (reach_context) |context|
                     if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
-                if (!try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings)) continue;
+                const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
+                if (trace_abstract_arg)
+                    std.debug.print("[abstract-arg] {s} constraints={}\n", .{ name, constraints_ok });
+                if (!constraints_ok) continue;
                 var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
                 defer arguments.deinit(self.allocator);
                 for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
