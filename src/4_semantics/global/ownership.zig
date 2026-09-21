@@ -201,21 +201,33 @@ pub const Resolver = struct {
             self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(source)];
             return true;
         }
-        if (self.triviallyCopyable(ty)) {
+        if (self.implementsNamedAbstract(ty, "ImplicitlyCopyable")) {
             const original = self.graph.nodes.items[@intFromEnum(source)];
             self.graph.nodes.items[@intFromEnum(target)] = original;
             self.stats.copies += 1;
             return true;
         }
-        const copy_fn = self.findUnaryFunction("copy", ty) orelse return false;
-        const input = try self.core.makeCallInput(copy_fn, &.{source});
-        self.graph.nodes.items[@intFromEnum(target)] = .{
-            .source = self.graph.nodes.items[@intFromEnum(source)].source,
-            .ty = try self.core.functionOutputType(copy_fn),
-            .content = .{ .function_call = .{ .callee = copy_fn, .input = input } },
-        };
+        // An explicit copy contract does not grant permission to insert that
+        // operation implicitly. This also keeps fallible copy results visible.
+        if (self.findUnaryFunction("copy", ty) != null) return false;
+        if (!self.triviallyCopyable(ty)) return false;
+        self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(source)];
         self.stats.copies += 1;
         return true;
+    }
+
+    fn implementsNamedAbstract(self: *Resolver, concrete: global_sg.GlobalTypeId, name: []const u8) bool {
+        const dispatch = self.dispatch orelse return false;
+        for (self.graph.declarations.items, 0..) |declaration, raw| {
+            if (declaration.kind != .abstract_type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
+            const abstract_decl: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
+            for (self.graph.types.items, 0..) |candidate, type_raw| {
+                if (candidate != .declared or candidate.declared != abstract_decl) continue;
+                const abstract_type: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(type_raw)));
+                if (dispatch.abstracts.concreteImplements(concrete, abstract_type)) return true;
+            }
+        }
+        return false;
     }
 
     fn resolveExplicitDeinit(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
