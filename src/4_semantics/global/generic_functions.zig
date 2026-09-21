@@ -361,12 +361,16 @@ pub const Resolver = struct {
                 else => return .deferred,
             }
         else
-            self.resolveImplicitGenericFunction(module_index, module, reference, input, reach) catch |err| switch (err) {
-                error.NoMatchingGenericFunction => return .not_applicable,
-                error.DeferredGenericFunction => return .deferred,
-                error.AmbiguousGenericFunction => return .invalid,
-                error.ConflictingGenericArgument => return err,
-                else => return .deferred,
+            self.resolveImplicitGenericFunction(module_index, module, reference, input, reach) catch |err| {
+                if (std.mem.eql(u8, name, "read") or std.mem.eql(u8, name, "write") or std.mem.eql(u8, name, "flush"))
+                    std.debug.print("[contract-call] {s}: {s}\n", .{ name, @errorName(err) });
+                return switch (err) {
+                    error.NoMatchingGenericFunction => .not_applicable,
+                    error.DeferredGenericFunction => .deferred,
+                    error.AmbiguousGenericFunction => .invalid,
+                    error.ConflictingGenericArgument => return err,
+                    else => .deferred,
+                };
             };
         const completed = try self.core.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function)].input, input, reach);
         if (std.mem.eql(u8, name, "exercise")) std.debug.print("[exercise] completed={}\n", .{completed});
