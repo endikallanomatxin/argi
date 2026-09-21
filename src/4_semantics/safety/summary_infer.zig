@@ -1522,8 +1522,6 @@ pub const Infer = struct {
     ) !void {
         const arguments = self.structArguments(input) orelse return;
         const callee_function = self.graph.function(callee);
-        const caller_decl = self.graph.declaration(self.graph.function(function_id).declaration);
-        const trace_deinit = std.mem.eql(u8, self.graph.text(caller_decl.name), "deinit");
         switch (callee_function.safety_primitive) {
             .trusted_opaque_move => {
                 state.emptied.clearRetainingCapacity();
@@ -1542,26 +1540,12 @@ pub const Infer = struct {
             .trusted_opaque_mark_empty => {
                 if (arguments.len != 1) return;
                 const storages = try self.inferInputPaths(function_id, arguments[0].value);
-                if (trace_deinit) {
-                    std.debug.print("[opaque-summary] fn={d} mark_empty paths={d}\n", .{ @intFromEnum(function_id), storages.len });
-                    for (storages) |storage| std.debug.print("[opaque-summary]   input={d} projections={d}\n", .{ storage.input_index, storage.projections.len });
-                }
                 for (storages) |storage| try self.recordOpaqueStorageRelease(&state.emptied, storage);
                 return;
             },
             else => {},
         }
         const summary = self.engine.summaryFor(callee) orelse return;
-        if (trace_deinit) {
-            const callee_decl = self.graph.declaration(callee_function.declaration);
-            std.debug.print("[opaque-summary] fn={d} calls {s}({d}) empties={d} repopulate={}\n", .{
-                @intFromEnum(function_id),
-                self.graph.text(callee_decl.name),
-                @intFromEnum(callee),
-                summary.opaque_storage_empties.len,
-                self.summaryMayRepopulateOpaqueStorage(summary),
-            });
-        }
         try self.applyOpaqueEmptySummary(function_id, summary, input, effects, state, null);
     }
 
