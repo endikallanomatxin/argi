@@ -2228,6 +2228,31 @@ pub const SafetyChecker = struct {
     ) !void {
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
         const storage = facts.Place{ .root = cleanup.binding };
+        const trace_arr = std.mem.eql(u8, self.graph.text(self.graph.binding(cleanup.binding).name), "arr");
+        if (trace_arr) {
+            std.debug.print("[arr-cleanup] auto={d} deinit={any} fields={d} init={s}\n", .{
+                @intFromEnum(id),
+                cleanup.deinit_fn,
+                cleanup.fields.len,
+                @tagName(self.initializednessAtPlace(state, storage)),
+            });
+            if (cleanup.deinit_fn) |deinit_fn| {
+                const decl = self.graph.declaration(self.graph.function(deinit_fn).declaration);
+                std.debug.print("[arr-cleanup] fn={d} name={s}\n", .{
+                    @intFromEnum(deinit_fn),
+                    self.graph.text(decl.name),
+                });
+                if (self.active_summaries) |engine| {
+                    if (engine.summaryFor(deinit_fn)) |summary| {
+                        std.debug.print("[arr-cleanup] summary empties={d} effects={d} post={d}\n", .{
+                            summary.opaque_storage_empties.len,
+                            summary.opaque_storage_effects.len,
+                            summary.input_post_states.len,
+                        });
+                    } else std.debug.print("[arr-cleanup] no summary\n", .{});
+                }
+            }
+        }
         switch (self.initializednessAtPlace(state, storage)) {
             .initialized => if (cleanup.deinit_fn != null) {
                 try self.evaluateResolvedAutoDeinit(function, cleanup, storage, state);
