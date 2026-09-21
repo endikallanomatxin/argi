@@ -381,7 +381,10 @@ pub const Resolver = struct {
                     error.MissingGenericArgument => continue,
                     else => return err,
                 };
-                _ = self.instantiate(declaration, arguments) catch continue;
+                _ = self.instantiate(declaration, arguments) catch |err| {
+                    if (operator == .set) std.debug.print("[nested-index] set instantiate {s}\n", .{@errorName(err)});
+                    continue;
+                };
                 instantiated = true;
             }
         }
