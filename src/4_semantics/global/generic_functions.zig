@@ -894,9 +894,23 @@ pub const Resolver = struct {
                     if (candidate_deferred) saw_deferred = true;
                     continue;
                 }
-                if (reach_context) |context|
-                    if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
-                if (!try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings)) continue;
+                if (reach_context) |context| {
+                    const reach_ok = try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context);
+                    if (trace_exercise) {
+                        std.debug.print("[exercise] reach_ok={}\n", .{reach_ok});
+                        for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
+                            const parameter = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw];
+                            std.debug.print("[exercise] param {s} type={any}\n", .{
+                                candidate_module.text(parameter.name),
+                                bindings.types[raw],
+                            });
+                        }
+                    }
+                    if (!reach_ok) continue;
+                }
+                const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
+                if (trace_exercise) std.debug.print("[exercise] constraints_ok={}\n", .{constraints_ok});
+                if (!constraints_ok) continue;
                 var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
                 defer arguments.deinit(self.allocator);
                 for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
