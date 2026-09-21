@@ -524,32 +524,19 @@ pub const Resolver = struct {
                 .pointer => |pointer_value| pointer_value,
                 else => continue,
             };
+            if (!types.equal(self.graph, pointer.child, constructed_ty)) continue;
+            result.has_visible_initializer = true;
+
             const user_fields = global_sg.FieldRange{
                 .start = function.input.start + 1,
                 .len = function.input.len - 1,
             };
-            var trace_string_capacity = false;
-            for (self.graph.fields.items[user_fields.start..][0..user_fields.len]) |candidate_field|
-                if (std.mem.eql(u8, self.graph.text(candidate_field.name), "capacity")) {
-                    trace_string_capacity = true;
-                    break;
-                };
-            if (trace_string_capacity) std.debug.print("[string-init] child={d} constructed={d} equal={} abstract={}\n", .{
-                @intFromEnum(pointer.child),
-                @intFromEnum(constructed_ty),
-                types.equal(self.graph, pointer.child, constructed_ty),
-                function.flags.is_abstract_dispatch,
-            });
-            if (!types.equal(self.graph, pointer.child, constructed_ty)) continue;
-            result.has_visible_initializer = true;
-
             const score_match = if (!function.flags.is_abstract_dispatch and context != null)
                 self.core.matchCallInputWithReach(user_fields, input, context.?) catch .deferred
             else if (self.abstracts) |abstracts|
                 call_compatibility.matchInput(.{ .core = self.core, .abstracts = abstracts }, user_fields, input)
             else
                 self.core.matchCallInput(user_fields, input);
-            if (trace_string_capacity) std.debug.print("[string-init] match={s}\n", .{@tagName(score_match)});
             var score = switch (score_match) {
                 .score => |value| value,
                 .no_match, .deferred => continue,

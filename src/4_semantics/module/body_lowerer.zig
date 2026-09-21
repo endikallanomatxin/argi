@@ -280,7 +280,7 @@ const Context = struct {
             .match_statement => self.lowerMatch(node),
             .defer_statement => self.lowerDefer(node),
             .keep_statement => self.lowerKeep(node),
-            .reach_directive => self.lowerReach(node, expected),
+            .reach_directive => self.lowerReach(node),
             .index_assignment => self.lowerIndexAssignment(node, expected),
             .address_of, .address_of_mut => self.lowerAddress(node),
             .dereference => self.lowerDereference(node, expected),
@@ -833,55 +833,36 @@ const Context = struct {
         } }, try self.builtin(.Void));
     }
 
-    fn lowerReach(
-        self: *Context,
-        node: syn.NodeIndex,
-        expected: ?entities.ModuleTypeId,
-    ) !Lowered {
+    fn lowerReach(self: *Context, node: syn.NodeIndex) !Lowered {
         const directive = self.tree.reachDirective(node).?;
         const alt_start: u32 = @intCast(self.graph.semantic.reach_alternatives.items.len);
         for (directive.alternatives) |alt_node| {
             const alt = self.tree.reachAlternative(alt_node).?;
             const seg_start: u32 = @intCast(self.graph.semantic.reach_segments.items.len);
-            for (alt.segments) |segment|
-                try self.graph.semantic.reach_segments.append(
-                    self.allocator,
-                    try self.writer.addString(
-                        self.tree.tokenTextFromSource(self.source, self.tree.mainToken(segment)),
-                    ),
-                );
+            for (alt.segments) |segment| {
+                try self.graph.semantic.reach_segments.append(self.allocator, try self.writer.addString(self.tree.tokenTextFromSource(self.source, self.tree.mainToken(segment))));
+            }
             try self.graph.semantic.reach_alternatives.append(self.allocator, .{
                 .segments = .{ .start = seg_start, .len = @intCast(alt.segments.len) },
             });
         }
-        const reach_id: entities.ModuleReachId = @enumFromInt(
-            @as(u32, @intCast(self.graph.semantic.reaches.items.len)),
-        );
+        const reach_id: entities.ModuleReachId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.reaches.items.len)));
         try self.graph.semantic.reaches.append(self.allocator, .{
             .alternatives = .{ .start = alt_start, .len = @intCast(directive.alternatives.len) },
         });
-        return self.pending(node, .{ .resolve_reach = .{
-            .node = self.nextNodeId(),
-            .reach = reach_id,
-            .expected_type = expected,
-            .visible_bindings = try self.captureVisibleBindings(),
-            .owner_function = self.current_function,
-            .source = self.sourceRef(node),
-        } }, expected);
+        return self.resolved(node, try self.builtin(.Void), .{ .reach_directive = reach_id });
     }
 
     fn lowerAddress(self: *Context, node: syn.NodeIndex) !Lowered {
         const address = self.tree.addressOf(node).?;
+        const pipe_placeholder = self.tree.tag(address.value) == .pipe_placeholder;
         if (self.tree.tag(address.value) == .index_access)
             return self.lowerIndexWithOperator(address.value, null, null, if (address.mutability == .read_write) .get_rw_pointer else .get_ro_pointer);
         const value = try self.lowerNode(address.value, null);
         const mutability = graph_mod.pointerMutabilityFromSyntax(address.mutability);
         if (value.ty) |child_ty| {
-            // References are already borrowed values. Acquiring another
-            // reference preserves the existing reference instead of nesting it.
-            // Mutability legality is validated by the use site / safety pass.
-            if (try self.pointerChild(child_ty)) |_| return value;
-            if (try views.typeView(self.graph, child_ty) != .external) {
+            if (pipe_placeholder) if (try self.pointerChild(child_ty)) |_| return value;
+            if (!pipe_placeholder or try views.typeView(self.graph, child_ty) != .external) {
                 const ty = try self.writer.addResolvedType(.{ .pointer = .{ .child = child_ty, .mutability = mutability } });
                 return self.resolved(node, ty, .{ .address_of = value.node });
             }
@@ -890,7 +871,7 @@ const Context = struct {
             .node = self.nextNodeId(),
             .value = value.node,
             .mutability = mutability,
-            .collapse_existing_pointer = true,
+            .collapse_existing_pointer = pipe_placeholder,
         } }, null);
     }
 
