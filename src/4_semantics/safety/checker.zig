@@ -435,6 +435,9 @@ pub const SafetyChecker = struct {
                 break :blk try self.envelopeOpaqueRead(state, value, node.ty, pointer);
             },
             .struct_field_access => |access| blk: {
+                const diagnostic_count = self.diagnostics.list.items.len;
+                try self.validateAddressAccess(function, node.source, access.value, state);
+                if (self.diagnostics.list.items.len != diagnostic_count) break :blk .{};
                 if (try self.resolvePlace(node_id, state)) |storage| {
                     const initializedness = self.initializednessAtPlace(state, storage);
                     try self.requireInitialized(function, node.source, initializedness);
@@ -1072,8 +1075,23 @@ pub const SafetyChecker = struct {
             };
             if (post_state.initializedness == .deinitialized)
                 try self.endStorageGenerationsUnder(source, state, target);
-            if (!post_state.requires_available_destination and (reinitializes_dead_place or post_state.refreshes_storage_generation))
+            if (!post_state.requires_available_destination and (reinitializes_dead_place or post_state.refreshes_storage_generation)) {
+                const old_generation = try self.storageGeneration(state, target);
                 try self.refreshStorageGenerationChecked(source, state, target);
+                if (reinitializes_dead_place and post_state.target.projections.len == 0 and index < argument_ids.len) {
+                    const argument_node = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
+                    if (try self.resolvePlace(argument_node, state)) |pointer_storage| {
+                        const argument = arguments[index];
+                        if (!pointer_storage.eql(target) and argument.referenced_place != null and argument.referenced_place.?.eql(target)) {
+                            const generation = try self.storageGeneration(state, target);
+                            const refreshed = try self.replaceValueRoots(argument, &.{old_generation}, generation);
+                            // The input pointer used to reinitialize the place
+                            // follows its generation; sibling aliases remain old.
+                            try self.setPlace(state, pointer_storage, .initialized, refreshed);
+                        }
+                    }
+                }
+            }
 
             const value = if (post_state.initializedness == .initialized)
                 try self.instantiateOutputWithFresh(post_state.value, arguments, state, &fresh_roots, &fresh_capabilities)
@@ -2369,8 +2387,8 @@ pub const SafetyChecker = struct {
         }
     }
 
-    // Taking an address does not read the destination, but every pointer used
-    // to reach it must still refer to a live storage generation.
+    // Address formation and projected reads must validate every pointer used
+    // to reach the destination, even when the final Place is resolved directly.
     fn validateAddressAccess(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, node_id: graph_mod.GlobalNodeId, state: *FunctionState) !void {
         switch (self.graph.nodes.items[@intFromEnum(node_id)].content) {
             .dereference => |access| {
