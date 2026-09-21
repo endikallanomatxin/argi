@@ -514,8 +514,7 @@ pub const Resolver = struct {
                     error.MissingGenericArgument => continue,
                     else => return err,
                 };
-                const match_result = self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input);
-                const score = switch (match_result) {
+                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
                     .no_match => continue,
                     .deferred => {
                         saw_deferred = true;
@@ -951,12 +950,7 @@ pub const Resolver = struct {
                             matches = false;
                             break;
                         };
-                        const inferred = self.inferInputType(
-                            candidate_index,
-                            field.ty,
-                            actual,
-                            &bindings,
-                        ) catch |err| {
+                        _ = self.inferInputType(candidate_index, field.ty, actual, &bindings) catch |err| {
                             if (err == error.ConflictingGenericArgument) {
                                 conflicting_candidates += 1;
                                 matches = false;
@@ -966,10 +960,6 @@ pub const Resolver = struct {
                             matches = false;
                             break;
                         };
-                        if (!inferred) {
-                            matches = false;
-                            break;
-                        }
                         break;
                     }
                     if (!matches) break;
@@ -980,8 +970,7 @@ pub const Resolver = struct {
                 }
                 if (reach_context) |context|
                     if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
-                const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
-                if (!constraints_ok) continue;
+                if (!try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings)) continue;
                 var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
                 defer arguments.deinit(self.allocator);
                 for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
