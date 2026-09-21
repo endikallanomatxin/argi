@@ -123,7 +123,16 @@ pub const Resolver = struct {
         for (self.graph.nodes.items) |*node| switch (node.content) {
             .binding_declaration, .binding_use => |binding_id| {
                 if (self.graph.isBindingTypeUnresolved(binding_id)) continue;
-                const inferred = self.graph.bindings.items[@intFromEnum(binding_id)].ty;
+                const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
+                var inferred = binding.ty;
+                if (binding.initialization) |initialization| {
+                    if (self.graph.nodes.items[@intFromEnum(initialization)].ty) |actual| {
+                        if (!self.graph.isTypeUnresolved(actual) and
+                            self.isAbstractPointer(binding.ty) and
+                            !types.equal(self.graph, actual, binding.ty))
+                            inferred = actual;
+                    }
+                }
                 // An unresolved type is unequal even to itself in semantic
                 // matching, but writing the same slot cannot advance the
                 // fixed point.
@@ -1354,7 +1363,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn resolveReachedDefaultWithCompatibility(
+    pub fn resolveReachedDefaultWithCompatibility(
         self: *Resolver,
         context: reach_context.Context,
         default_node: global_sg.GlobalNodeId,
@@ -1452,6 +1461,66 @@ pub const Resolver = struct {
             }
         }
         return null;
+    }
+
+    pub fn resolveReachExpressionWithCompatibility(
+        self: *Resolver,
+        module: *const module_sg.ModuleSemanticGraph,
+        o: globalizer.Offsets,
+        value: anytype,
+        additional: ?AdditionalTypeCompatibility,
+    ) !resolution.Result {
+        const target = globalizer.globalNode(o, value.node);
+        const expected = if (value.expected_type) |local| blk: {
+            const ty = globalizer.globalType(o, local);
+            if (self.graph.isTypeUnresolved(ty)) return .deferred;
+            break :blk ty;
+        } else return .deferred;
+
+        // Reuse the exact same reach machinery as omitted call arguments.
+        // Keeping the target as a reach node while deferred makes retries
+        // transactional and lets abstract-field storage materialize first.
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = .{
+                .file_index = o.file_base + value.source.file_index,
+                .offset = value.source.offset,
+            },
+            .ty = expected,
+            .content = .{ .reach_directive = globalizer.globalReach(o, value.reach) },
+        };
+        const resolved = (try self.resolveReachedDefaultWithCompatibility(
+            reach_context.Context.fromModule(
+                module,
+                o,
+                value.visible_bindings,
+                value.owner_function,
+            ),
+            target,
+            expected,
+            additional,
+        )) orelse return .deferred;
+
+        const resolved_ty = self.graph.nodes.items[@intFromEnum(resolved)].ty orelse return .deferred;
+        // If an abstract interface reached only itself, do not freeze that
+        // interface as the static implementation. A later fixed-point round
+        // may expose a concrete backing through field storage.
+        if (types.equal(self.graph, resolved_ty, expected) and self.isAbstractPointer(expected))
+            return .deferred;
+
+        self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(resolved)];
+        return .resolved;
+    }
+
+    fn isAbstractPointer(self: *const Resolver, ty: global_sg.GlobalTypeId) bool {
+        const pointer = switch (self.graph.types.items[@intFromEnum(ty)]) {
+            .pointer => |value| value,
+            else => return false,
+        };
+        const declaration = switch (self.graph.types.items[@intFromEnum(pointer.child)]) {
+            .declared => |value| value,
+            else => return false,
+        };
+        return self.graph.declarations.items[@intFromEnum(declaration)].kind == .abstract_type;
     }
 
     fn propagateReachedDefaultWithCompatibility(
