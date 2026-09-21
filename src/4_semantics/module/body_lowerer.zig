@@ -401,7 +401,8 @@ const Context = struct {
         const call = self.tree.functionCall(node).?;
         const name_text = self.tree.tokenTextFromSource(self.source, call.callee_token);
         const previous_suppression = self.suppress_implicit_copies;
-        if (std.mem.eql(u8, name_text, "is")) self.suppress_implicit_copies = true;
+        if (std.mem.eql(u8, name_text, "is") or std.mem.eql(u8, name_text, "type_of"))
+            self.suppress_implicit_copies = true;
         defer self.suppress_implicit_copies = previous_suppression;
         const input = try self.lowerNode(call.input, null);
         const module_path = if (call.module_qualifier) |token_index|
