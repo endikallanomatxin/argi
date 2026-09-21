@@ -220,14 +220,6 @@ pub const PendingOperation = union(enum) {
         mutability: primitives.PointerMutability,
         collapse_existing_pointer: bool = false,
     },
-    resolve_reach: struct {
-        node: ModuleNodeId,
-        reach: ModuleReachId,
-        expected_type: ?ModuleTypeId = null,
-        visible_bindings: BindingRange = .{ .start = 0, .len = 0 },
-        owner_function: ?ModuleFunctionId = null,
-        source: primitives.SourceRef,
-    },
     resolve_choice_literal: struct {
         node: ModuleNodeId,
         option: ExternalRefId,

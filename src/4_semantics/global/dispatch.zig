@@ -64,28 +64,6 @@ pub const Resolver = struct {
         return if (control_result.allowsFallback()) .deferred else control_result;
     }
 
-    pub fn resolveReach(
-        self: *Resolver,
-        module: *const module_sg.ModuleSemanticGraph,
-        o: globalizer.Offsets,
-        operation: module_entities.PendingOperation,
-    ) !resolution.Result {
-        const value = switch (operation) {
-            .resolve_reach => |item| item,
-            else => return .not_applicable,
-        };
-        const compatibility = call_compatibility.Abstract{
-            .core = self.core,
-            .abstracts = self.abstracts,
-        };
-        return self.core.resolveReachExpressionWithCompatibility(
-            module,
-            o,
-            value,
-            compatibility.additionalTypeCompatibility(),
-        );
-    }
-
     pub const ImplicitFunctionCall = struct {
         function: global_sg.GlobalFunctionId,
         input: global_sg.GlobalNodeId,

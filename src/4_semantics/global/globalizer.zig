@@ -659,7 +659,7 @@ fn globalVirtualize(o: Offsets, id: module_entities.ModuleVirtualizeId) global_s
 fn globalVirtualCall(o: Offsets, id: module_entities.ModuleVirtualCallId) global_sg.GlobalVirtualCallId {
     return @enumFromInt(o.virtual_call_base + @intFromEnum(id));
 }
-pub fn globalReach(o: Offsets, id: module_entities.ModuleReachId) global_sg.GlobalReachId {
+fn globalReach(o: Offsets, id: module_entities.ModuleReachId) global_sg.GlobalReachId {
     return @enumFromInt(o.reach_base + @intFromEnum(id));
 }
 fn globalNullableUnwrap(o: Offsets, id: module_entities.ModuleNullableUnwrapId) global_sg.GlobalNullableUnwrapId {
