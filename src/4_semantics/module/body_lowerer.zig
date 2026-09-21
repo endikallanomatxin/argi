@@ -280,7 +280,7 @@ const Context = struct {
             .match_statement => self.lowerMatch(node),
             .defer_statement => self.lowerDefer(node),
             .keep_statement => self.lowerKeep(node),
-            .reach_directive => self.lowerReach(node),
+            .reach_directive => self.lowerReach(node, expected),
             .index_assignment => self.lowerIndexAssignment(node, expected),
             .address_of, .address_of_mut => self.lowerAddress(node),
             .dereference => self.lowerDereference(node, expected),
@@ -833,24 +833,41 @@ const Context = struct {
         } }, try self.builtin(.Void));
     }
 
-    fn lowerReach(self: *Context, node: syn.NodeIndex) !Lowered {
+    fn lowerReach(
+        self: *Context,
+        node: syn.NodeIndex,
+        expected: ?entities.ModuleTypeId,
+    ) !Lowered {
         const directive = self.tree.reachDirective(node).?;
         const alt_start: u32 = @intCast(self.graph.semantic.reach_alternatives.items.len);
         for (directive.alternatives) |alt_node| {
             const alt = self.tree.reachAlternative(alt_node).?;
             const seg_start: u32 = @intCast(self.graph.semantic.reach_segments.items.len);
-            for (alt.segments) |segment| {
-                try self.graph.semantic.reach_segments.append(self.allocator, try self.writer.addString(self.tree.tokenTextFromSource(self.source, self.tree.mainToken(segment))));
-            }
+            for (alt.segments) |segment|
+                try self.graph.semantic.reach_segments.append(
+                    self.allocator,
+                    try self.writer.addString(
+                        self.tree.tokenTextFromSource(self.source, self.tree.mainToken(segment)),
+                    ),
+                );
             try self.graph.semantic.reach_alternatives.append(self.allocator, .{
                 .segments = .{ .start = seg_start, .len = @intCast(alt.segments.len) },
             });
         }
-        const reach_id: entities.ModuleReachId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.reaches.items.len)));
+        const reach_id: entities.ModuleReachId = @enumFromInt(
+            @as(u32, @intCast(self.graph.semantic.reaches.items.len)),
+        );
         try self.graph.semantic.reaches.append(self.allocator, .{
             .alternatives = .{ .start = alt_start, .len = @intCast(directive.alternatives.len) },
         });
-        return self.resolved(node, try self.builtin(.Void), .{ .reach_directive = reach_id });
+        return self.pending(node, .{ .resolve_reach = .{
+            .node = self.nextNodeId(),
+            .reach = reach_id,
+            .expected_type = expected,
+            .visible_bindings = try self.captureVisibleBindings(),
+            .owner_function = self.current_function,
+            .source = self.sourceRef(node),
+        } }, expected);
     }
 
     fn lowerAddress(self: *Context, node: syn.NodeIndex) !Lowered {
