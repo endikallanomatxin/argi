@@ -1724,13 +1724,34 @@ pub const Infer = struct {
     }
 
     fn summaryMayRepopulateOpaqueStorage(self: *Infer, summary: facts.SafetySummary) bool {
-        _ = self;
         for (summary.input_post_states) |post_state| {
-            if (post_state.opaque_ownership == .none and
-                post_state.initializedness == .initialized and
-                post_state.may_repopulate_opaque_storage) return true;
+            if (post_state.opaque_ownership != .none or
+                post_state.initializedness != .initialized or
+                !post_state.may_repopulate_opaque_storage) continue;
+
+            // A write-like effect on a projection is irrelevant when the
+            // summary final state ends an ancestor place. This occurs when
+            // destructor dispatch mutates a field before deinitializing self.
+            var ended_by_ancestor = false;
+            for (summary.input_post_states) |terminal| {
+                if (terminal.initializedness != .deinitialized and
+                    terminal.initializedness != .moved) continue;
+                if (self.inputPathPrefix(terminal.target, post_state.target)) {
+                    ended_by_ancestor = true;
+                    break;
+                }
+            }
+            if (!ended_by_ancestor) return true;
         }
         return false;
+    }
+
+    fn inputPathPrefix(self: *Infer, prefix: facts.InputPath, path: facts.InputPath) bool {
+        _ = self;
+        if (prefix.input_index != path.input_index or prefix.projections.len > path.projections.len) return false;
+        for (prefix.projections, path.projections[0..prefix.projections.len]) |left, right|
+            if (!std.meta.eql(left, right)) return false;
+        return true;
     }
 
     fn dependencyOnlyEffect(self: *Infer, effect: facts.ValueEffect) !facts.ValueEffect {
@@ -3022,6 +3043,40 @@ test "input post-state joins retain caller-visible transitions" {
     try std.testing.expectEqual(value_state.Initializedness.maybe_initialized, joined.items[0].initializedness);
 }
 
+test "repopulation under an ended ancestor does not survive a summary" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = Infer.init(allocator, &graph, &engine);
+    defer inference.deinit();
+
+    const child_projections = [_]facts.Projection{.{ .field = 0 }};
+    const states = [_]facts.PlacePostState{
+        .{
+            .target = .{ .input_index = 0, .projections = &child_projections },
+            .initializedness = .initialized,
+            .may_repopulate_opaque_storage = true,
+        },
+        .{
+            .target = .{ .input_index = 0 },
+            .initializedness = .deinitialized,
+        },
+    };
+    try std.testing.expect(!inference.summaryMayRepopulateOpaqueStorage(.{ .input_post_states = &states }));
+
+    const unrelated = [_]facts.PlacePostState{
+        states[0],
+        .{
+            .target = .{ .input_index = 1 },
+            .initializedness = .deinitialized,
+        },
+    };
+    try std.testing.expect(inference.summaryMayRepopulateOpaqueStorage(.{ .input_post_states = &unrelated }));
+}
 test "opaque ownership post-state joins preserve storage correlation" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
