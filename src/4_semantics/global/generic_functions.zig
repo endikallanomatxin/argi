@@ -209,16 +209,6 @@ pub const Resolver = struct {
         bindings: *generic_mod.Resolver.Bindings,
     ) !bool {
         const storage = &self.modules[candidate_module_index].semantic.parameterized_storage.ir;
-        const trace_set = parameterized.operator == .set;
-        if (trace_set) {
-            std.debug.print("[set-infer] module={d} params={d} operands={d}\n", .{
-                candidate_module_index,
-                parameterized.parameters.len,
-                operands.len,
-            });
-            for (operand_types, 0..) |ty, offset|
-                std.debug.print("[set-infer] operand[{d}] ty={d}\n", .{ offset, @intFromEnum(ty) });
-        }
         const shape = switch (storage.types.items[@intFromEnum(parameterized.input)]) {
             .resolved => |resolved| switch (resolved) {
                 .structural => |value| value,
@@ -233,14 +223,12 @@ pub const Resolver = struct {
             const pattern = field.ty;
 
             if (offset == 0) {
-                const receiver_ok = try self.inferInputTypeWithImplicitAddress(
+                if (!try self.inferInputTypeWithImplicitAddress(
                     candidate_module_index,
                     pattern,
                     operand_types[offset],
                     bindings,
-                );
-                if (trace_set) std.debug.print("[set-infer] receiver_ok={}\n", .{receiver_ok});
-                if (!receiver_ok) return false;
+                )) return false;
                 continue;
             }
 
@@ -255,33 +243,27 @@ pub const Resolver = struct {
                 } else |_| {}
             }
 
-            const operand_ok = try self.inferInputType(
+            if (!try self.inferInputType(
                 candidate_module_index,
                 pattern,
                 operand_types[offset],
                 bindings,
-            );
-            if (trace_set) std.debug.print("[set-infer] operand[{d}] ok={}\n", .{ offset, operand_ok });
-            if (!operand_ok) return false;
+            )) return false;
         }
 
-        const reach_ok = try self.inferBindingsFromReachDefaults(
+        if (!try self.inferBindingsFromReachDefaults(
             candidate_module_index,
             parameterized.input,
             input,
             bindings,
             reach,
-        );
-        if (trace_set) std.debug.print("[set-infer] reach_ok={}\n", .{reach_ok});
-        if (!reach_ok) return false;
+        )) return false;
 
-        const constraints_ok = try self.inferAndValidateConstraints(
+        return self.inferAndValidateConstraints(
             candidate_module_index,
             parameterized.parameters,
             bindings,
         );
-        if (trace_set) std.debug.print("[set-infer] constraints_ok={}\n", .{constraints_ok});
-        return constraints_ok;
     }
 
     fn resolveInstantiatedIndexOperator(
@@ -399,10 +381,7 @@ pub const Resolver = struct {
                     error.MissingGenericArgument => continue,
                     else => return err,
                 };
-                _ = self.instantiate(declaration, arguments) catch |err| {
-                    if (operator == .set) std.debug.print("[nested-index] set instantiate {s}\n", .{@errorName(err)});
-                    continue;
-                };
+                _ = self.instantiate(declaration, arguments) catch continue;
                 instantiated = true;
             }
         }
@@ -475,20 +454,15 @@ pub const Resolver = struct {
                 else => return .deferred,
             }
         else
-            self.resolveImplicitGenericFunction(module_index, module, reference, input, reach) catch |err| {
-                if (std.mem.eql(u8, name, "read") or std.mem.eql(u8, name, "write") or std.mem.eql(u8, name, "flush"))
-                    std.debug.print("[contract-call] {s}: {s}\n", .{ name, @errorName(err) });
-                return switch (err) {
-                    error.NoMatchingGenericFunction => .not_applicable,
-                    error.DeferredGenericFunction => .deferred,
-                    error.AmbiguousGenericFunction => .invalid,
-                    error.ConflictingGenericArgument => return err,
-                    else => .deferred,
-                };
+            self.resolveImplicitGenericFunction(module_index, module, reference, input, reach) catch |err| switch (err) {
+                error.NoMatchingGenericFunction => return .not_applicable,
+                error.DeferredGenericFunction => return .deferred,
+                error.AmbiguousGenericFunction => return .invalid,
+                error.ConflictingGenericArgument => return err,
+                else => return .deferred,
             };
-        const completed = try self.core.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function)].input, input, reach);
-        if (std.mem.eql(u8, name, "exercise")) std.debug.print("[exercise] completed={}\n", .{completed});
-        if (!completed) return .deferred;
+        if (!try self.core.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function)].input, input, reach))
+            return .deferred;
         const output_ty = try self.core.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -955,28 +929,6 @@ pub const Resolver = struct {
                 if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
                 if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
                 candidate_count += 1;
-                const trace_exercise = std.mem.eql(u8, name, "exercise");
-                const trace_flush = std.mem.eql(u8, name, "flush");
-                const trace_candidate = trace_exercise or trace_flush;
-                if (trace_candidate) {
-                    std.debug.print("[generic-candidate] {s} module={d} params={d} visible={d}\n", .{ name,
-                        candidate_index,
-                        parameterized.parameters.len,
-                        if (reach_context) |context| context.bindingCount() else 0,
-                    });
-                    if (reach_context) |context| {
-                        var trace_index: usize = 0;
-                        while (trace_index < context.bindingCount()) : (trace_index += 1) {
-                            const trace_binding = self.graph.bindings.items[@intFromEnum(context.bindingAt(trace_index))];
-                            std.debug.print("[generic-candidate] {s} visible[{d}]={s} unresolved={} ty={d}\n", .{ name,
-                                trace_index,
-                                self.graph.text(trace_binding.name),
-                                self.graph.isBindingTypeUnresolved(context.bindingAt(trace_index)),
-                                @intFromEnum(trace_binding.ty),
-                            });
-                        }
-                    }
-                }
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.allocator);
                 const storage = &candidate_module.semantic.parameterized_storage.ir;
@@ -1016,23 +968,9 @@ pub const Resolver = struct {
                     if (candidate_deferred) saw_deferred = true;
                     continue;
                 }
-                if (reach_context) |context| {
-                    const reach_ok = try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context);
-                    if (trace_candidate) {
-                        std.debug.print("[generic-candidate] {s} reach_ok={}\n", .{ name, reach_ok });
-                        for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
-                            const parameter = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw];
-                            std.debug.print("[generic-candidate] {s} param {s} type={any}\n", .{ name,
-                                candidate_module.text(parameter.name),
-                                bindings.types[raw],
-                            });
-                        }
-                    }
-                    if (!reach_ok) continue;
-                }
-                const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
-                if (trace_candidate) std.debug.print("[generic-candidate] {s} constraints_ok={}\n", .{ name, constraints_ok });
-                if (!constraints_ok) continue;
+                if (reach_context) |context|
+                    if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
+                if (!try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings)) continue;
                 var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
                 defer arguments.deinit(self.allocator);
                 for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
@@ -1043,13 +981,10 @@ pub const Resolver = struct {
                     };
                     try arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, candidate_module.text(parameter.name)), .value = argument });
                 }
-                if (trace_candidate) std.debug.print("[generic-candidate] {s} arguments={d}/{d}\n", .{ name, arguments.items.len, parameterized.parameters.len });
                 if (arguments.items.len != parameterized.parameters.len) continue;
                 const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };
                 try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
-                const input_match = self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input);
-                if (trace_candidate) std.debug.print("[generic-candidate] {s} input_match={s}\n", .{ name, @tagName(input_match) });
-                const score = switch (input_match) {
+                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
                     .no_match => continue,
                     .deferred => {
                         saw_deferred = true;
@@ -1082,13 +1017,7 @@ pub const Resolver = struct {
         }
         if (tied) return error.AmbiguousGenericFunction;
         const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else if (candidate_count == 1 and conflicting_candidates == 1) error.ConflictingGenericArgument else error.NoMatchingGenericFunction;
-        if (std.mem.eql(u8, name, "exercise")) std.debug.print("[exercise] selected declaration={d}\n", .{@intFromEnum(declaration)});
-        const instantiated = self.instantiate(declaration, best_arguments) catch |err| {
-            if (std.mem.eql(u8, name, "exercise")) std.debug.print("[exercise] instantiate_error={s}\n", .{@errorName(err)});
-            return err;
-        };
-        if (std.mem.eql(u8, name, "exercise")) std.debug.print("[exercise] instantiated function={d}\n", .{@intFromEnum(instantiated)});
-        return instantiated;
+        return self.instantiate(declaration, best_arguments);
     }
 
     /// Re-run implicit generic selection transactionally for diagnostics and
