@@ -1786,23 +1786,34 @@ pub const Resolver = struct {
             const storage = &module.semantic.parameterized_storage.ir;
             const source = storage.bindings.items[@intFromEnum(id)];
             const source_ty = storage.bindingType(id);
-            const global: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.bindings.items.len)));
+            const concrete_ty: ?global_sg.GlobalTypeId = if (source_ty) |ty|
+                try self.resolver.generics.instantiateParameterizedType(
+                    self.module_index,
+                    ty,
+                    self.substitutions,
+                    null,
+                )
+            else
+                null;
+            const global: global_sg.GlobalBindingId = @enumFromInt(
+                @as(u32, @intCast(self.resolver.graph.bindings.items.len)),
+            );
             try self.resolver.graph.bindings.append(self.resolver.allocator, .{
                 .name = try self.resolver.graph.addString(self.resolver.allocator, module.text(source.name)),
                 .source = self.resolver.sourceFor(self.module_index, source.source),
-                .ty = if (source_ty) |ty|
-                    try self.resolver.generics.instantiateParameterizedType(self.module_index, ty, self.substitutions, null)
-                else
-                    @enumFromInt(0),
+                .ty = concrete_ty orelse @enumFromInt(0),
                 .initialization = null,
                 .mutability = source.mutability,
             });
             self.binding_map[@intFromEnum(id)] = global;
             if (source_ty == null) try self.resolver.graph.markBindingTypeUnresolved(self.resolver.allocator, global);
             if (source.initialization) |node| {
-                const initialization = if (source_ty) |ty|
-                    try self.instantiateNodeAs(node, ty)
-                else
+                const initialization = if (concrete_ty) |expected| blk: {
+                    const local_node = storage.nodes.items[@intFromEnum(node)];
+                    if (local_node == .resolved and local_node.resolved.content == .reach_directive)
+                        break :blk try self.instantiateReachValue(node, expected, global);
+                    break :blk try self.instantiateNodeWithExpected(node, expected);
+                } else
                     try self.instantiateNode(node);
                 self.resolver.graph.bindings.items[@intFromEnum(global)].initialization = initialization;
                 if (source_ty == null) {
@@ -1894,6 +1905,8 @@ pub const Resolver = struct {
                 }
             } else if (local.resolved.content == .struct_value_literal) {
                 return self.instantiateStructValueWithExpected(id, local.resolved, expected);
+            } else if (local.resolved.content == .reach_directive) {
+                return self.instantiateReachValue(id, expected, null);
             } else if (local.resolved.content == .string_literal or local.resolved.content == .int_literal) {
                 const global = try self.instantiateNode(id);
                 const current = self.resolver.graph.nodes.items[@intFromEnum(global)].ty;
@@ -1902,6 +1915,55 @@ pub const Resolver = struct {
                 return global;
             }
             return self.instantiateNode(id);
+        }
+
+        fn instantiateReachValue(
+            self: *InstanceContext,
+            id: ir.ParameterizedNodeId,
+            expected: global_sg.GlobalTypeId,
+            exclude_binding: ?global_sg.GlobalBindingId,
+        ) !global_sg.GlobalNodeId {
+            if (self.node_map[@intFromEnum(id)]) |existing| return existing;
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
+            const local = storage.nodes.items[@intFromEnum(id)];
+            if (local != .resolved or local.resolved.content != .reach_directive)
+                return error.ExpectedParameterizedReach;
+
+            const target: global_sg.GlobalNodeId = @enumFromInt(
+                @as(u32, @intCast(self.resolver.graph.nodes.items.len)),
+            );
+            const reach = try self.instantiateReach(local.resolved.content.reach_directive);
+            try self.resolver.graph.nodes.append(self.resolver.allocator, .{
+                .source = self.resolver.sourceFor(self.module_index, local.resolved.source),
+                .ty = expected,
+                .content = .{ .reach_directive = reach },
+            });
+            self.node_map[@intFromEnum(id)] = target;
+
+            var visible: std.ArrayList(global_sg.GlobalBindingId) = .empty;
+            defer visible.deinit(self.resolver.allocator);
+            for (self.binding_map) |candidate| if (candidate) |binding| {
+                if (exclude_binding != null and binding == exclude_binding.?) continue;
+                try visible.append(self.resolver.allocator, binding);
+            };
+            const context = ReachInferenceContext.fromGlobal(visible.items, self.function);
+            const additional = if (self.resolver.nested_call_context) |abstracts|
+                (call_compatibility.Abstract{
+                    .core = self.resolver.core,
+                    .abstracts = abstracts,
+                }).additionalTypeCompatibility()
+            else
+                null;
+            const resolved = (try self.resolver.core.resolveReachedDefaultWithCompatibility(
+                context,
+                target,
+                expected,
+                additional,
+            )) orelse return error.UnresolvedParameterizedReach;
+
+            self.resolver.graph.nodes.items[@intFromEnum(target)] =
+                self.resolver.graph.nodes.items[@intFromEnum(resolved)];
+            return target;
         }
 
         fn instantiateStructValueWithExpected(self: *InstanceContext, id: ir.ParameterizedNodeId, node: ir.ResolvedNode, expected: global_sg.GlobalTypeId) !global_sg.GlobalNodeId {
