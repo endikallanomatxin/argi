@@ -239,7 +239,10 @@ pub const SafetyChecker = struct {
                 },
                 .assignment => |assignment| {
                     const binding = self.graph.binding(assignment.binding);
-                    if (binding.mutability == .constant and self.initializednessAtPlace(state, .{ .root = assignment.binding }) == .initialized)
+                    const previous_state = self.initializednessAtPlace(state, .{ .root = assignment.binding });
+                    if (previous_state == .moved)
+                        try self.requireInitialized(function, node.source, previous_state);
+                    if (binding.mutability == .constant and previous_state == .initialized)
                         try self.report(node.source, "binding '{s}' is constant and cannot be reassigned after initialization", .{self.graph.text(binding.name)});
                     try self.validateContextualIntegerLiteral(assignment.value, self.graph.binding(assignment.binding).ty);
                     const value = try self.evaluate(function, assignment.value, state);
@@ -404,7 +407,10 @@ pub const SafetyChecker = struct {
             },
             .move_value => |child| blk: {
                 const value = try self.evaluate(function, child, state);
-                if (try self.resolvePlace(child, state)) |storage| try self.setPlace(state, storage, .moved, value);
+                if (try self.resolvePlace(child, state)) |storage| {
+                    try self.requireInitialized(function, node.source, self.initializednessAtPlace(state, storage));
+                    try self.setPlace(state, storage, .moved, value);
+                }
                 break :blk value;
             },
             .address_of => |child| blk: {
