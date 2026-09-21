@@ -51,8 +51,6 @@ pub const Resolver = struct {
         source: primitives.SourceRef,
     ) anyerror!?global_sg.Node {
         const self: *Resolver = @ptrCast(@alignCast(context_ptr));
-        if (arguments.len != 0) return null;
-
         const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {
             error.UnknownGlobalDeclaration => return null,
             else => return err,
@@ -65,43 +63,104 @@ pub const Resolver = struct {
             .offsets = self.offsets,
             .core = self.core,
         };
-        if (generics.isParameterizedTypeDeclaration(declaration_id)) return null;
-        const ty = declaration.type_id orelse return null;
 
-        const initializer = self.findInitializer(module_index, ty, input, reach);
-        if (initializer.function) |function_id| {
-            var selected = function_id;
-            if (self.graph.functions.items[@intFromEnum(selected)].flags.is_abstract_dispatch) {
-                var generic_functions = generic_functions_mod.Resolver{
-                    .allocator = self.core.allocator,
-                    .graph = self.graph,
-                    .modules = self.modules,
-                    .offsets = self.offsets,
-                    .core = self.core,
-                    .generics = &generics,
-                    .nested_call_context = self.abstracts,
-                    .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
-                    .nested_constructor_context = self,
-                    .nested_constructor_resolver = Resolver.resolveNestedCall,
-                };
-                selected = (try generic_functions.instantiateInitializer(
-                    self.graph.functions.items[@intFromEnum(selected)].declaration,
-                    ty,
-                    input,
-                    reach,
-                )) orelse return null;
-            }
-            const function = self.graph.functions.items[@intFromEnum(selected)];
-            const user_fields = global_sg.FieldRange{ .start = function.input.start + 1, .len = function.input.len - 1 };
-            if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, reach)) return null;
-            self.core.stats.calls += 1;
-            return .{
-                .source = source,
-                .ty = ty,
-                .content = .{ .type_initializer = .{ .type_decl = declaration_id, .init_fn = selected, .args = input } },
+        const parameterized = generics.isParameterizedTypeDeclaration(declaration_id);
+        const ty = if (parameterized) blk: {
+            if (arguments.len == 0) return null;
+            const generic_ty = try generics.internType(.{ .generic = .{
+                .base = declaration_id,
+                .arguments = arguments,
+            } });
+            _ = generics.ensureGenericInstance(generic_ty) catch return null;
+            break :blk generic_ty;
+        } else blk: {
+            if (arguments.len != 0) return null;
+            break :blk declaration.type_id orelse return null;
+        };
+
+        if (parameterized) {
+            var generic_functions = generic_functions_mod.Resolver{
+                .allocator = self.core.allocator,
+                .graph = self.graph,
+                .modules = self.modules,
+                .offsets = self.offsets,
+                .core = self.core,
+                .generics = &generics,
+                .nested_call_context = self.abstracts,
+                .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
+                .nested_constructor_context = self,
+                .nested_constructor_resolver = Resolver.resolveNestedCall,
             };
+            const initializer = try self.findGenericInitializer(
+                &generics,
+                &generic_functions,
+                module_index,
+                ty,
+                input,
+                reach,
+            );
+            if (initializer.function) |function_id| {
+                const function = self.graph.functions.items[@intFromEnum(function_id)];
+                const user_fields = global_sg.FieldRange{
+                    .start = function.input.start + 1,
+                    .len = function.input.len - 1,
+                };
+                if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, reach)) return null;
+                self.core.stats.calls += 1;
+                return .{
+                    .source = source,
+                    .ty = ty,
+                    .content = .{ .type_initializer = .{
+                        .type_decl = declaration_id,
+                        .init_fn = function_id,
+                        .args = input,
+                    } },
+                };
+            }
+            if (initializer.has_visible_initializer) return null;
+        } else {
+            const initializer = self.findInitializer(module_index, ty, input, reach);
+            if (initializer.function) |function_id| {
+                var selected = function_id;
+                if (self.graph.functions.items[@intFromEnum(selected)].flags.is_abstract_dispatch) {
+                    var generic_functions = generic_functions_mod.Resolver{
+                        .allocator = self.core.allocator,
+                        .graph = self.graph,
+                        .modules = self.modules,
+                        .offsets = self.offsets,
+                        .core = self.core,
+                        .generics = &generics,
+                        .nested_call_context = self.abstracts,
+                        .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
+                        .nested_constructor_context = self,
+                        .nested_constructor_resolver = Resolver.resolveNestedCall,
+                    };
+                    selected = (try generic_functions.instantiateInitializer(
+                        self.graph.functions.items[@intFromEnum(selected)].declaration,
+                        ty,
+                        input,
+                        reach,
+                    )) orelse return null;
+                }
+                const function = self.graph.functions.items[@intFromEnum(selected)];
+                const user_fields = global_sg.FieldRange{
+                    .start = function.input.start + 1,
+                    .len = function.input.len - 1,
+                };
+                if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, reach)) return null;
+                self.core.stats.calls += 1;
+                return .{
+                    .source = source,
+                    .ty = ty,
+                    .content = .{ .type_initializer = .{
+                        .type_decl = declaration_id,
+                        .init_fn = selected,
+                        .args = input,
+                    } },
+                };
+            }
+            if (initializer.has_visible_initializer) return null;
         }
-        if (initializer.has_visible_initializer) return null;
 
         const fields = types.fields(self.graph, ty) orelse return null;
         switch (self.core.matchCallInput(fields, input)) {
