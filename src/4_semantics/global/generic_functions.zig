@@ -209,6 +209,16 @@ pub const Resolver = struct {
         bindings: *generic_mod.Resolver.Bindings,
     ) !bool {
         const storage = &self.modules[candidate_module_index].semantic.parameterized_storage.ir;
+        const trace_set = parameterized.operator == .set;
+        if (trace_set) {
+            std.debug.print("[set-infer] module={d} params={d} operands={d}\n", .{
+                candidate_module_index,
+                parameterized.parameters.len,
+                operands.len,
+            });
+            for (operand_types, 0..) |ty, offset|
+                std.debug.print("[set-infer] operand[{d}] ty={d}\n", .{ offset, @intFromEnum(ty) });
+        }
         const shape = switch (storage.types.items[@intFromEnum(parameterized.input)]) {
             .resolved => |resolved| switch (resolved) {
                 .structural => |value| value,
@@ -223,12 +233,14 @@ pub const Resolver = struct {
             const pattern = field.ty;
 
             if (offset == 0) {
-                if (!try self.inferInputTypeWithImplicitAddress(
+                const receiver_ok = try self.inferInputTypeWithImplicitAddress(
                     candidate_module_index,
                     pattern,
                     operand_types[offset],
                     bindings,
-                )) return false;
+                );
+                if (trace_set) std.debug.print("[set-infer] receiver_ok={}\n", .{receiver_ok});
+                if (!receiver_ok) return false;
                 continue;
             }
 
@@ -243,27 +255,33 @@ pub const Resolver = struct {
                 } else |_| {}
             }
 
-            if (!try self.inferInputType(
+            const operand_ok = try self.inferInputType(
                 candidate_module_index,
                 pattern,
                 operand_types[offset],
                 bindings,
-            )) return false;
+            );
+            if (trace_set) std.debug.print("[set-infer] operand[{d}] ok={}\n", .{ offset, operand_ok });
+            if (!operand_ok) return false;
         }
 
-        if (!try self.inferBindingsFromReachDefaults(
+        const reach_ok = try self.inferBindingsFromReachDefaults(
             candidate_module_index,
             parameterized.input,
             input,
             bindings,
             reach,
-        )) return false;
+        );
+        if (trace_set) std.debug.print("[set-infer] reach_ok={}\n", .{reach_ok});
+        if (!reach_ok) return false;
 
-        return self.inferAndValidateConstraints(
+        const constraints_ok = try self.inferAndValidateConstraints(
             candidate_module_index,
             parameterized.parameters,
             bindings,
         );
+        if (trace_set) std.debug.print("[set-infer] constraints_ok={}\n", .{constraints_ok});
+        return constraints_ok;
     }
 
     fn resolveInstantiatedIndexOperator(
