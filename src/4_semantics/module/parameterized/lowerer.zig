@@ -882,6 +882,18 @@ pub const Context = struct {
             try result.append(try self.lowerBodyNode(assignment.value));
             return;
         }
+        if (self.tree.indexAssignment(node)) |assignment| {
+            const target = self.tree.indexAccess(assignment.target) orelse return error.InvalidIndexAssignmentTarget;
+            try result.append(try self.lowerBodyNode(target.value));
+            try result.append(try self.lowerBodyNode(target.index));
+            try result.append(try self.lowerBodyNode(assignment.value));
+            return;
+        }
+        if (self.tree.indexAccess(node)) |access| {
+            try result.append(try self.lowerBodyNode(access.value));
+            try result.append(try self.lowerBodyNode(access.index));
+            return;
+        }
         if (self.tree.structFieldAccess(node)) |access| {
             try result.append(try self.lowerBodyNode(access.value));
             return;
