@@ -1573,6 +1573,11 @@ pub const CodeGenerator = struct {
 
     fn genFunctionCall(self: *CodeGenerator, call: anytype) !?TypedValue {
         const callee = self.graph.functions.items[@intFromEnum(call.callee)];
+        if (callee.safety_primitive == .relocate) {
+            const result = try self.opaqueRelocate(call.input);
+            self.markRelocationDropState(call.input);
+            return result;
+        }
         if (callee.safety_primitive == .trusted_opaque_move or callee.safety_primitive == .trusted_opaque_move_in) return self.opaqueStore(call.input);
         if (callee.safety_primitive == .trusted_opaque_move_out) return self.opaqueTake(call.input);
         if (callee.safety_primitive == .trusted_opaque_relocate) return self.opaqueRelocate(call.input);
@@ -1689,6 +1694,17 @@ pub const CodeGenerator = struct {
         const value = c.LLVMBuildLoad2(self.builder, type_ref, source.value_ref, "opaque.relocate");
         _ = c.LLVMBuildStore(self.builder, value, destination.value_ref);
         return null;
+    }
+
+    fn markRelocationDropState(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId) void {
+        const input = switch (self.graph.nodes.items[@intFromEnum(input_id)].content) {
+            .struct_value_literal => |literal| literal,
+            else => return,
+        };
+        const fields = self.graph.value_fields.items[input.fields.start..][0..input.fields.len];
+        if (fields.len != 2) return;
+        if (self.dropStateForNode(fields[0].value)) |source| self.storeDropState(source, false);
+        if (self.dropStateForNode(fields[1].value)) |destination| self.storeDropState(destination, true);
     }
 
     fn opaqueDrop(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId, primitive: graph_mod.Function) !?TypedValue {
