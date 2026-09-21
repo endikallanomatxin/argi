@@ -413,30 +413,14 @@ pub const Resolver = struct {
                     else => return err,
                 };
                 if (!input_inferred) continue;
-                if (reach_context) |context| {
-                    const reach_ok = try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context);
-                    if (trace_exercise) {
-                        std.debug.print("[exercise] reach_ok={}\n", .{reach_ok});
-                        for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
-                            const parameter = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw];
-                            std.debug.print("[exercise] param {s} bound={any}\n", .{
-                                candidate_module.text(parameter.name),
-                                bindings.types[raw],
-                            });
-                        }
-                    }
-                    if (!reach_ok) continue;
-                }
-                const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
-                if (trace_exercise) std.debug.print("[exercise] constraints_ok={}\n", .{constraints_ok});
-                if (!constraints_ok) continue;
+                if (reach_context) |context|
+                    if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
+                if (!try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings)) continue;
                 const complete_arguments = self.appendBoundArguments(candidate_index, parameterized.parameters, &bindings) catch |err| switch (err) {
                     error.MissingGenericArgument => continue,
                     else => return err,
                 };
-                const match_result = self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input);
-                if (trace_exercise) std.debug.print("[exercise] match={s}\n", .{@tagName(match_result)});
-                const score = switch (match_result) {
+                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
                     .no_match => continue,
                     .deferred => {
                         saw_deferred = true;
