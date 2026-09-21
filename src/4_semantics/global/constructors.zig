@@ -543,10 +543,6 @@ pub const Resolver = struct {
             if (!types.equal(self.graph, pointer.child, constructed_ty)) continue;
             result.has_visible_initializer = true;
 
-            const user_fields = global_sg.FieldRange{
-                .start = function.input.start + 1,
-                .len = function.input.len - 1,
-            };
             const score_match = if (!function.flags.is_abstract_dispatch and context != null)
                 self.core.matchCallInputWithReach(user_fields, input, context.?) catch .deferred
             else if (self.abstracts) |abstracts|
