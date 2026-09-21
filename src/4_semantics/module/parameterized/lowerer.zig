@@ -796,9 +796,15 @@ pub const Context = struct {
                 },
                 .bool_literal => |value| self.addResolvedNode(node, try self.parameterizedBuiltin(.Bool), .{ .bool_literal = value }),
                 .char_literal => |value| self.addResolvedNode(node, try self.parameterizedBuiltin(.Char), .{ .char_literal = value }),
-                .string_literal => self.addResolvedNode(node, null, .{
-                    .string_literal = try self.writer.addString(self.tree.tokenTextFromSource(self.source, literal.token)),
-                }),
+                .string_literal => blk: {
+                    const raw = self.tree.tokenTextFromSource(self.source, literal.token);
+                    const decoded = try tok.decodeStringLiteral(self.allocator, raw);
+                    defer if (std.mem.indexOfScalar(u8, raw, '\\') != null)
+                        self.allocator.free(decoded);
+                    break :blk self.addResolvedNode(node, null, .{
+                        .string_literal = try self.writer.addString(decoded),
+                    });
+                },
             };
         }
         if (self.tree.tag(node) == .identifier) {
