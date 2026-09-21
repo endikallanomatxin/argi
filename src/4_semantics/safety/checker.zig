@@ -1305,6 +1305,7 @@ pub const SafetyChecker = struct {
             }
         }
         result.dependencies = try dependencies.toOwnedSlice();
+        const direct_owned_roots = result.owned_roots;
 
         for (effect.input_dependencies) |dependency| {
             if (dependency.path.input_index >= arguments.len) continue;
@@ -1334,6 +1335,21 @@ pub const SafetyChecker = struct {
             }
             result.fields = fields;
             result.variants = variants;
+            // A complete field effect supersedes ownership copied from the
+            // prior aggregate. Keep roots established directly by this effect
+            // and roots still present in its materialized fields; otherwise a
+            // replaced owned field leaves a dead root on the parent value.
+            var current_owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            for (direct_owned_roots) |root| try appendRootFact(&current_owned, root);
+            for (fields) |field| for (field.value.owned_roots) |root| try appendRootFact(&current_owned, root);
+            const old_owned = result.owned_roots;
+            result.owned_roots = try current_owned.toOwnedSlice();
+            var current_dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+            for (result.dependencies) |dependency| {
+                if (containsRoot(old_owned, dependency.root) and !containsRoot(result.owned_roots, dependency.root)) continue;
+                try appendDependencyFact(&current_dependencies, dependency);
+            }
+            result.dependencies = try current_dependencies.toOwnedSlice();
         }
         if (effect.variants.len != 0) {
             const variants = try self.allocator.alloc(facts.VariantFacts, effect.variants.len);
