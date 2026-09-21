@@ -366,11 +366,7 @@ pub const Resolver = struct {
                 error.DeferredGenericFunction => return .deferred,
                 error.AmbiguousGenericFunction => return .invalid,
                 error.ConflictingGenericArgument => return err,
-                else => {
-                    if (std.mem.eql(u8, name, "exercise"))
-                        std.debug.print("[generic-instance] exercise: {s}\n", .{@errorName(err)});
-                    return .deferred;
-                },
+                else => return .deferred,
             };
         if (!try self.core.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function)].input, input, reach)) return .deferred;
         const output_ty = try self.core.functionOutputType(function);
@@ -417,14 +413,30 @@ pub const Resolver = struct {
                     else => return err,
                 };
                 if (!input_inferred) continue;
-                if (reach_context) |context|
-                    if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
-                if (!try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings)) continue;
+                if (reach_context) |context| {
+                    const reach_ok = try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context);
+                    if (trace_exercise) {
+                        std.debug.print("[exercise] reach_ok={}\n", .{reach_ok});
+                        for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
+                            const parameter = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw];
+                            std.debug.print("[exercise] param {s} bound={any}\n", .{
+                                candidate_module.text(parameter.name),
+                                bindings.types[raw],
+                            });
+                        }
+                    }
+                    if (!reach_ok) continue;
+                }
+                const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
+                if (trace_exercise) std.debug.print("[exercise] constraints_ok={}\n", .{constraints_ok});
+                if (!constraints_ok) continue;
                 const complete_arguments = self.appendBoundArguments(candidate_index, parameterized.parameters, &bindings) catch |err| switch (err) {
                     error.MissingGenericArgument => continue,
                     else => return err,
                 };
-                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+                const match_result = self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input);
+                if (trace_exercise) std.debug.print("[exercise] match={s}\n", .{@tagName(match_result)});
+                const score = switch (match_result) {
                     .no_match => continue,
                     .deferred => {
                         saw_deferred = true;
@@ -839,6 +851,26 @@ pub const Resolver = struct {
                 if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
                 if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
                 candidate_count += 1;
+                const trace_exercise = std.mem.eql(u8, name, "exercise");
+                if (trace_exercise) {
+                    std.debug.print("[exercise] candidate module={d} params={d} visible={d}\n", .{
+                        candidate_index,
+                        parameterized.parameters.len,
+                        if (reach_context) |context| context.bindingCount() else 0,
+                    });
+                    if (reach_context) |context| {
+                        var trace_index: usize = 0;
+                        while (trace_index < context.bindingCount()) : (trace_index += 1) {
+                            const trace_binding = self.graph.bindings.items[@intFromEnum(context.bindingAt(trace_index))];
+                            std.debug.print("[exercise] visible[{d}]={s} unresolved={} ty={d}\n", .{
+                                trace_index,
+                                self.graph.text(trace_binding.name),
+                                self.graph.isBindingTypeUnresolved(context.bindingAt(trace_index)),
+                                @intFromEnum(trace_binding.ty),
+                            });
+                        }
+                    }
+                }
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.allocator);
                 const storage = &candidate_module.semantic.parameterized_storage.ir;
@@ -891,6 +923,7 @@ pub const Resolver = struct {
                     };
                     try arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, candidate_module.text(parameter.name)), .value = argument });
                 }
+                if (trace_exercise) std.debug.print("[exercise] arguments={d}/{d}\n", .{ arguments.items.len, parameterized.parameters.len });
                 if (arguments.items.len != parameterized.parameters.len) continue;
                 const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };
                 try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
