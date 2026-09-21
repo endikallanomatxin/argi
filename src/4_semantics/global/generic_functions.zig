@@ -2276,7 +2276,7 @@ pub const Resolver = struct {
                 null
             else if (value.operands.len == 1)
                 if (variant.variant.payload_type) |payload_type|
-                    try self.instantiateNodeWithExpected(storage.node_refs.items[value.operands.start], payload_type)
+                    try self.instantiateNodeWithExpected(self.normalizeChoicePayloadNode(storage.node_refs.items[value.operands.start], payload_type), payload_type)
                 else
                     try self.instantiateNode(storage.node_refs.items[value.operands.start])
             else
@@ -2292,6 +2292,21 @@ pub const Resolver = struct {
                 .ty = expected,
                 .content = .{ .choice_literal = .{ .choice_type = expected, .variant = variant.id, .payload = payload } },
             };
+        }
+
+        fn normalizeChoicePayloadNode(self: *InstanceContext, id: ir.ParameterizedNodeId, expected: global_sg.GlobalTypeId) ir.ParameterizedNodeId {
+            // Choice constructor arguments are lowered as an aggregate. Match
+            // the direct resolver's scalar payload normalization before typing.
+            if (global_types.fields(self.resolver.graph, expected) != null) return id;
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
+            const node = storage.nodes.items[@intFromEnum(id)];
+            if (node != .resolved or node.resolved.content != .struct_value_literal) return id;
+            const literal = node.resolved.content.struct_value_literal;
+            if (literal.fields.len != 1) return id;
+            const field = storage.value_fields.items[literal.fields.start];
+            if (literal.dispatch_prefix_positional_count != 1 and
+                !std.mem.eql(u8, self.resolver.modules[self.module_index].text(field.name), "value")) return id;
+            return field.value;
         }
 
         fn matchesPendingNullable(self: *InstanceContext, actual: global_sg.GlobalTypeId, expected: global_sg.GlobalTypeId) bool {

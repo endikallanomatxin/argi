@@ -4724,6 +4724,12 @@ test "feature_tests/polymorphism/35_generic_specialization_cache_nominal_identit
     try runExpect(test_path, 12);
 }
 
+test "feature_tests/polymorphism/36_abstract_contract_choice_payload" {
+    const test_path = "tests/feature_tests/polymorphism/36_abstract_contract_choice_payload";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/text/10_string_view_c_string_storage" {
     const test_path = "tests/feature_tests/text/10_string_view_c_string_storage";
     try expectSuccessfulBuild(test_path);
