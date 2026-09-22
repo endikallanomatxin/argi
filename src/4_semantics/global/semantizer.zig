@@ -522,7 +522,7 @@ pub fn semantizeWithOptions(
     }
 
     if (options.diagnostics) |diagnostics|
-        if (try diagnoseInvalidMatchPayloadCopies(allocator, &relocation.graph, &ownership, diagnostics))
+        if (try diagnoseInvalidMatchPayloadCopies(allocator, &relocation.graph, &ownership, reachable, diagnostics))
             return error.Reported;
 
     if (options.diagnostics) |diagnostics|
@@ -586,11 +586,13 @@ fn diagnoseInvalidMatchPayloadCopies(
     allocator: std.mem.Allocator,
     graph: *const global_sg.GlobalSemanticGraph,
     ownership: *ownership_mod.Resolver,
+    reachable: ?*const reachability_mod.FunctionSet,
     diagnostics: *diagnostics_mod.Diagnostics,
 ) !bool {
     for (graph.switch_cases.items) |case| {
         if (case.payload_mode != .value) continue;
         const binding_id = case.payload_binding orelse continue;
+        if (reachable) |set| if (!set.containsBinding(binding_id)) continue;
         const binding = graph.binding(binding_id);
         if (std.mem.eql(u8, graph.text(binding.name), "_")) continue;
         if (graph.isTypeUnresolved(binding.ty) or ownership.canImplicitlyCopy(binding.ty)) continue;
