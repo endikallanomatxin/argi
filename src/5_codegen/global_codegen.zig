@@ -605,7 +605,13 @@ pub const CodeGenerator = struct {
             values[index] = (try self.visitNode(node)) orelse return CodegenError.ValueNotFound;
             llvm_fields[index] = values[index].type_ref;
         }
-        const type_ref = c.LLVMStructType(if (llvm_fields.len == 0) null else llvm_fields.ptr, @intCast(llvm_fields.len), 0);
+        const type_ref = if (ty) |resolved_ty|
+            if (types.arrayLength(self.graph, resolved_ty) != null)
+                try self.toLLVMType(resolved_ty)
+            else
+                c.LLVMStructType(if (llvm_fields.len == 0) null else llvm_fields.ptr, @intCast(llvm_fields.len), 0)
+        else
+            c.LLVMStructType(if (llvm_fields.len == 0) null else llvm_fields.ptr, @intCast(llvm_fields.len), 0);
         var aggregate = c.LLVMGetUndef(type_ref);
         for (values, 0..) |value, index|
             aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value.value_ref, @intCast(index), "list.elem");
