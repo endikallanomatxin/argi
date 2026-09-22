@@ -95,7 +95,7 @@ pub const Resolver = struct {
         var defers: std.ArrayList(global_sg.GlobalNodeId) = .empty;
         defer defers.deinit(self.allocator);
         const module = self.graph.moduleForDeclaration(function.declaration) orelse return error.MissingFunctionModule;
-        try self.finalizeBlock(body, &active, &defers, &visible, function_id, @intCast(@intFromEnum(module)));
+        try self.finalizeBlock(body, &active, &defers, &visible, &.{}, function_id, @intCast(@intFromEnum(module)));
         return true;
     }
 
@@ -245,6 +245,8 @@ pub const Resolver = struct {
     ) anyerror!void {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
+            .binding_declaration => |binding| if (self.graph.bindings.items[@intFromEnum(binding)].initialization) |initialization|
+                try self.finalizeExpressionCleanup(initialization, active, defers),
             .error_propagation => |propagation_id| {
                 const propagation = &self.graph.error_propagations.items[@intFromEnum(propagation_id)];
                 try self.finalizeExpressionCleanup(propagation.errable_value, active, defers);
@@ -336,6 +338,7 @@ pub const Resolver = struct {
         inherited_active: *std.ArrayList(global_sg.GlobalBindingId),
         inherited_defers: *std.ArrayList(global_sg.GlobalNodeId),
         inherited_visible: *std.ArrayList(global_sg.GlobalBindingId),
+        introduced_bindings: []const global_sg.GlobalBindingId,
         owner_function: global_sg.GlobalFunctionId,
         module_index: usize,
     ) anyerror!void {
@@ -351,6 +354,15 @@ pub const Resolver = struct {
         var visible: std.ArrayList(global_sg.GlobalBindingId) = .empty;
         defer visible.deinit(self.allocator);
         try visible.appendSlice(self.allocator, inherited_visible.items);
+        for (introduced_bindings) |binding| {
+            try visible.append(self.allocator, binding);
+            try self.prepareAutoDeinit(
+                binding,
+                reach_context.Context.fromGlobal(visible.items, owner_function),
+                module_index,
+            );
+            try active.append(self.allocator, binding);
+        }
 
         var rebuilt: std.ArrayList(global_sg.GlobalNodeId) = .empty;
         defer rebuilt.deinit(self.allocator);
@@ -381,20 +393,22 @@ pub const Resolver = struct {
                     try active.append(self.allocator, binding);
                 },
                 .return_statement => |*ret| ret.cleanup = try self.appendCleanup(active.items, defers.items),
-                .code_block => |child| try self.finalizeBlock(child, &active, &defers, &visible, owner_function, module_index),
+                .code_block => |child| try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index),
                 .if_statement => |statement| {
-                    try self.finalizeBlock(statement.then_block, &active, &defers, &visible, owner_function, module_index);
+                    try self.finalizeBlock(statement.then_block, &active, &defers, &visible, &.{}, owner_function, module_index);
                     if (statement.else_block) |child|
-                        try self.finalizeBlock(child, &active, &defers, &visible, owner_function, module_index);
+                        try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index);
                 },
-                .while_statement => |statement| try self.finalizeBlock(statement.body, &active, &defers, &visible, owner_function, module_index),
-                .for_statement => |statement| try self.finalizeBlock(statement.body, &active, &defers, &visible, owner_function, module_index),
+                .while_statement => |statement| try self.finalizeBlock(statement.body, &active, &defers, &visible, &.{}, owner_function, module_index),
+                .for_statement => |statement| try self.finalizeBlock(statement.body, &active, &defers, &visible, &.{}, owner_function, module_index),
                 .switch_statement => |switch_id| {
                     const sw = self.graph.switches.items[@intFromEnum(switch_id)];
-                    for (self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]) |case|
-                        try self.finalizeBlock(case.body, &active, &defers, &visible, owner_function, module_index);
+                    for (self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]) |case| {
+                        const bindings: []const global_sg.GlobalBindingId = if (case.payload_binding) |*binding| binding[0..1] else &.{};
+                        try self.finalizeBlock(case.body, &active, &defers, &visible, bindings, owner_function, module_index);
+                    }
                     if (sw.default_block) |child|
-                        try self.finalizeBlock(child, &active, &defers, &visible, owner_function, module_index);
+                        try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index);
                 },
                 else => {},
             }
