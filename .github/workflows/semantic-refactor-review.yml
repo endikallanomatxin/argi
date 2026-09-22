@@ -27,11 +27,13 @@ jobs:
       - name: Internal tests
         run: zig build test-internal
       - name: Targeted parity tests
+        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
           zig build test-programs \
             -Dtest-filter="dormant match payload copy diagnostics respect reachability" \
+            -Dtest-filter="dormant pointer diagnostics respect reachability" \
             -Dtest-filter=feature_tests/types/32X_match_value_noncopyable_payload \
             -Dtest-filter=feature_tests/types/47X_match_value_payload_ambiguous_copy \
             -Dtest-filter=feature_tests/pointers/03X_assign_through_readonly_pointer \
@@ -40,15 +42,72 @@ jobs:
             -Dtest-filter=feature_tests/pointers/08X_array_index_requires_uint_native \
             -Dtest-filter=feature_tests/io/23X_abstract_writer_field_conflicting_assignment \
             -Dtest-filter=feature_tests/ownership/97_choice_nested_narrowing \
+            -Dtest-filter=feature_tests/collections/17_string_hash_map_baseline \
             -Dtest-filter=feature_tests/collections/35_dynamic_array_fallible_copy_cleanup \
             -Dtest-filter=feature_tests/collections/37_dynamic_array_associated_copy_reasons \
             -Dtest-filter=feature_tests/text/10_string_view_c_string_storage \
             2>&1 | tee semantic-review.log
+      - name: Inspect remaining focused failures
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          zig build >/dev/null 2>&1
+          echo "=== types/47X build ==="
+          ./zig-out/bin/argi build tests/feature_tests/types/47X_match_value_payload_ambiguous_copy 2>&1
+          echo "exit=$?"
+          echo "=== collections/37 build ==="
+          ./zig-out/bin/argi build tests/feature_tests/collections/37_dynamic_array_associated_copy_reasons 2>&1
+          echo "exit=$?"
+          echo "=== ownership/97 build+run ==="
+          ./zig-out/bin/argi build tests/feature_tests/ownership/97_choice_nested_narrowing 2>&1
+          echo "build_exit=$?"
+          if [ -x tests/feature_tests/ownership/97_choice_nested_narrowing/out ]; then
+            tests/feature_tests/ownership/97_choice_nested_narrowing/out
+            echo "run_exit=$?"
+          fi
+          echo "=== collections/35 build+run ==="
+          ./zig-out/bin/argi build tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup 2>&1
+          echo "build_exit=$?"
+          if [ -x tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup/out ]; then
+            tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup/out
+            echo "run_exit=$?"
+          fi
       - name: Upload targeted log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: semantic-review-log
           path: semantic-review.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+
+  full-suite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Install LLVM 21
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.org.asc >/dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends llvm-21-dev
+      - name: Full program suite
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 420s zig build test-programs 2>&1 | tee semantic-full.log
+      - name: Upload full-suite log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semantic-full-log
+          path: semantic-full.log
           if-no-files-found: ignore
           retention-days: 7
