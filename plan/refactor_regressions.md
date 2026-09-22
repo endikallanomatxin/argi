@@ -6,6 +6,30 @@ This document's original checkpoint below records the 2026-09-09 state; its
 test counts and file paths are historical. Development continues on
 `compact-semantic-graph-chatgpt`, using `performance` as the behavior reference.
 
+### Open language-design question: calls through erased abstract values
+
+The remaining String concatenation failures expose a boundary that should not
+be papered over as generic-inference fallout. `concat_views` obtains an
+`allocator: $&Allocator` through `#reach` and calls the free function
+`string_with_capacity`, whose abstract input makes it an abstract-contract
+template. The caller now has only the erased abstract type, while contract
+specialization deliberately requires a concrete implementer. The source
+contract declaration has no executable ABI, so selecting it as an ordinary
+function is not a valid fallback either.
+
+Before implementing this path, the language needs to choose one of these
+semantics (or define another explicitly): preserve the concrete backing type
+through typed `#reach` bindings so the free function remains statically
+specialized; permit a runtime/virtual specialization of free functions over an
+erased abstract value; or reject such calls and require the abstraction to
+expose the operation as a virtual requirement. This affects representation,
+dispatch, and codegen ABI. Do not relax constrained generic inference to bind
+an abstract declaration as its own implementer merely to make these tests pass.
+
+Current examples are `feature_tests/text/12_string_concat` through
+`text/17_string_view_concat_string`; `text/16` and `text/17` expose the direct
+`string_with_capacity(.allocator: $&Allocator, .capacity: UIntNative)` case.
+
 ModuleSema now recognizes a same-module abstract input as a constrained
 parameterized function. It retains the source declaration as a bodyless
 contract interface and lowers the executable body once as a template;
