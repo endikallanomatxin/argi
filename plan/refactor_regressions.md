@@ -50,6 +50,12 @@ through `text/15`, applies contextual string-literal coercion, and preserves
 the `Errable` output type. Those tests consequently converge on the same
 erased-allocator specialization boundary rather than failing earlier as
 pointer arithmetic or with a stale `&String` binding type.
+`feature_tests/system/25_local_typed_reach_binding` exposes the same erased
+implementer boundary through an explicitly typed local `$&Allocator` and the
+abstract `String.init` initializer. Its `.capacity = 3` operand successfully
+matches `UIntNative` context during candidate scoring; the apparent `Int32`
+mismatch is only the fallback diagnostic after abstract specialization cannot
+recover a concrete allocator type.
 
 ModuleSema now recognizes a same-module abstract input as a constrained
 parameterized function. It retains the source declaration as a bodyless
