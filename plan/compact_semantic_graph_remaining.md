@@ -12,11 +12,11 @@ belong in `plan/refactor_regressions.md` and should only be linked from here.
 
 ## Measured checkpoint
 
-Current checkpoint after preserving projected-place diagnostics:
+Current checkpoint after preserving projected-place initializedness:
 
-- 633 / 661 program tests pass.
-- 28 / 661 program tests fail.
-- 18 failures already reject invalid source and differ only in diagnostic
+- 636 / 661 program tests pass.
+- 25 / 661 program tests fail.
+- 15 failures already reject invalid source and differ only in diagnostic
   wording or source location.
 - 10 failures expose semantic or resolution work.
 
@@ -98,12 +98,10 @@ the same reporting path.
 Move-state reporting:
 
 - `feature_tests/ownership/14X_use_after_move`
-- `feature_tests/ownership/85X_semantic_relocation_double`
-- `feature_tests/ownership/202X_conditional_expression_joins_input_post_state`
 
-The remaining differences are reporting order or stale expected wording for
-operations that are rejected before Safety can use the stored move origin.
-Projected field and array reads already preserve root/place names and move
+The remaining difference is reporting order: copy insertion rejects the
+second use before Safety can use the stored move origin. Projected field and
+array reads already preserve root/place names, initializedness, and move
 locations. Preserve the existing temporal joins and move origins.
 
 Lifetime, provenance, and raw-pointer reporting:
@@ -117,7 +115,6 @@ Lifetime, provenance, and raw-pointer reporting:
 - `feature_tests/ownership/55X_deinit_through_alias_read`
 - `feature_tests/ownership/57X_return_reference_to_local`
 - `feature_tests/ownership/58X_null_safe_reference`
-- `feature_tests/ownership/59X_branch_deinit_then_use`
 - `feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root`
 - `feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip`
 - `feature_tests/ownership/63X_malloc_direct_safe_cast`

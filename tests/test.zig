@@ -2997,9 +2997,9 @@ test "feature_tests/ownership/58X_null_safe_reference" {
 
 test "feature_tests/ownership/59X_branch_deinit_then_use" {
     try buildExpectFailExact("tests/feature_tests/ownership/59X_branch_deinit_then_use",
-        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:1:1: error: place rooted at 'allocation' is maybe_initialized and cannot be used
-        \\  main(.system: System, .condition: Bool = false) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:12:8: error: place rooted at 'allocation' is maybe_initialized and cannot be used
+        \\      if allocation.size == 1 {
+        \\         ^
         \\
     );
 }
@@ -3162,7 +3162,7 @@ test "feature_tests/ownership/84_semantic_relocation" {
 test "feature_tests/ownership/85X_semantic_relocation_double" {
     try buildExpectFail(
         "tests/feature_tests/ownership/85X_semantic_relocation_double",
-        "place rooted at 'source' is moved and cannot be used",
+        "binding 'source' was moved and cannot be used again",
     );
 }
 

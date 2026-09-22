@@ -2712,6 +2712,10 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !void {
         if (initializedness == .moved) return self.reportMovedPlace(source, storage, state);
+        if (initializedness == .maybe_initialized) {
+            const name = self.graph.text(self.graph.binding(storage.root).name);
+            return self.report(source, "place rooted at '{s}' is maybe_initialized and cannot be used", .{name});
+        }
         try self.requireInitialized(function, source, initializedness);
     }
 
