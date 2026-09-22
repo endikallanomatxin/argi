@@ -8,17 +8,20 @@ const types = @import("types.zig");
 pub const FunctionSet = struct {
     values: std.AutoHashMap(graph_mod.GlobalFunctionId, void),
     bindings: std.AutoHashMap(graph_mod.GlobalBindingId, void),
+    nodes: std.AutoHashMap(graph_mod.GlobalNodeId, void),
 
     pub fn init(allocator: std.mem.Allocator) FunctionSet {
         return .{
             .values = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
             .bindings = std.AutoHashMap(graph_mod.GlobalBindingId, void).init(allocator),
+            .nodes = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator),
         };
     }
 
     pub fn deinit(self: *FunctionSet) void {
         self.values.deinit();
         self.bindings.deinit();
+        self.nodes.deinit();
     }
 
     pub fn contains(self: *const FunctionSet, function: graph_mod.GlobalFunctionId) bool {
@@ -32,6 +35,10 @@ pub const FunctionSet = struct {
 
     pub fn containsBinding(self: *const FunctionSet, binding: graph_mod.GlobalBindingId) bool {
         return self.bindings.contains(binding);
+    }
+
+    pub fn containsNode(self: *const FunctionSet, node: graph_mod.GlobalNodeId) bool {
+        return self.nodes.contains(node);
     }
 };
 
@@ -140,6 +147,7 @@ const State = struct {
 
     fn walkNode(self: *State, node_id: graph_mod.GlobalNodeId) anyerror!void {
         if ((try self.visited_nodes.getOrPut(node_id)).found_existing) return;
+        try self.functions.nodes.put(node_id, {});
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
             .declaration, .reach_directive, .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal, .break_statement, .continue_statement, .type_literal => {},
