@@ -418,6 +418,7 @@ pub const SafetyChecker = struct {
             .address_of => |child| blk: {
                 try self.validateAddressAccess(function, node.source, child, state);
                 const storage = try self.resolvePlace(child, state);
+                if (storage) |target| try self.rejectMovedAddress(node.source, target, state);
                 const opaque_provenance = try self.opaqueProvenanceForAccess(child, state);
                 var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
                 if (opaque_provenance.len == 0) {
@@ -2444,6 +2445,15 @@ pub const SafetyChecker = struct {
             },
             else => {},
         }
+    }
+
+    fn rejectMovedAddress(self: *SafetyChecker, source: primitives.SourceRef, storage: facts.Place, state: *FunctionState) !void {
+        if (self.initializednessAtPlace(state, storage) != .moved) return;
+        const name = self.graph.text(self.graph.binding(storage.root).name);
+        if (storage.projections.len == 0)
+            try self.report(source, "binding '{s}' was moved and cannot be used again", .{name})
+        else
+            try self.report(source, "place rooted at '{s}' is moved and cannot be used", .{name});
     }
 
     fn resolvePlace(self: *SafetyChecker, node_id: graph_mod.GlobalNodeId, state: *FunctionState) !?facts.Place {
