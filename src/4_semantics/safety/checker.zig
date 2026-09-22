@@ -240,9 +240,10 @@ pub const SafetyChecker = struct {
                 },
                 .assignment => |assignment| {
                     const binding = self.graph.binding(assignment.binding);
-                    const previous_state = self.initializednessAtPlace(state, .{ .root = assignment.binding });
+                    const storage = facts.Place{ .root = assignment.binding };
+                    const previous_state = self.initializednessAtPlace(state, storage);
                     if (previous_state == .moved)
-                        try self.requireInitialized(function, node.source, previous_state);
+                        try self.reportMovedReassignment(node.source, storage, state);
                     if (binding.mutability == .constant and previous_state == .initialized)
                         try self.report(node.source, "binding '{s}' is constant and cannot be reassigned after initialization", .{self.graph.text(binding.name)});
                     try self.validateContextualIntegerLiteral(assignment.value, self.graph.binding(assignment.binding).ty);
@@ -2474,6 +2475,16 @@ pub const SafetyChecker = struct {
         };
         if (storage.projections.len == 0) return self.report(source, "binding '{s}' was moved and cannot be used again", .{name});
         return self.report(source, "place rooted at '{s}' is moved and cannot be used", .{name});
+    }
+
+    fn reportMovedReassignment(self: *SafetyChecker, source: primitives.SourceRef, storage: facts.Place, state: *FunctionState) !void {
+        const name = self.graph.text(self.graph.binding(storage.root).name);
+        const moved_at = if (self.getPlace(state, storage)) |place| place.moved_at else null;
+        if (moved_at) |origin| if (self.location(origin)) |origin_location| {
+            const position = self.diagnostics.lineColumn(origin_location);
+            return self.report(source, "binding '{s}' was moved and cannot be reassigned (moved at {s}:{d}:{d})", .{ name, self.diagnostics.path(origin_location), position.line, position.column });
+        };
+        return self.report(source, "binding '{s}' was moved and cannot be reassigned", .{name});
     }
 
     fn resolvePlace(self: *SafetyChecker, node_id: graph_mod.GlobalNodeId, state: *FunctionState) !?facts.Place {
