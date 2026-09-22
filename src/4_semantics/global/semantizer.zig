@@ -525,13 +525,17 @@ pub fn semantizeWithOptions(
         return error.UnsupportedGlobalSemantic;
     }
 
-    if (options.diagnostics) |diagnostics|
-        if (try diagnoseInvalidMatchPayloadCopies(allocator, &relocation.graph, &ownership, reachable, diagnostics))
-            return error.Reported;
+    if (try diagnoseInvalidMatchPayloadCopies(
+        allocator,
+        &relocation.graph,
+        &ownership,
+        reachable,
+        options.diagnostics,
+    ))
+        return if (options.diagnostics != null) error.Reported else error.InvalidImplicitCopy;
 
-    if (options.diagnostics) |diagnostics|
-        if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, diagnostics))
-            return error.Reported;
+    if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, options.diagnostics))
+        return if (options.diagnostics != null) error.Reported else error.InvalidPointerOperation;
 
     if (options.diagnostics) |diagnostics|
         if (try abstracts.findGenericTypeConstraintFailure()) |failure| {
@@ -591,7 +595,7 @@ fn diagnoseInvalidMatchPayloadCopies(
     graph: *const global_sg.GlobalSemanticGraph,
     ownership: *ownership_mod.Resolver,
     reachable: ?*const reachability_mod.FunctionSet,
-    diagnostics: *diagnostics_mod.Diagnostics,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !bool {
     for (graph.switch_cases.items) |case| {
         if (case.payload_mode != .value) continue;
@@ -600,15 +604,17 @@ fn diagnoseInvalidMatchPayloadCopies(
         const binding = graph.binding(binding_id);
         if (std.mem.eql(u8, graph.text(binding.name), "_")) continue;
         if (graph.isTypeUnresolved(binding.ty) or ownership.canImplicitlyCopy(binding.ty)) continue;
-        var type_name = std.array_list.Managed(u8).init(allocator);
-        defer type_name.deinit();
-        try appendTypeName(&type_name, graph, binding.ty);
-        try diagnostics.add(
-            diagnosticLocation(graph, diagnostics, binding.source),
-            .semantic,
-            "type '{s}' cannot be copied implicitly; use '~value' to transfer ownership",
-            .{type_name.items},
-        );
+        if (diagnostics) |sink| {
+            var type_name = std.array_list.Managed(u8).init(allocator);
+            defer type_name.deinit();
+            try appendTypeName(&type_name, graph, binding.ty);
+            try sink.add(
+                diagnosticLocation(graph, sink, binding.source),
+                .semantic,
+                "type '{s}' cannot be copied implicitly; use '~value' to transfer ownership",
+                .{type_name.items},
+            );
+        }
         return true;
     }
     return false;
@@ -658,7 +664,7 @@ fn diagnoseUnresolvedPointerArithmetic(
 fn diagnoseInvalidPointerOperations(
     allocator: std.mem.Allocator,
     graph: *const global_sg.GlobalSemanticGraph,
-    diagnostics: *diagnostics_mod.Diagnostics,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !bool {
     for (graph.nodes.items) |node| switch (node.content) {
         .pointer_assignment => |assignment| {
@@ -668,7 +674,19 @@ fn diagnoseInvalidPointerOperations(
                 else => continue,
             };
             if (pointer.mutability != .read_only) continue;
-            var name = std.array_list.Managed(u8).init(allocator);
+            if (diagnostics) |sink| {
+                var name = std.array_list.Managed(u8).init(allocator);
+                defer name.deinit();
+                try appendTypeName(&name, graph, pointer_ty);
+                var source = node.source;
+                if (graph.node(assignment.pointer).content == .binding_use) {
+                    const binding = graph.node(assignment.pointer).content.binding_use;
+                    source.offset += @intCast(graph.text(graph.binding(binding).name).len);
+                }
+                try sink.add(
+                    diagnosticLocation(graph, sink, source),
+                    .semantic,
+                    "cannot assign through pointer '{s}' because it is read-only; use '            var name = std.array_list.Managed(u8).init(allocator);
             defer name.deinit();
             try appendTypeName(&name, graph, pointer_ty);
             var source = node.source;
@@ -682,6 +700,10 @@ fn diagnoseInvalidPointerOperations(
                 "cannot assign through pointer '{s}' because it is read-only; use '$&' when acquiring it",
                 .{name.items},
             );
+            return true;' when acquiring it",
+                    .{name.items},
+                );
+            }
             return true;
         },
         .array_index => |access| {
@@ -692,15 +714,17 @@ fn diagnoseInvalidPointerOperations(
             // non-negative literal is valid even if its node still says Int32.
             if (graph.node(access.index).content == .int_literal and
                 graph.node(access.index).content.int_literal >= 0) continue;
-            var name = std.array_list.Managed(u8).init(allocator);
-            defer name.deinit();
-            try appendTypeName(&name, graph, index_ty);
-            try diagnostics.add(
-                diagnosticLocation(graph, diagnostics, graph.node(access.index).source),
-                .semantic,
-                "array index must be 'UIntNative', got '{s}'",
-                .{name.items},
-            );
+            if (diagnostics) |sink| {
+                var name = std.array_list.Managed(u8).init(allocator);
+                defer name.deinit();
+                try appendTypeName(&name, graph, index_ty);
+                try sink.add(
+                    diagnosticLocation(graph, sink, graph.node(access.index).source),
+                    .semantic,
+                    "array index must be 'UIntNative', got '{s}'",
+                    .{name.items},
+                );
+            }
             return true;
         },
         else => {},
@@ -724,12 +748,13 @@ fn diagnoseInvalidPointerOperations(
         };
         const source = graph.binding(binding);
         if (source.mutability != .constant) continue;
-        try diagnostics.add(
-            diagnosticLocation(graph, diagnostics, graph.node(child).source),
-            .semantic,
-            "binding '{s}' is immutable; declare it with '::' or use '&{s}'",
-            .{ graph.text(source.name), graph.text(source.name) },
-        );
+        if (diagnostics) |sink|
+            try sink.add(
+                diagnosticLocation(graph, sink, graph.node(child).source),
+                .semantic,
+                "binding '{s}' is immutable; declare it with '::' or use '&{s}'",
+                .{ graph.text(source.name), graph.text(source.name) },
+            );
         return true;
     }
     return false;
