@@ -4070,27 +4070,27 @@ test "feature_tests/ownership/48_structural_field_move" {
 
 test "feature_tests/ownership/49X_structural_field_use_after_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/49X_structural_field_use_after_move",
-        \\tests/feature_tests/ownership/49X_structural_field_use_after_move/main.rg:10:1: error: place rooted at 'pair' is moved and cannot be used
-        \\  main() -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/49X_structural_field_use_after_move/main.rg:13:19: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/49X_structural_field_use_after_move/main.rg:12:32)
+        \\      status_code = pair.left + pair.right - moved
+        \\                    ^
         \\
     );
 }
 
 test "feature_tests/ownership/50X_branch_may_move_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/50X_branch_may_move_value",
-        \\tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:4:1: error: place rooted at 'pair' is moved and cannot be used
-        \\  main(.condition: Bool = false) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:9:19: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:7:26)
+        \\      status_code = pair.left
+        \\                    ^
         \\
     );
 }
 
 test "feature_tests/ownership/51X_loop_may_move_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/51X_loop_may_move_value",
-        \\tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:4:1: error: place rooted at 'pair' is moved and cannot be used
-        \\  main(.condition: Bool = false) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:7:27: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:7:26)
+        \\          consume(.value = ~pair.left)
+        \\                            ^
         \\
     );
 }
