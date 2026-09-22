@@ -504,6 +504,10 @@ pub fn semantizeWithOptions(
     }
 
     if (options.diagnostics) |diagnostics|
+        if (try diagnoseInvalidMatchPayloadCopies(allocator, &relocation.graph, &ownership, diagnostics))
+            return error.Reported;
+
+    if (options.diagnostics) |diagnostics|
         if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, diagnostics))
             return error.Reported;
 
@@ -558,6 +562,32 @@ pub fn semantizeWithOptions(
     try global_verify.verifyGlobal(&relocation.graph);
     stats.remaining = 0;
     return .{ .graph = relocation.takeGraph(allocator), .stats = stats };
+}
+
+fn diagnoseInvalidMatchPayloadCopies(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    ownership: *ownership_mod.Resolver,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    for (graph.switch_cases.items) |case| {
+        if (case.payload_mode != .value) continue;
+        const binding_id = case.payload_binding orelse continue;
+        const binding = graph.binding(binding_id);
+        if (std.mem.eql(u8, graph.text(binding.name), "_")) continue;
+        if (graph.isTypeUnresolved(binding.ty) or ownership.canImplicitlyCopy(binding.ty)) continue;
+        var type_name = std.array_list.Managed(u8).init(allocator);
+        defer type_name.deinit();
+        try appendTypeName(&type_name, graph, binding.ty);
+        try diagnostics.add(
+            diagnosticLocation(graph, diagnostics, binding.source),
+            .semantic,
+            "type '{s}' cannot be copied implicitly; use '~value' to transfer ownership",
+            .{type_name.items},
+        );
+        return true;
+    }
+    return false;
 }
 
 fn diagnoseUnresolvedPointerArithmetic(
@@ -2031,6 +2061,7 @@ fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.G
             try appendTypeName(buffer, graph, array.element);
             try buffer.append(')');
         },
+        .structural => try buffer.appendSlice("{...}"),
         else => try buffer.appendSlice("<type>"),
     }
 }

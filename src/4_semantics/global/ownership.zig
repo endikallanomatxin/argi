@@ -216,6 +216,15 @@ pub const Resolver = struct {
         return true;
     }
 
+    /// Whether the language may duplicate a value without an explicit `copy`
+    /// operation. Match value payloads use this permission even though they do
+    /// not pass through a lowered `resolve_copy` node.
+    pub fn canImplicitlyCopy(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
+        if (self.implementsNamedAbstract(ty, "ImplicitlyCopyable")) return true;
+        if (self.findUnaryFunction("copy", ty) != null) return false;
+        return self.triviallyCopyable(ty);
+    }
+
     fn implementsNamedAbstract(self: *Resolver, concrete: global_sg.GlobalTypeId, name: []const u8) bool {
         const dispatch = self.dispatch orelse return false;
         for (self.graph.declarations.items, 0..) |declaration, raw| {
