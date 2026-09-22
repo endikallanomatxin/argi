@@ -826,11 +826,20 @@ const Context = struct {
     fn lowerKeep(self: *Context, node: syn.NodeIndex) !Lowered {
         const keep = self.tree.keepStatement(node).?;
         const name = self.tree.tokenTextFromSource(self.source, keep.name_token);
+        const source = primitives.SourceRef{
+            .file_index = self.file_index,
+            .offset = self.tree.tokenLocation(keep.name_token).offset,
+        };
         if (self.lookupBinding(name)) |binding|
-            return self.pending(node, .{ .resolve_keep = .{ .node = self.nextNodeId(), .binding = binding.id } }, try self.builtin(.Void));
+            return self.pending(node, .{ .resolve_keep = .{
+                .node = self.nextNodeId(),
+                .binding = binding.id,
+                .source = source,
+            } }, try self.builtin(.Void));
         return self.pending(node, .{ .resolve_keep_name = .{
             .node = self.nextNodeId(),
             .name = try self.writer.addString(name),
+            .source = source,
         } }, try self.builtin(.Void));
     }
 

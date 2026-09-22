@@ -534,6 +534,19 @@ pub fn semantizeWithOptions(
     ))
         return if (options.diagnostics != null) error.Reported else error.InvalidImplicitCopy;
 
+    if (ownership.invalidKeep()) |keep| {
+        if (options.diagnostics) |diagnostics| {
+            const binding = relocation.graph.binding(keep.binding);
+            try diagnostics.add(
+                diagnosticLocation(&relocation.graph, diagnostics, keep.source),
+                .semantic,
+                "cannot keep binding '{s}': no automatic deinit is scheduled",
+                .{relocation.graph.text(binding.name)},
+            );
+        }
+        return if (options.diagnostics != null) error.Reported else error.InvalidKeep;
+    }
+
     if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, reachable, options.diagnostics))
         return if (options.diagnostics != null) error.Reported else error.InvalidPointerOperation;
 

@@ -21,7 +21,11 @@ pub const Stats = struct {
 };
 
 const Deferred = struct { marker: global_sg.GlobalNodeId, value: global_sg.GlobalNodeId };
-const Kept = struct { marker: global_sg.GlobalNodeId, binding: global_sg.GlobalBindingId };
+const Kept = struct {
+    marker: global_sg.GlobalNodeId,
+    binding: global_sg.GlobalBindingId,
+    source: primitives.SourceRef,
+};
 const AutoNode = struct { binding: global_sg.GlobalBindingId, node: ?global_sg.GlobalNodeId };
 const ResolvedDestructor = struct {
     function: global_sg.GlobalFunctionId,
@@ -38,6 +42,7 @@ pub const Resolver = struct {
     dispatch: ?*dispatch_mod.Resolver = null,
     deferred: std.ArrayList(Deferred) = .empty,
     kept: std.ArrayList(Kept) = .empty,
+    invalid_keep: ?Kept = null,
     auto_nodes: std.ArrayList(AutoNode) = .empty,
     empty_block: ?global_sg.GlobalBlockId = null,
     stats: Stats = .{},
@@ -169,7 +174,11 @@ pub const Resolver = struct {
     }
 
     fn resolveKeep(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
-        return self.registerKeep(globalizer.globalNode(o, value.node), globalizer.globalBinding(o, value.binding));
+        return self.registerKeep(
+            globalizer.globalNode(o, value.node),
+            globalizer.globalBinding(o, value.binding),
+            globalSource(o, value.source),
+        );
     }
 
     fn resolveKeepName(
@@ -180,11 +189,20 @@ pub const Resolver = struct {
         value: anytype,
     ) !bool {
         const binding = name_lookup.binding(self.modules, self.offsets, module_index, module.text(value.name)) orelse return false;
-        return self.registerKeep(globalizer.globalNode(o, value.node), binding);
+        return self.registerKeep(globalizer.globalNode(o, value.node), binding, globalSource(o, value.source));
     }
 
-    fn registerKeep(self: *Resolver, marker: global_sg.GlobalNodeId, binding: global_sg.GlobalBindingId) !bool {
-        try self.kept.append(self.allocator, .{ .marker = marker, .binding = binding });
+    fn registerKeep(
+        self: *Resolver,
+        marker: global_sg.GlobalNodeId,
+        binding: global_sg.GlobalBindingId,
+        source: primitives.SourceRef,
+    ) !bool {
+        try self.kept.append(self.allocator, .{
+            .marker = marker,
+            .binding = binding,
+            .source = source,
+        });
         try self.makeNoop(marker, self.graph.bindings.items[@intFromEnum(binding)].source);
         self.stats.keeps += 1;
         return true;
@@ -388,6 +406,8 @@ pub const Resolver = struct {
                 continue;
             }
             if (self.keepBinding(node_id)) |binding| {
+                if (self.autoDeinitNode(binding) == null and self.invalid_keep == null)
+                    self.invalid_keep = self.keepEntry(node_id);
                 removeBinding(&active, binding);
                 continue;
             }
@@ -787,8 +807,16 @@ pub const Resolver = struct {
     }
 
     fn keepBinding(self: *Resolver, marker: global_sg.GlobalNodeId) ?global_sg.GlobalBindingId {
-        for (self.kept.items) |entry| if (entry.marker == marker) return entry.binding;
+        return if (self.keepEntry(marker)) |entry| entry.binding else null;
+    }
+
+    fn keepEntry(self: *Resolver, marker: global_sg.GlobalNodeId) ?Kept {
+        for (self.kept.items) |entry| if (entry.marker == marker) return entry;
         return null;
+    }
+
+    pub fn invalidKeep(self: *const Resolver) ?Kept {
+        return self.invalid_keep;
     }
 
     fn makeNoop(self: *Resolver, marker: global_sg.GlobalNodeId, source: primitives.SourceRef) !void {
@@ -815,6 +843,10 @@ pub const Resolver = struct {
         return id;
     }
 };
+
+fn globalSource(o: globalizer.Offsets, source: primitives.SourceRef) primitives.SourceRef {
+    return .{ .file_index = o.file_base + source.file_index, .offset = source.offset };
+}
 
 fn removeBinding(list: *std.ArrayList(global_sg.GlobalBindingId), binding: global_sg.GlobalBindingId) void {
     var i: usize = list.items.len;
