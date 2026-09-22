@@ -457,8 +457,8 @@ pub fn semantizeWithOptions(
 
     if (reachable) |set| try retireDormantBindingResolution(&relocation.graph, set, try core.builtin(.Any));
 
-    if (options.diagnostics) |diagnostics| {
-        if (abstracts.field_storage_conflict) |conflict| {
+    if (abstracts.field_storage_conflict) |conflict| {
+        if (options.diagnostics) |diagnostics| {
             var abstract_name = std.array_list.Managed(u8).init(allocator);
             defer abstract_name.deinit();
             var existing_name = std.array_list.Managed(u8).init(allocator);
@@ -476,6 +476,10 @@ pub fn semantizeWithOptions(
             );
             return error.Reported;
         }
+        return error.ConflictingAbstractFieldStorage;
+    }
+
+    if (options.diagnostics) |diagnostics| {
         if (try diagnoseUnresolvedPropagatedReach(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
             return error.Reported;
         if (try diagnosePrivateFields(&relocation.graph, modules, reachable, relocation.offsets.items, diagnostics))
