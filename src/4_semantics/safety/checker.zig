@@ -246,6 +246,8 @@ pub const SafetyChecker = struct {
                         try self.reportMovedReassignment(node.source, storage, state);
                     if (binding.mutability == .constant and previous_state == .initialized)
                         try self.report(node.source, "binding '{s}' is constant and cannot be reassigned after initialization", .{self.graph.text(binding.name)});
+                    if (previous_state == .deinitialized)
+                        try self.refreshStorageGenerationChecked(node.source, state, storage);
                     try self.validateContextualIntegerLiteral(assignment.value, self.graph.binding(assignment.binding).ty);
                     const value = try self.evaluate(function, assignment.value, state);
                     try self.setPlace(state, .{ .root = assignment.binding }, .initialized, value);
