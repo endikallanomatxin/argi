@@ -96,7 +96,7 @@ pub const Resolver = struct {
                 var variant_id: ?global_sg.GlobalVariantId = null;
                 for (0..variants.len) |index| {
                     const raw = variants.start + @as(u32, @intCast(index));
-                    if (self.graph.variants.items[raw].value == tag) {
+                    if (self.choiceVariantTag(choice_ty, @enumFromInt(raw)) == tag) {
                         variant_id = @enumFromInt(raw);
                         break;
                     }
@@ -323,7 +323,7 @@ pub const Resolver = struct {
         self.graph.nodes.items[@intFromEnum(tag)] = .{
             .source = option_source orelse return .deferred,
             .ty = try self.builtin(.Int32),
-            .content = .{ .int_literal = variant.variant.value },
+            .content = .{ .int_literal = self.choiceVariantTag(choice_ty, variant.id) },
         };
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -394,7 +394,7 @@ pub const Resolver = struct {
         try self.graph.nodes.append(self.allocator, .{
             .source = self.graph.nodes.items[@intFromEnum(source)].source,
             .ty = int_ty,
-            .content = .{ .int_literal = some.variant.value },
+            .content = .{ .int_literal = self.choiceVariantTag(choice_ty, some.id) },
         });
         const target = globalizer.globalNode(o, value.node);
         self.graph.nodes.items[@intFromEnum(target)] = .{
@@ -410,6 +410,24 @@ pub const Resolver = struct {
         };
         self.stats.nullable += 1;
         return true;
+    }
+
+    fn choiceVariantTag(self: *const Resolver, ty: global_sg.GlobalTypeId, variant: global_sg.GlobalVariantId) i32 {
+        if (self.choiceUsesDeclaredTags(ty)) return self.graph.variants.items[@intFromEnum(variant)].value;
+        const variants = types.variants(self.graph, ty) orelse return self.graph.variants.items[@intFromEnum(variant)].value;
+        return @intCast(@intFromEnum(variant) - variants.start);
+    }
+
+    fn choiceUsesDeclaredTags(self: *const Resolver, ty: global_sg.GlobalTypeId) bool {
+        return switch (self.graph.resolvedSemanticType(ty) orelse return false) {
+            .declared => |declaration| self.graph.declaration(declaration).choice_layout == .c_enum,
+            .structural_choice => |shape| shape.layout == .c_enum,
+            .generic => if (types.genericInstance(self.graph, ty)) |instance| switch (instance.shape) {
+                .choice => |shape| shape.layout == .c_enum,
+                else => false,
+            } else false,
+            else => false,
+        };
     }
 
     fn resolveMatch(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
