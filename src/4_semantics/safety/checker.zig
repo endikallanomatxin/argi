@@ -2175,7 +2175,10 @@ pub const SafetyChecker = struct {
             try self.report(source, "choice payload access requires a proven active variant", .{});
             return .{};
         }
-        for (choice.variants) |variant| if (variant.index == wanted) return variant.value.*;
+        for (choice.variants) |variant| if (variant.index == wanted) {
+            try self.activateConditionalOwnedRoots(state, variant.value.*);
+            return variant.value.*;
+        };
         return .{};
     }
 
