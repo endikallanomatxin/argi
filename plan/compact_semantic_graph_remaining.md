@@ -28,9 +28,15 @@ Affected tests:
 
 - `feature_tests/collections/37_dynamic_array_associated_copy_reasons`
 
-The declaration exists and input inference reaches constraint validation, but
-the associated copy-reasons constraint does not accept the concrete dynamic
-array. Trace associated-type substitution before changing inference rules.
+The declaration exists and input inference reaches constraint validation. The
+parameterized implementation
+`DynamicArray#(.t: Type: FalliblyCopyable#(.reasons: element_reasons))`
+uses `element_reasons` as an implicitly inferred associated parameter. The
+compact abstract-relation lowerer currently records that name as an external
+type rather than a parameter, so matching the concrete `FallibleValue`
+implementation cannot bind its `(..copy_failed)` reasons. Restore inferred
+associated parameters in relation lowering; do not weaken choice equality or
+constraint validation.
 
 ### Erased abstract free-function calls
 
