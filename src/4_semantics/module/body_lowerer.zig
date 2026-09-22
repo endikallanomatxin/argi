@@ -451,7 +451,7 @@ const Context = struct {
         var nodes = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
         defer nodes.deinit();
         for (list.elements) |child| {
-            const value = try self.lowerNode(child, null);
+            const value = try self.valuePosition(child, try self.lowerNode(child, null));
             try nodes.append(value.node);
         }
         return self.resolved(node, null, .{ .list_literal = .{

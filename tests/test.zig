@@ -2908,7 +2908,7 @@ test "feature_tests/ownership/26_distinct_fields_do_not_alias_same_call" {
 }
 
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
-    try buildExpectFail("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal", "type 'Resource' is not copyable");
+    try buildExpectFail("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal", "type 'Resource' cannot be copied implicitly");
 }
 
 test "feature_tests/ownership/28X_ambiguous_copy_assignment" {
