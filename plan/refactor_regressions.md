@@ -26,6 +26,22 @@ expose the operation as a virtual requirement. This affects representation,
 dispatch, and codegen ABI. Do not relax constrained generic inference to bind
 an abstract declaration as its own implementer merely to make these tests pass.
 
+### Open language-design question: canonical identity for the non-movable System capability
+
+`feature_tests/ownership/35X_system_move_by_value` specifies that `System`
+cannot be moved by value even with an explicit `~`; callers must pass a
+reference. The compact graph currently represents `System` as an ordinary
+nominal core declaration. Unlike primitive builtins, it has no canonical role
+or capability bit that the ownership checker can test. Implementing the rule
+by comparing the declaration's displayed name would also forbid unrelated
+user declarations named `System` and would make semantics depend on spelling.
+
+Before restoring this diagnostic, decide where core capability identities live
+after module globalization. Plausible directions include a canonical core
+declaration table or an explicit non-movable type property. The ownership pass
+should consume that identity/property; it should not rediscover the rule by a
+global string search.
+
 Current examples are `feature_tests/text/12_string_concat` through
 `text/17_string_view_concat_string`; `text/16` and `text/17` expose the direct
 `string_with_capacity(.allocator: $&Allocator, .capacity: UIntNative)` case.
