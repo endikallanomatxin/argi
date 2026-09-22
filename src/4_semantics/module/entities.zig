@@ -276,10 +276,12 @@ pub const PendingOperation = union(enum) {
     resolve_keep: struct {
         node: ModuleNodeId,
         binding: ModuleBindingId,
+        source: primitives.SourceRef,
     },
     resolve_keep_name: struct {
         node: ModuleNodeId,
         name: primitives.StringRange,
+        source: primitives.SourceRef,
     },
     resolve_name_use: struct {
         node: ModuleNodeId,
