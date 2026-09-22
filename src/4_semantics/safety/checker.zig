@@ -692,7 +692,8 @@ pub const SafetyChecker = struct {
                     .owned_roots = if (primitive == .establish_allocation) try self.oneRoot(root) else &.{},
                 };
             },
-            .reference_offset, .mutable_reference_offset, .reinterpret_reference, .mutable_reinterpret_reference, .restrict_reference, .read_reference => if (values.len != 0) values[0].referenceCopy() else .{},
+            .reference_offset, .mutable_reference_offset, .reinterpret_reference, .mutable_reinterpret_reference, .read_reference => if (values.len != 0) values[0].referenceCopy() else .{},
+            .restrict_reference => try self.restrictReferencePrimitive(values),
             .relocate => try self.relocatePrimitive(source, values, state),
             .trusted_opaque_move, .trusted_opaque_move_in => blk: {
                 try self.applyOpaqueMovePrimitive(function, source, argument_ids, values, state);
@@ -712,6 +713,19 @@ pub const SafetyChecker = struct {
             // communicated explicitly by mark_empty and by summaries.
             .trusted_opaque_drop => .{},
         };
+    }
+
+    fn restrictReferencePrimitive(self: *SafetyChecker, values: []const facts.ValueFacts) !facts.ValueFacts {
+        if (values.len == 0) return .{};
+
+        var result = values[0].referenceCopy();
+        if (values.len == 1) return result;
+
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+        for (result.dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
+        for (values[1].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
+        result.dependencies = try dependencies.toOwnedSlice();
+        return result;
     }
 
     fn relocatePrimitive(

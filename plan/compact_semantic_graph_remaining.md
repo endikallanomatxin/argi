@@ -12,18 +12,16 @@ belong in `plan/refactor_regressions.md` and should only be linked from here.
 
 ## Measured checkpoint
 
-At `af4f83931a21b5c6c4b8068a18bc40bb46658194`:
+After preserving the restricting lifetime in direct `restrict_reference`
+evaluation:
 
-- 619 / 659 program tests pass.
-- 40 / 659 program tests fail.
+- 621 / 659 program tests pass.
+- 38 / 659 program tests fail.
 - 22 failures already reject invalid source and differ only in diagnostic
   wording or source location.
-- 16 failures expose semantic or resolution work.
+- 14 failures expose semantic or resolution work.
 - 2 failures are aggregate regression slices and should not initially be
   treated as independent roots.
-
-The program total was reconstructed from complete category shards: 617 tests
-in the explicitly selected categories plus 42 passing harness-only tests.
 
 ## Resolution, generic materialization, and contextual typing
 
@@ -80,19 +78,6 @@ an open language-design question documented in
 implementer or otherwise relax generic inference to force these tests through.
 
 ## Safety and ownership semantics
-
-### Restricted references lose the restricting lifetime
-
-Affected tests:
-
-- `feature_tests/ownership/101X_safe_reference_restriction_ended_lifetime`
-- `feature_tests/ownership/104X_safe_reference_restriction_relocated`
-
-Summary inference merges the source and lifetime dependencies for
-`restrict_reference`, but direct primitive evaluation currently returns only
-a copy of the source reference facts. Ending the restricting lifetime is
-therefore not observed. Make direct evaluation and summaries represent the
-same dependency set, then verify ownership tests 100 through 105.
 
 ### Owned-root cycles are not rejected
 
@@ -201,14 +186,13 @@ generation fixes before assigning either a new root cause.
 
 ## Recommended work order
 
-1. Preserve both dependencies of `restrict_reference` in direct evaluation.
-2. Reject indirect owned-root cycles.
-3. Repair nested aggregate/choice ownership transfer and re-run both derived
+1. Reject indirect owned-root cycles.
+2. Repair nested aggregate/choice ownership transfer and re-run both derived
    regression slices.
-4. Repair opaque-domain generation refresh in direct and summarized paths.
-5. Restore binary operator materialization and `Errable` output propagation.
-6. Diagnose generic candidate discovery and contextual literal typing without
+3. Repair opaque-domain generation refresh in direct and summarized paths.
+4. Restore binary operator materialization and `Errable` output propagation.
+5. Diagnose generic candidate discovery and contextual literal typing without
    globally tightening inference.
-7. Consolidate move/place/provenance diagnostics.
-8. Leave erased abstract calls and canonical `System` identity pending their
+6. Consolidate move/place/provenance diagnostics.
+7. Leave erased abstract calls and canonical `System` identity pending their
    documented language-design decisions.
