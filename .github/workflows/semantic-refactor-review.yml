@@ -73,6 +73,39 @@ jobs:
             tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup/out
             echo "run_exit=$?"
           fi
+      - name: Inspect choice and fallible-copy codegen
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          zig build >/dev/null 2>&1
+
+          echo "=== ownership/97 explicit output + LLVM ==="
+          ./zig-out/bin/argi build tests/feature_tests/ownership/97_choice_nested_narrowing \
+            --output /tmp/choice97 --emit-llvm /tmp/choice97.ll 2>&1
+          echo "build_exit=$?"
+          if [ -x /tmp/choice97 ]; then
+            /tmp/choice97
+            echo "run_exit=$?"
+          fi
+          if [ -f /tmp/choice97.ll ]; then
+            echo "--- ownership/97 choice-related IR ---"
+            grep -n -E "choice|icmp|status|main" /tmp/choice97.ll | tail -120 || true
+          fi
+
+          echo "=== collections/35 explicit output ==="
+          ./zig-out/bin/argi build tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup \
+            --output /tmp/collections35 2>&1
+          echo "build_exit=$?"
+          if [ -x /tmp/collections35 ]; then
+            /tmp/collections35
+            echo "run_exit=$?"
+            if command -v gdb >/dev/null 2>&1; then
+              echo "--- gdb backtrace ---"
+              gdb -q -batch -ex run -ex bt --args /tmp/collections35 || true
+            fi
+          fi
+
       - name: Upload targeted log
         if: always()
         uses: actions/upload-artifact@v4
