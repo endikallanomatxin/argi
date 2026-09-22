@@ -2778,9 +2778,14 @@ pub const SafetyChecker = struct {
         if (containsRoot(state.lexical_storage_generations.items, root)) return true;
         const record = self.graph.functions.items[@intFromEnum(function)];
         const inputs = self.graph.binding_refs.items[record.input_bindings.start..][0..record.input_bindings.len];
+        const outputs = self.graph.binding_refs.items[record.output_bindings.start..][0..record.output_bindings.len];
         for (state.storage_generations.items) |entry| {
             if (entry.generation != root) continue;
             for (inputs) |input| if (input == entry.storage.root) return false;
+            // Function output bindings model caller-provided result storage.
+            // A value materialized into that storage may carry its generation
+            // without borrowing a callee-local lifetime.
+            for (outputs) |output| if (output == entry.storage.root) return false;
             return true;
         }
         return false;

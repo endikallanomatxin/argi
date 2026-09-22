@@ -12,13 +12,13 @@ belong in `plan/refactor_regressions.md` and should only be linked from here.
 
 ## Measured checkpoint
 
-Current checkpoint after diagnosing unavailable reached defaults:
+Current checkpoint after classifying output storage as caller-owned:
 
-- 650 / 661 program tests pass.
-- 11 / 661 program tests fail.
+- 651 / 661 program tests pass.
+- 10 / 661 program tests fail.
 - 1 failure already rejects invalid source and differs only in diagnostic
   wording or source location.
-- 10 failures expose semantic or resolution work.
+- 9 failures expose semantic or resolution work.
 
 ## Resolution, generic materialization, and contextual typing
 
@@ -65,18 +65,6 @@ the earlier `Int32` type only after specialization fails. Do not treat that
 display as a literal-inference failure.
 
 ## Safety and ownership semantics
-
-### Escaping provenance after partial aggregate moves
-
-Affected test:
-
-- `feature_tests/ownership/60_partial_field_move_cleanup`
-
-Nested auto-deinit descriptors now retain contiguous field ranges, but the
-valid `Pair` returned by `make_pair` still appears to depend on a local storage
-generation. Trace which generation survives the move into the `Errable`
-payload before changing cleanup or escape rules; this is a provenance-transfer
-bug, not a reason to permit local references to escape.
 
 ### Canonical non-movable `System`
 
