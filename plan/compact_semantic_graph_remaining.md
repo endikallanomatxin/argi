@@ -12,14 +12,13 @@ belong in `plan/refactor_regressions.md` and should only be linked from here.
 
 ## Measured checkpoint
 
-Current checkpoint after direct binding generation refresh:
+Current checkpoint after isolating error-propagation cleanup state:
 
-- 625 / 659 program tests pass.
-- 34 / 659 program tests fail.
+- 626 / 659 program tests pass.
+- 33 / 659 program tests fail.
 - 22 failures already reject invalid source and differ only in diagnostic
   wording or source location.
-- 12 failures expose semantic or resolution work, including two aggregate
-  regression slices that remained red after repairing nested cleanup layout.
+- 11 failures expose semantic or resolution work.
 
 ## Resolution, generic materialization, and contextual typing
 
@@ -68,6 +67,18 @@ an open language-design question documented in
 implementer or otherwise relax generic inference to force these tests through.
 
 ## Safety and ownership semantics
+
+### Escaping provenance after partial aggregate moves
+
+Affected test:
+
+- `feature_tests/ownership/60_partial_field_move_cleanup`
+
+Nested auto-deinit descriptors now retain contiguous field ranges, but the
+valid `Pair` returned by `make_pair` still appears to depend on a local storage
+generation. Trace which generation survives the move into the `Errable`
+payload before changing cleanup or escape rules; this is a provenance-transfer
+bug, not a reason to permit local references to escape.
 
 ### Canonical non-movable `System`
 
@@ -128,22 +139,10 @@ Resolution knows that `print` cannot obtain its required reached value, but
 emits a generic no-overload diagnostic instead of explaining the unavailable
 `#reach` input.
 
-## Regression slices requiring separate diagnosis
-
-- `feature_tests/testing/13_collections_text_regression_slice`
-- `feature_tests/testing/14_core_path_regression_slice`
-
-The first ends a root during deferred String cleanup after formatting and
-payload moves. The second loses a live dependency through Path construction or
-its function summary. Both remained red after correcting nested auto-deinit
-ranges and direct binding generation refresh, so diagnose each slice
-independently.
-
 ## Recommended work order
 
-1. Diagnose the two remaining regression slices independently.
-2. Diagnose generic candidate discovery and contextual literal typing without
+1. Diagnose generic candidate discovery and contextual literal typing without
    globally tightening inference.
-3. Consolidate move/place/provenance diagnostics.
-4. Leave erased abstract calls and canonical `System` identity pending their
+2. Consolidate move/place/provenance diagnostics.
+3. Leave erased abstract calls and canonical `System` identity pending their
    documented language-design decisions.
