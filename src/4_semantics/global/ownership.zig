@@ -404,7 +404,10 @@ pub const Resolver = struct {
                 .switch_statement => |switch_id| {
                     const sw = self.graph.switches.items[@intFromEnum(switch_id)];
                     for (self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]) |case| {
-                        const bindings: []const global_sg.GlobalBindingId = if (case.payload_binding) |*binding| binding[0..1] else &.{};
+                        const bindings: []const global_sg.GlobalBindingId = if (case.payload_mode == .move)
+                            if (case.payload_binding) |*binding| binding[0..1] else &.{}
+                        else
+                            &.{};
                         try self.finalizeBlock(case.body, &active, &defers, &visible, bindings, owner_function, module_index);
                     }
                     if (sw.default_block) |child|
