@@ -2030,6 +2030,25 @@ fn diagnoseUnresolvedCall(
                 };
             }
 
+            var reach_details = std.array_list.Managed(u8).init(allocator);
+            defer reach_details.deinit();
+            var reach_candidate_count: usize = 0;
+            for (candidates.items) |candidate| {
+                const function = graph.functions.items[@intFromEnum(candidate)];
+                if (diagnostic_core.matchCallInput(function.input, input_id) != .score) continue;
+                if (try appendOmittedReachDefaults(&reach_details, graph, name, function, input))
+                    reach_candidate_count += 1;
+            }
+            if (reach_candidate_count != 0) {
+                var message = std.array_list.Managed(u8).init(allocator);
+                defer message.deinit();
+                try message.print("function '{s}' exists, but no overload matches the provided arguments.\nOverloads with omitted #reach defaults:\n", .{name});
+                try message.appendSlice(reach_details.items);
+                try message.appendSlice("\n\nAdd a reachable value in the caller, for example:\n  main(.system: System = System()) -> (.status_code: Int32 = 0) := { ... }\n\nOr pass the omitted argument explicitly.");
+                try diagnostics.add(location, .semantic, "{s}", .{message.items});
+                return true;
+            }
+
             var message = std.array_list.Managed(u8).init(allocator);
             defer message.deinit();
             try message.appendSlice("no overload of '");
@@ -2092,7 +2111,91 @@ fn appendFieldShape(buffer: *std.array_list.Managed(u8), graph: *const global_sg
     try buffer.append(')');
 }
 
-fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) !void {
+fn appendOmittedReachDefaults(
+    buffer: *std.array_list.Managed(u8),
+    graph: *const global_sg.GlobalSemanticGraph,
+    name: []const u8,
+    function: global_sg.Function,
+    input: anytype,
+) !bool {
+    var omitted_count: usize = 0;
+    for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, field_index| {
+        if (callInputSuppliesField(graph, input, field, field_index)) continue;
+        const fallback = field.default_value orelse continue;
+        if (graph.node(fallback).content == .reach_directive) omitted_count += 1;
+    }
+    if (omitted_count == 0) return false;
+
+    if (buffer.items.len != 0) try buffer.append('\n');
+    try buffer.appendSlice("  - ");
+    try buffer.appendSlice(name);
+    try buffer.append('(');
+    for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
+        if (index != 0) try buffer.appendSlice(", ");
+        try buffer.append('.');
+        try buffer.appendSlice(graph.text(field.name));
+        try buffer.appendSlice(": ");
+        try appendTypeName(buffer, graph, field.ty);
+        const fallback = field.default_value orelse continue;
+        const reach_id = switch (graph.node(fallback).content) {
+            .reach_directive => |value| value,
+            else => continue,
+        };
+        try buffer.appendSlice(" = #reach ");
+        try appendReachAlternatives(buffer, graph, reach_id);
+    }
+    try buffer.appendSlice(") -> ");
+    try appendFieldShape(buffer, graph, function.output);
+    try buffer.appendSlice("\n    omitted #reach defaults:");
+
+    for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, field_index| {
+        if (callInputSuppliesField(graph, input, field, field_index)) continue;
+        const fallback = field.default_value orelse continue;
+        const reach_id = switch (graph.node(fallback).content) {
+            .reach_directive => |value| value,
+            else => continue,
+        };
+        try buffer.appendSlice("\n      - .");
+        try buffer.appendSlice(graph.text(field.name));
+        try buffer.appendSlice(" uses #reach [");
+        try appendReachAlternatives(buffer, graph, reach_id);
+        try buffer.appendSlice("] expected as '");
+        try appendTypeName(buffer, graph, field.ty);
+        try buffer.append('\'');
+    }
+    return true;
+}
+
+fn callInputSuppliesField(
+    graph: *const global_sg.GlobalSemanticGraph,
+    input: anytype,
+    field: global_sg.Field,
+    field_index: usize,
+) bool {
+    for (graph.value_fields.items[input.fields.start..][0..input.fields.len], 0..) |supplied, supplied_index| {
+        if (supplied_index < input.dispatch_prefix_positional_count or graph.text(supplied.name).len == 0) {
+            if (supplied_index == field_index) return true;
+        } else if (std.mem.eql(u8, graph.text(supplied.name), graph.text(field.name))) return true;
+    }
+    return false;
+}
+
+fn appendReachAlternatives(
+    buffer: *std.array_list.Managed(u8),
+    graph: *const global_sg.GlobalSemanticGraph,
+    reach_id: global_sg.GlobalReachId,
+) !void {
+    const reach = graph.reaches.items[@intFromEnum(reach_id)];
+    for (graph.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len], 0..) |alternative, index| {
+        if (index != 0) try buffer.appendSlice(", ");
+        for (graph.reach_segments.items[alternative.segments.start..][0..alternative.segments.len], 0..) |segment, segment_index| {
+            if (segment_index != 0) try buffer.append('.');
+            try buffer.appendSlice(graph.text(segment));
+        }
+    }
+}
+
+fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) anyerror!void {
     if (global_types.arrayLength(graph, ty)) |length| {
         const element = global_types.arrayElement(graph, ty) orelse return error.InvalidArrayType;
         try buffer.append('[');
@@ -2148,11 +2251,30 @@ fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.G
             try buffer.append('?');
             try appendTypeName(buffer, graph, child);
         },
-        .structural_choice, .inferred_choice => try buffer.appendSlice("choice"),
+        .structural_choice => |choice| try appendChoiceTypeName(buffer, graph, choice.variants),
+        .inferred_choice => |choice| try appendChoiceTypeName(buffer, graph, choice.variants),
         .array => unreachable,
         .structural => try buffer.appendSlice("{...}"),
         else => try buffer.appendSlice("<type>"),
     }
+}
+
+fn appendChoiceTypeName(
+    buffer: *std.array_list.Managed(u8),
+    graph: *const global_sg.GlobalSemanticGraph,
+    variants: global_sg.VariantRange,
+) anyerror!void {
+    try buffer.append('(');
+    for (graph.variants.items[variants.start..][0..variants.len], 0..) |variant, index| {
+        if (index != 0) try buffer.appendSlice(", ");
+        try buffer.appendSlice("..");
+        try buffer.appendSlice(graph.text(variant.name));
+        if (variant.payload_type) |payload| {
+            try buffer.appendSlice(": ");
+            try appendTypeName(buffer, graph, payload);
+        }
+    }
+    try buffer.append(')');
 }
 
 fn argumentFieldLocation(
