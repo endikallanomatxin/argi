@@ -45,6 +45,11 @@ global string search.
 Current examples are `feature_tests/text/12_string_concat` through
 `text/17_string_view_concat_string`; `text/16` and `text/17` expose the direct
 `string_with_capacity(.allocator: $&Allocator, .capacity: UIntNative)` case.
+The binary operator pipeline now selects the intended overload for `text/12`
+through `text/15`, applies contextual string-literal coercion, and preserves
+the `Errable` output type. Those tests consequently converge on the same
+erased-allocator specialization boundary rather than failing earlier as
+pointer arithmetic or with a stale `&String` binding type.
 
 ModuleSema now recognizes a same-module abstract input as a constrained
 parameterized function. It retains the source declaration as a bodyless
