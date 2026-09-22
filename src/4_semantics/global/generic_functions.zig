@@ -2270,6 +2270,7 @@ pub const Resolver = struct {
         fn resolveChoiceLiteral(self: *InstanceContext, value: ir.PendingExpression, expected: global_sg.GlobalTypeId) !global_sg.Node {
             const name_range = value.name orelse return error.ParameterizedChoiceLiteralWithoutName;
             const name = self.resolver.modules[self.module_index].text(name_range);
+            _ = try self.resolver.generics.ensureGenericInstance(expected);
             const variant = global_types.findVariant(self.resolver.graph, expected, name) orelse return error.UnknownParameterizedChoiceVariant;
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             const payload = if (value.operands.len == 0)

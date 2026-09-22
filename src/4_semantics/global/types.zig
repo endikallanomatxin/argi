@@ -111,6 +111,35 @@ pub fn findVariant(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
     return null;
 }
 
+/// Nullable is an inference-friendly wrapper until consumers need its concrete
+/// choice layout. Parameterized bodies may create and consume the type within
+/// one instantiation, before the outer semantizing fixed point can materialize
+/// it, so layout materialization is shared by both paths.
+pub fn materializeNullable(
+    allocator: std.mem.Allocator,
+    graph: *graph_mod.GlobalSemanticGraph,
+    id: graph_mod.GlobalTypeId,
+    child: graph_mod.GlobalTypeId,
+    source: primitives.SourceRef,
+) !void {
+    if (graph.types.items[@intFromEnum(id)] != .nullable) return;
+    const value_name = try graph.addString(allocator, "value");
+    const none_name = try graph.addString(allocator, "none");
+    const some_name = try graph.addString(allocator, "some");
+
+    const field_start: u32 = @intCast(graph.fields.items.len);
+    try graph.fields.append(allocator, .{ .name = value_name, .ty = child, .source = source });
+    const payload_ty: graph_mod.GlobalTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+    try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = field_start, .len = 1 } } });
+
+    const variant_start: u32 = @intCast(graph.variants.items.len);
+    try graph.variants.append(allocator, .{ .name = none_name, .source = source, .value = 0 });
+    try graph.variants.append(allocator, .{ .name = some_name, .payload_type = payload_ty, .source = source, .value = 1 });
+    graph.types.items[@intFromEnum(id)] = .{ .structural_choice = .{
+        .variants = .{ .start = variant_start, .len = 2 },
+    } };
+}
+
 /// Destructors receive an address of the owned value. A reference itself is
 /// never the value whose lifetime that destructor closes.
 pub fn deinitFunction(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalFunctionId {

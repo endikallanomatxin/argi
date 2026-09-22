@@ -113,37 +113,7 @@ pub const Resolver = struct {
     }
 
     fn materializeNullable(self: *Resolver, id: global_sg.GlobalTypeId, child: global_sg.GlobalTypeId) !void {
-        const value_name = try self.graph.addString(self.allocator, "value");
-        const none_name = try self.graph.addString(self.allocator, "none");
-        const some_name = try self.graph.addString(self.allocator, "some");
-        const source = self.syntheticSource();
-
-        const field_start: u32 = @intCast(self.graph.fields.items.len);
-        try self.graph.fields.append(self.allocator, .{
-            .name = value_name,
-            .ty = child,
-            .source = source,
-        });
-        const payload_ty: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
-        try self.graph.types.append(self.allocator, .{ .structural = .{
-            .fields = .{ .start = field_start, .len = 1 },
-        } });
-
-        const variant_start: u32 = @intCast(self.graph.variants.items.len);
-        try self.graph.variants.append(self.allocator, .{
-            .name = none_name,
-            .source = source,
-            .value = 0,
-        });
-        try self.graph.variants.append(self.allocator, .{
-            .name = some_name,
-            .payload_type = payload_ty,
-            .source = source,
-            .value = 1,
-        });
-        self.graph.types.items[@intFromEnum(id)] = .{ .structural_choice = .{
-            .variants = .{ .start = variant_start, .len = 2 },
-        } };
+        try types.materializeNullable(self.allocator, self.graph, id, child, self.syntheticSource());
         self.stats.nullable += 1;
     }
 
