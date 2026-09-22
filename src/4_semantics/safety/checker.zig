@@ -1090,22 +1090,6 @@ pub const SafetyChecker = struct {
                 }
             }
 
-            // Taking an address does not itself require initialized storage:
-            // constructors and relocation destinations need to address dead
-            // places. A summary that destroys the pointee does consume its
-            // current value, however, so validate that value before applying
-            // the post-state. This prevents an explicit deinit from reviving
-            // access to storage that was already moved.
-            if (post_state.initializedness == .deinitialized) {
-                var diagnostic_place = target;
-                if (index < argument_ids.len) {
-                    const argument_node = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
-                    if (try self.resolvePlace(argument_node, state)) |argument_place|
-                        diagnostic_place = argument_place;
-                }
-                try self.requireInitializedPlace(source, diagnostic_place, state);
-            }
-
             const reinitializes_dead_place = post_state.initializedness == .initialized and
                 (if (self.getPlace(state, target)) |current| current.initializedness == .deinitialized else false);
             const previous_value = self.valueAtPlace(state, target);
@@ -2537,21 +2521,6 @@ pub const SafetyChecker = struct {
             .moved => try self.report(source, "value was moved", .{}),
             .deinitialized => try self.report(source, "value was deinitialized", .{}),
         }
-    }
-
-    fn requireInitializedPlace(
-        self: *SafetyChecker,
-        source: primitives.SourceRef,
-        place: facts.Place,
-        state: *FunctionState,
-    ) !void {
-        const initializedness = self.initializednessAtPlace(state, place);
-        if (initializedness != .moved) return self.requireInitialized(@enumFromInt(0), source, initializedness);
-        const name = self.graph.text(self.graph.binding(place.root).name);
-        if (place.projections.len == 0)
-            try self.report(source, "binding '{s}' was moved and cannot be used again", .{name})
-        else
-            try self.report(source, "place rooted at '{s}' is moved and cannot be used", .{name});
     }
 
     fn requireLive(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, value: facts.ValueFacts, state: *FunctionState) !void {
