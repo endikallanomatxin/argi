@@ -21,6 +21,7 @@ pub const Stats = struct {
 };
 
 const Deferred = struct { marker: global_sg.GlobalNodeId, value: global_sg.GlobalNodeId };
+pub const DeniedCopy = struct { source: primitives.SourceRef, ty: global_sg.GlobalTypeId };
 const Kept = struct {
     marker: global_sg.GlobalNodeId,
     binding: global_sg.GlobalBindingId,
@@ -43,6 +44,7 @@ pub const Resolver = struct {
     deferred: std.ArrayList(Deferred) = .empty,
     kept: std.ArrayList(Kept) = .empty,
     invalid_keep: ?Kept = null,
+    denied_copy: ?DeniedCopy = null,
     auto_nodes: std.ArrayList(AutoNode) = .empty,
     empty_block: ?global_sg.GlobalBlockId = null,
     stats: Stats = .{},
@@ -227,8 +229,23 @@ pub const Resolver = struct {
         }
         // An explicit copy contract does not grant permission to insert that
         // operation implicitly. This also keeps fallible copy results visible.
-        if (self.findUnaryFunction("copy", ty) != null) return false;
-        if (!self.triviallyCopyable(ty)) return false;
+        if (self.findUnaryFunction("copy", ty) != null or !self.triviallyCopyable(ty)) {
+            // A binding use can still carry a temporal move error that Safety
+            // must diagnose before the copy permission. Other expressions may
+            // be part of overload/initializer matching, where failure here
+            // must continue to reject the candidate.
+            if (self.graph.nodes.items[@intFromEnum(source)].content != .binding_use) return false;
+            if (self.denied_copy == null) self.denied_copy = .{
+                .source = self.graph.nodes.items[@intFromEnum(source)].source,
+                .ty = ty,
+            };
+            self.graph.nodes.items[@intFromEnum(target)] = .{
+                .source = self.graph.nodes.items[@intFromEnum(source)].source,
+                .ty = ty,
+                .content = .{ .denied_implicit_copy = source },
+            };
+            return true;
+        }
         self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(source)];
         self.stats.copies += 1;
         return true;
@@ -285,7 +302,7 @@ pub const Resolver = struct {
                 try self.finalizeExpressionCleanup(context.context, active, defers);
                 context.cleanup_nodes = try self.appendCleanup(active, defers);
             },
-            .move_value, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers),
+            .move_value, .denied_implicit_copy, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers),
             .assignment => |assignment| try self.finalizeExpressionCleanup(assignment.value, active, defers),
             .function_call => |call| try self.finalizeExpressionCleanup(call.input, active, defers),
             .virtualize => |virtualize_id| try self.finalizeExpressionCleanup(

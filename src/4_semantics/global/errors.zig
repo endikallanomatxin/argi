@@ -168,6 +168,7 @@ pub const Resolver = struct {
                 try self.collectNode(function, value.value, out);
             },
             .type_initializer => |value| try self.collectNode(function, value.args, out),
+            .denied_implicit_copy => |value| try self.collectNode(function, value, out),
             .explicit_cast => |value| try self.collectNode(function, value.value, out),
             else => {},
         }
@@ -565,6 +566,7 @@ pub const Resolver = struct {
             .dereference => |value| self.nodeContains(value.pointer, target),
             .pointer_assignment => |value| self.nodeContains(value.pointer, target) or self.nodeContains(value.value, target),
             .type_initializer => |value| self.nodeContains(value.args, target),
+            .denied_implicit_copy => |value| self.nodeContains(value, target),
             .explicit_cast => |value| self.nodeContains(value.value, target),
             else => false,
         };

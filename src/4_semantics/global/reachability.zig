@@ -157,7 +157,7 @@ const State = struct {
                 const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
                 if (binding.initialization) |value| try self.walkNode(value);
             },
-            .move_value, .address_of => |value| try self.walkNode(value),
+            .move_value, .denied_implicit_copy, .address_of => |value| try self.walkNode(value),
             .assignment => |value| {
                 try self.functions.bindings.put(value.binding, {});
                 try self.walkNode(value.value);

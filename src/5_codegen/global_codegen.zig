@@ -491,6 +491,7 @@ pub const CodeGenerator = struct {
                 if (self.dropStateForNode(value)) |drop| self.storeDropState(drop, false);
                 break :blk result;
             },
+            .denied_implicit_copy => return CodegenError.InvalidType,
             .auto_deinit_binding => |auto| blk: {
                 try self.genAutoDeinit(auto);
                 break :blk null;

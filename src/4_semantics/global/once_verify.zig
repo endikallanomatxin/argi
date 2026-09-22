@@ -86,7 +86,7 @@ const State = struct {
                 const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
                 if (binding.initialization) |value| try self.walkNode(value);
             },
-            .move_value => |value| try self.walkNode(value),
+            .move_value, .denied_implicit_copy => |value| try self.walkNode(value),
             .assignment => |assignment| try self.walkNode(assignment.value),
             .auto_deinit_binding => |auto_id| {
                 const auto = self.graph.auto_deinits.items[@intFromEnum(auto_id)];

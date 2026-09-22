@@ -494,6 +494,7 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .binding_use => |id| .{ .binding_use = globalBinding(o, id) },
             .reach_directive => |id| .{ .reach_directive = globalReach(o, id) },
             .move_value => |id| .{ .move_value = globalNode(o, id) },
+            .denied_implicit_copy => |id| .{ .denied_implicit_copy = globalNode(o, id) },
             .assignment => |value| .{ .assignment = .{ .binding = globalBinding(o, value.binding), .value = globalNode(o, value.value) } },
             .auto_deinit_binding => |id| .{ .auto_deinit_binding = globalAutoDeinit(o, id) },
             .function_call => |value| .{ .function_call = .{
