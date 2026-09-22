@@ -256,6 +256,7 @@ pub const PendingOperation = union(enum) {
         iterable: ModuleNodeId,
         body: ModuleBlockId,
         mode: primitives.ForMode,
+        source: primitives.SourceRef,
     },
     resolve_match: struct {
         node: ModuleNodeId,
