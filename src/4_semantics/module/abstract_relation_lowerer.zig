@@ -94,7 +94,11 @@ const Context = struct {
 
     fn lowerImplementationParameterized(self: *Context, node: syn.NodeIndex, relation: syn.AbstractImplements) !void {
         self.params.clearRetainingCapacity();
-        const params = try self.lowerParams(relation.generic_params, relation.generic_params_struct);
+        const params = try self.lowerParams(relation.generic_params, relation.generic_params_struct, relation.abstract_type);
+        const concrete_parameter_count: u32 = @intCast(if (relation.generic_params_struct) |params_node|
+            self.tree.structTypeLiteral(params_node).?.fields.len
+        else
+            relation.generic_params.len);
         const parsed = try self.abstractReference(relation.abstract_type, true);
         defer self.allocator.free(parsed.module_arguments);
         const concrete_name_text = self.tree.tokenTextFromSource(self.source, relation.concrete_name_token);
@@ -104,7 +108,7 @@ const Context = struct {
             .parameters = params,
             .concrete_type_pattern = try self.lowerCompactConcretePattern(concrete_name_text),
             .concrete_name = concrete_name,
-            .concrete_parameter_count = params.len,
+            .concrete_parameter_count = concrete_parameter_count,
             .arguments = parsed.parameterized_arguments,
             .source = self.sourceRef(node),
         });
@@ -152,7 +156,7 @@ const Context = struct {
 
     fn lowerDefaultParameterized(self: *Context, node: syn.NodeIndex, relation: syn.AbstractDefaultsTo) !void {
         self.params.clearRetainingCapacity();
-        const params = try self.lowerParams(relation.generic_params, relation.generic_params_struct);
+        const params = try self.lowerParams(relation.generic_params, relation.generic_params_struct, null);
         const abstract_name = self.tree.tokenTextFromSource(self.source, relation.name_token);
         const abstract_ref = try self.declarationRef(node, abstract_name, .abstract);
         const ty = try self.lowerParameterizedType(relation.type_node);
@@ -230,7 +234,7 @@ const Context = struct {
         };
     }
 
-    fn lowerParams(self: *Context, params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex) !primitives.Range(ir.ComptimeParameterId) {
+    fn lowerParams(self: *Context, params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex, associated_target: ?syn.NodeIndex) !primitives.Range(ir.ComptimeParameterId) {
         const start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
         if (params_struct) |node| {
             const literal = self.tree.structTypeLiteral(node) orelse return error.InvalidGenericParameters;
@@ -249,6 +253,18 @@ const Context = struct {
                     .kind = kind,
                 });
                 try self.params.append(.{ .name = name_text, .id = id, .kind = kind });
+            }
+
+            // An implements relation can infer additional type parameters
+            // from associated arguments in its bounds and target abstract.
+            // Register them before lowering bounds so their names become
+            // parameter IDs rather than unresolved external type references.
+            if (associated_target) |target| {
+                for (literal.fields) |field_node| {
+                    const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
+                    if (field.type_node) |type_node| try self.collectHiddenArgumentParameters(type_node);
+                }
+                try self.collectHiddenArgumentParameters(target);
             }
 
             for (literal.fields, 0..) |field_node, offset| {
@@ -277,8 +293,55 @@ const Context = struct {
                 });
                 try self.params.append(.{ .name = name_text, .id = id, .kind = .type });
             }
+            if (associated_target) |target| try self.collectHiddenArgumentParameters(target);
         }
         return .{ .start = start, .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - start) };
+    }
+
+    fn collectHiddenArgumentParameters(self: *Context, node: syn.NodeIndex) !void {
+        const syntax_type = self.tree.syntaxType(node) orelse return;
+        if (syntax_type != .generic) return;
+        const literal = self.tree.structTypeLiteral(syntax_type.generic.arguments) orelse return;
+        for (literal.fields) |field_node| {
+            const field = self.tree.structTypeField(field_node) orelse continue;
+            if (field.type_node) |child| try self.collectHiddenTypeParameters(child);
+        }
+    }
+
+    fn collectHiddenTypeParameters(self: *Context, node: syn.NodeIndex) anyerror!void {
+        const syntax_type = self.tree.syntaxType(node) orelse return;
+        switch (syntax_type) {
+            .name => |name| {
+                if (name.qualifier_token != null) return;
+                const text = self.tree.tokenTextFromSource(self.source, name.name_token);
+                if (builtinFromName(text) != null or self.localType(text) != null) return;
+                for (self.params.items) |parameter| if (std.mem.eql(u8, parameter.name, text)) return;
+                const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
+                try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
+                    .name = try self.writer.addString(text),
+                    .kind = .type,
+                });
+                try self.params.append(.{ .name = text, .id = id, .kind = .type });
+            },
+            .pointer => |pointer| try self.collectHiddenTypeParameters(pointer.child),
+            .nullable, .inferred_errable => |child| try self.collectHiddenTypeParameters(child),
+            .array => |array| try self.collectHiddenTypeParameters(array.element),
+            .struct_literal => |literal| for (literal.fields) |field_node| {
+                const field = self.tree.structTypeField(field_node) orelse continue;
+                if (field.type_node) |child| try self.collectHiddenTypeParameters(child);
+            },
+            .choice_literal => |literal| for (literal.variants) |variant_node| {
+                const variant = self.tree.choiceTypeVariant(variant_node) orelse continue;
+                if (variant.payload_type) |child| try self.collectHiddenTypeParameters(child);
+            },
+            .generic => |generic| {
+                const literal = self.tree.structTypeLiteral(generic.arguments) orelse return;
+                for (literal.fields) |field_node| {
+                    const field = self.tree.structTypeField(field_node) orelse continue;
+                    if (field.type_node) |child| try self.collectHiddenTypeParameters(child);
+                }
+            },
+        }
     }
 
     fn lowerParameterizedType(self: *Context, node: syn.NodeIndex) !ir.ParameterizedTypeId {

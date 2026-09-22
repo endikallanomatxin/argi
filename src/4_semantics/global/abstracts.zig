@@ -1668,7 +1668,13 @@ pub const Resolver = struct {
         if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(identity.base)].name), wanted)) return false;
         if (identity.arguments.len != parameterized.concrete_parameter_count) return false;
 
-        try self.generics.bindGlobalArguments(module_index, parameterized.parameters, identity.arguments, bindings);
+        // Only declared parameters form the concrete generic identity.
+        // Hidden associated parameters are inferred by the bounds below.
+        const concrete_parameters: primitives.Range(ir.ComptimeParameterId) = .{
+            .start = parameterized.parameters.start,
+            .len = parameterized.concrete_parameter_count,
+        };
+        try self.generics.bindGlobalArguments(module_index, concrete_parameters, identity.arguments, bindings);
         return self.validateParameterizedImplementationConstraints(module_index, parameterized.parameters, bindings);
     }
 

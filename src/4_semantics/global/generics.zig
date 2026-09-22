@@ -276,8 +276,9 @@ pub const Resolver = struct {
         defer variants.deinit(self.allocator);
         for ([_]global_sg.GlobalTypeId{ left_type, right_type }) |ty| {
             const range = global_types.variants(self.graph, ty) orelse return error.InvalidChoiceUnionType;
+            // Declared options keep their canonical identity when combined
+            // with other choice variants, including error reason sets.
             for (self.graph.variants.items[range.start..][0..range.len]) |variant| {
-                if (variant.option_decl != null) return error.InvalidChoiceUnionType;
                 var duplicate = false;
                 for (variants.items) |existing| {
                     if (!std.mem.eql(u8, self.graph.text(existing.name), self.graph.text(variant.name))) continue;
