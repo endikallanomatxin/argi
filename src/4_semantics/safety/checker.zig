@@ -268,7 +268,11 @@ pub const SafetyChecker = struct {
                     }
                 },
                 .pointer_assignment => |assignment| {
-                    var pointer = try self.evaluate(function, assignment.pointer, state);
+                    const pointer_node = self.graph.node(assignment.pointer);
+                    var pointer = switch (pointer_node.content) {
+                        .address_of => |child| try self.evaluateAddress(function, pointer_node.source, child, state, true),
+                        else => try self.evaluate(function, assignment.pointer, state),
+                    };
                     if (pointer.referenced_place) |target| {
                         if (self.initializednessAtPlace(state, target) == .deinitialized and pointer.opaque_provenance.len == 0) {
                             const old_generation = try self.storageGeneration(state, target);
@@ -374,7 +378,7 @@ pub const SafetyChecker = struct {
                     // Moving a choice payload consumes the discriminated value.
                     // Keeping the aggregate initialized would allow another
                     // branch-sensitive read to observe the transferred payload.
-                    try self.setPlace(&branch, storage, .moved, .{});
+                    try self.markMoved(&branch, storage, .{}, self.graph.node(sw.expression).source);
                 };
             }
             try self.validateBlock(function, case.body, &branch, loop_transfers);
@@ -403,36 +407,20 @@ pub const SafetyChecker = struct {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
             .binding_use => |binding| blk: {
-                const place = self.getPlace(state, .{ .root = binding }) orelse break :blk .{};
-                try self.requireInitialized(function, node.source, place.initializedness);
+                const storage = facts.Place{ .root = binding };
+                const place = self.getPlace(state, storage) orelse break :blk .{};
+                try self.requirePlaceInitialized(function, node.source, storage, place.initializedness, state);
                 break :blk place.value;
             },
             .move_value => |child| blk: {
                 const value = try self.evaluate(function, child, state);
                 if (try self.resolvePlace(child, state)) |storage| {
-                    try self.requireInitialized(function, node.source, self.initializednessAtPlace(state, storage));
-                    try self.setPlace(state, storage, .moved, value);
+                    try self.requirePlaceInitialized(function, node.source, storage, self.initializednessAtPlace(state, storage), state);
+                    try self.markMoved(state, storage, value, node.source);
                 }
                 break :blk value;
             },
-            .address_of => |child| blk: {
-                try self.validateAddressAccess(function, node.source, child, state);
-                const storage = try self.resolvePlace(child, state);
-                if (storage) |target| try self.rejectMovedAddress(node.source, target, state);
-                const opaque_provenance = try self.opaqueProvenanceForAccess(child, state);
-                var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
-                if (opaque_provenance.len == 0) {
-                    if (storage) |target| try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
-                } else {
-                    for (opaque_provenance) |provenance|
-                        try appendDependencyFact(&dependencies, .{ .root = provenance.generation });
-                }
-                break :blk .{
-                    .dependencies = try dependencies.toOwnedSlice(),
-                    .referenced_place = storage,
-                    .opaque_provenance = opaque_provenance,
-                };
-            },
+            .address_of => |child| try self.evaluateAddress(function, node.source, child, state, false),
             .dereference => |deref| blk: {
                 const pointer = try self.evaluatePointerUse(function, node.source, deref.pointer, state) orelse break :blk .{};
                 var value: facts.ValueFacts = .{};
@@ -757,7 +745,7 @@ pub const SafetyChecker = struct {
         }
         const value = self.valueAtPlace(state, source_place) orelse return .{};
         try self.setPlace(state, destination, .initialized, value);
-        try self.setPlace(state, source_place, .moved, .{});
+        try self.markMoved(state, source_place, .{}, source);
         return .{};
     }
 
@@ -1062,13 +1050,13 @@ pub const SafetyChecker = struct {
                 if (post_state.opaque_storage) |opaque_path| {
                     const storage = try self.resolveSummaryInputPath(opaque_path, argument_ids, arguments, state) orelse continue;
                     try self.closeOpaqueOwnedRoots(source, value, state, consumed);
-                    if (consumed) |target| try self.setPlace(state, target, .moved, .{});
+                    if (consumed) |target| try self.markMoved(state, target, .{}, source);
                     try self.hideOpaqueDependencies(state, storage, value);
                 } else {
                     if (hasExternalOpaqueDependency(value, value.owned_roots))
                         try self.report(source, "opaque ownership storage cannot hide dependencies on external roots", .{});
                     try self.closeOpaqueOwnedRoots(source, value, state, consumed);
-                    if (consumed) |target| try self.setPlace(state, target, .moved, .{});
+                    if (consumed) |target| try self.markMoved(state, target, .{}, source);
                 }
                 continue;
             }
@@ -2430,6 +2418,33 @@ pub const SafetyChecker = struct {
         }
     }
 
+    fn evaluateAddress(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        source: primitives.SourceRef,
+        child: graph_mod.GlobalNodeId,
+        state: *FunctionState,
+        allow_moved_destination: bool,
+    ) !facts.ValueFacts {
+        try self.validateAddressAccess(function, source, child, state);
+        const storage = try self.resolvePlace(child, state);
+        if (!allow_moved_destination) if (storage) |target| if (self.initializednessAtPlace(state, target) == .moved)
+            try self.reportMovedPlace(source, target, state);
+        const opaque_provenance = try self.opaqueProvenanceForAccess(child, state);
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+        if (opaque_provenance.len == 0) {
+            if (storage) |target| try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
+        } else {
+            for (opaque_provenance) |provenance|
+                try appendDependencyFact(&dependencies, .{ .root = provenance.generation });
+        }
+        return .{
+            .dependencies = try dependencies.toOwnedSlice(),
+            .referenced_place = storage,
+            .opaque_provenance = opaque_provenance,
+        };
+    }
+
     // Address formation and projected reads must validate every pointer used
     // to reach the destination, even when the final Place is resolved directly.
     fn validateAddressAccess(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, node_id: graph_mod.GlobalNodeId, state: *FunctionState) !void {
@@ -2447,13 +2462,18 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn rejectMovedAddress(self: *SafetyChecker, source: primitives.SourceRef, storage: facts.Place, state: *FunctionState) !void {
-        if (self.initializednessAtPlace(state, storage) != .moved) return;
+    fn reportMovedPlace(self: *SafetyChecker, source: primitives.SourceRef, storage: facts.Place, state: *FunctionState) !void {
         const name = self.graph.text(self.graph.binding(storage.root).name);
-        if (storage.projections.len == 0)
-            try self.report(source, "binding '{s}' was moved and cannot be used again", .{name})
-        else
-            try self.report(source, "place rooted at '{s}' is moved and cannot be used", .{name});
+        const moved_at = if (self.getPlace(state, storage)) |place| place.moved_at else null;
+        if (moved_at) |origin| if (self.location(origin)) |origin_location| {
+            const position = self.diagnostics.lineColumn(origin_location);
+            if (storage.projections.len == 0)
+                return self.report(source, "binding '{s}' was moved and cannot be used again (moved at {s}:{d}:{d})", .{ name, self.diagnostics.path(origin_location), position.line, position.column })
+            else
+                return self.report(source, "place rooted at '{s}' is moved and cannot be used (moved at {s}:{d}:{d})", .{ name, self.diagnostics.path(origin_location), position.line, position.column });
+        };
+        if (storage.projections.len == 0) return self.report(source, "binding '{s}' was moved and cannot be used again", .{name});
+        return self.report(source, "place rooted at '{s}' is moved and cannot be used", .{name});
     }
 
     fn resolvePlace(self: *SafetyChecker, node_id: graph_mod.GlobalNodeId, state: *FunctionState) !?facts.Place {
@@ -2508,6 +2528,7 @@ pub const SafetyChecker = struct {
         var stored = false;
         for (state.places.items) |*entry| if (entry.storage.eql(storage)) {
             entry.initializedness = initializedness;
+            if (initializedness != .moved) entry.moved_at = null;
             entry.value = value;
             stored = true;
             break;
@@ -2516,6 +2537,11 @@ pub const SafetyChecker = struct {
             try state.places.append(.{ .storage = storage, .initializedness = initializedness, .value = value });
         if (initializedness == .initialized)
             try self.recordKnownChoiceVariants(state, storage, value);
+    }
+
+    fn markMoved(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, value: facts.ValueFacts, source: primitives.SourceRef) !void {
+        try self.setPlace(state, storage, .moved, value);
+        if (self.getPlace(state, storage)) |place| place.moved_at = source;
     }
 
     fn recordKnownChoiceVariants(
@@ -2548,6 +2574,18 @@ pub const SafetyChecker = struct {
             .moved => try self.report(source, "value was moved", .{}),
             .deinitialized => try self.report(source, "value was deinitialized", .{}),
         }
+    }
+
+    fn requirePlaceInitialized(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        source: primitives.SourceRef,
+        storage: facts.Place,
+        initializedness: value_state.Initializedness,
+        state: *FunctionState,
+    ) !void {
+        if (initializedness == .moved) return self.reportMovedPlace(source, storage, state);
+        try self.requireInitialized(function, source, initializedness);
     }
 
     fn requireLive(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, value: facts.ValueFacts, state: *FunctionState) !void {
@@ -2687,6 +2725,10 @@ pub const SafetyChecker = struct {
             var merged = left_place;
             if (findPlaceConst(right, left_place.storage)) |right_place| {
                 merged.initializedness = joinInitializedness(left_place.initializedness, right_place.initializedness);
+                merged.moved_at = if (merged.initializedness == .moved)
+                    if (left_place.initializedness == .moved) left_place.moved_at else right_place.moved_at
+                else
+                    null;
                 merged.value = try self.mergeValueFacts(left_place.value, right_place.value);
             }
             try joined.places.append(merged);
@@ -3632,7 +3674,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         if (!containsRoot(right.lexical_storage_generations.items, root)) return false;
     for (left.places.items) |left_place| {
         const right_place = findPlaceConst(right, left_place.storage) orelse return false;
-        if (left_place.initializedness != right_place.initializedness or !valueFactsEqual(left_place.value, right_place.value)) return false;
+        if (left_place.initializedness != right_place.initializedness or !std.meta.eql(left_place.moved_at, right_place.moved_at) or !valueFactsEqual(left_place.value, right_place.value)) return false;
     }
     for (left.ownership_edges.items) |edge| {
         var found = false;
@@ -3712,6 +3754,7 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
 
 fn joinInitializedness(left: value_state.Initializedness, right: value_state.Initializedness) value_state.Initializedness {
     if (left == right) return left;
+    if (left == .moved or right == .moved) return .moved;
     return .maybe_initialized;
 }
 

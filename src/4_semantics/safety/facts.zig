@@ -3,6 +3,7 @@ const graph = @import("../global/graph.zig");
 const place_mod = @import("../place.zig");
 const base = @import("../safety_facts.zig");
 const value_state = @import("../value_state.zig");
+const primitives = @import("../primitives/schema.zig");
 
 pub const Place = place_mod.PlaceFor(graph.GlobalBindingId);
 pub const Projection = place_mod.Projection;
@@ -84,6 +85,7 @@ pub const VariantFacts = struct {
 pub const PlaceFacts = struct {
     storage: Place,
     initializedness: value_state.Initializedness = .initialized,
+    moved_at: ?primitives.SourceRef = null,
     value: ValueFacts = .{},
 };
 
