@@ -498,14 +498,23 @@ pub const SafetyChecker = struct {
             .error_propagation => |prop_id| blk: {
                 const prop = self.graph.error_propagations.items[@intFromEnum(prop_id)];
                 const value = try self.evaluate(function, prop.errable_value, state);
-                for (self.graph.node_refs.items[prop.cleanup_nodes.start..][0..prop.cleanup_nodes.len]) |cleanup| _ = try self.evaluate(function, cleanup, state);
+                // Cleanup belongs to the propagation's error exit. Validate it
+                // on a branch state so its mutations cannot affect the success
+                // continuation that receives the unwrapped value.
+                var error_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                defer error_state.deinit();
+                for (self.graph.node_refs.items[prop.cleanup_nodes.start..][0..prop.cleanup_nodes.len]) |cleanup|
+                    _ = try self.evaluate(function, cleanup, &error_state);
                 break :blk value;
             },
             .error_context => |ctx_id| blk: {
                 const ctx = self.graph.error_contexts.items[@intFromEnum(ctx_id)];
                 const value = try self.evaluate(function, ctx.errable_value, state);
-                _ = try self.evaluate(function, ctx.context, state);
-                for (self.graph.node_refs.items[ctx.cleanup_nodes.start..][0..ctx.cleanup_nodes.len]) |cleanup| _ = try self.evaluate(function, cleanup, state);
+                var error_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                defer error_state.deinit();
+                _ = try self.evaluate(function, ctx.context, &error_state);
+                for (self.graph.node_refs.items[ctx.cleanup_nodes.start..][0..ctx.cleanup_nodes.len]) |cleanup|
+                    _ = try self.evaluate(function, cleanup, &error_state);
                 break :blk value;
             },
             .auto_deinit_binding => |auto_id| blk: {
