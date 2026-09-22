@@ -15,13 +15,12 @@ belong in `plan/refactor_regressions.md` and should only be linked from here.
 Current checkpoint after restricted-lifetime propagation and owned-root cycle
 validation:
 
-- 622 / 659 program tests pass.
-- 37 / 659 program tests fail.
+- 623 / 659 program tests pass.
+- 36 / 659 program tests fail.
 - 22 failures already reject invalid source and differ only in diagnostic
   wording or source location.
-- 13 failures expose semantic or resolution work.
-- 2 failures are aggregate regression slices and should not initially be
-  treated as independent roots.
+- 14 failures expose semantic or resolution work, including two aggregate
+  regression slices that remained red after repairing nested cleanup layout.
 
 ## Resolution, generic materialization, and contextual typing
 
@@ -78,18 +77,6 @@ an open language-design question documented in
 implementer or otherwise relax generic inference to force these tests through.
 
 ## Safety and ownership semantics
-
-### Nested aggregate transfer retains a dead dependency
-
-Affected test:
-
-- `feature_tests/ownership/60_partial_field_move_cleanup`
-
-Moving a choice payload into a directly bound aggregate works, but wrapping
-that payload in another aggregate leaves a dependency on the consumed or ended
-source. Review complete aggregate effects and ownership transfer through the
-extra projection level; preserve the existing rule that complete field effects
-replace superseded parent ownership.
 
 ### Fresh opaque extraction uses a stale generation
 
@@ -163,21 +150,23 @@ Resolution knows that `print` cannot obtain its required reached value, but
 emits a generic no-overload diagnostic instead of explaining the unavailable
 `#reach` input.
 
-## Derived regression slices
+## Regression slices requiring separate diagnosis
 
 - `feature_tests/testing/13_collections_text_regression_slice`
 - `feature_tests/testing/14_core_path_regression_slice`
 
 The first ends a root during deferred String cleanup after formatting and
 payload moves. The second loses a live dependency through Path construction or
-its function summary. Re-run them after nested aggregate transfer and opaque
-generation fixes before assigning either a new root cause.
+its function summary. Both remained red after correcting the nested
+auto-deinit descriptor layout, so they are no longer assumed to be consequences
+of `ownership/60`. Re-run the first after opaque-generation work, then diagnose
+each remaining slice independently.
 
 ## Recommended work order
 
-1. Repair nested aggregate/choice ownership transfer and re-run both derived
-   regression slices.
-2. Repair opaque-domain generation refresh in direct and summarized paths.
+1. Repair opaque-domain generation refresh in direct and summarized paths, then
+   re-run the collections/text regression slice.
+2. Diagnose the core Path regression slice if it remains independent.
 3. Restore binary operator materialization and `Errable` output propagation.
 4. Diagnose generic candidate discovery and contextual literal typing without
    globally tightening inference.
