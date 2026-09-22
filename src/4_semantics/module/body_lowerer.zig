@@ -602,7 +602,10 @@ const Context = struct {
     fn lowerReturn(self: *Context, node: syn.NodeIndex) !Lowered {
         const ret = self.tree.returnStatement(node).?;
         const expected = try self.currentReturnType();
-        const value = if (ret.value) |child| try self.lowerNode(child, expected) else null;
+        const value = if (ret.value) |child|
+            try self.valuePosition(child, try self.lowerNode(child, expected))
+        else
+            null;
         const ty: ?entities.ModuleTypeId = expected orelse if (value) |item| item.ty else try self.builtin(.Void);
         return self.resolved(node, ty, .{ .return_statement = .{
             .expression = if (value) |item| item.node else null,
