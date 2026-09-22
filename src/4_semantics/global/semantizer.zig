@@ -458,6 +458,24 @@ pub fn semantizeWithOptions(
     if (reachable) |set| try retireDormantBindingResolution(&relocation.graph, set, try core.builtin(.Any));
 
     if (options.diagnostics) |diagnostics| {
+        if (abstracts.field_storage_conflict) |conflict| {
+            var abstract_name = std.array_list.Managed(u8).init(allocator);
+            defer abstract_name.deinit();
+            var existing_name = std.array_list.Managed(u8).init(allocator);
+            defer existing_name.deinit();
+            var actual_name = std.array_list.Managed(u8).init(allocator);
+            defer actual_name.deinit();
+            try appendTypeName(&abstract_name, &relocation.graph, conflict.abstract_type);
+            try appendTypeName(&existing_name, &relocation.graph, conflict.existing_type);
+            try appendTypeName(&actual_name, &relocation.graph, conflict.actual_type);
+            try diagnostics.add(
+                diagnosticLocation(&relocation.graph, diagnostics, conflict.source),
+                .semantic,
+                "field '.{s}' already stores '{s}' for abstract type '{s}', so it cannot also store '{s}'",
+                .{ relocation.graph.text(conflict.field_name), existing_name.items, abstract_name.items, actual_name.items },
+            );
+            return error.Reported;
+        }
         if (try diagnoseUnresolvedPropagatedReach(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
             return error.Reported;
         if (try diagnosePrivateFields(&relocation.graph, modules, reachable, relocation.offsets.items, diagnostics))
