@@ -2077,6 +2077,15 @@ fn appendFieldShape(buffer: *std.array_list.Managed(u8), graph: *const global_sg
 }
 
 fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) !void {
+    if (global_types.arrayLength(graph, ty)) |length| {
+        const element = global_types.arrayElement(graph, ty) orelse return error.InvalidArrayType;
+        try buffer.append('[');
+        var storage: [32]u8 = undefined;
+        try buffer.appendSlice(try std.fmt.bufPrint(&storage, "{d}", .{length}));
+        try buffer.append(']');
+        try appendTypeName(buffer, graph, element);
+        return;
+    }
     switch (graph.semanticType(ty)) {
         .builtin => |builtin| try buffer.appendSlice(@tagName(builtin)),
         .declared => |declaration| try buffer.appendSlice(graph.text(graph.declaration(declaration).name)),
@@ -2108,14 +2117,7 @@ fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.G
             try buffer.appendSlice(if (pointer.mutability == .read_write) "$&" else "&");
             try appendTypeName(buffer, graph, pointer.child);
         },
-        .array => |array| {
-            try buffer.appendSlice("Array#(.n = ");
-            var storage: [32]u8 = undefined;
-            try buffer.appendSlice(try std.fmt.bufPrint(&storage, "{d}", .{array.length}));
-            try buffer.appendSlice(", .t: ");
-            try appendTypeName(buffer, graph, array.element);
-            try buffer.append(')');
-        },
+        .array => unreachable,
         .structural => try buffer.appendSlice("{...}"),
         else => try buffer.appendSlice("<type>"),
     }
