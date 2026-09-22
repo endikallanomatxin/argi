@@ -369,10 +369,10 @@ pub const SafetyChecker = struct {
                     .borrow, .mut_borrow => payload.referenceCopy(),
                 });
                 if (case.payload_mode == .move) if (try self.resolvePlace(sw.expression, &branch)) |storage| {
-                    var transferred = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-                    defer transferred.deinit();
-                    try collectOwnedRoots(payload, &transferred);
-                    try self.setPlace(&branch, storage, .initialized, try self.withoutOwnedRoots(choice, transferred.items));
+                    // Moving a choice payload consumes the discriminated value.
+                    // Keeping the aggregate initialized would allow another
+                    // branch-sensitive read to observe the transferred payload.
+                    try self.setPlace(&branch, storage, .moved, .{});
                 };
             }
             try self.validateBlock(function, case.body, &branch, loop_transfers);
