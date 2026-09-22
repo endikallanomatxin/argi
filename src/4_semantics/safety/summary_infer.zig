@@ -816,8 +816,7 @@ pub const Infer = struct {
             const destination_targets = try self.inferInputPaths(function_id, arguments[1].value);
             for (source_targets) |source| {
                 try self.recordInputPostState(states, &.{source}, .moved, .{}, false, false, false, false);
-                var transferred = try self.inputValueEffect(source.input_index, source.projections);
-                transferred = try self.withOwnershipTransfer(transferred);
+                const transferred = try self.inputPlaceValueEffect(source);
                 for (destination_targets) |destination|
                     try self.recordInputPostState(
                         states,
@@ -825,7 +824,7 @@ pub const Infer = struct {
                         .initialized,
                         transferred,
                         false,
-                        false,
+                        true,
                         true,
                         false,
                     );

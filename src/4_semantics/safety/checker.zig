@@ -1009,7 +1009,24 @@ pub const SafetyChecker = struct {
         var fresh_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
         defer fresh_capabilities.deinit();
 
-        for (summary.input_post_states) |post_state| {
+        // A summary describes the post-state of all inputs at once. Materialize
+        // its values before changing any place so effects may transfer a value
+        // from an input that the same summary subsequently marks as moved.
+        const post_values = try self.allocator.alloc(?facts.ValueFacts, summary.input_post_states.len);
+        @memset(post_values, null);
+        for (summary.input_post_states, 0..) |post_state, post_index| {
+            if (post_state.target.input_index >= arguments.len) continue;
+            if (post_state.initializedness != .initialized or post_state.opaque_ownership != .none) continue;
+            post_values[post_index] = try self.instantiateOutputWithFresh(
+                post_state.value,
+                arguments,
+                state,
+                &fresh_roots,
+                &fresh_capabilities,
+            );
+        }
+
+        for (summary.input_post_states, 0..) |post_state, post_index| {
             if (post_state.target.input_index >= arguments.len) continue;
             const index: usize = @intCast(post_state.target.input_index);
 
@@ -1081,7 +1098,9 @@ pub const SafetyChecker = struct {
             };
             if (post_state.initializedness == .deinitialized)
                 try self.endStorageGenerationsUnder(source, state, target);
-            if (!post_state.requires_available_destination and (reinitializes_dead_place or post_state.refreshes_storage_generation)) {
+            if (post_state.refreshes_storage_generation or
+                (!post_state.requires_available_destination and reinitializes_dead_place))
+            {
                 const old_generation = try self.storageGeneration(state, target);
                 try self.refreshStorageGenerationChecked(source, state, target);
                 if (reinitializes_dead_place and post_state.target.projections.len == 0 and index < argument_ids.len) {
@@ -1099,10 +1118,7 @@ pub const SafetyChecker = struct {
                 }
             }
 
-            const value = if (post_state.initializedness == .initialized)
-                try self.instantiateOutputWithFresh(post_state.value, arguments, state, &fresh_roots, &fresh_capabilities)
-            else
-                facts.ValueFacts{};
+            const value = post_values[post_index] orelse facts.ValueFacts{};
             try self.setPlace(state, target, post_state.initializedness, value);
         }
     }
