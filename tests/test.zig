@@ -5702,3 +5702,36 @@ test "dormant match payload copy diagnostics respect reachability" {
         std.debug.print("dormant match payload build failed:\n{s}", .{result.stderr});
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
 }
+
+
+test "dormant pointer diagnostics respect reachability" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "main.rg",
+        .data =
+        \\dormant() -> () := {
+        \\    value :: Int32 = 0
+        \\    reader : &Int32 = &value
+        \\    reader& = 1
+        \\}
+        \\
+        \\main() -> (.status_code: Int32 = 0) := {}
+        \\
+        ,
+    });
+
+    const module_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(module_root);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+
+    const result = try runChild(&.{ installed_argi, "build", module_root });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    if (result.term != .exited or result.term.exited != 0)
+        std.debug.print("dormant pointer build failed:\n{s}", .{result.stderr});
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+}
