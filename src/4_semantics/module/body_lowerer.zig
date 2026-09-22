@@ -790,7 +790,7 @@ const Context = struct {
                 const text = self.tree.tokenTextFromSource(self.source, token_index);
                 const id = try self.writer.addUnresolvedBinding(
                     try self.writer.addString(text),
-                    self.sourceRef(case_node),
+                    .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(token_index).offset },
                     null,
                     if (case.mode == .mut_borrow) .variable else .constant,
                 );
