@@ -35,18 +35,6 @@ second reports no `require_array_reasons`. Instrument candidate rejection
 before changing inference rules, and distinguish declaration discovery from
 associated-type substitution.
 
-### Contextual integer typing through `#reach`
-
-Affected test:
-
-- `feature_tests/system/25_local_typed_reach_binding`
-
-The `.capacity` literal becomes `Int32` before the selected call supplies the
-expected `UIntNative` context. Preserve an unresolved literal until call
-materialization or reapply the selected input context. Do not make every
-`inferInputType` failure discard a candidate; that previously caused broad
-regressions.
-
 ### Erased abstract free-function calls
 
 Affected tests:
@@ -57,6 +45,7 @@ Affected tests:
 - `feature_tests/text/15_string_view_concat_c_string`
 - `feature_tests/text/16_string_view_concat_string_view`
 - `feature_tests/text/17_string_view_concat_string`
+- `feature_tests/system/25_local_typed_reach_binding`
 
 Operator resolution now preserves the eventual overload output type and scores
 contextual literals consistently with ordinary calls. All six tests therefore
@@ -65,6 +54,12 @@ implementer from which to specialize its abstract-contract function. This is
 an open language-design question documented in
 `plan/refactor_regressions.md`. Do not bind the abstract declaration as its own
 implementer or otherwise relax generic inference to force these tests through.
+
+`system/25` reaches the same boundary through an explicitly typed local
+`$&Allocator` binding and the abstract `String.init` initializer. Its integer
+literal passes contextual `UIntNative` scoring; the final diagnostic displays
+the earlier `Int32` type only after specialization fails. Do not treat that
+display as a literal-inference failure.
 
 ## Safety and ownership semantics
 
