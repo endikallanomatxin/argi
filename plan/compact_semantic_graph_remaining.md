@@ -12,11 +12,11 @@ belong in `plan/refactor_regressions.md` and should only be linked from here.
 
 ## Measured checkpoint
 
-Current checkpoint after isolating error-propagation cleanup state:
+Current checkpoint after preserving projected-place diagnostics:
 
-- 627 / 659 program tests pass.
-- 32 / 659 program tests fail.
-- 22 failures already reject invalid source and differ only in diagnostic
+- 633 / 661 program tests pass.
+- 28 / 661 program tests fail.
+- 18 failures already reject invalid source and differ only in diagnostic
   wording or source location.
 - 10 failures expose semantic or resolution work.
 
@@ -98,16 +98,13 @@ the same reporting path.
 Move-state reporting:
 
 - `feature_tests/ownership/14X_use_after_move`
-- `feature_tests/ownership/49X_structural_field_use_after_move`
-- `feature_tests/ownership/50X_branch_may_move_value`
-- `feature_tests/ownership/51X_loop_may_move_value`
 - `feature_tests/ownership/85X_semantic_relocation_double`
 - `feature_tests/ownership/202X_conditional_expression_joins_input_post_state`
-- `feature_tests/ownership/214X_conditional_opaque_consumption_invalidates_source`
 
-The remaining differences are generic `value was moved` or
-`value may be uninitialized` messages, lost root/place names, reporting order,
-or source locations. Preserve the existing temporal joins and move origins.
+The remaining differences are reporting order or stale expected wording for
+operations that are rejected before Safety can use the stored move origin.
+Projected field and array reads already preserve root/place names and move
+locations. Preserve the existing temporal joins and move origins.
 
 Lifetime, provenance, and raw-pointer reporting:
 

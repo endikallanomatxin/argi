@@ -440,7 +440,7 @@ pub const SafetyChecker = struct {
                 if (self.diagnostics.list.items.len != diagnostic_count) break :blk .{};
                 if (try self.resolvePlace(node_id, state)) |storage| {
                     const initializedness = self.initializednessAtPlace(state, storage);
-                    try self.requireInitialized(function, node.source, initializedness);
+                    try self.requirePlaceInitialized(function, node.source, storage, initializedness, state);
                     if (self.valueAtPlace(state, storage)) |value| {
                         const provenance = try self.opaqueProvenanceCarriedByAccess(access.value, state);
                         break :blk try self.addOpaqueReadEnvelope(value, node.ty, provenance);
@@ -458,7 +458,7 @@ pub const SafetyChecker = struct {
                     const projection: facts.Projection = if (self.staticIndex(access.index)) |index| .{ .static_index = index } else .dynamic_index;
                     const storage = try self.project(base, projection);
                     const initializedness = self.initializednessAtPlace(state, storage);
-                    try self.requireInitialized(function, node.source, initializedness);
+                    try self.requirePlaceInitialized(function, node.source, storage, initializedness, state);
                     value = self.valueAtPlace(state, storage) orelse .{};
                 }
                 break :blk try self.envelopeOpaqueRead(state, value, node.ty, pointer);
