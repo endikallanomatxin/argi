@@ -12,14 +12,14 @@ belong in `plan/refactor_regressions.md` and should only be linked from here.
 
 ## Measured checkpoint
 
-After preserving the restricting lifetime in direct `restrict_reference`
-evaluation:
+Current checkpoint after restricted-lifetime propagation and owned-root cycle
+validation:
 
-- 621 / 659 program tests pass.
-- 38 / 659 program tests fail.
+- 622 / 659 program tests pass.
+- 37 / 659 program tests fail.
 - 22 failures already reject invalid source and differ only in diagnostic
   wording or source location.
-- 14 failures expose semantic or resolution work.
+- 13 failures expose semantic or resolution work.
 - 2 failures are aggregate regression slices and should not initially be
   treated as independent roots.
 
@@ -78,17 +78,6 @@ an open language-design question documented in
 implementer or otherwise relax generic inference to force these tests through.
 
 ## Safety and ownership semantics
-
-### Owned-root cycles are not rejected
-
-Affected test:
-
-- `feature_tests/ownership/64X_owned_root_cycle`
-
-The checker permits two allocations to become mutual owners. Enforce the
-acyclic ownership invariant at the common point where owned-root edges are
-materialized or replaced, including indirect cycles. This is a semantic safety
-failure: invalid source currently compiles.
 
 ### Nested aggregate transfer retains a dead dependency
 
@@ -186,13 +175,12 @@ generation fixes before assigning either a new root cause.
 
 ## Recommended work order
 
-1. Reject indirect owned-root cycles.
-2. Repair nested aggregate/choice ownership transfer and re-run both derived
+1. Repair nested aggregate/choice ownership transfer and re-run both derived
    regression slices.
-3. Repair opaque-domain generation refresh in direct and summarized paths.
-4. Restore binary operator materialization and `Errable` output propagation.
-5. Diagnose generic candidate discovery and contextual literal typing without
+2. Repair opaque-domain generation refresh in direct and summarized paths.
+3. Restore binary operator materialization and `Errable` output propagation.
+4. Diagnose generic candidate discovery and contextual literal typing without
    globally tightening inference.
-6. Consolidate move/place/provenance diagnostics.
-7. Leave erased abstract calls and canonical `System` identity pending their
+5. Consolidate move/place/provenance diagnostics.
+6. Leave erased abstract calls and canonical `System` identity pending their
    documented language-design decisions.

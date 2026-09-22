@@ -254,7 +254,7 @@ pub const SafetyChecker = struct {
                 .struct_field_store => |store| {
                     const pointer = try self.evaluatePointerUse(function, node.source, store.struct_ptr, state) orelse continue;
                     const value = try self.evaluate(function, store.value, state);
-                    try self.recordOpaqueWrite(state, pointer, value);
+                    try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (try self.resolvePlace(store.struct_ptr, state)) |base|
                         try self.setPlace(state, try self.project(base, .{ .field = store.field_index }), .initialized, value);
                 },
@@ -262,7 +262,7 @@ pub const SafetyChecker = struct {
                     const pointer = try self.evaluatePointerUse(function, node.source, store.array_ptr, state) orelse continue;
                     _ = try self.evaluate(function, store.index, state);
                     const value = try self.evaluate(function, store.value, state);
-                    try self.recordOpaqueWrite(state, pointer, value);
+                    try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (try self.resolvePlace(store.array_ptr, state)) |base| {
                         const projection: facts.Projection = if (self.staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
                         try self.setPlace(state, try self.project(base, projection), .initialized, value);
@@ -288,7 +288,7 @@ pub const SafetyChecker = struct {
                     }
                     try self.requireLive(function, node.source, pointer, state);
                     const value = try self.evaluate(function, assignment.value, state);
-                    try self.recordOpaqueWrite(state, pointer, value);
+                    try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (pointer.referenced_place) |target| try self.setPlace(state, target, .initialized, value);
                 },
                 .if_statement => |statement| {
@@ -1978,13 +1978,104 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn recordOpaqueWrite(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, value: facts.ValueFacts) !void {
+    fn recordOpaqueWrite(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        state: *FunctionState,
+        pointer: facts.ValueFacts,
+        value: facts.ValueFacts,
+    ) !void {
         // Slot contents remain opaque, but every reference stored through an
         // access to the domain must constrain the lifetime of its target.
         var domains = std.array_list.Managed(facts.Place).init(self.allocator);
         defer domains.deinit();
         try self.collectOpaqueDomainsAccessedBy(state, pointer, &domains);
-        for (domains.items) |domain| try self.hideOpaqueDependencies(state, domain, value);
+        if (domains.items.len == 0) {
+            if (try self.inferOpaqueDomain(state, pointer)) |domain|
+                try domains.append(domain)
+            else if (self.inferTransferredOpaqueDomain(state, pointer)) |domain|
+                try domains.append(domain);
+        }
+        for (domains.items) |domain| {
+            if (try self.opaqueWriteCreatesOwnershipCycle(state, domain, value)) {
+                try self.report(source, "root ownership must be acyclic", .{});
+                continue;
+            }
+            try self.hideOpaqueDependencies(state, domain, value);
+        }
+    }
+
+    fn inferTransferredOpaqueDomain(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        pointer: facts.ValueFacts,
+    ) ?facts.Place {
+        _ = self;
+        for (pointer.dependencies) |dependency| {
+            var dependency_is_hidden = false;
+            for (state.opaque_storages.items) |opaque_storage| {
+                if (!containsRoot(opaque_storage.hidden_dependencies, dependency.root)) continue;
+                dependency_is_hidden = true;
+                break;
+            }
+            if (!dependency_is_hidden) continue;
+
+            var index = state.places.items.len;
+            while (index > 0) {
+                index -= 1;
+                const candidate = state.places.items[index];
+                if (candidate.initializedness != .moved) continue;
+                if (valueContainsOwnedRoot(candidate.value, dependency.root)) return candidate.storage;
+            }
+        }
+        return null;
+    }
+
+    fn opaqueWriteCreatesOwnershipCycle(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        domain: facts.Place,
+        value: facts.ValueFacts,
+    ) !bool {
+        const domain_value = self.valueAtPlace(state, domain) orelse return false;
+        var owners = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer owners.deinit();
+        try collectOwnedRoots(domain_value, &owners);
+
+        var transferred = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer transferred.deinit();
+        try collectOwnedRoots(value, &transferred);
+        for (owners.items) |owner| {
+            if (!state.tracker.roots.items[@intFromEnum(owner)].owned_resource) continue;
+            for (transferred.items) |dependency| {
+                var visited = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                defer visited.deinit();
+                if (try self.opaqueOwnershipReaches(state, dependency, owner, &visited)) return true;
+            }
+        }
+        return false;
+    }
+
+    fn opaqueOwnershipReaches(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        current: facts.ValidityRootId,
+        target: facts.ValidityRootId,
+        visited: *std.array_list.Managed(facts.ValidityRootId),
+    ) !bool {
+        if (current == target) return true;
+        if (containsRoot(visited.items, current)) return false;
+        try visited.append(current);
+
+        for (state.opaque_storages.items) |opaque_storage| {
+            const storage_value = self.valueAtPlace(state, opaque_storage.storage) orelse continue;
+            if (!valueContainsOwnedRoot(storage_value, current)) continue;
+            for (opaque_storage.hidden_dependencies) |dependency| {
+                if (!state.tracker.roots.items[@intFromEnum(dependency)].owned_resource) continue;
+                if (try self.opaqueOwnershipReaches(state, dependency, target, visited)) return true;
+            }
+        }
+        return false;
     }
 
     fn collectOpaqueProvenancesCarriedBy(
@@ -3881,6 +3972,38 @@ test "opaque primitives move ownership through domain state" {
     try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
 }
 
+test "opaque ownership cycle detection follows indirect edges" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+
+    const first = try state.tracker.establish(.fresh);
+    const second = try state.tracker.establish(.fresh);
+    const third = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(first)].owned_resource = true;
+    state.tracker.roots.items[@intFromEnum(second)].owned_resource = true;
+    state.tracker.roots.items[@intFromEnum(third)].owned_resource = true;
+
+    const first_storage = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(0)) };
+    const second_storage = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(1)) };
+    const third_storage = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(2)) };
+    try checker.setPlace(&state, first_storage, .initialized, .{ .owned_roots = &.{first} });
+    try checker.setPlace(&state, second_storage, .initialized, .{ .owned_roots = &.{second} });
+    try checker.setPlace(&state, third_storage, .initialized, .{ .owned_roots = &.{third} });
+    try checker.mergeOpaqueStorage(&state, first_storage, &.{second});
+    try checker.mergeOpaqueStorage(&state, second_storage, &.{third});
+
+    try std.testing.expect(try checker.opaqueWriteCreatesOwnershipCycle(
+        &state,
+        third_storage,
+        .{ .dependencies = &.{.{ .root = first }}, .owned_roots = &.{first} },
+    ));
+}
+
 test "relocate primitive preserves owned root identity" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -4289,7 +4412,12 @@ test "opaque writes repopulate only accessed domains" {
     const root = try state.tracker.establish(.fresh);
     try checker.mergeOpaqueStorage(&state, domain, &.{});
     try checker.mergeOpaqueStorage(&state, other, &.{});
-    try checker.recordOpaqueWrite(&state, .{ .opaque_provenance = &.{.{ .storage = domain, .generation = root }} }, .{ .dependencies = &.{.{ .root = root }} });
+    try checker.recordOpaqueWrite(
+        .{ .file_index = 0, .offset = 0 },
+        &state,
+        .{ .opaque_provenance = &.{.{ .storage = domain, .generation = root }} },
+        .{ .dependencies = &.{.{ .root = root }} },
+    );
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{root}, state.opaque_storages.items[0].hidden_dependencies);
     try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[1].hidden_dependencies.len);
 }

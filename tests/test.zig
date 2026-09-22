@@ -3037,9 +3037,9 @@ test "feature_tests/ownership/63X_malloc_direct_safe_cast" {
 
 test "feature_tests/ownership/64X_owned_root_cycle" {
     try buildExpectFailExact("tests/feature_tests/ownership/64X_owned_root_cycle",
-        \\tests/feature_tests/ownership/64X_owned_root_cycle/main.rg:1:1: error: root ownership must be acyclic
-        \\  main(.system: System) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/64X_owned_root_cycle/main.rg:16:5: error: root ownership must be acyclic
+        \\      slot_b& = ~a
+        \\      ^
         \\
     );
 }
