@@ -12,31 +12,15 @@ belong in `plan/refactor_regressions.md` and should only be linked from here.
 
 ## Measured checkpoint
 
-Current checkpoint after classifying output storage as caller-owned:
+Current checkpoint after inferring associated implementation parameters:
 
-- 651 / 661 program tests pass.
-- 10 / 661 program tests fail.
+- 652 / 661 program tests pass.
+- 9 / 661 program tests fail.
 - 1 failure already rejects invalid source and differs only in diagnostic
   wording or source location.
-- 9 failures expose semantic or resolution work.
+- 8 failures expose semantic or resolution work.
 
-## Resolution, generic materialization, and contextual typing
-
-### Associated generic discovery
-
-Affected tests:
-
-- `feature_tests/collections/37_dynamic_array_associated_copy_reasons`
-
-The declaration exists and input inference reaches constraint validation. The
-parameterized implementation
-`DynamicArray#(.t: Type: FalliblyCopyable#(.reasons: element_reasons))`
-uses `element_reasons` as an implicitly inferred associated parameter. The
-compact abstract-relation lowerer currently records that name as an external
-type rather than a parameter, so matching the concrete `FallibleValue`
-implementation cannot bind its `(..copy_failed)` reasons. Restore inferred
-associated parameters in relation lowering; do not weaken choice equality or
-constraint validation.
+## Resolution and generic materialization
 
 ### Erased abstract free-function calls
 
@@ -94,8 +78,6 @@ locations. Preserve the existing temporal joins and move origins.
 
 ## Recommended work order
 
-1. Diagnose generic candidate discovery and contextual literal typing without
-   globally tightening inference.
-2. Correct move/copy diagnostic precedence and escaping aggregate provenance.
-3. Leave erased abstract calls and canonical `System` identity pending their
+1. Correct move/copy diagnostic precedence.
+2. Leave erased abstract calls and canonical `System` identity pending their
    documented language-design decisions.
