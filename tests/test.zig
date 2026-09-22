@@ -2221,7 +2221,7 @@ test "feature_tests/control_flow/14_for_mut_borrowed_dynamic_array" {
 
 test "feature_tests/types/14X_errable_match_unknown_variant" {
     try buildExpectFailExact("tests/feature_tests/types/14X_errable_match_unknown_variant",
-        \\tests/feature_tests/types/14X_errable_match_unknown_variant/main.rg:7:11: error: choice type 'Errable#(.t: Int32, .reasons: choice)' has no variant '..none'
+        \\tests/feature_tests/types/14X_errable_match_unknown_variant/main.rg:7:11: error: choice type 'Errable#(.t: Int32, .reasons: (..test_error))' has no variant '..none'
         \\          ..none {
         \\            ^
         \\

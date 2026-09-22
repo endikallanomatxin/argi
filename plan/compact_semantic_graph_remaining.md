@@ -12,11 +12,11 @@ belong in `plan/refactor_regressions.md` and should only be linked from here.
 
 ## Measured checkpoint
 
-Current checkpoint after accepting precise safety diagnostic locations:
+Current checkpoint after diagnosing unavailable reached defaults:
 
-- 649 / 661 program tests pass.
-- 12 / 661 program tests fail.
-- 2 failures already reject invalid source and differ only in diagnostic
+- 650 / 661 program tests pass.
+- 11 / 661 program tests fail.
+- 1 failure already rejects invalid source and differs only in diagnostic
   wording or source location.
 - 10 failures expose semantic or resolution work.
 
@@ -104,18 +104,10 @@ second use before Safety can use the stored move origin. Projected field and
 array reads already preserve root/place names, initializedness, and move
 locations. Preserve the existing temporal joins and move origins.
 
-Reached-default reporting:
-
-- `feature_tests/io/26X_print_without_system`
-
-Resolution knows that `print` cannot obtain its required reached value, but
-emits a generic no-overload diagnostic instead of explaining the unavailable
-`#reach` input.
-
 ## Recommended work order
 
 1. Diagnose generic candidate discovery and contextual literal typing without
    globally tightening inference.
-2. Consolidate move/place/provenance diagnostics.
+2. Correct move/copy diagnostic precedence and escaping aggregate provenance.
 3. Leave erased abstract calls and canonical `System` identity pending their
    documented language-design decisions.
