@@ -1,10 +1,13 @@
 # Compact graph refactor: regression handoff
 
-## Current checkpoint (2026-09-14)
+## Current checkpoint (2026-09-23)
 
 This document's original checkpoint below records the 2026-09-09 state; its
 test counts and file paths are historical. Development continues on
 `compact-semantic-graph-chatgpt`, using `performance` as the behavior reference.
+The active inventory is `plan/compact_semantic_graph_remaining.md`: 653 / 661
+program tests pass, and the remaining eight tests are the two design questions
+below.
 
 ### Open language-design question: calls through erased abstract values
 
@@ -26,6 +29,21 @@ expose the operation as a virtual requirement. This affects representation,
 dispatch, and codegen ABI. Do not relax constrained generic inference to bind
 an abstract declaration as its own implementer merely to make these tests pass.
 
+Current examples are `feature_tests/text/12_string_concat` through
+`text/17_string_view_concat_string`; `text/16` and `text/17` expose the direct
+`string_with_capacity(.allocator: $&Allocator, .capacity: UIntNative)` case.
+The binary operator pipeline now selects the intended overload for `text/12`
+through `text/15`, applies contextual string-literal coercion, and preserves
+the `Errable` output type. Those tests consequently converge on the same
+erased-allocator specialization boundary rather than failing earlier as
+pointer arithmetic or with a stale `&String` binding type.
+`feature_tests/system/25_local_typed_reach_binding` exposes the same erased
+implementer boundary through an explicitly typed local `$&Allocator` and the
+abstract `String.init` initializer. Its `.capacity = 3` operand successfully
+matches `UIntNative` context during candidate scoring; the apparent `Int32`
+mismatch is only the fallback diagnostic after abstract specialization cannot
+recover a concrete allocator type.
+
 ### Open language-design question: canonical identity for the non-movable System capability
 
 `feature_tests/ownership/35X_system_move_by_value` specifies that `System`
@@ -42,20 +60,15 @@ declaration table or an explicit non-movable type property. The ownership pass
 should consume that identity/property; it should not rediscover the rule by a
 global string search.
 
-Current examples are `feature_tests/text/12_string_concat` through
-`text/17_string_view_concat_string`; `text/16` and `text/17` expose the direct
-`string_with_capacity(.allocator: $&Allocator, .capacity: UIntNative)` case.
-The binary operator pipeline now selects the intended overload for `text/12`
-through `text/15`, applies contextual string-literal coercion, and preserves
-the `Errable` output type. Those tests consequently converge on the same
-erased-allocator specialization boundary rather than failing earlier as
-pointer arithmetic or with a stale `&String` binding type.
-`feature_tests/system/25_local_typed_reach_binding` exposes the same erased
-implementer boundary through an explicitly typed local `$&Allocator` and the
-abstract `String.init` initializer. Its `.capacity = 3` operand successfully
-matches `UIntNative` context during candidate scoring; the apparent `Int32`
-mismatch is only the fallback diagnostic after abstract specialization cannot
-recover a concrete allocator type.
+The pre-refactor compiler's `isSystemType` did exactly such a name comparison,
+so its passing test establishes the intended prohibition but not a sound way
+to identify the capability. Nor should the rule be generalized to every
+self-referential aggregate: `description/37_memory_management.md` explicitly
+separates logical `~` moves from physical relocation and allows a value with
+internal references to be logically movable. This is a core-capability policy
+decision, not a missing generic provenance rejection.
+
+## Historical implementation notes
 
 ModuleSema now recognizes a same-module abstract input as a constrained
 parameterized function. It retains the source declaration as a bodyless
