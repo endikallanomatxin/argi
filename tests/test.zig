@@ -2931,9 +2931,9 @@ test "feature_tests/ownership/39_stable_field_reference_survives_replacement" {
 
 test "feature_tests/ownership/40_raw_pointer_establish_fresh" {
     try buildExpectFailExact("tests/feature_tests/ownership/40_raw_pointer_establish_fresh",
-        \\tests/feature_tests/ownership/40_raw_pointer_establish_fresh/main.rg:1:1: error: fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
-        \\  main() -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/40_raw_pointer_establish_fresh/main.rg:5:56: error: fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
+        \\      reference ::= establish_fresh_reference#(.t: Int32)(.raw = raw)
+        \\                                                         ^
         \\
     );
 }
@@ -2944,18 +2944,18 @@ test "feature_tests/ownership/41_raw_pointer_establish_inherit" {
 
 test "feature_tests/ownership/42X_reference_use_after_root_end" {
     try buildExpectFailExact("tests/feature_tests/ownership/42X_reference_use_after_root_end",
-        \\tests/feature_tests/ownership/42X_reference_use_after_root_end/main.rg:1:1: error: reference depends on a root that has ended
-        \\  main(.system: System) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/42X_reference_use_after_root_end/main.rg:10:8: error: reference depends on a root that has ended
+        \\      if reference& == 0 {
+        \\         ^
         \\
     );
 }
 
 test "feature_tests/ownership/53X_pointer_inputs_may_alias" {
     try buildExpectFailExact("tests/feature_tests/ownership/53X_pointer_inputs_may_alias",
-        \\tests/feature_tests/ownership/53X_pointer_inputs_may_alias/main.rg:1:1: error: reference depends on a root that has ended
-        \\  invalidate_then_read(
-        \\  ^
+        \\tests/feature_tests/ownership/53X_pointer_inputs_may_alias/main.rg:6:23: error: reference depends on a root that has ended
+        \\      value = read_alias&.size
+        \\                        ^
         \\
     );
 }
@@ -2966,9 +2966,9 @@ test "feature_tests/ownership/54_deinit_through_alias_reinitialize" {
 
 test "feature_tests/ownership/55X_deinit_through_alias_read" {
     try buildExpectFailExact("tests/feature_tests/ownership/55X_deinit_through_alias_read",
-        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:1:1: error: reference depends on a root that has ended
-        \\  main(.system: System) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:11:8: error: reference depends on a root that has ended
+        \\      if b&.size == 1 {
+        \\         ^
         \\
     );
 }
@@ -2979,18 +2979,18 @@ test "feature_tests/ownership/56_branch_ownership_cleanup_resolves" {
 
 test "feature_tests/ownership/57X_return_reference_to_local" {
     try buildExpectFailExact("tests/feature_tests/ownership/57X_return_reference_to_local",
-        \\tests/feature_tests/ownership/57X_return_reference_to_local/main.rg:1:1: error: function output cannot depend on a local storage generation that ends before return
+        \\tests/feature_tests/ownership/57X_return_reference_to_local/main.rg:1:12: error: function output cannot depend on a local storage generation that ends before return
         \\  bad() -> (.result: &Int32) := {
-        \\  ^
+        \\             ^
         \\
     );
 }
 
 test "feature_tests/ownership/58X_null_safe_reference" {
     try buildExpectFailExact("tests/feature_tests/ownership/58X_null_safe_reference",
-        \\tests/feature_tests/ownership/58X_null_safe_reference/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
-        \\  main() -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/58X_null_safe_reference/main.rg:3:19: error: an integer address cannot establish a safe reference; use an explicit root establishment boundary
+        \\      reference ::= cast#(.to: $&Int32)(.value = zero)
+        \\                    ^
         \\
     );
 }
@@ -3010,27 +3010,27 @@ test "feature_tests/ownership/60_partial_field_move_cleanup" {
 
 test "feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root",
-        \\tests/feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root/main.rg:1:1: error: fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
-        \\  main() -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root/main.rg:5:50: error: fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
+        \\      safe ::= establish_fresh_reference#(.t: Char)(.raw = raw).reference
+        \\                                                   ^
         \\
     );
 }
 
 test "feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip" {
     try buildExpectFailExact("tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip",
-        \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
-        \\  main() -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:4:20: error: an integer address cannot establish a safe reference; use an explicit root establishment boundary
+        \\      fabricated ::= cast#(.to: &Char)(.value = address)
+        \\                     ^
         \\
     );
 }
 
 test "feature_tests/ownership/63X_malloc_direct_safe_cast" {
     try buildExpectFailExact("tests/feature_tests/ownership/63X_malloc_direct_safe_cast",
-        \\tests/feature_tests/ownership/63X_malloc_direct_safe_cast/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
-        \\  main() -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/63X_malloc_direct_safe_cast/main.rg:4:20: error: an integer address cannot establish a safe reference; use an explicit root establishment boundary
+        \\      fabricated ::= cast#(.to: $&UInt8)(.value = address)
+        \\                     ^
         \\
     );
 }
@@ -4029,9 +4029,9 @@ test "feature_tests/ownership/218X_conditional_opaque_reference_source_closes_ow
 
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
-        \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended
-        \\  main(.system: System) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:19:8: error: reference depends on a root that has ended
+        \\      if alias& == 0 {
+        \\         ^
         \\
     );
 }
@@ -4042,9 +4042,9 @@ test "feature_tests/ownership/44_cross_root_cycle_survivor_remains_usable" {
 
 test "feature_tests/ownership/45X_cross_root_cycle_stale_edge" {
     try buildExpectFailExact("tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge",
-        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:3:1: error: reference depends on a root that has ended
-        \\  main(.system: System) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:13:8: error: reference depends on a root that has ended
+        \\      if b.to_a& == 0 {
+        \\         ^
         \\
     );
 }
@@ -4055,9 +4055,9 @@ test "feature_tests/ownership/46_deinitialized_place_can_be_replaced" {
 
 test "feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance" {
     try buildExpectFailExact("tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance",
-        \\tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
-        \\  main() -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance/main.rg:4:19: error: an integer address cannot establish a safe reference; use an explicit root establishment boundary
+        \\      reference ::= cast#(.to: $&Int32)(.value = address)
+        \\                    ^
         \\
     );
 }
@@ -4688,7 +4688,7 @@ test "feature_tests/ownership/283_scalar_opaque_read_is_independent" {
 test "feature_tests/ownership/284X_integer_cannot_establish_any_reference" {
     try buildExpectFail(
         "tests/feature_tests/ownership/284X_integer_cannot_establish_any_reference",
-        "an integer address cannot establish a safe reference; use RawPointer and explicit root establishment",
+        "an integer address cannot establish a safe reference; use an explicit root establishment boundary",
     );
 }
 
