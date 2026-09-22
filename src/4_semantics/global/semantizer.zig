@@ -686,21 +686,7 @@ fn diagnoseInvalidPointerOperations(
                 try sink.add(
                     diagnosticLocation(graph, sink, source),
                     .semantic,
-                    "cannot assign through pointer '{s}' because it is read-only; use '            var name = std.array_list.Managed(u8).init(allocator);
-            defer name.deinit();
-            try appendTypeName(&name, graph, pointer_ty);
-            var source = node.source;
-            if (graph.node(assignment.pointer).content == .binding_use) {
-                const binding = graph.node(assignment.pointer).content.binding_use;
-                source.offset += @intCast(graph.text(graph.binding(binding).name).len);
-            }
-            try diagnostics.add(
-                diagnosticLocation(graph, diagnostics, source),
-                .semantic,
-                "cannot assign through pointer '{s}' because it is read-only; use '$&' when acquiring it",
-                .{name.items},
-            );
-            return true;' when acquiring it",
+                    "cannot assign through pointer '{s}' because it is read-only; use '$&' when acquiring it",
                     .{name.items},
                 );
             }
