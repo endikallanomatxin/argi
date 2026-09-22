@@ -14,11 +14,11 @@ belong in `plan/refactor_regressions.md` and should only be linked from here.
 
 Current checkpoint after isolating error-propagation cleanup state:
 
-- 626 / 659 program tests pass.
-- 33 / 659 program tests fail.
+- 627 / 659 program tests pass.
+- 32 / 659 program tests fail.
 - 22 failures already reject invalid source and differ only in diagnostic
   wording or source location.
-- 11 failures expose semantic or resolution work.
+- 10 failures expose semantic or resolution work.
 
 ## Resolution, generic materialization, and contextual typing
 
@@ -26,14 +26,11 @@ Current checkpoint after isolating error-propagation cleanup state:
 
 Affected tests:
 
-- `feature_tests/collections/17_string_hash_map_baseline`
 - `feature_tests/collections/37_dynamic_array_associated_copy_reasons`
 
-The declarations exist, but candidate discovery or substitution does not
-produce a callable concrete instance. The first test reports no `put`; the
-second reports no `require_array_reasons`. Instrument candidate rejection
-before changing inference rules, and distinguish declaration discovery from
-associated-type substitution.
+The declaration exists and input inference reaches constraint validation, but
+the associated copy-reasons constraint does not accept the concrete dynamic
+array. Trace associated-type substitution before changing inference rules.
 
 ### Erased abstract free-function calls
 

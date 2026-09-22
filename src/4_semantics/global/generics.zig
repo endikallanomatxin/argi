@@ -337,7 +337,12 @@ pub const Resolver = struct {
                 .length = array.length,
                 .element = try self.instantiateParameterizedType(module_index, array.element, bindings, self_type),
             } }),
-            .nullable => |child| self.internType(.{ .nullable = try self.instantiateParameterizedType(module_index, child, bindings, self_type) }),
+            .nullable => |child| blk: {
+                const instantiated_child = try self.instantiateParameterizedType(module_index, child, bindings, self_type);
+                const nullable = try self.internType(.{ .nullable = instantiated_child });
+                try global_types.materializeNullable(self.allocator, self.graph, nullable, instantiated_child, .{ .file_index = 0, .offset = 0 });
+                break :blk nullable;
+            },
             .inferred_errable => |child| self.internType(.{ .inferred_errable = try self.instantiateParameterizedType(module_index, child, bindings, self_type) }),
             .inferred_choice => |choice| self.internType(.{ .inferred_choice = .{
                 .identity = choice.identity,
