@@ -235,6 +235,7 @@ pub const SafetyChecker = struct {
                         try self.validateContextualIntegerLiteral(initialization, record.ty);
                         break :blk try self.evaluate(function, initialization, state);
                     } else facts.ValueFacts{};
+                    try self.beginLexicalStorage(state, .{ .root = binding });
                     try self.setPlace(state, .{ .root = binding }, if (record.initialization != null) .initialized else .deinitialized, value);
                 },
                 .assignment => |assignment| {
@@ -364,6 +365,7 @@ pub const SafetyChecker = struct {
                     break;
                 };
                 try self.activateConditionalOwnedRoots(&branch, payload);
+                try self.beginLexicalStorage(&branch, .{ .root = binding });
                 try self.setPlace(&branch, .{ .root = binding }, .initialized, switch (case.payload_mode) {
                     .value, .move => payload,
                     .borrow, .mut_borrow => payload.referenceCopy(),
@@ -1632,6 +1634,14 @@ pub const SafetyChecker = struct {
         }
         if (!replaced)
             try state.storage_generations.append(.{ .storage = storage, .generation = try state.tracker.establish(.fresh) });
+    }
+
+    fn beginLexicalStorage(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) !void {
+        for (state.storage_generations.items) |entry| {
+            if (!storage.isPrefixOf(entry.storage)) continue;
+            try self.refreshStorageGeneration(state, storage);
+            return;
+        }
     }
 
     fn evaluatePointerUse(
