@@ -534,7 +534,7 @@ pub fn semantizeWithOptions(
     ))
         return if (options.diagnostics != null) error.Reported else error.InvalidImplicitCopy;
 
-    if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, options.diagnostics))
+    if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, reachable, options.diagnostics))
         return if (options.diagnostics != null) error.Reported else error.InvalidPointerOperation;
 
     if (options.diagnostics) |diagnostics|
@@ -664,9 +664,13 @@ fn diagnoseUnresolvedPointerArithmetic(
 fn diagnoseInvalidPointerOperations(
     allocator: std.mem.Allocator,
     graph: *const global_sg.GlobalSemanticGraph,
+    reachable: ?*const reachability_mod.FunctionSet,
     diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !bool {
-    for (graph.nodes.items) |node| switch (node.content) {
+    for (graph.nodes.items, 0..) |node, raw| {
+        const node_id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
+        if (reachable) |set| if (!set.containsNode(node_id)) continue;
+        switch (node.content) {
         .pointer_assignment => |assignment| {
             const pointer_ty = graph.node(assignment.pointer).ty orelse continue;
             const pointer = switch (graph.semanticType(pointer_ty)) {
@@ -714,8 +718,11 @@ fn diagnoseInvalidPointerOperations(
             return true;
         },
         else => {},
-    };
-    for (graph.bindings.items) |destination| {
+        }
+    }
+    for (graph.bindings.items, 0..) |destination, raw| {
+        const destination_id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
+        if (reachable) |set| if (!set.containsBinding(destination_id)) continue;
         const initialization = destination.initialization orelse continue;
         const node = graph.node(initialization);
         const child = switch (node.content) {
