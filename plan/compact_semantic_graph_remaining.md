@@ -12,14 +12,13 @@ belong in `plan/refactor_regressions.md` and should only be linked from here.
 
 ## Measured checkpoint
 
-Current checkpoint after restricted-lifetime propagation and owned-root cycle
-validation:
+Current checkpoint after direct binding generation refresh:
 
-- 623 / 659 program tests pass.
-- 36 / 659 program tests fail.
+- 625 / 659 program tests pass.
+- 34 / 659 program tests fail.
 - 22 failures already reject invalid source and differ only in diagnostic
   wording or source location.
-- 14 failures expose semantic or resolution work, including two aggregate
+- 12 failures expose semantic or resolution work, including two aggregate
   regression slices that remained red after repairing nested cleanup layout.
 
 ## Resolution, generic materialization, and contextual typing
@@ -77,19 +76,6 @@ an open language-design question documented in
 implementer or otherwise relax generic inference to force these tests through.
 
 ## Safety and ownership semantics
-
-### Fresh opaque extraction uses a stale generation
-
-Affected tests:
-
-- `feature_tests/ownership/156_fresh_opaque_extraction_after_refresh`
-- `feature_tests/ownership/161_fresh_opaque_wrapper_extraction_after_refresh`
-
-After a storage binding is reinitialized with a new allocation, a reference
-extracted from its new opaque slot still depends on the old ended generation.
-The wrapper case shows that the same invariant must survive function summaries.
-The fix must refresh only the alias used to reinitialize storage, not sibling
-aliases. Verify the ownership 148--162 neighborhood.
 
 ### Canonical non-movable `System`
 
@@ -157,19 +143,16 @@ emits a generic no-overload diagnostic instead of explaining the unavailable
 
 The first ends a root during deferred String cleanup after formatting and
 payload moves. The second loses a live dependency through Path construction or
-its function summary. Both remained red after correcting the nested
-auto-deinit descriptor layout, so they are no longer assumed to be consequences
-of `ownership/60`. Re-run the first after opaque-generation work, then diagnose
-each remaining slice independently.
+its function summary. Both remained red after correcting nested auto-deinit
+ranges and direct binding generation refresh, so diagnose each slice
+independently.
 
 ## Recommended work order
 
-1. Repair opaque-domain generation refresh in direct and summarized paths, then
-   re-run the collections/text regression slice.
-2. Diagnose the core Path regression slice if it remains independent.
-3. Restore binary operator materialization and `Errable` output propagation.
-4. Diagnose generic candidate discovery and contextual literal typing without
+1. Diagnose the two remaining regression slices independently.
+2. Restore binary operator materialization and `Errable` output propagation.
+3. Diagnose generic candidate discovery and contextual literal typing without
    globally tightening inference.
-5. Consolidate move/place/provenance diagnostics.
-6. Leave erased abstract calls and canonical `System` identity pending their
+4. Consolidate move/place/provenance diagnostics.
+5. Leave erased abstract calls and canonical `System` identity pending their
    documented language-design decisions.
