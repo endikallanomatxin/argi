@@ -389,6 +389,7 @@ pub fn Node(comptime Ids: type) type {
             binding_use: Ids.BindingId,
             reach_directive: Ids.ReachId,
             move_value: Ids.NodeId,
+            denied_implicit_copy: Ids.NodeId,
             assignment: struct { binding: Ids.BindingId, value: Ids.NodeId },
             auto_deinit_binding: Ids.AutoDeinitId,
             function_call: struct {

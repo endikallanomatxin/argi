@@ -12,13 +12,12 @@ belong in `plan/refactor_regressions.md` and should only be linked from here.
 
 ## Measured checkpoint
 
-Current checkpoint after inferring associated implementation parameters:
+Current checkpoint after preserving move diagnostics through denied copies:
 
-- 652 / 661 program tests pass.
-- 9 / 661 program tests fail.
-- 1 failure already rejects invalid source and differs only in diagnostic
-  wording or source location.
-- 8 failures expose semantic or resolution work.
+- 653 / 661 program tests pass.
+- 8 / 661 program tests fail.
+- All 8 remaining failures expose language-design questions documented in
+  `plan/refactor_regressions.md`.
 
 ## Resolution and generic materialization
 
@@ -61,23 +60,9 @@ This remains an open language-design question in
 identity or non-movable property for core `System`. Do not implement the rule
 by comparing a displayed type name.
 
-## Correct rejection with stale diagnostics
-
-These tests already reject invalid source. They should be addressed after the
-remaining semantic acceptance/rejection bugs unless a semantic change touches
-the same reporting path.
-
-Move-state reporting:
-
-- `feature_tests/ownership/14X_use_after_move`
-
-The remaining difference is reporting order: copy insertion rejects the
-second use before Safety can use the stored move origin. Projected field and
-array reads already preserve root/place names, initializedness, and move
-locations. Preserve the existing temporal joins and move origins.
-
 ## Recommended work order
 
-1. Correct move/copy diagnostic precedence.
-2. Leave erased abstract calls and canonical `System` identity pending their
-   documented language-design decisions.
+1. Resolve the erased abstract-call semantics before changing allocator
+   specialization or string operators.
+2. Define canonical `System` capability identity and mobility before
+   rejecting by-value transfers.

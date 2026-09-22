@@ -677,7 +677,7 @@ pub const Infer = struct {
     ) anyerror!void {
         const node = self.graph.node(node_id);
         switch (node.content) {
-            .move_value, .address_of => |value| try self.inferInputPostStatesExpression(function_id, value, states, exits),
+            .move_value, .denied_implicit_copy, .address_of => |value| try self.inferInputPostStatesExpression(function_id, value, states, exits),
             .dereference => |value| try self.inferInputPostStatesExpression(function_id, value.pointer, states, exits),
             .struct_value_literal => |literal| {
                 for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
@@ -1408,7 +1408,7 @@ pub const Infer = struct {
     ) anyerror!void {
         const node = self.graph.node(node_id);
         switch (node.content) {
-            .move_value, .address_of => |value| try self.inferOpaqueEmptyExpression(function_id, value, effects, state, exits),
+            .move_value, .denied_implicit_copy, .address_of => |value| try self.inferOpaqueEmptyExpression(function_id, value, effects, state, exits),
             .dereference => |value| try self.inferOpaqueEmptyExpression(function_id, value.pointer, effects, state, exits),
             .struct_value_literal => |literal| {
                 for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
@@ -1824,7 +1824,7 @@ pub const Infer = struct {
                     try self.inferRequiredLiveInputsNode(function_id, initialization, required);
             },
             .assignment => |assignment| try self.inferRequiredLiveInputsNode(function_id, assignment.value, required),
-            .move_value, .address_of => |value| try self.inferRequiredLiveInputsNode(function_id, value, required),
+            .move_value, .denied_implicit_copy, .address_of => |value| try self.inferRequiredLiveInputsNode(function_id, value, required),
             .dereference => |value| try self.inferRequiredLiveInputsNode(function_id, value.pointer, required),
             .array_index => |index| {
                 try self.inferRequiredLiveInputsNode(function_id, index.array_ptr, required);
@@ -2100,6 +2100,7 @@ pub const Infer = struct {
             else
                 self.bindings.get(binding) orelse .{},
             .move_value => |value| try self.withOwnershipTransfer(try self.inferExpression(function_id, value)),
+            .denied_implicit_copy => |value| try self.inferExpression(function_id, value),
             .address_of => |value| .{ .input_places = try self.inferInputPaths(function_id, value) },
             .dereference => |value| try self.inferOpaqueRead(
                 function_id,
@@ -2275,7 +2276,7 @@ pub const Infer = struct {
 
     fn inferOpaqueReadInputPaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId) ![]const facts.InputPath {
         return switch (self.graph.node(node_id).content) {
-            .move_value => |value| self.inferOpaqueReadInputPaths(function_id, value),
+            .move_value, .denied_implicit_copy => |value| self.inferOpaqueReadInputPaths(function_id, value),
             .struct_field_access => |access| self.inferOpaqueReadInputPaths(function_id, access.value),
             .choice_payload_access => |access| self.inferOpaqueReadInputPaths(function_id, access.value),
             .dereference => |dereference| self.inferInputPaths(function_id, dereference.pointer),
@@ -2291,7 +2292,7 @@ pub const Infer = struct {
             else
                 self.place_bindings.get(binding) orelse &.{},
             .address_of => |value| self.inferInputPaths(function_id, value),
-            .move_value => |value| self.inferInputPaths(function_id, value),
+            .move_value, .denied_implicit_copy => |value| self.inferInputPaths(function_id, value),
             .dereference => |value| self.inferInputPaths(function_id, value.pointer),
             .explicit_cast => |cast| if (self.graph.types.items[@intFromEnum(cast.target_type)] == .pointer)
                 self.inferInputPaths(function_id, cast.value)

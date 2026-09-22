@@ -521,6 +521,22 @@ pub fn semantizeWithOptions(
                 return error.Reported;
             if (try diagnoseUnresolvedCopy(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
+            // A denied copy may already be represented in the graph so Safety
+            // can prefer a preceding move error. If another operation remains
+            // unresolved, report that definite copy failure before unrelated
+            // overload diagnostics prevent Safety from running.
+            if (ownership.denied_copy) |denied| {
+                var type_name = std.array_list.Managed(u8).init(allocator);
+                defer type_name.deinit();
+                try appendTypeName(&type_name, &relocation.graph, denied.ty);
+                try diagnostics.add(
+                    diagnosticLocation(&relocation.graph, diagnostics, denied.source),
+                    .semantic,
+                    "type '{s}' cannot be copied implicitly; use '~value' to transfer ownership",
+                    .{type_name.items},
+                );
+                return error.Reported;
+            }
             if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, &generic_functions, &abstracts, diagnostics))
                 return error.Reported;
         }

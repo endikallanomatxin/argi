@@ -344,6 +344,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
             try require(verify.idFits(item.args, bounds.nodes));
         },
         .type_literal => |id| try require(verify.idFits(id, bounds.types)),
+        .denied_implicit_copy => |id| try require(verify.idFits(id, bounds.nodes)),
         .explicit_cast => |item| {
             try require(verify.idFits(item.value, bounds.nodes));
             try require(verify.idFits(item.target_type, bounds.types));

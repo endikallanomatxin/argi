@@ -423,6 +423,17 @@ pub const SafetyChecker = struct {
                 }
                 break :blk value;
             },
+            .denied_implicit_copy => |child| blk: {
+                const diagnostic_count = self.diagnostics.list.items.len;
+                const value = try self.evaluate(function, child, state);
+                if (self.diagnostics.list.items.len == diagnostic_count) {
+                    var type_name = std.array_list.Managed(u8).init(self.allocator);
+                    defer type_name.deinit();
+                    try appendSafetyTypeName(&type_name, self.graph, node.ty orelse self.graph.node(child).ty.?);
+                    try self.report(node.source, "type '{s}' cannot be copied implicitly; use '~value' to transfer ownership", .{type_name.items});
+                }
+                break :blk value;
+            },
             .address_of => |child| try self.evaluateAddress(function, node.source, child, state, false),
             .dereference => |deref| blk: {
                 const pointer = try self.evaluatePointerUse(function, node.source, deref.pointer, state) orelse break :blk .{};
@@ -3904,6 +3915,32 @@ fn isPointer(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTy
         .pointer => true,
         else => false,
     };
+}
+
+fn appendSafetyTypeName(buffer: *std.array_list.Managed(u8), graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) anyerror!void {
+    switch (graph.semanticType(ty)) {
+        .builtin => |builtin| try buffer.appendSlice(@tagName(builtin)),
+        .declared => |decl| try buffer.appendSlice(graph.text(graph.declaration(decl).name)),
+        .generic => |generic| try buffer.appendSlice(graph.text(graph.declaration(generic.base).name)),
+        .pointer => |pointer| {
+            try buffer.appendSlice(if (pointer.mutability == .read_write) "$&" else "&");
+            try appendSafetyTypeName(buffer, graph, pointer.child);
+        },
+        .array => |array| {
+            var length: [32]u8 = undefined;
+            try buffer.append('[');
+            try buffer.appendSlice(try std.fmt.bufPrint(&length, "{d}", .{array.length}));
+            try buffer.append(']');
+            try appendSafetyTypeName(buffer, graph, array.element);
+        },
+        .structural => try buffer.appendSlice("{...}"),
+        .structural_choice, .inferred_choice => try buffer.appendSlice("choice"),
+        .nullable => |child| {
+            try buffer.append('?');
+            try appendSafetyTypeName(buffer, graph, child);
+        },
+        else => try buffer.appendSlice("<type>"),
+    }
 }
 
 fn variantIndex(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, variant: graph_mod.GlobalVariantId) ?u32 {
