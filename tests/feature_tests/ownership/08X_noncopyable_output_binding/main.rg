@@ -10,4 +10,5 @@ identity(.res: Resource) -> (.out: Resource) := {
 
 main() -> (.status_code: Int32) := {
     status_code = 0
+    _ ::= identity(.res = Resource())
 }
