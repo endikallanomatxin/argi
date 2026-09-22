@@ -473,6 +473,8 @@ pub fn semantizeWithOptions(
     };
     if (remaining != 0) {
         if (options.diagnostics) |diagnostics| {
+            if (try diagnoseUnresolvedPointerArithmetic(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                return error.Reported;
             if (try diagnoseUnresolvedQualifiedTypes(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
                 return error.Reported;
             if (try diagnoseUnresolvedQualifiedNames(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
@@ -500,6 +502,10 @@ pub fn semantizeWithOptions(
         std.debug.print("global sema unresolved binding types remain\n", .{});
         return error.UnsupportedGlobalSemantic;
     }
+
+    if (options.diagnostics) |diagnostics|
+        if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, diagnostics))
+            return error.Reported;
 
     if (options.diagnostics) |diagnostics|
         if (try abstracts.findGenericTypeConstraintFailure()) |failure| {
@@ -552,6 +558,122 @@ pub fn semantizeWithOptions(
     try global_verify.verifyGlobal(&relocation.graph);
     stats.remaining = 0;
     return .{ .graph = relocation.takeGraph(allocator), .stats = stats };
+}
+
+fn diagnoseUnresolvedPointerArithmetic(
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    resolved: []const bool,
+    reachable: ?*const reachability_mod.FunctionSet,
+    offsets: []const globalizer.Offsets,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    var flat: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
+            defer flat += 1;
+            const binary = switch (operation) {
+                .resolve_binary => |value| value,
+                else => continue,
+            };
+            const owner = if (operation_index < module.semantic.pending_owner_functions.items.len)
+                if (module.semantic.pending_owner_functions.items[operation_index]) |value|
+                    globalizer.globalFunction(offsets[module_index], value)
+                else
+                    null
+            else
+                null;
+            if (resolved[flat] or (reachable != null and owner != null and !reachable.?.contains(owner.?))) continue;
+            const left = globalizer.globalNode(offsets[module_index], binary.left);
+            const right = globalizer.globalNode(offsets[module_index], binary.right);
+            const left_ty = graph.node(left).ty orelse continue;
+            const right_ty = graph.node(right).ty orelse continue;
+            if (graph.semanticType(left_ty) != .pointer and graph.semanticType(right_ty) != .pointer) continue;
+            try diagnostics.add(
+                diagnosticLocation(graph, diagnostics, graph.node(left).source),
+                .semantic,
+                "pointer arithmetic is not allowed; cast explicitly to an integer, perform the arithmetic, and cast back",
+                .{},
+            );
+            return true;
+        }
+    }
+    return false;
+}
+
+fn diagnoseInvalidPointerOperations(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    for (graph.nodes.items) |node| switch (node.content) {
+        .pointer_assignment => |assignment| {
+            const pointer_ty = graph.node(assignment.pointer).ty orelse continue;
+            const pointer = switch (graph.semanticType(pointer_ty)) {
+                .pointer => |value| value,
+                else => continue,
+            };
+            if (pointer.mutability != .read_only) continue;
+            var name = std.array_list.Managed(u8).init(allocator);
+            defer name.deinit();
+            try appendTypeName(&name, graph, pointer_ty);
+            var source = node.source;
+            if (graph.node(assignment.pointer).content == .binding_use) {
+                const binding = graph.node(assignment.pointer).content.binding_use;
+                source.offset += @intCast(graph.text(graph.binding(binding).name).len);
+            }
+            try diagnostics.add(
+                diagnosticLocation(graph, diagnostics, source),
+                .semantic,
+                "cannot assign through pointer '{s}' because it is read-only; use '$&' when acquiring it",
+                .{name.items},
+            );
+            return true;
+        },
+        .array_index => |access| {
+            const index_ty = graph.node(access.index).ty orelse continue;
+            if (global_types.isBuiltin(graph, index_ty, .UIntNative)) continue;
+            var name = std.array_list.Managed(u8).init(allocator);
+            defer name.deinit();
+            try appendTypeName(&name, graph, index_ty);
+            try diagnostics.add(
+                diagnosticLocation(graph, diagnostics, graph.node(access.index).source),
+                .semantic,
+                "array index must be 'UIntNative', got '{s}'",
+                .{name.items},
+            );
+            return true;
+        },
+        else => {},
+    };
+    for (graph.bindings.items) |destination| {
+        const initialization = destination.initialization orelse continue;
+        const node = graph.node(initialization);
+        const child = switch (node.content) {
+            .address_of => |value| value,
+            else => continue,
+        };
+        const pointer_ty = node.ty orelse continue;
+        const pointer = switch (graph.semanticType(pointer_ty)) {
+            .pointer => |value| value,
+            else => continue,
+        };
+        if (pointer.mutability != .read_write) continue;
+        const binding = switch (graph.node(child).content) {
+            .binding_use => |value| value,
+            else => continue,
+        };
+        const source = graph.binding(binding);
+        if (source.mutability != .constant) continue;
+        try diagnostics.add(
+            diagnosticLocation(graph, diagnostics, graph.node(child).source),
+            .semantic,
+            "binding '{s}' is immutable; declare it with '::' or use '&{s}'",
+            .{ graph.text(source.name), graph.text(source.name) },
+        );
+        return true;
+    }
+    return false;
 }
 
 fn diagnoseUnresolvedPropagatedReach(
