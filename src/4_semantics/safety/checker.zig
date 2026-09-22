@@ -1137,6 +1137,13 @@ pub const SafetyChecker = struct {
         var target = arguments[index].referenced_place orelse blk: {
             if (index >= argument_ids.len) return null;
             const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
+            const argument_type = self.graph.nodes.items[@intFromEnum(argument)].ty orelse return null;
+            // A by-value parameter owns its local slot. Its summary state must
+            // not overwrite the caller Place that supplied the value; explicit
+            // move/copy evaluation has already updated that Place. Pointer
+            // arguments may still expose their own storage when provenance is
+            // unavailable (for example an abstract pointer binding).
+            if (!isPointer(self.graph, argument_type)) return null;
             const storage = try self.resolvePlace(argument, state) orelse return null;
             // An abstract pointer input has no concrete pointee Place. Its
             // binding stores the pointer itself, so writing a pointee summary
