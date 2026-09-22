@@ -633,6 +633,11 @@ fn diagnoseInvalidPointerOperations(
         .array_index => |access| {
             const index_ty = graph.node(access.index).ty orelse continue;
             if (global_types.isBuiltin(graph, index_ty, .UIntNative)) continue;
+            // Integer literals retain their default type until a consumer gives
+            // them context. Array indexing supplies UIntNative context, so a
+            // non-negative literal is valid even if its node still says Int32.
+            if (graph.node(access.index).content == .int_literal and
+                graph.node(access.index).content.int_literal >= 0) continue;
             var name = std.array_list.Managed(u8).init(allocator);
             defer name.deinit();
             try appendTypeName(&name, graph, index_ty);
