@@ -48,7 +48,7 @@ materialization or reapply the selected input context. Do not make every
 `inferInputType` failure discard a candidate; that previously caused broad
 regressions.
 
-### Binary operator materialization and output propagation
+### Erased abstract free-function calls
 
 Affected tests:
 
@@ -56,20 +56,12 @@ Affected tests:
 - `feature_tests/text/13_string_concat_string`
 - `feature_tests/text/14_string_concat_string_view`
 - `feature_tests/text/15_string_view_concat_c_string`
-
-The intended `+` overload is either not selected or loses its `Errable`
-output during materialization. The fallback then diagnoses pointer arithmetic,
-or a following match sees `&String` instead of the choice result. Treat this as
-an operator-call pipeline issue rather than special-casing String.
-
-### Erased abstract free-function calls
-
-Affected tests:
-
 - `feature_tests/text/16_string_view_concat_string_view`
 - `feature_tests/text/17_string_view_concat_string`
 
-These reach `string_with_capacity` with an erased `$&Allocator` but no concrete
+Operator resolution now preserves the eventual overload output type and scores
+contextual literals consistently with ordinary calls. All six tests therefore
+reach `string_with_capacity` with an erased `$&Allocator` but no concrete
 implementer from which to specialize its abstract-contract function. This is
 an open language-design question documented in
 `plan/refactor_regressions.md`. Do not bind the abstract declaration as its own
@@ -150,9 +142,8 @@ independently.
 ## Recommended work order
 
 1. Diagnose the two remaining regression slices independently.
-2. Restore binary operator materialization and `Errable` output propagation.
-3. Diagnose generic candidate discovery and contextual literal typing without
+2. Diagnose generic candidate discovery and contextual literal typing without
    globally tightening inference.
-4. Consolidate move/place/provenance diagnostics.
-5. Leave erased abstract calls and canonical `System` identity pending their
+3. Consolidate move/place/provenance diagnostics.
+4. Leave erased abstract calls and canonical `System` identity pending their
    documented language-design decisions.

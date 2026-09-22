@@ -391,19 +391,28 @@ pub const Resolver = struct {
         self: *Resolver,
         current_module: usize,
         operator: callable.OperatorKind,
+        operand_nodes: []const global_sg.GlobalNodeId,
         operand_types: []const global_sg.GlobalTypeId,
     ) !global_sg.GlobalFunctionId {
+        if (operand_nodes.len != operand_types.len) return error.InvalidCallInputArity;
         var best: ?global_sg.GlobalFunctionId = null;
         var best_score: u32 = 0;
         var tied = false;
         for (self.graph.functions.items, 0..) |function, raw| {
             if (raw >= self.graph.function_operators.items.len or self.graph.function_operators.items[raw] != operator) continue;
             if (function.input.len != operand_types.len) continue;
+            if (!self.declarationVisible(current_module, function.declaration, null)) continue;
             var score: u32 = 0;
             var compatible = true;
             for (operand_types, 0..) |actual, index| {
                 const expected = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))].ty;
-                if (types.equal(self.graph, expected, actual)) score += 4 else if (types.isBuiltin(self.graph, expected, .Any)) score += 1 else {
+                if (types.equal(self.graph, expected, actual))
+                    score += 4
+                else if (self.callTypesCompatible(actual, expected) or self.contextualLiteralFits(operand_nodes[index], expected))
+                    score += 3
+                else if (types.isBuiltin(self.graph, expected, .Any))
+                    score += 1
+                else {
                     compatible = false;
                     break;
                 }
@@ -418,6 +427,11 @@ pub const Resolver = struct {
         }
         if (best == null) return error.NoMatchingGlobalFunction;
         if (tied) return error.AmbiguousGlobalFunction;
+        const selected = self.graph.functions.items[@intFromEnum(best.?)];
+        for (operand_nodes, 0..) |node, index| {
+            const expected = self.graph.fields.items[selected.input.start + @as(u32, @intCast(index))].ty;
+            _ = self.coerceContextualValue(node, expected);
+        }
         return best.?;
     }
 
@@ -722,7 +736,7 @@ pub const Resolver = struct {
             return true;
         }
         if (value.operator != .addition) return false;
-        const function = self.resolveOperator(module_index, .add, &.{ left_ty, right_ty }) catch return false;
+        const function = self.resolveOperator(module_index, .add, &.{ left, right }, &.{ left_ty, right_ty }) catch return false;
         const input = try self.makeCallInput(function, &.{ left, right });
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = self.graph.nodes.items[@intFromEnum(left)].source,
@@ -777,7 +791,7 @@ pub const Resolver = struct {
             .not_equal => .not_equal,
             else => return false,
         };
-        const function = self.resolveOperator(module_index, operator, &.{ left_ty, right_ty }) catch return false;
+        const function = self.resolveOperator(module_index, operator, &.{ left, right }, &.{ left_ty, right_ty }) catch return false;
         const input = try self.makeCallInput(function, &.{ left, right });
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = self.graph.nodes.items[@intFromEnum(left)].source,
@@ -914,7 +928,7 @@ pub const Resolver = struct {
         }
         var operand_types: [3]global_sg.GlobalTypeId = undefined;
         for (operands[0..count], 0..) |node, i| operand_types[i] = self.graph.nodes.items[@intFromEnum(node)].ty orelse return .deferred;
-        const function = self.resolveOperator(module_index, operator, operand_types[0..count]) catch blk: {
+        const function = self.resolveOperator(module_index, operator, operands[0..count], operand_types[0..count]) catch blk: {
             break :blk self.resolveAddressedIndexOperator(
                 module_index,
                 operator,
@@ -963,7 +977,8 @@ pub const Resolver = struct {
                 const expected = self.graph.fields.items[candidate.input.start + @as(u32, @intCast(offset))].ty;
                 if (!types.equal(self.graph, expected, operand_types[offset]) and
                     !self.callTypesCompatible(operand_types[offset], expected) and
-                    !self.contextualLiteralFits(operand_nodes[offset], expected)) {
+                    !self.contextualLiteralFits(operand_nodes[offset], expected))
+                {
                     matches = false;
                     break;
                 }

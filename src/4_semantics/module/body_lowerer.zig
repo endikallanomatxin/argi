@@ -638,7 +638,7 @@ const Context = struct {
             .operator = operator,
             .left = lhs.node,
             .right = rhs.node,
-        } }, expected orelse lhs.ty);
+        } }, expected);
     }
 
     fn lowerComparison(self: *Context, node: syn.NodeIndex) !Lowered {
