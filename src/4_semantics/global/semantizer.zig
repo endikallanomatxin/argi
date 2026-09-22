@@ -457,6 +457,22 @@ pub fn semantizeWithOptions(
 
     if (reachable) |set| try retireDormantBindingResolution(&relocation.graph, set, try core.builtin(.Any));
 
+    if (control.for_each_failure) |failure| {
+        if (options.diagnostics) |diagnostics| {
+            var actual_name = std.array_list.Managed(u8).init(allocator);
+            defer actual_name.deinit();
+            try appendTypeName(&actual_name, &relocation.graph, failure.actual);
+            try diagnostics.add(
+                diagnosticLocation(&relocation.graph, diagnostics, failure.source),
+                .semantic,
+                "for expects a type implementing abstract '{s}', got '{s}'",
+                .{ failure.contract_name, actual_name.items },
+            );
+            return error.Reported;
+        }
+        return error.InvalidForEach;
+    }
+
     if (abstracts.field_storage_conflict) |conflict| {
         if (options.diagnostics) |diagnostics| {
             var abstract_name = std.array_list.Managed(u8).init(allocator);
@@ -684,53 +700,53 @@ fn diagnoseInvalidPointerOperations(
         const node_id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
         if (reachable) |set| if (!set.containsNode(node_id)) continue;
         switch (node.content) {
-        .pointer_assignment => |assignment| {
-            const pointer_ty = graph.node(assignment.pointer).ty orelse continue;
-            const pointer = switch (graph.semanticType(pointer_ty)) {
-                .pointer => |value| value,
-                else => continue,
-            };
-            if (pointer.mutability != .read_only) continue;
-            if (diagnostics) |sink| {
-                var name = std.array_list.Managed(u8).init(allocator);
-                defer name.deinit();
-                try appendTypeName(&name, graph, pointer_ty);
-                var source = node.source;
-                if (graph.node(assignment.pointer).content == .binding_use) {
-                    const binding = graph.node(assignment.pointer).content.binding_use;
-                    source.offset += @intCast(graph.text(graph.binding(binding).name).len);
+            .pointer_assignment => |assignment| {
+                const pointer_ty = graph.node(assignment.pointer).ty orelse continue;
+                const pointer = switch (graph.semanticType(pointer_ty)) {
+                    .pointer => |value| value,
+                    else => continue,
+                };
+                if (pointer.mutability != .read_only) continue;
+                if (diagnostics) |sink| {
+                    var name = std.array_list.Managed(u8).init(allocator);
+                    defer name.deinit();
+                    try appendTypeName(&name, graph, pointer_ty);
+                    var source = node.source;
+                    if (graph.node(assignment.pointer).content == .binding_use) {
+                        const binding = graph.node(assignment.pointer).content.binding_use;
+                        source.offset += @intCast(graph.text(graph.binding(binding).name).len);
+                    }
+                    try sink.add(
+                        diagnosticLocation(graph, sink, source),
+                        .semantic,
+                        "cannot assign through pointer '{s}' because it is read-only; use '$&' when acquiring it",
+                        .{name.items},
+                    );
                 }
-                try sink.add(
-                    diagnosticLocation(graph, sink, source),
-                    .semantic,
-                    "cannot assign through pointer '{s}' because it is read-only; use '$&' when acquiring it",
-                    .{name.items},
-                );
-            }
-            return true;
-        },
-        .array_index => |access| {
-            const index_ty = graph.node(access.index).ty orelse continue;
-            if (global_types.isBuiltin(graph, index_ty, .UIntNative)) continue;
-            // Integer literals retain their default type until a consumer gives
-            // them context. Array indexing supplies UIntNative context, so a
-            // non-negative literal is valid even if its node still says Int32.
-            if (graph.node(access.index).content == .int_literal and
-                graph.node(access.index).content.int_literal >= 0) continue;
-            if (diagnostics) |sink| {
-                var name = std.array_list.Managed(u8).init(allocator);
-                defer name.deinit();
-                try appendTypeName(&name, graph, index_ty);
-                try sink.add(
-                    diagnosticLocation(graph, sink, graph.node(access.index).source),
-                    .semantic,
-                    "array index must be 'UIntNative', got '{s}'",
-                    .{name.items},
-                );
-            }
-            return true;
-        },
-        else => {},
+                return true;
+            },
+            .array_index => |access| {
+                const index_ty = graph.node(access.index).ty orelse continue;
+                if (global_types.isBuiltin(graph, index_ty, .UIntNative)) continue;
+                // Integer literals retain their default type until a consumer gives
+                // them context. Array indexing supplies UIntNative context, so a
+                // non-negative literal is valid even if its node still says Int32.
+                if (graph.node(access.index).content == .int_literal and
+                    graph.node(access.index).content.int_literal >= 0) continue;
+                if (diagnostics) |sink| {
+                    var name = std.array_list.Managed(u8).init(allocator);
+                    defer name.deinit();
+                    try appendTypeName(&name, graph, index_ty);
+                    try sink.add(
+                        diagnosticLocation(graph, sink, graph.node(access.index).source),
+                        .semantic,
+                        "array index must be 'UIntNative', got '{s}'",
+                        .{name.items},
+                    );
+                }
+                return true;
+            },
+            else => {},
         }
     }
     for (graph.bindings.items, 0..) |destination, raw| {
@@ -2090,7 +2106,18 @@ fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.G
         .builtin => |builtin| try buffer.appendSlice(@tagName(builtin)),
         .declared => |declaration| try buffer.appendSlice(graph.text(graph.declaration(declaration).name)),
         .generic => |generic| {
-            try buffer.appendSlice(graph.text(graph.declaration(generic.base).name));
+            const base_name = graph.text(graph.declaration(generic.base).name);
+            if (std.mem.eql(u8, base_name, "Nullable")) {
+                for (graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| switch (argument.value) {
+                    .type => |value| {
+                        try buffer.append('?');
+                        try appendTypeName(buffer, graph, value);
+                        return;
+                    },
+                    else => {},
+                };
+            }
+            try buffer.appendSlice(base_name);
             try buffer.appendSlice("#(");
             for (graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len], 0..) |argument, index| {
                 if (index != 0) try buffer.appendSlice(", ");
@@ -2117,6 +2144,11 @@ fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.G
             try buffer.appendSlice(if (pointer.mutability == .read_write) "$&" else "&");
             try appendTypeName(buffer, graph, pointer.child);
         },
+        .nullable => |child| {
+            try buffer.append('?');
+            try appendTypeName(buffer, graph, child);
+        },
+        .structural_choice, .inferred_choice => try buffer.appendSlice("choice"),
         .array => unreachable,
         .structural => try buffer.appendSlice("{...}"),
         else => try buffer.appendSlice("<type>"),

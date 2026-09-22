@@ -17,6 +17,12 @@ pub const Stats = struct {
     for_loops: u32 = 0,
 };
 
+pub const ForEachFailure = struct {
+    source: primitives.SourceRef,
+    actual: global_sg.GlobalTypeId,
+    contract_name: []const u8,
+};
+
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -26,6 +32,7 @@ pub const Resolver = struct {
     generic_functions: ?*generic_functions_mod.Resolver = null,
     abstracts: ?*abstract_mod.Resolver = null,
     stats: Stats = .{},
+    for_each_failure: ?ForEachFailure = null,
 
     pub fn materializeSugarTypes(self: *Resolver) !bool {
         // Work over the original length: materializing nullable payload structs
@@ -540,7 +547,14 @@ pub const Resolver = struct {
         } else null;
         const contract_ty = if (existing_reference) |pointer_type| pointer_type.child else iterable_ty;
         const iterable_contract = self.visibleAbstract(module_index, iterable_contract_name) orelse return .deferred;
-        if (!try abstracts.implements(contract_ty, iterable_contract)) return .invalid;
+        if (!try abstracts.implements(contract_ty, iterable_contract)) {
+            if (self.for_each_failure == null) self.for_each_failure = .{
+                .source = .{ .file_index = o.file_base + value.source.file_index, .offset = value.source.offset },
+                .actual = iterable_ty,
+                .contract_name = iterable_contract_name,
+            };
+            return .invalid;
+        }
 
         const source = self.graph.nodes.items[@intFromEnum(iterable)].source;
         var iterable_declaration: ?global_sg.GlobalNodeId = null;

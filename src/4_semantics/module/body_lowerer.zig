@@ -770,6 +770,7 @@ const Context = struct {
             .iterable = iterable.node,
             .body = body,
             .mode = graph_mod.forModeFromSyntax(statement.mode),
+            .source = self.sourceRef(node),
         } }, try self.builtin(.Void));
     }
 
