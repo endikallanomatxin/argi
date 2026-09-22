@@ -46,6 +46,14 @@ pub const GenericTypeConstraintFailure = struct {
     source: primitives.SourceRef,
 };
 
+pub const AbstractFieldStorageConflict = struct {
+    field_name: primitives.StringRange,
+    abstract_type: global_sg.GlobalTypeId,
+    existing_type: global_sg.GlobalTypeId,
+    actual_type: global_sg.GlobalTypeId,
+    source: primitives.SourceRef,
+};
+
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -53,6 +61,7 @@ pub const Resolver = struct {
     offsets: []const globalizer.Offsets,
     core: *core_mod.Resolver,
     generics: *generic_mod.Resolver,
+    field_storage_conflict: ?AbstractFieldStorageConflict = null,
     stats: Stats = .{},
     pub fn deinit(self: *Resolver) void {
         _ = self;
@@ -574,6 +583,7 @@ pub const Resolver = struct {
         struct_type: global_sg.GlobalTypeId,
         field_index: u32,
         actual_type: global_sg.GlobalTypeId,
+        source: primitives.SourceRef,
         legacy_field_type: ?*global_sg.GlobalTypeId = null,
     };
 
@@ -592,6 +602,7 @@ pub const Resolver = struct {
                     .struct_type = store.struct_type,
                     .field_index = store.field_index,
                     .actual_type = actual,
+                    .source = self.graph.node(store.value).source,
                     .legacy_field_type = &store.field_type,
                 };
             },
@@ -614,6 +625,7 @@ pub const Resolver = struct {
                     .struct_type = struct_ty,
                     .field_index = access.field_index,
                     .actual_type = actual,
+                    .source = self.graph.node(assignment.value).source,
                 };
             },
             else => return null,
@@ -634,8 +646,16 @@ pub const Resolver = struct {
             if (global_types.equal(self.graph, field.ty, assignment.actual_type)) continue;
             if (!try self.abstractStorageCompatible(field.ty, assignment.actual_type)) continue;
             if (field.storage_type) |existing| {
-                if (!global_types.equal(self.graph, existing, assignment.actual_type))
-                    return error.ConflictingAbstractFieldStorage;
+                if (!global_types.equal(self.graph, existing, assignment.actual_type)) {
+                    if (self.field_storage_conflict == null) self.field_storage_conflict = .{
+                        .field_name = field.name,
+                        .abstract_type = field.ty,
+                        .existing_type = existing,
+                        .actual_type = assignment.actual_type,
+                        .source = assignment.source,
+                    };
+                    continue;
+                }
             } else {
                 field.storage_type = assignment.actual_type;
                 changed = true;
