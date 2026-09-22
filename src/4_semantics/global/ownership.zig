@@ -538,8 +538,8 @@ pub const Resolver = struct {
         }
 
         const fields = global_types.fields(self.graph, ty) orelse return null;
-        const start: u32 = @intCast(self.graph.auto_deinit_fields.items.len);
-        var count: u32 = 0;
+        var direct_fields: std.ArrayList(global_sg.AutoDeinitField) = .empty;
+        defer direct_fields.deinit(self.allocator);
         for (0..fields.len) |index| {
             const field = self.graph.fields.items[fields.start + @as(u32, @intCast(index))];
             const projected = try self.appendNode(
@@ -551,38 +551,40 @@ pub const Resolver = struct {
                     .field_index = @intCast(index),
                 } },
             );
-            if (try self.appendAutoField(@intCast(index), projected, field.ty, context, module_index)) count += 1;
+            if (try self.buildAutoField(@intCast(index), projected, field.ty, context, module_index)) |auto_field|
+                try direct_fields.append(self.allocator, auto_field);
         }
-        if (count == 0) return null;
+        if (direct_fields.items.len == 0) return null;
+        const start: u32 = @intCast(self.graph.auto_deinit_fields.items.len);
+        try self.graph.auto_deinit_fields.appendSlice(self.allocator, direct_fields.items);
         return .{
             .binding = binding,
             .deinit_fn = null,
-            .fields = .{ .start = start, .len = count },
+            .fields = .{ .start = start, .len = @intCast(direct_fields.items.len) },
         };
     }
 
-    fn appendAutoField(
+    fn buildAutoField(
         self: *Resolver,
         field_index: u32,
         target: global_sg.GlobalNodeId,
         ty: global_sg.GlobalTypeId,
         context: reach_context.Context,
         module_index: usize,
-    ) !bool {
-        if (self.graph.semanticType(ty) == .pointer) return false;
+    ) !?global_sg.AutoDeinitField {
+        if (self.graph.semanticType(ty) == .pointer) return null;
         if (try self.resolveDestructor(target, context, module_index)) |resolved| {
-            try self.graph.auto_deinit_fields.append(self.allocator, .{
+            return .{
                 .field_index = field_index,
                 .deinit_fn = resolved.function,
                 .input = resolved.input,
                 .self_field_index = resolved.self_field_index,
-            });
-            return true;
+            };
         }
 
-        const fields = global_types.fields(self.graph, ty) orelse return false;
-        const child_start: u32 = @intCast(self.graph.auto_deinit_fields.items.len);
-        var child_count: u32 = 0;
+        const fields = global_types.fields(self.graph, ty) orelse return null;
+        var children: std.ArrayList(global_sg.AutoDeinitField) = .empty;
+        defer children.deinit(self.allocator);
         for (0..fields.len) |index| {
             const field = self.graph.fields.items[fields.start + @as(u32, @intCast(index))];
             const projected = try self.appendNode(
@@ -594,15 +596,17 @@ pub const Resolver = struct {
                     .field_index = @intCast(index),
                 } },
             );
-            if (try self.appendAutoField(@intCast(index), projected, field.ty, context, module_index)) child_count += 1;
+            if (try self.buildAutoField(@intCast(index), projected, field.ty, context, module_index)) |child|
+                try children.append(self.allocator, child);
         }
-        if (child_count == 0) return false;
-        try self.graph.auto_deinit_fields.append(self.allocator, .{
+        if (children.items.len == 0) return null;
+        const child_start: u32 = @intCast(self.graph.auto_deinit_fields.items.len);
+        try self.graph.auto_deinit_fields.appendSlice(self.allocator, children.items);
+        return .{
             .field_index = field_index,
             .deinit_fn = null,
-            .fields = .{ .start = child_start, .len = child_count },
-        });
-        return true;
+            .fields = .{ .start = child_start, .len = @intCast(children.items.len) },
+        };
     }
 
     fn resolveDestructor(
