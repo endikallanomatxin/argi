@@ -20,6 +20,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        // Zig 0.16 error tracing can fault while recording handled I/O errors
+        // (reproduced in createDirPath when PathAlreadyExists is returned).
+        .error_tracing = if (optimize == .Debug) false else null,
     });
 
     const llvm_c = b.addTranslateC(.{

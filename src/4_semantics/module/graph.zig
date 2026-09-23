@@ -176,7 +176,6 @@ pub const FileInput = struct {
     is_bundled_core: bool = false,
 };
 
-
 /// Construction-only lookup from durable source provenance back into syntax.
 /// Completed ModuleSG declarations keep source identity, not AST identity.
 pub fn declarationSyntaxNode(files: []const FileInput, declaration: Declaration) ?syn.NodeIndex {

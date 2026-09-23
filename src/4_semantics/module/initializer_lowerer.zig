@@ -330,7 +330,6 @@ const Context = struct {
     fn sourceRef(self: *const Context, node: syn.NodeIndex) primitives.SourceRef {
         return .{ .file_index = self.file_index, .offset = self.tree.location(node).offset };
     }
-
 };
 
 test "module initializer lowering is syntax-free after construction" {

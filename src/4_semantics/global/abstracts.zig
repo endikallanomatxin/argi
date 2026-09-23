@@ -963,9 +963,7 @@ pub const Resolver = struct {
                 &bindings,
             ) catch continue;
 
-            for (located.parameterized.parameters.start..
-                located.parameterized.parameters.start + located.parameterized.parameters.len) |raw|
-            {
+            for (located.parameterized.parameters.start..located.parameterized.parameters.start + located.parameterized.parameters.len) |raw| {
                 const parameter = storage.comptime_parameters.items[raw];
                 const constraint_id = parameter.constraint orelse continue;
                 if (parameter.kind != .type) continue;

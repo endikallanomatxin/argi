@@ -216,7 +216,6 @@ pub fn matchInput(
     return .{ .score = score };
 }
 
-
 pub fn matchInputWithReach(
     compatibility: Abstract,
     expected_fields: global_sg.FieldRange,
