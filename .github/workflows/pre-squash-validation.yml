@@ -1,0 +1,46 @@
+name: Pre-squash validation
+
+on:
+  push:
+    branches:
+      - compact-semantic-graph-chatgpt
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pre-squash-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Install LLVM 21
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+          sudo apt-get install -y llvm-21-dev clang-21
+          rm llvm.sh
+      - name: Check formatting
+        run: zig fmt --check build.zig src tests/test.zig
+      - name: Check diff whitespace
+        run: git diff --check origin/performance...HEAD
+      - name: Build compiler
+        run: zig build
+      - name: Run internal tests
+        run: zig build test-internal
+      - name: Run program tests
+        timeout-minutes: 12
+        run: zig build test-programs
