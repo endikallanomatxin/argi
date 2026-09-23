@@ -80,12 +80,12 @@ pub fn typeView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.Module
 
 pub fn fieldView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFieldId) !entities.Field {
     var raw: usize = @intFromEnum(id);
-    if (raw < graph.fields.items.len) return compatibilityField(graph, id, graph.fields.items[raw]);
+    if (raw < graph.fields.items.len) return constructionField(graph, id, graph.fields.items[raw]);
     raw -= graph.fields.items.len;
 
     if (raw < graph.structural_fields.items.len) {
         const logical: entities.ModuleFieldId = @enumFromInt(@as(u32, @intCast(graph.fields.items.len + raw)));
-        return compatibilityField(graph, logical, graph.structural_fields.items[raw]);
+        return constructionField(graph, logical, graph.structural_fields.items[raw]);
     }
     raw -= graph.structural_fields.items.len;
 
@@ -93,7 +93,7 @@ pub fn fieldView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.Modul
     return error.InvalidModuleFieldId;
 }
 
-fn compatibilityField(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFieldId, field: graph_mod.Field) !entities.Field {
+fn constructionField(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFieldId, field: graph_mod.Field) !entities.Field {
     if (field.module_file_index >= graph.file_offsets.items.len) return error.InvalidModuleFileIndex;
     const semantic = findFieldSemantic(graph, id);
     if (field.has_default and (semantic == null or semantic.?.default_value == null))
@@ -110,12 +110,12 @@ fn compatibilityField(graph: *const graph_mod.ModuleSemanticGraph, id: entities.
 pub fn variantView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleVariantId) !entities.ChoiceVariant {
     var raw: usize = @intFromEnum(id);
     if (raw < graph.choice_variant_entries.items.len)
-        return compatibilityVariant(graph, id, graph.choice_variant_entries.items[raw]);
+        return constructionVariant(graph, id, graph.choice_variant_entries.items[raw]);
     raw -= graph.choice_variant_entries.items.len;
 
     if (raw < graph.structural_choice_variants.items.len) {
         const logical: entities.ModuleVariantId = @enumFromInt(@as(u32, @intCast(graph.choice_variant_entries.items.len + raw)));
-        return compatibilityVariant(graph, logical, graph.structural_choice_variants.items[raw]);
+        return constructionVariant(graph, logical, graph.structural_choice_variants.items[raw]);
     }
     raw -= graph.structural_choice_variants.items.len;
 
@@ -123,7 +123,7 @@ pub fn variantView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.Mod
     return error.InvalidModuleVariantId;
 }
 
-fn compatibilityVariant(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleVariantId, variant: graph_mod.ChoiceVariant) !entities.ChoiceVariant {
+fn constructionVariant(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleVariantId, variant: graph_mod.ChoiceVariant) !entities.ChoiceVariant {
     if (variant.module_file_index >= graph.file_offsets.items.len) return error.InvalidModuleFileIndex;
     const semantic = findVariantSemantic(graph, id);
     return .{
@@ -182,7 +182,7 @@ fn findVariantSemantic(graph: *const graph_mod.ModuleSemanticGraph, id: entities
     return null;
 }
 
-test "module views expose compatibility types followed by one canonical type tail" {
+test "module views expose construction types followed by one canonical type tail" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
     defer graph.deinit(allocator);

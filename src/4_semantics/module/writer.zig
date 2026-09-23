@@ -6,48 +6,48 @@ const strings = @import("../primitives/strings.zig");
 const primitives = @import("../primitives/schema.zig");
 
 /// Canonical mutation API for ModuleSema. New semantic lowering should use this
-/// instead of appending to migration-era compatibility tables directly.
+/// instead of appending to discovery-time construction tables directly.
 pub const Writer = struct {
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
-    compatibility_bases: storage.CompatibilityBases,
+    construction_bases: storage.ConstructionBases,
     pending_owner_function: ?entities.ModuleFunctionId = null,
 
     pub fn init(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph) Writer {
-        const bases = graph.semantic.compatibility_bases orelse blk: {
-            const value = storage.CompatibilityBases{
+        const bases = graph.semantic.construction_bases orelse blk: {
+            const value = storage.ConstructionBases{
                 .types = @intCast(graph.types.items.len),
                 .fields = @intCast(graph.fields.items.len + graph.structural_fields.items.len),
                 .variants = @intCast(graph.choice_variant_entries.items.len + graph.structural_choice_variants.items.len),
                 .generic_arguments = @intCast(graph.generic_type_arguments.items.len),
             };
-            graph.semantic.compatibility_bases = value;
+            graph.semantic.construction_bases = value;
             break :blk value;
         };
-        return .{ .allocator = allocator, .graph = graph, .compatibility_bases = bases };
+        return .{ .allocator = allocator, .graph = graph, .construction_bases = bases };
     }
 
     pub fn addString(self: *Writer, text: []const u8) !graph_mod.StringRange {
         return strings.append(&self.graph.strings, self.allocator, text);
     }
 
-    fn ensureCompatibilityPrefixesStable(self: *const Writer) !void {
-        const bases = self.compatibility_bases;
+    fn ensureConstructionPrefixesStable(self: *const Writer) !void {
+        const bases = self.construction_bases;
         if (self.graph.types.items.len != @as(usize, bases.types) or
             self.graph.fields.items.len + self.graph.structural_fields.items.len != @as(usize, bases.fields) or
             self.graph.choice_variant_entries.items.len + self.graph.structural_choice_variants.items.len != @as(usize, bases.variants) or
             self.graph.generic_type_arguments.items.len != @as(usize, bases.generic_arguments))
         {
-            return error.ModuleSemanticCompatibilityPrefixMutated;
+            return error.ModuleSemanticConstructionPrefixMutated;
         }
     }
 
     fn canonicalTypeBase(self: *const Writer) usize {
-        return self.compatibility_bases.types;
+        return self.construction_bases.types;
     }
 
     pub fn addType(self: *Writer, ty: entities.ModuleType) !entities.ModuleTypeId {
-        try self.ensureCompatibilityPrefixesStable();
+        try self.ensureConstructionPrefixesStable();
         const id = try logicalId(
             entities.ModuleTypeId,
             self.canonicalTypeBase() + self.graph.semantic.types.items.len,
@@ -71,30 +71,30 @@ pub const Writer = struct {
     }
 
     pub fn addField(self: *Writer, field: entities.Field) !entities.ModuleFieldId {
-        try self.ensureCompatibilityPrefixesStable();
+        try self.ensureConstructionPrefixesStable();
         const id = try logicalId(
             entities.ModuleFieldId,
-            @as(usize, self.compatibility_bases.fields) + self.graph.semantic.fields.items.len,
+            @as(usize, self.construction_bases.fields) + self.graph.semantic.fields.items.len,
         );
         try self.graph.semantic.fields.append(self.allocator, field);
         return id;
     }
 
     pub fn addVariant(self: *Writer, variant: entities.ChoiceVariant) !entities.ModuleVariantId {
-        try self.ensureCompatibilityPrefixesStable();
+        try self.ensureConstructionPrefixesStable();
         const id = try logicalId(
             entities.ModuleVariantId,
-            @as(usize, self.compatibility_bases.variants) + self.graph.semantic.variants.items.len,
+            @as(usize, self.construction_bases.variants) + self.graph.semantic.variants.items.len,
         );
         try self.graph.semantic.variants.append(self.allocator, variant);
         return id;
     }
 
     pub fn addGenericArgument(self: *Writer, argument: entities.GenericArgument) !entities.ModuleGenericArgId {
-        try self.ensureCompatibilityPrefixesStable();
+        try self.ensureConstructionPrefixesStable();
         const id = try logicalId(
             entities.ModuleGenericArgId,
-            @as(usize, self.compatibility_bases.generic_arguments) + self.graph.semantic.generic_arguments.items.len,
+            @as(usize, self.construction_bases.generic_arguments) + self.graph.semantic.generic_arguments.items.len,
         );
         try self.graph.semantic.generic_arguments.append(self.allocator, argument);
         return id;
@@ -253,7 +253,7 @@ test "module semantic writer rejects compatibility prefix growth after canonical
     try graph.types.append(allocator, .{ .builtin = .Bool });
 
     try std.testing.expectError(
-        error.ModuleSemanticCompatibilityPrefixMutated,
+        error.ModuleSemanticConstructionPrefixMutated,
         writer.addResolvedType(.{ .builtin = .Float32 }),
     );
 }

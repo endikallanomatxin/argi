@@ -154,7 +154,7 @@ pub fn run(
 
         indexed_build.compileTarget(module_dir, flags, .{
             .frontend_options = .{
-                .semantizer = .{
+                .semantizing = .{
                     .include_tests = true,
                     .selected_test_name = test_decl.name,
                     .implicit_testing_module_dir = testing_module_dir,

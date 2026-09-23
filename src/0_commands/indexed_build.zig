@@ -95,7 +95,6 @@ fn printStats(
     std.debug.print("  ModuleSemanticGraph bytes:    {d}\n", .{pipeline.moduleSemanticStorageBytes()});
     std.debug.print("  GlobalSemanticGraph bytes:    {d}\n", .{pipeline.globalSemanticStorageBytes()});
     std.debug.print("  ModuleSema precise functions: {d}\n", .{pipeline.module_lowered_functions});
-    std.debug.print("  ModuleSema fallback functions:{d}\n", .{pipeline.module_fallback_functions});
     std.debug.print("  pending global operations:    {d}\n", .{pipeline.global_stats.pending_total});
     std.debug.print("  resolved global operations:   {d}\n", .{pipeline.global_stats.pending_resolved});
 
@@ -265,7 +264,7 @@ pub fn check(io: std.Io, environ_map: ?*const std.process.Environ.Map, args: []c
     });
     const testing_module_dir = try std.fs.path.join(allocator, &.{ core_dir, "testing" });
     try compileTarget(parsed.target_path, parsed.flags, .{
-        .frontend_options = .{ .semantizer = .{
+        .frontend_options = .{ .semantizing = .{
             .include_tests = true,
             .implicit_testing_module_dir = testing_module_dir,
             .exhaustive_function_bodies = true,

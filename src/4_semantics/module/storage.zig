@@ -5,10 +5,10 @@ const primitives = @import("../primitives/schema.zig");
 const callable = @import("../primitives/callable.zig");
 const type_shapes = @import("../primitives/type_shapes.zig");
 
-/// Frozen sizes of the migration-era prefixes that precede canonical Module*
+/// Frozen sizes of the discovery-time prefixes that precede canonical Module*
 /// identities. Once canonical lowering starts these prefixes must never grow:
 /// doing so would shift every already-issued logical ID.
-pub const CompatibilityBases = struct {
+pub const ConstructionBases = struct {
     types: u32,
     fields: u32,
     variants: u32,
@@ -17,7 +17,7 @@ pub const CompatibilityBases = struct {
 
 pub const Storage = struct {
     local_semantics_complete: bool = false,
-    compatibility_bases: ?CompatibilityBases = null,
+    construction_bases: ?ConstructionBases = null,
 
     declaration_semantics: std.ArrayList(entities.DeclarationSemantic) = .empty,
     declaration_bindings: std.ArrayList(entities.DeclarationBinding) = .empty,
@@ -29,7 +29,7 @@ pub const Storage = struct {
     field_semantics: std.ArrayList(entities.FieldSemantic) = .empty,
     variant_semantics: std.ArrayList(entities.VariantSemantic) = .empty,
 
-    /// Canonical semantic tails appended after the remaining builder-era
+    /// Canonical semantic tails appended after the discovery-time
     /// prefixes owned by ModuleSemanticGraph itself.
     fields: std.ArrayList(entities.Field) = .empty,
     variants: std.ArrayList(entities.ChoiceVariant) = .empty,
@@ -123,7 +123,7 @@ pub const Storage = struct {
     }
 
     pub fn storageBytes(self: *const Storage) usize {
-        return @sizeOf(bool) + @sizeOf(?CompatibilityBases) +
+        return @sizeOf(bool) + @sizeOf(?ConstructionBases) +
             self.declaration_semantics.items.len * @sizeOf(entities.DeclarationSemantic) +
             self.declaration_bindings.items.len * @sizeOf(entities.DeclarationBinding) +
             self.module_aliases.items.len * @sizeOf(entities.ModuleAlias) +

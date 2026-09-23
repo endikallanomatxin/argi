@@ -15,7 +15,6 @@ const complete_verify = @import("complete_verify.zig");
 
 pub const BuildStats = struct {
     lowered_functions: u32 = 0,
-    fallback_functions: u32 = 0,
     global_bindings: u32 = 0,
     module_aliases: u32 = 0,
     global_roots: u32 = 0,
@@ -56,7 +55,7 @@ pub fn buildWithAbstractCatalog(
     // Declaration discovery can leave interfaces whose imported/generic types
     // and default values still need source syntax. Finish that construction
     // work first; everything after canonicalization consumes one Module* ID
-    // space and must not depend on the builder-era compatibility prefixes.
+    // space and must not depend on the discovery-time construction prefixes.
     const module_aliases = try module_alias_lowerer.lower(allocator, &graph, files);
     const initializers = try initializer_lowerer.lower(allocator, &graph, files);
     try lowerNominalLayouts(allocator, &graph, files);
@@ -81,7 +80,6 @@ pub fn buildWithAbstractCatalog(
         .graph = graph,
         .stats = .{
             .lowered_functions = bodies.lowered_functions,
-            .fallback_functions = 0,
             .global_bindings = initializers.global_bindings,
             .module_aliases = module_aliases,
             .global_roots = global_roots,
@@ -145,5 +143,4 @@ test "module semantizer completes syntax-independent local semantics" {
     defer result.graph.deinit(allocator);
     try std.testing.expect(result.graph.semantic.local_semantics_complete);
     try std.testing.expect(result.stats.local_semantics_complete);
-    try std.testing.expectEqual(@as(u32, 0), result.stats.fallback_functions);
 }

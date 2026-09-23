@@ -64,7 +64,7 @@ pub const Declaration = struct {
     name: StringRange,
     source_offset: u32,
     module_file_index: u32,
-    // Temporary syntax provenance bridge while expression lowering is migrated.
+    // Construction-time syntax provenance used while lowering declaration bodies.
     type_id: ?ModuleTypeId = null,
     function_id: ?ModuleFunctionId = null,
     struct_fields: ?FieldRange = null,
@@ -86,7 +86,7 @@ pub const Symbol = struct {
 };
 
 /// Compact semantic storage owned by one module directory. Source-file indices
-/// and source offsets in compatibility tables are provenance only. Durable
+/// and source offsets in construction tables are provenance only. Durable
 /// bodies and semantic identities live in `semantic` using Module* IDs.
 pub const ModuleSemanticGraph = struct {
     module_dir: []const u8 = "",
@@ -822,8 +822,8 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
             .generic_parameter_count = genericParameterCount(tree, node),
         });
     }
-    // Syntax-node order permits binary lookup during the global consumer
-    // migration without retaining a dense map for every expression node.
+    // Syntax-node order permits binary lookup during ModuleSema construction
+    // without retaining a dense map for every expression node.
     for (tree.nodes.items(.tag), 0..) |tag, index| {
         if (tag != .type_name) continue;
         const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(index)));

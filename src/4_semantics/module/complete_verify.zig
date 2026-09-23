@@ -9,7 +9,7 @@ const verify = @import("../semantic_verify.zig");
 
 pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
     try core.verifyModule(graph);
-    if (graph.semantic.local_semantics_complete and canonicalize_storage.hasCompatibilityPrefixes(graph))
+    if (graph.semantic.local_semantics_complete and canonicalize_storage.hasConstructionPrefixes(graph))
         return error.CompletedModuleRetainsCompatibilityStorage;
     try parameterized_state.verifyParameterizedForms(graph);
     try generic_instances.verifyGenericInstances(graph, graph.semantic.local_semantics_complete);
