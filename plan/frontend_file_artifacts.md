@@ -451,7 +451,7 @@ Persisting FileSG as another cache layer would therefore add:
 - local IDs that later require relocation;
 - another serialization format and validity rule;
 - another merge pass;
-- duplicated semantic traversal during migration;
+- duplicated semantic traversal;
 - limited saved work compared with caching the complete ModuleSG.
 
 For V1, prefer the simpler model:
@@ -487,129 +487,39 @@ LSP operations or source reconstruction require it. Ordinary ModuleSG cache hits
 should not read and parse source only because a later error might need source
 text.
 
-## Current branch and migration direction
+## Current implementation
 
-The `compact-semantic-graph` branch first accumulated useful exploratory work
-around `FileSemanticGraph` and a `GlobalSemanticGraphBuilder`:
-
-- frontend artifact naming (`FileTokenList`, `FileSyntaxTree`);
-- file-local declaration discovery;
-- lexical scope/binding/reference discovery;
-- owned shared string ranges;
-- symbolic type references;
-- import references;
-- file-local IDs;
-- flatten/relocation experiments for declarations and lexical tables;
-- integration of some pre-discovered information into the legacy Semantizer;
-- storage and timing instrumentation.
-
-This work was useful because it exposed the natural semantic boundary. It should
-now be treated as migration scaffolding, not as architecture to preserve.
-
-Do **not** continue investing in a persistent FileSG format or complete
-file-to-global relocation machinery.
-
-Reuse or adapt the algorithms that are still useful, but redirect them toward:
+The in-memory compiler now follows the target architecture described above:
 
 ```text
-[]FileSyntaxTree for one module
-        ↓
-ModuleSemanticGraphBuilder
+FileSyntaxTree[] per module directory
         ↓
 ModuleSemanticGraph
+        ↓
+GlobalSemanticGraph
+        ↓
+Safety
+        ↓
+Codegen
 ```
 
-In particular:
+ModuleSema discovers declarations and simple interfaces first, then lowers the
+remaining module semantics. During construction it can use discovery-time
+prefix tables; `canonicalize_storage` folds those tables into one canonical
+`Module*` ID space before the graph reaches GlobalSema. That construction
+state is not part of the future persistent ModuleSG ABI.
 
-- declaration discovery should populate module declaration storage directly;
-- lexical scope and binding discovery should allocate module IDs directly;
-- type/import reference extraction should feed module resolution directly;
-- file provenance should remain available for diagnostics;
-- the current global flattening helpers can inform the eventual
-  ModuleSG-to-GlobalSG globalization layer, where relocation is actually useful.
+GlobalSema globalizes module-owned IDs, resolves cross-module and whole-program
+operations, materializes generic/abstract specializations and produces the
+indexed GlobalSemanticGraph consumed directly by Safety, Codegen and the LSP.
+The pointer-heavy semantic graph and the intermediate FileSemanticGraph path are
+no longer part of the compiler pipeline.
 
-Do not preserve an intermediate FileSG merely to avoid deleting or reshaping code
-written during this investigation.
+Persistent FileSyntaxTree and ModuleSG caches are the remaining work described
+below. The cache format must serialize the canonical module representation, not
+ModuleSema's construction-only state.
 
-The Phase 0 pivot is now reflected in the implementation. `FrontendPipeline`
-groups syntax trees by their directory, constructs one `ModuleSemanticGraph` per
-group directly from those trees, and globalizes module graphs. Declaration,
-reference, string and lexical storage is module-owned; file ordinals inside it
-are module-local provenance and are translated to invocation `FileId`s only by
-the temporary global compatibility bridge. No `FileSemanticGraph` artifact or
-file-to-global semantic merge remains.
-
-Module file provenance is now stored as module-owned direct-file paths rather
-than invocation `FileId`s. Globalization matches those stable identities against
-the current `SourceDb` only when constructing the compatibility graph.
-
-## Implementation plan
-
-### Phase 0 — pivot the current scaffolding (complete)
-
-1. Keep `FileTokenList` and `FileSyntaxTree` as the per-file frontend artifacts.
-2. Introduce an explicit module grouping in the frontend pipeline: one module is
-   one directory and contains its direct `.rg` files.
-3. Introduce `ModuleSemanticGraph` / `ModuleSemanticGraphBuilder` terminology and
-   storage.
-4. Stop extending `FileSemanticGraph` as a persistent or complete semantic
-   artifact.
-5. Move/reuse file declaration, lexical, type-reference and import discovery so
-   it writes directly into module-owned builder state.
-6. Remove file-local relocation layers once their consumers have moved.
-7. Keep tests that describe language semantics and ownership guarantees; rewrite
-   tests that only exist to validate the obsolete file-to-global architecture.
-
-### Phase 1 — direct module semantic analysis (in progress)
-
-1. [x] Give ModuleSema all `FileSyntaxTree`s belonging to one module.
-2. [x] Discover all top-level declarations before resolving module semantics.
-3. [x] Build module symbol indexes.
-4. [ ] Semantize module-local types and callable interfaces. Module-local type
-   identities, simple nominal struct and choice shapes, and non-generic callable
-   interfaces made from names, builtins, pointers, arrays, nullable types and
-   inferred errable types, anonymous structures (with temporary syntax
-   provenance for field defaults), anonymous choices, type-only generic
-   instantiations and literal-length `Array`
-   instantiations and resolvable `choice_union` combinations are now produced
-   and consumed; richer type forms remain.
-5. [ ] Lower lexical scopes, bindings, expressions and control flow directly to
-   module IDs.
-6. [ ] Resolve cross-file references inside the same module. Unqualified named
-   type references are the first migrated case.
-7. [ ] Emit explicit external-module references and pending global operations for
-   everything whose answer can depend on another module. Named type references
-   now distinguish builtin, module-local and external requirements.
-8. [x] Ensure ModuleSema does not need semantic state from imported modules to build
-   the basic cacheable ModuleSG.
-
-### Phase 2 — compact `ModuleSemanticGraph`
-
-1. Stabilize the semantic tables and ID taxonomy before optimizing layout.
-2. Convert hot/large tables to data-oriented compact storage as justified by
-   access patterns.
-3. Introduce module-local type IDs and canonicalization where needed.
-4. Eliminate raw semantic pointers and transient source slices from the
-   persistent representation.
-5. Measure ModuleSG build time, retained bytes and downstream traversal cost.
-
-### Phase 3 — module globalization
-
-1. Make `GlobalSemanticGraphBuilder` consume ModuleSGs rather than FileSGs.
-2. Flatten/relocate module semantic IDs into global IDs where appropriate.
-3. Canonicalize global types where simple relocation is insufficient.
-4. Build global symbol indexes.
-5. Resolve external module references.
-6. Resolve pending cross-module/program operations.
-7. Produce an indexed `GlobalSemanticGraph` for Safety and Codegen.
-
-### Phase 4 — migrate downstream consumers
-
-1. Move Safety from pointer-based SG objects to global semantic IDs/views.
-2. Move Codegen and semantic debug/printing utilities to the indexed global
-   representation.
-3. Remove the legacy pointer-heavy semantic graph once no consumer needs it.
-4. Preserve the current language/test baseline throughout the migration.
+## Remaining implementation plan
 
 ### Phase 5 — persistent caches
 
@@ -637,9 +547,9 @@ Invalidate only affected units when possible. This is preferable to treating
 source files as semantic dependency units merely because they are convenient
 filesystem boundaries.
 
-## Non-goals for the first module-semantic implementation
+## Non-goals for the first persistent-cache implementation
 
-Do not combine these into the initial pivot:
+Do not combine these into the first persistent-cache implementation:
 
 - subtree-incremental parsing;
 - declaration-level incremental Sema;
@@ -651,5 +561,5 @@ Do not combine these into the initial pivot:
 - redesigning every semantic table for maximum compactness before its shape is
   stable.
 
-The immediate goal is simpler: make files the parsing unit, modules the semantic
-unit, and modules the primary semantic cache boundary.
+The next goal is narrower: persist and reuse FileSyntaxTree and ModuleSemanticGraph
+at their existing boundaries before adding finer-grained incremental semantics.

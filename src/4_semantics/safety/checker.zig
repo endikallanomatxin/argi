@@ -10,7 +10,7 @@ const value_state = @import("../value_state.zig");
 const primitives = @import("../primitives/schema.zig");
 
 /// Indexed temporal checker. Program identity is exclusively Global*Id; no
-/// pointer identity or legacy SemanticGraph object participates in state.
+/// pointer identity or pointer-based semantic object participates in state.
 ///
 /// Calls execute transactionally against a cloned caller state. Because
 /// GlobalBindingId is unique program-wide, pointee Places survive the call and

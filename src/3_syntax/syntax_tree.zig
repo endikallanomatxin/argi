@@ -331,7 +331,7 @@ pub const FileSyntaxTree = struct {
         }
     };
 
-    // Compact counts include type syntax, which the legacy parallel Type tree
+    // Compact counts include type syntax, which the former parallel Type tree
     // omitted from its STNode count.
 
     pub fn init(allocator: std.mem.Allocator, file_id: source_db.FileId, tokens: token.View) !FileSyntaxTree {
