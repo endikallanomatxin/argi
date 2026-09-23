@@ -68,6 +68,11 @@ pub const Resolver = struct {
         module_index: u32,
         constraint: parameterized_storage.AbstractConstraintId,
     };
+    const AbstractRefKey = struct {
+        module_index: u32,
+        external: module_entities.ExternalRefId,
+        kind: primitives.DeclarationKind,
+    };
 
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -83,12 +88,14 @@ pub const Resolver = struct {
     known_implementations: std.AutoHashMapUnmanaged(ImplementationKey, void) = .empty,
     known_nonimplementations: std.AutoHashMapUnmanaged(ImplementationKey, GraphGeneration) = .empty,
     constraint_declarations: std.AutoHashMapUnmanaged(ConstraintKey, global_sg.GlobalDeclId) = .empty,
+    resolved_abstract_refs: std.AutoHashMapUnmanaged(AbstractRefKey, global_sg.GlobalDeclId) = .empty,
     cached_implementation_hits: u64 = 0,
     cached_nonimplementation_hits: u64 = 0,
     pub fn deinit(self: *Resolver) void {
         self.known_implementations.deinit(self.allocator);
         self.known_nonimplementations.deinit(self.allocator);
         self.constraint_declarations.deinit(self.allocator);
+        self.resolved_abstract_refs.deinit(self.allocator);
     }
 
     pub fn invalidate_negative_implementation_cache(self: *Resolver) void {
@@ -1792,11 +1799,19 @@ pub const Resolver = struct {
     ) !global_sg.GlobalDeclId {
         return switch (reference) {
             .module => |local| globalizer.globalDecl(self.offsets[module_index], local),
-            .external => |external| self.core.resolveDeclaration(
-                module_index,
-                self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)],
-                &.{kind},
-            ),
+            .external => |external| blk: {
+                const key = AbstractRefKey{ .module_index = @intCast(module_index), .external = external, .kind = kind };
+                if (self.resolved_abstract_refs.get(key)) |declaration| break :blk declaration;
+                // Module declarations are fixed after relocation. Cache only
+                // successful lookups so an unresolved reference can be retried.
+                const declaration = try self.core.resolveDeclaration(
+                    module_index,
+                    self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)],
+                    &.{kind},
+                );
+                try self.resolved_abstract_refs.put(self.allocator, key, declaration);
+                break :blk declaration;
+            },
         };
     }
 
