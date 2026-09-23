@@ -5,29 +5,26 @@
 This document's original checkpoint below records the 2026-09-09 state; its
 test counts and file paths are historical. Development continues on
 `compact-semantic-graph-chatgpt`, using `performance` as the behavior reference.
-The active inventory is `plan/compact_semantic_graph_remaining.md`: 653 / 661
-program tests pass, and the remaining eight tests are the two design questions
-below.
+The active inventory is `plan/compact_semantic_graph_remaining.md`: 655 / 661
+program tests pass, with six failures in one implementation path.
 
-### Open language-design question: calls through erased abstract values
+### Settled language semantics: abstract is static, `Virtual` is dynamic
 
-The remaining String concatenation failures expose a boundary that should not
-be papered over as generic-inference fallout. `concat_views` obtains an
-`allocator: $&Allocator` through `#reach` and calls the free function
-`string_with_capacity`, whose abstract input makes it an abstract-contract
-template. The caller now has only the erased abstract type, while contract
-specialization deliberately requires a concrete implementer. The source
-contract declaration has no executable ABI, so selecting it as an ordinary
-function is not a valid fallback either.
+`description/133_abstract_types.md` requires abstract function inputs to
+monomorphize. Runtime dispatch requires an explicit `Virtual#(...)`.
+`description/33_function_args.md` says a concrete implementer satisfies an
+abstract reached argument. A binding may therefore expose `$&Allocator` while
+retaining `$&CAllocator` as its static implementer. The implementation now
+materializes typed local `#reach` and records this identity for generic
+inference; `system/25_local_typed_reach_binding` passes. This identity must
+never widen the binding's visible member interface.
 
-Before implementing this path, the language needs to choose one of these
-semantics (or define another explicitly): preserve the concrete backing type
-through typed `#reach` bindings so the free function remains statically
-specialized; permit a runtime/virtual specialization of free functions over an
-erased abstract value; or reject such calls and require the abstraction to
-expose the operation as a virtual requirement. This affects representation,
-dispatch, and codegen ABI. Do not relax constrained generic inference to bind
-an abstract declaration as its own implementer merely to make these tests pass.
+The remaining String failures are an implementation gap: `concat_views`
+receives a reached abstract parameter across a function boundary, but the
+concrete implementer is not yet propagated into a specialized body. Its free
+call to `string_with_capacity` consequently sees only `$&Allocator`. Do not
+select the abstract declaration as its own implementer or introduce implicit
+runtime dispatch.
 
 Current examples are `feature_tests/text/12_string_concat` through
 `text/17_string_view_concat_string`; `text/16` and `text/17` expose the direct
@@ -37,36 +34,15 @@ through `text/15`, applies contextual string-literal coercion, and preserves
 the `Errable` output type. Those tests consequently converge on the same
 erased-allocator specialization boundary rather than failing earlier as
 pointer arithmetic or with a stale `&String` binding type.
-`feature_tests/system/25_local_typed_reach_binding` exposes the same erased
-implementer boundary through an explicitly typed local `$&Allocator` and the
-abstract `String.init` initializer. Its `.capacity = 3` operand successfully
-matches `UIntNative` context during candidate scoring; the apparent `Int32`
-mismatch is only the fallback diagnostic after abstract specialization cannot
-recover a concrete allocator type.
+### Settled ownership semantics: `System` can move explicitly
 
-### Open language-design question: canonical identity for the non-movable System capability
-
-`feature_tests/ownership/35X_system_move_by_value` specifies that `System`
-cannot be moved by value even with an explicit `~`; callers must pass a
-reference. The compact graph currently represents `System` as an ordinary
-nominal core declaration. Unlike primitive builtins, it has no canonical role
-or capability bit that the ownership checker can test. Implementing the rule
-by comparing the declaration's displayed name would also forbid unrelated
-user declarations named `System` and would make semantics depend on spelling.
-
-Before restoring this diagnostic, decide where core capability identities live
-after module globalization. Plausible directions include a canonical core
-declaration table or an explicit non-movable type property. The ownership pass
-should consume that identity/property; it should not rediscover the rule by a
-global string search.
-
-The pre-refactor compiler's `isSystemType` did exactly such a name comparison,
-so its passing test establishes the intended prohibition but not a sound way
-to identify the capability. Nor should the rule be generalized to every
-self-referential aggregate: `description/37_memory_management.md` explicitly
-separates logical `~` moves from physical relocation and allows a value with
-internal references to be logically movable. This is a core-capability policy
-decision, not a missing generic provenance rejection.
+The prior `35X_system_move_by_value` negative test enforced a name-based
+restriction from the old compiler. It is now `35_system_move_by_value`, a
+positive build-and-run test. Logical `~` transfers ownership; it does not
+relocate the representation or retarget references. Internal references alone
+do not justify non-movability. `System` remains noncopyable without an explicit
+move. Introduce a non-movable type property only if a separate, general
+semantic reason emerges.
 
 ## Historical implementation notes
 

@@ -12,16 +12,16 @@ belong in `plan/refactor_regressions.md` and should only be linked from here.
 
 ## Measured checkpoint
 
-Current checkpoint after preserving move diagnostics through denied copies:
+Current checkpoint after resolving typed local `#reach` and allowing explicit
+`System` moves:
 
-- 653 / 661 program tests pass.
-- 8 / 661 program tests fail.
-- All 8 remaining failures expose language-design questions documented in
-  `plan/refactor_regressions.md`.
+- 655 / 661 program tests pass.
+- 6 / 661 program tests fail.
+- All six failures share an incomplete static-implementer propagation path.
 
 ## Resolution and generic materialization
 
-### Erased abstract free-function calls
+### Static implementers through propagated `#reach`
 
 Affected tests:
 
@@ -31,38 +31,19 @@ Affected tests:
 - `feature_tests/text/15_string_view_concat_c_string`
 - `feature_tests/text/16_string_view_concat_string_view`
 - `feature_tests/text/17_string_view_concat_string`
-- `feature_tests/system/25_local_typed_reach_binding`
-
-Operator resolution now preserves the eventual overload output type and scores
-contextual literals consistently with ordinary calls. All six tests therefore
-reach `string_with_capacity` with an erased `$&Allocator` but no concrete
-implementer from which to specialize its abstract-contract function. This is
-an open language-design question documented in
-`plan/refactor_regressions.md`. Do not bind the abstract declaration as its own
-implementer or otherwise relax generic inference to force these tests through.
-
-`system/25` reaches the same boundary through an explicitly typed local
-`$&Allocator` binding and the abstract `String.init` initializer. Its integer
-literal passes contextual `UIntNative` scoring; the final diagnostic displays
-the earlier `Int32` type only after specialization fails. Do not treat that
-display as a literal-inference failure.
-
-## Safety and ownership semantics
-
-### Canonical non-movable `System`
-
-Affected test:
-
-- `feature_tests/ownership/35X_system_move_by_value`
-
-This remains an open language-design question in
-`plan/refactor_regressions.md`: the compact graph has no canonical capability
-identity or non-movable property for core `System`. Do not implement the rule
-by comparing a displayed type name.
+Operator resolution preserves the eventual `Errable` output type. All six
+tests reach `string_with_capacity` from `concat_views`, whose `allocator`
+binding is reached through a function boundary. Local typed `#reach` now
+selects and records a concrete static implementer without widening the
+visible `$&Allocator` interface; this closes `system/25`. The same identity
+must be carried when a reached parameter is propagated into and specialized
+through another function. Abstract inputs monomorphize; `Virtual` alone opts
+into runtime dispatch. Do not bind the abstract declaration as its own
+implementer or relax generic inference to force these tests through.
 
 ## Recommended work order
 
-1. Resolve the erased abstract-call semantics before changing allocator
-   specialization or string operators.
-2. Define canonical `System` capability identity and mobility before
-   rejecting by-value transfers.
+1. Carry concrete static-implementer evidence through propagated reached
+   parameters and function specialization.
+2. Verify the six String concatenation paths and global suite without
+   changing their visible abstract interfaces.
