@@ -2703,13 +2703,10 @@ test "feature_tests/ownership/19X_system_noncopyable_argument" {
     );
 }
 
-test "feature_tests/ownership/35X_system_move_by_value" {
-    try buildExpectFailExact("tests/feature_tests/ownership/35X_system_move_by_value",
-        \\tests/feature_tests/ownership/35X_system_move_by_value/main.rg:6:37: error: System cannot be moved by value; pass it by '&' or '$&' instead
-        \\      status_code = consume(.system = ~system)
-        \\                                      ^
-        \\
-    );
+test "feature_tests/ownership/35_system_move_by_value" {
+    const test_path = "tests/feature_tests/ownership/35_system_move_by_value";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
 }
 
 test "feature_tests/ownership/36X_double_move" {
