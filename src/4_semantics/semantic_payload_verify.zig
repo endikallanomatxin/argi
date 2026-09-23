@@ -105,6 +105,7 @@ pub fn binding(comptime Ids: type, value: primitives.Binding(Ids), bounds: Bound
     try require(verify.sourceFits(value.source, bounds.files));
     try require(verify.idFits(value.ty, bounds.types));
     try require(verify.optionalIdFits(value.initialization, bounds.nodes));
+    try require(verify.optionalIdFits(value.static_implementer, bounds.types));
 }
 
 pub fn block(comptime Ids: type, value: primitives.Block(Ids), bounds: Bounds) !void {

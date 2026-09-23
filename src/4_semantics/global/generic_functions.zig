@@ -596,12 +596,25 @@ pub const Resolver = struct {
                     } else |_| {}
                 }
 
-                const actual = self.graph.nodes.items[@intFromEnum(value.value)].ty orelse return false;
+                const actual = self.staticInputType(value.value) orelse return false;
                 if (!try self.inferInputType(module_index, field.ty, actual, bindings)) return false;
                 break;
             }
         }
         return true;
+    }
+
+    /// An abstract-typed reached binding retains its selected implementer for
+    /// monomorphization without widening ordinary member lookup.
+    fn staticInputType(self: *Resolver, node_id: global_sg.GlobalNodeId) ?global_sg.GlobalTypeId {
+        const node = self.graph.node(node_id);
+        const visible = node.ty orelse return null;
+        const binding_id = switch (node.content) {
+            .binding_use => |binding| binding,
+            else => return visible,
+        };
+        const binding = self.graph.binding(binding_id);
+        return binding.static_implementer orelse visible;
     }
 
     fn inferBindingsFromReachDefaults(

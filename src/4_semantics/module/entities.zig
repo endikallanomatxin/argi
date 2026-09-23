@@ -180,6 +180,13 @@ pub const PendingOperation = union(enum) {
         visible_bindings: BindingRange = .{ .start = 0, .len = 0 },
         owner_function: ?ModuleFunctionId = null,
     },
+    resolve_local_reach: struct {
+        node: ModuleNodeId,
+        reach: ModuleNodeId,
+        binding: ModuleBindingId,
+        visible_bindings: BindingRange,
+        owner_function: ?ModuleFunctionId = null,
+    },
     resolve_field: struct {
         node: ModuleNodeId,
         value: ModuleNodeId,

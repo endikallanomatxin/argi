@@ -199,6 +199,9 @@ pub fn Binding(comptime Ids: type) type {
         source: SourceRef,
         ty: Ids.TypeId,
         initialization: ?Ids.NodeId = null,
+        /// Concrete static implementer retained when `ty` exposes an abstract
+        /// interface. This is monomorphization evidence, not the visible type.
+        static_implementer: ?Ids.TypeId = null,
         mutability: Mutability,
     };
 }
