@@ -33,9 +33,13 @@ jobs:
           sudo ./llvm.sh 21
           sudo apt-get install -y llvm-21-dev clang-21
           rm llvm.sh
-      - name: Check formatting
-        run: zig fmt --check build.zig src tests/test.zig
-      - name: Check diff whitespace
+      - name: Format validation working tree
+        run: |
+          zig fmt build.zig src tests/test.zig
+          git diff --check
+      - name: Show formatting diff
+        run: git diff -- build.zig src tests/test.zig
+      - name: Check branch diff whitespace
         run: git diff --check origin/performance...HEAD
       - name: Build compiler
         run: zig build
