@@ -1,3 +1,4 @@
+const std = @import("std");
 const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const global_sg = @import("graph.zig");
@@ -22,6 +23,8 @@ pub const Resolver = struct {
     abstracts: *abstract_mod.Resolver,
     control: *control_mod.Resolver,
     errors: *error_mod.Resolver,
+    profile_io: ?std.Io = null,
+    profile_generic_ns: i96 = 0,
 
     pub fn resolveLocalReach(
         self: *Resolver,
@@ -139,12 +142,15 @@ pub const Resolver = struct {
             .no_match => if (ordinary_deferred) return error.DeferredImplicitFunction,
         }
 
-        const function = self.generic_functions.resolveImplicitGenericFunctionByName(
+        const generic_start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+        const generic_result = self.generic_functions.resolveImplicitGenericFunctionByName(
             module_index,
             name,
             input,
             reach,
-        ) catch |err| switch (err) {
+        );
+        if (self.profile_io) |io| self.profile_generic_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - generic_start;
+        const function = generic_result catch |err| switch (err) {
             error.NoMatchingGenericFunction, error.ConflictingGenericArgument => return null,
             error.DeferredGenericFunction => return error.DeferredImplicitFunction,
             error.AmbiguousGenericFunction => return error.AmbiguousImplicitFunction,

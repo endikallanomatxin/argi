@@ -28,9 +28,24 @@ pub const Options = struct {
     selected_test_name: ?[]const u8 = null,
     exhaustive_function_bodies: bool = true,
     diagnostics: ?*diagnostics_mod.Diagnostics = null,
+    profile_io: ?std.Io = null,
 };
 
 pub const Stats = struct {
+    pub const Timings = struct {
+        relocation_ns: u64 = 0,
+        setup_ns: u64 = 0,
+        fixed_point_ns: u64 = 0,
+        pending_ns: u64 = 0,
+        error_inference_ns: u64 = 0,
+        cleanup_ns: u64 = 0,
+        implicit_destructor_ns: u64 = 0,
+        implicit_generic_lookup_ns: u64 = 0,
+        generic_constraints_ns: u64 = 0,
+        post_resolution_ns: u64 = 0,
+        verify_ns: u64 = 0,
+    };
+
     core: core_mod.Stats = .{},
     expressions: expression_mod.Stats = .{},
     control: control_mod.Stats = .{},
@@ -43,6 +58,12 @@ pub const Stats = struct {
     pending_resolved: u32 = 0,
     pending_attempts: u64 = 0,
     remaining: u32 = 0,
+    rounds: u32 = 0,
+    cleanup_attempts: u32 = 0,
+    destructor_lookups: u32 = 0,
+    cached_implementation_hits: u64 = 0,
+    cached_nonimplementation_hits: u64 = 0,
+    timings: Timings = .{},
 };
 
 pub const Result = struct {
@@ -175,9 +196,11 @@ pub fn semantizeWithOptions(
     modules: []const module_sg.ModuleSemanticGraph,
     options: Options,
 ) !Result {
+    const profile_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
     var relocation = try globalizer.relocate(allocator, modules, .allow_holes);
     errdefer relocation.deinit(allocator);
     try module_linker.link(allocator, &relocation.graph, modules, relocation.offsets.items);
+    const profile_relocated = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
 
     // The globalizer preallocates stable GlobalTypeId slots. Record which of
     // those slots are genuinely unresolved before any resolver can inspect
@@ -224,6 +247,7 @@ pub fn semantizeWithOptions(
         .offsets = relocation.offsets.items,
         .core = &core,
         .generics = &generics,
+        .profile_io = options.profile_io,
     };
     var abstracts = abstract_mod.Resolver{
         .allocator = allocator,
@@ -255,6 +279,7 @@ pub fn semantizeWithOptions(
         .abstracts = &abstracts,
         .control = &control,
         .errors = &errors,
+        .profile_io = options.profile_io,
     };
     var ownership = ownership_mod.Resolver{
         .allocator = allocator,
@@ -263,6 +288,7 @@ pub fn semantizeWithOptions(
         .offsets = relocation.offsets.items,
         .core = &core,
         .dispatch = &dispatch,
+        .profile_io = options.profile_io,
     };
     defer ownership.deinit();
     generic_functions.ownership_context = &ownership;
@@ -376,6 +402,12 @@ pub fn semantizeWithOptions(
     }
     defer if (reachable) |set| set.deinit();
     var pending_attempts: u64 = 0;
+    const profile_preloop = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+    var profile_rounds: usize = 0;
+    var profile_pending_ns: i96 = 0;
+    var profile_errors_ns: i96 = 0;
+    var profile_finalize_ns: i96 = 0;
+    var profile_finalize_count: usize = 0;
 
     // GlobalSema is staged by semantic domain. Ownership finalization can add
     // cleanup calls to functions absent from the source call graph. Each newly
@@ -385,7 +417,12 @@ pub fn semantizeWithOptions(
     var changed = true;
     while (true) {
         while (changed) {
+            profile_rounds += 1;
+            // Pending resolution can fill existing type slots without growing
+            // a pool, so failed conformance checks cannot cross rounds.
+            abstracts.invalidate_negative_implementation_cache();
             changed = false;
+            const pending_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             for (pending_phases) |phase| {
                 if (try resolvePendingPhase(
                     &core,
@@ -405,6 +442,7 @@ pub fn semantizeWithOptions(
                     &pending_attempts,
                 )) changed = true;
             }
+            if (options.profile_io) |io| profile_pending_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - pending_start;
 
             if (relocation.graph.reconcileTypeResolution()) changed = true;
             if (relocation.graph.reconcileBindingTypeResolution()) changed = true;
@@ -424,12 +462,15 @@ pub fn semantizeWithOptions(
             // types during this pass. Their materialization must schedule a
             // further pass so pending uses can observe the final choice shape.
             if (try control.materializeSugarTypes()) changed = true;
+            const errors_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             if (try errors.inferFunctionErrorReasons()) changed = true;
+            if (options.profile_io) |io| profile_errors_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - errors_start;
             if (try completePropagatedReachCalls(&core, modules, relocation.offsets.items)) changed = true;
             if (reachable) |set| {
                 if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
             }
         }
+        abstracts.invalidate_negative_implementation_cache();
         var finalized_any = false;
         const finalization_count = relocation.graph.functions.items.len;
         var raw: usize = 0;
@@ -440,7 +481,11 @@ pub fn semantizeWithOptions(
                 if (!set.contains(id)) continue;
             }
             if (relocation.graph.functions.items[raw].body == null) continue;
-            if (!try ownership.finalizeFunctionBody(id)) continue;
+            const finalize_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+            const did_finalize = try ownership.finalizeFunctionBody(id);
+            if (options.profile_io) |io| profile_finalize_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - finalize_start;
+            profile_finalize_count += 1;
+            if (!did_finalize) continue;
             try finalized_functions.put(id, {});
             finalized_any = true;
         }
@@ -451,6 +496,7 @@ pub fn semantizeWithOptions(
         if (!finalized_any and !reached_cleanup) break;
         changed = true;
     }
+    const profile_postloop = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
 
     try abstracts.validateGenericFunctionInstances();
     control.annotateChoiceTests();
@@ -628,10 +674,30 @@ pub fn semantizeWithOptions(
         .pending_resolved = @intCast(resolved_count),
         .pending_attempts = pending_attempts,
         .remaining = 0,
+        .rounds = @intCast(profile_rounds),
+        .cleanup_attempts = @intCast(profile_finalize_count),
+        .destructor_lookups = @intCast(ownership.profile_destructor_calls),
+        .cached_implementation_hits = abstracts.cached_implementation_hits,
+        .cached_nonimplementation_hits = abstracts.cached_nonimplementation_hits,
     };
 
+    const profile_preverify = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
     try global_verify.verifyGlobal(&relocation.graph);
+    const profile_end = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
     stats.remaining = 0;
+    if (options.profile_io != null) stats.timings = .{
+        .relocation_ns = @intCast(profile_relocated - profile_start),
+        .setup_ns = @intCast(profile_preloop - profile_relocated),
+        .fixed_point_ns = @intCast(profile_postloop - profile_preloop),
+        .pending_ns = @intCast(profile_pending_ns),
+        .error_inference_ns = @intCast(profile_errors_ns),
+        .cleanup_ns = @intCast(profile_finalize_ns),
+        .implicit_destructor_ns = @intCast(ownership.profile_destructor_ns),
+        .implicit_generic_lookup_ns = @intCast(dispatch.profile_generic_ns),
+        .generic_constraints_ns = @intCast(generic_functions.profile_constraints_ns),
+        .post_resolution_ns = @intCast(profile_preverify - profile_postloop),
+        .verify_ns = @intCast(profile_end - profile_preverify),
+    };
     return .{ .graph = relocation.takeGraph(allocator), .stats = stats };
 }
 

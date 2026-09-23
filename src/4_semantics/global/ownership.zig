@@ -48,6 +48,9 @@ pub const Resolver = struct {
     auto_nodes: std.ArrayList(AutoNode) = .empty,
     empty_block: ?global_sg.GlobalBlockId = null,
     stats: Stats = .{},
+    profile_io: ?std.Io = null,
+    profile_destructor_calls: usize = 0,
+    profile_destructor_ns: i96 = 0,
 
     pub fn deinit(self: *Resolver) void {
         self.deferred.deinit(self.allocator);
@@ -632,6 +635,11 @@ pub const Resolver = struct {
         context: reach_context.Context,
         module_index: usize,
     ) !?ResolvedDestructor {
+        const profile_start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+        defer if (self.profile_io) |io| {
+            self.profile_destructor_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - profile_start;
+            self.profile_destructor_calls += 1;
+        };
         const target_ty = self.graph.nodes.items[@intFromEnum(target)].ty orelse return null;
         const dispatch = self.dispatch orelse return error.MissingOwnershipDispatch;
         const pointer_ty = try self.core.pointerType(target_ty, .read_write);
@@ -646,12 +654,13 @@ pub const Resolver = struct {
         var names = receiver_names.keyIterator();
         while (names.next()) |name_ptr| {
             const input = try self.singleNamedInput(name_ptr.*, address, source);
-            const call = dispatch.resolveImplicitFunction(
+            const dispatch_result = dispatch.resolveImplicitFunction(
                 module_index,
                 "deinit",
                 input,
                 context,
-            ) catch |err| switch (err) {
+            );
+            const call = dispatch_result catch |err| switch (err) {
                 error.DeferredImplicitFunction => continue,
                 error.AmbiguousImplicitFunction => return err,
                 else => return err,

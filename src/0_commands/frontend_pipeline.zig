@@ -267,6 +267,7 @@ pub const FrontendPipeline = struct {
             .selected_test_name = self.options.semantizing.selected_test_name,
             .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
             .diagnostics = self.diagnostics,
+            .profile_io = if (self.options.collect_stats) self.io else null,
         });
         self.global_graph = result.graph;
         self.global_stats = result.stats;

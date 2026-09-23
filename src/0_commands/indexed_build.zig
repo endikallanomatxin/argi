@@ -81,6 +81,8 @@ fn printStats(
     pipeline: *const frontend.FrontendPipeline,
     generator: ?*const codegen.CodeGenerator,
 ) void {
+    const semantic = pipeline.global_stats;
+    const semantic_timings = semantic.timings;
     std.debug.print("Timing\n", .{});
     std.debug.print("  indexed frontend: {d:.3} ms\n", .{@as(f64, @floatFromInt(frontend_ns)) / 1_000_000.0});
     std.debug.print("    ModuleSema:     {d:.3} ms\n", .{@as(f64, @floatFromInt(pipeline.module_semantizing_ns)) / 1_000_000.0});
@@ -88,6 +90,28 @@ fn printStats(
     std.debug.print("    GlobalSafety:   {d:.3} ms\n", .{@as(f64, @floatFromInt(pipeline.safety_ns)) / 1_000_000.0});
     std.debug.print("  codegen:          {d:.3} ms\n", .{@as(f64, @floatFromInt(codegen_ns)) / 1_000_000.0});
     std.debug.print("  link:             {d:.3} ms\n", .{@as(f64, @floatFromInt(link_ns)) / 1_000_000.0});
+
+    std.debug.print("Global semantizing\n", .{});
+    std.debug.print("  relocate and link:           {d:.3} ms\n", .{milliseconds(semantic_timings.relocation_ns)});
+    std.debug.print("  setup:                       {d:.3} ms\n", .{milliseconds(semantic_timings.setup_ns)});
+    std.debug.print("  fixed point:                 {d:.3} ms ({d} rounds, {d} pending attempts)\n", .{
+        milliseconds(semantic_timings.fixed_point_ns), semantic.rounds, semantic.pending_attempts,
+    });
+    std.debug.print("    pending resolution:        {d:.3} ms\n", .{milliseconds(semantic_timings.pending_ns)});
+    std.debug.print("    error reason inference:    {d:.3} ms\n", .{milliseconds(semantic_timings.error_inference_ns)});
+    std.debug.print("    implicit generic constraints: {d:.3} ms\n", .{milliseconds(semantic_timings.generic_constraints_ns)});
+    std.debug.print("    ownership cleanup:         {d:.3} ms ({d} attempts)\n", .{
+        milliseconds(semantic_timings.cleanup_ns), semantic.cleanup_attempts,
+    });
+    std.debug.print("      implicit destructors:    {d:.3} ms ({d} lookups)\n", .{
+        milliseconds(semantic_timings.implicit_destructor_ns), semantic.destructor_lookups,
+    });
+    std.debug.print("      generic lookup:          {d:.3} ms\n", .{milliseconds(semantic_timings.implicit_generic_lookup_ns)});
+    std.debug.print("  post-resolution:             {d:.3} ms\n", .{milliseconds(semantic_timings.post_resolution_ns)});
+    std.debug.print("  verify:                      {d:.3} ms\n", .{milliseconds(semantic_timings.verify_ns)});
+    std.debug.print("  abstract implementation cache hits: {d} positive, {d} negative\n", .{
+        semantic.cached_implementation_hits, semantic.cached_nonimplementation_hits,
+    });
 
     std.debug.print("Indexed frontend\n", .{});
     std.debug.print("  tokens:                       {d}\n", .{pipeline.tokenCount()});
@@ -115,6 +139,10 @@ fn printStats(
         std.debug.print("  instructions:       {d}\n", .{stats.instructions});
         std.debug.print("  IR bytes:           {d}\n", .{stats.ir_bytes});
     } else |_| {};
+}
+
+fn milliseconds(ns: u64) f64 {
+    return @as(f64, @floatFromInt(ns)) / 1_000_000.0;
 }
 
 pub fn compileTarget(

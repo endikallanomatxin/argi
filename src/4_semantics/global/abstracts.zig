@@ -55,6 +55,20 @@ pub const AbstractFieldStorageConflict = struct {
 };
 
 pub const Resolver = struct {
+    const ImplementationKey = struct {
+        concrete: global_sg.GlobalTypeId,
+        abstract_decl: global_sg.GlobalDeclId,
+    };
+    const GraphGeneration = struct {
+        types: usize,
+        generic_instances: usize,
+        functions: usize,
+    };
+    const ConstraintKey = struct {
+        module_index: u32,
+        constraint: parameterized_storage.AbstractConstraintId,
+    };
+
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
@@ -63,8 +77,22 @@ pub const Resolver = struct {
     generics: *generic_mod.Resolver,
     field_storage_conflict: ?AbstractFieldStorageConflict = null,
     stats: Stats = .{},
+    // Automatic cleanup repeatedly probes generic deinit candidates for the
+    // same concrete/abstract pairs. Positive matches remain valid as resolution
+    // advances; negative matches are scoped to a round and graph generation.
+    known_implementations: std.AutoHashMapUnmanaged(ImplementationKey, void) = .empty,
+    known_nonimplementations: std.AutoHashMapUnmanaged(ImplementationKey, GraphGeneration) = .empty,
+    constraint_declarations: std.AutoHashMapUnmanaged(ConstraintKey, global_sg.GlobalDeclId) = .empty,
+    cached_implementation_hits: u64 = 0,
+    cached_nonimplementation_hits: u64 = 0,
     pub fn deinit(self: *Resolver) void {
-        _ = self;
+        self.known_implementations.deinit(self.allocator);
+        self.known_nonimplementations.deinit(self.allocator);
+        self.constraint_declarations.deinit(self.allocator);
+    }
+
+    pub fn invalidate_negative_implementation_cache(self: *Resolver) void {
+        self.known_nonimplementations.clearRetainingCapacity();
     }
 
     pub fn tryResolve(
@@ -912,12 +940,30 @@ pub const Resolver = struct {
         depth: u8,
     ) !bool {
         if (depth >= 64) return false;
+        const key = ImplementationKey{ .concrete = concrete, .abstract_decl = abstract_decl };
+        if (self.known_implementations.contains(key)) {
+            self.cached_implementation_hits += 1;
+            return true;
+        }
+        const generation = GraphGeneration{
+            .types = self.graph.types.items.len,
+            .generic_instances = self.graph.generic_instances.items.len,
+            .functions = self.graph.functions.items.len,
+        };
+        const concrete_resolved = !self.graph.isTypeUnresolved(concrete);
+        if (concrete_resolved) if (self.known_nonimplementations.get(key)) |cached| {
+            if (std.meta.eql(cached, generation)) {
+                self.cached_nonimplementation_hits += 1;
+                return false;
+            }
+        };
         for (self.modules, 0..) |*module, module_index| {
             for (module.semantic.parameterized_storage.abstract_implementations.items) |implementation| {
                 const candidate_abstract = try self.resolveDeclarationRef(module_index, implementation.abstract_ref, .abstract_type);
                 if (candidate_abstract != abstract_decl) continue;
                 const candidate_type = globalizer.globalType(self.offsets[module_index], implementation.ty);
                 if (global_types.equal(self.graph, concrete, candidate_type)) {
+                    try self.known_implementations.put(self.allocator, key, {});
                     self.stats.concrete_hits += 1;
                     return true;
                 }
@@ -927,6 +973,7 @@ pub const Resolver = struct {
                 };
                 if (inherited == abstract_decl or self.findAbstractDefinition(inherited) == null) continue;
                 if (try self.implementsDepth(concrete, inherited, depth + 1)) {
+                    try self.known_implementations.put(self.allocator, key, {});
                     self.stats.concrete_hits += 1;
                     return true;
                 }
@@ -935,11 +982,15 @@ pub const Resolver = struct {
                 const candidate_abstract = try self.resolveDeclarationRef(module_index, parameterized.abstract_ref, .abstract_type);
                 if (candidate_abstract != abstract_decl) continue;
                 if (self.matchesImplementationParameterized(module_index, concrete, parameterized) catch false) {
+                    try self.known_implementations.put(self.allocator, key, {});
                     self.stats.parameterized_hits += 1;
                     return true;
                 }
             }
         }
+        // A failed match can become valid when a generic type is materialized.
+        // Reuse it only while the relevant graph pools remain at this generation.
+        if (concrete_resolved) try self.known_nonimplementations.put(self.allocator, key, generation);
         return false;
     }
 
@@ -1167,7 +1218,12 @@ pub const Resolver = struct {
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage;
         const constraint = storage.abstract_constraints.items[@intFromEnum(constraint_id)];
-        const abstract_decl = try self.resolveDeclarationRef(module_index, constraint.abstract_ref, .abstract_type);
+        const key = ConstraintKey{ .module_index = @intCast(module_index), .constraint = constraint_id };
+        const abstract_decl = self.constraint_declarations.get(key) orelse blk: {
+            const resolved = try self.resolveDeclarationRef(module_index, constraint.abstract_ref, .abstract_type);
+            try self.constraint_declarations.put(self.allocator, key, resolved);
+            break :blk resolved;
+        };
         if (!try self.implementsDepth(concrete, abstract_decl, 0)) return false;
         if (constraint.arguments.len == 0) return true;
 

@@ -36,6 +36,8 @@ pub const Resolver = struct {
     ownership_context: ?*anyopaque = null,
     register_defer: ?*const fn (*anyopaque, global_sg.GlobalNodeId, global_sg.GlobalNodeId) anyerror!void = null,
     stats: Stats = .{},
+    profile_io: ?std.Io = null,
+    profile_constraints_ns: i96 = 0,
 
     pub fn tryResolve(
         self: *Resolver,
@@ -893,14 +895,13 @@ pub const Resolver = struct {
             made_progress = after > before;
         }
 
+        // Every bound constraint was checked in the last no-progress round.
+        // This pass only needs to reject constraints left without a binding.
         for (parameters.start..parameters.start + parameters.len) |raw| {
             const parameter = storage.comptime_parameters.items[raw];
-            const constraint_id = parameter.constraint orelse continue;
+            if (parameter.constraint == null) continue;
             if (parameter.kind != .type) return false;
-            const concrete = bindings.types[raw] orelse return false;
-            const constraint_ok = try abstracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings);
-
-            if (!constraint_ok) return false;
+            if (bindings.types[raw] == null) return false;
         }
         return true;
     }
@@ -1045,7 +1046,10 @@ pub const Resolver = struct {
                 }
                 if (reach_context) |context|
                     if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
-                if (!try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings)) continue;
+                const constraints_start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+                const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
+                if (self.profile_io) |io| self.profile_constraints_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - constraints_start;
+                if (!constraints_ok) continue;
                 var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
                 defer arguments.deinit(self.allocator);
                 for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
