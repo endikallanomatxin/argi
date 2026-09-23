@@ -19,4 +19,5 @@ duplicate(.source: Resource) -> (.value: Resource) := {
 
 main() -> (.status_code: Int32) := {
     status_code = 0
+    _ ::= duplicate(.source = Resource())
 }

@@ -37,17 +37,17 @@ pub const Syntaxer = struct {
     source: []const u8,
     index: usize,
     allocator: std.mem.Allocator,
-    file: syn.SyntaxFile,
+    file: syn.FileSyntaxTree,
     tokens: tok.View,
     diags: *diagnostic.Diagnostics,
     parsing_pipe_rhs: bool,
     scratch: std.ArrayList(syn.NodeIndex),
 
     pub fn init(alloc: std.mem.Allocator, toks: tok.View, source: []const u8, diags: *diagnostic.Diagnostics) !Syntaxer {
-        return initFile(alloc, try syn.SyntaxFile.init(alloc, toks.locations[0].file, toks), source, diags);
+        return initFile(alloc, try syn.FileSyntaxTree.init(alloc, toks.locations[0].file, toks), source, diags);
     }
 
-    pub fn initFile(alloc: std.mem.Allocator, file: syn.SyntaxFile, source: []const u8, diags: *diagnostic.Diagnostics) Syntaxer {
+    pub fn initFile(alloc: std.mem.Allocator, file: syn.FileSyntaxTree, source: []const u8, diags: *diagnostic.Diagnostics) Syntaxer {
         const tokens = tok.View.init(&file.tokens);
         return .{ .source = source, .index = 0, .allocator = alloc, .file = file, .tokens = tokens, .diags = diags, .parsing_pipe_rhs = false, .scratch = .empty };
     }
@@ -62,7 +62,7 @@ pub const Syntaxer = struct {
         self.file = .{ .file_id = file_id };
     }
 
-    pub fn parse(self: *Syntaxer) !syn.SyntaxFile {
+    pub fn parse(self: *Syntaxer) !syn.FileSyntaxTree {
         defer self.scratch.deinit(self.allocator);
         const scratch_top = self.scratch.items.len;
         defer self.scratch.shrinkRetainingCapacity(scratch_top);
@@ -1079,6 +1079,140 @@ pub const Syntaxer = struct {
         return node;
     }
 
+    const PipePlaceholderAnalysis = struct {
+        has_placeholder: bool = false,
+        direct_shape: bool = false,
+        first_placeholder: ?syn.TokenIndex = null,
+        invalid_token: ?syn.TokenIndex = null,
+    };
+
+    fn mergePipePlaceholderAnalysis(result: *PipePlaceholderAnalysis, child: PipePlaceholderAnalysis) void {
+        if (!result.has_placeholder and child.has_placeholder) result.first_placeholder = child.first_placeholder;
+        result.has_placeholder = result.has_placeholder or child.has_placeholder;
+        if (result.invalid_token == null) result.invalid_token = child.invalid_token;
+    }
+
+    fn invalidatePipePlaceholderAnalysis(self: *Syntaxer, result: *PipePlaceholderAnalysis, node: syn.NodeIndex) void {
+        if (result.has_placeholder and result.invalid_token == null)
+            result.invalid_token = self.file.mainToken(node);
+        result.direct_shape = false;
+    }
+
+    fn analyzePipePlaceholder(self: *Syntaxer, node: syn.NodeIndex) PipePlaceholderAnalysis {
+        return switch (self.file.tag(node)) {
+            .pipe_placeholder => .{
+                .has_placeholder = true,
+                .direct_shape = true,
+                .first_placeholder = self.file.mainToken(node),
+            },
+
+            // These are the deliberately supported placeholder expressions.
+            // Chaining field/payload projections remains a direct shape because
+            // lowering can substitute the piped value before applying them.
+            .address_of, .address_of_mut => blk: {
+                const child_node = self.file.unaryOperand(node).?;
+                var result = self.analyzePipePlaceholder(child_node);
+                if (result.has_placeholder and (result.invalid_token != null or !result.direct_shape))
+                    self.invalidatePipePlaceholderAnalysis(&result, node);
+                break :blk result;
+            },
+            .struct_field_access => blk: {
+                const access = self.file.structFieldAccess(node).?;
+                var result = self.analyzePipePlaceholder(access.value);
+                if (result.has_placeholder and (result.invalid_token != null or !result.direct_shape))
+                    self.invalidatePipePlaceholderAnalysis(&result, node);
+                break :blk result;
+            },
+            .choice_payload_access => blk: {
+                const access = self.file.choicePayloadAccess(node).?;
+                var result = self.analyzePipePlaceholder(access.value);
+                if (result.has_placeholder and (result.invalid_token != null or !result.direct_shape))
+                    self.invalidatePipePlaceholderAnalysis(&result, node);
+                break :blk result;
+            },
+
+            // Calls and aggregate literals are containers: placeholders inside
+            // their values keep their validity, but the container itself is not
+            // a direct placeholder shape that another operator may wrap.
+            .function_call => blk: {
+                const call = self.file.functionCall(node).?;
+                var result = self.analyzePipePlaceholder(call.input);
+                result.direct_shape = false;
+                break :blk result;
+            },
+            .struct_value_literal => blk: {
+                const literal = self.file.structValueLiteral(node).?;
+                var result: PipePlaceholderAnalysis = .{};
+                for (literal.fields) |field_node|
+                    mergePipePlaceholderAnalysis(&result, self.analyzePipePlaceholder(field_node));
+                result.direct_shape = false;
+                break :blk result;
+            },
+            .struct_value_field, .positional_value_field => blk: {
+                const field = self.file.valueField(node).?;
+                var result = self.analyzePipePlaceholder(field.value);
+                result.direct_shape = false;
+                break :blk result;
+            },
+            .list_literal => blk: {
+                const literal = self.file.listLiteral(node).?;
+                var result: PipePlaceholderAnalysis = .{};
+                for (literal.elements) |element|
+                    mergePipePlaceholderAnalysis(&result, self.analyzePipePlaceholder(element));
+                result.direct_shape = false;
+                break :blk result;
+            },
+            .choice_literal, .choice_some_literal => blk: {
+                const literal = self.file.choiceLiteral(node).?;
+                var result: PipePlaceholderAnalysis = .{};
+                if (literal.payload) |payload| result = self.analyzePipePlaceholder(payload);
+                result.direct_shape = false;
+                break :blk result;
+            },
+
+            // Composite operators are not substitution points. If a placeholder
+            // appears anywhere under one, diagnose the first unsupported
+            // operator rather than the placeholder itself.
+            .pipe_expression,
+            .unwrap_or,
+            .unwrap_or_do,
+            .binary_add,
+            .binary_subtract,
+            .binary_multiply,
+            .binary_divide,
+            .binary_modulo,
+            .compare_equal,
+            .compare_not_equal,
+            .compare_less,
+            .compare_greater,
+            .compare_less_equal,
+            .compare_greater_equal,
+            .logical_and,
+            .logical_or,
+            .error_context,
+            .index_access,
+            => blk: {
+                const op = self.file.binaryOperation(node).?;
+                var result = self.analyzePipePlaceholder(op.lhs);
+                mergePipePlaceholderAnalysis(&result, self.analyzePipePlaceholder(op.rhs));
+                self.invalidatePipePlaceholderAnalysis(&result, node);
+                break :blk result;
+            },
+
+            .move_expression,
+            .error_propagation,
+            .nullable_test,
+            .dereference,
+            => blk: {
+                var result = self.analyzePipePlaceholder(self.file.unaryOperand(node).?);
+                self.invalidatePipePlaceholderAnalysis(&result, node);
+                break :blk result;
+            },
+
+            else => .{},
+        };
+    }
+
     fn parsePipeRhs(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         const prev_pipe_rhs = self.parsing_pipe_rhs;
         self.parsing_pipe_rhs = true;
@@ -1236,6 +1370,22 @@ pub const Syntaxer = struct {
             self.advanceOne();
             self.skipNewLinesAndComments();
             const right = try self.parsePipeRhs();
+            const placeholder = self.analyzePipePlaceholder(right);
+            if (!placeholder.has_placeholder) {
+                try self.diags.add(
+                    self.file.tokenLocation(pipe_token),
+                    .syntax,
+                    "pipe right-hand side must use at least one argument placeholder",
+                    .{},
+                );
+            } else if (placeholder.invalid_token) |invalid| {
+                try self.diags.add(
+                    self.file.tokenLocation(invalid),
+                    .syntax,
+                    "pipe placeholders are only supported as '_', '&_', '$&_', '_.field', or '..variant' payload access for now",
+                    .{},
+                );
+            }
             lhs = try self.addNode(.pipe_expression, pipe_token, .{ .node_and_node = .{ .first = lhs, .second = right } });
         }
         return lhs;

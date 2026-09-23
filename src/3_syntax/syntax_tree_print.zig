@@ -2,7 +2,7 @@ const std = @import("std");
 const source_db = @import("../1_base/source_db.zig");
 const syn = @import("syntax_tree.zig");
 
-pub fn printNode(tree: *const syn.SyntaxFile, db: *const source_db.SourceDb, node: syn.NodeIndex, level: usize) void {
+pub fn printNode(tree: *const syn.FileSyntaxTree, db: *const source_db.SourceDb, node: syn.NodeIndex, level: usize) void {
     indent(level);
     std.debug.print("{s}", .{@tagName(tree.tag(node))});
     const token_text = tree.tokenText(db, tree.mainToken(node));
@@ -45,7 +45,7 @@ pub fn printNode(tree: *const syn.SyntaxFile, db: *const source_db.SourceDb, nod
     if (tree.unaryOperand(node)) |operand| printNode(tree, db, operand, level + 1);
 }
 
-fn printNodes(tree: *const syn.SyntaxFile, db: *const source_db.SourceDb, nodes: []const syn.NodeIndex, level: usize) void {
+fn printNodes(tree: *const syn.FileSyntaxTree, db: *const source_db.SourceDb, nodes: []const syn.NodeIndex, level: usize) void {
     for (nodes) |node| printNode(tree, db, node, level);
 }
 

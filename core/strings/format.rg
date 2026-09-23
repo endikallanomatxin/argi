@@ -92,7 +92,7 @@ format_unsigned_decimal_into_u64(
 
             while current > 0 {
                 digit ::= current % 10
-                pushed ::= push_byte(.self = $&reversed, .byte = decimal_digit_byte_u32(.digit = digit).byte, .allocator = allocator)
+                pushed ::= push_byte(.self = $&reversed, .byte = decimal_digit_byte(.digit = digit).byte, .allocator = allocator)
                 match pushed {
                     ..ok _ {
                     }
@@ -231,7 +231,7 @@ format_signed_decimal_into_i64(
 
                 pushed ::= push_byte(
                     .self = $&reversed,
-                    .byte = decimal_digit_byte_i32(.digit = remainder).byte,
+                    .byte = decimal_digit_byte(.digit = remainder).byte,
                     .allocator = allocator,
                 )
                 match pushed {

@@ -7,17 +7,24 @@ const token = @import("../2_tokens/token.zig");
 const tokenizer = @import("../2_tokens/tokenizer.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
 const syntaxer = @import("../3_syntax/syntaxer.zig");
-const sg = @import("../4_semantics/semantic_graph.zig");
-const semantizer = @import("../4_semantics/semantizer.zig");
-const safety_checker = @import("../4_semantics/safety_checker.zig");
+const module_sg = @import("../4_semantics/module/graph.zig");
+const module_semantizer = @import("../4_semantics/module/semantizer.zig");
+const global_sg = @import("../4_semantics/global/graph.zig");
+const global_semantizer = @import("../4_semantics/global/semantizer.zig");
+const global_once_verify = @import("../4_semantics/global/once_verify.zig");
+const module_test_validate = @import("../4_semantics/module/test_validate.zig");
+const global_safety_checker = @import("../4_semantics/safety/checker.zig");
 
-// FrontendPipeline is the shared orchestration layer for the pre-codegen
-// compiler phases. The intent is to keep `build` and `lsp` on exactly the same
-// tokenizing/syntaxing/semantizing path so architectural changes in the
-// compiler do not fork into subtly different command-specific pipelines.
 pub const FrontendPipeline = struct {
+    pub const SemantizingOptions = struct {
+        include_tests: bool = false,
+        selected_test_name: ?[]const u8 = null,
+        implicit_testing_module_dir: ?[]const u8 = null,
+        exhaustive_function_bodies: bool = false,
+    };
+
     pub const Options = struct {
-        semantizer: semantizer.SemantizerOptions = .{},
+        semantizing: SemantizingOptions = .{},
         collect_stats: bool = false,
     };
 
@@ -26,17 +33,22 @@ pub const FrontendPipeline = struct {
     diagnostics: *diag.Diagnostics,
     options: Options,
     source_db: *const source_db.SourceDb,
-    syntax_files: std.array_list.Managed(st.SyntaxFile),
+    syntax_files: std.array_list.Managed(st.FileSyntaxTree),
     syntax_root_list: std.array_list.Managed(st.SyntaxRef),
+    module_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty,
+    /// Authoritative whole-program semantic artifact. No pointer SemanticGraph
+    /// can be materialized by this pipeline anymore.
+    global_graph: ?global_sg.GlobalSemanticGraph = null,
+    global_stats: global_semantizer.Stats = .{},
+    global_safety_stats: global_safety_checker.SafetyChecker.Stats = .{},
     syntax_ctx: ?syntaxer.Syntaxer = null,
-    sem_ctx: ?semantizer.Semantizer = null,
-    safety_ctx: ?safety_checker.SafetyChecker = null,
-    semantize_timings: semantizer.Semantizer.SemantizeTimings = .{},
+    safety_ctx: ?global_safety_checker.SafetyChecker = null,
     safety_ns: u64 = 0,
+    module_semantizing_ns: u64 = 0,
+    global_semantic_ns: u64 = 0,
+    module_lowered_functions: u32 = 0,
     syntax_node_count: usize = 0,
-    sg_node_count: usize = 0,
     syntax_roots: []const st.SyntaxRef = &.{},
-    sg_nodes: []const *sg.SGNode = &.{},
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -50,19 +62,21 @@ pub const FrontendPipeline = struct {
             .diagnostics = diagnostics,
             .options = options,
             .source_db = &diagnostics.source_db,
-            .syntax_files = std.array_list.Managed(st.SyntaxFile).init(allocator),
+            .syntax_files = std.array_list.Managed(st.FileSyntaxTree).init(allocator),
             .syntax_root_list = std.array_list.Managed(st.SyntaxRef).init(allocator),
         };
     }
 
     pub fn deinit(self: *FrontendPipeline) void {
-        if (self.safety_ctx) |*ctx| ctx.deinit();
+        self.clearModuleGraphs();
+        self.module_graphs.deinit(self.allocator);
         for (self.syntax_files.items) |*file| file.deinit(self.allocator);
         self.syntax_files.deinit();
         self.syntax_root_list.deinit();
     }
 
     pub fn tokenizeFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !void {
+        self.clearModuleGraphs();
         for (self.syntax_files.items) |*file| file.deinit(self.allocator);
         self.syntax_files.clearRetainingCapacity();
 
@@ -75,7 +89,7 @@ pub const FrontendPipeline = struct {
             );
             defer tokenizer_ctx.deinit();
             _ = try tokenizer_ctx.tokenize();
-            var file = st.SyntaxFile.initOwnedTokens(self.source_db.fileId(index), tokenizer_ctx.takeTokens());
+            var file = st.FileSyntaxTree.initOwnedTokens(self.source_db.fileId(index), tokenizer_ctx.takeTokens());
             errdefer file.deinit(self.allocator);
             try self.syntax_files.append(file);
         }
@@ -89,7 +103,6 @@ pub const FrontendPipeline = struct {
             self.syntax_ctx = syntaxer.Syntaxer.initFile(self.allocator, file.*, self.source_db.get(file_id).source, self.diagnostics);
             file.* = .{ .file_id = file_id };
             file.* = self.syntax_ctx.?.parse() catch |err| {
-                // Keep the failed file's tokens for lexical LSP fallback.
                 file.* = self.syntax_ctx.?.file;
                 self.syntax_ctx.?.file = .{ .file_id = file_id };
                 return err;
@@ -101,8 +114,8 @@ pub const FrontendPipeline = struct {
         return self.syntax_roots;
     }
 
-    pub fn syntaxStorageMetrics(self: *const FrontendPipeline) st.SyntaxFile.StorageMetrics {
-        var result = st.SyntaxFile.StorageMetrics{ .token_bytes = 0, .node_base_bytes = 0, .extra_data_bytes = 0, .root_bytes = 0 };
+    pub fn syntaxStorageMetrics(self: *const FrontendPipeline) st.FileSyntaxTree.StorageMetrics {
+        var result = st.FileSyntaxTree.StorageMetrics{ .token_bytes = 0, .node_base_bytes = 0, .extra_data_bytes = 0, .root_bytes = 0 };
         for (self.syntax_files.items) |*file| {
             const metrics = file.storageMetrics();
             result.token_bytes += metrics.token_bytes;
@@ -136,24 +149,152 @@ pub const FrontendPipeline = struct {
         return try self.syntax();
     }
 
-    pub fn semantizeFiles(self: *FrontendPipeline, files: []const sf.SourceFile) ![]const *sg.SGNode {
+    /// Produce and safety-check the final indexed semantic graph. This is the
+    /// sole semantic output API of the frontend.
+    pub fn semantizeGlobalFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !*const global_sg.GlobalSemanticGraph {
         _ = try self.parseFiles(files);
-        return try self.semantize();
+        // Syntax diagnostics are terminal for this compilation. Continuing into
+        // ModuleSema/GlobalSema can only manufacture secondary unresolved work
+        // and pollute the primary parser diagnostic with internal debug noise.
+        if (self.diagnostics.hasErrors()) return error.Reported;
+        try module_test_validate.validate(
+            self.syntax_files.items,
+            self.source_db,
+            self.diagnostics,
+            self.options.semantizing.include_tests,
+            self.options.semantizing.selected_test_name,
+        );
+        try self.validateFunctionSignatures();
+        if (self.diagnostics.hasErrors()) return error.Reported;
+        try self.buildGlobalGraph();
+        try self.analyzeGlobalSafety();
+        return &self.global_graph.?;
     }
 
-    pub fn semantize(self: *FrontendPipeline) ![]const *sg.SGNode {
-        self.sg_node_count = 0;
-        if (self.options.collect_stats) sg.beginNodeCounting(&self.sg_node_count);
-        defer if (self.options.collect_stats) sg.endNodeCounting();
-        self.sem_ctx = semantizer.Semantizer.init(&self.allocator, self.io, self.syntax_files.items, self.syntax_roots, self.diagnostics, self.options.semantizer);
-        const result = try self.sem_ctx.?.semantizeWithTimings();
-        self.sg_nodes = result.nodes;
-        self.safety_ctx = safety_checker.SafetyChecker.init(&self.allocator, self.diagnostics);
+    fn validateFunctionSignatures(self: *FrontendPipeline) !void {
+        for (self.syntax_files.items) |*file| {
+            const source = self.source_db.get(file.file_id).source;
+            for (file.roots) |root| {
+                const function = file.functionDeclaration(root) orelse continue;
+                try self.validateFunctionSignatureFields(file, source, function.input, "input");
+                try self.validateFunctionSignatureFields(file, source, function.output, "output");
+            }
+        }
+    }
+
+    fn validateFunctionSignatureFields(
+        self: *FrontendPipeline,
+        file: *const st.FileSyntaxTree,
+        source: []const u8,
+        node: st.NodeIndex,
+        direction: []const u8,
+    ) !void {
+        const literal = file.structTypeLiteral(node) orelse return;
+        for (literal.fields) |field_node| {
+            const field = file.structTypeField(field_node) orelse continue;
+            if (field.type_node != null or field.inferred_result) continue;
+            const name = file.tokenTextFromSource(source, field.name_token);
+            try self.diagnostics.add(
+                file.tokenLocation(field.name_token),
+                .semantic,
+                "function {s} field '.{s}' requires an explicit type",
+                .{ direction, name },
+            );
+        }
+    }
+
+    fn analyzeGlobalSafety(self: *FrontendPipeline) !void {
+        if (self.safety_ctx) |*ctx| ctx.deinit();
+        self.safety_ctx = null;
+        const graph = &self.global_graph.?;
+        self.safety_ctx = global_safety_checker.SafetyChecker.init(self.allocator, self.diagnostics, graph);
         if (self.options.collect_stats) self.safety_ctx.?.enableStats();
         const safety_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-        try self.safety_ctx.?.analyze(self.sg_nodes);
+        try self.safety_ctx.?.analyze();
         self.safety_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - safety_start);
-        self.semantize_timings = result.timings;
-        return self.sg_nodes;
+        self.global_safety_stats = self.safety_ctx.?.stats;
+    }
+
+    fn buildGlobalGraph(self: *FrontendPipeline) !void {
+        const module_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
+        self.clearModuleGraphs();
+        errdefer self.clearModuleGraphs();
+        self.module_lowered_functions = 0;
+
+        const ModuleInputs = struct {
+            dir: []const u8,
+            files: std.ArrayList(module_sg.FileInput) = .empty,
+        };
+        var groups: std.ArrayList(ModuleInputs) = .empty;
+        var abstract_names: std.ArrayList([]const u8) = .empty;
+        defer abstract_names.deinit(self.allocator);
+        defer {
+            for (groups.items) |*group| group.files.deinit(self.allocator);
+            groups.deinit(self.allocator);
+        }
+        for (self.syntax_files.items) |*file| {
+            const source = self.source_db.get(file.file_id);
+            for (file.roots) |root| if (file.abstractDeclaration(root)) |abstract| {
+                try abstract_names.append(self.allocator, file.tokenTextFromSource(source.source, abstract.name_token));
+            };
+            const dir = std.fs.path.dirname(source.path) orelse ".";
+            var group_index: ?usize = null;
+            for (groups.items, 0..) |group, index| if (std.mem.eql(u8, group.dir, dir)) {
+                group_index = index;
+                break;
+            };
+            if (group_index == null) {
+                try groups.append(self.allocator, .{ .dir = dir });
+                group_index = groups.items.len - 1;
+            }
+            try groups.items[group_index.?].files.append(self.allocator, .{
+                .path = source.path,
+                .tree = file,
+                .source = source.source,
+                .is_bundled_core = source.origin == .bundled_core,
+            });
+        }
+        try self.module_graphs.ensureTotalCapacity(self.allocator, groups.items.len);
+        for (groups.items) |group| {
+            const result = try module_semantizer.buildWithAbstractCatalog(self.allocator, group.dir, group.files.items, abstract_names.items);
+            self.module_lowered_functions += result.stats.lowered_functions;
+            self.module_graphs.appendAssumeCapacity(result.graph);
+        }
+        self.module_semantizing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - module_start);
+
+        const global_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
+        const result = try global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{
+            .selected_test_name = self.options.semantizing.selected_test_name,
+            .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
+            .diagnostics = self.diagnostics,
+        });
+        self.global_graph = result.graph;
+        self.global_stats = result.stats;
+        try global_once_verify.verify(
+            self.allocator,
+            &self.global_graph.?,
+            self.diagnostics,
+            self.options.semantizing.selected_test_name,
+        );
+        self.global_semantic_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - global_start);
+    }
+
+    fn clearModuleGraphs(self: *FrontendPipeline) void {
+        if (self.safety_ctx) |*ctx| ctx.deinit();
+        self.safety_ctx = null;
+        if (self.global_graph) |*graph| graph.deinit(self.allocator);
+        self.global_graph = null;
+        for (self.module_graphs.items) |*graph| graph.deinit(self.allocator);
+        self.module_graphs.clearRetainingCapacity();
+    }
+
+    pub fn moduleSemanticStorageBytes(self: *const FrontendPipeline) usize {
+        var bytes: usize = 0;
+        for (self.module_graphs.items) |*graph| bytes += graph.storageBytes();
+        return bytes;
+    }
+
+    pub fn globalSemanticStorageBytes(self: *const FrontendPipeline) usize {
+        return if (self.global_graph) |*graph| graph.storageBytes() else 0;
     }
 };

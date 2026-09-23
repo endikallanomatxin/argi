@@ -1,6 +1,6 @@
 ..test_error
 
-main := {
+main() -> (.status_code: Int32) := {
     value : Errable#(.t: Int32, .reasons: (..test_error)) = ..ok 7
 
     match value {

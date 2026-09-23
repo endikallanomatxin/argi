@@ -1,0 +1,867 @@
+const std = @import("std");
+const module_sg = @import("../module/graph.zig");
+const module_entities = @import("../module/entities.zig");
+const global_sg = @import("graph.zig");
+const globalizer = @import("globalizer.zig");
+const resolution = @import("resolution.zig");
+const core_mod = @import("core.zig");
+const generic_functions_mod = @import("generic_functions.zig");
+const abstract_mod = @import("abstracts.zig");
+const types = @import("types.zig");
+const primitives = @import("../primitives/schema.zig");
+
+pub const Stats = struct {
+    choices: u32 = 0,
+    nullable: u32 = 0,
+    matches: u32 = 0,
+    for_loops: u32 = 0,
+};
+
+pub const ForEachFailure = struct {
+    source: primitives.SourceRef,
+    actual: global_sg.GlobalTypeId,
+    contract_name: []const u8,
+};
+
+pub const Resolver = struct {
+    allocator: std.mem.Allocator,
+    graph: *global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    offsets: []const globalizer.Offsets,
+    core: ?*core_mod.Resolver = null,
+    generic_functions: ?*generic_functions_mod.Resolver = null,
+    abstracts: ?*abstract_mod.Resolver = null,
+    stats: Stats = .{},
+    for_each_failure: ?ForEachFailure = null,
+
+    pub fn materializeSugarTypes(self: *Resolver) !bool {
+        // Work over the original length: materializing nullable payload structs
+        // appends helper types but those helpers are already final.
+        const original_len = self.graph.types.items.len;
+        var changed = false;
+        for (0..original_len) |raw| {
+            const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(raw)));
+            switch (self.graph.types.items[raw]) {
+                .nullable => |child| {
+                    try self.materializeNullable(id, child);
+                    changed = true;
+                },
+                .inferred_errable => |child| {
+                    try self.materializeInferredErrable(id, child);
+                    changed = true;
+                },
+                else => {},
+            }
+        }
+        return changed;
+    }
+
+    pub fn tryResolve(
+        self: *Resolver,
+        module_index: usize,
+        module: *const module_sg.ModuleSemanticGraph,
+        o: globalizer.Offsets,
+        operation: module_entities.PendingOperation,
+    ) !resolution.Result {
+        return switch (operation) {
+            .resolve_call => |value| try self.resolveChoiceTest(module, o, value),
+            .resolve_choice_literal => |value| try self.resolveChoiceLiteral(module, o, value),
+            .resolve_choice_payload => |value| try self.resolveChoicePayload(module, o, value),
+            .resolve_nullable_unwrap => |value| resolution.Result.fromBool(try self.resolveNullableUnwrap(o, value)),
+            .resolve_nullable_test => |value| resolution.Result.fromBool(try self.resolveNullableTest(o, value)),
+            .resolve_match => |value| try self.resolveMatch(module, o, value),
+            .resolve_match_case => |value| resolution.Result.fromBool(self.matchCaseAlreadyResolved(o, value)),
+            .resolve_for_each => |value| try self.resolveForEach(module_index, o, value),
+            else => .not_applicable,
+        };
+    }
+
+    pub fn annotateChoiceTests(self: *Resolver) void {
+        for (self.graph.nodes.items) |*node| switch (node.content) {
+            .if_statement => |*statement| {
+                const condition = self.graph.nodes.items[@intFromEnum(statement.condition)];
+                const comparison = switch (condition.content) {
+                    .comparison => |value| value,
+                    else => continue,
+                };
+                if (comparison.operator != .equal and comparison.operator != .not_equal) continue;
+                const left = self.graph.nodes.items[@intFromEnum(comparison.left)];
+                const right = self.graph.nodes.items[@intFromEnum(comparison.right)];
+                const choice_ty = left.ty orelse continue;
+                const variants = types.variants(self.graph, choice_ty) orelse continue;
+                const tag = switch (right.content) {
+                    .int_literal => |value| value,
+                    else => continue,
+                };
+                var variant_id: ?global_sg.GlobalVariantId = null;
+                for (0..variants.len) |index| {
+                    const raw = variants.start + @as(u32, @intCast(index));
+                    if (self.choiceVariantTag(choice_ty, @enumFromInt(raw)) == tag) {
+                        variant_id = @enumFromInt(raw);
+                        break;
+                    }
+                }
+                if (variant_id) |variant| statement.choice_test = .{
+                    .choice_value = comparison.left,
+                    .choice_type = choice_ty,
+                    .variant = variant,
+                    .then_has_variant = comparison.operator == .equal,
+                };
+            },
+            else => {},
+        };
+    }
+
+    fn materializeNullable(self: *Resolver, id: global_sg.GlobalTypeId, child: global_sg.GlobalTypeId) !void {
+        try types.materializeNullable(self.allocator, self.graph, id, child, self.syntheticSource());
+        self.stats.nullable += 1;
+    }
+
+    fn materializeInferredErrable(self: *Resolver, id: global_sg.GlobalTypeId, child: global_sg.GlobalTypeId) !void {
+        const ok_name = try self.graph.addString(self.allocator, "ok");
+        const error_name = try self.graph.addString(self.allocator, "error");
+        const reason_name = try self.graph.addString(self.allocator, "reason");
+        const trace_name = try self.graph.addString(self.allocator, "trace");
+        const source = self.syntheticSource();
+        const trace_ty = self.errorTraceType() orelse return error.MissingErrorTraceType;
+        const reasons_ty: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
+        try self.graph.types.append(self.allocator, .{ .inferred_choice = .{
+            .identity = @intFromEnum(id),
+            .kind = .reasons,
+            .variants = .{ .start = @intCast(self.graph.variants.items.len), .len = 0 },
+        } });
+        const field_start: u32 = @intCast(self.graph.fields.items.len);
+        try self.graph.fields.append(self.allocator, .{ .name = reason_name, .ty = reasons_ty, .source = source });
+        try self.graph.fields.append(self.allocator, .{ .name = trace_name, .ty = trace_ty, .source = source });
+        const error_payload: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
+        try self.graph.types.append(self.allocator, .{ .structural = .{ .fields = .{ .start = field_start, .len = 2 } } });
+        const variant_start: u32 = @intCast(self.graph.variants.items.len);
+        try self.graph.variants.append(self.allocator, .{
+            .name = ok_name,
+            .payload_type = child,
+            .source = source,
+            .value = 0,
+        });
+        try self.graph.variants.append(self.allocator, .{
+            .name = error_name,
+            .payload_type = error_payload,
+            .source = source,
+            .value = 1,
+        });
+        self.graph.types.items[@intFromEnum(id)] = .{ .inferred_choice = .{
+            .identity = @intFromEnum(id),
+            .kind = .errable,
+            .variants = .{ .start = variant_start, .len = 2 },
+        } };
+    }
+
+    fn errorTraceType(self: *const Resolver) ?global_sg.GlobalTypeId {
+        for (self.graph.declarations.items) |declaration| {
+            if (declaration.kind != .type or !std.mem.eql(u8, self.graph.text(declaration.name), "ErrorTrace")) continue;
+            return declaration.type_id;
+        }
+        return null;
+    }
+
+    fn resolveChoiceLiteral(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
+        const reference = module.semantic.external_refs.items[@intFromEnum(value.option)];
+        const name = module.text(reference.name);
+        var payload = if (value.payload) |id| globalizer.globalNode(o, id) else null;
+        var payload_ty = if (payload) |id| self.graph.nodes.items[@intFromEnum(id)].ty else null;
+        const target = globalizer.globalNode(o, value.node);
+        if (self.graph.nodes.items[@intFromEnum(target)].content == .int_literal) return .resolved;
+        const expected = if (value.expected_type) |id| globalizer.globalType(o, id) else self.graph.nodes.items[@intFromEnum(target)].ty;
+
+        // An explicit contextual type is authoritative. Shape errors that can
+        // no longer change (unknown variant, or a required payload being
+        // absent) are terminal-invalid; unresolved payload typing remains
+        // deferred so coercion/generic resolution can still make progress.
+        const choice_ty = blk: {
+            if (expected) |expected_ty| {
+                if (!self.graph.isTypeUnresolved(expected_ty) and !types.isBuiltin(self.graph, expected_ty, .Any)) {
+                    try self.ensureInferredReasonVariant(expected_ty, name, self.sourceFor(reference.source, o));
+                    if (types.findVariant(self.graph, expected_ty, name)) |hit| {
+                        if (hit.variant.payload_type != null and payload == null) return .invalid;
+                        if (payload) |payload_node| if (hit.variant.payload_type) |expected_payload| {
+                            const normalized = self.normalizeChoicePayload(payload_node, expected_payload);
+                            payload = normalized;
+                            if (self.core) |core| _ = core.coerceContextualValue(normalized, expected_payload);
+                            payload_ty = self.graph.nodes.items[@intFromEnum(normalized)].ty;
+                        };
+                        if (!self.payloadCompatible(hit.variant.payload_type, payload_ty)) return .deferred;
+                        break :blk expected_ty;
+                    }
+                    if (value.expected_type != null and types.variants(self.graph, expected_ty) != null) return .invalid;
+                }
+            }
+            break :blk self.findChoiceType(expected, name, payload_ty) orelse return .deferred;
+        };
+
+        const variant = types.findVariant(self.graph, choice_ty, name) orelse return .deferred;
+        if (payload) |payload_node| if (variant.variant.payload_type) |expected_payload| {
+            const normalized = self.normalizeChoicePayload(payload_node, expected_payload);
+            payload = normalized;
+            if (self.core) |core| _ = core.coerceContextualValue(normalized, expected_payload);
+            payload_ty = self.graph.nodes.items[@intFromEnum(normalized)].ty;
+        };
+        if (!self.payloadCompatible(variant.variant.payload_type, payload_ty)) return .deferred;
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = self.sourceFor(reference.source, o),
+            .ty = choice_ty,
+            .content = .{ .choice_literal = .{
+                .choice_type = choice_ty,
+                .variant = variant.id,
+                .payload = payload,
+            } },
+        };
+        self.stats.choices += 1;
+        return .resolved;
+    }
+
+    fn normalizeChoicePayload(
+        self: *const Resolver,
+        payload: global_sg.GlobalNodeId,
+        expected: global_sg.GlobalTypeId,
+    ) global_sg.GlobalNodeId {
+        // Choice constructor arguments are lowered as an aggregate. Structural
+        // payloads consume that aggregate directly; scalar/non-structural
+        // payloads consume their single '.value' (or positional) argument.
+        if (types.fields(self.graph, expected) != null) return payload;
+        const literal = switch (self.graph.nodes.items[@intFromEnum(payload)].content) {
+            .struct_value_literal => |value| value,
+            else => return payload,
+        };
+        if (literal.fields.len != 1) return payload;
+        const field = self.graph.value_fields.items[literal.fields.start];
+        if (literal.dispatch_prefix_positional_count != 1 and
+            !std.mem.eql(u8, self.graph.text(field.name), "value")) return payload;
+        return field.value;
+    }
+
+    fn ensureInferredReasonVariant(self: *Resolver, ty: global_sg.GlobalTypeId, name: []const u8, source: primitives.SourceRef) !void {
+        const choice = switch (self.graph.types.items[@intFromEnum(ty)]) {
+            .inferred_choice => |value| if (value.kind == .reasons) value else return,
+            else => return,
+        };
+        if (types.findVariant(self.graph, ty, name) != null) return;
+        const start: u32 = @intCast(self.graph.variants.items.len);
+        for (0..choice.variants.len) |offset|
+            try self.graph.variants.append(self.allocator, self.graph.variants.items[choice.variants.start + @as(u32, @intCast(offset))]);
+        try self.graph.variants.append(self.allocator, .{
+            .name = try self.graph.addString(self.allocator, name),
+            .source = source,
+            .value = @intCast(choice.variants.len),
+        });
+        self.graph.types.items[@intFromEnum(ty)].inferred_choice.variants = .{ .start = start, .len = choice.variants.len + 1 };
+    }
+
+    fn resolveChoiceTest(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
+        const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
+        if (reference.module_path != null or reference.generic_arguments != null or
+            !std.mem.eql(u8, module.text(reference.name), "is")) return .not_applicable;
+        const input = globalizer.globalNode(o, value.input);
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |item| item,
+            else => return .deferred,
+        };
+        var choice_value: ?global_sg.GlobalNodeId = null;
+        var tag_node: ?global_sg.GlobalNodeId = null;
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, index| {
+            if (index < literal.dispatch_prefix_positional_count) {
+                if (index == 0) choice_value = field.value;
+                if (index == 1) tag_node = field.value;
+                continue;
+            }
+            if (std.mem.eql(u8, self.graph.text(field.name), "value")) choice_value = field.value;
+            if (std.mem.eql(u8, self.graph.text(field.name), "variant")) tag_node = field.value;
+        }
+        const choice = choice_value orelse return .deferred;
+        const choice_ty = self.graph.nodes.items[@intFromEnum(choice)].ty orelse return .deferred;
+        const tag = tag_node orelse return .deferred;
+        var option_name: ?[]const u8 = null;
+        var option_source: ?primitives.SourceRef = null;
+        for (module.semantic.pending_operations.items) |pending| switch (pending) {
+            .resolve_choice_literal => |candidate| if (globalizer.globalNode(o, candidate.node) == tag) {
+                const option = module.semantic.external_refs.items[@intFromEnum(candidate.option)];
+                option_name = module.text(option.name);
+                option_source = self.sourceFor(option.source, o);
+                break;
+            },
+            else => {},
+        };
+        const variant = types.findVariant(self.graph, choice_ty, option_name orelse return .deferred) orelse return .deferred;
+        self.graph.nodes.items[@intFromEnum(tag)] = .{
+            .source = option_source orelse return .deferred,
+            .ty = try self.builtin(.Int32),
+            .content = .{ .int_literal = self.choiceVariantTag(choice_ty, variant.id) },
+        };
+        const target = globalizer.globalNode(o, value.node);
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = self.sourceFor(reference.source, o),
+            .ty = try self.builtin(.Bool),
+            .content = .{ .comparison = .{ .operator = .equal, .left = choice, .right = tag } },
+        };
+        return .resolved;
+    }
+
+    fn resolveChoicePayload(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
+        const source = globalizer.globalNode(o, value.value);
+        const choice_ty = self.graph.nodes.items[@intFromEnum(source)].ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(choice_ty)) return .deferred;
+        const name = module.text(value.option_name);
+        const hit = types.findVariant(self.graph, choice_ty, name) orelse return .deferred;
+        const payload_ty = hit.variant.payload_type orelse return .invalid;
+        const target = globalizer.globalNode(o, value.node);
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = self.sourceFor(value.source, o),
+            .ty = payload_ty,
+            .content = .{ .choice_payload_access = .{
+                .value = source,
+                .variant = hit.id,
+                .payload_type = payload_ty,
+            } },
+        };
+        self.stats.choices += 1;
+        return .resolved;
+    }
+
+    fn resolveNullableUnwrap(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
+        const nullable = globalizer.globalNode(o, value.nullable_value);
+        const fallback = globalizer.globalNode(o, value.fallback_value);
+        const choice_ty = self.graph.nodes.items[@intFromEnum(nullable)].ty orelse return false;
+        const some = types.findVariant(self.graph, choice_ty, "some") orelse return false;
+        const payload_ty = some.variant.payload_type orelse return false;
+        const payload_fields = types.fields(self.graph, payload_ty) orelse return false;
+        if (payload_fields.len == 0) return false;
+        const result_ty = self.graph.fields.items[payload_fields.start].ty;
+        const fallback_ty = self.graph.nodes.items[@intFromEnum(fallback)].ty orelse return false;
+        if (!types.equal(self.graph, result_ty, fallback_ty) and !types.isBuiltin(self.graph, fallback_ty, .Any)) return false;
+        const unwrap_id: global_sg.GlobalNullableUnwrapId = @enumFromInt(@as(u32, @intCast(self.graph.nullable_unwraps.items.len)));
+        try self.graph.nullable_unwraps.append(self.allocator, .{
+            .nullable_value = nullable,
+            .fallback_value = fallback,
+            .some_variant = some.id,
+            .some_value_field_index = 0,
+            .result_type = result_ty,
+        });
+        const target = globalizer.globalNode(o, value.node);
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = self.graph.nodes.items[@intFromEnum(nullable)].source,
+            .ty = result_ty,
+            .content = .{ .nullable_unwrap_or = unwrap_id },
+        };
+        self.stats.nullable += 1;
+        return true;
+    }
+
+    fn resolveNullableTest(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
+        const source = globalizer.globalNode(o, value.value);
+        const choice_ty = self.graph.nodes.items[@intFromEnum(source)].ty orelse return false;
+        const some = types.findVariant(self.graph, choice_ty, "some") orelse return false;
+        const int_ty = try self.builtin(.Int32);
+        const bool_ty = try self.builtin(.Bool);
+        const tag_node: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        try self.graph.nodes.append(self.allocator, .{
+            .source = self.graph.nodes.items[@intFromEnum(source)].source,
+            .ty = int_ty,
+            .content = .{ .int_literal = self.choiceVariantTag(choice_ty, some.id) },
+        });
+        const target = globalizer.globalNode(o, value.node);
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = self.graph.nodes.items[@intFromEnum(source)].source,
+            .ty = bool_ty,
+            // Final codegen treats choice-vs-tag comparison as a tag compare;
+            // `annotateChoiceTests` supplies the same fact to Safety.
+            .content = .{ .comparison = .{
+                .operator = .equal,
+                .left = source,
+                .right = tag_node,
+            } },
+        };
+        self.stats.nullable += 1;
+        return true;
+    }
+
+    fn choiceVariantTag(self: *const Resolver, ty: global_sg.GlobalTypeId, variant: global_sg.GlobalVariantId) i32 {
+        if (self.choiceUsesDeclaredTags(ty)) return self.graph.variants.items[@intFromEnum(variant)].value;
+        const variants = types.variants(self.graph, ty) orelse return self.graph.variants.items[@intFromEnum(variant)].value;
+        return @intCast(@intFromEnum(variant) - variants.start);
+    }
+
+    fn choiceUsesDeclaredTags(self: *const Resolver, ty: global_sg.GlobalTypeId) bool {
+        return switch (self.graph.resolvedSemanticType(ty) orelse return false) {
+            .declared => |declaration| self.graph.declaration(declaration).choice_layout == .c_enum,
+            .structural_choice => |shape| shape.layout == .c_enum,
+            .generic => if (types.genericInstance(self.graph, ty)) |instance| switch (instance.shape) {
+                .choice => |shape| shape.layout == .c_enum,
+                else => false,
+            } else false,
+            else => false,
+        };
+    }
+
+    fn resolveMatch(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
+        const expression = globalizer.globalNode(o, value.value);
+        const choice_ty = self.graph.nodes.items[@intFromEnum(expression)].ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(choice_ty)) return .deferred;
+        const variants = types.variants(self.graph, choice_ty) orelse return .invalid;
+        const local_cases = module.semantic.node_refs.items[value.cases.start..][0..value.cases.len];
+
+        // Validate the complete pattern set before mutating the global graph.
+        // A terminal-invalid case must not leave partially materialized switch
+        // cases or payload binding types behind for later fixed-point rounds.
+        var seen: std.ArrayList(global_sg.GlobalVariantId) = .empty;
+        defer seen.deinit(self.allocator);
+        for (local_cases) |local_case_node| {
+            const local_node = module.semantic.nodes.items[@intFromEnum(local_case_node)];
+            const pending_id = switch (local_node) {
+                .pending => |id| id,
+                else => return .deferred,
+            };
+            const pending = module.semantic.pending_operations.items[@intFromEnum(pending_id)];
+            const case = switch (pending) {
+                .resolve_match_case => |item| item,
+                else => return .deferred,
+            };
+            const option_ref = module.semantic.external_refs.items[@intFromEnum(case.option)];
+            const option_name = module.text(option_ref.name);
+            const hit = types.findVariant(self.graph, choice_ty, option_name) orelse return .invalid;
+            for (seen.items) |previous| if (previous == hit.id) return .invalid;
+            try seen.append(self.allocator, hit.id);
+            if (case.payload_binding != null and hit.variant.payload_type == null) return .invalid;
+            if (case.payload_binding == null and hit.variant.payload_type != null) return .invalid;
+        }
+
+        const case_start: u32 = @intCast(self.graph.switch_cases.items.len);
+        for (local_cases) |local_case_node| {
+            const pending_id = switch (module.semantic.nodes.items[@intFromEnum(local_case_node)]) {
+                .pending => |id| id,
+                else => unreachable,
+            };
+            const case = module.semantic.pending_operations.items[@intFromEnum(pending_id)].resolve_match_case;
+            const option_ref = module.semantic.external_refs.items[@intFromEnum(case.option)];
+            const hit = types.findVariant(self.graph, choice_ty, module.text(option_ref.name)).?;
+
+            if (case.payload_binding) |local_binding| {
+                const payload_ty = hit.variant.payload_type.?;
+                const binding = globalizer.globalBinding(o, local_binding);
+                self.graph.bindings.items[@intFromEnum(binding)].ty = try self.matchBindingType(payload_ty, case.mode);
+            }
+
+            const tag = try self.appendIntNode(hit.variant.value, self.sourceFor(option_ref.source, o));
+            try self.graph.switch_cases.append(self.allocator, .{
+                .value = tag,
+                .variant = hit.id,
+                .body = globalizer.globalBlock(o, case.body),
+                .payload_binding = if (case.payload_binding) |binding| globalizer.globalBinding(o, binding) else null,
+                .payload_mode = case.mode,
+            });
+            const global_case_node = globalizer.globalNode(o, case.node);
+            self.graph.nodes.items[@intFromEnum(global_case_node)] = .{
+                .source = self.sourceFor(option_ref.source, o),
+                .ty = try self.builtin(.Void),
+                .content = .{ .code_block = globalizer.globalBlock(o, case.body) },
+            };
+        }
+
+        const switch_id: global_sg.GlobalSwitchId = @enumFromInt(@as(u32, @intCast(self.graph.switches.items.len)));
+        try self.graph.switches.append(self.allocator, .{
+            .expression = expression,
+            .cases = .{ .start = case_start, .len = @intCast(local_cases.len) },
+            .default_block = null,
+            .exhaustive = local_cases.len == variants.len,
+        });
+        const target = globalizer.globalNode(o, value.node);
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = self.graph.nodes.items[@intFromEnum(expression)].source,
+            .ty = try self.builtin(.Void),
+            .content = .{ .switch_statement = switch_id },
+        };
+        self.stats.matches += 1;
+        return .resolved;
+    }
+
+    fn matchCaseAlreadyResolved(self: *Resolver, o: globalizer.Offsets, value: anytype) bool {
+        const node = self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))];
+        return switch (node.content) {
+            .code_block => true,
+            else => false,
+        };
+    }
+
+    const SyntheticCallResult = union(enum) {
+        no_match,
+        deferred,
+        invalid,
+        call: global_sg.GlobalNodeId,
+    };
+
+    fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
+        @setEvalBranchQuota(5000);
+        const core = self.core orelse return .deferred;
+        const generic_functions = self.generic_functions orelse return .deferred;
+        const abstracts = self.abstracts orelse return .deferred;
+        const iterable = globalizer.globalNode(o, value.iterable);
+        const iterable_ty = self.graph.nodes.items[@intFromEnum(iterable)].ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(iterable_ty)) return .deferred;
+
+        // Desugaring is speculative while downstream types/functions may still
+        // be unresolved. Roll every append-only GlobalSG pool back unless the
+        // complete iterator loop can be published atomically.
+        const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
+        var lengths: [pools.len]usize = undefined;
+        inline for (pools, 0..) |pool, index| lengths[index] = @field(self.graph, pool.name).items.len;
+        var committed = false;
+        defer if (!committed) {
+            inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+        };
+
+        const ForProtocol = struct {
+            iterable_contract: []const u8,
+            conversion: []const u8,
+            mutable: bool,
+        };
+        const protocol: ForProtocol = switch (value.mode) {
+            .value => .{ .iterable_contract = "Iterable", .conversion = "to_iterator", .mutable = false },
+            .borrow => .{ .iterable_contract = "ROPointerIterable", .conversion = "to_ro_pointer_iterator", .mutable = false },
+            .mut_borrow => .{ .iterable_contract = "RWPointerIterable", .conversion = "to_rw_pointer_iterator", .mutable = true },
+        };
+        const iterable_contract_name = protocol.iterable_contract;
+        const conversion_name = protocol.conversion;
+        const iterable_mutable = protocol.mutable;
+        const existing_reference = if (value.mode == .value) switch (self.graph.types.items[@intFromEnum(iterable_ty)]) {
+            .pointer => |pointer_type| pointer_type,
+            else => null,
+        } else null;
+        const contract_ty = if (existing_reference) |pointer_type| pointer_type.child else iterable_ty;
+        const iterable_contract = self.visibleAbstract(module_index, iterable_contract_name) orelse return .deferred;
+        if (!try abstracts.implements(contract_ty, iterable_contract)) {
+            if (self.for_each_failure == null) self.for_each_failure = .{
+                .source = .{ .file_index = o.file_base + value.source.file_index, .offset = value.source.offset },
+                .actual = iterable_ty,
+                .contract_name = iterable_contract_name,
+            };
+            return .invalid;
+        }
+
+        const source = self.graph.nodes.items[@intFromEnum(iterable)].source;
+        var iterable_declaration: ?global_sg.GlobalNodeId = null;
+        var iterable_place = iterable;
+        if (!self.addressable(iterable)) {
+            const binding: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.graph.bindings.items.len)));
+            try self.graph.bindings.append(self.allocator, .{
+                .name = try self.graph.addString(self.allocator, "$for_iterable"),
+                .source = source,
+                .ty = iterable_ty,
+                .initialization = iterable,
+                .mutability = if (iterable_mutable) .variable else .constant,
+            });
+            iterable_declaration = try self.appendNode(source, try self.builtin(.Void), .{ .binding_declaration = binding });
+            iterable_place = try self.appendNode(source, iterable_ty, .{ .binding_use = binding });
+        }
+
+        const iterable_reference = if (existing_reference != null)
+            iterable_place
+        else
+            try self.appendAddress(iterable_place, iterable_ty, iterable_mutable, source);
+        const conversion = try self.syntheticCall(module_index, conversion_name, iterable_reference, source, core, generic_functions);
+        const iterator_value = switch (conversion) {
+            .call => |node| node,
+            .deferred => return .deferred,
+            .no_match, .invalid => return .invalid,
+        };
+        const iterator_ty = self.graph.nodes.items[@intFromEnum(iterator_value)].ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(iterator_ty)) return .deferred;
+        const iterator_contract = self.visibleAbstract(module_index, "Iterator") orelse return .deferred;
+        if (!try abstracts.implements(iterator_ty, iterator_contract)) return .invalid;
+
+        const iterator_binding: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.graph.bindings.items.len)));
+        try self.graph.bindings.append(self.allocator, .{
+            .name = try self.graph.addString(self.allocator, "$for_iterator"),
+            .source = source,
+            .ty = iterator_ty,
+            .initialization = iterator_value,
+            .mutability = .variable,
+        });
+        const iterator_declaration = try self.appendNode(source, try self.builtin(.Void), .{ .binding_declaration = iterator_binding });
+
+        const condition_iterator = try self.appendNode(source, iterator_ty, .{ .binding_use = iterator_binding });
+        const condition_self = try self.appendAddress(condition_iterator, iterator_ty, false, source);
+        const condition_result = try self.syntheticCall(module_index, "has_next", condition_self, source, core, generic_functions);
+        const condition = switch (condition_result) {
+            .call => |node| node,
+            .deferred => return .deferred,
+            .no_match, .invalid => return .invalid,
+        };
+        const bool_ty = try self.builtin(.Bool);
+        const condition_ty = self.graph.nodes.items[@intFromEnum(condition)].ty orelse return .deferred;
+        if (!types.equal(self.graph, condition_ty, bool_ty)) return .invalid;
+
+        const next_iterator = try self.appendNode(source, iterator_ty, .{ .binding_use = iterator_binding });
+        const next_self = try self.appendAddress(next_iterator, iterator_ty, true, source);
+        const next_result = try self.syntheticCall(module_index, "next", next_self, source, core, generic_functions);
+        const next_value = switch (next_result) {
+            .call => |node| node,
+            .deferred => return .deferred,
+            .no_match, .invalid => return .invalid,
+        };
+        const element_ty = self.graph.nodes.items[@intFromEnum(next_value)].ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(element_ty)) return .deferred;
+
+        const item_binding = globalizer.globalBinding(o, value.binding);
+        const old_binding_ty = self.graph.bindings.items[@intFromEnum(item_binding)].ty;
+        self.graph.bindings.items[@intFromEnum(item_binding)].ty = element_ty;
+        errdefer self.graph.bindings.items[@intFromEnum(item_binding)].ty = old_binding_ty;
+        const item_declaration = try self.appendNode(source, try self.builtin(.Void), .{ .binding_declaration = item_binding });
+        const item_assignment = try self.appendNode(source, element_ty, .{ .assignment = .{
+            .binding = item_binding,
+            .value = next_value,
+        } });
+
+        const old_body = self.graph.blocks.items[@intFromEnum(globalizer.globalBlock(o, value.body))];
+        const old_nodes = try self.allocator.dupe(
+            global_sg.GlobalNodeId,
+            self.graph.node_refs.items[old_body.nodes.start..][0..old_body.nodes.len],
+        );
+        defer self.allocator.free(old_nodes);
+        const body_start: u32 = @intCast(self.graph.node_refs.items.len);
+        try self.graph.node_refs.append(self.allocator, item_declaration);
+        try self.graph.node_refs.append(self.allocator, item_assignment);
+        try self.graph.node_refs.appendSlice(self.allocator, old_nodes);
+        const body_id: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
+        try self.graph.blocks.append(self.allocator, .{
+            .nodes = .{ .start = body_start, .len = @intCast(old_nodes.len + 2) },
+            .ret_val = old_body.ret_val,
+        });
+
+        var init = iterator_declaration;
+        if (iterable_declaration) |iterable_decl| {
+            const init_start: u32 = @intCast(self.graph.node_refs.items.len);
+            try self.graph.node_refs.append(self.allocator, iterable_decl);
+            try self.graph.node_refs.append(self.allocator, iterator_declaration);
+            const init_block: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
+            try self.graph.blocks.append(self.allocator, .{
+                .nodes = .{ .start = init_start, .len = 2 },
+                .ret_val = null,
+            });
+            init = try self.appendNode(source, try self.builtin(.Void), .{ .code_block = init_block });
+        }
+
+        const target = globalizer.globalNode(o, value.node);
+        self.graph.nodes.items[@intFromEnum(target)] = .{
+            .source = source,
+            .ty = try self.builtin(.Void),
+            .content = .{ .for_statement = .{
+                .init = init,
+                .condition = condition,
+                .increment = null,
+                .body = body_id,
+            } },
+        };
+        self.stats.for_loops += 1;
+        committed = true;
+        return .resolved;
+    }
+
+    fn syntheticCall(
+        self: *Resolver,
+        module_index: usize,
+        name: []const u8,
+        argument: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+        core: *core_mod.Resolver,
+        generic_functions: *generic_functions_mod.Resolver,
+    ) !SyntheticCallResult {
+        const input = try self.positionalInput(argument, source);
+        const function = switch (try core.matchUnqualifiedFunctionByName(module_index, name, input)) {
+            .function => |function| function,
+            .deferred => return .deferred,
+            .ambiguous => return .invalid,
+            .no_match => generic_functions.resolveImplicitGenericFunctionByName(module_index, name, input, null) catch |err| switch (err) {
+                error.NoMatchingGenericFunction => return .no_match,
+                error.DeferredGenericFunction => return .deferred,
+                error.AmbiguousGenericFunction => return .invalid,
+                error.ConflictingGenericArgument => return .no_match,
+                else => return err,
+            },
+        };
+        const fields = self.graph.functions.items[@intFromEnum(function)].input;
+        if (!try core.completeCallInputFields(fields, input)) return .deferred;
+        const output = try core.functionOutputType(function);
+        const call = try self.appendNode(source, output, .{ .function_call = .{
+            .callee = function,
+            .input = input,
+        } });
+        return .{ .call = call };
+    }
+
+    fn positionalInput(self: *Resolver, argument: global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.GlobalNodeId {
+        const start: u32 = @intCast(self.graph.value_fields.items.len);
+        try self.graph.value_fields.append(self.allocator, .{
+            .name = try self.graph.addString(self.allocator, ""),
+            .value = argument,
+        });
+        const input: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        try self.graph.nodes.append(self.allocator, .{
+            .source = source,
+            .ty = null,
+            .content = .{ .struct_value_literal = .{
+                .fields = .{ .start = start, .len = 1 },
+                .dispatch_prefix_positional_count = 1,
+            } },
+        });
+        return input;
+    }
+
+    fn visibleAbstract(self: *Resolver, module_index: usize, name: []const u8) ?global_sg.GlobalDeclId {
+        const core = self.core orelse return null;
+        var found: ?global_sg.GlobalDeclId = null;
+        for (self.graph.declarations.items, 0..) |declaration, raw| {
+            if (declaration.kind != .abstract_type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
+            const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (!core.declarationVisible(module_index, id, null)) continue;
+            if (found != null) return null;
+            found = id;
+        }
+        return found;
+    }
+
+    fn addressable(self: *Resolver, node: global_sg.GlobalNodeId) bool {
+        return switch (self.graph.nodes.items[@intFromEnum(node)].content) {
+            .binding_use, .struct_field_access, .choice_payload_access, .dereference => true,
+            else => false,
+        };
+    }
+
+    fn findChoiceType(self: *Resolver, expected: ?global_sg.GlobalTypeId, name: []const u8, payload_ty: ?global_sg.GlobalTypeId) ?global_sg.GlobalTypeId {
+        if (expected) |ty| {
+            if (!types.isBuiltin(self.graph, ty, .Any)) {
+                if (types.findVariant(self.graph, ty, name)) |hit|
+                    if (self.payloadCompatible(hit.variant.payload_type, payload_ty)) return ty;
+            }
+        }
+        var found: ?global_sg.GlobalTypeId = null;
+        for (self.graph.types.items, 0..) |_, raw| {
+            const ty: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(raw)));
+            const hit = types.findVariant(self.graph, ty, name) orelse continue;
+            if (!self.payloadCompatible(hit.variant.payload_type, payload_ty)) continue;
+            if (found != null and !types.equal(self.graph, found.?, ty)) return null;
+            found = ty;
+        }
+        return found;
+    }
+
+    fn payloadCompatible(self: *Resolver, expected: ?global_sg.GlobalTypeId, actual: ?global_sg.GlobalTypeId) bool {
+        if (expected == null or actual == null) return expected == null and actual == null;
+        if (types.isBuiltin(self.graph, actual.?, .Any) or types.isBuiltin(self.graph, expected.?, .Any)) return true;
+        return types.equal(self.graph, expected.?, actual.?);
+    }
+
+    fn matchBindingType(self: *Resolver, payload: global_sg.GlobalTypeId, mode: primitives.MatchCaseMode) !global_sg.GlobalTypeId {
+        return switch (mode) {
+            .value, .move => payload,
+            .borrow => self.pointer(payload, .read_only),
+            .mut_borrow => self.pointer(payload, .read_write),
+        };
+    }
+
+    fn forBindingType(self: *Resolver, payload: global_sg.GlobalTypeId, mode: primitives.ForMode) !global_sg.GlobalTypeId {
+        return switch (mode) {
+            .value => payload,
+            .borrow => self.pointer(payload, .read_only),
+            .mut_borrow => self.pointer(payload, .read_write),
+        };
+    }
+
+    fn pointer(self: *Resolver, child: global_sg.GlobalTypeId, mutability: primitives.PointerMutability) !global_sg.GlobalTypeId {
+        for (self.graph.types.items, 0..) |ty, raw| switch (ty) {
+            .pointer => |value| if (value.child == child and value.mutability == mutability)
+                return @enumFromInt(@as(u32, @intCast(raw))),
+            else => {},
+        };
+        const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
+        try self.graph.types.append(self.allocator, .{ .pointer = .{ .child = child, .mutability = mutability } });
+        return id;
+    }
+
+    fn appendAddress(self: *Resolver, value: global_sg.GlobalNodeId, child: global_sg.GlobalTypeId, mutable: bool, source: primitives.SourceRef) !global_sg.GlobalNodeId {
+        const ty = try self.pointer(child, if (mutable) .read_write else .read_only);
+        return self.appendNode(source, ty, .{ .address_of = value });
+    }
+
+    fn appendIntNode(self: *Resolver, value: i64, source: primitives.SourceRef) !global_sg.GlobalNodeId {
+        return self.appendTypedIntNode(value, try self.builtin(.Int32), source);
+    }
+
+    fn appendTypedIntNode(self: *Resolver, value: i64, ty: global_sg.GlobalTypeId, source: primitives.SourceRef) !global_sg.GlobalNodeId {
+        return self.appendNode(source, ty, .{ .int_literal = value });
+    }
+
+    fn appendNode(self: *Resolver, source: primitives.SourceRef, ty: global_sg.GlobalTypeId, content: global_sg.Node.Content) !global_sg.GlobalNodeId {
+        const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = ty, .content = content });
+        return id;
+    }
+
+    fn builtin(self: *Resolver, builtin_type: primitives.BuiltinType) !global_sg.GlobalTypeId {
+        for (self.graph.types.items, 0..) |ty, raw| switch (ty) {
+            .builtin => |value| if (value == builtin_type) return @enumFromInt(@as(u32, @intCast(raw))),
+            else => {},
+        };
+        const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
+        try self.graph.types.append(self.allocator, .{ .builtin = builtin_type });
+        return id;
+    }
+
+    fn sourceFor(self: *Resolver, source: primitives.SourceRef, o: globalizer.Offsets) primitives.SourceRef {
+        _ = self;
+        return .{ .file_index = o.file_base + source.file_index, .offset = source.offset };
+    }
+
+    fn syntheticSource(self: *Resolver) primitives.SourceRef {
+        _ = self;
+        return .{ .file_index = 0, .offset = 0 };
+    }
+};
+
+test "global control resolver materializes nullable into an explicit choice shape" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .nullable = @enumFromInt(0) });
+    var resolver = Resolver{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    try std.testing.expect(try resolver.materializeSugarTypes());
+    try std.testing.expect(!try resolver.materializeSugarTypes());
+    const variants = types.variants(&graph, @enumFromInt(1)).?;
+    try std.testing.expectEqual(@as(u32, 2), variants.len);
+    try std.testing.expectEqualStrings("some", graph.text(graph.variants.items[variants.start + 1].name));
+}
+
+test "inferred errable keeps an open reason choice and concrete trace field" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .declared = @enumFromInt(0) });
+    try graph.types.append(allocator, .{ .inferred_errable = @enumFromInt(0) });
+    try graph.declarations.append(allocator, .{
+        .kind = .type,
+        .name = try graph.addString(allocator, "ErrorTrace"),
+        .source = source,
+        .type_id = @enumFromInt(1),
+    });
+    var resolver = Resolver{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    _ = try resolver.materializeSugarTypes();
+    const error_variant = types.findVariant(&graph, @enumFromInt(2), "error").?;
+    const payload_ty = error_variant.variant.payload_type.?;
+    const reason = types.findField(&graph, payload_ty, "reason").?;
+    const trace = types.findField(&graph, payload_ty, "trace").?;
+    try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(1)), trace.field.ty);
+    try std.testing.expectEqual(primitives.InferredChoiceKind.reasons, graph.types.items[@intFromEnum(reason.field.ty)].inferred_choice.kind);
+    try resolver.ensureInferredReasonVariant(reason.field.ty, "first", source);
+    try resolver.ensureInferredReasonVariant(reason.field.ty, "second", source);
+    try resolver.ensureInferredReasonVariant(reason.field.ty, "first", source);
+    try std.testing.expectEqual(@as(u32, 2), types.variants(&graph, reason.field.ty).?.len);
+}
