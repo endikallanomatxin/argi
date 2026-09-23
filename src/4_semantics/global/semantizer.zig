@@ -1082,7 +1082,12 @@ fn resolvePendingOperation(
         else
             dispatch.resolveCall(module_index, module, o, operation),
         .indexing => dispatch.resolveIndex(module_index, module, o, operation),
-        .core => ownedResult(try core.tryResolve(module_index, module, o, operation)),
+        .core => blk: {
+            const core_result = try core.tryResolve(module_index, module, o, operation);
+            if (core_result == .resolved or operation != .resolve_binary) break :blk ownedResult(core_result);
+            const generic_result = try dispatch.generic_functions.resolveGenericAddition(module_index, module, o, operation.resolve_binary);
+            break :blk if (generic_result == .resolved) generic_result else ownedResult(core_result);
+        },
         .expressions => ownedResult(try expressions.tryResolve(module_index, module, o, operation)),
         .control => ownedResult(try control.tryResolve(module_index, module, o, operation)),
         .abstracts => ownedResult(try abstracts.tryResolve(module_index, module, o, operation)),

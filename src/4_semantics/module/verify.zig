@@ -197,6 +197,8 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.idFits(value.left, semantic.nodes.items.len));
             try require(verify.idFits(value.right, semantic.nodes.items.len));
+            try require(verify.rangeFits(value.visible_bindings, semantic.binding_refs.items.len));
+            try require(verify.optionalIdFits(value.owner_function, graph.functions.items.len));
         },
         .resolve_comparison => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));

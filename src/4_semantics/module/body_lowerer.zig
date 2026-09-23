@@ -645,11 +645,14 @@ const Context = struct {
             .binary_modulo => .modulo,
             else => unreachable,
         };
+        const visible_bindings = try self.captureVisibleBindings();
         return self.pending(node, .{ .resolve_binary = .{
             .node = self.nextNodeId(),
             .operator = operator,
             .left = lhs.node,
             .right = rhs.node,
+            .visible_bindings = visible_bindings,
+            .owner_function = self.current_function,
         } }, expected);
     }
 

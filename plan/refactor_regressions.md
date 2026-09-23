@@ -5,8 +5,10 @@
 This document's original checkpoint below records the 2026-09-09 state; its
 test counts and file paths are historical. Development continues on
 `compact-semantic-graph-chatgpt`, using `performance` as the behavior reference.
-The active inventory is `plan/compact_semantic_graph_remaining.md`: 655 / 661
-program tests pass, with six failures in one implementation path.
+The active checkpoint is `plan/compact_semantic_graph_remaining.md`: 661 / 661
+program tests and all internal tests pass. The sections below explain the
+settled semantics and record historical investigation; they are not open
+regression tasks.
 
 ### Settled language semantics: abstract is static, `Virtual` is dynamic
 
@@ -19,21 +21,15 @@ materializes typed local `#reach` and records this identity for generic
 inference; `system/25_local_typed_reach_binding` passes. This identity must
 never widen the binding's visible member interface.
 
-The remaining String failures are an implementation gap: `concat_views`
-receives a reached abstract parameter across a function boundary, but the
-concrete implementer is not yet propagated into a specialized body. Its free
-call to `string_with_capacity` consequently sees only `$&Allocator`. Do not
-select the abstract declaration as its own implementer or introduce implicit
-runtime dispatch.
+`concat_views` now declares its allocator as an abstract reached input. Its
+operator callers likewise expose a reached input; binary operator resolution
+infers and instantiates those abstract-contract operators from the written
+operands and the caller's lexical `#reach` context. The instantiated bodies
+call `concat_views` and `string_with_capacity` with a concrete implementer.
+This closes `feature_tests/text/12_string_concat` through
+`text/17_string_view_concat_string` without runtime dispatch or widening the
+abstract interface.
 
-Current examples are `feature_tests/text/12_string_concat` through
-`text/17_string_view_concat_string`; `text/16` and `text/17` expose the direct
-`string_with_capacity(.allocator: $&Allocator, .capacity: UIntNative)` case.
-The binary operator pipeline now selects the intended overload for `text/12`
-through `text/15`, applies contextual string-literal coercion, and preserves
-the `Errable` output type. Those tests consequently converge on the same
-erased-allocator specialization boundary rather than failing earlier as
-pointer arithmetic or with a stale `&String` binding type.
 ### Settled ownership semantics: `System` can move explicitly
 
 The prior `35X_system_move_by_value` negative test enforced a name-based

@@ -1,58 +1,17 @@
-# Compact semantic graph: remaining parity work
+# Compact semantic graph: parity checkpoint
 
-This is the active inventory for the final semantic-parity work on
-`compact-semantic-graph-chatgpt`. It records current causes and recommended
-work order, not a history of every regression fixed during the refactor.
+The compact semantic graph branch now passes all registered program tests:
 
-Keep this document small and current. When a cause is fixed and its focal and
-related tests pass, remove that cause and its test names instead of marking a
-permanent completed checklist. Update the measured checkpoint after each
-global run. Design questions that cannot be settled as implementation details
-belong in `plan/refactor_regressions.md` and should only be linked from here.
+- 661 / 661 program tests pass (`zig build test-programs`).
+- Internal tests pass (`zig build test-internal`).
 
-## Measured checkpoint
+No known red parity tests remain. Abstract contracts are specialized from
+concrete static implementers, including typed local `#reach` bindings and
+reached inputs to binary operators. `Virtual` remains the explicit dynamic
+dispatch mechanism. An explicit `~System` transfer is valid; implicit copying
+of `System` remains invalid.
 
-Current checkpoint after resolving typed local `#reach` and allowing explicit
-`System` moves:
-
-- 655 / 661 program tests pass.
-- 6 / 661 program tests fail.
-- All six failures share an incomplete static-implementer propagation path.
-
-## Resolution and generic materialization
-
-### Static implementers through propagated `#reach`
-
-Affected tests:
-
-- `feature_tests/text/12_string_concat`
-- `feature_tests/text/13_string_concat_string`
-- `feature_tests/text/14_string_concat_string_view`
-- `feature_tests/text/15_string_view_concat_c_string`
-- `feature_tests/text/16_string_view_concat_string_view`
-- `feature_tests/text/17_string_view_concat_string`
-
-Operator resolution preserves the eventual `Errable` output type. All six
-tests reach `string_with_capacity` from `concat_views`, whose `allocator`
-binding is reached through a function boundary. Local typed `#reach` now
-selects and records a concrete static implementer without widening the
-visible `$&Allocator` interface; this closes `system/25`. The same identity
-must be carried when a reached parameter is propagated into and specialized
-through another function. Abstract inputs monomorphize; `Virtual` alone opts
-into runtime dispatch. Do not bind the abstract declaration as its own
-implementer or relax generic inference to force these tests through.
-
-A direct-source probe making `concat_views`'s reached allocator an explicit
-abstract input then required its operator callers to specialize too. Adding
-that reached abstract input to an operator made the operator undiscoverable
-and resolution fell back to pointer arithmetic. The probe was reverted. The
-structural fix must cover both interprocedural `#reach` propagation and
-generic operator candidate discovery; changing only the core String source
-does not close the group.
-
-## Recommended work order
-
-1. Carry concrete static-implementer evidence through propagated reached
-   parameters and function specialization.
-2. Verify the six String concatenation paths and global suite without
-   changing their visible abstract interfaces.
+Before integration, review the branch-wide diff and run the combined
+`zig build test` target in the intended release environment. New failures
+should be investigated against this checkpoint rather than the historical
+inventory in `plan/refactor_regressions.md`.
