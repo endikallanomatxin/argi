@@ -1,1 +1,0 @@
-zig build test-programs -Dtest-filter=feature_tests/text/04_string_buffer_helpers -Dtest-filter=feature_tests/text/10_string_view_c_string_storage
