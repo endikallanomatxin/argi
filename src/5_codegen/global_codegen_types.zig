@@ -234,7 +234,7 @@ pub const Lowerer = struct {
     }
 };
 
-test "global codegen type layer is independent from legacy semantic graph" {
+test "global codegen type layer is independent from pointer-based semantic graph" {
     try std.testing.expect(@sizeOf(graph_mod.GlobalTypeId) == 4);
     try std.testing.expect(types.pointer_size_bytes == @sizeOf(*usize));
 }

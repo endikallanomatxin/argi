@@ -16,7 +16,6 @@ pub const CodegenError = error{
     OutOfMemory,
     UnknownNode,
     ValueNotFound,
-    NotYetImplemented,
     ConstantReassignment,
     CompilationFailed,
     ExpressionNotFound,

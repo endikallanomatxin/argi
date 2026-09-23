@@ -109,13 +109,13 @@ const Context = struct {
             // Function interfaces participate in dispatch even when their
             // bodies are unreachable, so their pending work is global.
             self.writer.pending_owner_function = null;
-            const legacy_decl = self.graph.declarations.items[@intFromEnum(interface.declaration)];
-            self.file_index = legacy_decl.module_file_index;
+            const source_decl = self.graph.declarations.items[@intFromEnum(interface.declaration)];
+            self.file_index = source_decl.module_file_index;
             const file = self.files[@intCast(self.file_index)];
             self.tree = file.tree;
             self.source = file.source;
-            const declaration_node = graph_mod.declarationSyntaxNode(self.files, legacy_decl) orelse continue;
-            const declaration = switch (legacy_decl.kind) {
+            const declaration_node = graph_mod.declarationSyntaxNode(self.files, source_decl) orelse continue;
+            const declaration = switch (source_decl.kind) {
                 .function => self.tree.functionDeclaration(declaration_node) orelse continue,
                 .test_function => (self.tree.testDeclaration(declaration_node) orelse continue).function,
                 else => continue,
@@ -145,7 +145,7 @@ const Context = struct {
                 .output_bindings = output_range,
                 .flags = .{
                     .is_once = declaration.is_once,
-                    .is_test = legacy_decl.kind == .test_function,
+                    .is_test = source_decl.kind == .test_function,
                     .has_declared_body = declaration.body != null,
                     .uses_inferred_error_reasons = try self.interfaceUsesInferredErrable(interface.output),
                 },

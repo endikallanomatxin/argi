@@ -584,13 +584,12 @@ pub const Resolver = struct {
         field_index: u32,
         actual_type: global_sg.GlobalTypeId,
         source: primitives.SourceRef,
-        legacy_field_type: ?*global_sg.GlobalTypeId = null,
+        direct_store_field_type: ?*global_sg.GlobalTypeId = null,
     };
 
-    /// Normalize the two store representations GlobalSG may contain while the
-    /// compact refactor is in flight. Source field assignments are represented
-    /// as pointer_assignment(address_of(struct_field_access(...)), ...); older
-    /// synthesized paths may still use struct_field_store directly.
+    /// Normalize the two store representations supported by GlobalSG. Source
+    /// field assignments use pointer_assignment(address_of(struct_field_access(...)),
+    /// ...); synthesized semantic paths may use struct_field_store directly.
     fn abstractFieldAssignment(
         self: *Resolver,
         node: *global_sg.Node,
@@ -603,7 +602,7 @@ pub const Resolver = struct {
                     .field_index = store.field_index,
                     .actual_type = actual,
                     .source = self.graph.node(store.value).source,
-                    .legacy_field_type = &store.field_type,
+                    .direct_store_field_type = &store.field_type,
                 };
             },
             .pointer_assignment => |assignment| {
@@ -660,7 +659,7 @@ pub const Resolver = struct {
                 field.storage_type = assignment.actual_type;
                 changed = true;
             }
-            if (assignment.legacy_field_type) |field_type| {
+            if (assignment.direct_store_field_type) |field_type| {
                 if (!global_types.equal(self.graph, field_type.*, assignment.actual_type)) {
                     field_type.* = assignment.actual_type;
                     changed = true;
