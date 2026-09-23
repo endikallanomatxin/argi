@@ -31,6 +31,7 @@ Affected tests:
 - `feature_tests/text/15_string_view_concat_c_string`
 - `feature_tests/text/16_string_view_concat_string_view`
 - `feature_tests/text/17_string_view_concat_string`
+
 Operator resolution preserves the eventual `Errable` output type. All six
 tests reach `string_with_capacity` from `concat_views`, whose `allocator`
 binding is reached through a function boundary. Local typed `#reach` now
@@ -40,6 +41,14 @@ must be carried when a reached parameter is propagated into and specialized
 through another function. Abstract inputs monomorphize; `Virtual` alone opts
 into runtime dispatch. Do not bind the abstract declaration as its own
 implementer or relax generic inference to force these tests through.
+
+A direct-source probe making `concat_views`'s reached allocator an explicit
+abstract input then required its operator callers to specialize too. Adding
+that reached abstract input to an operator made the operator undiscoverable
+and resolution fell back to pointer arithmetic. The probe was reverted. The
+structural fix must cover both interprocedural `#reach` propagation and
+generic operator candidate discovery; changing only the core String source
+does not close the group.
 
 ## Recommended work order
 
