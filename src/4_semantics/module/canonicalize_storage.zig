@@ -3,7 +3,7 @@ const graph_mod = @import("graph.zig");
 const entities = @import("entities.zig");
 const views = @import("views.zig");
 
-/// Collapse the builder-era compatibility prefixes and canonical semantic tails
+/// Collapse the discovery-time construction prefixes and canonical semantic tails
 /// into one Module* ID space without changing any logical ID. This runs only
 /// after ModuleSema has finished writing, so downstream GlobalSema never has to
 /// reason about split type/field/variant/generic-argument storage.
@@ -65,7 +65,7 @@ pub fn run(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph) 
     graph.semantic.field_semantics = .empty;
     graph.semantic.variant_semantics.deinit(allocator);
     graph.semantic.variant_semantics = .empty;
-    graph.semantic.compatibility_bases = .{
+    graph.semantic.construction_bases = .{
         .types = 0,
         .fields = 0,
         .variants = 0,
@@ -73,7 +73,7 @@ pub fn run(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph) 
     };
 }
 
-pub fn hasCompatibilityPrefixes(graph: *const graph_mod.ModuleSemanticGraph) bool {
+pub fn hasConstructionPrefixes(graph: *const graph_mod.ModuleSemanticGraph) bool {
     return graph.types.items.len != 0 or
         graph.fields.items.len != 0 or
         graph.structural_fields.items.len != 0 or
@@ -94,7 +94,7 @@ test "canonicalization preserves logical type IDs while draining prefixes" {
     } } });
 
     try run(allocator, &graph);
-    try std.testing.expect(!hasCompatibilityPrefixes(&graph));
+    try std.testing.expect(!hasConstructionPrefixes(&graph));
     try std.testing.expectEqual(@as(usize, 2), graph.semantic.types.items.len);
     try std.testing.expectEqual(@import("../primitives/schema.zig").BuiltinType.Int32, graph.semantic.types.items[0].resolved.builtin);
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(graph.semantic.types.items[1].resolved.pointer.child));

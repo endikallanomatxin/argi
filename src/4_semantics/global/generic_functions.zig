@@ -2184,7 +2184,7 @@ pub const Resolver = struct {
         fn instantiatePendingNode(self: *InstanceContext, pending: ir.Pending) anyerror!global_sg.Node {
             return switch (pending) {
                 .resolve_name => |value| self.resolveName(value),
-                .resolve_call => |value| self.resolveLegacyCall(value),
+                .resolve_call => |value| self.resolveCall(value),
                 .resolve_field => |value| self.resolveParameterizedField(value.value, value.field_name, value.source),
                 .resolve_expression => |value| self.resolveExpression(value),
                 .resolve_copy, .resolve_deinit => error.ParameterizedOwnershipPending,
@@ -2200,7 +2200,7 @@ pub const Resolver = struct {
             return error.UnknownParameterizedName;
         }
 
-        fn resolveLegacyCall(self: *InstanceContext, value: anytype) !global_sg.Node {
+        fn resolveCall(self: *InstanceContext, value: anytype) !global_sg.Node {
             const input = try self.instantiateNode(value.input);
             return self.makeNamedCall(value.name, null, .{ .start = 0, .len = 0 }, input, value.source);
         }

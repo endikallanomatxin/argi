@@ -16,10 +16,7 @@ const module_test_validate = @import("../4_semantics/module/test_validate.zig");
 const global_safety_checker = @import("../4_semantics/safety/checker.zig");
 
 pub const FrontendPipeline = struct {
-    /// Indexed-frontend command options. The `semantizer` field name is kept
-    /// temporarily so build/test call sites can migrate independently from the
-    /// removal of the old pointer Semantizer implementation.
-    pub const SemanticOptions = struct {
+    pub const SemantizingOptions = struct {
         include_tests: bool = false,
         selected_test_name: ?[]const u8 = null,
         implicit_testing_module_dir: ?[]const u8 = null,
@@ -27,7 +24,7 @@ pub const FrontendPipeline = struct {
     };
 
     pub const Options = struct {
-        semantizer: SemanticOptions = .{},
+        semantizing: SemantizingOptions = .{},
         collect_stats: bool = false,
     };
 
@@ -50,7 +47,6 @@ pub const FrontendPipeline = struct {
     module_semantizing_ns: u64 = 0,
     global_semantic_ns: u64 = 0,
     module_lowered_functions: u32 = 0,
-    module_fallback_functions: u32 = 0,
     syntax_node_count: usize = 0,
     syntax_roots: []const st.SyntaxRef = &.{},
 
@@ -165,8 +161,8 @@ pub const FrontendPipeline = struct {
             self.syntax_files.items,
             self.source_db,
             self.diagnostics,
-            self.options.semantizer.include_tests,
-            self.options.semantizer.selected_test_name,
+            self.options.semantizing.include_tests,
+            self.options.semantizing.selected_test_name,
         );
         try self.validateFunctionSignatures();
         if (self.diagnostics.hasErrors()) return error.Reported;
@@ -224,7 +220,6 @@ pub const FrontendPipeline = struct {
         self.clearModuleGraphs();
         errdefer self.clearModuleGraphs();
         self.module_lowered_functions = 0;
-        self.module_fallback_functions = 0;
 
         const ModuleInputs = struct {
             dir: []const u8,
@@ -263,15 +258,14 @@ pub const FrontendPipeline = struct {
         for (groups.items) |group| {
             const result = try module_semantizer.buildWithAbstractCatalog(self.allocator, group.dir, group.files.items, abstract_names.items);
             self.module_lowered_functions += result.stats.lowered_functions;
-            self.module_fallback_functions += result.stats.fallback_functions;
             self.module_graphs.appendAssumeCapacity(result.graph);
         }
         self.module_semantizing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - module_start);
 
         const global_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         const result = try global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{
-            .selected_test_name = self.options.semantizer.selected_test_name,
-            .exhaustive_function_bodies = self.options.semantizer.exhaustive_function_bodies,
+            .selected_test_name = self.options.semantizing.selected_test_name,
+            .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
             .diagnostics = self.diagnostics,
         });
         self.global_graph = result.graph;
@@ -280,7 +274,7 @@ pub const FrontendPipeline = struct {
             self.allocator,
             &self.global_graph.?,
             self.diagnostics,
-            self.options.semantizer.selected_test_name,
+            self.options.semantizing.selected_test_name,
         );
         self.global_semantic_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - global_start);
     }
