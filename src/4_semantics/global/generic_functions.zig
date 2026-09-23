@@ -56,6 +56,65 @@ pub const Resolver = struct {
         addressed_receiver_type: ?global_sg.GlobalTypeId = null,
     };
 
+    /// Binary syntax may target a statically specialized operator whose
+    /// trailing capability inputs are supplied by `#reach`. Infer from the
+    /// written operands and caller context before materializing the call.
+    pub fn resolveGenericAddition(
+        self: *Resolver,
+        module_index: usize,
+        module: *const module_sg.ModuleSemanticGraph,
+        o: globalizer.Offsets,
+        value: anytype,
+    ) !resolution.Result {
+        if (value.operator != .addition) return .not_applicable;
+        const left = globalizer.globalNode(o, value.left);
+        const right = globalizer.globalNode(o, value.right);
+        const left_ty = self.graph.node(left).ty orelse return .deferred;
+        const right_ty = self.graph.node(right).ty orelse return .deferred;
+        if (self.graph.isTypeUnresolved(left_ty) or self.graph.isTypeUnresolved(right_ty)) return .deferred;
+        const operands = [_]global_sg.GlobalNodeId{ left, right };
+        const operand_types = [_]global_sg.GlobalTypeId{ left_ty, right_ty };
+        const reach = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
+        const input = try self.makePositionalInput(&operands);
+        var chosen: ?global_sg.GlobalFunctionId = null;
+        for (self.modules, 0..) |*candidate_module, candidate_module_index| {
+            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                if (parameterized.operator != .add) continue;
+                const declaration = globalizer.globalDecl(self.offsets[candidate_module_index], parameterized.declaration);
+                if (!self.core.declarationVisible(module_index, declaration, null)) continue;
+                var bindings = try generic_mod.Resolver.Bindings.init(
+                    self.allocator,
+                    candidate_module.semantic.parameterized_storage.comptime_parameters.items.len,
+                );
+                defer bindings.deinit(self.allocator);
+                if (!try self.inferOperatorCandidate(candidate_module_index, parameterized, &operands, &operand_types, input, reach, &bindings, false)) continue;
+                const arguments = self.appendBoundArguments(candidate_module_index, parameterized.parameters, &bindings) catch |err| switch (err) {
+                    error.MissingGenericArgument => continue,
+                    else => return err,
+                };
+                const instance = self.instantiate(declaration, arguments) catch continue;
+                if (chosen != null and chosen.? != instance) return .invalid;
+                chosen = instance;
+            }
+        }
+        const function_id = chosen orelse return .not_applicable;
+        const function = self.graph.function(function_id);
+        const compatibility = call_compatibility.Abstract{ .core = self.core, .abstracts = self.nested_call_context orelse return .deferred };
+        if (!try self.core.completeCallInputFieldsWithReachCompatibility(
+            function.input,
+            input,
+            reach,
+            compatibility.additionalTypeCompatibility(),
+        )) return .deferred;
+        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = .{
+            .source = self.graph.node(left).source,
+            .ty = try self.core.functionOutputType(function_id),
+            .content = .{ .function_call = .{ .callee = function_id, .input = input } },
+        };
+        self.stats.calls += 1;
+        return .resolved;
+    }
+
     fn resolveGenericIndex(
         self: *Resolver,
         module_index: usize,
@@ -110,7 +169,7 @@ pub const Resolver = struct {
                 );
                 defer bindings.deinit(self.allocator);
 
-                if (!try self.inferIndexCandidate(
+                if (!try self.inferOperatorCandidate(
                     candidate_module_index,
                     parameterized,
                     operands[0..count],
@@ -118,6 +177,7 @@ pub const Resolver = struct {
                     input,
                     reach,
                     &bindings,
+                    true,
                 )) continue;
 
                 const arguments = self.appendBoundArguments(
@@ -198,7 +258,7 @@ pub const Resolver = struct {
         return id;
     }
 
-    fn inferIndexCandidate(
+    fn inferOperatorCandidate(
         self: *Resolver,
         candidate_module_index: usize,
         parameterized: parameterized_storage.ParameterizedFunction,
@@ -207,6 +267,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         reach: ReachInferenceContext,
         bindings: *generic_mod.Resolver.Bindings,
+        allow_implicit_receiver_address: bool,
     ) !bool {
         const storage = &self.modules[candidate_module_index].semantic.parameterized_storage.ir;
         const shape = switch (storage.types.items[@intFromEnum(parameterized.input)]) {
@@ -222,7 +283,7 @@ pub const Resolver = struct {
             const field = storage.fields.items[shape.fields.start + @as(u32, @intCast(offset))];
             const pattern = field.ty;
 
-            if (offset == 0) {
+            if (offset == 0 and allow_implicit_receiver_address) {
                 if (!try self.inferInputTypeWithImplicitAddress(
                     candidate_module_index,
                     pattern,
@@ -363,7 +424,7 @@ pub const Resolver = struct {
                 );
                 defer bindings.deinit(self.allocator);
 
-                if (!try self.inferIndexCandidate(
+                if (!try self.inferOperatorCandidate(
                     candidate_module_index,
                     parameterized,
                     operands,
@@ -371,6 +432,7 @@ pub const Resolver = struct {
                     input,
                     reach,
                     &bindings,
+                    true,
                 )) continue;
 
                 const arguments = self.appendBoundArguments(

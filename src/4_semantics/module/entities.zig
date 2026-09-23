@@ -198,6 +198,8 @@ pub const PendingOperation = union(enum) {
         operator: primitives.BinaryOperator,
         left: ModuleNodeId,
         right: ModuleNodeId,
+        visible_bindings: BindingRange = .{ .start = 0, .len = 0 },
+        owner_function: ?ModuleFunctionId = null,
     },
     resolve_comparison: struct {
         node: ModuleNodeId,
