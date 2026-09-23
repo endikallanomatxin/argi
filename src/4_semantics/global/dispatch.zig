@@ -23,6 +23,31 @@ pub const Resolver = struct {
     control: *control_mod.Resolver,
     errors: *error_mod.Resolver,
 
+    pub fn resolveLocalReach(
+        self: *Resolver,
+        module: *const module_sg.ModuleSemanticGraph,
+        o: globalizer.Offsets,
+        value: anytype,
+    ) !resolution.Result {
+        const binding = globalizer.globalBinding(o, value.binding);
+        if (self.core.graph.isBindingTypeUnresolved(binding)) return .deferred;
+        const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
+        const compatibility = call_compatibility.Abstract{ .core = self.core, .abstracts = self.abstracts };
+        const selected = try self.core.resolveReachedBindingWithCompatibility(
+            reach,
+            globalizer.globalNode(o, value.reach),
+            binding,
+            compatibility.additionalTypeCompatibility(),
+        ) orelse return .deferred;
+        const selected_type = self.core.graph.node(selected).ty orelse return .deferred;
+        const stored = &self.core.graph.bindings.items[@intFromEnum(binding)];
+        if (stored.mutability == .constant and compatibility.compatible(selected_type, stored.ty))
+            stored.static_implementer = selected_type;
+        self.core.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] =
+            self.core.graph.nodes.items[@intFromEnum(selected)];
+        return .resolved;
+    }
+
     pub fn resolveCall(
         self: *Resolver,
         module_index: usize,

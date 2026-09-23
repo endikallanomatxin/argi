@@ -355,6 +355,18 @@ const Context = struct {
             })
         else
             try self.writer.addUnresolvedBinding(name_range, source, initialization, mutability);
+        if (declaration.value) |value_node| {
+            if (self.tree.tag(value_node) == .reach_directive and declared_ty != null) {
+                const visible_bindings = try self.captureVisibleBindings();
+                _ = try self.writer.addPendingOperation(.{ .resolve_local_reach = .{
+                    .node = value.?.node,
+                    .reach = value.?.node,
+                    .binding = binding,
+                    .visible_bindings = visible_bindings,
+                    .owner_function = self.current_function,
+                } });
+            }
+        }
         const name = self.graph.semantic.bindings.items[@intFromEnum(binding)].name;
         try self.bindings.append(.{ .name = name, .id = binding, .ty = semantic_ty });
         return self.resolved(node, semantic_ty, .{ .binding_declaration = binding });

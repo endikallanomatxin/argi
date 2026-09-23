@@ -982,7 +982,7 @@ fn retireDormantBindingResolution(
 fn pendingOwnerTag(tag: PendingTag) PendingOwner {
     return switch (tag) {
         .resolve_type => .types,
-        .resolve_call => .calls,
+        .resolve_call, .resolve_local_reach => .calls,
         .resolve_index => .indexing,
         .resolve_field,
         .resolve_binary,
@@ -1077,7 +1077,10 @@ fn resolvePendingOperation(
 ) !resolution.Result {
     return switch (pendingOwner(operation)) {
         .types => resolveTypeOperation(core, generics, module_index, module, o, operation),
-        .calls => dispatch.resolveCall(module_index, module, o, operation),
+        .calls => if (operation == .resolve_local_reach)
+            dispatch.resolveLocalReach(module, o, operation.resolve_local_reach)
+        else
+            dispatch.resolveCall(module_index, module, o, operation),
         .indexing => dispatch.resolveIndex(module_index, module, o, operation),
         .core => ownedResult(try core.tryResolve(module_index, module, o, operation)),
         .expressions => ownedResult(try expressions.tryResolve(module_index, module, o, operation)),

@@ -1369,6 +1369,28 @@ pub const Resolver = struct {
         return true;
     }
 
+    /// A local `#reach` declaration uses the same lexical alternatives and
+    /// concrete-to-abstract adaptation as an omitted reached call argument.
+    /// Its declared binding type remains the visible interface; the returned
+    /// expression retains the selected value's concrete type.
+    pub fn resolveReachedBindingWithCompatibility(
+        self: *Resolver,
+        context: reach_context.Context,
+        reach_node: global_sg.GlobalNodeId,
+        binding: global_sg.GlobalBindingId,
+        additional: ?AdditionalTypeCompatibility,
+    ) !?global_sg.GlobalNodeId {
+        const declared = self.graph.bindings.items[@intFromEnum(binding)];
+        if (try self.resolveReachedDefaultWithCompatibility(context, reach_node, declared.ty, additional)) |node|
+            return node;
+        return self.propagateReachedDefaultWithCompatibility(context.ownerFunction(), .{
+            .name = declared.name,
+            .ty = declared.ty,
+            .source = declared.source,
+            .default_value = reach_node,
+        }, reach_node, additional);
+    }
+
     fn resolveReachedDefaultWithCompatibility(
         self: *Resolver,
         context: reach_context.Context,
