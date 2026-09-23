@@ -5654,7 +5654,6 @@ test "argi test reports empty filter matches" {
     try expectEqualStrings("No tests found\n", result.stderr);
 }
 
-
 test "dormant match payload copy diagnostics respect reachability" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -5700,7 +5699,6 @@ test "dormant match payload copy diagnostics respect reachability" {
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
 }
 
-
 test "dormant pointer diagnostics respect reachability" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -5732,7 +5730,6 @@ test "dormant pointer diagnostics respect reachability" {
         std.debug.print("dormant pointer build failed:\n{s}", .{result.stderr});
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
 }
-
 
 test "argi check validates dormant function bodies" {
     var tmp = std.testing.tmpDir(.{});

@@ -188,18 +188,17 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn deinit(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
         inline for (.{
-            &self.modules,               &self.module_aliases,        &self.files,                      &self.declarations,
-            &self.symbols,
-            &self.symbol_declarations,   &self.types,                 &self.type_resolution,            &self.generic_instances,
-            &self.functions,             &self.function_operators,    &self.generic_function_instances, &self.bindings,
-            &self.binding_type_resolution,
-            &self.nodes,                 &self.blocks,                &self.fields,                     &self.variants,
-            &self.generic_arguments,     &self.value_fields,          &self.switch_cases,               &self.switches,
-            &self.auto_deinit_fields,    &self.auto_deinits,          &self.virtual_registries,         &self.virtualizes,
-            &self.virtual_calls,         &self.reach_segments,        &self.reach_alternatives,         &self.reaches,
-            &self.nullable_unwraps,      &self.testing_expect_errors, &self.error_propagations,         &self.error_contexts,
-            &self.node_refs,             &self.type_refs,             &self.binding_refs,               &self.function_refs,
-            &self.virtual_registry_refs, &self.strings,               &self.roots,
+            &self.modules,            &self.module_aliases,          &self.files,                 &self.declarations,
+            &self.symbols,            &self.symbol_declarations,     &self.types,                 &self.type_resolution,
+            &self.generic_instances,  &self.functions,               &self.function_operators,    &self.generic_function_instances,
+            &self.bindings,           &self.binding_type_resolution, &self.nodes,                 &self.blocks,
+            &self.fields,             &self.variants,                &self.generic_arguments,     &self.value_fields,
+            &self.switch_cases,       &self.switches,                &self.auto_deinit_fields,    &self.auto_deinits,
+            &self.virtual_registries, &self.virtualizes,             &self.virtual_calls,         &self.reach_segments,
+            &self.reach_alternatives, &self.reaches,                 &self.nullable_unwraps,      &self.testing_expect_errors,
+            &self.error_propagations, &self.error_contexts,          &self.node_refs,             &self.type_refs,
+            &self.binding_refs,       &self.function_refs,           &self.virtual_registry_refs, &self.strings,
+            &self.roots,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
