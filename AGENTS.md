@@ -38,9 +38,10 @@ This repository contains a compiler for a new programming language written in Zi
 > Zig version differs significantly, check `build.zig` and stdlib API
 > usage before assuming a compiler regression.
 >
-> LLVM 20 is the supported local codegen baseline. When multiple LLVM versions
-> are installed and the unversioned `llvm-config` selects another release, set
-> `LLVM_INCLUDE_DIR`, `LLVM_LIB_DIR`, and `LLVM_LIBS` from `llvm-config-20`.
+> LLVM 21 is the supported local codegen baseline, matching Zig `0.16.x`'s
+> LLVM generation. When multiple LLVM versions are installed and the unversioned
+> `llvm-config` selects another release, set `LLVM_INCLUDE_DIR`, `LLVM_LIB_DIR`,
+> and `LLVM_LIBS` from `llvm-config-21`.
 
 
 ## Guidelines
