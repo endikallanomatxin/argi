@@ -23,6 +23,8 @@ pub fn lower(
         const declaration_node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;
         if (file.is_bundled_core) semantic.safety_primitive = safetyPrimitiveForBundledDeclaration(graph.text(declaration.name), file.path);
         if (isDeinit(file, declaration_node)) {
+            // Global destructor lookup indexes declarations by this name.
+            std.debug.assert(std.mem.eql(u8, graph.text(declaration.name), "deinit"));
             semantic.flags.is_deinit = true;
             stats.deinit_functions += 1;
         }
@@ -34,6 +36,7 @@ pub fn lower(
         const declaration_node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;
         if (file.is_bundled_core) parameterized.safety_primitive = safetyPrimitiveForBundledDeclaration(graph.text(declaration.name), file.path);
         if (isDeinit(file, declaration_node)) {
+            std.debug.assert(std.mem.eql(u8, graph.text(declaration.name), "deinit"));
             parameterized.is_deinit = true;
             stats.generic_deinit_functions += 1;
         }

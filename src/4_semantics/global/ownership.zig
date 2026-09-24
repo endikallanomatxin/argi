@@ -686,7 +686,8 @@ pub const Resolver = struct {
         module_index: usize,
         names: *std.StringHashMap(void),
     ) !void {
-        for (self.graph.functions.items) |function| {
+        for (try self.graph.functionsNamed(self.allocator, "deinit")) |function_id| {
+            const function = self.graph.functions.items[@intFromEnum(function_id)];
             if (!function.flags.is_deinit) continue;
             if (!self.core.declarationVisible(module_index, function.declaration, null)) continue;
             for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field| {
@@ -699,30 +700,31 @@ pub const Resolver = struct {
             }
         }
 
-        for (self.modules, 0..) |*candidate_module, candidate_index| {
+        for (try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, "deinit")) |candidate| {
+            const candidate_index: usize = @intCast(candidate.module_index);
+            const candidate_module = &self.modules[candidate_index];
             const storage = &candidate_module.semantic.parameterized_storage;
-            for (storage.parameterized_functions.items) |function| {
-                if (!function.is_deinit) continue;
-                const declaration = globalizer.globalDecl(self.offsets[candidate_index], function.declaration);
-                if (!self.core.declarationVisible(module_index, declaration, null)) continue;
-                const shape = switch (storage.ir.types.items[@intFromEnum(function.input)]) {
+            const function = storage.parameterized_functions.items[@as(usize, @intCast(candidate.function_index))];
+            if (!function.is_deinit) continue;
+            const declaration = globalizer.globalDecl(self.offsets[candidate_index], function.declaration);
+            if (!self.core.declarationVisible(module_index, declaration, null)) continue;
+            const shape = switch (storage.ir.types.items[@intFromEnum(function.input)]) {
+                .resolved => |ty| switch (ty) {
+                    .structural => |value| value,
+                    else => continue,
+                },
+                else => continue,
+            };
+            for (storage.ir.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
+                const pointer = switch (storage.ir.types.items[@intFromEnum(field.ty)]) {
                     .resolved => |ty| switch (ty) {
-                        .structural => |value| value,
+                        .pointer => |value| value,
                         else => continue,
                     },
                     else => continue,
                 };
-                for (storage.ir.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
-                    const pointer = switch (storage.ir.types.items[@intFromEnum(field.ty)]) {
-                        .resolved => |ty| switch (ty) {
-                            .pointer => |value| value,
-                            else => continue,
-                        },
-                        else => continue,
-                    };
-                    if (pointer.mutability != .read_write) continue;
-                    try names.put(candidate_module.text(field.name), {});
-                }
+                if (pointer.mutability != .read_write) continue;
+                try names.put(candidate_module.text(field.name), {});
             }
         }
     }
