@@ -211,6 +211,12 @@ nested timings: instantiation occurs during source calls and other GlobalSema
 work, so its total must not be added to pending resolution. Prioritize avoiding
 unnecessary body instantiation or making the body lowerer cheaper; indexing
 existing generic instances is unlikely to move these workloads.
+Further timing of instance setup found only 0.12 ms for allocating/clearing
+the three whole-module ID maps in string hash map (0.05 ms in dynamic array).
+The body conversion itself remains about 3.9 and 0.75 ms, respectively, so
+changing map allocation alone has a small maximum payoff. Inspect work done
+per instantiated body node and whether each body is needed before changing
+the map representation.
 
 An ordered type-reference lookup in ModuleSema was also tested and removed.
 Sorting each file's reference slice plus binary search did not consistently

@@ -80,6 +80,7 @@ pub const Stats = struct {
         generic_instantiation_ns: u64 = 0,
         generic_instantiation_lookup_ns: u64 = 0,
         generic_instantiation_body_ns: u64 = 0,
+        generic_instance_context_init_ns: u64 = 0,
         post_resolution_ns: u64 = 0,
         verify_ns: u64 = 0,
     };
@@ -913,6 +914,7 @@ pub fn semantizeWithOptions(
         .generic_instantiation_ns = @intCast(generic_functions.profile_instantiate_ns),
         .generic_instantiation_lookup_ns = @intCast(generic_functions.profile_instantiate_lookup_ns),
         .generic_instantiation_body_ns = @intCast(generic_functions.profile_instantiate_body_ns),
+        .generic_instance_context_init_ns = @intCast(generic_functions.profile_instance_context_init_ns),
         .generic_constraints_ns = @intCast(generic_functions.profile_constraints_ns),
         .post_resolution_ns = @intCast(profile_preverify - profile_postloop),
         .verify_ns = @intCast(profile_end - profile_preverify),

@@ -140,8 +140,9 @@ fn printStats(
         semantic.generic_instantiation_calls,
         semantic.generic_existing_instances,
     });
-    std.debug.print("        existing lookup {d:.3} ms, body lowering {d:.3} ms\n", .{
+    std.debug.print("        existing lookup {d:.3} ms, context init {d:.3} ms, body lowering {d:.3} ms\n", .{
         milliseconds(semantic_timings.generic_instantiation_lookup_ns),
+        milliseconds(semantic_timings.generic_instance_context_init_ns),
         milliseconds(semantic_timings.generic_instantiation_body_ns),
     });
     const call_blockers = semantic.call_blockers;

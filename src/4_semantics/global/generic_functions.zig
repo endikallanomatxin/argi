@@ -45,6 +45,7 @@ pub const Resolver = struct {
     profile_instantiate_existing: u64 = 0,
     profile_instantiate_lookup_ns: i96 = 0,
     profile_instantiate_body_ns: i96 = 0,
+    profile_instance_context_init_ns: i96 = 0,
 
     pub fn tryResolve(
         self: *Resolver,
@@ -1844,7 +1845,9 @@ pub const Resolver = struct {
         const input_shape = try self.interfaceFields(input_ty);
         const output_shape = try self.interfaceFields(output_ty);
 
+        const context_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
         var context = try InstanceContext.init(self, located.module_index, located.parameterized, &substitutions);
+        if (self.profile_io) |io| self.profile_instance_context_init_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - context_started;
         defer context.deinit();
         const input_bindings = try context.instantiateBindingRange(located.parameterized.input_bindings);
         const output_bindings = try context.instantiateBindingRange(located.parameterized.output_bindings);
