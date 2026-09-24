@@ -35,7 +35,7 @@ Argi's unresolved operations within one compilation. See the
 ## Three-way regression baseline (2026-09-24)
 
 Measured `3e3802b9` (before compact semantic graph), `6f80ed92` (immediately
-after), and `bbb5aa2a` (current at measurement). Each compiler was built in
+after), and `f2039472` (current at measurement). Each compiler was built in
 ReleaseFast with Zig 0.16.0 and LLVM 21. All compiled the unchanged test
 programs below against the same current `core/` through `ARGI_SYSROOT`.
 Results are medians of 24 alternating runs per case, pinned to CPU 0, with
@@ -43,11 +43,11 @@ Results are medians of 24 alternating runs per case, pinned to CPU 0, with
 
 | Case | Frontend before | Frontend after | Frontend current | Current vs before |
 | --- | ---: | ---: | ---: | ---: |
-| Dynamic array owning mutations | 8.96 ms | 48.65 ms | 12.61 ms | +41% |
-| String hash map baseline | 11.07 ms | 91.58 ms | 17.17 ms | +55% |
-| Named struct auto deinit | 8.21 ms | 20.74 ms | 8.53 ms | +4% |
+| Dynamic array owning mutations | 9.71 ms | 53.19 ms | 13.67 ms | +41% |
+| String hash map baseline | 11.98 ms | 99.87 ms | 18.04 ms | +51% |
+| Named struct auto deinit | 8.93 ms | 22.63 ms | 9.38 ms | +5% |
 
-The current frontend is 74%, 81%, and 59% faster than immediately after the
+The current frontend is 74%, 82%, and 59% faster than immediately after the
 refactor, respectively. It still has a material regression in both collection
 cases. The old compiler reports file collection, tokenizing, syntaxing and
 semantizing separately; their sum is the comparable frontend number above.
@@ -56,12 +56,12 @@ boundaries, so compare the complete frontend across all three revisions.
 
 | Case | Codegen before | Codegen current | Frontend + codegen before | Frontend + codegen current |
 | --- | ---: | ---: | ---: | ---: |
-| Dynamic array owning mutations | 5.07 ms | 1.41 ms | 14.03 ms | 14.02 ms |
-| String hash map baseline | 5.92 ms | 2.03 ms | 16.98 ms | 19.19 ms |
-| Named struct auto deinit | 4.04 ms | 0.32 ms | 12.25 ms | 8.86 ms |
+| Dynamic array owning mutations | 5.42 ms | 1.55 ms | 15.19 ms | 15.23 ms |
+| String hash map baseline | 6.37 ms | 2.21 ms | 18.36 ms | 20.25 ms |
+| Named struct auto deinit | 4.47 ms | 0.35 ms | 13.40 ms | 9.73 ms |
 
 Codegen gains offset the frontend regression for dynamic array, but string
-hash map remains about 13% slower before linking. Ownership is about 28%
+hash map remains about 10% slower before linking. Ownership is about 27%
 faster before linking. Link time was similar across revisions and is excluded
 from these sums. The detail and overhead of `--stats` changed between commits;
 these are phase-timing comparisons, not a cycle-exact attribution of the
