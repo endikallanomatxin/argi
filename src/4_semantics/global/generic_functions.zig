@@ -51,12 +51,30 @@ pub const Resolver = struct {
     profile_instantiate_lookup_ns: i96 = 0,
     profile_instantiate_body_ns: i96 = 0,
     profile_instance_context_init_ns: i96 = 0,
+    profile_named_call_empty_initializer_ns: i96 = 0,
+    profile_named_call_reach_copy_ns: i96 = 0,
+    profile_named_call_ordinary_lookup_ns: i96 = 0,
+    profile_named_call_generic_selection_ns: i96 = 0,
+    profile_named_call_completion_ns: i96 = 0,
+    profile_named_call_accounted_ns: i96 = 0,
     profile_resolved_body_nodes: u64 = 0,
     profile_pending_body_nodes: u64 = 0,
     profile_resolved_body_node_ns: i96 = 0,
     profile_pending_body_node_ns: i96 = 0,
     profile_pending_body_kinds: [@typeInfo(ir.Pending).@"union".fields.len]BodyNodeProfile = @splat(.{}),
     profile_expression_kinds: [@typeInfo(ir.PendingExpressionKind).@"enum".fields.len]BodyNodeProfile = @splat(.{}),
+
+    fn profileTimestamp(self: *const Resolver) i96 {
+        if (self.profile_io) |io| return std.Io.Timestamp.now(io, .boot).nanoseconds;
+        return 0;
+    }
+
+    fn profileNamedCallStage(self: *Resolver, start: i96, accounted_before: i96, elapsed: *i96) void {
+        if (self.profile_io == null) return;
+        const own_ns = self.profileTimestamp() - start - (self.profile_named_call_accounted_ns - accounted_before);
+        elapsed.* += own_ns;
+        self.profile_named_call_accounted_ns += own_ns;
+    }
 
     pub fn tryResolve(
         self: *Resolver,
@@ -2708,16 +2726,26 @@ pub const Resolver = struct {
                 else => null,
             };
             if (input_literal) |literal| if (literal.fields.len == 0) {
+                const empty_started = self.resolver.profileTimestamp();
+                const accounted_before = self.resolver.profile_named_call_accounted_ns;
+                defer self.resolver.profileNamedCallStage(empty_started, accounted_before, &self.resolver.profile_named_call_empty_initializer_ns);
                 if (try self.resolveEmptyTypeInitializer(name, source)) |node| return node;
             };
             const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = module_path, .name = name_range, .source = source };
             // Calls in an instantiated body can reach the instance's concrete
             // input bindings, including parameters inferred from generic args.
             const input_bindings = self.resolver.graph.functions.items[@intFromEnum(self.function.?)].input_bindings;
+            const reach_copy_started = self.resolver.profileTimestamp();
+            const reach_accounted_before = self.resolver.profile_named_call_accounted_ns;
             const visible = try self.resolver.allocator.dupe(global_sg.GlobalBindingId, self.resolver.graph.binding_refs.items[input_bindings.start..][0..input_bindings.len]);
             defer self.resolver.allocator.free(visible);
             const nested_reach = ReachInferenceContext.fromGlobal(visible, self.function);
-            const function = if (arguments.len != 0)
+            self.resolver.profileNamedCallStage(reach_copy_started, reach_accounted_before, &self.resolver.profile_named_call_reach_copy_ns);
+            const function = blk: {
+                const generic_started = self.resolver.profileTimestamp();
+                const generic_accounted_before = self.resolver.profile_named_call_accounted_ns;
+                defer self.resolver.profileNamedCallStage(generic_started, generic_accounted_before, &self.resolver.profile_named_call_generic_selection_ns);
+                break :blk if (arguments.len != 0)
                 self.resolver.resolveExplicitGenericFunction(
                     self.module_index,
                     module,
@@ -2744,13 +2772,16 @@ pub const Resolver = struct {
                     },
                     else => return err,
                 }
-            else blk: {
+            else ordinary_lookup: {
+                const ordinary_started = self.resolver.profileTimestamp();
+                const ordinary_accounted_before = self.resolver.profile_named_call_accounted_ns;
                 const ordinary = if (module_path == null)
                     try self.resolver.core.matchUnqualifiedFunctionByNameWithReach(self.module_index, name, input, nested_reach)
                 else
                     try self.resolver.core.matchFunctionByName(self.module_index, reference, input);
-                if (ordinary == .function) break :blk ordinary.function;
-                break :blk self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, nested_reach) catch |err| {
+                self.resolver.profileNamedCallStage(ordinary_started, ordinary_accounted_before, &self.resolver.profile_named_call_ordinary_lookup_ns);
+                if (ordinary == .function) break :ordinary_lookup ordinary.function;
+                break :ordinary_lookup self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, nested_reach) catch |err| {
                     if (self.resolver.nested_constructor_context) |context| {
                         if (self.resolver.nested_constructor_resolver) |resolve| {
                             if (try resolve(context, self.module_index, reference, arguments, input, nested_reach, self.resolver.sourceFor(self.module_index, source))) |node|
@@ -2771,7 +2802,11 @@ pub const Resolver = struct {
                         return self.emptyValue(try self.resolver.generics.internType(.{ .builtin = .Void }), source);
                     return err;
                 };
+                };
             };
+            const completion_started = self.resolver.profileTimestamp();
+            const completion_accounted_before = self.resolver.profile_named_call_accounted_ns;
+            defer self.resolver.profileNamedCallStage(completion_started, completion_accounted_before, &self.resolver.profile_named_call_completion_ns);
             if (!try self.resolver.core.completeCallInputFieldsWithReach(
                 self.resolver.graph.functions.items[@intFromEnum(function)].input,
                 input,

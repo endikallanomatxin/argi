@@ -233,6 +233,17 @@ expressions. In 24 pinned ReleaseFast string hash map runs, 454 pending nodes
 took about 3.81 ms of self time versus 0.11 ms for 579 resolved nodes;
 89 nested `generic_call` expressions accounted for about 3.15 ms. Dynamic
 array showed the same pattern (50 nested generic calls, about 0.66 ms).
+Further opt-in `makeNamedCall` profiling places about 1.38 ms of string hash
+map time in generic selection/instantiation, versus about 0.05 ms for ordinary
+lookup and 0.002 ms for copying Reach bindings (12 pinned ReleaseFast runs).
+These times exclude nested named-call work. The Reach copy protects a slice
+that generic instantiation can invalidate by appending binding references.
+Reusing scratch binding arrays in explicit generic candidate selection was
+tested and discarded: across 24 paired ReleaseFast runs, indexed frontend
+shifted from 16.72 to 16.77 ms for string hash map and 11.73 to 11.76 ms for
+dynamic array. The next useful breakdown is inside generic candidate matching
+and instantiation, including how many explicit and implicit candidates each
+nested call probes.
 One lookup in that path still scanned every declaration when checking an
 empty type initializer. Reusing `declarationsNamed` removed that scan. Across
 32 alternating ReleaseFast pairs, median nested generic-call time fell 2.6%

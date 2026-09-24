@@ -136,6 +136,13 @@ fn printStats(
         milliseconds(semantic_timings.source_generic_selection_ns),
         milliseconds(semantic_timings.source_generic_completion_ns),
     });
+    std.debug.print("      instantiated body named calls self time: empty initializer {d:.3} ms, Reach copy {d:.3} ms, ordinary lookup {d:.3} ms, generic selection/instantiation {d:.3} ms, completion {d:.3} ms\n", .{
+        milliseconds(semantic_timings.named_call_empty_initializer_ns),
+        milliseconds(semantic_timings.named_call_reach_copy_ns),
+        milliseconds(semantic_timings.named_call_ordinary_lookup_ns),
+        milliseconds(semantic_timings.named_call_generic_selection_ns),
+        milliseconds(semantic_timings.named_call_completion_ns),
+    });
     std.debug.print("      generic instantiate: {d:.3} ms, {d} calls, {d} existing\n", .{
         milliseconds(semantic_timings.generic_instantiation_ns),
         semantic.generic_instantiation_calls,
