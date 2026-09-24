@@ -152,6 +152,18 @@ for dynamic array owning mutations and 2.4% for string hash map; their
 indexed frontend times fell 1.1% and 0.7%, respectively. Continue inspecting
 the generic no-match path and query equivalence before introducing a cache.
 
+The next generic no-match experiment moved the nominal check ahead of
+candidate binding allocation. It did not improve indexed frontend time in 24
+alternating ReleaseFast pairs (string hash map +0.1%, dynamic array -0.4%),
+so it was discarded. Reusing the temporary inference bindings across
+candidates in one implicit generic lookup was more effective: in 32 alternating
+ReleaseFast pairs pinned to CPU 0, median generic lookup fell 21.8% for string
+hash map and 16.9% for dynamic array. Indexed frontend fell 1.6% and 0.9%,
+respectively. The ownership case's generic lookup fell 11.2% across 24 pairs,
+but its 0.5% frontend increase is within the observed noise. All three builds
+compiled the same test programs against the same core; the paired baseline was
+`dea4c217`.
+
 A negative cache for the entire destructor query needs module visibility,
 target type, receiver name, reach context and invalidation on type/binding
 resolution and newly instantiated functions. A negative answer can become

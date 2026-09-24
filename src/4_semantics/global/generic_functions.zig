@@ -999,6 +999,12 @@ pub const Resolver = struct {
         var saw_deferred = false;
         var conflicting_candidates: usize = 0;
         var candidate_count: usize = 0;
+        // Candidate inference is synchronous. Reuse its scratch bindings
+        // across candidates, resetting them before each independent match.
+        var binding_types: std.ArrayList(?global_sg.GlobalTypeId) = .empty;
+        defer binding_types.deinit(self.allocator);
+        var binding_ints: std.ArrayList(?i64) = .empty;
+        defer binding_ints.deinit(self.allocator);
         for (try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, name)) |candidate| {
             const candidate_index: usize = candidate.module_index;
             const candidate_module = &self.modules[candidate_index];
@@ -1006,8 +1012,15 @@ pub const Resolver = struct {
             const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
             if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
             candidate_count += 1;
-            var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
-            defer bindings.deinit(self.allocator);
+            const parameter_count = candidate_module.semantic.parameterized_storage.comptime_parameters.items.len;
+            try binding_types.resize(self.allocator, parameter_count);
+            try binding_ints.resize(self.allocator, parameter_count);
+            @memset(binding_types.items, null);
+            @memset(binding_ints.items, null);
+            var bindings: generic_mod.Resolver.Bindings = .{
+                .types = binding_types.items,
+                .ints = binding_ints.items,
+            };
             const storage = &candidate_module.semantic.parameterized_storage.ir;
             const shape = switch (storage.types.items[@intFromEnum(parameterized.input)]) {
                 .resolved => |ty| switch (ty) {
