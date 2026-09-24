@@ -1538,7 +1538,15 @@ pub const Resolver = struct {
     }
 
     pub fn runtimeBindingAbstract(self: *const Resolver, binding_id: global_sg.GlobalBindingId) ?AbstractUse {
-        if (self.isFunctionInterfaceBinding(binding_id)) return null;
+        return self.runtimeBindingAbstractWithInterfaceMask(binding_id, null);
+    }
+
+    fn runtimeBindingAbstractWithInterfaceMask(
+        self: *const Resolver,
+        binding_id: global_sg.GlobalBindingId,
+        interface_mask: ?[]const bool,
+    ) ?AbstractUse {
+        if (if (interface_mask) |mask| mask[@intFromEnum(binding_id)] else self.isFunctionInterfaceBinding(binding_id)) return null;
         const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
         if (binding.initialization) |initialization| switch (self.graph.node(initialization).content) {
             // A virtual call carries a runtime implementation identity. Its
@@ -1563,9 +1571,18 @@ pub const Resolver = struct {
 
     pub fn materializeRuntimeBindingDefaults(self: *Resolver) !bool {
         var changed = false;
+        const interface_mask = try self.allocator.alloc(bool, self.graph.bindings.items.len);
+        defer self.allocator.free(interface_mask);
+        @memset(interface_mask, false);
+        for (self.graph.functions.items) |function| {
+            for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]) |binding|
+                interface_mask[@intFromEnum(binding)] = true;
+            for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding|
+                interface_mask[@intFromEnum(binding)] = true;
+        }
         for (self.graph.bindings.items, 0..) |*binding, raw| {
             const binding_id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
-            const abstract_use = self.runtimeBindingAbstract(binding_id) orelse continue;
+            const abstract_use = self.runtimeBindingAbstractWithInterfaceMask(binding_id, interface_mask) orelse continue;
             const concrete = (try self.defaultType(abstract_use.declaration, abstract_use.arguments)) orelse continue;
             if (self.graph.isTypeUnresolved(concrete)) continue;
             if (binding.ty == concrete or global_types.equal(self.graph, binding.ty, concrete)) continue;
