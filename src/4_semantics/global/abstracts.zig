@@ -16,6 +16,9 @@ pub const Stats = struct {
     concrete_hits: u32 = 0,
     parameterized_hits: u32 = 0,
     defaults: u32 = 0,
+    implementation_scans: u64 = 0,
+    implementation_candidates: u64 = 0,
+    implementation_scan_ns: u64 = 0,
 };
 
 pub const AbstractUse = struct {
@@ -82,6 +85,8 @@ pub const Resolver = struct {
     generics: *generic_mod.Resolver,
     field_storage_conflict: ?AbstractFieldStorageConflict = null,
     stats: Stats = .{},
+    profile_implementation_scans: bool = false,
+    profile_io: ?std.Io = null,
     // Automatic cleanup repeatedly probes generic deinit candidates for the
     // same concrete/abstract pairs. Positive matches remain valid as resolution
     // advances; negative matches are scoped to a round and graph generation.
@@ -964,8 +969,14 @@ pub const Resolver = struct {
                 return false;
             }
         };
+        const scan_start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+        defer if (self.profile_io) |io| {
+            self.stats.implementation_scan_ns += @intCast(std.Io.Timestamp.now(io, .boot).nanoseconds - scan_start);
+        };
+        if (self.profile_implementation_scans) self.stats.implementation_scans += 1;
         for (self.modules, 0..) |*module, module_index| {
             for (module.semantic.parameterized_storage.abstract_implementations.items) |implementation| {
+                if (self.profile_implementation_scans) self.stats.implementation_candidates += 1;
                 const candidate_abstract = try self.resolveDeclarationRef(module_index, implementation.abstract_ref, .abstract_type);
                 if (candidate_abstract != abstract_decl) continue;
                 const candidate_type = globalizer.globalType(self.offsets[module_index], implementation.ty);
@@ -986,6 +997,7 @@ pub const Resolver = struct {
                 }
             }
             for (module.semantic.parameterized_storage.parameterized_abstract_implementations.items) |parameterized| {
+                if (self.profile_implementation_scans) self.stats.implementation_candidates += 1;
                 const candidate_abstract = try self.resolveDeclarationRef(module_index, parameterized.abstract_ref, .abstract_type);
                 if (candidate_abstract != abstract_decl) continue;
                 if (self.matchesImplementationParameterized(module_index, concrete, parameterized) catch false) {
@@ -1835,6 +1847,6 @@ pub const Resolver = struct {
 };
 
 test "abstract resolver keeps compile-time relation metadata outside GlobalSG" {
-    try std.testing.expect(@sizeOf(Stats) <= 16);
+    try std.testing.expect(@sizeOf(Stats) <= 40);
     try std.testing.expect(@sizeOf(global_sg.GlobalDeclId) == 4);
 }

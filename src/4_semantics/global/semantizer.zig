@@ -37,6 +37,17 @@ pub const Stats = struct {
         setup_ns: u64 = 0,
         fixed_point_ns: u64 = 0,
         pending_ns: u64 = 0,
+        type_reconciliation_ns: u64 = 0,
+        binding_reconciliation_ns: u64 = 0,
+        runtime_binding_defaults_ns: u64 = 0,
+        string_literal_types_ns: u64 = 0,
+        binding_types_ns: u64 = 0,
+        assignment_values_ns: u64 = 0,
+        dereferences_ns: u64 = 0,
+        addresses_ns: u64 = 0,
+        known_generic_types_ns: u64 = 0,
+        abstract_field_storage_ns: u64 = 0,
+        sugar_types_ns: u64 = 0,
         error_inference_ns: u64 = 0,
         cleanup_ns: u64 = 0,
         implicit_destructor_ns: u64 = 0,
@@ -70,6 +81,15 @@ pub const Result = struct {
     graph: global_sg.GlobalSemanticGraph,
     stats: Stats,
 };
+
+fn profileTimestamp(io: ?std.Io) i96 {
+    if (io) |profile_io| return std.Io.Timestamp.now(profile_io, .boot).nanoseconds;
+    return 0;
+}
+
+fn profileAccumulate(io: ?std.Io, start: i96, elapsed: *i96) void {
+    if (io) |profile_io| elapsed.* += std.Io.Timestamp.now(profile_io, .boot).nanoseconds - start;
+}
 
 /// Top-level semantic ownership is stable for the lifetime of a pending
 /// operation. Composite owners such as calls and indexing may try multiple
@@ -212,6 +232,7 @@ pub fn semantizeWithOptions(
         .graph = &relocation.graph,
         .modules = modules,
         .offsets = relocation.offsets.items,
+        .profile_io = options.profile_io,
     };
     if (try resolveQualifiedChoiceOptions(&core, options.diagnostics)) return error.Reported;
     var expressions = expression_mod.Resolver{
@@ -239,6 +260,7 @@ pub fn semantizeWithOptions(
         .modules = modules,
         .offsets = relocation.offsets.items,
         .core = &core,
+        .profile_io = options.profile_io,
     };
     var generic_functions = generic_functions_mod.Resolver{
         .allocator = allocator,
@@ -256,6 +278,8 @@ pub fn semantizeWithOptions(
         .offsets = relocation.offsets.items,
         .core = &core,
         .generics = &generics,
+        .profile_implementation_scans = options.profile_io != null,
+        .profile_io = options.profile_io,
     };
     constructors.abstracts = &abstracts;
     control.generic_functions = &generic_functions;
@@ -405,6 +429,17 @@ pub fn semantizeWithOptions(
     const profile_preloop = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
     var profile_rounds: usize = 0;
     var profile_pending_ns: i96 = 0;
+    var profile_type_reconciliation_ns: i96 = 0;
+    var profile_binding_reconciliation_ns: i96 = 0;
+    var profile_runtime_binding_defaults_ns: i96 = 0;
+    var profile_string_literal_types_ns: i96 = 0;
+    var profile_binding_types_ns: i96 = 0;
+    var profile_assignment_values_ns: i96 = 0;
+    var profile_dereferences_ns: i96 = 0;
+    var profile_addresses_ns: i96 = 0;
+    var profile_known_generic_types_ns: i96 = 0;
+    var profile_abstract_field_storage_ns: i96 = 0;
+    var profile_sugar_types_ns: i96 = 0;
     var profile_errors_ns: i96 = 0;
     var profile_finalize_ns: i96 = 0;
     var profile_finalize_count: usize = 0;
@@ -444,24 +479,51 @@ pub fn semantizeWithOptions(
             }
             if (options.profile_io) |io| profile_pending_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - pending_start;
 
+            var sweep_start = profileTimestamp(options.profile_io);
             if (relocation.graph.reconcileTypeResolution()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &profile_type_reconciliation_ns);
+            sweep_start = profileTimestamp(options.profile_io);
             if (relocation.graph.reconcileBindingTypeResolution()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &profile_binding_reconciliation_ns);
+            sweep_start = profileTimestamp(options.profile_io);
             if (try abstracts.materializeRuntimeBindingDefaults()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &profile_runtime_binding_defaults_ns);
+            sweep_start = profileTimestamp(options.profile_io);
             if (core.materializeStringLiteralTypes()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &profile_string_literal_types_ns);
+            sweep_start = profileTimestamp(options.profile_io);
             if (core.materializeBindingTypes()) changed = true;
-            if (relocation.graph.reconcileBindingTypeResolution()) {
+            profileAccumulate(options.profile_io, sweep_start, &profile_binding_types_ns);
+            sweep_start = profileTimestamp(options.profile_io);
+            const binding_reconciled = relocation.graph.reconcileBindingTypeResolution();
+            profileAccumulate(options.profile_io, sweep_start, &profile_binding_reconciliation_ns);
+            if (binding_reconciled) {
                 changed = true;
+                const nested_binding_start = profileTimestamp(options.profile_io);
                 if (core.materializeBindingTypes()) changed = true;
+                profileAccumulate(options.profile_io, nested_binding_start, &profile_binding_types_ns);
             }
+            sweep_start = profileTimestamp(options.profile_io);
             if (core.materializeAssignmentValues()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &profile_assignment_values_ns);
+            sweep_start = profileTimestamp(options.profile_io);
             if (core.materializeDereferences()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &profile_dereferences_ns);
+            sweep_start = profileTimestamp(options.profile_io);
             if (try core.materializeAddresses()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &profile_addresses_ns);
+            sweep_start = profileTimestamp(options.profile_io);
             if (try generics.materializeKnownTypes()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &profile_known_generic_types_ns);
+            sweep_start = profileTimestamp(options.profile_io);
             if (try abstracts.materializeAbstractFieldStorage()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &profile_abstract_field_storage_ns);
             // Generic instantiation can intern nullable or inferred Errable
             // types during this pass. Their materialization must schedule a
             // further pass so pending uses can observe the final choice shape.
+            sweep_start = profileTimestamp(options.profile_io);
             if (try control.materializeSugarTypes()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &profile_sugar_types_ns);
             const errors_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             if (try errors.inferFunctionErrorReasons()) changed = true;
             if (options.profile_io) |io| profile_errors_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - errors_start;
@@ -690,6 +752,17 @@ pub fn semantizeWithOptions(
         .setup_ns = @intCast(profile_preloop - profile_relocated),
         .fixed_point_ns = @intCast(profile_postloop - profile_preloop),
         .pending_ns = @intCast(profile_pending_ns),
+        .type_reconciliation_ns = @intCast(profile_type_reconciliation_ns),
+        .binding_reconciliation_ns = @intCast(profile_binding_reconciliation_ns),
+        .runtime_binding_defaults_ns = @intCast(profile_runtime_binding_defaults_ns),
+        .string_literal_types_ns = @intCast(profile_string_literal_types_ns),
+        .binding_types_ns = @intCast(profile_binding_types_ns),
+        .assignment_values_ns = @intCast(profile_assignment_values_ns),
+        .dereferences_ns = @intCast(profile_dereferences_ns),
+        .addresses_ns = @intCast(profile_addresses_ns),
+        .known_generic_types_ns = @intCast(profile_known_generic_types_ns),
+        .abstract_field_storage_ns = @intCast(profile_abstract_field_storage_ns),
+        .sugar_types_ns = @intCast(profile_sugar_types_ns),
         .error_inference_ns = @intCast(profile_errors_ns),
         .cleanup_ns = @intCast(profile_finalize_ns),
         .implicit_destructor_ns = @intCast(ownership.profile_destructor_ns),

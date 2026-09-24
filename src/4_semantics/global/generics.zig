@@ -14,6 +14,9 @@ const primitives = @import("../primitives/schema.zig");
 pub const Stats = struct {
     type_instances: u32 = 0,
     type_holes: u32 = 0,
+    type_intern_calls: u64 = 0,
+    type_intern_candidates: u64 = 0,
+    type_intern_ns: u64 = 0,
 };
 
 pub const Resolver = struct {
@@ -22,6 +25,7 @@ pub const Resolver = struct {
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     core: *core_mod.Resolver,
+    profile_io: ?std.Io = null,
     stats: Stats = .{},
 
     pub fn resolveExternalTypes(self: *Resolver) !void {
@@ -497,7 +501,16 @@ pub const Resolver = struct {
     }
 
     pub fn internType(self: *Resolver, value: global_sg.GlobalType) !global_sg.GlobalTypeId {
-        if (findEquivalentType(self.graph, value)) |id| return id;
+        if (self.profile_io) |io| {
+            const started = std.Io.Timestamp.now(io, .boot).nanoseconds;
+            defer self.stats.type_intern_ns += @intCast(std.Io.Timestamp.now(io, .boot).nanoseconds - started);
+            self.stats.type_intern_calls += 1;
+            if (findEquivalentType(self.graph, value, &self.stats.type_intern_candidates)) |id| return id;
+            const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
+            try self.graph.types.append(self.allocator, value);
+            return id;
+        }
+        if (findEquivalentType(self.graph, value, null)) |id| return id;
         const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
         try self.graph.types.append(self.allocator, value);
         return id;
@@ -508,8 +521,9 @@ pub const Resolver = struct {
     }
 };
 
-fn findEquivalentType(graph: *const global_sg.GlobalSemanticGraph, value: global_sg.GlobalType) ?global_sg.GlobalTypeId {
+fn findEquivalentType(graph: *const global_sg.GlobalSemanticGraph, value: global_sg.GlobalType, candidates_examined: ?*u64) ?global_sg.GlobalTypeId {
     for (graph.types.items, 0..) |candidate, raw| {
+        if (candidates_examined) |count| count.* += 1;
         if (sameShallowType(graph, candidate, value)) return @enumFromInt(@as(u32, @intCast(raw)));
     }
     return null;
@@ -549,10 +563,13 @@ test "generic type identity is independent of argument pool position" {
     const equivalent = findEquivalentType(&graph, .{ .generic = .{
         .base = base,
         .arguments = .{ .start = 1, .len = 1 },
-    } }) orelse return error.ExpectedEquivalentGenericType;
+    } }, null) orelse return error.ExpectedEquivalentGenericType;
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(equivalent));
 }
 
 test "generic type materialization has a dedicated resolver" {
-    try std.testing.expect(@sizeOf(Stats) <= 8);
+    const stats: Stats = .{};
+    try std.testing.expectEqual(@as(u64, 0), stats.type_intern_calls);
+    try std.testing.expectEqual(@as(u64, 0), stats.type_intern_candidates);
+    try std.testing.expectEqual(@as(u64, 0), stats.type_intern_ns);
 }

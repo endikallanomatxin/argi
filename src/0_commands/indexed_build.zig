@@ -98,6 +98,18 @@ fn printStats(
         milliseconds(semantic_timings.fixed_point_ns), semantic.rounds, semantic.pending_attempts,
     });
     std.debug.print("    pending resolution:        {d:.3} ms\n", .{milliseconds(semantic_timings.pending_ns)});
+    std.debug.print("    full-pool materialization:\n", .{});
+    std.debug.print("      type reconciliation:     {d:.3} ms\n", .{milliseconds(semantic_timings.type_reconciliation_ns)});
+    std.debug.print("      binding reconciliation:  {d:.3} ms\n", .{milliseconds(semantic_timings.binding_reconciliation_ns)});
+    std.debug.print("      binding defaults:        {d:.3} ms\n", .{milliseconds(semantic_timings.runtime_binding_defaults_ns)});
+    std.debug.print("      string literal types:    {d:.3} ms\n", .{milliseconds(semantic_timings.string_literal_types_ns)});
+    std.debug.print("      binding types:           {d:.3} ms\n", .{milliseconds(semantic_timings.binding_types_ns)});
+    std.debug.print("      assignment values:       {d:.3} ms\n", .{milliseconds(semantic_timings.assignment_values_ns)});
+    std.debug.print("      dereferences:            {d:.3} ms\n", .{milliseconds(semantic_timings.dereferences_ns)});
+    std.debug.print("      addresses:               {d:.3} ms\n", .{milliseconds(semantic_timings.addresses_ns)});
+    std.debug.print("      generic types:           {d:.3} ms\n", .{milliseconds(semantic_timings.known_generic_types_ns)});
+    std.debug.print("      abstract field storage:  {d:.3} ms\n", .{milliseconds(semantic_timings.abstract_field_storage_ns)});
+    std.debug.print("      sugar types:             {d:.3} ms\n", .{milliseconds(semantic_timings.sugar_types_ns)});
     std.debug.print("    error reason inference:    {d:.3} ms\n", .{milliseconds(semantic_timings.error_inference_ns)});
     std.debug.print("    implicit generic constraints: {d:.3} ms\n", .{milliseconds(semantic_timings.generic_constraints_ns)});
     std.debug.print("    ownership cleanup:         {d:.3} ms ({d} attempts)\n", .{
@@ -111,6 +123,18 @@ fn printStats(
     std.debug.print("  verify:                      {d:.3} ms\n", .{milliseconds(semantic_timings.verify_ns)});
     std.debug.print("  abstract implementation cache hits: {d} positive, {d} negative\n", .{
         semantic.cached_implementation_hits, semantic.cached_nonimplementation_hits,
+    });
+    std.debug.print("  abstract implementation scans: {d:.3} ms, {d} over {d} candidates\n", .{
+        milliseconds(semantic.abstracts.implementation_scan_ns), semantic.abstracts.implementation_scans,
+        semantic.abstracts.implementation_candidates,
+    });
+    std.debug.print("  type interning: {d:.3} ms, {d} calls, {d} candidates\n", .{
+        milliseconds(semantic.generics.type_intern_ns), semantic.generics.type_intern_calls,
+        semantic.generics.type_intern_candidates,
+    });
+    std.debug.print("  pointer type lookup: {d:.3} ms, {d} calls, {d} candidates\n", .{
+        milliseconds(semantic.core.pointer_type_ns), semantic.core.pointer_type_calls,
+        semantic.core.pointer_type_candidates,
     });
 
     std.debug.print("Indexed frontend\n", .{});

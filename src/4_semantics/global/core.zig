@@ -19,6 +19,9 @@ pub const Stats = struct {
     indexes: u32 = 0,
     dereferences: u32 = 0,
     binding_types: u32 = 0,
+    pointer_type_calls: u64 = 0,
+    pointer_type_candidates: u64 = 0,
+    pointer_type_ns: u64 = 0,
 };
 
 pub const Resolver = struct {
@@ -26,6 +29,7 @@ pub const Resolver = struct {
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
+    profile_io: ?std.Io = null,
     stats: Stats = .{},
 
     pub fn resolveExternalTypes(self: *Resolver) !void {
@@ -95,7 +99,13 @@ pub const Resolver = struct {
                 const child = self.graph.nodes.items[@intFromEnum(value)].ty orelse continue;
                 if (self.graph.isTypeUnresolved(child)) continue;
                 const mutability = if (node.ty) |old| switch (self.graph.types.items[@intFromEnum(old)]) {
-                    .pointer => |pointer| pointer.mutability,
+                    .pointer => |pointer| blk: {
+                        // The existing pointer already has the required semantic
+                        // type when its child matches. Avoid interning it again,
+                        // which otherwise scans every global type each round.
+                        if (types.equal(self.graph, pointer.child, child)) continue;
+                        break :blk pointer.mutability;
+                    },
                     else => continue,
                 } else continue;
                 const pointer_type = try self.pointerType(child, mutability);
@@ -1576,11 +1586,19 @@ pub const Resolver = struct {
     }
 
     pub fn pointerType(self: *Resolver, child: global_sg.GlobalTypeId, mutability: primitives.PointerMutability) !global_sg.GlobalTypeId {
-        for (self.graph.types.items, 0..) |ty, raw| switch (ty) {
-            .pointer => |pointer| if (pointer.mutability == mutability and types.equal(self.graph, pointer.child, child))
-                return @enumFromInt(@as(u32, @intCast(raw))),
-            else => {},
+        const start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+        defer if (self.profile_io) |io| {
+            self.stats.pointer_type_ns += @intCast(std.Io.Timestamp.now(io, .boot).nanoseconds - start);
         };
+        if (self.profile_io != null) self.stats.pointer_type_calls += 1;
+        for (self.graph.types.items, 0..) |ty, raw| {
+            if (self.profile_io != null) self.stats.pointer_type_candidates += 1;
+            switch (ty) {
+                .pointer => |pointer| if (pointer.mutability == mutability and types.equal(self.graph, pointer.child, child))
+                    return @enumFromInt(@as(u32, @intCast(raw))),
+                else => {},
+            }
+        }
         const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
         try self.graph.types.append(self.allocator, .{ .pointer = .{ .child = child, .mutability = mutability } });
         return id;
@@ -1944,10 +1962,39 @@ test "typed integer initializer adopts its binding context" {
     try std.testing.expect(!resolver.materializeAssignmentValues());
 }
 
+test "address type materializes after its child resolves" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const unresolved_ty: global_sg.GlobalTypeId = @enumFromInt(0);
+    const bool_ty: global_sg.GlobalTypeId = @enumFromInt(1);
+    const bool_pointer_ty: global_sg.GlobalTypeId = @enumFromInt(2);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .builtin = .Bool });
+    try graph.types.append(allocator, .{ .pointer = .{ .child = bool_ty, .mutability = .read_only } });
+    try graph.markTypeUnresolved(allocator, unresolved_ty);
+    try graph.nodes.append(allocator, .{ .source = source, .ty = unresolved_ty, .content = .{ .int_literal = 7 } });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = bool_pointer_ty, .content = .{ .address_of = @enumFromInt(0) } });
+
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    try std.testing.expect(!try resolver.materializeAddresses());
+
+    graph.types.items[@intFromEnum(unresolved_ty)] = .{ .builtin = .Int32 };
+    try std.testing.expect(graph.reconcileTypeResolution());
+    try std.testing.expect(try resolver.materializeAddresses());
+    const result_pointer = switch (graph.semanticType(graph.node(@enumFromInt(1)).ty.?)) {
+        .pointer => |pointer| pointer,
+        else => return error.ExpectedPointerType,
+    };
+    try std.testing.expectEqual(unresolved_ty, result_pointer.child);
+    try std.testing.expectEqual(primitives.PointerMutability.read_only, result_pointer.mutability);
+}
+
 test "global core resolver is graph-only" {
     try std.testing.expect(!@hasField(Resolver, "abstract_context"));
     try std.testing.expect(!@hasField(Resolver, "abstract_compatible"));
-    try std.testing.expect(@sizeOf(Resolver) <= 96);
+    try std.testing.expect(@sizeOf(Resolver) <= 160);
 }
 
 test "qualified lookup follows linked module alias" {
