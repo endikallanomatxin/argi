@@ -28,9 +28,44 @@ Argi's unresolved operations within one compilation. See the
   full-pool sweep was about 0.13–0.17 ms; generic type sweeping was about
   0.05–0.06 ms. A previous worklist prototype for error reasons had mixed
   results. These measurements do not justify converting sweeps wholesale.
-- Aggregate pending time, attempts and rounds are available under `--stats`,
-  but not time or retries by operation kind. No evidence yet shows that
-  repeated waits on the same type or binding dominate pending time.
+- `--stats` now reports pending time and outcomes by owner and operation kind.
+  Deferred call attempts are a small part of measured pending time; the Core
+  gates sampled so far found no repeated unresolved type or binding ID.
+
+## Three-way regression baseline (2026-09-24)
+
+Measured `3e3802b9` (before compact semantic graph), `6f80ed92` (immediately
+after), and `bbb5aa2a` (current at measurement). Each compiler was built in
+ReleaseFast with Zig 0.16.0 and LLVM 21. All compiled the unchanged test
+programs below against the same current `core/` through `ARGI_SYSROOT`.
+Results are medians of 24 alternating runs per case, pinned to CPU 0, with
+`--stats` and the target's default development optimization mode.
+
+| Case | Frontend before | Frontend after | Frontend current | Current vs before |
+| --- | ---: | ---: | ---: | ---: |
+| Dynamic array owning mutations | 8.96 ms | 48.65 ms | 12.61 ms | +41% |
+| String hash map baseline | 11.07 ms | 91.58 ms | 17.17 ms | +55% |
+| Named struct auto deinit | 8.21 ms | 20.74 ms | 8.53 ms | +4% |
+
+The current frontend is 74%, 81%, and 59% faster than immediately after the
+refactor, respectively. It still has a material regression in both collection
+cases. The old compiler reports file collection, tokenizing, syntaxing and
+semantizing separately; their sum is the comparable frontend number above.
+Old semantizing and the new ModuleSema/GlobalSema split do not have identical
+boundaries, so compare the complete frontend across all three revisions.
+
+| Case | Codegen before | Codegen current | Frontend + codegen before | Frontend + codegen current |
+| --- | ---: | ---: | ---: | ---: |
+| Dynamic array owning mutations | 5.07 ms | 1.41 ms | 14.03 ms | 14.02 ms |
+| String hash map baseline | 5.92 ms | 2.03 ms | 16.98 ms | 19.19 ms |
+| Named struct auto deinit | 4.04 ms | 0.32 ms | 12.25 ms | 8.86 ms |
+
+Codegen gains offset the frontend regression for dynamic array, but string
+hash map remains about 13% slower before linking. Ownership is about 28%
+faster before linking. Link time was similar across revisions and is excluded
+from these sums. The detail and overhead of `--stats` changed between commits;
+these are phase-timing comparisons, not a cycle-exact attribution of the
+remaining regression.
 
 ## Hypotheses to test
 
