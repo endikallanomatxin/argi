@@ -173,6 +173,17 @@ do not share a proven local compatibility predicate. Keep the existing
 per-candidate nominal rejection until that predicate can be specified and
 tested against all valid destructor forms.
 
+The destructor no-match audit found that broad tail rollback is unsafe:
+`#reach` call completion can add owner fields and bindings before a later
+default fails, leaving durable references into those pools. A narrower change
+delays writing generic arguments and their names until a candidate becomes
+the current best match. In 32 alternating ReleaseFast pairs pinned to CPU 0
+against `f3dd97ec`, failed destructor probes appended 36.7% fewer string bytes
+in string hash map and 52.3% fewer in dynamic array; GlobalSemanticGraph
+storage fell 0.7% and 0.4%. Indexed frontend changed by -0.8% and +0.3%,
+respectively, so this is a graph-size improvement, not an established runtime
+win. The same change passed the full compiler test suite.
+
 Decision: identify a high-cost tag and a repeated prerequisite before changing
 the scheduler. If time is instead in candidate matching or speculative graph
 growth, optimize that operation directly.

@@ -1075,19 +1075,18 @@ pub const Resolver = struct {
             const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
             if (self.profile_io) |io| self.profile_constraints_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - constraints_start;
             if (!constraints_ok) continue;
-            var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
-            defer arguments.deinit(self.allocator);
+            var arguments_complete = true;
             for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
                 const parameter = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw];
-                const argument: global_sg.GenericArgument.Value = switch (parameter.kind) {
-                    .type => .{ .type = bindings.types[raw] orelse break },
-                    .comptime_int => .{ .comptime_int = bindings.ints[raw] orelse break },
-                };
-                try arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, candidate_module.text(parameter.name)), .value = argument });
+                if (switch (parameter.kind) {
+                    .type => bindings.types[raw] == null,
+                    .comptime_int => bindings.ints[raw] == null,
+                }) {
+                    arguments_complete = false;
+                    break;
+                }
             }
-            if (arguments.items.len != parameterized.parameters.len) continue;
-            const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };
-            try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
+            if (!arguments_complete) continue;
             const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
                 .no_match => continue,
                 .deferred => {
@@ -1100,6 +1099,20 @@ pub const Resolver = struct {
             const ordering: CandidateOrdering = if (best == null) .better else compareCandidates(specificity, score, best_specificity, best_score);
             switch (ordering) {
                 .better => {
+                    // Only the current winner needs durable arguments. Failed,
+                    // deferred, and lower-ranked probes leave no argument tail.
+                    var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
+                    defer arguments.deinit(self.allocator);
+                    for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
+                        const parameter = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw];
+                        const argument: global_sg.GenericArgument.Value = switch (parameter.kind) {
+                            .type => .{ .type = bindings.types[raw].? },
+                            .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
+                        };
+                        try arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, candidate_module.text(parameter.name)), .value = argument });
+                    }
+                    const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };
+                    try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
                     best = declaration;
                     best_arguments = range;
                     best_score = score;
