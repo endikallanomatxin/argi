@@ -244,6 +244,24 @@ shifted from 16.72 to 16.77 ms for string hash map and 11.73 to 11.76 ms for
 dynamic array. The next useful breakdown is inside generic candidate matching
 and instantiation, including how many explicit and implicit candidates each
 nested call probes.
+The candidate-stage profile now answers that for string hash map (median of
+12 pinned ReleaseFast runs): implicit selection saw 311 calls and 1,750
+candidates, spending 0.634 ms on prefilter/inference, 0.086 ms on constraints,
+and 0.024 ms on scoring. Explicit selection saw 89 calls and 209 candidates,
+spending 0.557 ms on prefilter/inference, 0.304 ms on scoring, and 4.384 ms
+on final instantiation. The latter includes nested body lowering and must
+not be summed with body timings. All 58 explicit candidates that materialized
+arguments also matched; zero materializations were discarded. Delaying
+explicit argument materialization would not help this workload. The remaining
+selection cost is modest compared with required body instantiation. Revisit
+destructor resolution, which still repeats many failed queries for the same
+target types and materializes graph nodes for those failures.
+Do not cache destructor misses by `TypeId` alone: visibility depends on the
+module, Reach changes matching and generic inference, and function/type state
+can evolve during semantizing. A transient cache would need a context-aware
+key and explicit invalidation; receiver-name memoization alone has a much
+smaller measured ceiling. First isolate the repeated failed dispatch cost
+from speculative graph growth before changing this path.
 One lookup in that path still scanned every declaration when checking an
 empty type initializer. Reusing `declarationsNamed` removed that scan. Across
 32 alternating ReleaseFast pairs, median nested generic-call time fell 2.6%

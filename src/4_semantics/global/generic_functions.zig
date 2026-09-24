@@ -20,6 +20,26 @@ pub const Stats = struct {
     nodes: u32 = 0,
 };
 
+pub const SelectionProfile = struct {
+    implicit_calls: u64 = 0,
+    implicit_candidates: u64 = 0,
+    implicit_prefilter_inference_ns: u64 = 0,
+    implicit_constraints_ns: u64 = 0,
+    implicit_scoring_ns: u64 = 0,
+    implicit_argument_materialization_ns: u64 = 0,
+    implicit_final_instantiation_ns: u64 = 0,
+    explicit_calls: u64 = 0,
+    explicit_candidates: u64 = 0,
+    explicit_candidates_reaching_argument_materialization: u64 = 0,
+    explicit_candidates_matching: u64 = 0,
+    explicit_argument_materializations_discarded: u64 = 0,
+    explicit_prefilter_inference_ns: u64 = 0,
+    explicit_constraints_ns: u64 = 0,
+    explicit_scoring_ns: u64 = 0,
+    explicit_argument_materialization_ns: u64 = 0,
+    explicit_final_instantiation_ns: u64 = 0,
+};
+
 const ReachInferenceContext = reach_context_mod.Context;
 
 pub const BodyNodeProfile = struct {
@@ -42,6 +62,7 @@ pub const Resolver = struct {
     register_defer: ?*const fn (*anyopaque, global_sg.GlobalNodeId, global_sg.GlobalNodeId) anyerror!void = null,
     stats: Stats = .{},
     profile_io: ?std.Io = null,
+    selection_profile: SelectionProfile = .{},
     profile_constraints_ns: i96 = 0,
     profile_source_selection_ns: i96 = 0,
     profile_source_completion_ns: i96 = 0,
@@ -67,6 +88,10 @@ pub const Resolver = struct {
     fn profileTimestamp(self: *const Resolver) i96 {
         if (self.profile_io) |io| return std.Io.Timestamp.now(io, .boot).nanoseconds;
         return 0;
+    }
+
+    fn addProfileTime(self: *Resolver, start: i96, elapsed: *u64) void {
+        if (self.profile_io != null) elapsed.* += @intCast(self.profileTimestamp() - start);
     }
 
     fn profileNamedCallStage(self: *Resolver, start: i96, accounted_before: i96, elapsed: *i96) void {
@@ -553,20 +578,20 @@ pub const Resolver = struct {
                 if (self.profile_io) |io| self.profile_source_selection_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - started;
             }
             break :blk if (local_args) |args|
-            self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input, reach) catch |err| switch (err) {
-                error.NoMatchingGenericFunction => return .not_applicable,
-                error.DeferredGenericFunction => return .deferred,
-                error.AmbiguousGenericFunction => return .invalid,
-                else => return .deferred,
-            }
-        else
-            self.resolveImplicitGenericFunction(module_index, module, reference, input, reach) catch |err| switch (err) {
-                error.NoMatchingGenericFunction => return .not_applicable,
-                error.DeferredGenericFunction => return .deferred,
-                error.AmbiguousGenericFunction => return .invalid,
-                error.ConflictingGenericArgument => return err,
-                else => return .deferred,
-            };
+                self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input, reach) catch |err| switch (err) {
+                    error.NoMatchingGenericFunction => return .not_applicable,
+                    error.DeferredGenericFunction => return .deferred,
+                    error.AmbiguousGenericFunction => return .invalid,
+                    else => return .deferred,
+                }
+            else
+                self.resolveImplicitGenericFunction(module_index, module, reference, input, reach) catch |err| switch (err) {
+                    error.NoMatchingGenericFunction => return .not_applicable,
+                    error.DeferredGenericFunction => return .deferred,
+                    error.AmbiguousGenericFunction => return .invalid,
+                    error.ConflictingGenericArgument => return err,
+                    else => return .deferred,
+                };
         };
         const completion_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
         const completed = try self.core.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function)].input, input, reach);
@@ -593,6 +618,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         reach_context: ?ReachInferenceContext,
     ) !global_sg.GlobalFunctionId {
+        if (self.profile_io != null) self.selection_profile.explicit_calls += 1;
         const module_filter = if (reference.module_path) |path|
             try self.core.findModuleForQualifier(current_module, module.text(path))
         else
@@ -604,7 +630,17 @@ pub const Resolver = struct {
         var best_specificity: ParameterizedSpecificity = .{};
         var tied = false;
         var saw_deferred = false;
+        var best_was_materialized = false;
         for (try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, name)) |candidate| {
+            if (self.profile_io != null) self.selection_profile.explicit_candidates += 1;
+            var phase_start = self.profileTimestamp();
+            var prefilter_active = true;
+            var scoring_start: i96 = 0;
+            var scoring_active = false;
+            defer {
+                if (prefilter_active) self.addProfileTime(phase_start, &self.selection_profile.explicit_prefilter_inference_ns);
+                if (scoring_active) self.addProfileTime(scoring_start, &self.selection_profile.explicit_scoring_ns);
+            }
             const candidate_index: usize = candidate.module_index;
             const candidate_module = &self.modules[candidate_index];
             const parameterized = candidate_module.semantic.parameterized_storage.parameterized_functions.items[candidate.function_index];
@@ -620,38 +656,68 @@ pub const Resolver = struct {
             if (!input_inferred) continue;
             if (reach_context) |context|
                 if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
-            if (!try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings)) continue;
+            self.addProfileTime(phase_start, &self.selection_profile.explicit_prefilter_inference_ns);
+            prefilter_active = false;
+            phase_start = self.profileTimestamp();
+            const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
+            self.addProfileTime(phase_start, &self.selection_profile.explicit_constraints_ns);
+            if (!constraints_ok) continue;
+            phase_start = self.profileTimestamp();
+            if (self.profile_io != null)
+                self.selection_profile.explicit_candidates_reaching_argument_materialization += 1;
             const complete_arguments = self.appendBoundArguments(candidate_index, parameterized.parameters, &bindings) catch |err| switch (err) {
                 error.MissingGenericArgument => continue,
                 else => return err,
             };
+            self.addProfileTime(phase_start, &self.selection_profile.explicit_argument_materialization_ns);
+            phase_start = self.profileTimestamp();
+            scoring_start = phase_start;
+            scoring_active = true;
             const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
-                .no_match => continue,
+                .no_match => {
+                    if (self.profile_io != null) self.selection_profile.explicit_argument_materializations_discarded += 1;
+                    continue;
+                },
                 .deferred => {
                     saw_deferred = true;
+                    if (self.profile_io != null) self.selection_profile.explicit_argument_materializations_discarded += 1;
                     continue;
                 },
                 .score => |score| score,
             };
+            if (self.profile_io != null) self.selection_profile.explicit_candidates_matching += 1;
             const specificity = self.parameterizedInputSpecificity(candidate_index, parameterized.input, input);
             const ordering: CandidateOrdering = if (best == null) .better else compareCandidates(specificity, score, best_specificity, best_score);
+            self.addProfileTime(scoring_start, &self.selection_profile.explicit_scoring_ns);
+            scoring_active = false;
             switch (ordering) {
                 .better => {
+                    if (self.profile_io != null) {
+                        if (best_was_materialized)
+                            self.selection_profile.explicit_argument_materializations_discarded += 1;
+                        best_was_materialized = true;
+                    }
                     best = declaration;
                     best_arguments = complete_arguments;
                     best_score = score;
                     best_specificity = specificity;
                     tied = false;
                 },
-                .worse => {},
+                .worse => {
+                    if (self.profile_io != null) self.selection_profile.explicit_argument_materializations_discarded += 1;
+                },
                 .tie => if (declaration != best.?) {
                     tied = true;
+                    if (self.profile_io != null) self.selection_profile.explicit_argument_materializations_discarded += 1;
                 },
             }
         }
         if (tied) return error.AmbiguousGenericFunction;
         const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else error.NoMatchingGenericFunction;
-        return self.instantiate(declaration, best_arguments);
+        const instantiate_start = self.profileTimestamp();
+        const result = try self.instantiate(declaration, best_arguments);
+        self.addProfileTime(instantiate_start, &self.selection_profile.explicit_final_instantiation_ns);
+        return result;
     }
 
     pub fn inferBindingsFromInput(
@@ -1033,6 +1099,7 @@ pub const Resolver = struct {
         reach_context: ?ReachInferenceContext,
         ambiguity_candidates: ?*std.ArrayList(global_sg.GlobalDeclId),
     ) !global_sg.GlobalFunctionId {
+        if (self.profile_io != null) self.selection_profile.implicit_calls += 1;
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |literal| literal,
             else => return error.MissingGenericInputType,
@@ -1052,6 +1119,15 @@ pub const Resolver = struct {
         var binding_ints: std.ArrayList(?i64) = .empty;
         defer binding_ints.deinit(self.allocator);
         for (try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, name)) |candidate| {
+            if (self.profile_io != null) self.selection_profile.implicit_candidates += 1;
+            var phase_start = self.profileTimestamp();
+            var prefilter_active = true;
+            var scoring_start: i96 = 0;
+            var scoring_active = false;
+            defer {
+                if (prefilter_active) self.addProfileTime(phase_start, &self.selection_profile.implicit_prefilter_inference_ns);
+                if (scoring_active) self.addProfileTime(scoring_start, &self.selection_profile.implicit_scoring_ns);
+            }
             const candidate_index: usize = candidate.module_index;
             const candidate_module = &self.modules[candidate_index];
             const parameterized = candidate_module.semantic.parameterized_storage.parameterized_functions.items[candidate.function_index];
@@ -1117,9 +1193,15 @@ pub const Resolver = struct {
             }
             if (reach_context) |context|
                 if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
+            self.addProfileTime(phase_start, &self.selection_profile.implicit_prefilter_inference_ns);
+            prefilter_active = false;
             const constraints_start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
-            if (self.profile_io) |io| self.profile_constraints_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - constraints_start;
+            if (self.profile_io) |io| {
+                const elapsed: u64 = @intCast(std.Io.Timestamp.now(io, .boot).nanoseconds - constraints_start);
+                self.profile_constraints_ns += elapsed;
+                self.selection_profile.implicit_constraints_ns += elapsed;
+            }
             if (!constraints_ok) continue;
             var arguments_complete = true;
             for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
@@ -1133,6 +1215,9 @@ pub const Resolver = struct {
                 }
             }
             if (!arguments_complete) continue;
+            phase_start = self.profileTimestamp();
+            scoring_start = phase_start;
+            scoring_active = true;
             const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
                 .no_match => continue,
                 .deferred => {
@@ -1143,8 +1228,11 @@ pub const Resolver = struct {
             };
             const specificity = self.parameterizedInputSpecificity(candidate_index, parameterized.input, input);
             const ordering: CandidateOrdering = if (best == null) .better else compareCandidates(specificity, score, best_specificity, best_score);
+            self.addProfileTime(scoring_start, &self.selection_profile.implicit_scoring_ns);
+            scoring_active = false;
             switch (ordering) {
                 .better => {
+                    phase_start = self.profileTimestamp();
                     // Only the current winner needs durable arguments. Failed,
                     // deferred, and lower-ranked probes leave no argument tail.
                     var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
@@ -1159,6 +1247,7 @@ pub const Resolver = struct {
                     }
                     const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };
                     try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
+                    self.addProfileTime(phase_start, &self.selection_profile.implicit_argument_materialization_ns);
                     best = declaration;
                     best_arguments = range;
                     best_score = score;
@@ -1179,7 +1268,10 @@ pub const Resolver = struct {
         }
         if (tied) return error.AmbiguousGenericFunction;
         const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else if (candidate_count == 1 and conflicting_candidates == 1) error.ConflictingGenericArgument else error.NoMatchingGenericFunction;
-        return self.instantiate(declaration, best_arguments);
+        const instantiate_start = self.profileTimestamp();
+        const result = try self.instantiate(declaration, best_arguments);
+        self.addProfileTime(instantiate_start, &self.selection_profile.implicit_final_instantiation_ns);
+        return result;
     }
 
     fn definiteDestructorReceiverMismatch(
@@ -2746,62 +2838,62 @@ pub const Resolver = struct {
                 const generic_accounted_before = self.resolver.profile_named_call_accounted_ns;
                 defer self.resolver.profileNamedCallStage(generic_started, generic_accounted_before, &self.resolver.profile_named_call_generic_selection_ns);
                 break :blk if (arguments.len != 0)
-                self.resolver.resolveExplicitGenericFunction(
-                    self.module_index,
-                    module,
-                    reference,
-                    arguments,
-                    input,
-                    nested_reach,
-                ) catch |err| switch (err) {
-                    error.NoMatchingGenericFunction => {
+                    self.resolver.resolveExplicitGenericFunction(
+                        self.module_index,
+                        module,
+                        reference,
+                        arguments,
+                        input,
+                        nested_reach,
+                    ) catch |err| switch (err) {
+                        error.NoMatchingGenericFunction => {
+                            if (self.resolver.nested_constructor_context) |context| {
+                                if (self.resolver.nested_constructor_resolver) |resolve| {
+                                    if (try resolve(
+                                        context,
+                                        self.module_index,
+                                        reference,
+                                        arguments,
+                                        input,
+                                        nested_reach,
+                                        self.resolver.sourceFor(self.module_index, source),
+                                    )) |node| return node;
+                                }
+                            }
+                            return err;
+                        },
+                        else => return err,
+                    }
+                else ordinary_lookup: {
+                    const ordinary_started = self.resolver.profileTimestamp();
+                    const ordinary_accounted_before = self.resolver.profile_named_call_accounted_ns;
+                    const ordinary = if (module_path == null)
+                        try self.resolver.core.matchUnqualifiedFunctionByNameWithReach(self.module_index, name, input, nested_reach)
+                    else
+                        try self.resolver.core.matchFunctionByName(self.module_index, reference, input);
+                    self.resolver.profileNamedCallStage(ordinary_started, ordinary_accounted_before, &self.resolver.profile_named_call_ordinary_lookup_ns);
+                    if (ordinary == .function) break :ordinary_lookup ordinary.function;
+                    break :ordinary_lookup self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, nested_reach) catch |err| {
                         if (self.resolver.nested_constructor_context) |context| {
                             if (self.resolver.nested_constructor_resolver) |resolve| {
-                                if (try resolve(
-                                    context,
-                                    self.module_index,
-                                    reference,
-                                    arguments,
-                                    input,
-                                    nested_reach,
-                                    self.resolver.sourceFor(self.module_index, source),
-                                )) |node| return node;
+                                if (try resolve(context, self.module_index, reference, arguments, input, nested_reach, self.resolver.sourceFor(self.module_index, source))) |node|
+                                    return node;
                             }
                         }
+                        if (arguments.len == 0) {
+                            if (try self.resolveConstrainedStaticCall(reference, input, source)) |node| return node;
+                        }
+                        if (self.resolver.nested_call_context) |context| {
+                            if (self.resolver.nested_call_resolver) |resolve| {
+                                if (try resolve(context, self.module_index, reference, input, self.resolver.sourceFor(self.module_index, source))) |node|
+                                    return node;
+                            }
+                        }
+                        if (module_path == null and std.mem.eql(u8, name, "deinit") and
+                            self.parameterized.safety_primitive == .trusted_opaque_drop)
+                            return self.emptyValue(try self.resolver.generics.internType(.{ .builtin = .Void }), source);
                         return err;
-                    },
-                    else => return err,
-                }
-            else ordinary_lookup: {
-                const ordinary_started = self.resolver.profileTimestamp();
-                const ordinary_accounted_before = self.resolver.profile_named_call_accounted_ns;
-                const ordinary = if (module_path == null)
-                    try self.resolver.core.matchUnqualifiedFunctionByNameWithReach(self.module_index, name, input, nested_reach)
-                else
-                    try self.resolver.core.matchFunctionByName(self.module_index, reference, input);
-                self.resolver.profileNamedCallStage(ordinary_started, ordinary_accounted_before, &self.resolver.profile_named_call_ordinary_lookup_ns);
-                if (ordinary == .function) break :ordinary_lookup ordinary.function;
-                break :ordinary_lookup self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, nested_reach) catch |err| {
-                    if (self.resolver.nested_constructor_context) |context| {
-                        if (self.resolver.nested_constructor_resolver) |resolve| {
-                            if (try resolve(context, self.module_index, reference, arguments, input, nested_reach, self.resolver.sourceFor(self.module_index, source))) |node|
-                                return node;
-                        }
-                    }
-                    if (arguments.len == 0) {
-                        if (try self.resolveConstrainedStaticCall(reference, input, source)) |node| return node;
-                    }
-                    if (self.resolver.nested_call_context) |context| {
-                        if (self.resolver.nested_call_resolver) |resolve| {
-                            if (try resolve(context, self.module_index, reference, input, self.resolver.sourceFor(self.module_index, source))) |node|
-                                return node;
-                        }
-                    }
-                    if (module_path == null and std.mem.eql(u8, name, "deinit") and
-                        self.parameterized.safety_primitive == .trusted_opaque_drop)
-                        return self.emptyValue(try self.resolver.generics.internType(.{ .builtin = .Void }), source);
-                    return err;
-                };
+                    };
                 };
             };
             const completion_started = self.resolver.profileTimestamp();

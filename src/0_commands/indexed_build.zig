@@ -196,6 +196,25 @@ fn printStats(
     std.debug.print("      sugar types:             {d:.3} ms\n", .{milliseconds(semantic_timings.sugar_types_ns)});
     std.debug.print("    error reason inference:    {d:.3} ms\n", .{milliseconds(semantic_timings.error_inference_ns)});
     std.debug.print("    implicit generic constraints: {d:.3} ms\n", .{milliseconds(semantic_timings.generic_constraints_ns)});
+    const generic_selection = semantic.generic_selection;
+    std.debug.print("  generic overload selection (phase times are disjoint):\n", .{});
+    std.debug.print("    implicit: {d} calls, {d} candidates; prefilter/inference {d:.3} ms, constraints {d:.3} ms, scoring {d:.3} ms, argument materialization {d:.3} ms, final instantiation {d:.3} ms\n", .{
+        generic_selection.implicit_calls,                                generic_selection.implicit_candidates,
+        milliseconds(generic_selection.implicit_prefilter_inference_ns), milliseconds(generic_selection.implicit_constraints_ns),
+        milliseconds(generic_selection.implicit_scoring_ns),             milliseconds(generic_selection.implicit_argument_materialization_ns),
+        milliseconds(generic_selection.implicit_final_instantiation_ns),
+    });
+    std.debug.print("    explicit: {d} calls, {d} candidates; prefilter/inference {d:.3} ms, constraints {d:.3} ms, scoring {d:.3} ms, argument materialization {d:.3} ms, final instantiation {d:.3} ms\n", .{
+        generic_selection.explicit_calls,                                generic_selection.explicit_candidates,
+        milliseconds(generic_selection.explicit_prefilter_inference_ns), milliseconds(generic_selection.explicit_constraints_ns),
+        milliseconds(generic_selection.explicit_scoring_ns),             milliseconds(generic_selection.explicit_argument_materialization_ns),
+        milliseconds(generic_selection.explicit_final_instantiation_ns),
+    });
+    std.debug.print("      explicit candidates: {d} reached argument materialization, {d} matched; {d} materializations discarded\n", .{
+        generic_selection.explicit_candidates_reaching_argument_materialization,
+        generic_selection.explicit_candidates_matching,
+        generic_selection.explicit_argument_materializations_discarded,
+    });
     std.debug.print("    ownership cleanup:         {d:.3} ms ({d} attempts)\n", .{
         milliseconds(semantic_timings.cleanup_ns), semantic.cleanup_attempts,
     });
