@@ -145,6 +145,9 @@ fn printStats(
         milliseconds(semantic_timings.generic_instance_context_init_ns),
         milliseconds(semantic_timings.generic_instantiation_body_ns),
     });
+    std.debug.print("        bodies built {d}\n", .{semantic.generic_bodies_built});
+    if (semantic.generic_reachability_tracked)
+        std.debug.print("        unreachable after semantizing {d}\n", .{semantic.generic_bodies_unreachable});
     const call_blockers = semantic.call_blockers;
     std.debug.print("      deferred calls observed: {d} without ID, {d} one type, {d} one binding, {d} multiple IDs\n", .{
         call_blockers.deferred_without_observed_id,

@@ -109,6 +109,9 @@ pub const Stats = struct {
     cached_nonimplementation_hits: u64 = 0,
     generic_instantiation_calls: u64 = 0,
     generic_existing_instances: u64 = 0,
+    generic_bodies_built: u64 = 0,
+    generic_bodies_unreachable: u64 = 0,
+    generic_reachability_tracked: bool = false,
     timings: Timings = .{},
 };
 
@@ -851,9 +854,20 @@ pub fn semantizeWithOptions(
     try relocation.graph.finishTypeResolution(allocator);
     try relocation.graph.finishBindingTypeResolution(allocator);
 
+    var generic_bodies_built: u64 = 0;
+    var generic_bodies_unreachable: u64 = 0;
+    if (options.profile_io != null) {
+        for (relocation.graph.functions.items) |function| {
+            if (function.flags.is_generic_instantiation and function.body != null)
+                generic_bodies_built += 1;
+        }
+    }
     if (reachable) |set| {
         for (relocation.graph.functions.items, 0..) |*function, raw| {
             const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (options.profile_io != null and function.flags.is_generic_instantiation and function.body != null) {
+                if (!set.contains(id)) generic_bodies_unreachable += 1;
+            }
             if (!set.contains(id)) function.body = null;
         }
     }
@@ -883,6 +897,9 @@ pub fn semantizeWithOptions(
         .cached_nonimplementation_hits = abstracts.cached_nonimplementation_hits,
         .generic_instantiation_calls = generic_functions.profile_instantiate_calls,
         .generic_existing_instances = generic_functions.profile_instantiate_existing,
+        .generic_bodies_built = generic_bodies_built,
+        .generic_bodies_unreachable = generic_bodies_unreachable,
+        .generic_reachability_tracked = reachable != null,
     };
 
     const profile_preverify = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;

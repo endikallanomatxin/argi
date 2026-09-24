@@ -218,6 +218,16 @@ changing map allocation alone has a small maximum payoff. Inspect work done
 per instantiated body node and whether each body is needed before changing
 the map representation.
 
+The next body experiment found no reachability waste in the normal build of
+string hash map: 52 generic bodies were constructed and all 52 were reachable
+at the end of GlobalSema. The `check` command requests exhaustive bodies, so
+reachability-based delay would not help its current contract either. Reserving
+the temporary node-reference list to the full block length was tested in 32
+alternating ReleaseFast pairs against `24deaa04`; median body-lowering time
+was unchanged (3.84 to 3.85 ms in string hash map), while frontend shifted
+up 0.7–0.9% across the measured cases. The allocation change was discarded.
+The remaining body cost needs a per-node breakdown before choosing a rewrite.
+
 An ordered type-reference lookup in ModuleSema was also tested and removed.
 Sorting each file's reference slice plus binary search did not consistently
 improve ModuleSema or complete frontend across 32 paired ReleaseFast runs.
