@@ -191,6 +191,14 @@ median matching time by 57% in string hash map and 59% in dynamic array; across
 and 0.5%, respectively. This is a small but repeatable removal of an accidental
 global scan and does not change abstract matching rules.
 
+A conservative nominal receiver filter in destructor name collection was
+tested and discarded. In the same three workloads it removed no destructor
+dispatches or speculative nodes: generic/unknown receiver patterns kept the
+same names visible. Across 32 paired runs it added roughly 0.2–0.6% frontend
+time. Filtering names is ineffective while broad candidate patterns share a
+receiver name; a future change must filter candidates within dispatch or
+separate lookup from completion.
+
 Decision: identify a high-cost tag and a repeated prerequisite before changing
 the scheduler. If time is instead in candidate matching or speculative graph
 growth, optimize that operation directly.
