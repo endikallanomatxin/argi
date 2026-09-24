@@ -22,6 +22,11 @@ pub const Stats = struct {
 
 const ReachInferenceContext = reach_context_mod.Context;
 
+pub const BodyNodeProfile = struct {
+    count: u64 = 0,
+    self_ns: u64 = 0,
+};
+
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -46,6 +51,12 @@ pub const Resolver = struct {
     profile_instantiate_lookup_ns: i96 = 0,
     profile_instantiate_body_ns: i96 = 0,
     profile_instance_context_init_ns: i96 = 0,
+    profile_resolved_body_nodes: u64 = 0,
+    profile_pending_body_nodes: u64 = 0,
+    profile_resolved_body_node_ns: i96 = 0,
+    profile_pending_body_node_ns: i96 = 0,
+    profile_pending_body_kinds: [@typeInfo(ir.Pending).@"union".fields.len]BodyNodeProfile = @splat(.{}),
+    profile_expression_kinds: [@typeInfo(ir.PendingExpressionKind).@"enum".fields.len]BodyNodeProfile = @splat(.{}),
 
     pub fn tryResolve(
         self: *Resolver,
@@ -1965,6 +1976,7 @@ pub const Resolver = struct {
         binding_map: []?global_sg.GlobalBindingId,
         node_map: []?global_sg.GlobalNodeId,
         block_map: []?global_sg.GlobalBlockId,
+        profile_accounted_node_ns: i96 = 0,
         function: ?global_sg.GlobalFunctionId = null,
 
         fn init(
@@ -2093,9 +2105,38 @@ pub const Resolver = struct {
                     return global;
                 }
             }
+            const node_started = if (self.resolver.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+            const accounted_before = self.profile_accounted_node_ns;
             const instantiated: global_sg.Node = switch (local) {
-                .resolved => |node| try self.instantiateResolvedNode(node),
-                .pending => |pending| try self.instantiatePendingNode(storage.pending.items[@intFromEnum(pending)]),
+                .resolved => |node| blk: {
+                    const result = try self.instantiateResolvedNode(node);
+                    if (self.resolver.profile_io) |io| {
+                        self.resolver.profile_resolved_body_nodes += 1;
+                        const own_ns = std.Io.Timestamp.now(io, .boot).nanoseconds - node_started - (self.profile_accounted_node_ns - accounted_before);
+                        self.resolver.profile_resolved_body_node_ns += own_ns;
+                        self.profile_accounted_node_ns += own_ns;
+                    }
+                    break :blk result;
+                },
+                .pending => |pending| blk: {
+                    const pending_value = storage.pending.items[@intFromEnum(pending)];
+                    const result = try self.instantiatePendingNode(pending_value);
+                    if (self.resolver.profile_io) |io| {
+                        self.resolver.profile_pending_body_nodes += 1;
+                        const own_ns = std.Io.Timestamp.now(io, .boot).nanoseconds - node_started - (self.profile_accounted_node_ns - accounted_before);
+                        self.resolver.profile_pending_body_node_ns += own_ns;
+                        self.profile_accounted_node_ns += own_ns;
+                        const profile = &self.resolver.profile_pending_body_kinds[@intFromEnum(std.meta.activeTag(pending_value))];
+                        profile.count += 1;
+                        profile.self_ns += @intCast(own_ns);
+                        if (pending_value == .resolve_expression) {
+                            const expression_profile = &self.resolver.profile_expression_kinds[@intFromEnum(pending_value.resolve_expression.kind)];
+                            expression_profile.count += 1;
+                            expression_profile.self_ns += @intCast(own_ns);
+                        }
+                    }
+                    break :blk result;
+                },
             };
             self.resolver.graph.nodes.items[@intFromEnum(global)] = instantiated;
             self.resolver.stats.nodes += 1;
@@ -2765,9 +2806,9 @@ pub const Resolver = struct {
                     return self.emptyValue(ty, source);
                 }
             }
-            for (self.resolver.graph.declarations.items, 0..) |declaration, raw| {
-                if (declaration.kind != .type or !std.mem.eql(u8, self.resolver.graph.text(declaration.name), name)) continue;
-                const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
+            for (try self.resolver.graph.declarationsNamed(self.resolver.allocator, name)) |id| {
+                const declaration = self.resolver.graph.declarations.items[@intFromEnum(id)];
+                if (declaration.kind != .type) continue;
                 if (!self.resolver.core.declarationVisible(self.module_index, id, null)) continue;
                 const ty = declaration.type_id orelse continue;
                 const fields = global_types.fields(self.resolver.graph, ty) orelse continue;

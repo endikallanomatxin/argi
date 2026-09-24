@@ -11,6 +11,7 @@ const types = @import("../4_semantics/global/types.zig");
 const graph_print = @import("../4_semantics/global/print.zig");
 const global_semantizer = @import("../4_semantics/global/semantizer.zig");
 const global_dispatch = @import("../4_semantics/global/dispatch.zig");
+const parameterized_ir = @import("../4_semantics/module/parameterized/ir.zig");
 const planning = @import("build_plan.zig");
 
 pub const BuildFlags = planning.BuildFlags;
@@ -148,6 +149,20 @@ fn printStats(
     std.debug.print("        bodies built {d}\n", .{semantic.generic_bodies_built});
     if (semantic.generic_reachability_tracked)
         std.debug.print("        unreachable after semantizing {d}\n", .{semantic.generic_bodies_unreachable});
+    std.debug.print("        body node self time: resolved {d} / {d:.3} ms, pending {d} / {d:.3} ms\n", .{
+        semantic.resolved_body_nodes,
+        milliseconds(semantic_timings.resolved_body_node_ns),
+        semantic.pending_body_nodes,
+        milliseconds(semantic_timings.pending_body_node_ns),
+    });
+    inline for (std.meta.fields(parameterized_ir.Pending), 0..) |field, index| {
+        const item = semantic.pending_body_kinds[index];
+        if (item.count != 0) std.debug.print("          {s}: {d}, {d:.3} ms\n", .{ field.name, item.count, milliseconds(item.self_ns) });
+    }
+    inline for (std.meta.fields(parameterized_ir.PendingExpressionKind), 0..) |field, index| {
+        const item = semantic.expression_kinds[index];
+        if (item.count != 0) std.debug.print("            {s}: {d}, {d:.3} ms\n", .{ field.name, item.count, milliseconds(item.self_ns) });
+    }
     const call_blockers = semantic.call_blockers;
     std.debug.print("      deferred calls observed: {d} without ID, {d} one type, {d} one binding, {d} multiple IDs\n", .{
         call_blockers.deferred_without_observed_id,

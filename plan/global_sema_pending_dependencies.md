@@ -228,6 +228,18 @@ was unchanged (3.84 to 3.85 ms in string hash map), while frontend shifted
 up 0.7–0.9% across the measured cases. The allocation change was discarded.
 The remaining body cost needs a per-node breakdown before choosing a rewrite.
 
+The per-node profile attributes most generic body conversion to pending
+expressions. In 24 pinned ReleaseFast string hash map runs, 454 pending nodes
+took about 3.81 ms of self time versus 0.11 ms for 579 resolved nodes;
+89 nested `generic_call` expressions accounted for about 3.15 ms. Dynamic
+array showed the same pattern (50 nested generic calls, about 0.66 ms).
+One lookup in that path still scanned every declaration when checking an
+empty type initializer. Reusing `declarationsNamed` removed that scan. Across
+32 alternating ReleaseFast pairs, median nested generic-call time fell 2.6%
+for string hash map and 3.2% for dynamic array; indexed frontend fell 1.0%
+and 0.7%. The per-node timers are opt-in under `--stats` and report self time
+by subtracting nested node work.
+
 An ordered type-reference lookup in ModuleSema was also tested and removed.
 Sorting each file's reference slice plus binary search did not consistently
 improve ModuleSema or complete frontend across 32 paired ReleaseFast runs.
