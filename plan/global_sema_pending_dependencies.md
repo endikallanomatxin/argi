@@ -117,6 +117,15 @@ for dynamic array owning mutations and 2.4% for string hash map; their
 indexed frontend times fell 1.1% and 0.7%, respectively. Continue inspecting
 the generic no-match path and query equivalence before introducing a cache.
 
+A negative cache for the entire destructor query needs module visibility,
+target type, receiver name, reach context and invalidation on type/binding
+resolution and newly instantiated functions. A negative answer can become
+positive later in the fixed point. A broad ownership-side structural
+prefilter is also deferred: ordinary, abstract and parameterized candidates
+do not share a proven local compatibility predicate. Keep the existing
+per-candidate nominal rejection until that predicate can be specified and
+tested against all valid destructor forms.
+
 Decision: identify a high-cost tag and a repeated prerequisite before changing
 the scheduler. If time is instead in candidate matching or speculative graph
 growth, optimize that operation directly.
