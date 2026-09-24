@@ -1027,7 +1027,18 @@ pub const Resolver = struct {
                         matches = false;
                         break;
                     };
-                    const inferred = self.inferInputType(candidate_index, field.ty, actual, &bindings) catch |err| {
+                    // Destructor calls commonly probe many generic receivers
+                    // with the same address. Reject a different concrete
+                    // nominal base before allocating inference state or
+                    // recursively matching the receiver pattern.
+                    if (std.mem.eql(u8, name, "deinit") and
+                        self.graph.nodes.items[@intFromEnum(value.value)].content == .address_of and
+                        self.definiteDestructorReceiverMismatch(candidate_index, field.ty, actual))
+                    {
+                        matches = false;
+                        break;
+                    }
+                    _ = self.inferInputType(candidate_index, field.ty, actual, &bindings) catch |err| {
                         if (err == error.ConflictingGenericArgument) {
                             conflicting_candidates += 1;
                             matches = false;
@@ -1037,13 +1048,6 @@ pub const Resolver = struct {
                         matches = false;
                         break;
                     };
-                    if (!inferred and std.mem.eql(u8, name, "deinit") and
-                        self.graph.nodes.items[@intFromEnum(value.value)].content == .address_of and
-                        self.definiteDestructorReceiverMismatch(candidate_index, field.ty, actual))
-                    {
-                        matches = false;
-                        break;
-                    }
                     break;
                 }
                 if (!matches) break;

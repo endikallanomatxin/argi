@@ -110,6 +110,13 @@ operation may reveal another. Deduplication, changing prerequisites, direct
 slot writes, speculative rollback and reachability must be addressed before
 sleeping work is authoritative.
 
+The first direct lookup change moves an existing conclusive nominal `deinit`
+receiver check before generic input inference. Across 24 alternating
+ReleaseFast paired builds pinned to CPU 0, median generic matching fell 4.4%
+for dynamic array owning mutations and 2.4% for string hash map; their
+indexed frontend times fell 1.1% and 0.7%, respectively. Continue inspecting
+the generic no-match path and query equivalence before introducing a cache.
+
 Decision: identify a high-cost tag and a repeated prerequisite before changing
 the scheduler. If time is instead in candidate matching or speculative graph
 growth, optimize that operation directly.
