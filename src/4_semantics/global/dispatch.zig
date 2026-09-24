@@ -45,6 +45,23 @@ pub const ImplicitLookupStats = struct {
     generic_completion_ns: u64 = 0,
 };
 
+pub const PendingCallStage = enum {
+    errors,
+    ordinary,
+    abstract_ordinary,
+    generic,
+    constructor,
+    abstract,
+    control,
+};
+
+pub const PendingCallStageStats = struct {
+    attempts: u64 = 0,
+    resolved: u64 = 0,
+    deferred: u64 = 0,
+    ns: u64 = 0,
+};
+
 /// Owns operations whose language-level resolution is deliberately composed
 /// from several specialized strategies. Strategy fallback stays private to
 /// this coordinator; callers only observe `deferred` or `resolved`.
@@ -58,6 +75,7 @@ pub const Resolver = struct {
     profile_io: ?std.Io = null,
     profile_generic_ns: i96 = 0,
     implicit_lookup_stats: ImplicitLookupStats = .{},
+    pending_call_stages: [@typeInfo(PendingCallStage).@"enum".fields.len]PendingCallStageStats = @splat(.{}),
 
     fn profileTimestamp(self: *const Resolver) i96 {
         if (self.profile_io) |io| return std.Io.Timestamp.now(io, .boot).nanoseconds;
@@ -66,6 +84,15 @@ pub const Resolver = struct {
 
     fn profileAccumulate(self: *Resolver, start: i96, elapsed: *u64) void {
         if (self.profile_io != null) elapsed.* += @intCast(self.profileTimestamp() - start);
+    }
+
+    fn profilePendingStage(self: *Resolver, stage: PendingCallStage, start: i96, result: resolution.Result) void {
+        if (self.profile_io == null) return;
+        const stats = &self.pending_call_stages[@intFromEnum(stage)];
+        stats.attempts += 1;
+        stats.resolved += @intFromBool(result == .resolved);
+        stats.deferred += @intFromBool(result == .deferred);
+        stats.ns += @intCast(self.profileTimestamp() - start);
     }
 
     pub fn resolveLocalReach(
@@ -100,15 +127,20 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
+        var stage_start = self.profileTimestamp();
         const error_result = try self.errors.tryResolveCall(module_index, module, o, operation);
+        self.profilePendingStage(.errors, stage_start, error_result);
         if (!error_result.allowsFallback()) return error_result;
+        stage_start = self.profileTimestamp();
         const core_result = try self.core.tryResolve(module_index, module, o, operation);
+        self.profilePendingStage(.ordinary, stage_start, core_result);
         if (core_result == .resolved or core_result == .invalid) return core_result;
 
         // Abstract compatibility is not a competing callable family: it is a
         // richer matching policy for the same ordinary candidates. A Core
         // "deferred" result must therefore not hide a candidate that becomes
         // decidable once concrete-to-abstract compatibility is considered.
+        stage_start = self.profileTimestamp();
         const abstract_ordinary_result = try call_compatibility.tryResolveOrdinaryCall(
             .{ .core = self.core, .abstracts = self.abstracts },
             module_index,
@@ -116,21 +148,30 @@ pub const Resolver = struct {
             o,
             operation,
         );
+        self.profilePendingStage(.abstract_ordinary, stage_start, abstract_ordinary_result);
         if (abstract_ordinary_result == .resolved or abstract_ordinary_result == .invalid)
             return abstract_ordinary_result;
         if (core_result == .deferred or abstract_ordinary_result == .deferred)
             return .deferred;
 
+        stage_start = self.profileTimestamp();
         const generic_result = try self.generic_functions.tryResolve(module_index, module, o, operation);
+        self.profilePendingStage(.generic, stage_start, generic_result);
         if (!generic_result.allowsFallback()) return generic_result;
 
+        stage_start = self.profileTimestamp();
         const constructor_result = try self.constructors.tryResolve(module_index, module, o, operation);
+        self.profilePendingStage(.constructor, stage_start, constructor_result);
         if (!constructor_result.allowsFallback()) return constructor_result;
 
+        stage_start = self.profileTimestamp();
         const abstract_result = try self.abstracts.tryResolve(module_index, module, o, operation);
+        self.profilePendingStage(.abstract, stage_start, abstract_result);
         if (!abstract_result.allowsFallback()) return abstract_result;
 
+        stage_start = self.profileTimestamp();
         const control_result = try self.control.tryResolve(module_index, module, o, operation);
+        self.profilePendingStage(.control, stage_start, control_result);
         return if (control_result.allowsFallback()) .deferred else control_result;
     }
 

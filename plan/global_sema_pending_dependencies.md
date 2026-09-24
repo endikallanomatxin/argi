@@ -199,6 +199,23 @@ time. Filtering names is ineffective while broad candidate patterns share a
 receiver name; a future change must filter candidates within dispatch or
 separate lookup from completion.
 
+Source-call profiling (24 pinned ReleaseFast runs, `--stats`) shows that the
+generic strategy dominates successful pending calls. In string hash map,
+`resolve_call` took 2.52 ms median, of which generic strategy took 1.95 ms;
+generic candidate selection took 1.93 ms and input completion 0.013 ms. In
+dynamic array the corresponding values were 1.10, 0.75, 0.74 and 0.005 ms.
+Across all paths, generic instantiation took 4.39 ms in string hash map
+(85 invocations, 44 returning an existing instance), with body lowering
+accounting for 3.81 ms and existing-instance lookup for 0.008 ms. These are
+nested timings: instantiation occurs during source calls and other GlobalSema
+work, so its total must not be added to pending resolution. Prioritize avoiding
+unnecessary body instantiation or making the body lowerer cheaper; indexing
+existing generic instances is unlikely to move these workloads.
+
+An ordered type-reference lookup in ModuleSema was also tested and removed.
+Sorting each file's reference slice plus binary search did not consistently
+improve ModuleSema or complete frontend across 32 paired ReleaseFast runs.
+
 Decision: identify a high-cost tag and a repeated prerequisite before changing
 the scheduler. If time is instead in candidate matching or speculative graph
 growth, optimize that operation directly.

@@ -10,6 +10,7 @@ const graph_mod = @import("../4_semantics/global/graph.zig");
 const types = @import("../4_semantics/global/types.zig");
 const graph_print = @import("../4_semantics/global/print.zig");
 const global_semantizer = @import("../4_semantics/global/semantizer.zig");
+const global_dispatch = @import("../4_semantics/global/dispatch.zig");
 const planning = @import("build_plan.zig");
 
 pub const BuildFlags = planning.BuildFlags;
@@ -121,6 +122,28 @@ fn printStats(
             });
         }
     }
+    std.debug.print("      call strategies (attempts/resolved/deferred, ms):\n", .{});
+    inline for (std.meta.fields(global_dispatch.PendingCallStage), 0..) |field, index| {
+        const item = semantic.pending_call_stages[index];
+        if (item.attempts != 0) {
+            std.debug.print("        {s}: {d}/{d}/{d}, {d:.3} ms\n", .{
+                field.name, item.attempts, item.resolved, item.deferred, milliseconds(item.ns),
+            });
+        }
+    }
+    std.debug.print("      generic source calls: selection {d:.3} ms, completion {d:.3} ms\n", .{
+        milliseconds(semantic_timings.source_generic_selection_ns),
+        milliseconds(semantic_timings.source_generic_completion_ns),
+    });
+    std.debug.print("      generic instantiate: {d:.3} ms, {d} calls, {d} existing\n", .{
+        milliseconds(semantic_timings.generic_instantiation_ns),
+        semantic.generic_instantiation_calls,
+        semantic.generic_existing_instances,
+    });
+    std.debug.print("        existing lookup {d:.3} ms, body lowering {d:.3} ms\n", .{
+        milliseconds(semantic_timings.generic_instantiation_lookup_ns),
+        milliseconds(semantic_timings.generic_instantiation_body_ns),
+    });
     const call_blockers = semantic.call_blockers;
     std.debug.print("      deferred calls observed: {d} without ID, {d} one type, {d} one binding, {d} multiple IDs\n", .{
         call_blockers.deferred_without_observed_id,

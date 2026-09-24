@@ -38,6 +38,13 @@ pub const Resolver = struct {
     stats: Stats = .{},
     profile_io: ?std.Io = null,
     profile_constraints_ns: i96 = 0,
+    profile_source_selection_ns: i96 = 0,
+    profile_source_completion_ns: i96 = 0,
+    profile_instantiate_ns: i96 = 0,
+    profile_instantiate_calls: u64 = 0,
+    profile_instantiate_existing: u64 = 0,
+    profile_instantiate_lookup_ns: i96 = 0,
+    profile_instantiate_body_ns: i96 = 0,
 
     pub fn tryResolve(
         self: *Resolver,
@@ -510,7 +517,12 @@ pub const Resolver = struct {
             return .resolved;
         }
         const reach: ReachInferenceContext = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
-        const function = if (local_args) |args|
+        const function = blk: {
+            const started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+            defer {
+                if (self.profile_io) |io| self.profile_source_selection_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - started;
+            }
+            break :blk if (local_args) |args|
             self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input, reach) catch |err| switch (err) {
                 error.NoMatchingGenericFunction => return .not_applicable,
                 error.DeferredGenericFunction => return .deferred,
@@ -525,7 +537,11 @@ pub const Resolver = struct {
                 error.ConflictingGenericArgument => return err,
                 else => return .deferred,
             };
-        if (!try self.core.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function)].input, input, reach))
+        };
+        const completion_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+        const completed = try self.core.completeCallInputFieldsWithReach(self.graph.functions.items[@intFromEnum(function)].input, input, reach);
+        if (self.profile_io) |io| self.profile_source_completion_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - completion_started;
+        if (!completed)
             return .deferred;
         const output_ty = try self.core.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
@@ -1778,7 +1794,18 @@ pub const Resolver = struct {
         declaration: global_sg.GlobalDeclId,
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
     ) !global_sg.GlobalFunctionId {
-        if (self.findExisting(declaration, arguments)) |id| return id;
+        const profile_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+        defer if (self.profile_io) |io| {
+            self.profile_instantiate_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - profile_started;
+            self.profile_instantiate_calls += 1;
+        };
+        const lookup_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+        const existing = self.findExisting(declaration, arguments);
+        if (self.profile_io) |io| self.profile_instantiate_lookup_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - lookup_started;
+        if (existing) |id| {
+            if (self.profile_io != null) self.profile_instantiate_existing += 1;
+            return id;
+        }
         const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
         var lengths: [pools.len]usize = undefined;
         const saved_function_count = self.graph.functions.items.len;
@@ -1851,7 +1878,9 @@ pub const Resolver = struct {
 
         context.function = function_id;
         if (located.parameterized.body) |body| {
+            const body_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             const instantiated_body = try context.instantiateBlock(body);
+            if (self.profile_io) |io| self.profile_instantiate_body_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - body_started;
             self.graph.functions.items[@intFromEnum(function_id)].body = instantiated_body;
         }
         self.stats.instances += 1;

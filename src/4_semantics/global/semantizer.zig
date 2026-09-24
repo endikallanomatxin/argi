@@ -75,6 +75,11 @@ pub const Stats = struct {
         implicit_destructor_ns: u64 = 0,
         implicit_generic_lookup_ns: u64 = 0,
         generic_constraints_ns: u64 = 0,
+        source_generic_selection_ns: u64 = 0,
+        source_generic_completion_ns: u64 = 0,
+        generic_instantiation_ns: u64 = 0,
+        generic_instantiation_lookup_ns: u64 = 0,
+        generic_instantiation_body_ns: u64 = 0,
         post_resolution_ns: u64 = 0,
         verify_ns: u64 = 0,
     };
@@ -88,6 +93,7 @@ pub const Stats = struct {
     errors: error_mod.Stats = .{},
     ownership: ownership_mod.Stats = .{},
     implicit_lookup: dispatch_mod.ImplicitLookupStats = .{},
+    pending_call_stages: [@typeInfo(dispatch_mod.PendingCallStage).@"enum".fields.len]dispatch_mod.PendingCallStageStats = @splat(.{}),
     pending_total: u32 = 0,
     pending_resolved: u32 = 0,
     pending_attempts: u64 = 0,
@@ -100,6 +106,8 @@ pub const Stats = struct {
     destructor_lookups: u32 = 0,
     cached_implementation_hits: u64 = 0,
     cached_nonimplementation_hits: u64 = 0,
+    generic_instantiation_calls: u64 = 0,
+    generic_existing_instances: u64 = 0,
     timings: Timings = .{},
 };
 
@@ -859,6 +867,7 @@ pub fn semantizeWithOptions(
         .errors = errors.stats,
         .ownership = ownership.stats,
         .implicit_lookup = dispatch.implicit_lookup_stats,
+        .pending_call_stages = dispatch.pending_call_stages,
         .pending_total = @intCast(total),
         .pending_resolved = @intCast(resolved_count),
         .pending_attempts = pending_attempts,
@@ -871,6 +880,8 @@ pub fn semantizeWithOptions(
         .destructor_lookups = @intCast(ownership.profile_destructor_calls),
         .cached_implementation_hits = abstracts.cached_implementation_hits,
         .cached_nonimplementation_hits = abstracts.cached_nonimplementation_hits,
+        .generic_instantiation_calls = generic_functions.profile_instantiate_calls,
+        .generic_existing_instances = generic_functions.profile_instantiate_existing,
     };
 
     const profile_preverify = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
@@ -897,6 +908,11 @@ pub fn semantizeWithOptions(
         .cleanup_ns = @intCast(profile_finalize_ns),
         .implicit_destructor_ns = @intCast(ownership.profile_destructor_ns),
         .implicit_generic_lookup_ns = @intCast(dispatch.profile_generic_ns),
+        .source_generic_selection_ns = @intCast(generic_functions.profile_source_selection_ns),
+        .source_generic_completion_ns = @intCast(generic_functions.profile_source_completion_ns),
+        .generic_instantiation_ns = @intCast(generic_functions.profile_instantiate_ns),
+        .generic_instantiation_lookup_ns = @intCast(generic_functions.profile_instantiate_lookup_ns),
+        .generic_instantiation_body_ns = @intCast(generic_functions.profile_instantiate_body_ns),
         .generic_constraints_ns = @intCast(generic_functions.profile_constraints_ns),
         .post_resolution_ns = @intCast(profile_preverify - profile_postloop),
         .verify_ns = @intCast(profile_end - profile_preverify),
