@@ -32,6 +32,28 @@ pub const Options = struct {
 };
 
 pub const Stats = struct {
+    pub const PendingResolution = struct {
+        initial_operations: u64 = 0,
+        attempts: u64 = 0,
+        resolved: u64 = 0,
+        invalid: u64 = 0,
+        deferred: u64 = 0,
+        ns: u64 = 0,
+        resolved_ns: u64 = 0,
+        deferred_ns: u64 = 0,
+        invalid_ns: u64 = 0,
+    };
+
+    pub const CallBlockers = struct {
+        deferred_without_observed_id: u64 = 0,
+        deferred_with_one_type: u64 = 0,
+        deferred_with_one_binding: u64 = 0,
+        deferred_with_multiple_ids: u64 = 0,
+        repeated_same_single_id: u64 = 0,
+        changed_single_id: u64 = 0,
+        observations_overflowed: u64 = 0,
+    };
+
     pub const Timings = struct {
         relocation_ns: u64 = 0,
         setup_ns: u64 = 0,
@@ -65,9 +87,13 @@ pub const Stats = struct {
     abstracts: abstract_mod.Stats = .{},
     errors: error_mod.Stats = .{},
     ownership: ownership_mod.Stats = .{},
+    implicit_lookup: dispatch_mod.ImplicitLookupStats = .{},
     pending_total: u32 = 0,
     pending_resolved: u32 = 0,
     pending_attempts: u64 = 0,
+    pending_by_owner: [pending_owner_count]PendingResolution = @splat(.{}),
+    pending_by_operation: [pending_tag_count]PendingResolution = @splat(.{}),
+    call_blockers: CallBlockers = .{},
     remaining: u32 = 0,
     rounds: u32 = 0,
     cleanup_attempts: u32 = 0,
@@ -95,7 +121,7 @@ fn profileAccumulate(io: ?std.Io, start: i96, elapsed: *i96) void {
 /// operation. Composite owners such as calls and indexing may try multiple
 /// implementation strategies internally, but those strategies never compete
 /// for ownership at the GlobalSema boundary.
-const PendingOwner = enum {
+pub const PendingOwner = enum {
     types,
     calls,
     indexing,
@@ -107,7 +133,92 @@ const PendingOwner = enum {
     ownership,
 };
 
-const PendingTag = @typeInfo(module_entities.PendingOperation).@"union".tag_type.?;
+pub const PendingTag = @typeInfo(module_entities.PendingOperation).@"union".tag_type.?;
+const pending_owner_count = @typeInfo(PendingOwner).@"enum".fields.len;
+const pending_tag_count = @typeInfo(PendingTag).@"enum".fields.len;
+
+const PendingResolutionStats = struct {
+    owners: [pending_owner_count]Stats.PendingResolution = @splat(.{}),
+    operations: [pending_tag_count]Stats.PendingResolution = @splat(.{}),
+
+    fn initial(self: *PendingResolutionStats, operation: module_entities.PendingOperation) void {
+        self.owners[@intFromEnum(pendingOwner(operation))].initial_operations += 1;
+        self.operations[@intFromEnum(std.meta.activeTag(operation))].initial_operations += 1;
+    }
+
+    fn attempt(self: *PendingResolutionStats, operation: module_entities.PendingOperation, result: resolution.Result, elapsed_ns: u64) void {
+        const owner = &self.owners[@intFromEnum(pendingOwner(operation))];
+        const tag = &self.operations[@intFromEnum(std.meta.activeTag(operation))];
+        owner.attempts += 1;
+        tag.attempts += 1;
+        owner.ns += elapsed_ns;
+        tag.ns += elapsed_ns;
+        switch (result) {
+            .resolved => {
+                owner.resolved += 1;
+                tag.resolved += 1;
+                owner.resolved_ns += elapsed_ns;
+                tag.resolved_ns += elapsed_ns;
+            },
+            .invalid => {
+                owner.invalid += 1;
+                tag.invalid += 1;
+                owner.invalid_ns += elapsed_ns;
+                tag.invalid_ns += elapsed_ns;
+            },
+            .deferred => {
+                owner.deferred += 1;
+                tag.deferred += 1;
+                owner.deferred_ns += elapsed_ns;
+                tag.deferred_ns += elapsed_ns;
+            },
+            .not_applicable => unreachable,
+        }
+    }
+};
+
+const CallBlockerKey = union(enum) {
+    type_id: global_sg.GlobalTypeId,
+    binding_id: global_sg.GlobalBindingId,
+};
+
+const CallBlockerTracker = struct {
+    previous_single: []?CallBlockerKey,
+    stats: Stats.CallBlockers = .{},
+
+    fn observe(self: *CallBlockerTracker, flat_index: usize, probe: core_mod.PendingBlockerProbe, result: resolution.Result) void {
+        if (result != .deferred) {
+            self.previous_single[flat_index] = null;
+            return;
+        }
+        if (probe.types_overflowed or probe.bindings_overflowed) self.stats.observations_overflowed += 1;
+        const total = @as(usize, probe.type_count) + probe.binding_count;
+        if (total == 0) {
+            self.stats.deferred_without_observed_id += 1;
+            self.previous_single[flat_index] = null;
+            return;
+        }
+        if (total != 1 or probe.types_overflowed or probe.bindings_overflowed) {
+            self.stats.deferred_with_multiple_ids += 1;
+            self.previous_single[flat_index] = null;
+            return;
+        }
+        const key: CallBlockerKey = if (probe.type_count == 1) blk: {
+            self.stats.deferred_with_one_type += 1;
+            break :blk .{ .type_id = probe.types[0] };
+        } else blk: {
+            self.stats.deferred_with_one_binding += 1;
+            break :blk .{ .binding_id = probe.bindings[0] };
+        };
+        if (self.previous_single[flat_index]) |previous| {
+            if (std.meta.eql(previous, key))
+                self.stats.repeated_same_single_id += 1
+            else
+                self.stats.changed_single_id += 1;
+        }
+        self.previous_single[flat_index] = key;
+    }
+};
 
 const PendingPhase = enum {
     types_and_generics,
@@ -418,6 +529,18 @@ pub fn semantizeWithOptions(
     @memset(invalid, false);
     var worklists = try PendingWorklists.init(allocator, modules, relocation.offsets.items);
     defer worklists.deinit(allocator);
+    var pending_resolution_stats: PendingResolutionStats = .{};
+    const previous_call_blocker = if (options.profile_io != null) try allocator.alloc(?CallBlockerKey, total) else null;
+    defer if (previous_call_blocker) |history| allocator.free(history);
+    if (previous_call_blocker) |history| @memset(history, null);
+    var call_blocker_tracker: CallBlockerTracker = .{
+        .previous_single = previous_call_blocker orelse undefined,
+    };
+    if (options.profile_io != null) {
+        for (modules) |module| for (module.semantic.pending_operations.items) |operation| {
+            pending_resolution_stats.initial(operation);
+        };
+    }
     var reachable_storage: reachability_mod.FunctionSet = undefined;
     var reachable: ?*reachability_mod.FunctionSet = null;
     if (!options.exhaustive_function_bodies) {
@@ -475,6 +598,9 @@ pub fn semantizeWithOptions(
                     worklists.forPhase(phase),
                     reachable,
                     &pending_attempts,
+                    if (options.profile_io != null) &pending_resolution_stats else null,
+                    if (options.profile_io != null) &call_blocker_tracker else null,
+                    options.profile_io,
                 )) changed = true;
             }
             if (options.profile_io) |io| profile_pending_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - pending_start;
@@ -732,9 +858,13 @@ pub fn semantizeWithOptions(
         .abstracts = abstracts.stats,
         .errors = errors.stats,
         .ownership = ownership.stats,
+        .implicit_lookup = dispatch.implicit_lookup_stats,
         .pending_total = @intCast(total),
         .pending_resolved = @intCast(resolved_count),
         .pending_attempts = pending_attempts,
+        .pending_by_owner = pending_resolution_stats.owners,
+        .pending_by_operation = pending_resolution_stats.operations,
+        .call_blockers = call_blocker_tracker.stats,
         .remaining = 0,
         .rounds = @intCast(profile_rounds),
         .cleanup_attempts = @intCast(profile_finalize_count),
@@ -1044,6 +1174,9 @@ fn resolvePendingPhase(
     work: *std.ArrayList(PendingWorkItem),
     reachable: ?*const reachability_mod.FunctionSet,
     pending_attempts: *u64,
+    detailed_stats: ?*PendingResolutionStats,
+    call_blocker_tracker: ?*CallBlockerTracker,
+    profile_io: ?std.Io,
 ) !bool {
     var changed = false;
     var write: usize = 0;
@@ -1065,7 +1198,11 @@ fn resolvePendingPhase(
         pending_attempts.* += 1;
         const module = &modules[module_index];
         const operation = module.semantic.pending_operations.items[operation_index];
-        const result = try resolvePendingOperation(
+        const attempt_start = if (detailed_stats != null) profileTimestamp(profile_io) else 0;
+        var blocker_probe: core_mod.PendingBlockerProbe = .{};
+        const observe_call = call_blocker_tracker != null and operation == .resolve_call;
+        if (observe_call) core.pending_blocker_probe = &blocker_probe;
+        const result = resolvePendingOperation(
             core,
             expressions,
             dispatch,
@@ -1078,7 +1215,16 @@ fn resolvePendingPhase(
             module,
             offsets[module_index],
             operation,
-        );
+        ) catch |err| {
+            core.pending_blocker_probe = null;
+            return err;
+        };
+        core.pending_blocker_probe = null;
+        if (observe_call) call_blocker_tracker.?.observe(flat_index, blocker_probe, result);
+        if (detailed_stats) |stats| {
+            const elapsed = profileTimestamp(profile_io) - attempt_start;
+            stats.attempt(operation, result, @intCast(@max(0, elapsed)));
+        }
         if (result.isResolved()) {
             resolved[flat_index] = true;
             changed = true;

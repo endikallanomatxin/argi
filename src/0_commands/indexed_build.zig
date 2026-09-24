@@ -9,6 +9,7 @@ const codegen = @import("../5_codegen/global_codegen.zig");
 const graph_mod = @import("../4_semantics/global/graph.zig");
 const types = @import("../4_semantics/global/types.zig");
 const graph_print = @import("../4_semantics/global/print.zig");
+const global_semantizer = @import("../4_semantics/global/semantizer.zig");
 const planning = @import("build_plan.zig");
 
 pub const BuildFlags = planning.BuildFlags;
@@ -98,6 +99,40 @@ fn printStats(
         milliseconds(semantic_timings.fixed_point_ns), semantic.rounds, semantic.pending_attempts,
     });
     std.debug.print("    pending resolution:        {d:.3} ms\n", .{milliseconds(semantic_timings.pending_ns)});
+    std.debug.print("      by owner (initial/attempts/deferred/resolved/invalid, ms):\n", .{});
+    inline for (std.meta.fields(global_semantizer.PendingOwner), 0..) |field, index| {
+        const item = semantic.pending_by_owner[index];
+        if (item.initial_operations != 0) {
+            std.debug.print("        {s}: {d}/{d}/{d}/{d}/{d}, {d:.3} ms ({d:.3} deferred)\n", .{
+                field.name,            item.initial_operations,        item.attempts,
+                item.deferred,         item.resolved,                  item.invalid,
+                milliseconds(item.ns), milliseconds(item.deferred_ns),
+            });
+        }
+    }
+    std.debug.print("      by operation (initial/attempts/deferred/resolved/invalid, ms):\n", .{});
+    inline for (std.meta.fields(global_semantizer.PendingTag), 0..) |field, index| {
+        const item = semantic.pending_by_operation[index];
+        if (item.initial_operations != 0) {
+            std.debug.print("        {s}: {d}/{d}/{d}/{d}/{d}, {d:.3} ms ({d:.3} deferred)\n", .{
+                field.name,            item.initial_operations,        item.attempts,
+                item.deferred,         item.resolved,                  item.invalid,
+                milliseconds(item.ns), milliseconds(item.deferred_ns),
+            });
+        }
+    }
+    const call_blockers = semantic.call_blockers;
+    std.debug.print("      deferred calls observed: {d} without ID, {d} one type, {d} one binding, {d} multiple IDs\n", .{
+        call_blockers.deferred_without_observed_id,
+        call_blockers.deferred_with_one_type,
+        call_blockers.deferred_with_one_binding,
+        call_blockers.deferred_with_multiple_ids,
+    });
+    std.debug.print("      repeated single ID: {d} same, {d} changed, {d} overflowed observations\n", .{
+        call_blockers.repeated_same_single_id,
+        call_blockers.changed_single_id,
+        call_blockers.observations_overflowed,
+    });
     std.debug.print("    full-pool materialization:\n", .{});
     std.debug.print("      type reconciliation:     {d:.3} ms\n", .{milliseconds(semantic_timings.type_reconciliation_ns)});
     std.debug.print("      binding reconciliation:  {d:.3} ms\n", .{milliseconds(semantic_timings.binding_reconciliation_ns)});
@@ -119,6 +154,47 @@ fn printStats(
         milliseconds(semantic_timings.implicit_destructor_ns), semantic.destructor_lookups,
     });
     std.debug.print("      generic lookup:          {d:.3} ms\n", .{milliseconds(semantic_timings.implicit_generic_lookup_ns)});
+    const implicit = semantic.implicit_lookup;
+    std.debug.print("  implicit function lookup (matching time excludes completion):\n", .{});
+    std.debug.print("    ordinary: {d:.3} ms, {d} calls, {d} resolved, {d} deferred, {d} no match, {d} ambiguous\n", .{
+        milliseconds(implicit.ordinary_matching_ns), implicit.ordinary_calls,
+        implicit.ordinary_resolved,                  implicit.ordinary_deferred,
+        implicit.ordinary_no_match,                  implicit.ordinary_ambiguous,
+    });
+    std.debug.print("    abstract-compatible: {d:.3} ms, {d} calls, {d} resolved, {d} deferred, {d} no match, {d} ambiguous\n", .{
+        milliseconds(implicit.abstract_compatible_matching_ns), implicit.abstract_compatible_calls,
+        implicit.abstract_compatible_resolved,                  implicit.abstract_compatible_deferred,
+        implicit.abstract_compatible_no_match,                  implicit.abstract_compatible_ambiguous,
+    });
+    std.debug.print("    generic: {d:.3} ms, {d} calls, {d} resolved, {d} deferred, {d} no match, {d} ambiguous\n", .{
+        milliseconds(implicit.generic_matching_ns), implicit.generic_calls,
+        implicit.generic_resolved,                  implicit.generic_deferred,
+        implicit.generic_no_match,                  implicit.generic_ambiguous,
+    });
+    std.debug.print("    completion: {d:.3} ms, {d} calls, {d} deferred\n", .{
+        milliseconds(implicit.ordinary_completion_ns + implicit.abstract_compatible_completion_ns + implicit.generic_completion_ns),
+        implicit.ordinary_completion_calls + implicit.abstract_compatible_completion_calls + implicit.generic_completion_calls,
+        implicit.ordinary_completion_deferred + implicit.abstract_compatible_completion_deferred + implicit.generic_completion_deferred,
+    });
+    const destructor = semantic.ownership;
+    std.debug.print("  destructor resolution: {d} success, {d} failed, {d} repeated target TypeId lookups\n", .{
+        destructor.destructor_successes,                    destructor.destructor_failures,
+        destructor.destructor_repeated_target_type_lookups,
+    });
+    std.debug.print("    pointer/address {d:.3} ms, receivers {d:.3} ms, inputs {d:.3} ms, dispatch {d:.3} ms\n", .{
+        milliseconds(destructor.destructor_pointer_address_ns),
+        milliseconds(destructor.destructor_receiver_discovery_ns),
+        milliseconds(destructor.destructor_input_construction_ns),
+        milliseconds(destructor.destructor_dispatch_ns),
+    });
+    std.debug.print("    appended on success: {d} nodes, {d} value fields, {d} string bytes\n", .{
+        destructor.destructor_successful_nodes,   destructor.destructor_successful_value_fields,
+        destructor.destructor_successful_strings,
+    });
+    std.debug.print("    appended on failure: {d} nodes, {d} value fields, {d} string bytes\n", .{
+        destructor.destructor_failed_nodes,   destructor.destructor_failed_value_fields,
+        destructor.destructor_failed_strings,
+    });
     std.debug.print("  post-resolution:             {d:.3} ms\n", .{milliseconds(semantic_timings.post_resolution_ns)});
     std.debug.print("  verify:                      {d:.3} ms\n", .{milliseconds(semantic_timings.verify_ns)});
     std.debug.print("  abstract implementation cache hits: {d} positive, {d} negative\n", .{

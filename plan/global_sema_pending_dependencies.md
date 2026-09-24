@@ -53,22 +53,62 @@ reliable, observable prerequisite.
 
 ### 1. Profile pending work without changing resolution
 
-- [ ] Under `--stats`, count initial operations, attempts, resolved, invalid,
+- [x] Under `--stats`, count initial operations, attempts, resolved, invalid,
       deferred attempts and elapsed time by `PendingOwner` and operation tag.
       Report attempts per operation and time per attempt. Keep timing
       overhead opt-in and avoid summing nested timings as independent costs.
-- [ ] For costly call and ownership paths, split ordinary matching,
-      abstract-compatible matching, generic matching and reach completion.
-      Count candidates and attempts where practical.
-- [ ] In destructor lookup, count calls, distinct *query contexts* (target
-      type plus module/visibility and relevant reach/input context), success,
-      failed probes, graph nodes/fields/strings appended, and time spent in
-      receiver discovery, input construction and dispatch. A repeated TypeId
+- [x] Split implicit-function lookup into ordinary,
+      abstract-compatible, generic matching and reach completion time,
+      calls and outcomes. Candidate counts inside the matching modules remain
+      to be added only if one strategy needs deeper profiling.
+- [ ] Classify distinct destructor *query contexts* (target type plus
+      module/visibility and relevant reach/input context). A repeated TypeId
       alone does not prove two lookups are equivalent.
-- [ ] Benchmark `36_dynamic_array_owning_mutations`,
+- [x] Count destructor successes, failures, repeated target TypeIds, appended
+      graph objects and phase times. Distinct equivalent query contexts are
+      still unknown.
+- [x] Benchmark `36_dynamic_array_owning_mutations`,
       `17_string_hash_map_baseline`, and `23_named_struct_auto_deinit` with
       alternating before/after ReleaseFast runs pinned to one CPU. Compare
       pending time, GlobalSema and indexed frontend as well as local counters.
+
+First profile findings (16 alternating paired ReleaseFast runs, CPU 0):
+
+- In `17_string_hash_map_baseline`, `resolve_call` accounted for roughly 2.7
+  ms of 3.1 ms median pending time. It had 257 initial operations, 117
+  attempts, 52 deferred attempts and 65 resolutions in a representative run.
+- Destructor resolution attempted 147 lookups: 8 succeeded and 139 failed.
+  There were 128 repeat lookups by target TypeId; this does not establish
+  equivalent lookup context. Failed lookups appended 417 nodes, 278 value
+  fields and 7,719 string bytes in that run. Some appended objects may be
+  side effects of nested resolution, so they cannot yet all be called waste.
+- Implicit generic matching is the largest measured destructor substage.
+  The added detailed timers increased median `StringHashMap` frontend time
+  by about 2.9% under `--stats`; keep comparative builds equally instrumented.
+
+Second profile findings (24 ReleaseFast runs pinned to CPU 0, with the same
+instrumented compiler in each run):
+
+| Case | Median pending | Median call resolution | Deferred-call time | Deferred call attempts |
+| --- | ---: | ---: | ---: | ---: |
+| Dynamic array owning mutations | 1.58 ms | 1.14 ms | 0.16 ms | 45 |
+| String hash map | 3.07 ms | 2.68 ms | 0.27 ms | 52 |
+| Named struct auto deinit | 0.36 ms | 0.18 ms | 0.02 ms | 8 |
+
+The sampled call gates in Core observed no unresolved TypeId or BindingId in
+these deferred attempts. This does not classify deferrals inside generic,
+abstract, constructor or control strategies. Even eliminating *all* deferred
+call attempts would save at most the deferred-call time shown above; successful
+call resolution accounts for most measured pending time. The dependency-queue
+pilot is therefore **not justified by the current workloads**.
+
+The `ready_queue` / `remaining_deps[WorkId]` /
+`dependents[DependencyId] -> WorkId[]` design remains a candidate if later
+workloads show costly repeated blockers. Dynamically discovered dependencies
+need care: a counter can cover only dependencies already known, and a resumed
+operation may reveal another. Deduplication, changing prerequisites, direct
+slot writes, speculative rollback and reachability must be addressed before
+sleeping work is authoritative.
 
 Decision: identify a high-cost tag and a repeated prerequisite before changing
 the scheduler. If time is instead in candidate matching or speculative graph
@@ -76,10 +116,13 @@ growth, optimize that operation directly.
 
 ### 2. Observe why work defers
 
-- [ ] Add opt-in observations at the point a resolver discovers an unavailable
-      prerequisite. Start with unresolved type and binding IDs; bucket all
-      other reasons separately. Record whether a later attempt sees the same
-      blocker, a new blocker, or no blocker.
+- [x] Add opt-in observations at explicit Core call gates where a type or
+      binding ID is unresolved. Preserve `flat_index` across attempts and
+      count repeated single IDs without asserting that an observed ID caused
+      the final deferred result.
+- [ ] Extend observations only if a future workload shows expensive deferred
+      calls with no blocker identified at the current gates. Additional
+      resolver families may have other causes.
 - [ ] Inventory every write that can satisfy the chosen prerequisite,
       including direct slot writes, reconciliation, generic specialization,
       materialization, reachability expansion and ownership finalization.
@@ -88,10 +131,13 @@ growth, optimize that operation directly.
       not retain IDs from a discarded candidate or wake an unrelated entity
       that later reuses an ID.
 
-Decision: pilot sleepers only if repeated same-blocker retries account for a
-meaningful share of pending time and every relevant wake event is covered.
+Decision: do not pilot sleepers on the current benchmarks. Revisit only if
+repeated same-blocker retries account for a meaningful share of pending time
+and every relevant wake event is covered.
 
 ### 3. Pilot one operation kind
+
+On hold: the phase 1–2 measurements above did not meet the decision gate.
 
 - [ ] Select the measured costly tag. Keep its waiters in transient GlobalSema
       state, indexed by the specific type/binding prerequisite. Leave other
