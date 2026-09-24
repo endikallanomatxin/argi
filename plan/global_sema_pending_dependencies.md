@@ -262,6 +262,17 @@ can evolve during semantizing. A transient cache would need a context-aware
 key and explicit invalidation; receiver-name memoization alone has a much
 smaller measured ceiling. First isolate the repeated failed dispatch cost
 from speculative graph growth before changing this path.
+Type interning by incoming tag identified pointer types as the largest safe
+local target: string hash map made 1,088 pointer intern calls, and dynamic
+array made 374. A transient pointer-key index validates its cached ID against
+the current graph and retains the full scan for misses or recursively
+equivalent child IDs. In 32 alternating pinned ReleaseFast pairs, indexed
+frontend moved from 18.59 to 18.05 ms for string hash map and 12.95 to
+12.83 ms for dynamic array; pointer-intern time moved from 0.873 to 0.124 ms
+and 0.301 to 0.063 ms respectively. Total compile wall time without
+`--stats` also fell from 64.75 to 63.69 ms and 50.04 to 49.61 ms. Structural
+and generic type interning remain linear, but their measured costs are smaller
+and their identities require a separate mutation/rollback design.
 One lookup in that path still scanned every declaration when checking an
 empty type initializer. Reusing `declarationsNamed` removed that scan. Across
 32 alternating ReleaseFast pairs, median nested generic-call time fell 2.6%

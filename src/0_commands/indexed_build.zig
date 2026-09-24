@@ -276,6 +276,15 @@ fn printStats(
         milliseconds(semantic.generics.type_intern_ns), semantic.generics.type_intern_calls,
         semantic.generics.type_intern_candidates,
     });
+    inline for (std.meta.fields(std.meta.Tag(graph_mod.GlobalType)), 0..) |field, index| {
+        const calls = semantic.generics.type_intern_calls_by_tag[index];
+        const candidates = semantic.generics.type_intern_candidates_by_tag[index];
+        if (calls != 0 or candidates != 0) {
+            std.debug.print("    {s}: {d} calls, {d} candidates, {d:.3} ms\n", .{
+                field.name, calls, candidates, milliseconds(semantic.generics.type_intern_ns_by_tag[index]),
+            });
+        }
+    }
     std.debug.print("  pointer type lookup: {d:.3} ms, {d} calls, {d} candidates\n", .{
         milliseconds(semantic.core.pointer_type_ns), semantic.core.pointer_type_calls,
         semantic.core.pointer_type_candidates,

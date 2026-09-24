@@ -63,6 +63,7 @@ pub const Resolver = struct {
             .offsets = self.offsets,
             .core = self.core,
         };
+        defer generics.deinit();
 
         const parameterized = generics.isParameterizedTypeDeclaration(declaration_id);
         const ty = if (parameterized) blk: {
@@ -212,6 +213,7 @@ pub const Resolver = struct {
             .offsets = self.offsets,
             .core = self.core,
         };
+        defer type_generics.deinit();
         if (type_generics.isParameterizedTypeDeclaration(declaration_id))
             return self.resolveImplicitGenericCall(module_index, module, o, value, reference, declaration_id, input);
         const ty = declaration.type_id orelse return .deferred;
@@ -232,6 +234,7 @@ pub const Resolver = struct {
                     .offsets = self.offsets,
                     .core = self.core,
                 };
+                defer generics.deinit();
                 var generic_functions = generic_functions_mod.Resolver{
                     .allocator = self.core.allocator,
                     .graph = self.graph,
@@ -311,6 +314,7 @@ pub const Resolver = struct {
             .offsets = self.offsets,
             .core = self.core,
         };
+        defer generics.deinit();
         var generic_functions = generic_functions_mod.Resolver{
             .allocator = self.core.allocator,
             .graph = self.graph,
@@ -431,6 +435,7 @@ pub const Resolver = struct {
             .offsets = self.offsets,
             .core = self.core,
         };
+        defer generics.deinit();
         const arguments = try generics.relocateModuleArguments(module_index, local_arguments);
         const ty = try generics.internType(.{ .generic = .{
             .base = declaration_id,

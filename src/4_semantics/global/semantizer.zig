@@ -402,6 +402,7 @@ pub fn semantizeWithOptions(
         .core = &core,
         .profile_io = options.profile_io,
     };
+    defer generics.deinit();
     var generic_functions = generic_functions_mod.Resolver{
         .allocator = allocator,
         .graph = &relocation.graph,

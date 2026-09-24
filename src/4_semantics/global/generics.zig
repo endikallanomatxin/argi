@@ -12,14 +12,25 @@ const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
 
 pub const Stats = struct {
+    const GlobalTypeTag = std.meta.Tag(global_sg.GlobalType);
+    const tag_count = @typeInfo(GlobalTypeTag).@"enum".fields.len;
+
     type_instances: u32 = 0,
     type_holes: u32 = 0,
     type_intern_calls: u64 = 0,
     type_intern_candidates: u64 = 0,
     type_intern_ns: u64 = 0,
+    type_intern_calls_by_tag: [tag_count]u64 = @splat(0),
+    type_intern_candidates_by_tag: [tag_count]u64 = @splat(0),
+    type_intern_ns_by_tag: [tag_count]u64 = @splat(0),
 };
 
 pub const Resolver = struct {
+    const PointerKey = struct {
+        child: global_sg.GlobalTypeId,
+        mutability: primitives.PointerMutability,
+    };
+
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
@@ -27,6 +38,11 @@ pub const Resolver = struct {
     core: *core_mod.Resolver,
     profile_io: ?std.Io = null,
     stats: Stats = .{},
+    pointer_types: std.AutoHashMapUnmanaged(PointerKey, global_sg.GlobalTypeId) = .empty,
+
+    pub fn deinit(self: *Resolver) void {
+        self.pointer_types.deinit(self.allocator);
+    }
 
     pub fn resolveExternalTypes(self: *Resolver) !void {
         for (self.modules, 0..) |*module, module_index| {
@@ -502,18 +518,55 @@ pub const Resolver = struct {
 
     pub fn internType(self: *Resolver, value: global_sg.GlobalType) !global_sg.GlobalTypeId {
         if (self.profile_io) |io| {
+            const tag_index = @intFromEnum(std.meta.activeTag(value));
             const started = std.Io.Timestamp.now(io, .boot).nanoseconds;
-            defer self.stats.type_intern_ns += @intCast(std.Io.Timestamp.now(io, .boot).nanoseconds - started);
+            defer {
+                const elapsed: u64 = @intCast(std.Io.Timestamp.now(io, .boot).nanoseconds - started);
+                self.stats.type_intern_ns += elapsed;
+                self.stats.type_intern_ns_by_tag[tag_index] += elapsed;
+            }
             self.stats.type_intern_calls += 1;
-            if (findEquivalentType(self.graph, value, &self.stats.type_intern_candidates)) |id| return id;
+            self.stats.type_intern_calls_by_tag[tag_index] += 1;
+            if (value == .pointer) if (self.findCachedPointer(value.pointer, true)) |id| return id;
+            if (findEquivalentType(self.graph, value, &self.stats.type_intern_candidates, &self.stats.type_intern_candidates_by_tag)) |id| {
+                if (value == .pointer) self.cachePointer(value.pointer, id);
+                return id;
+            }
             const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
             try self.graph.types.append(self.allocator, value);
+            if (value == .pointer) self.cachePointer(value.pointer, id);
             return id;
         }
-        if (findEquivalentType(self.graph, value, null)) |id| return id;
+        if (value == .pointer) if (self.findCachedPointer(value.pointer, false)) |id| return id;
+        if (findEquivalentType(self.graph, value, null, null)) |id| {
+            if (value == .pointer) self.cachePointer(value.pointer, id);
+            return id;
+        }
         const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
         try self.graph.types.append(self.allocator, value);
+        if (value == .pointer) self.cachePointer(value.pointer, id);
         return id;
+    }
+
+    fn cachePointer(self: *Resolver, pointer: anytype, id: global_sg.GlobalTypeId) void {
+        // This index is disposable. A failed allocation must not turn a
+        // successfully interned type into a semantic resolution failure.
+        self.pointer_types.put(self.allocator, .{ .child = pointer.child, .mutability = pointer.mutability }, id) catch {};
+    }
+
+    fn findCachedPointer(self: *Resolver, pointer: anytype, profile: bool) ?global_sg.GlobalTypeId {
+        const key: PointerKey = .{ .child = pointer.child, .mutability = pointer.mutability };
+        const candidate_id = self.pointer_types.get(key) orelse return null;
+        if (profile) {
+            self.stats.type_intern_candidates += 1;
+            self.stats.type_intern_candidates_by_tag[@intFromEnum(std.meta.Tag(global_sg.GlobalType).pointer)] += 1;
+        }
+        const raw: usize = @intFromEnum(candidate_id);
+        if (raw < self.graph.types.items.len and sameShallowType(self.graph, self.graph.types.items[raw], .{ .pointer = pointer })) {
+            return candidate_id;
+        }
+        _ = self.pointer_types.remove(key);
+        return null;
     }
 
     pub fn globalSource(self: *Resolver, module_index: usize, source: primitives.SourceRef) primitives.SourceRef {
@@ -521,9 +574,15 @@ pub const Resolver = struct {
     }
 };
 
-fn findEquivalentType(graph: *const global_sg.GlobalSemanticGraph, value: global_sg.GlobalType, candidates_examined: ?*u64) ?global_sg.GlobalTypeId {
+fn findEquivalentType(
+    graph: *const global_sg.GlobalSemanticGraph,
+    value: global_sg.GlobalType,
+    candidates_examined: ?*u64,
+    candidates_by_tag: ?*[Stats.tag_count]u64,
+) ?global_sg.GlobalTypeId {
     for (graph.types.items, 0..) |candidate, raw| {
         if (candidates_examined) |count| count.* += 1;
+        if (candidates_by_tag) |counts| counts[@intFromEnum(std.meta.activeTag(candidate))] += 1;
         if (sameShallowType(graph, candidate, value)) return @enumFromInt(@as(u32, @intCast(raw)));
     }
     return null;
@@ -563,8 +622,53 @@ test "generic type identity is independent of argument pool position" {
     const equivalent = findEquivalentType(&graph, .{ .generic = .{
         .base = base,
         .arguments = .{ .start = 1, .len = 1 },
-    } }, null) orelse return error.ExpectedEquivalentGenericType;
+    } }, null, null) orelse return error.ExpectedEquivalentGenericType;
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(equivalent));
+}
+
+test "pointer interning cache validates graph mutations" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+
+    var resolver: Resolver = .{
+        .allocator = allocator,
+        .graph = &graph,
+        .modules = &.{},
+        .offsets = &.{},
+        .core = undefined,
+    };
+    defer resolver.deinit();
+
+    const first = try resolver.internType(.{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
+    try std.testing.expectEqual(first, try resolver.internType(.{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } }));
+
+    graph.types.items[@intFromEnum(first)] = .{ .builtin = .Bool };
+    const after_mutation = try resolver.internType(.{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
+    try std.testing.expect(after_mutation != first);
+    try std.testing.expectEqual(.pointer, std.meta.activeTag(graph.types.items[@intFromEnum(after_mutation)]));
+}
+
+test "pointer interning fallback preserves recursive identity equality" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+
+    var resolver: Resolver = .{
+        .allocator = allocator,
+        .graph = &graph,
+        .modules = &.{},
+        .offsets = &.{},
+        .core = undefined,
+    };
+    defer resolver.deinit();
+
+    const first = try resolver.internType(.{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } });
+    const equivalent = try resolver.internType(.{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } });
+    try std.testing.expectEqual(first, equivalent);
 }
 
 test "generic type materialization has a dedicated resolver" {
