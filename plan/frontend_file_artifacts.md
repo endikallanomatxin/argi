@@ -547,6 +547,11 @@ Invalidate only affected units when possible. This is preferable to treating
 source files as semantic dependency units merely because they are convenient
 filesystem boundaries.
 
+Within a single compilation, GlobalSema's pending-operation retries have a
+separate measurement and dependency-queue plan in
+[global_sema_pending_dependencies.md](global_sema_pending_dependencies.md).
+That work does not require persistent identities across source edits.
+
 ## Non-goals for the first persistent-cache implementation
 
 Do not combine these into the first persistent-cache implementation:
