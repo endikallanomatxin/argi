@@ -184,6 +184,13 @@ storage fell 0.7% and 0.4%. Indexed frontend changed by -0.8% and +0.3%,
 respectively, so this is a graph-size improvement, not an established runtime
 win. The same change passed the full compiler test suite.
 
+The abstract-compatible ordinary matcher still scanned the entire function
+pool after Core's indexed lookup had failed. Reusing `functionsNamed` cut its
+median matching time by 57% in string hash map and 59% in dynamic array; across
+32 alternating ReleaseFast pairs pinned to CPU 0, indexed frontend fell 1.3%
+and 0.5%, respectively. This is a small but repeatable removal of an accidental
+global scan and does not change abstract matching rules.
+
 Decision: identify a high-cost tag and a repeated prerequisite before changing
 the scheduler. If time is instead in candidate matching or speculative graph
 growth, optimize that operation directly.

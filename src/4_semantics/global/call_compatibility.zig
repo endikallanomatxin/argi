@@ -144,10 +144,9 @@ fn matchFunctionNamed(
     var best_score: u32 = 0;
     var tied = false;
     var saw_deferred = false;
-    for (compatibility.core.graph.functions.items, 0..) |function, raw| {
+    for (try compatibility.core.graph.functionsNamed(compatibility.core.allocator, name)) |id| {
+        const function = compatibility.core.graph.functions.items[@intFromEnum(id)];
         if (function.flags.is_abstract_dispatch) continue;
-        const declaration = compatibility.core.graph.declarations.items[@intFromEnum(function.declaration)];
-        if (!std.mem.eql(u8, compatibility.core.graph.text(declaration.name), name)) continue;
         if (!compatibility.core.declarationVisible(current_module, function.declaration, module_filter)) continue;
         const score = switch (try matchInputWithReach(
             compatibility,
@@ -163,7 +162,7 @@ fn matchFunctionNamed(
             .score => |score| score,
         };
         if (best == null or score > best_score) {
-            best = @enumFromInt(@as(u32, @intCast(raw)));
+            best = id;
             best_score = score;
             tied = false;
         } else if (score == best_score) tied = true;
