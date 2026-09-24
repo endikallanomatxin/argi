@@ -510,10 +510,23 @@ pub const Resolver = struct {
         // complete iterator loop can be published atomically.
         const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
         var lengths: [pools.len]usize = undefined;
-        inline for (pools, 0..) |pool, index| lengths[index] = @field(self.graph, pool.name).items.len;
+        const saved_function_count = self.graph.functions.items.len;
+        const saved_declaration_count = self.graph.declarations.items.len;
+        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+            .@"struct" => @hasField(pool.type, "items"),
+            else => false,
+        }) {
+            lengths[index] = @field(self.graph, pool.name).items.len;
+        };
         var committed = false;
         defer if (!committed) {
-            inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
+            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+                .@"struct" => @hasField(pool.type, "items"),
+                else => false,
+            }) {
+                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            };
         };
 
         const ForProtocol = struct {

@@ -558,49 +558,49 @@ pub const Resolver = struct {
         var best_specificity: ParameterizedSpecificity = .{};
         var tied = false;
         var saw_deferred = false;
-        for (self.modules, 0..) |*candidate_module, candidate_index| {
-            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
-                const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
-                if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
-                if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
-                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
-                defer bindings.deinit(self.allocator);
-                self.generics.bindGlobalArgumentsPartial(candidate_index, parameterized.parameters, arguments, &bindings) catch continue;
-                const input_inferred = self.inferBindingsFromInput(candidate_index, parameterized.input, input, &bindings) catch |err| switch (err) {
-                    error.ConflictingGenericArgument => continue,
-                    else => return err,
-                };
-                if (!input_inferred) continue;
-                if (reach_context) |context|
-                    if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
-                if (!try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings)) continue;
-                const complete_arguments = self.appendBoundArguments(candidate_index, parameterized.parameters, &bindings) catch |err| switch (err) {
-                    error.MissingGenericArgument => continue,
-                    else => return err,
-                };
-                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
-                    .no_match => continue,
-                    .deferred => {
-                        saw_deferred = true;
-                        continue;
-                    },
-                    .score => |score| score,
-                };
-                const specificity = self.parameterizedInputSpecificity(candidate_index, parameterized.input, input);
-                const ordering: CandidateOrdering = if (best == null) .better else compareCandidates(specificity, score, best_specificity, best_score);
-                switch (ordering) {
-                    .better => {
-                        best = declaration;
-                        best_arguments = complete_arguments;
-                        best_score = score;
-                        best_specificity = specificity;
-                        tied = false;
-                    },
-                    .worse => {},
-                    .tie => if (declaration != best.?) {
-                        tied = true;
-                    },
-                }
+        for (try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, name)) |candidate| {
+            const candidate_index: usize = candidate.module_index;
+            const candidate_module = &self.modules[candidate_index];
+            const parameterized = candidate_module.semantic.parameterized_storage.parameterized_functions.items[candidate.function_index];
+            const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
+            if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
+            var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
+            defer bindings.deinit(self.allocator);
+            self.generics.bindGlobalArgumentsPartial(candidate_index, parameterized.parameters, arguments, &bindings) catch continue;
+            const input_inferred = self.inferBindingsFromInput(candidate_index, parameterized.input, input, &bindings) catch |err| switch (err) {
+                error.ConflictingGenericArgument => continue,
+                else => return err,
+            };
+            if (!input_inferred) continue;
+            if (reach_context) |context|
+                if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
+            if (!try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings)) continue;
+            const complete_arguments = self.appendBoundArguments(candidate_index, parameterized.parameters, &bindings) catch |err| switch (err) {
+                error.MissingGenericArgument => continue,
+                else => return err,
+            };
+            const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+                .no_match => continue,
+                .deferred => {
+                    saw_deferred = true;
+                    continue;
+                },
+                .score => |score| score,
+            };
+            const specificity = self.parameterizedInputSpecificity(candidate_index, parameterized.input, input);
+            const ordering: CandidateOrdering = if (best == null) .better else compareCandidates(specificity, score, best_specificity, best_score);
+            switch (ordering) {
+                .better => {
+                    best = declaration;
+                    best_arguments = complete_arguments;
+                    best_score = score;
+                    best_specificity = specificity;
+                    tied = false;
+                },
+                .worse => {},
+                .tie => if (declaration != best.?) {
+                    tied = true;
+                },
             }
         }
         if (tied) return error.AmbiguousGenericFunction;
@@ -999,104 +999,155 @@ pub const Resolver = struct {
         var saw_deferred = false;
         var conflicting_candidates: usize = 0;
         var candidate_count: usize = 0;
-        for (self.modules, 0..) |*candidate_module, candidate_index| {
-            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
-                const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
-                if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
-                if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
-                candidate_count += 1;
-                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
-                defer bindings.deinit(self.allocator);
-                const storage = &candidate_module.semantic.parameterized_storage.ir;
-                const shape = switch (storage.types.items[@intFromEnum(parameterized.input)]) {
-                    .resolved => |ty| switch (ty) {
-                        .structural => |shape| shape,
-                        else => continue,
-                    },
+        for (try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, name)) |candidate| {
+            const candidate_index: usize = candidate.module_index;
+            const candidate_module = &self.modules[candidate_index];
+            const parameterized = candidate_module.semantic.parameterized_storage.parameterized_functions.items[candidate.function_index];
+            const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
+            if (!self.core.declarationVisible(current_module, declaration, module_filter)) continue;
+            candidate_count += 1;
+            var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, candidate_module.semantic.parameterized_storage.comptime_parameters.items.len);
+            defer bindings.deinit(self.allocator);
+            const storage = &candidate_module.semantic.parameterized_storage.ir;
+            const shape = switch (storage.types.items[@intFromEnum(parameterized.input)]) {
+                .resolved => |ty| switch (ty) {
+                    .structural => |shape| shape,
                     else => continue,
-                };
-                var matches = true;
-                var candidate_deferred = false;
-                for (storage.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, position| {
-                    for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |value, supplied_position| {
-                        const positional = supplied_position < literal.dispatch_prefix_positional_count or self.graph.text(value.name).len == 0;
-                        if (if (positional) position != supplied_position else !std.mem.eql(u8, candidate_module.text(field.name), self.graph.text(value.name))) continue;
-                        const actual = self.graph.nodes.items[@intFromEnum(value.value)].ty orelse {
-                            candidate_deferred = true;
+                },
+                else => continue,
+            };
+            var matches = true;
+            var candidate_deferred = false;
+            for (storage.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, position| {
+                for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |value, supplied_position| {
+                    const positional = supplied_position < literal.dispatch_prefix_positional_count or self.graph.text(value.name).len == 0;
+                    if (if (positional) position != supplied_position else !std.mem.eql(u8, candidate_module.text(field.name), self.graph.text(value.name))) continue;
+                    const actual = self.graph.nodes.items[@intFromEnum(value.value)].ty orelse {
+                        candidate_deferred = true;
+                        matches = false;
+                        break;
+                    };
+                    const inferred = self.inferInputType(candidate_index, field.ty, actual, &bindings) catch |err| {
+                        if (err == error.ConflictingGenericArgument) {
+                            conflicting_candidates += 1;
                             matches = false;
                             break;
-                        };
-                        _ = self.inferInputType(candidate_index, field.ty, actual, &bindings) catch |err| {
-                            if (err == error.ConflictingGenericArgument) {
-                                conflicting_candidates += 1;
-                                matches = false;
-                                break;
-                            }
-                            candidate_deferred = true;
-                            matches = false;
-                            break;
-                        };
+                        }
+                        candidate_deferred = true;
+                        matches = false;
+                        break;
+                    };
+                    if (!inferred and std.mem.eql(u8, name, "deinit") and
+                        self.graph.nodes.items[@intFromEnum(value.value)].content == .address_of and
+                        self.definiteDestructorReceiverMismatch(candidate_index, field.ty, actual))
+                    {
+                        matches = false;
                         break;
                     }
-                    if (!matches) break;
+                    break;
                 }
-                if (!matches) {
-                    if (candidate_deferred) saw_deferred = true;
-                    continue;
-                }
-                if (reach_context) |context|
-                    if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
-                const constraints_start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-                const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
-                if (self.profile_io) |io| self.profile_constraints_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - constraints_start;
-                if (!constraints_ok) continue;
-                var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
-                defer arguments.deinit(self.allocator);
-                for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
-                    const parameter = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw];
-                    const argument: global_sg.GenericArgument.Value = switch (parameter.kind) {
-                        .type => .{ .type = bindings.types[raw] orelse break },
-                        .comptime_int => .{ .comptime_int = bindings.ints[raw] orelse break },
-                    };
-                    try arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, candidate_module.text(parameter.name)), .value = argument });
-                }
-                if (arguments.items.len != parameterized.parameters.len) continue;
-                const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };
-                try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
-                const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
-                    .no_match => continue,
-                    .deferred => {
-                        saw_deferred = true;
-                        continue;
-                    },
-                    .score => |score| score,
+                if (!matches) break;
+            }
+            if (!matches) {
+                if (candidate_deferred) saw_deferred = true;
+                continue;
+            }
+            if (reach_context) |context|
+                if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
+            const constraints_start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+            const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
+            if (self.profile_io) |io| self.profile_constraints_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - constraints_start;
+            if (!constraints_ok) continue;
+            var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
+            defer arguments.deinit(self.allocator);
+            for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
+                const parameter = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw];
+                const argument: global_sg.GenericArgument.Value = switch (parameter.kind) {
+                    .type => .{ .type = bindings.types[raw] orelse break },
+                    .comptime_int => .{ .comptime_int = bindings.ints[raw] orelse break },
                 };
-                const specificity = self.parameterizedInputSpecificity(candidate_index, parameterized.input, input);
-                const ordering: CandidateOrdering = if (best == null) .better else compareCandidates(specificity, score, best_specificity, best_score);
-                switch (ordering) {
-                    .better => {
-                        best = declaration;
-                        best_arguments = range;
-                        best_score = score;
-                        best_specificity = specificity;
-                        tied = false;
-                        if (ambiguity_candidates) |candidates| {
-                            candidates.clearRetainingCapacity();
-                            try candidates.append(self.allocator, declaration);
-                        }
-                    },
-                    .worse => {},
-                    .tie => if (declaration != best.?) {
-                        tied = true;
-                        if (ambiguity_candidates) |candidates|
-                            try candidates.append(self.allocator, declaration);
-                    },
-                }
+                try arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, candidate_module.text(parameter.name)), .value = argument });
+            }
+            if (arguments.items.len != parameterized.parameters.len) continue;
+            const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };
+            try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
+            const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+                .no_match => continue,
+                .deferred => {
+                    saw_deferred = true;
+                    continue;
+                },
+                .score => |score| score,
+            };
+            const specificity = self.parameterizedInputSpecificity(candidate_index, parameterized.input, input);
+            const ordering: CandidateOrdering = if (best == null) .better else compareCandidates(specificity, score, best_specificity, best_score);
+            switch (ordering) {
+                .better => {
+                    best = declaration;
+                    best_arguments = range;
+                    best_score = score;
+                    best_specificity = specificity;
+                    tied = false;
+                    if (ambiguity_candidates) |candidates| {
+                        candidates.clearRetainingCapacity();
+                        try candidates.append(self.allocator, declaration);
+                    }
+                },
+                .worse => {},
+                .tie => if (declaration != best.?) {
+                    tied = true;
+                    if (ambiguity_candidates) |candidates|
+                        try candidates.append(self.allocator, declaration);
+                },
             }
         }
         if (tied) return error.AmbiguousGenericFunction;
         const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else if (candidate_count == 1 and conflicting_candidates == 1) error.ConflictingGenericArgument else error.NoMatchingGenericFunction;
         return self.instantiate(declaration, best_arguments);
+    }
+
+    fn definiteDestructorReceiverMismatch(
+        self: *const Resolver,
+        module_index: usize,
+        pattern: ir.ParameterizedTypeId,
+        actual: global_sg.GlobalTypeId,
+    ) bool {
+        if (self.graph.isTypeUnresolved(actual)) return false;
+        const actual_pointer = switch (self.graph.types.items[@intFromEnum(actual)]) {
+            .pointer => |pointer| pointer,
+            else => return false,
+        };
+        if (self.graph.isTypeUnresolved(actual_pointer.child)) return false;
+        const actual_base = switch (self.graph.types.items[@intFromEnum(actual_pointer.child)]) {
+            .declared => |declaration| declaration,
+            .generic => |generic| generic.base,
+            else => return false,
+        };
+
+        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+        const expected_pointer = switch (storage.types.items[@intFromEnum(pattern)]) {
+            .resolved => |ty| switch (ty) {
+                .pointer => |pointer| pointer,
+                else => return false,
+            },
+            else => return false,
+        };
+        const expected_ref = switch (storage.types.items[@intFromEnum(expected_pointer.child)]) {
+            .resolved => |ty| switch (ty) {
+                .declared => |declaration| declaration,
+                .generic => |generic| generic.base,
+                else => return false,
+            },
+            else => return false,
+        };
+        const local_declaration = switch (storage.declarations.items[@intFromEnum(expected_ref)].target) {
+            .module => |declaration| declaration,
+            .external => return false,
+        };
+        const expected_base = globalizer.globalDecl(self.offsets[module_index], local_declaration);
+        // A different concrete nominal base cannot be supplied by #reach or
+        // pointer compatibility. Abstract receivers keep the full matcher.
+        return self.graph.declarations.items[@intFromEnum(expected_base)].kind == .type and actual_base != expected_base;
     }
 
     /// Re-run implicit generic selection transactionally for diagnostics and
@@ -1113,14 +1164,25 @@ pub const Resolver = struct {
     ) !bool {
         const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
         var lengths: [pools.len]usize = undefined;
-        inline for (pools, 0..) |pool, index|
+        const saved_function_count = self.graph.functions.items.len;
+        const saved_declaration_count = self.graph.declarations.items.len;
+        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+            .@"struct" => @hasField(pool.type, "items"),
+            else => false,
+        }) {
             lengths[index] = @field(self.graph, pool.name).items.len;
+        };
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
         const saved_core_stats = self.core.stats;
         defer {
-            inline for (pools, 0..) |pool, index|
+            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
+            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+                .@"struct" => @hasField(pool.type, "items"),
+                else => false,
+            }) {
                 @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            };
             self.stats = saved_stats;
             self.generics.stats = saved_generic_stats;
             self.core.stats = saved_core_stats;
@@ -1342,10 +1404,23 @@ pub const Resolver = struct {
     fn matchParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) core_mod.Resolver.CallInputMatch {
         const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
         var lengths: [pools.len]usize = undefined;
-        inline for (pools, 0..) |pool, index| lengths[index] = @field(self.graph, pool.name).items.len;
+        const saved_function_count = self.graph.functions.items.len;
+        const saved_declaration_count = self.graph.declarations.items.len;
+        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+            .@"struct" => @hasField(pool.type, "items"),
+            else => false,
+        }) {
+            lengths[index] = @field(self.graph, pool.name).items.len;
+        };
         const saved_stats = self.generics.stats;
         defer {
-            inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
+            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+                .@"struct" => @hasField(pool.type, "items"),
+                else => false,
+            }) {
+                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            };
             self.generics.stats = saved_stats;
         }
         const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return .deferred;
@@ -1676,11 +1751,24 @@ pub const Resolver = struct {
         if (self.findExisting(declaration, arguments)) |id| return id;
         const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
         var lengths: [pools.len]usize = undefined;
-        inline for (pools, 0..) |pool, index| lengths[index] = @field(self.graph, pool.name).items.len;
+        const saved_function_count = self.graph.functions.items.len;
+        const saved_declaration_count = self.graph.declarations.items.len;
+        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+            .@"struct" => @hasField(pool.type, "items"),
+            else => false,
+        }) {
+            lengths[index] = @field(self.graph, pool.name).items.len;
+        };
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
         errdefer {
-            inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
+            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+                .@"struct" => @hasField(pool.type, "items"),
+                else => false,
+            }) {
+                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            };
             self.stats = saved_stats;
             self.generics.stats = saved_generic_stats;
         }

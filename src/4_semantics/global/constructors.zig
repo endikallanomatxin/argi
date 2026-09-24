@@ -285,10 +285,23 @@ pub const Resolver = struct {
         // unresolved, a later fixed-point round must start from the same graph.
         const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
         var lengths: [pools.len]usize = undefined;
-        inline for (pools, 0..) |pool, index| lengths[index] = @field(self.graph, pool.name).items.len;
+        const saved_function_count = self.graph.functions.items.len;
+        const saved_declaration_count = self.graph.declarations.items.len;
+        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+            .@"struct" => @hasField(pool.type, "items"),
+            else => false,
+        }) {
+            lengths[index] = @field(self.graph, pool.name).items.len;
+        };
         var committed = false;
         defer if (!committed) {
-            inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
+            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+                .@"struct" => @hasField(pool.type, "items"),
+                else => false,
+            }) {
+                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            };
         };
 
         var generics = generic_mod.Resolver{
@@ -388,10 +401,23 @@ pub const Resolver = struct {
         // identities, instantiated fields, functions or value-field tails.
         const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
         var lengths: [pools.len]usize = undefined;
-        inline for (pools, 0..) |pool, index| lengths[index] = @field(self.graph, pool.name).items.len;
+        const saved_function_count = self.graph.functions.items.len;
+        const saved_declaration_count = self.graph.declarations.items.len;
+        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+            .@"struct" => @hasField(pool.type, "items"),
+            else => false,
+        }) {
+            lengths[index] = @field(self.graph, pool.name).items.len;
+        };
         var committed = false;
         defer if (!committed) {
-            inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
+            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+                .@"struct" => @hasField(pool.type, "items"),
+                else => false,
+            }) {
+                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            };
         };
 
         const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {
@@ -670,10 +696,23 @@ pub const Resolver = struct {
     ) !InitializerProbe {
         const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
         var lengths: [pools.len]usize = undefined;
-        inline for (pools, 0..) |pool, index| lengths[index] = @field(self.graph, pool.name).items.len;
+        const saved_function_count = self.graph.functions.items.len;
+        const saved_declaration_count = self.graph.declarations.items.len;
+        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+            .@"struct" => @hasField(pool.type, "items"),
+            else => false,
+        }) {
+            lengths[index] = @field(self.graph, pool.name).items.len;
+        };
         const saved_stats = generics.stats;
         defer {
-            inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
+            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+                .@"struct" => @hasField(pool.type, "items"),
+                else => false,
+            }) {
+                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            };
             generics.stats = saved_stats;
         }
 
@@ -824,10 +863,23 @@ pub const Resolver = struct {
     ) !InitializerProbe {
         const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
         var lengths: [pools.len]usize = undefined;
-        inline for (pools, 0..) |pool, index| lengths[index] = @field(self.graph, pool.name).items.len;
+        const saved_function_count = self.graph.functions.items.len;
+        const saved_declaration_count = self.graph.declarations.items.len;
+        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+            .@"struct" => @hasField(pool.type, "items"),
+            else => false,
+        }) {
+            lengths[index] = @field(self.graph, pool.name).items.len;
+        };
         const saved_stats = generics.stats;
         defer {
-            inline for (pools, 0..) |pool, index| @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
+            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+                .@"struct" => @hasField(pool.type, "items"),
+                else => false,
+            }) {
+                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
+            };
             generics.stats = saved_stats;
         }
 

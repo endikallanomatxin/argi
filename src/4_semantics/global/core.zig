@@ -207,15 +207,15 @@ pub const Resolver = struct {
             null;
         const name = self.modules[current_module].text(reference.name);
         var found: ?global_sg.GlobalDeclId = null;
-        for (self.graph.declarations.items, 0..) |decl, raw| {
-            const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
+        for (try self.graph.declarationsNamed(self.allocator, name)) |id| {
+            const decl = self.graph.declarations.items[@intFromEnum(id)];
             if (!self.declarationVisible(current_module, id, module_filter)) continue;
             var allowed = false;
             for (kinds) |kind| if (decl.kind == kind) {
                 allowed = true;
                 break;
             };
-            if (!allowed or !std.mem.eql(u8, self.graph.text(decl.name), name)) continue;
+            if (!allowed) continue;
             if (found) |previous| {
                 if (reference.module_path == null) {
                     const current: global_sg.GlobalModuleId = @enumFromInt(@as(u32, @intCast(current_module)));
@@ -308,10 +308,9 @@ pub const Resolver = struct {
         var best_score: u32 = 0;
         var tied = false;
         var saw_deferred = false;
-        for (self.graph.functions.items, 0..) |function, raw| {
+        for (try self.graph.functionsNamed(self.allocator, name)) |id| {
+            const function = self.graph.functions.items[@intFromEnum(id)];
             if (function.flags.is_abstract_dispatch) continue;
-            const decl = self.graph.declarations.items[@intFromEnum(function.declaration)];
-            if (!std.mem.eql(u8, self.graph.text(decl.name), name)) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
             const score = switch (try self.matchCallInputWithReach(function.input, input_node, context)) {
                 .no_match => continue,
@@ -322,7 +321,7 @@ pub const Resolver = struct {
                 .score => |score| score,
             };
             if (best == null or score > best_score) {
-                best = @enumFromInt(@as(u32, @intCast(raw)));
+                best = id;
                 best_score = score;
                 tied = false;
             } else if (score == best_score) tied = true;
@@ -346,10 +345,9 @@ pub const Resolver = struct {
         var best_score: u32 = 0;
         var tied = false;
         var saw_deferred = false;
-        for (self.graph.functions.items, 0..) |function, raw| {
+        for (try self.graph.functionsNamed(self.allocator, name)) |id| {
+            const function = self.graph.functions.items[@intFromEnum(id)];
             if (function.flags.is_abstract_dispatch) continue;
-            const decl = self.graph.declarations.items[@intFromEnum(function.declaration)];
-            if (!std.mem.eql(u8, self.graph.text(decl.name), name)) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
             const score = switch (self.matchCallInput(function.input, input_node)) {
                 .no_match => continue,
@@ -360,7 +358,7 @@ pub const Resolver = struct {
                 .score => |score| score,
             };
             if (best == null or score > best_score) {
-                best = @enumFromInt(@as(u32, @intCast(raw)));
+                best = id;
                 best_score = score;
                 tied = false;
             } else if (score == best_score) tied = true;

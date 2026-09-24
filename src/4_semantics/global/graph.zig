@@ -3,6 +3,7 @@ const primitives = @import("../primitives/schema.zig");
 const semantic_strings = @import("../primitives/strings.zig");
 const callable = @import("../primitives/callable.zig");
 const type_shapes = @import("../primitives/type_shapes.zig");
+const module_sg = @import("../module/graph.zig");
 
 pub const GlobalDeclId = enum(u32) { _ };
 pub const GlobalTypeId = enum(u32) { _ };
@@ -125,6 +126,11 @@ pub const GenericFunctionInstance = struct {
     arguments: primitives.Range(GlobalGenericArgId),
 };
 
+pub const ParameterizedFunctionCandidate = struct {
+    module_index: u32,
+    function_index: u32,
+};
+
 /// Construction-only state for slots whose final GlobalTypeId is already
 /// allocated but whose semantic payload is not resolved yet. This state is
 /// deliberately separate from `GlobalType`: unresolved is not a language type
@@ -186,7 +192,34 @@ pub const GlobalSemanticGraph = struct {
     strings: std.ArrayList(u8) = .empty,
     roots: std.ArrayList(GlobalNodeId) = .empty,
 
+    // Lookup-only indexes. The underlying arrays remain the semantic source of
+    // truth; synchronize their appended tails so generic instances are visible.
+    function_names: std.StringHashMapUnmanaged(std.ArrayList(GlobalFunctionId)) = .empty,
+    indexed_functions: usize = 0,
+    declaration_names: std.StringHashMapUnmanaged(std.ArrayList(GlobalDeclId)) = .empty,
+    indexed_declarations: usize = 0,
+    parameterized_function_names: std.StringHashMapUnmanaged(std.ArrayList(ParameterizedFunctionCandidate)) = .empty,
+    indexed_parameterized_functions: bool = false,
+
     pub fn deinit(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
+        var functions = self.function_names.iterator();
+        while (functions.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
+            entry.value_ptr.deinit(allocator);
+        }
+        self.function_names.deinit(allocator);
+        var declarations = self.declaration_names.iterator();
+        while (declarations.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
+            entry.value_ptr.deinit(allocator);
+        }
+        self.declaration_names.deinit(allocator);
+        var parameterized = self.parameterized_function_names.iterator();
+        while (parameterized.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
+            entry.value_ptr.deinit(allocator);
+        }
+        self.parameterized_function_names.deinit(allocator);
         inline for (.{
             &self.modules,            &self.module_aliases,          &self.files,                 &self.declarations,
             &self.symbols,            &self.symbol_declarations,     &self.types,                 &self.type_resolution,
@@ -205,6 +238,87 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn text(self: *const GlobalSemanticGraph, range: StringRange) []const u8 {
         return self.strings.items[range.start..][0..range.len];
+    }
+
+    pub fn functionsNamed(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, name: []const u8) ![]const GlobalFunctionId {
+        while (self.indexed_functions < self.functions.items.len) {
+            const raw = self.indexed_functions;
+            const decl = self.declarations.items[@intFromEnum(self.functions.items[raw].declaration)];
+            const spelling = self.text(decl.name);
+            if (self.function_names.getPtr(spelling) == null) {
+                const owned = try allocator.dupe(u8, spelling);
+                self.function_names.put(allocator, owned, .empty) catch |err| {
+                    allocator.free(owned);
+                    return err;
+                };
+            }
+            try self.function_names.getPtr(spelling).?.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
+            self.indexed_functions += 1;
+        }
+        return if (self.function_names.get(name)) |matches| matches.items else &.{};
+    }
+
+    pub fn declarationsNamed(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, name: []const u8) ![]const GlobalDeclId {
+        while (self.indexed_declarations < self.declarations.items.len) {
+            const raw = self.indexed_declarations;
+            const spelling = self.text(self.declarations.items[raw].name);
+            if (self.declaration_names.getPtr(spelling) == null) {
+                const owned = try allocator.dupe(u8, spelling);
+                self.declaration_names.put(allocator, owned, .empty) catch |err| {
+                    allocator.free(owned);
+                    return err;
+                };
+            }
+            try self.declaration_names.getPtr(spelling).?.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
+            self.indexed_declarations += 1;
+        }
+        return if (self.declaration_names.get(name)) |matches| matches.items else &.{};
+    }
+
+    /// Speculative resolution can append functions and declarations before
+    /// rolling their pools back. Remove those IDs before truncating the pools.
+    pub fn discardIndexedTail(self: *GlobalSemanticGraph, function_count: usize, declaration_count: usize) void {
+        while (self.indexed_functions > function_count) {
+            self.indexed_functions -= 1;
+            const entry = self.functions.items[self.indexed_functions];
+            const name = self.text(self.declarations.items[@intFromEnum(entry.declaration)].name);
+            _ = self.function_names.getPtr(name).?.pop();
+        }
+        while (self.indexed_declarations > declaration_count) {
+            self.indexed_declarations -= 1;
+            const name = self.text(self.declarations.items[self.indexed_declarations].name);
+            _ = self.declaration_names.getPtr(name).?.pop();
+        }
+    }
+
+    /// Module templates are fixed during GlobalSema, so this lookup index is
+    /// built once. Speculative global specialization never changes it.
+    pub fn parameterizedFunctionsNamed(
+        self: *GlobalSemanticGraph,
+        allocator: std.mem.Allocator,
+        modules: []const module_sg.ModuleSemanticGraph,
+        name: []const u8,
+    ) ![]const ParameterizedFunctionCandidate {
+        if (!self.indexed_parameterized_functions) {
+            for (modules, 0..) |*module, module_index| {
+                for (module.semantic.parameterized_storage.parameterized_functions.items, 0..) |candidate, function_index| {
+                    const spelling = module.text(module.declarations.items[@intFromEnum(candidate.declaration)].name);
+                    if (self.parameterized_function_names.getPtr(spelling) == null) {
+                        const owned = try allocator.dupe(u8, spelling);
+                        self.parameterized_function_names.put(allocator, owned, .empty) catch |err| {
+                            allocator.free(owned);
+                            return err;
+                        };
+                    }
+                    try self.parameterized_function_names.getPtr(spelling).?.append(allocator, .{
+                        .module_index = @intCast(module_index),
+                        .function_index = @intCast(function_index),
+                    });
+                }
+            }
+            self.indexed_parameterized_functions = true;
+        }
+        return if (self.parameterized_function_names.get(name)) |matches| matches.items else &.{};
     }
 
     pub fn declaration(self: *const GlobalSemanticGraph, id: GlobalDeclId) Declaration {
@@ -433,6 +547,44 @@ test "global semantic graph derives symbol module ownership from declarations" {
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(graph.moduleForSymbol(symbol).?));
     try std.testing.expectEqualStrings("Thing", graph.text(type_name));
     try std.testing.expectEqual(callable.OperatorKind.add, graph.functionOperator(@enumFromInt(0)).?);
+}
+
+test "name indexes discard speculative functions before IDs are reused" {
+    const allocator = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+
+    const first = try graph.addString(allocator, "first");
+    const discarded = try graph.addString(allocator, "discarded");
+    const replacement = try graph.addString(allocator, "replacement");
+    for ([_]StringRange{ first, discarded, replacement }) |name| {
+        try graph.declarations.append(allocator, .{
+            .kind = .function,
+            .name = name,
+            .source = .{ .file_index = 0, .offset = 0 },
+        });
+    }
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+    });
+    try std.testing.expectEqual(@as(usize, 1), (try graph.functionsNamed(allocator, "first")).len);
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(1),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+    });
+    try std.testing.expectEqual(@as(usize, 1), (try graph.functionsNamed(allocator, "discarded")).len);
+    graph.discardIndexedTail(1, 3);
+    graph.functions.shrinkRetainingCapacity(1);
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(2),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+    });
+    try std.testing.expectEqual(@as(usize, 0), (try graph.functionsNamed(allocator, "discarded")).len);
+    try std.testing.expectEqual(@as(usize, 1), (try graph.functionsNamed(allocator, "replacement")).len);
 }
 
 test "unresolved global type slots are construction state, not Any" {
