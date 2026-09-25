@@ -5084,6 +5084,12 @@ test "feature_tests/modules/24_imported_generic_abstract_dispatch_prefers_concre
     try runExpect(test_path, 2);
 }
 
+test "feature_tests/modules/27_imported_abstract_qualified_signature" {
+    const test_path = "tests/feature_tests/modules/27_imported_abstract_qualified_signature";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/modules/25X_private_choice_option_imported" {
     try buildExpectFailExact("tests/feature_tests/modules/25X_private_choice_option_imported",
         \\tests/feature_tests/modules/25X_private_choice_option_imported/main.rg:4:10: error: choice option '_hidden_reason' is private to its module

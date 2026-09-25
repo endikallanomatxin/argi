@@ -50,9 +50,6 @@ pub fn resolveImportPath(
         return found orelse error.UnknownModuleReference;
     }
 
-    // `.../foo` is project/dependency-root syntax. The loader has already
-    // discovered concrete module directories; linking accepts only a unique
-    // path suffix and converts it immediately to GlobalModuleId.
     const suffix = if (std.mem.startsWith(u8, import_path, ".../")) import_path[4..] else import_path;
     var found: ?global_sg.GlobalModuleId = null;
     for (graph.modules.items, 0..) |module, index| {
@@ -62,6 +59,48 @@ pub fn resolveImportPath(
         found = @enumFromInt(@as(u32, @intCast(index)));
     }
     return found orelse error.UnknownModuleReference;
+}
+
+/// Resolves import spellings against the discovered module directories.
+/// Relative paths are based at the importing module; other spellings match a
+/// unique directory suffix.
+pub fn resolveImportPathFromDirs(
+    allocator: std.mem.Allocator,
+    module_dirs: []const []const u8,
+    current_module: usize,
+    spelling: []const u8,
+) !usize {
+    const import_path = std.mem.trim(u8, spelling, "\"'");
+    if (std.mem.startsWith(u8, import_path, "./") or std.mem.startsWith(u8, import_path, "../")) {
+        const resolved = try std.fs.path.resolve(allocator, &.{ module_dirs[current_module], import_path });
+        defer allocator.free(resolved);
+        var found: ?usize = null;
+        for (module_dirs, 0..) |dir, index| {
+            if (!std.mem.eql(u8, dir, resolved)) continue;
+            if (found != null) return error.AmbiguousModuleReference;
+            found = index;
+        }
+        return found orelse error.UnknownModuleReference;
+    }
+
+    // `.../foo` is project/dependency-root syntax. The loader has already
+    // discovered concrete module directories; linking accepts only a unique
+    // path suffix and converts it immediately to GlobalModuleId.
+    const suffix = if (std.mem.startsWith(u8, import_path, ".../")) import_path[4..] else import_path;
+    var found: ?usize = null;
+    for (module_dirs, 0..) |dir, index| {
+        if (!pathEndsWith(dir, suffix)) continue;
+        if (found != null) return error.AmbiguousModuleReference;
+        found = index;
+    }
+    return found orelse error.UnknownModuleReference;
+}
+
+test "import path resolver matches relative and suffix module directories" {
+    const dirs = [_][]const u8{ "/project/app", "/project/more/math", "/other/math" };
+    try std.testing.expectEqual(@as(usize, 1), try resolveImportPathFromDirs(std.testing.allocator, &dirs, 0, "../more/math"));
+    try std.testing.expectEqual(@as(usize, 1), try resolveImportPathFromDirs(std.testing.allocator, &dirs, 0, ".../more/math"));
+    try std.testing.expectError(error.AmbiguousModuleReference, resolveImportPathFromDirs(std.testing.allocator, &dirs, 0, "math"));
 }
 
 fn pathEndsWith(path: []const u8, suffix: []const u8) bool {

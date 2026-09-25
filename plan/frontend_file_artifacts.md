@@ -173,25 +173,26 @@ Where language rules permit it, ModuleSema can finish work such as:
 The exact set should follow language semantics, not a target percentage of work.
 The rule is simply: another module must not be able to invalidate the answer.
 
-### External abstract names are currently a cache-boundary violation
+### Imported abstract signatures
 
-The current frontend passes a compilation-wide list of abstract declaration
-names into every `ModuleSemanticGraph` build. Parameterized lowering uses a
-matching name to turn an external type reference into a hidden abstract
-parameter. This makes the graph depend on unrelated modules, and the current
-catalog drops both the declaring module and the source qualifier. Adding an
-unrelated abstract called `A` can change how a module using `dep.A` is lowered.
+The durable `ModuleSemanticGraph` is built without consulting abstract names
+from other modules. It retains qualified external references such as `dep.A`.
+During whole-program linking, the frontend resolves import aliases against the
+discovered module directories and identifies qualified references to imported
+abstract declarations. Only modules needing that interpretation are lowered
+again into transient linked graphs for GlobalSema. The durable graph remains
+independent of changes in imported modules and is suitable for a module cache.
+Unqualified abstract names from bundled core remain available as prelude names;
+abstracts in user modules require an import qualifier.
 
-Do not fix this by replacing the global list with a per-module imported-name
-list: that still makes the cached module graph depend on imported module
-contents. Correct support for an external abstract in a generic signature
-requires a pending representation in ModuleSG that preserves the qualified
-external reference and the possible hidden parameter/constraint. GlobalSema
-must resolve the declaration kind and normalize the parameter list, dispatch
-kind, signature, and bindings before registering generic candidates. This
-normalization is not implemented yet; the external abstract signature case
-remains blocked on that IR and GlobalSema work. Local abstract names remain
-safe to lower directly in ModuleSema.
+This is an intermediate implementation: linked modules repeat ModuleSema work
+for that compilation. A future pending IR could normalize the affected
+function signatures directly in GlobalSema and avoid rebuilding those modules.
+On the StringHashMap benchmark, this duplicates lowering in seven core modules.
+Eight alternating pinned ReleaseFast pairs measured ModuleSema at 8.1 → 11.9
+ms and frontend at 25.3 → 28.0 ms; DynamicArray frontend was 23.6 → 26.7 ms.
+Remove this cost before relying on clean-build performance gains from the
+module cache boundary.
 
 ### Must remain pending for GlobalSema
 

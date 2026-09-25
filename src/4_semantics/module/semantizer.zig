@@ -12,6 +12,10 @@ const generic_call_args_lowerer = @import("generic_call_args_lowerer.zig");
 const callable = @import("../primitives/callable.zig");
 const canonicalize_storage = @import("canonicalize_storage.zig");
 const complete_verify = @import("complete_verify.zig");
+const diagnostic = @import("../../1_base/diagnostic.zig");
+const source_files = @import("../../1_base/source_files.zig");
+const tokenizer = @import("../../2_tokens/tokenizer.zig");
+const syntaxer = @import("../../3_syntax/syntaxer.zig");
 
 pub const BuildStats = struct {
     lowered_functions: u32 = 0,
@@ -35,19 +39,21 @@ pub const BuildResult = struct {
     stats: BuildStats,
 };
 
+pub const QualifiedAbstract = parameterized_lowerer.QualifiedAbstract;
+
 pub fn build(
     allocator: std.mem.Allocator,
     module_dir: []const u8,
     files: []const module_sg.FileInput,
 ) !BuildResult {
-    return buildWithAbstractCatalog(allocator, module_dir, files, &.{});
+    return buildLinked(allocator, module_dir, files, &.{});
 }
 
-pub fn buildWithAbstractCatalog(
+pub fn buildLinked(
     allocator: std.mem.Allocator,
     module_dir: []const u8,
     files: []const module_sg.FileInput,
-    abstract_names: []const []const u8,
+    abstract_types: []const QualifiedAbstract,
 ) !BuildResult {
     var graph = try module_sg.build(allocator, module_dir, files);
     errdefer graph.deinit(allocator);
@@ -64,7 +70,7 @@ pub fn buildWithAbstractCatalog(
     try lowerOperatorMetadata(allocator, &graph, files);
     const global_roots = try global_roots_lowerer.lower(allocator, &graph);
 
-    const parameterized_stats = try parameterized_lowerer.lowerWithAbstractCatalog(allocator, &graph, files, abstract_names);
+    const parameterized_stats = try parameterized_lowerer.lowerLinked(allocator, &graph, files, abstract_types);
     // Templates claim abstract interfaces before ordinary body lowering, so
     // each contract body is materialized only after specialization.
     const bodies = try body_lowerer.lowerMissingFunctions(allocator, &graph, files);
@@ -143,4 +149,37 @@ test "module semantizer completes syntax-independent local semantics" {
     defer result.graph.deinit(allocator);
     try std.testing.expect(result.graph.semantic.local_semantics_complete);
     try std.testing.expect(result.stats.local_semantics_complete);
+}
+
+test "qualified external signature lowers without an abstract catalog" {
+    const allocator = std.testing.allocator;
+    const source =
+        "dep := #import(\"../dep\")\n" ++
+        "consume_imported(.value: dep.Abstract) -> (.result: Int32) := {\n" ++
+        "    result = score(.value = value).result\n" ++
+        "}\n";
+    const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};
+    var diagnostics = diagnostic.Diagnostics.init(&allocator, &input_sources);
+    defer diagnostics.deinit();
+    var tokenizer_context = tokenizer.Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
+    _ = try tokenizer_context.tokenize();
+    var tokens = tokenizer_context.takeTokens();
+    defer tokens.deinit(allocator);
+    var compact = try syntaxer.Syntaxer.init(allocator, .init(&tokens), source, &diagnostics);
+    defer compact.deinit();
+    var tree = try compact.parse();
+    defer tree.deinit(allocator);
+    try std.testing.expect(!diagnostics.hasErrors());
+    const files = [_]module_sg.FileInput{.{ .path = "app/use.rg", .tree = &tree, .source = source }};
+    var result = try build(allocator, "app", &files);
+    defer result.graph.deinit(allocator);
+    try std.testing.expect(result.graph.semantic.local_semantics_complete);
+    try std.testing.expectEqual(@as(usize, 0), result.graph.semantic.parameterized_storage.parameterized_functions.items.len);
+    var linked = try buildLinked(allocator, "app", &files, &.{.{ .qualifier = "dep", .name = "Abstract" }});
+    defer linked.graph.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), linked.graph.semantic.parameterized_storage.parameterized_functions.items.len);
+    try std.testing.expectEqual(
+        @import("parameterized/storage.zig").GenericDispatchKind.abstract_contract,
+        linked.graph.semantic.parameterized_storage.parameterized_functions.items[0].dispatch_kind,
+    );
 }

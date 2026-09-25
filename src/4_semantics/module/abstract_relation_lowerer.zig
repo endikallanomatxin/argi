@@ -389,14 +389,16 @@ const Context = struct {
     }
 
     fn declarationRef(self: *Context, node: syn.NodeIndex, name: []const u8, kind: entities.ExternalKind) !ir.DeclarationRef {
-        for (self.graph.declarationsNamed(name)) |decl| {
+        const syntax_type = self.tree.syntaxType(node);
+        const qualifier = if (syntax_type) |ty| (if (ty == .name) ty.name.qualifier_token else null) else null;
+        if (qualifier == null) for (self.graph.declarationsNamed(name)) |decl| {
             const candidate = self.graph.declarations.items[@intFromEnum(decl)];
             if ((kind == .abstract and candidate.kind == .abstract_type) or (kind == .type and candidate.kind == .type))
                 return .{ .module = decl };
-        }
+        };
         const external = try self.writer.addExternalRef(.{
             .kind = kind,
-            .module_path = null,
+            .module_path = if (qualifier) |token| try self.writer.addString(self.tree.tokenTextFromSource(self.source, token)) else null,
             .name = try self.writer.addString(name),
             .source = self.sourceRef(node),
         });

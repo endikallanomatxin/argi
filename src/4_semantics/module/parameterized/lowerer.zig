@@ -23,6 +23,11 @@ pub const ParameterBinding = struct {
     kind: parameterized_storage.ComptimeParameterKind,
 };
 
+pub const QualifiedAbstract = struct {
+    qualifier: ?[]const u8,
+    name: []const u8,
+};
+
 const BindingName = struct {
     name: []const u8,
     id: ir.ParameterizedBindingId,
@@ -38,14 +43,14 @@ pub fn lower(
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
 ) !Stats {
-    return lowerWithAbstractCatalog(allocator, graph, files, &.{});
+    return lowerLinked(allocator, graph, files, &.{});
 }
 
-pub fn lowerWithAbstractCatalog(
+pub fn lowerLinked(
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
-    abstract_names: []const []const u8,
+    abstract_types: []const QualifiedAbstract,
 ) !Stats {
     var ctx = Context{
         .allocator = allocator,
@@ -55,7 +60,7 @@ pub fn lowerWithAbstractCatalog(
         .parameters = std.array_list.Managed(ParameterBinding).init(allocator),
         .abstract_parameters = std.array_list.Managed(AbstractParameterBinding).init(allocator),
         .bindings = std.array_list.Managed(BindingName).init(allocator),
-        .abstract_names = abstract_names,
+        .abstract_types = abstract_types,
     };
     defer ctx.parameters.deinit();
     defer ctx.abstract_parameters.deinit();
@@ -71,7 +76,7 @@ pub const Context = struct {
     parameters: std.array_list.Managed(ParameterBinding),
     abstract_parameters: std.array_list.Managed(AbstractParameterBinding),
     bindings: std.array_list.Managed(BindingName),
-    abstract_names: []const []const u8 = &.{},
+    abstract_types: []const QualifiedAbstract = &.{},
     file_index: u32 = 0,
     tree: *const syn.FileSyntaxTree = undefined,
     source: []const u8 = &.{},
@@ -366,8 +371,11 @@ pub const Context = struct {
         text: []const u8,
         qualifier: ?syn.TokenIndex,
     ) bool {
-        if (qualifier == null and self.localAbstractType(text) != null) return true;
-        return self.knownAbstract(text);
+        if (qualifier) |qualifier_token| {
+            const qualifier_text = self.tree.tokenTextFromSource(self.source, qualifier_token);
+            return self.knownAbstract(qualifier_text, text);
+        }
+        return self.localAbstractType(text) != null or self.knownAbstract(null, text);
     }
 
     fn registerAbstractParameter(self: *Context, node: syn.NodeIndex, abstract_name: []const u8) !ir.ComptimeParameterId {
@@ -398,8 +406,13 @@ pub const Context = struct {
         return null;
     }
 
-    fn knownAbstract(self: *const Context, name: []const u8) bool {
-        for (self.abstract_names) |candidate| if (std.mem.eql(u8, candidate, name)) return true;
+    fn knownAbstract(self: *const Context, qualifier: ?[]const u8, name: []const u8) bool {
+        for (self.abstract_types) |candidate| {
+            if (candidate.qualifier == null and qualifier == null and std.mem.eql(u8, candidate.name, name)) return true;
+            if (candidate.qualifier != null and qualifier != null and
+                std.mem.eql(u8, candidate.qualifier.?, qualifier.?) and
+                std.mem.eql(u8, candidate.name, name)) return true;
+        }
         return false;
     }
 

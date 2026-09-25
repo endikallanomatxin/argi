@@ -11,6 +11,7 @@ const module_sg = @import("../4_semantics/module/graph.zig");
 const module_semantizer = @import("../4_semantics/module/semantizer.zig");
 const global_sg = @import("../4_semantics/global/graph.zig");
 const global_semantizer = @import("../4_semantics/global/semantizer.zig");
+const module_linker = @import("../4_semantics/global/module_linker.zig");
 const global_once_verify = @import("../4_semantics/global/once_verify.zig");
 const module_test_validate = @import("../4_semantics/module/test_validate.zig");
 const global_safety_checker = @import("../4_semantics/safety/checker.zig");
@@ -226,17 +227,12 @@ pub const FrontendPipeline = struct {
             files: std.ArrayList(module_sg.FileInput) = .empty,
         };
         var groups: std.ArrayList(ModuleInputs) = .empty;
-        var abstract_names: std.ArrayList([]const u8) = .empty;
-        defer abstract_names.deinit(self.allocator);
         defer {
             for (groups.items) |*group| group.files.deinit(self.allocator);
             groups.deinit(self.allocator);
         }
         for (self.syntax_files.items) |*file| {
             const source = self.source_db.get(file.file_id);
-            for (file.roots) |root| if (file.abstractDeclaration(root)) |abstract| {
-                try abstract_names.append(self.allocator, file.tokenTextFromSource(source.source, abstract.name_token));
-            };
             const dir = std.fs.path.dirname(source.path) orelse ".";
             var group_index: ?usize = null;
             for (groups.items, 0..) |group, index| if (std.mem.eql(u8, group.dir, dir)) {
@@ -256,14 +252,94 @@ pub const FrontendPipeline = struct {
         }
         try self.module_graphs.ensureTotalCapacity(self.allocator, groups.items.len);
         for (groups.items) |group| {
-            const result = try module_semantizer.buildWithAbstractCatalog(self.allocator, group.dir, group.files.items, abstract_names.items);
+            const result = try module_semantizer.build(self.allocator, group.dir, group.files.items);
             self.module_lowered_functions += result.stats.lowered_functions;
             self.module_graphs.appendAssumeCapacity(result.graph);
+        }
+
+        // Durable module graphs depend only on their own source. A qualified
+        // external abstract is classified after imports have been linked, in
+        // a transient derivative used for this whole-program semantizing run.
+        var module_dirs: std.ArrayList([]const u8) = .empty;
+        defer module_dirs.deinit(self.allocator);
+        for (self.module_graphs.items) |*module| try module_dirs.append(self.allocator, module.module_dir);
+        var linked_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty;
+        defer {
+            for (linked_graphs.items) |*graph| graph.deinit(self.allocator);
+            linked_graphs.deinit(self.allocator);
+        }
+        var selected_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty;
+        defer selected_graphs.deinit(self.allocator);
+        var unqualified_abstracts: std.ArrayList(module_semantizer.QualifiedAbstract) = .empty;
+        defer unqualified_abstracts.deinit(self.allocator);
+        for (self.module_graphs.items) |*candidate_module| {
+            // Bundled core declarations are available as unqualified prelude
+            // names. User imports require their explicit source qualifier.
+            if (!candidate_module.is_bundled_core) continue;
+            for (candidate_module.declarations.items) |declaration| {
+                if (declaration.kind != .abstract_type) continue;
+                try unqualified_abstracts.append(self.allocator, .{
+                    .qualifier = null,
+                    .name = candidate_module.text(declaration.name),
+                });
+            }
+        }
+        for (self.module_graphs.items, 0..) |*module, module_index| {
+            var qualified_abstracts: std.ArrayList(module_semantizer.QualifiedAbstract) = .empty;
+            defer qualified_abstracts.deinit(self.allocator);
+            try qualified_abstracts.appendSlice(self.allocator, unqualified_abstracts.items);
+            for (module.semantic.module_aliases.items) |alias| {
+                const target_index = try module_linker.resolveImportPathFromDirs(
+                    self.allocator,
+                    module_dirs.items,
+                    module_index,
+                    module.text(alias.path),
+                );
+                const qualifier = module.text(module.declaration(alias.declaration).name);
+                const target = &self.module_graphs.items[target_index];
+                for (target.declarations.items) |declaration| {
+                    if (declaration.kind != .abstract_type) continue;
+                    try qualified_abstracts.append(self.allocator, .{
+                        .qualifier = qualifier,
+                        .name = target.text(declaration.name),
+                    });
+                }
+            }
+            var needs_linked_graph = false;
+            for (module.semantic.external_refs.items) |reference| {
+                if (reference.kind != .type) continue;
+                const qualifier = if (reference.module_path) |path| module.text(path) else null;
+                const name = module.text(reference.name);
+                for (qualified_abstracts.items) |candidate| {
+                    const qualifier_matches = if (qualifier) |q|
+                        (candidate.qualifier != null and std.mem.eql(u8, q, candidate.qualifier.?))
+                    else
+                        candidate.qualifier == null;
+                    if (qualifier_matches and std.mem.eql(u8, name, candidate.name)) {
+                        needs_linked_graph = true;
+                        break;
+                    }
+                }
+                if (needs_linked_graph) break;
+            }
+            if (needs_linked_graph) {
+                const linked = try module_semantizer.buildLinked(
+                    self.allocator,
+                    groups.items[module_index].dir,
+                    groups.items[module_index].files.items,
+                    qualified_abstracts.items,
+                );
+                try linked_graphs.append(self.allocator, linked.graph);
+                try selected_graphs.append(self.allocator, linked_graphs.items[linked_graphs.items.len - 1]);
+                self.module_lowered_functions += linked.stats.lowered_functions;
+            } else {
+                try selected_graphs.append(self.allocator, module.*);
+            }
         }
         self.module_semantizing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - module_start);
 
         const global_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-        const result = try global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{
+        const result = try global_semantizer.semantizeWithOptions(self.allocator, selected_graphs.items, .{
             .selected_test_name = self.options.semantizing.selected_test_name,
             .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
             .diagnostics = self.diagnostics,

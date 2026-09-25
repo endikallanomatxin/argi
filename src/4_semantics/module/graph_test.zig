@@ -609,14 +609,14 @@ test "parameterized call defaults preserve reach alternatives" {
 
 test "imported abstract inputs become constrained templates" {
     const allocator = std.testing.allocator;
-    const source = "write#(.t: Type)(.value: t, .writer: $&Writer) -> () := {}\n";
+    const source = "dep := #import(\"../dep\")\nwrite#(.t: Type)(.value: t, .writer: $&dep.Writer) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var module = try @import("semantizer.zig").buildWithAbstractCatalog(allocator, "consumer", &.{.{
+    var module = try @import("semantizer.zig").buildLinked(allocator, "consumer", &.{.{
         .path = "consumer/main.rg",
         .tree = &tree,
         .source = source,
-    }}, &.{"Writer"});
+    }}, &.{.{ .qualifier = "dep", .name = "Writer" }});
     defer module.graph.deinit(allocator);
 
     const templates = module.graph.semantic.parameterized_storage.parameterized_functions.items;
