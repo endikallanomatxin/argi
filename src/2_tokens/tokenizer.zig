@@ -1,6 +1,5 @@
 const std = @import("std");
 const tok = @import("token.zig");
-const tok_print = @import("token_print.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const sf = @import("../1_base/source_files.zig");
 const source_db = @import("../1_base/source_db.zig");
@@ -631,19 +630,6 @@ pub const Tokenizer = struct {
 
     pub fn deinit(self: *Tokenizer) void {
         self.tokens.deinit(self.allocator);
-    }
-
-    pub fn printTokens(self: *Tokenizer) void {
-        std.debug.print("\nTOKENS\n", .{});
-        var i: usize = 0;
-        const tokens = tok.View.init(&self.tokens);
-        for (tokens.contents, tokens.locations) |content, location| {
-            const token = tok.Token{ .content = content, .location = location };
-            std.debug.print("{d}: ", .{i});
-            const position = self.diagnostics.lineColumn(token.location);
-            tok_print.printTokenWithLocation(token, self.source, self.diagnostics.path(token.location), position.line, position.column);
-            i += 1;
-        }
     }
 };
 

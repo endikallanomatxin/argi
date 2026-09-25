@@ -5,7 +5,6 @@ pub const BuildFlags = struct {
     show_cascade: bool = false,
     show_syntax_tree: bool = false,
     show_semantic_graph: bool = false,
-    show_token_list: bool = false,
     stats: bool = false,
     output_path: ?[]const u8 = null,
     llvm_ir_path: ?[]const u8 = null,
@@ -56,8 +55,6 @@ pub fn parseBuildArgs(args: []const []const u8) !ParsedBuildArgs {
             parsed.flags.show_syntax_tree = true;
         } else if (std.mem.eql(u8, arg, "--on-build-error-show-semantic-graph")) {
             parsed.flags.show_semantic_graph = true;
-        } else if (std.mem.eql(u8, arg, "--on-build-error-show-token-list")) {
-            parsed.flags.show_token_list = true;
         } else if (std.mem.eql(u8, arg, "--stats")) {
             parsed.flags.stats = true;
         } else if (std.mem.eql(u8, arg, "--release")) {

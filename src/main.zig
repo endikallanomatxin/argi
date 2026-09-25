@@ -56,7 +56,6 @@ fn printHelp() void {
     std.debug.print("  --on-build-error-show-cascade          Print all cascading diagnostics\n", .{});
     std.debug.print("  --on-build-error-show-syntax-tree      Print the syntax tree\n", .{});
     std.debug.print("  --on-build-error-show-semantic-graph   Print the semantic graph\n", .{});
-    std.debug.print("  --on-build-error-show-token-list       Print the token list\n", .{});
 }
 
 fn isHelpArg(arg: []const u8) bool {
