@@ -305,23 +305,11 @@ pub const FrontendPipeline = struct {
                     });
                 }
             }
-            var needs_linked_graph = false;
-            for (module.semantic.external_refs.items) |reference| {
-                if (reference.kind != .type) continue;
-                const qualifier = if (reference.module_path) |path| module.text(path) else null;
-                const name = module.text(reference.name);
-                for (qualified_abstracts.items) |candidate| {
-                    const qualifier_matches = if (qualifier) |q|
-                        (candidate.qualifier != null and std.mem.eql(u8, q, candidate.qualifier.?))
-                    else
-                        candidate.qualifier == null;
-                    if (qualifier_matches and std.mem.eql(u8, name, candidate.name)) {
-                        needs_linked_graph = true;
-                        break;
-                    }
-                }
-                if (needs_linked_graph) break;
-            }
+            const needs_linked_graph = module_semantizer.needsLinkedLowering(
+                module,
+                groups.items[module_index].files.items,
+                qualified_abstracts.items,
+            );
             if (needs_linked_graph) {
                 const linked = try module_semantizer.buildLinked(
                     self.allocator,

@@ -40,6 +40,7 @@ pub const BuildResult = struct {
 };
 
 pub const QualifiedAbstract = parameterized_lowerer.QualifiedAbstract;
+pub const needsLinkedLowering = parameterized_lowerer.needsLinkedLowering;
 
 pub fn build(
     allocator: std.mem.Allocator,
@@ -149,6 +150,52 @@ test "module semantizer completes syntax-independent local semantics" {
     defer result.graph.deinit(allocator);
     try std.testing.expect(result.graph.semantic.local_semantics_complete);
     try std.testing.expect(result.stats.local_semantics_complete);
+}
+
+test "linked lowering trigger ignores abstracts outside function inputs" {
+    const allocator = std.testing.allocator;
+    const source =
+        "dep := #import(\"../dep\")\n" ++
+        "consume(.value: Int32) -> (.result: dep.Abstract) := {}\n";
+    const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};
+    var diagnostics = diagnostic.Diagnostics.init(&allocator, &input_sources);
+    defer diagnostics.deinit();
+    var tokenizer_context = tokenizer.Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
+    _ = try tokenizer_context.tokenize();
+    var tokens = tokenizer_context.takeTokens();
+    defer tokens.deinit(allocator);
+    var compact = try syntaxer.Syntaxer.init(allocator, .init(&tokens), source, &diagnostics);
+    defer compact.deinit();
+    var tree = try compact.parse();
+    defer tree.deinit(allocator);
+    try std.testing.expect(!diagnostics.hasErrors());
+    const files = [_]module_sg.FileInput{.{ .path = "app/use.rg", .tree = &tree, .source = source }};
+    var result = try build(allocator, "app", &files);
+    defer result.graph.deinit(allocator);
+    try std.testing.expect(!needsLinkedLowering(&result.graph, &files, &.{.{ .qualifier = "dep", .name = "Abstract" }}));
+}
+
+test "linked lowering trigger detects imported abstract function inputs" {
+    const allocator = std.testing.allocator;
+    const source =
+        "dep := #import(\"../dep\")\n" ++
+        "consume(.value: dep.Abstract) -> () := {}\n";
+    const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};
+    var diagnostics = diagnostic.Diagnostics.init(&allocator, &input_sources);
+    defer diagnostics.deinit();
+    var tokenizer_context = tokenizer.Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
+    _ = try tokenizer_context.tokenize();
+    var tokens = tokenizer_context.takeTokens();
+    defer tokens.deinit(allocator);
+    var compact = try syntaxer.Syntaxer.init(allocator, .init(&tokens), source, &diagnostics);
+    defer compact.deinit();
+    var tree = try compact.parse();
+    defer tree.deinit(allocator);
+    try std.testing.expect(!diagnostics.hasErrors());
+    const files = [_]module_sg.FileInput{.{ .path = "app/use.rg", .tree = &tree, .source = source }};
+    var result = try build(allocator, "app", &files);
+    defer result.graph.deinit(allocator);
+    try std.testing.expect(needsLinkedLowering(&result.graph, &files, &.{.{ .qualifier = "dep", .name = "Abstract" }}));
 }
 
 test "qualified external signature lowers without an abstract catalog" {

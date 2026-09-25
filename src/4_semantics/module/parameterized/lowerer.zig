@@ -68,6 +68,114 @@ pub fn lowerLinked(
     return ctx.lowerDeclarations();
 }
 
+pub fn needsLinkedLowering(
+    graph: *const graph_mod.ModuleSemanticGraph,
+    files: []const graph_mod.FileInput,
+    abstract_types: []const QualifiedAbstract,
+) bool {
+    if (abstract_types.len == 0) return false;
+    for (graph.declarations.items) |declaration| {
+        if (declaration.kind != .function) continue;
+        const node = graph_mod.declarationSyntaxNode(files, declaration) orelse continue;
+        const file = files[declaration.module_file_index];
+        const function = file.tree.functionDeclaration(node) orelse continue;
+        if (typeUsesLinkedAbstract(graph, file.tree, file.source, function.input, abstract_types)) return true;
+    }
+    return false;
+}
+
+fn typeUsesLinkedAbstract(
+    graph: *const graph_mod.ModuleSemanticGraph,
+    tree: *const syn.FileSyntaxTree,
+    source: []const u8,
+    node: syn.NodeIndex,
+    abstract_types: []const QualifiedAbstract,
+) bool {
+    const syntax_type = tree.syntaxType(node) orelse return false;
+    return switch (syntax_type) {
+        .name => |name| nameUsesLinkedAbstract(graph, tree, source, name.name_token, name.qualifier_token, abstract_types),
+        .pointer => |pointer| typeUsesLinkedAbstract(graph, tree, source, pointer.child, abstract_types),
+        .nullable, .inferred_errable => |child| typeUsesLinkedAbstract(graph, tree, source, child, abstract_types),
+        .array => |array| typeUsesLinkedAbstract(graph, tree, source, array.element, abstract_types),
+        .struct_literal => |literal| blk: {
+            for (literal.fields) |field_node| {
+                const field = tree.structTypeField(field_node) orelse continue;
+                if (field.type_node) |ty|
+                    if (typeUsesLinkedAbstract(graph, tree, source, ty, abstract_types)) break :blk true;
+            }
+            break :blk false;
+        },
+        .choice_literal => |literal| blk: {
+            for (literal.variants) |variant_node| {
+                const variant = tree.choiceTypeVariant(variant_node) orelse continue;
+                if (variant.payload_type) |ty|
+                    if (typeUsesLinkedAbstract(graph, tree, source, ty, abstract_types)) break :blk true;
+            }
+            break :blk false;
+        },
+        .generic => |generic| blk: {
+            if (type_lowerer.isRuntimeVirtualType(tree, source, generic)) break :blk false;
+            if (tree.structTypeLiteral(generic.arguments)) |arguments| {
+                for (arguments.fields) |field_node| {
+                    const field = tree.structTypeField(field_node) orelse continue;
+                    if (field.type_node) |ty|
+                        if (typeUsesLinkedAbstract(graph, tree, source, ty, abstract_types)) break :blk true;
+                }
+            }
+            const base = tree.syntaxType(generic.base) orelse break :blk false;
+            if (base != .name) break :blk false;
+            break :blk nameUsesLinkedAbstract(
+                graph,
+                tree,
+                source,
+                base.name.name_token,
+                base.name.qualifier_token,
+                abstract_types,
+            );
+        },
+    };
+}
+
+fn nameUsesLinkedAbstract(
+    graph: *const graph_mod.ModuleSemanticGraph,
+    tree: *const syn.FileSyntaxTree,
+    source: []const u8,
+    name_token: syn.TokenIndex,
+    qualifier_token: ?syn.TokenIndex,
+    abstract_types: []const QualifiedAbstract,
+) bool {
+    const name = tree.tokenTextFromSource(source, name_token);
+    if (qualifier_token) |token| {
+        const qualifier = tree.tokenTextFromSource(source, token);
+        return linkedAbstractMatches(abstract_types, qualifier, name);
+    }
+
+    // Local type declarations shadow unqualified prelude names, and local
+    // abstracts were already classified by the durable lowering pass.
+    for (graph.declarationsNamed(name)) |id| {
+        const kind = graph.declaration(id).kind;
+        if (kind == .type or kind == .abstract_type) return false;
+    }
+    // Conservatively allow false positives for explicit generic parameter
+    // shadowing: that only causes an unnecessary derivative, never a missed
+    // abstract-dispatch transformation.
+    return linkedAbstractMatches(abstract_types, null, name);
+}
+
+fn linkedAbstractMatches(
+    abstract_types: []const QualifiedAbstract,
+    qualifier: ?[]const u8,
+    name: []const u8,
+) bool {
+    for (abstract_types) |candidate| {
+        if (candidate.qualifier == null and qualifier == null and std.mem.eql(u8, candidate.name, name)) return true;
+        if (candidate.qualifier != null and qualifier != null and
+            std.mem.eql(u8, candidate.qualifier.?, qualifier.?) and
+            std.mem.eql(u8, candidate.name, name)) return true;
+    }
+    return false;
+}
+
 pub const Context = struct {
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
