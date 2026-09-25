@@ -198,14 +198,43 @@ pub const GlobalSemanticGraph = struct {
     strings: std.ArrayList(u8) = .empty,
     roots: std.ArrayList(GlobalNodeId) = .empty,
 
-    // Lookup-only indexes. The underlying arrays remain the semantic source of
-    // truth; synchronize their appended tails so generic instances are visible.
-    function_names: std.StringHashMapUnmanaged(std.ArrayList(GlobalFunctionId)) = .empty,
-    indexed_functions: usize = 0,
-    declaration_names: std.StringHashMapUnmanaged(std.ArrayList(GlobalDeclId)) = .empty,
-    indexed_declarations: usize = 0,
-    parameterized_function_names: std.StringHashMapUnmanaged(std.ArrayList(ParameterizedFunctionCandidate)) = .empty,
-    indexed_parameterized_functions: bool = false,
+    const LookupState = struct {
+        function_names: std.StringHashMapUnmanaged(std.ArrayList(GlobalFunctionId)) = .empty,
+        indexed_functions: usize = 0,
+        declaration_names: std.StringHashMapUnmanaged(std.ArrayList(GlobalDeclId)) = .empty,
+        indexed_declarations: usize = 0,
+        parameterized_function_names: std.StringHashMapUnmanaged(std.ArrayList(ParameterizedFunctionCandidate)) = .empty,
+        indexed_parameterized_functions: bool = false,
+
+        fn deinit(self: *LookupState, allocator: std.mem.Allocator) void {
+            var functions = self.function_names.iterator();
+            while (functions.next()) |entry| {
+                allocator.free(entry.key_ptr.*);
+                entry.value_ptr.deinit(allocator);
+            }
+            self.function_names.deinit(allocator);
+
+            var declarations = self.declaration_names.iterator();
+            while (declarations.next()) |entry| {
+                allocator.free(entry.key_ptr.*);
+                entry.value_ptr.deinit(allocator);
+            }
+            self.declaration_names.deinit(allocator);
+
+            var parameterized = self.parameterized_function_names.iterator();
+            while (parameterized.next()) |entry| {
+                allocator.free(entry.key_ptr.*);
+                entry.value_ptr.deinit(allocator);
+            }
+            self.parameterized_function_names.deinit(allocator);
+            self.* = .{};
+        }
+    };
+
+    // Transient lookup state used while building/querying GlobalSema. The
+    // append-only semantic pools remain the source of truth; these indexes are
+    // derived state and are not part of a persistent semantic representation.
+    lookup: LookupState = .{},
 
     /// Snapshot append-only graph storage and the mutable lookup-index tails.
     /// This is deliberately not a transaction for resolver-local caches or
@@ -214,8 +243,8 @@ pub const GlobalSemanticGraph = struct {
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
         var result: Checkpoint = .{
             .pool_lengths = undefined,
-            .indexed_functions = self.indexed_functions,
-            .indexed_declarations = self.indexed_declarations,
+            .indexed_functions = self.lookup.indexed_functions,
+            .indexed_declarations = self.lookup.indexed_declarations,
         };
         inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
             .@"struct" => @hasField(pool.type, "items"),
@@ -240,24 +269,7 @@ pub const GlobalSemanticGraph = struct {
     }
 
     pub fn deinit(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
-        var functions = self.function_names.iterator();
-        while (functions.next()) |entry| {
-            allocator.free(entry.key_ptr.*);
-            entry.value_ptr.deinit(allocator);
-        }
-        self.function_names.deinit(allocator);
-        var declarations = self.declaration_names.iterator();
-        while (declarations.next()) |entry| {
-            allocator.free(entry.key_ptr.*);
-            entry.value_ptr.deinit(allocator);
-        }
-        self.declaration_names.deinit(allocator);
-        var parameterized = self.parameterized_function_names.iterator();
-        while (parameterized.next()) |entry| {
-            allocator.free(entry.key_ptr.*);
-            entry.value_ptr.deinit(allocator);
-        }
-        self.parameterized_function_names.deinit(allocator);
+        self.lookup.deinit(allocator);
         inline for (.{
             &self.modules,            &self.module_aliases,          &self.files,                 &self.declarations,
             &self.symbols,            &self.symbol_declarations,     &self.types,                 &self.type_resolution,
@@ -279,53 +291,53 @@ pub const GlobalSemanticGraph = struct {
     }
 
     pub fn functionsNamed(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, name: []const u8) ![]const GlobalFunctionId {
-        while (self.indexed_functions < self.functions.items.len) {
-            const raw = self.indexed_functions;
+        while (self.lookup.indexed_functions < self.functions.items.len) {
+            const raw = self.lookup.indexed_functions;
             const decl = self.declarations.items[@intFromEnum(self.functions.items[raw].declaration)];
             const spelling = self.text(decl.name);
-            if (self.function_names.getPtr(spelling) == null) {
+            if (self.lookup.function_names.getPtr(spelling) == null) {
                 const owned = try allocator.dupe(u8, spelling);
-                self.function_names.put(allocator, owned, .empty) catch |err| {
+                self.lookup.function_names.put(allocator, owned, .empty) catch |err| {
                     allocator.free(owned);
                     return err;
                 };
             }
-            try self.function_names.getPtr(spelling).?.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
-            self.indexed_functions += 1;
+            try self.lookup.function_names.getPtr(spelling).?.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
+            self.lookup.indexed_functions += 1;
         }
-        return if (self.function_names.get(name)) |matches| matches.items else &.{};
+        return if (self.lookup.function_names.get(name)) |matches| matches.items else &.{};
     }
 
     pub fn declarationsNamed(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, name: []const u8) ![]const GlobalDeclId {
-        while (self.indexed_declarations < self.declarations.items.len) {
-            const raw = self.indexed_declarations;
+        while (self.lookup.indexed_declarations < self.declarations.items.len) {
+            const raw = self.lookup.indexed_declarations;
             const spelling = self.text(self.declarations.items[raw].name);
-            if (self.declaration_names.getPtr(spelling) == null) {
+            if (self.lookup.declaration_names.getPtr(spelling) == null) {
                 const owned = try allocator.dupe(u8, spelling);
-                self.declaration_names.put(allocator, owned, .empty) catch |err| {
+                self.lookup.declaration_names.put(allocator, owned, .empty) catch |err| {
                     allocator.free(owned);
                     return err;
                 };
             }
-            try self.declaration_names.getPtr(spelling).?.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
-            self.indexed_declarations += 1;
+            try self.lookup.declaration_names.getPtr(spelling).?.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
+            self.lookup.indexed_declarations += 1;
         }
-        return if (self.declaration_names.get(name)) |matches| matches.items else &.{};
+        return if (self.lookup.declaration_names.get(name)) |matches| matches.items else &.{};
     }
 
     /// Speculative resolution can append functions and declarations before
     /// rolling their pools back. Remove those IDs before truncating the pools.
     pub fn discardIndexedTail(self: *GlobalSemanticGraph, function_count: usize, declaration_count: usize) void {
-        while (self.indexed_functions > function_count) {
-            self.indexed_functions -= 1;
-            const entry = self.functions.items[self.indexed_functions];
+        while (self.lookup.indexed_functions > function_count) {
+            self.lookup.indexed_functions -= 1;
+            const entry = self.functions.items[self.lookup.indexed_functions];
             const name = self.text(self.declarations.items[@intFromEnum(entry.declaration)].name);
-            _ = self.function_names.getPtr(name).?.pop();
+            _ = self.lookup.function_names.getPtr(name).?.pop();
         }
-        while (self.indexed_declarations > declaration_count) {
-            self.indexed_declarations -= 1;
-            const name = self.text(self.declarations.items[self.indexed_declarations].name);
-            _ = self.declaration_names.getPtr(name).?.pop();
+        while (self.lookup.indexed_declarations > declaration_count) {
+            self.lookup.indexed_declarations -= 1;
+            const name = self.text(self.declarations.items[self.lookup.indexed_declarations].name);
+            _ = self.lookup.declaration_names.getPtr(name).?.pop();
         }
     }
 
@@ -337,26 +349,26 @@ pub const GlobalSemanticGraph = struct {
         modules: []const module_sg.ModuleSemanticGraph,
         name: []const u8,
     ) ![]const ParameterizedFunctionCandidate {
-        if (!self.indexed_parameterized_functions) {
+        if (!self.lookup.indexed_parameterized_functions) {
             for (modules, 0..) |*module, module_index| {
                 for (module.semantic.parameterized_storage.parameterized_functions.items, 0..) |candidate, function_index| {
                     const spelling = module.text(module.declarations.items[@intFromEnum(candidate.declaration)].name);
-                    if (self.parameterized_function_names.getPtr(spelling) == null) {
+                    if (self.lookup.parameterized_function_names.getPtr(spelling) == null) {
                         const owned = try allocator.dupe(u8, spelling);
-                        self.parameterized_function_names.put(allocator, owned, .empty) catch |err| {
+                        self.lookup.parameterized_function_names.put(allocator, owned, .empty) catch |err| {
                             allocator.free(owned);
                             return err;
                         };
                     }
-                    try self.parameterized_function_names.getPtr(spelling).?.append(allocator, .{
+                    try self.lookup.parameterized_function_names.getPtr(spelling).?.append(allocator, .{
                         .module_index = @intCast(module_index),
                         .function_index = @intCast(function_index),
                     });
                 }
             }
-            self.indexed_parameterized_functions = true;
+            self.lookup.indexed_parameterized_functions = true;
         }
-        return if (self.parameterized_function_names.get(name)) |matches| matches.items else &.{};
+        return if (self.lookup.parameterized_function_names.get(name)) |matches| matches.items else &.{};
     }
 
     pub fn declaration(self: *const GlobalSemanticGraph, id: GlobalDeclId) Declaration {
