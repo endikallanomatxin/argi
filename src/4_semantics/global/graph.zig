@@ -144,6 +144,12 @@ pub const unresolved_type_poison_decl: GlobalDeclId = @enumFromInt(std.math.maxI
 const unresolved_binding_type_poison: GlobalTypeId = @enumFromInt(std.math.maxInt(u32));
 
 pub const GlobalSemanticGraph = struct {
+    pub const Checkpoint = struct {
+        pool_lengths: [@typeInfo(GlobalSemanticGraph).@"struct".fields.len]usize,
+        indexed_functions: usize,
+        indexed_declarations: usize,
+    };
+
     modules: std.ArrayList(Module) = .empty,
     module_aliases: std.ArrayList(ModuleAlias) = .empty,
     files: std.ArrayList(File) = .empty,
@@ -200,6 +206,34 @@ pub const GlobalSemanticGraph = struct {
     indexed_declarations: usize = 0,
     parameterized_function_names: std.StringHashMapUnmanaged(std.ArrayList(ParameterizedFunctionCandidate)) = .empty,
     indexed_parameterized_functions: bool = false,
+
+    pub fn checkpoint(self: *const GlobalSemanticGraph) Checkpoint {
+        const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
+        var result: Checkpoint = .{
+            .pool_lengths = undefined,
+            .indexed_functions = self.indexed_functions,
+            .indexed_declarations = self.indexed_declarations,
+        };
+        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+            .@"struct" => @hasField(pool.type, "items"),
+            else => false,
+        }) {
+            result.pool_lengths[index] = @field(self, pool.name).items.len;
+        };
+        return result;
+    }
+
+    /// Drop indexed IDs before truncating the append-only pools they reference.
+    pub fn rollback(self: *GlobalSemanticGraph, saved: Checkpoint) void {
+        const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
+        self.discardIndexedTail(saved.indexed_functions, saved.indexed_declarations);
+        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
+            .@"struct" => @hasField(pool.type, "items"),
+            else => false,
+        }) {
+            @field(self, pool.name).shrinkRetainingCapacity(saved.pool_lengths[index]);
+        };
+    }
 
     pub fn deinit(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
         var functions = self.function_names.iterator();

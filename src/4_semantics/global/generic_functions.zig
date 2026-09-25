@@ -1330,27 +1330,12 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         candidates: *std.ArrayList(global_sg.GlobalDeclId),
     ) !bool {
-        const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
-        var lengths: [pools.len]usize = undefined;
-        const saved_function_count = self.graph.functions.items.len;
-        const saved_declaration_count = self.graph.declarations.items.len;
-        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-            .@"struct" => @hasField(pool.type, "items"),
-            else => false,
-        }) {
-            lengths[index] = @field(self.graph, pool.name).items.len;
-        };
+        const checkpoint = self.graph.checkpoint();
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
         const saved_core_stats = self.core.stats;
         defer {
-            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
-            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-                .@"struct" => @hasField(pool.type, "items"),
-                else => false,
-            }) {
-                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
-            };
+            self.graph.rollback(checkpoint);
             self.stats = saved_stats;
             self.generics.stats = saved_generic_stats;
             self.core.stats = saved_core_stats;
@@ -1570,25 +1555,10 @@ pub const Resolver = struct {
     }
 
     fn matchParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) core_mod.Resolver.CallInputMatch {
-        const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
-        var lengths: [pools.len]usize = undefined;
-        const saved_function_count = self.graph.functions.items.len;
-        const saved_declaration_count = self.graph.declarations.items.len;
-        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-            .@"struct" => @hasField(pool.type, "items"),
-            else => false,
-        }) {
-            lengths[index] = @field(self.graph, pool.name).items.len;
-        };
+        const checkpoint = self.graph.checkpoint();
         const saved_stats = self.generics.stats;
         defer {
-            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
-            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-                .@"struct" => @hasField(pool.type, "items"),
-                else => false,
-            }) {
-                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
-            };
+            self.graph.rollback(checkpoint);
             self.generics.stats = saved_stats;
         }
         const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return .deferred;
@@ -1928,26 +1898,11 @@ pub const Resolver = struct {
             if (self.profile_io != null) self.profile_instantiate_existing += 1;
             return id;
         }
-        const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
-        var lengths: [pools.len]usize = undefined;
-        const saved_function_count = self.graph.functions.items.len;
-        const saved_declaration_count = self.graph.declarations.items.len;
-        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-            .@"struct" => @hasField(pool.type, "items"),
-            else => false,
-        }) {
-            lengths[index] = @field(self.graph, pool.name).items.len;
-        };
+        const checkpoint = self.graph.checkpoint();
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
         errdefer {
-            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
-            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-                .@"struct" => @hasField(pool.type, "items"),
-                else => false,
-            }) {
-                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
-            };
+            self.graph.rollback(checkpoint);
             self.stats = saved_stats;
             self.generics.stats = saved_generic_stats;
         }

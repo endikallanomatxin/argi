@@ -508,25 +508,10 @@ pub const Resolver = struct {
         // Desugaring is speculative while downstream types/functions may still
         // be unresolved. Roll every append-only GlobalSG pool back unless the
         // complete iterator loop can be published atomically.
-        const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
-        var lengths: [pools.len]usize = undefined;
-        const saved_function_count = self.graph.functions.items.len;
-        const saved_declaration_count = self.graph.declarations.items.len;
-        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-            .@"struct" => @hasField(pool.type, "items"),
-            else => false,
-        }) {
-            lengths[index] = @field(self.graph, pool.name).items.len;
-        };
+        const checkpoint = self.graph.checkpoint();
         var committed = false;
         defer if (!committed) {
-            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
-            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-                .@"struct" => @hasField(pool.type, "items"),
-                else => false,
-            }) {
-                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
-            };
+            self.graph.rollback(checkpoint);
         };
 
         const ForProtocol = struct {

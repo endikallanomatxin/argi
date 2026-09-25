@@ -234,25 +234,10 @@ pub const Resolver = struct {
         // Candidate inference interns temporary types and generic identities.
         // Keep the whole attempt transactional: if some dependency is still
         // unresolved, a later fixed-point round must start from the same graph.
-        const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
-        var lengths: [pools.len]usize = undefined;
-        const saved_function_count = self.graph.functions.items.len;
-        const saved_declaration_count = self.graph.declarations.items.len;
-        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-            .@"struct" => @hasField(pool.type, "items"),
-            else => false,
-        }) {
-            lengths[index] = @field(self.graph, pool.name).items.len;
-        };
+        const checkpoint = self.graph.checkpoint();
         var committed = false;
         defer if (!committed) {
-            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
-            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-                .@"struct" => @hasField(pool.type, "items"),
-                else => false,
-            }) {
-                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
-            };
+            self.graph.rollback(checkpoint);
         };
 
         const generics = self.generics.?;
@@ -333,25 +318,10 @@ pub const Resolver = struct {
         // dependencies in the initializer body are still unresolved. Keep the
         // attempt transactional so failed retries do not accumulate generic
         // identities, instantiated fields, functions or value-field tails.
-        const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
-        var lengths: [pools.len]usize = undefined;
-        const saved_function_count = self.graph.functions.items.len;
-        const saved_declaration_count = self.graph.declarations.items.len;
-        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-            .@"struct" => @hasField(pool.type, "items"),
-            else => false,
-        }) {
-            lengths[index] = @field(self.graph, pool.name).items.len;
-        };
+        const checkpoint = self.graph.checkpoint();
         var committed = false;
         defer if (!committed) {
-            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
-            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-                .@"struct" => @hasField(pool.type, "items"),
-                else => false,
-            }) {
-                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
-            };
+            self.graph.rollback(checkpoint);
         };
 
         const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {
@@ -611,25 +581,10 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         context: reach_context.Context,
     ) !InitializerProbe {
-        const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
-        var lengths: [pools.len]usize = undefined;
-        const saved_function_count = self.graph.functions.items.len;
-        const saved_declaration_count = self.graph.declarations.items.len;
-        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-            .@"struct" => @hasField(pool.type, "items"),
-            else => false,
-        }) {
-            lengths[index] = @field(self.graph, pool.name).items.len;
-        };
+        const checkpoint = self.graph.checkpoint();
         const saved_stats = generics.stats;
         defer {
-            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
-            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-                .@"struct" => @hasField(pool.type, "items"),
-                else => false,
-            }) {
-                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
-            };
+            self.graph.rollback(checkpoint);
             generics.stats = saved_stats;
         }
 
@@ -778,25 +733,10 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         context: reach_context.Context,
     ) !InitializerProbe {
-        const pools = @typeInfo(global_sg.GlobalSemanticGraph).@"struct".fields;
-        var lengths: [pools.len]usize = undefined;
-        const saved_function_count = self.graph.functions.items.len;
-        const saved_declaration_count = self.graph.declarations.items.len;
-        inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-            .@"struct" => @hasField(pool.type, "items"),
-            else => false,
-        }) {
-            lengths[index] = @field(self.graph, pool.name).items.len;
-        };
+        const checkpoint = self.graph.checkpoint();
         const saved_stats = generics.stats;
         defer {
-            self.graph.discardIndexedTail(saved_function_count, saved_declaration_count);
-            inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
-                .@"struct" => @hasField(pool.type, "items"),
-                else => false,
-            }) {
-                @field(self.graph, pool.name).shrinkRetainingCapacity(lengths[index]);
-            };
+            self.graph.rollback(checkpoint);
             generics.stats = saved_stats;
         }
 
