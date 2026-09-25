@@ -207,6 +207,9 @@ pub const GlobalSemanticGraph = struct {
     parameterized_function_names: std.StringHashMapUnmanaged(std.ArrayList(ParameterizedFunctionCandidate)) = .empty,
     indexed_parameterized_functions: bool = false,
 
+    /// Snapshot append-only graph storage and the mutable lookup-index tails.
+    /// This is deliberately not a transaction for resolver-local caches or
+    /// side effects; callers must checkpoint those separately when needed.
     pub fn checkpoint(self: *const GlobalSemanticGraph) Checkpoint {
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
         var result: Checkpoint = .{
@@ -224,6 +227,7 @@ pub const GlobalSemanticGraph = struct {
     }
 
     /// Drop indexed IDs before truncating the append-only pools they reference.
+    /// In-place mutations of pre-existing entries are outside this checkpoint.
     pub fn rollback(self: *GlobalSemanticGraph, saved: Checkpoint) void {
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
         self.discardIndexedTail(saved.indexed_functions, saved.indexed_declarations);

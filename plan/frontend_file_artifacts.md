@@ -536,24 +536,36 @@ indexed GlobalSemanticGraph consumed directly by Safety, Codegen and the LSP.
 The pointer-heavy semantic graph and the intermediate FileSemanticGraph path are
 no longer part of the compiler pipeline.
 
-Persistent FileSyntaxTree and ModuleSG caches are the remaining work described
-below. The cache format must serialize the canonical module representation, not
+Persistent reuse is the next architectural direction, but measure the boundary
+before committing to a disk format. On the current StringHashMap benchmark the
+pre-linked ModuleSema work was about 8.1 ms of a 25.3 ms frontend, so module
+reuse has a meaningful theoretical ceiling. The temporary linked-abstract
+derivative raises ModuleSema to about 11.9 ms and frontend to 28.0 ms by
+re-lowering affected modules; that duplicate work is not a cache benefit and
+must not be mistaken for the steady-state incremental design.
+
+The cache format must serialize the canonical module representation, not
 ModuleSema's construction-only state.
 
 ## Remaining implementation plan
 
 ### Phase 5 — persistent caches
 
-1. Define an explicit versioned FileSyntaxTree cache format if measurements show
-   that parsing reuse is worthwhile independently of ModuleSG cache hits.
-2. Define an explicit versioned ModuleSG disk format; do not serialize raw Zig
-   pointer/slice ABI.
+1. Before designing the on-disk format, measure an unchanged in-memory rebuild
+   that reuses durable ModuleSGs. Account separately for the current linked
+   derivative; either eliminate its full ModuleSema rerun or report its cost as
+   unavoidable work in the first cache prototype.
+2. Define an explicit versioned ModuleSG disk format only if the measured reuse
+   remains material; do not serialize raw Zig pointer/slice ABI.
 3. Key ModuleSGs by module source set/content plus semantic configuration.
 4. Make bundled `core` the first high-value consumer of prebuilt ModuleSGs.
 5. On ModuleSG cache hits, avoid loading source/FileST unless diagnostics or LSP
    require them.
-6. Benchmark cold builds, unchanged rebuilds and one-file-changed rebuilds.
-7. Optimize loading (including mmap/zero-copy) only if measurements justify it.
+6. Define a FileSyntaxTree cache independently only if parsing still contributes
+   enough time after ModuleSG reuse to justify another persistent artifact.
+7. Benchmark cold builds, unchanged rebuilds, one-file-changed rebuilds and a
+   change to a widely imported module.
+8. Optimize loading (including mmap/zero-copy) only if measurements justify it.
 
 ### Phase 6 — later incremental semantics
 

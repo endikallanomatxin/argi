@@ -334,9 +334,13 @@ counts remain available under `--stats` for future profiling.
       including direct slot writes, reconciliation, generic specialization,
       materialization, reachability expansion and ownership finalization.
       Identify the event that can be emitted *after* the value is usable.
-- [ ] Audit speculative graph rollback and ID reuse. Dependency records must
-      not retain IDs from a discarded candidate or wake an unrelated entity
-      that later reuses an ID.
+- [ ] Audit speculative graph rollback and ID reuse. GlobalSG append-only
+      rollback is now centralized in `GlobalSemanticGraph.checkpoint/rollback`,
+      name-index tails are covered by regression tests, and parameterized
+      `#defer` registrations checkpoint Ownership alongside the graph. Pointer
+      interning validates stale IDs after rollback. A future dependency queue
+      must still prove that every resolver-local cache/subscription either
+      survives ID reuse safely or participates in rollback.
 
 Decision: the probe did not establish that repeated same-blocker retries
 account for a meaningful share of pending time, so it was removed and sleepers
