@@ -58,49 +58,61 @@ pub fn buildLinked(
 ) !BuildResult {
     var graph = try module_sg.build(allocator, module_dir, files);
     errdefer graph.deinit(allocator);
+    const stats = try finishLinked(allocator, &graph, files, abstract_types);
+    return .{ .graph = graph, .stats = stats };
+}
+
+/// Finish semantic lowering on a graph that has already completed module
+/// discovery/interfaces. This lets the frontend discover all module headers
+/// first, derive explicit semantic configuration such as the bundled prelude,
+/// and still lower each durable ModuleSG only once.
+pub fn finishLinked(
+    allocator: std.mem.Allocator,
+    graph: *module_sg.ModuleSemanticGraph,
+    files: []const module_sg.FileInput,
+    abstract_types: []const QualifiedAbstract,
+) !BuildStats {
+    if (graph.semantic.local_semantics_complete) return error.ModuleSemanticGraphAlreadyComplete;
 
     // Declaration discovery can leave interfaces whose imported/generic types
     // and default values still need source syntax. Finish that construction
     // work first; everything after canonicalization consumes one Module* ID
     // space and must not depend on the discovery-time construction prefixes.
-    const module_aliases = try module_alias_lowerer.lower(allocator, &graph, files);
-    const initializers = try initializer_lowerer.lower(allocator, &graph, files);
-    try lowerNominalLayouts(allocator, &graph, files);
-    try canonicalize_storage.run(allocator, &graph);
+    const module_aliases = try module_alias_lowerer.lower(allocator, graph, files);
+    const initializers = try initializer_lowerer.lower(allocator, graph, files);
+    try lowerNominalLayouts(allocator, graph, files);
+    try canonicalize_storage.run(allocator, graph);
 
-    try lowerOperatorMetadata(allocator, &graph, files);
-    const global_roots = try global_roots_lowerer.lower(allocator, &graph);
+    try lowerOperatorMetadata(allocator, graph, files);
+    const global_roots = try global_roots_lowerer.lower(allocator, graph);
 
-    const parameterized_stats = try parameterized_lowerer.lowerLinked(allocator, &graph, files, abstract_types);
+    const parameterized_stats = try parameterized_lowerer.lowerLinked(allocator, graph, files, abstract_types);
     // Templates claim abstract interfaces before ordinary body lowering, so
     // each contract body is materialized only after specialization.
-    const bodies = try body_lowerer.lowerMissingFunctions(allocator, &graph, files);
-    const generic_operators = try generic_operator_lowerer.lower(&graph, files);
-    const identity_stats = function_identity_lowerer.lower(&graph, files);
-    const relation_stats = try abstract_relation_lowerer.lower(allocator, &graph, files);
-    const generic_calls = try generic_call_args_lowerer.lower(allocator, &graph, files);
+    const bodies = try body_lowerer.lowerMissingFunctions(allocator, graph, files);
+    const generic_operators = try generic_operator_lowerer.lower(graph, files);
+    const identity_stats = function_identity_lowerer.lower(graph, files);
+    const relation_stats = try abstract_relation_lowerer.lower(allocator, graph, files);
+    const generic_calls = try generic_call_args_lowerer.lower(allocator, graph, files);
 
     graph.semantic.local_semantics_complete = true;
-    try complete_verify.verifyModule(&graph);
+    try complete_verify.verifyModule(graph);
 
     return .{
-        .graph = graph,
-        .stats = .{
-            .lowered_functions = bodies.lowered_functions,
-            .global_bindings = initializers.global_bindings,
-            .module_aliases = module_aliases,
-            .global_roots = global_roots,
-            .field_defaults = initializers.field_defaults,
-            .generic_types = parameterized_stats.generic_types,
-            .generic_functions = parameterized_stats.generic_functions,
-            .generic_operators = generic_operators,
-            .deinit_functions = identity_stats.deinit_functions,
-            .generic_deinit_functions = identity_stats.generic_deinit_functions,
-            .abstract_definitions = parameterized_stats.abstract_definitions,
-            .abstract_relations = relation_stats.implementations + relation_stats.implementation_parameterized_forms + relation_stats.defaults + relation_stats.default_parameterized_forms,
-            .generic_calls = generic_calls.generic_calls,
-            .local_semantics_complete = true,
-        },
+        .lowered_functions = bodies.lowered_functions,
+        .global_bindings = initializers.global_bindings,
+        .module_aliases = module_aliases,
+        .global_roots = global_roots,
+        .field_defaults = initializers.field_defaults,
+        .generic_types = parameterized_stats.generic_types,
+        .generic_functions = parameterized_stats.generic_functions,
+        .generic_operators = generic_operators,
+        .deinit_functions = identity_stats.deinit_functions,
+        .generic_deinit_functions = identity_stats.generic_deinit_functions,
+        .abstract_definitions = parameterized_stats.abstract_definitions,
+        .abstract_relations = relation_stats.implementations + relation_stats.implementation_parameterized_forms + relation_stats.defaults + relation_stats.default_parameterized_forms,
+        .generic_calls = generic_calls.generic_calls,
+        .local_semantics_complete = true,
     };
 }
 
@@ -142,6 +154,16 @@ fn lowerOperatorMetadata(
             null;
         graph.semantic.function_operators.appendAssumeCapacity(operator);
     }
+}
+
+test "finishLinked completes an already discovered module graph" {
+    const allocator = std.testing.allocator;
+    var graph = try module_sg.build(allocator, "empty", &.{});
+    defer graph.deinit(allocator);
+    try std.testing.expect(!graph.semantic.local_semantics_complete);
+    const stats = try finishLinked(allocator, &graph, &.{}, &.{});
+    try std.testing.expect(graph.semantic.local_semantics_complete);
+    try std.testing.expect(stats.local_semantics_complete);
 }
 
 test "module semantizer completes syntax-independent local semantics" {
