@@ -317,9 +317,13 @@ Decision: identify a high-cost tag and a repeated prerequisite before changing
 the scheduler. If time is instead in candidate matching or speculative graph
 growth, optimize that operation directly.
 
-### 2. Observe why work defers
+### 2. Observe why work defers (historical probe)
 
-- [x] Add opt-in observations at explicit Core call gates where a type or
+The temporary Core call blocker probe described here has been removed. Its
+measurements are historical evidence only; pending attempt and deferred timing
+counts remain available under `--stats` for future profiling.
+
+- [x] (Historical) Add opt-in observations at explicit Core call gates where a type or
       binding ID is unresolved. Preserve `flat_index` across attempts and
       count repeated single IDs without asserting that an observed ID caused
       the final deferred result.
@@ -334,9 +338,10 @@ growth, optimize that operation directly.
       not retain IDs from a discarded candidate or wake an unrelated entity
       that later reuses an ID.
 
-Decision: do not pilot sleepers on the current benchmarks. Revisit only if
-repeated same-blocker retries account for a meaningful share of pending time
-and every relevant wake event is covered.
+Decision: the probe did not establish that repeated same-blocker retries
+account for a meaningful share of pending time, so it was removed and sleepers
+were not piloted. Revisit the question only if future pending timing shows a
+costly operation family and a reliable prerequisite to observe.
 
 ### 3. Pilot one operation kind
 

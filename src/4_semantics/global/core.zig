@@ -24,40 +24,6 @@ pub const Stats = struct {
     pointer_type_ns: u64 = 0,
 };
 
-/// Records unresolved type and binding IDs encountered by one call attempt.
-/// Multiple IDs can contribute to the same deferred result; the probe does not
-/// claim that any recorded ID caused that result.
-pub const PendingBlockerProbe = struct {
-    const capacity = 8;
-
-    types: [capacity]global_sg.GlobalTypeId = undefined,
-    type_count: u8 = 0,
-    bindings: [capacity]global_sg.GlobalBindingId = undefined,
-    binding_count: u8 = 0,
-    types_overflowed: bool = false,
-    bindings_overflowed: bool = false,
-
-    pub fn noteType(self: *PendingBlockerProbe, id: global_sg.GlobalTypeId) void {
-        for (self.types[0..self.type_count]) |observed| if (observed == id) return;
-        if (self.type_count == capacity) {
-            self.types_overflowed = true;
-            return;
-        }
-        self.types[self.type_count] = id;
-        self.type_count += 1;
-    }
-
-    pub fn noteBinding(self: *PendingBlockerProbe, id: global_sg.GlobalBindingId) void {
-        for (self.bindings[0..self.binding_count]) |observed| if (observed == id) return;
-        if (self.binding_count == capacity) {
-            self.bindings_overflowed = true;
-            return;
-        }
-        self.bindings[self.binding_count] = id;
-        self.binding_count += 1;
-    }
-};
-
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -65,7 +31,6 @@ pub const Resolver = struct {
     offsets: []const globalizer.Offsets,
     profile_io: ?std.Io = null,
     stats: Stats = .{},
-    pending_blocker_probe: ?*PendingBlockerProbe = null,
 
     pub fn resolveExternalTypes(self: *Resolver) !void {
         for (self.modules, 0..) |*module, module_index| {
@@ -566,7 +531,6 @@ pub const Resolver = struct {
                     }
                     if (measured.ty) |ty| {
                         if (self.graph.isTypeUnresolved(ty)) {
-                            self.notePendingType(ty);
                             return .deferred;
                         }
                     } else return .deferred;
@@ -1056,14 +1020,6 @@ pub const Resolver = struct {
     pub const ReachedDefaultProbe = enum { unavailable, deferred, available };
     const ReachedAdaptation = enum { direct, address };
 
-    fn notePendingType(self: *Resolver, id: global_sg.GlobalTypeId) void {
-        if (self.pending_blocker_probe) |probe| probe.noteType(id);
-    }
-
-    fn notePendingBinding(self: *Resolver, id: global_sg.GlobalBindingId) void {
-        if (self.pending_blocker_probe) |probe| probe.noteBinding(id);
-    }
-
     pub fn matchCallInput(self: *Resolver, expected_fields: global_sg.FieldRange, input_node: global_sg.GlobalNodeId) CallInputMatch {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input_node)].content) {
             .struct_value_literal => |value| value,
@@ -1076,13 +1032,11 @@ pub const Resolver = struct {
             const supplied = self.callArgument(literal, expected_offset, expected.name);
             if (supplied) |node| {
                 if (self.graph.isTypeUnresolved(expected.ty)) {
-                    self.notePendingType(expected.ty);
                     return .deferred;
                 }
                 const supplied_node = self.graph.nodes.items[@intFromEnum(node)];
                 if (supplied_node.ty) |actual| {
                     if (self.graph.isTypeUnresolved(actual)) {
-                        self.notePendingType(actual);
                         return .deferred;
                     }
                     if (types.equal(self.graph, actual, expected.ty)) score += 4 else if (self.callTypesCompatible(actual, expected.ty)) score += 3 else if (types.isBuiltin(self.graph, expected.ty, .Any)) score += 1 else if (self.contextualLiteralFits(node, expected.ty)) score += 3 else return .no_match;
@@ -1185,12 +1139,10 @@ pub const Resolver = struct {
                 const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
                 if (!std.mem.eql(u8, self.graph.text(binding.name), root_name)) continue;
                 if (self.graph.isBindingTypeUnresolved(binding_id)) {
-                    self.notePendingBinding(binding_id);
                     saw_deferred = true;
                     continue;
                 }
                 if (self.graph.isTypeUnresolved(binding.ty)) {
-                    self.notePendingType(binding.ty);
                     saw_deferred = true;
                     continue;
                 }
@@ -1199,7 +1151,6 @@ pub const Resolver = struct {
                 var valid = true;
                 for (segments[1..]) |segment| {
                     if (self.graph.isTypeUnresolved(current_ty)) {
-                        self.notePendingType(current_ty);
                         saw_deferred = true;
                         valid = false;
                         break;
@@ -1212,7 +1163,6 @@ pub const Resolver = struct {
                 }
                 if (!valid) continue;
                 if (self.graph.isTypeUnresolved(current_ty)) {
-                    self.notePendingType(current_ty);
                     saw_deferred = true;
                     continue;
                 }
@@ -1231,11 +1181,9 @@ pub const Resolver = struct {
         for (self.graph.fields.items[owner.input.start..][0..owner.input.len]) |field| {
             if (!std.mem.eql(u8, self.graph.text(field.name), self.graph.text(expected_field.name))) continue;
             if (self.graph.isTypeUnresolved(field.ty)) {
-                self.notePendingType(field.ty);
                 return .deferred;
             }
             if (self.graph.isTypeUnresolved(expected_field.ty)) {
-                self.notePendingType(expected_field.ty);
                 return .deferred;
             }
             return if (self.typesCompatibleWithAdditional(field.ty, expected_field.ty, additional) or

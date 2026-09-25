@@ -170,18 +170,6 @@ fn printStats(
         const item = semantic.expression_kinds[index];
         if (item.count != 0) std.debug.print("            {s}: {d}, {d:.3} ms\n", .{ field.name, item.count, milliseconds(item.self_ns) });
     }
-    const call_blockers = semantic.call_blockers;
-    std.debug.print("      deferred calls observed: {d} without ID, {d} one type, {d} one binding, {d} multiple IDs\n", .{
-        call_blockers.deferred_without_observed_id,
-        call_blockers.deferred_with_one_type,
-        call_blockers.deferred_with_one_binding,
-        call_blockers.deferred_with_multiple_ids,
-    });
-    std.debug.print("      repeated single ID: {d} same, {d} changed, {d} overflowed observations\n", .{
-        call_blockers.repeated_same_single_id,
-        call_blockers.changed_single_id,
-        call_blockers.observations_overflowed,
-    });
     std.debug.print("    full-pool materialization:\n", .{});
     std.debug.print("      type reconciliation:     {d:.3} ms\n", .{milliseconds(semantic_timings.type_reconciliation_ns)});
     std.debug.print("      binding reconciliation:  {d:.3} ms\n", .{milliseconds(semantic_timings.binding_reconciliation_ns)});
