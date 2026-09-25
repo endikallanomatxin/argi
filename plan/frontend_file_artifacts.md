@@ -173,6 +173,26 @@ Where language rules permit it, ModuleSema can finish work such as:
 The exact set should follow language semantics, not a target percentage of work.
 The rule is simply: another module must not be able to invalidate the answer.
 
+### External abstract names are currently a cache-boundary violation
+
+The current frontend passes a compilation-wide list of abstract declaration
+names into every `ModuleSemanticGraph` build. Parameterized lowering uses a
+matching name to turn an external type reference into a hidden abstract
+parameter. This makes the graph depend on unrelated modules, and the current
+catalog drops both the declaring module and the source qualifier. Adding an
+unrelated abstract called `A` can change how a module using `dep.A` is lowered.
+
+Do not fix this by replacing the global list with a per-module imported-name
+list: that still makes the cached module graph depend on imported module
+contents. Correct support for an external abstract in a generic signature
+requires a pending representation in ModuleSG that preserves the qualified
+external reference and the possible hidden parameter/constraint. GlobalSema
+must resolve the declaration kind and normalize the parameter list, dispatch
+kind, signature, and bindings before registering generic candidates. This
+normalization is not implemented yet; the external abstract signature case
+remains blocked on that IR and GlobalSema work. Local abstract names remain
+safe to lower directly in ModuleSema.
+
 ### Must remain pending for GlobalSema
 
 ModuleSema preserves explicit unresolved requirements for work that depends on
