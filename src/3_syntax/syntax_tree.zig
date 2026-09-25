@@ -139,7 +139,6 @@ pub const Node = struct {
         match_case_move,
         import_statement,
         defer_statement,
-        keep_statement,
         index_assignment,
         address_of,
         address_of_mut,
@@ -298,7 +297,6 @@ pub const ValueField = struct { name_token: ?TokenIndex, value: NodeIndex, posit
 pub const ReachDirective = struct { alternatives: []const NodeIndex };
 pub const ReachAlternative = struct { segments: []const NodeIndex };
 pub const ReturnStatement = struct { value: ?NodeIndex };
-pub const KeepStatement = struct { name_token: TokenIndex };
 pub const IndexAccess = struct { value: NodeIndex, index: NodeIndex };
 pub const AddressOf = struct { value: NodeIndex, mutability: PointerMutability };
 pub const PointerAssignment = struct { target: NodeIndex, value: NodeIndex };
@@ -787,11 +785,6 @@ pub const FileSyntaxTree = struct {
     pub fn returnStatement(tree: *const FileSyntaxTree, node: NodeIndex) ?ReturnStatement {
         if (tree.tag(node) != .return_statement) return null;
         return .{ .value = tree.data(node).optional_node.unwrap() };
-    }
-
-    pub fn keepStatement(tree: *const FileSyntaxTree, node: NodeIndex) ?KeepStatement {
-        if (tree.tag(node) != .keep_statement) return null;
-        return .{ .name_token = tree.data(node).token };
     }
 
     pub fn literal(tree: *const FileSyntaxTree, node: NodeIndex) ?Literal {

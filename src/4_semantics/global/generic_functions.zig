@@ -2488,7 +2488,6 @@ pub const Resolver = struct {
                 .for_each,
                 .match_case,
                 .defer_value,
-                .keep_binding,
                 .type_initializer,
                 .explicit_cast,
                 .other,

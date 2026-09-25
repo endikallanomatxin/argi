@@ -742,19 +742,6 @@ pub fn semantizeWithOptions(
     ))
         return if (options.diagnostics != null) error.Reported else error.InvalidImplicitCopy;
 
-    if (ownership.invalidKeep()) |keep| {
-        if (options.diagnostics) |diagnostics| {
-            const binding = relocation.graph.binding(keep.binding);
-            try diagnostics.add(
-                diagnosticLocation(&relocation.graph, diagnostics, keep.source),
-                .semantic,
-                "cannot keep binding '{s}': no automatic deinit is scheduled",
-                .{relocation.graph.text(binding.name)},
-            );
-        }
-        return if (options.diagnostics != null) error.Reported else error.InvalidKeep;
-    }
-
     if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, reachable, options.diagnostics))
         return if (options.diagnostics != null) error.Reported else error.InvalidPointerOperation;
 
@@ -1242,8 +1229,6 @@ fn pendingOwnerTag(tag: PendingTag) PendingOwner {
         .resolve_abstract => .abstracts,
         .resolve_error_propagation => .errors,
         .resolve_defer,
-        .resolve_keep,
-        .resolve_keep_name,
         .resolve_copy,
         .resolve_deinit,
         => .ownership,
@@ -1329,7 +1314,7 @@ fn resolvePendingOperation(
         .control => ownedResult(try control.tryResolve(module_index, module, o, operation)),
         .abstracts => ownedResult(try abstracts.tryResolve(module_index, module, o, operation)),
         .errors => ownedResult(try errors.tryResolve(module_index, module, o, operation)),
-        .ownership => ownedResult(try ownership.tryResolve(module_index, module, o, operation)),
+        .ownership => ownedResult(try ownership.tryResolve(o, operation)),
     };
 }
 
@@ -2620,10 +2605,6 @@ fn dumpUnresolved(
                     .resolve_import => |value| std.debug.print(
                         "global sema unresolved: module={d} dir={s} op=resolve_import path={s} node={d}\n",
                         .{ module_index, module.module_dir, module.text(value.path), @intFromEnum(value.node) },
-                    ),
-                    .resolve_keep_name => |value| std.debug.print(
-                        "global sema unresolved: module={d} dir={s} op=resolve_keep_name name={s} node={d}\n",
-                        .{ module_index, module.module_dir, module.text(value.name), @intFromEnum(value.node) },
                     ),
                     .resolve_choice_literal => |choice| {
                         const reference = module.semantic.external_refs.items[@intFromEnum(choice.option)];

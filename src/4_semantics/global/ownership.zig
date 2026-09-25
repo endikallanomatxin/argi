@@ -4,7 +4,6 @@ const module_entities = @import("../module/entities.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
 const resolution = @import("resolution.zig");
-const name_lookup = @import("name_lookup.zig");
 const core_mod = @import("core.zig");
 const dispatch_mod = @import("dispatch.zig");
 const reach_context = @import("reach_context.zig");
@@ -16,7 +15,6 @@ pub const Stats = struct {
     deinit_checks: u32 = 0,
     auto_deinits: u32 = 0,
     defers: u32 = 0,
-    keeps: u32 = 0,
     cleanup_edges: u32 = 0,
     destructor_successes: u32 = 0,
     destructor_failures: u32 = 0,
@@ -24,11 +22,6 @@ pub const Stats = struct {
 
 const Deferred = struct { marker: global_sg.GlobalNodeId, value: global_sg.GlobalNodeId };
 pub const DeniedCopy = struct { source: primitives.SourceRef, ty: global_sg.GlobalTypeId };
-const Kept = struct {
-    marker: global_sg.GlobalNodeId,
-    binding: global_sg.GlobalBindingId,
-    source: primitives.SourceRef,
-};
 const AutoNode = struct { binding: global_sg.GlobalBindingId, node: ?global_sg.GlobalNodeId };
 const ResolvedDestructor = struct {
     function: global_sg.GlobalFunctionId,
@@ -44,8 +37,6 @@ pub const Resolver = struct {
     core: *core_mod.Resolver,
     dispatch: ?*dispatch_mod.Resolver = null,
     deferred: std.ArrayList(Deferred) = .empty,
-    kept: std.ArrayList(Kept) = .empty,
-    invalid_keep: ?Kept = null,
     denied_copy: ?DeniedCopy = null,
     auto_nodes: std.ArrayList(AutoNode) = .empty,
     empty_block: ?global_sg.GlobalBlockId = null,
@@ -61,21 +52,16 @@ pub const Resolver = struct {
 
     pub fn deinit(self: *Resolver) void {
         self.deferred.deinit(self.allocator);
-        self.kept.deinit(self.allocator);
         self.auto_nodes.deinit(self.allocator);
     }
 
     pub fn tryResolve(
         self: *Resolver,
-        module_index: usize,
-        module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
         return switch (operation) {
             .resolve_defer => |value| resolution.Result.fromBool(try self.resolveDefer(o, value)),
-            .resolve_keep => |value| resolution.Result.fromBool(try self.resolveKeep(o, value)),
-            .resolve_keep_name => |value| resolution.Result.fromBool(try self.resolveKeepName(module_index, module, o, value)),
             .resolve_copy => |value| resolution.Result.fromBool(try self.resolveCopy(o, value)),
             .resolve_deinit => |value| resolution.Result.fromBool(try self.resolveExplicitDeinit(o, value)),
             else => .not_applicable,
@@ -194,41 +180,6 @@ pub const Resolver = struct {
         try self.deferred.append(self.allocator, .{ .marker = marker, .value = deferred_value });
         try self.makeNoop(marker, self.graph.nodes.items[@intFromEnum(deferred_value)].source);
         self.stats.defers += 1;
-    }
-
-    fn resolveKeep(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
-        return self.registerKeep(
-            globalizer.globalNode(o, value.node),
-            globalizer.globalBinding(o, value.binding),
-            globalSource(o, value.source),
-        );
-    }
-
-    fn resolveKeepName(
-        self: *Resolver,
-        module_index: usize,
-        module: *const module_sg.ModuleSemanticGraph,
-        o: globalizer.Offsets,
-        value: anytype,
-    ) !bool {
-        const binding = name_lookup.binding(self.modules, self.offsets, module_index, module.text(value.name)) orelse return false;
-        return self.registerKeep(globalizer.globalNode(o, value.node), binding, globalSource(o, value.source));
-    }
-
-    fn registerKeep(
-        self: *Resolver,
-        marker: global_sg.GlobalNodeId,
-        binding: global_sg.GlobalBindingId,
-        source: primitives.SourceRef,
-    ) !bool {
-        try self.kept.append(self.allocator, .{
-            .marker = marker,
-            .binding = binding,
-            .source = source,
-        });
-        try self.makeNoop(marker, self.graph.bindings.items[@intFromEnum(binding)].source);
-        self.stats.keeps += 1;
-        return true;
     }
 
     fn resolveCopy(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
@@ -441,12 +392,6 @@ pub const Resolver = struct {
             const node = &self.graph.nodes.items[@intFromEnum(node_id)];
             if (self.deferValue(node_id)) |deferred_value| {
                 try defers.append(self.allocator, deferred_value);
-                continue;
-            }
-            if (self.keepBinding(node_id)) |binding| {
-                if (self.autoDeinitNode(binding) == null and self.invalid_keep == null)
-                    self.invalid_keep = self.keepEntry(node_id);
-                removeBinding(&active, binding);
                 continue;
             }
             switch (node.content) {
@@ -862,19 +807,6 @@ pub const Resolver = struct {
         return null;
     }
 
-    fn keepBinding(self: *Resolver, marker: global_sg.GlobalNodeId) ?global_sg.GlobalBindingId {
-        return if (self.keepEntry(marker)) |entry| entry.binding else null;
-    }
-
-    fn keepEntry(self: *Resolver, marker: global_sg.GlobalNodeId) ?Kept {
-        for (self.kept.items) |entry| if (entry.marker == marker) return entry;
-        return null;
-    }
-
-    pub fn invalidKeep(self: *const Resolver) ?Kept {
-        return self.invalid_keep;
-    }
-
     fn makeNoop(self: *Resolver, marker: global_sg.GlobalNodeId, source: primitives.SourceRef) !void {
         const block = if (self.empty_block) |id| id else blk: {
             const id: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
@@ -902,17 +834,6 @@ pub const Resolver = struct {
 
 fn globalSource(o: globalizer.Offsets, source: primitives.SourceRef) primitives.SourceRef {
     return .{ .file_index = o.file_base + source.file_index, .offset = source.offset };
-}
-
-fn removeBinding(list: *std.ArrayList(global_sg.GlobalBindingId), binding: global_sg.GlobalBindingId) void {
-    var i: usize = list.items.len;
-    while (i != 0) {
-        i -= 1;
-        if (list.items[i] == binding) {
-            _ = list.orderedRemove(i);
-            return;
-        }
-    }
 }
 
 fn typeAccepts(graph: *const global_sg.GlobalSemanticGraph, expected: global_sg.GlobalTypeId, concrete: global_sg.GlobalTypeId) bool {

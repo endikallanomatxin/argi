@@ -1601,10 +1601,6 @@ pub const Syntaxer = struct {
                 const expr = try self.parseExpression();
                 return try self.addNode(.defer_statement, hash_token, .{ .node = expr });
             }
-            if (std.mem.eql(u8, ident, "keep")) {
-                const kept_name = try self.parseName();
-                return try self.addNode(.keep_statement, hash_token, .{ .token = kept_name.token });
-            }
             if (std.mem.eql(u8, ident, "import")) {
                 try self.diags.add(hash_loc, .syntax, "#import must be assigned to a name", .{});
                 return SyntaxerError.ExpectedDeclarationOrAssignment;

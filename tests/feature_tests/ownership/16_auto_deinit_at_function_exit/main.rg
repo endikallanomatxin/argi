@@ -11,16 +11,15 @@ deinit(.res: $&Resource) -> () := {
     global_counter_ptr& = global_counter_ptr& + 1
 }
 
-verify(.counter: $&Int32, .status: $&Int32) -> () := {
-    if counter& != 0 {
-        status& = 7
-    }
+create_and_drop(.counter: $&Int32) -> () := {
+    handle := Resource(.counter = counter)
 }
 
 main() -> (.status_code: Int32) := {
     counter :: Int32 = 0
+    create_and_drop(.counter = $&counter)
     status_code = 0
-    #defer verify(.counter = $&counter, .status = $&status_code)
-    handle := Resource(.counter = $&counter)
-    #keep handle
+    if counter != 1 {
+        status_code = 7
+    }
 }

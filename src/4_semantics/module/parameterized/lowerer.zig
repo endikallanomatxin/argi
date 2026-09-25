@@ -973,7 +973,6 @@ pub const Context = struct {
             .struct_field_access => if (self.tree.structFieldAccess(node)) |access| try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.field_token)) else null,
             .choice_payload_access => if (self.tree.choicePayloadAccess(node)) |access| try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.variant_token)) else null,
             .choice_literal, .choice_some_literal => if (self.tree.choiceLiteral(node)) |literal| try self.writer.addString(self.tree.tokenTextFromSource(self.source, literal.name_token)) else null,
-            .keep_statement => if (self.tree.keepStatement(node)) |keep| try self.writer.addString(self.tree.tokenTextFromSource(self.source, keep.name_token)) else null,
             else => null,
         };
         return self.addPending(node, kind, operands.items, name, null, parameterizedDetailForTag(self.tree.tag(node)));
@@ -1269,7 +1268,6 @@ fn parameterizedKindForTag(tag: syn.Node.Tag) ir.PendingExpressionKind {
         .for_value, .for_borrow, .for_mut_borrow => .for_each,
         .match_statement, .match_case_value, .match_case_borrow, .match_case_mut_borrow, .match_case_move => .match,
         .defer_statement => .defer_value,
-        .keep_statement => .keep_binding,
         .address_of, .address_of_mut => .address_of,
         .dereference => .dereference,
         .pointer_assignment => .pointer_store,

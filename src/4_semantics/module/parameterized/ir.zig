@@ -164,7 +164,6 @@ pub const PendingExpressionKind = enum(u8) {
     match,
     match_case,
     defer_value,
-    keep_binding,
     address_of,
     dereference,
     pointer_store,

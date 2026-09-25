@@ -2370,17 +2370,17 @@ test "feature_tests/types/15_default_type_initializer_argument" {
     try runExpect(test_path, 7);
 }
 
-test "feature_tests/ownership/16_keep_cancels_auto_deinit" {
-    const test_path = "tests/feature_tests/ownership/16_keep_cancels_auto_deinit";
+test "feature_tests/ownership/16_auto_deinit_at_function_exit" {
+    const test_path = "tests/feature_tests/ownership/16_auto_deinit_at_function_exit";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/17X_keep_without_auto_deinit" {
-    try buildExpectFailExact("tests/feature_tests/ownership/17X_keep_without_auto_deinit",
-        \\tests/feature_tests/ownership/17X_keep_without_auto_deinit/main.rg:3:11: error: cannot keep binding 'value': no automatic deinit is scheduled
+test "feature_tests/ownership/17X_removed_keep_directive" {
+    try buildExpectFailExact("tests/feature_tests/ownership/17X_removed_keep_directive",
+        \\tests/feature_tests/ownership/17X_removed_keep_directive/main.rg:3:5: error: unknown directive '#keep'
         \\      #keep value
-        \\            ^
+        \\      ^
         \\
     );
 }
@@ -2878,8 +2878,8 @@ test "feature_tests/ownership/20_anonymous_struct_auto_deinit" {
     try runExpect(test_path, 11);
 }
 
-test "feature_tests/ownership/21_keep_string_auto_deinit" {
-    const test_path = "tests/feature_tests/ownership/21_keep_string_auto_deinit";
+test "feature_tests/ownership/21_explicit_string_deinit" {
+    const test_path = "tests/feature_tests/ownership/21_explicit_string_deinit";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 11);
 }

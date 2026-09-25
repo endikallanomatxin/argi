@@ -314,30 +314,6 @@ explicit `copy(&value)` or explicit ownership transfer with `~value`.
 > La variable resultate de la inicialización va en el input o en el output de la declaración?
 
 
-## Keeping
-
-If you want to avoid the destruction of a variable, yo can use the `keep` keyword:
-
-```
-my_thing := 42
-my_pointer := &my_thing
-keep my_thing with my_pointer
-```
-
-This is a very confortable way of manual memory management. Almost automatic.
-
-> [!IDEA]
-> In the future, if it turns out to be useful, `keep` could support explicit
-> lifetime-management backends:
-> `keep my_view on rc_heap`
-> `keep my_object on gc_runtime`
->
-> The idea would be that plain `keep` preserves the current manual model, while
-> `keep ... on ...` would hand the lifetime over to an explicit runtime or
-> manager, potentially returning a different type such as a shared view or a
-> GC-managed reference.
-
-
 ## Generics
 
 - Monomorphized at compile time.

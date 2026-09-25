@@ -52,7 +52,6 @@ BackingAllocator implements Deallocator
 main(.system: System) -> (.status_code: Int32) := {
     backing :: BackingAllocator = BackingAllocator()
     array ::= DynamicArray#(.t: Tracked)(.allocator = $&backing, .capacity = 3)
-    #keep array
 
     first_result ::= make_tracked(.allocator = system.allocator, .id = 1)
     match first_result {

@@ -279,7 +279,6 @@ const Context = struct {
             .while_statement => self.lowerWhile(node),
             .match_statement => self.lowerMatch(node),
             .defer_statement => self.lowerDefer(node),
-            .keep_statement => self.lowerKeep(node),
             .reach_directive => self.lowerReach(node),
             .index_assignment => self.lowerIndexAssignment(node, expected),
             .address_of, .address_of_mut => self.lowerAddress(node),
@@ -840,26 +839,6 @@ const Context = struct {
     fn lowerDefer(self: *Context, node: syn.NodeIndex) !Lowered {
         const value = try self.lowerNode(self.tree.unaryOperand(node).?, null);
         return self.pending(node, .{ .resolve_defer = .{ .node = self.nextNodeId(), .value = value.node } }, try self.builtin(.Void));
-    }
-
-    fn lowerKeep(self: *Context, node: syn.NodeIndex) !Lowered {
-        const keep = self.tree.keepStatement(node).?;
-        const name = self.tree.tokenTextFromSource(self.source, keep.name_token);
-        const source = primitives.SourceRef{
-            .file_index = self.file_index,
-            .offset = self.tree.tokenLocation(keep.name_token).offset,
-        };
-        if (self.lookupBinding(name)) |binding|
-            return self.pending(node, .{ .resolve_keep = .{
-                .node = self.nextNodeId(),
-                .binding = binding.id,
-                .source = source,
-            } }, try self.builtin(.Void));
-        return self.pending(node, .{ .resolve_keep_name = .{
-            .node = self.nextNodeId(),
-            .name = try self.writer.addString(name),
-            .source = source,
-        } }, try self.builtin(.Void));
     }
 
     fn lowerReach(self: *Context, node: syn.NodeIndex) !Lowered {

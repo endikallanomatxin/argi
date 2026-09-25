@@ -267,10 +267,6 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.idFits(value.value, semantic.nodes.items.len));
         },
-        .resolve_keep => |value| {
-            try require(verify.idFits(value.node, semantic.nodes.items.len));
-            try require(verify.idFits(value.binding, semantic.bindings.items.len));
-        },
         .resolve_name_use => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.stringFits(value.name, graph.strings.items));
@@ -283,10 +279,6 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
         .resolve_import => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.stringFits(value.path, graph.strings.items));
-        },
-        .resolve_keep_name => |value| {
-            try require(verify.idFits(value.node, semantic.nodes.items.len));
-            try require(verify.stringFits(value.name, graph.strings.items));
         },
         .resolve_abstract => |value| {
             try require(verify.idFits(value.declaration, graph.declarations.items.len));
