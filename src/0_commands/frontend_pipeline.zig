@@ -267,14 +267,22 @@ pub const FrontendPipeline = struct {
         // the durable ModuleSG build/cache key rather than discovering it by
         // relowering modules after the fact.
         var prelude_abstracts: std.ArrayList(module_semantizer.QualifiedAbstract) = .empty;
-        defer prelude_abstracts.deinit(self.allocator);
+        defer {
+            for (prelude_abstracts.items) |candidate| self.allocator.free(candidate.name);
+            prelude_abstracts.deinit(self.allocator);
+        }
         for (self.module_graphs.items) |*candidate_module| {
             if (!candidate_module.is_bundled_core) continue;
             for (candidate_module.declarations.items) |declaration| {
                 if (declaration.kind != .abstract_type) continue;
+                // The source graph is not semantically finished yet; finishing
+                // can grow/reallocate its string pool. Keep the prelude catalog
+                // independent from those mutable buffers.
+                const name = try self.allocator.dupe(u8, candidate_module.text(declaration.name));
+                errdefer self.allocator.free(name);
                 try prelude_abstracts.append(self.allocator, .{
                     .qualifier = null,
-                    .name = candidate_module.text(declaration.name),
+                    .name = name,
                 });
             }
         }
