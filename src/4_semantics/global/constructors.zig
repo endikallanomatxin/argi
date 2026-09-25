@@ -21,9 +21,11 @@ pub const Resolver = struct {
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     core: *core_mod.Resolver,
+    // GlobalSema wires these after creating the mutually recursive resolvers.
+    // Constructor probes share their caches and services with normal calls.
+    generics: ?*generic_mod.Resolver = null,
+    generic_functions: ?*generic_functions_mod.Resolver = null,
     abstracts: ?*abstract_mod.Resolver = null,
-    ownership_context: ?*anyopaque = null,
-    register_defer: ?*const fn (*anyopaque, global_sg.GlobalNodeId, global_sg.GlobalNodeId) anyerror!void = null,
 
     const InitializerLookup = struct {
         function: ?global_sg.GlobalFunctionId = null,
@@ -58,14 +60,8 @@ pub const Resolver = struct {
             else => return err,
         };
         const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
-        var generics = generic_mod.Resolver{
-            .allocator = self.core.allocator,
-            .graph = self.graph,
-            .modules = self.modules,
-            .offsets = self.offsets,
-            .core = self.core,
-        };
-        defer generics.deinit();
+        const generics = self.generics.?;
+        const generic_functions = self.generic_functions.?;
 
         const parameterized = generics.isParameterizedTypeDeclaration(declaration_id);
         const ty = if (parameterized) blk: {
@@ -82,23 +78,9 @@ pub const Resolver = struct {
         };
 
         if (parameterized) {
-            var generic_functions = generic_functions_mod.Resolver{
-                .allocator = self.core.allocator,
-                .graph = self.graph,
-                .modules = self.modules,
-                .offsets = self.offsets,
-                .core = self.core,
-                .generics = &generics,
-                .nested_call_context = self.abstracts,
-                .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
-                .nested_constructor_context = self,
-                .nested_constructor_resolver = Resolver.resolveNestedCall,
-                .ownership_context = self.ownership_context,
-                .register_defer = self.register_defer,
-            };
             const initializer = try self.findGenericInitializer(
-                &generics,
-                &generic_functions,
+                generics,
+                generic_functions,
                 module_index,
                 ty,
                 input,
@@ -128,20 +110,6 @@ pub const Resolver = struct {
             if (initializer.function) |function_id| {
                 var selected = function_id;
                 if (self.graph.functions.items[@intFromEnum(selected)].flags.is_abstract_dispatch) {
-                    var generic_functions = generic_functions_mod.Resolver{
-                        .allocator = self.core.allocator,
-                        .graph = self.graph,
-                        .modules = self.modules,
-                        .offsets = self.offsets,
-                        .core = self.core,
-                        .generics = &generics,
-                        .nested_call_context = self.abstracts,
-                        .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
-                        .nested_constructor_context = self,
-                        .nested_constructor_resolver = Resolver.resolveNestedCall,
-                        .ownership_context = self.ownership_context,
-                        .register_defer = self.register_defer,
-                    };
                     selected = (try generic_functions.instantiateInitializer(
                         self.graph.functions.items[@intFromEnum(selected)].declaration,
                         ty,
@@ -212,14 +180,7 @@ pub const Resolver = struct {
         };
         const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
         const input = globalizer.globalNode(o, value.input);
-        var type_generics = generic_mod.Resolver{
-            .allocator = self.core.allocator,
-            .graph = self.graph,
-            .modules = self.modules,
-            .offsets = self.offsets,
-            .core = self.core,
-        };
-        defer type_generics.deinit();
+        const type_generics = self.generics.?;
         if (type_generics.isParameterizedTypeDeclaration(declaration_id))
             return self.resolveImplicitGenericCall(module_index, module, o, value, reference, declaration_id, input);
         const ty = declaration.type_id orelse return .deferred;
@@ -233,28 +194,7 @@ pub const Resolver = struct {
         if (initializer.function) |function_id| {
             var selected = function_id;
             if (self.graph.functions.items[@intFromEnum(selected)].flags.is_abstract_dispatch) {
-                var generics = generic_mod.Resolver{
-                    .allocator = self.core.allocator,
-                    .graph = self.graph,
-                    .modules = self.modules,
-                    .offsets = self.offsets,
-                    .core = self.core,
-                };
-                defer generics.deinit();
-                var generic_functions = generic_functions_mod.Resolver{
-                    .allocator = self.core.allocator,
-                    .graph = self.graph,
-                    .modules = self.modules,
-                    .offsets = self.offsets,
-                    .core = self.core,
-                    .generics = &generics,
-                    .nested_call_context = self.abstracts,
-                    .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
-                    .nested_constructor_context = self,
-                    .nested_constructor_resolver = Resolver.resolveNestedCall,
-                    .ownership_context = self.ownership_context,
-                    .register_defer = self.register_defer,
-                };
+                const generic_functions = self.generic_functions.?;
                 selected = (try generic_functions.instantiateInitializer(
                     self.graph.functions.items[@intFromEnum(selected)].declaration,
                     ty,
@@ -315,28 +255,8 @@ pub const Resolver = struct {
             };
         };
 
-        var generics = generic_mod.Resolver{
-            .allocator = self.core.allocator,
-            .graph = self.graph,
-            .modules = self.modules,
-            .offsets = self.offsets,
-            .core = self.core,
-        };
-        defer generics.deinit();
-        var generic_functions = generic_functions_mod.Resolver{
-            .allocator = self.core.allocator,
-            .graph = self.graph,
-            .modules = self.modules,
-            .offsets = self.offsets,
-            .core = self.core,
-            .generics = &generics,
-            .nested_call_context = self.abstracts,
-            .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
-            .nested_constructor_context = self,
-            .nested_constructor_resolver = Resolver.resolveNestedCall,
-            .ownership_context = self.ownership_context,
-            .register_defer = self.register_defer,
-        };
+        const generics = self.generics.?;
+        const generic_functions = self.generic_functions.?;
 
         // Context can fully determine a generic constructor even when none of
         // the runtime arguments mention its type parameter (for example an
@@ -347,8 +267,8 @@ pub const Resolver = struct {
                 .generic => |identity| if (identity.base == declaration_id) {
                     _ = generics.ensureGenericInstance(expected) catch return .deferred;
                     const initializer = try self.findGenericInitializer(
-                        &generics,
-                        &generic_functions,
+                        generics,
+                        generic_functions,
                         module_index,
                         expected,
                         input,
@@ -372,8 +292,8 @@ pub const Resolver = struct {
         }
 
         const initializer = try self.findImplicitGenericInitializer(
-            &generics,
-            &generic_functions,
+            generics,
+            generic_functions,
             module_index,
             declaration_id,
             input,
@@ -438,14 +358,7 @@ pub const Resolver = struct {
             error.UnknownGlobalDeclaration => return .not_applicable,
             else => return err,
         };
-        var generics = generic_mod.Resolver{
-            .allocator = self.core.allocator,
-            .graph = self.graph,
-            .modules = self.modules,
-            .offsets = self.offsets,
-            .core = self.core,
-        };
-        defer generics.deinit();
+        const generics = self.generics.?;
         const arguments = try generics.relocateModuleArguments(module_index, local_arguments);
         const ty = try generics.internType(.{ .generic = .{
             .base = declaration_id,
@@ -453,24 +366,11 @@ pub const Resolver = struct {
         } });
         _ = generics.ensureGenericInstance(ty) catch return .deferred;
 
-        var generic_functions = generic_functions_mod.Resolver{
-            .allocator = self.core.allocator,
-            .graph = self.graph,
-            .modules = self.modules,
-            .offsets = self.offsets,
-            .core = self.core,
-            .generics = &generics,
-            .nested_call_context = self.abstracts,
-            .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
-            .nested_constructor_context = self,
-            .nested_constructor_resolver = Resolver.resolveNestedCall,
-            .ownership_context = self.ownership_context,
-            .register_defer = self.register_defer,
-        };
+        const generic_functions = self.generic_functions.?;
         const input = globalizer.globalNode(o, value.input);
         const initializer = try self.findGenericInitializer(
-            &generics,
-            &generic_functions,
+            generics,
+            generic_functions,
             module_index,
             ty,
             input,
@@ -1128,11 +1028,29 @@ const Fixture = struct {
             .modules = self.modules(),
             .offsets = &self.offsets,
         };
+        var generics = generic_mod.Resolver{
+            .allocator = self.allocator,
+            .graph = &self.graph,
+            .modules = self.modules(),
+            .offsets = &self.offsets,
+            .core = &core,
+        };
+        defer generics.deinit();
+        var generic_functions = generic_functions_mod.Resolver{
+            .allocator = self.allocator,
+            .graph = &self.graph,
+            .modules = self.modules(),
+            .offsets = &self.offsets,
+            .core = &core,
+            .generics = &generics,
+        };
         var resolver: Resolver = .{
             .graph = &self.graph,
             .modules = self.modules(),
             .offsets = &self.offsets,
             .core = &core,
+            .generics = &generics,
+            .generic_functions = &generic_functions,
         };
         const operation = module_entities.PendingOperation{ .resolve_call = .{
             .node = @enumFromInt(1),

@@ -430,6 +430,10 @@ pub fn semantizeWithOptions(
     generic_functions.nested_call_resolver = abstract_mod.Resolver.resolveNestedCall;
     generic_functions.nested_constructor_context = &constructors;
     generic_functions.nested_constructor_resolver = constructor_mod.Resolver.resolveNestedCall;
+    // These resolvers call back into one another while materializing generic
+    // bodies, so wire their stable stack-owned instances after both exist.
+    constructors.generics = &generics;
+    constructors.generic_functions = &generic_functions;
     var errors = error_mod.Resolver{
         .allocator = allocator,
         .graph = &relocation.graph,
@@ -458,8 +462,6 @@ pub fn semantizeWithOptions(
     defer ownership.deinit();
     generic_functions.ownership_context = &ownership;
     generic_functions.register_defer = ownership_mod.Resolver.registerParameterizedDefer;
-    constructors.ownership_context = &ownership;
-    constructors.register_defer = ownership_mod.Resolver.registerParameterizedDefer;
 
     try core.resolveExternalTypes();
     try generics.resolveExternalTypes();
