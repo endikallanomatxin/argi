@@ -141,7 +141,7 @@ pub const Resolver = struct {
 
     fn cacheImplementation(self: *Resolver, key: ImplementationKey) !void {
         if (self.known_implementations.contains(key)) return;
-        try self.cacheImplementation(key);
+        try self.known_implementations.put(self.allocator, key, {});
         self.known_implementation_order.append(self.allocator, key) catch |err| {
             _ = self.known_implementations.remove(key);
             return err;
