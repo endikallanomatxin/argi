@@ -166,6 +166,40 @@ test "finishLinked completes an already discovered module graph" {
     try std.testing.expect(stats.local_semantics_complete);
 }
 
+test "finishLinked applies bundled prelude abstracts in one pass" {
+    const allocator = std.testing.allocator;
+    const source = "consume(.value: PreludeAbstract) -> () := {}\n";
+    const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};
+    var diagnostics = diagnostic.Diagnostics.init(&allocator, &input_sources);
+    defer diagnostics.deinit();
+    var tokenizer_context = tokenizer.Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
+    _ = try tokenizer_context.tokenize();
+    var tokens = tokenizer_context.takeTokens();
+    defer tokens.deinit(allocator);
+    var compact = try syntaxer.Syntaxer.init(allocator, .init(&tokens), source, &diagnostics);
+    defer compact.deinit();
+    var tree = try compact.parse();
+    defer tree.deinit(allocator);
+    try std.testing.expect(!diagnostics.hasErrors());
+
+    const files = [_]module_sg.FileInput{.{ .path = "app/use.rg", .tree = &tree, .source = source }};
+    var graph = try module_sg.build(allocator, "app", &files);
+    defer graph.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), graph.semantic.parameterized_storage.parameterized_functions.items.len);
+
+    _ = try finishLinked(
+        allocator,
+        &graph,
+        &files,
+        &.{.{ .qualifier = null, .name = "PreludeAbstract" }},
+    );
+    try std.testing.expectEqual(@as(usize, 1), graph.semantic.parameterized_storage.parameterized_functions.items.len);
+    try std.testing.expectEqual(
+        @import("parameterized/storage.zig").GenericDispatchKind.abstract_contract,
+        graph.semantic.parameterized_storage.parameterized_functions.items[0].dispatch_kind,
+    );
+}
+
 test "module semantizer completes syntax-independent local semantics" {
     const allocator = std.testing.allocator;
     var result = try build(allocator, "empty", &.{});

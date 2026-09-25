@@ -140,12 +140,16 @@ The source location is provenance, not semantic identity.
 ## `ModuleSemanticGraph` invariant
 
 A `ModuleSemanticGraph` may contain only semantic decisions whose correctness is
-independent of the contents of other modules.
+independent of arbitrary program modules, given explicit compiler semantic
+configuration such as the language/prelude version.
 
-This is the semantic cache invariant.
+This is the semantic cache invariant. Bundled core prelude names are treated as
+compiler configuration, not as ordinary cross-module dependencies; changing
+that configuration invalidates the module cache key.
 
-If changing another module could change a decision, ModuleSema must represent the
-requirement explicitly for GlobalSema instead of choosing a final target.
+If changing an ordinary imported/user module could change a decision, ModuleSema
+must represent the requirement explicitly for GlobalSema instead of choosing a
+final target.
 
 This permits aggressive resolution inside one module while keeping the module
 artifact independently cacheable.
@@ -175,26 +179,24 @@ The rule is simply: another module must not be able to invalidate the answer.
 
 ### Imported abstract signatures
 
-The durable `ModuleSemanticGraph` is built without consulting abstract names
-from other modules. It retains qualified external references such as `dep.A`.
-During whole-program linking, the frontend resolves import aliases against the
-discovered module directories and identifies qualified references to imported
-abstract declarations. The transient linked derivative is now built only when
-one of those declarations occurs in a function input position that
-`parameterized_lowerer` would classify as an abstract parameter; matching
-references in outputs or unrelated semantic positions no longer trigger a full
-module rebuild. The durable graph remains independent of changes in imported
-modules and is suitable for a module cache. Unqualified abstract names from
-bundled core remain available as prelude names; abstracts in user modules
-require an import qualifier.
+The frontend first discovers module headers for the whole compilation. From
+bundled core it derives the unqualified abstract prelude, then finishes every
+durable `ModuleSemanticGraph` exactly once with that prelude as explicit
+compiler semantic configuration. This removes the former second ModuleSema pass
+for ordinary core contracts such as `Allocator`, `Reader` and `Writer`.
 
-This is still an intermediate implementation: modules that genuinely need the
-linked interpretation repeat ModuleSema work for that compilation. The
-pre-trigger-narrowing StringHashMap baseline duplicated lowering in seven core
-modules; eight alternating pinned ReleaseFast pairs measured ModuleSema at
-8.1 → 11.9 ms and frontend at 25.3 → 28.0 ms, while DynamicArray frontend was
-23.6 → 26.7 ms. Re-measure those figures before using them as the current
-baseline.
+Ordinary imported modules remain different. The durable graph retains qualified
+external references such as `dep.A` without asking what declaration kind the
+target module owns. During whole-program linking, the frontend resolves import
+aliases and builds a transient linked derivative only when a qualified imported
+abstract occurs in a function input position that `parameterized_lowerer`
+would classify as an implicit abstract parameter. Matching references in
+outputs or unrelated semantic positions do not trigger a rebuild.
+
+The earlier StringHashMap measurement in which seven core modules were lowered
+twice (ModuleSema 8.1 → 11.9 ms, frontend 25.3 → 28.0 ms) predates prelude-aware
+single-pass finishing and is historical only. Re-measure the current branch
+before making further clean-build decisions.
 
 The durable replacement should encode the source-local fact that an external
 input type *may* be an abstract contract without deciding that question from
@@ -446,6 +448,8 @@ semantics, at minimum:
 
 - the identity and content fingerprint of every direct `.rg` file in the module;
 - compiler/language semantic format version;
+- bundled prelude semantic version/fingerprint, because unqualified core
+  abstracts participate in durable ModuleSema;
 - compiler options that can affect module-local semantics;
 - module layout/configuration inputs that are semantically relevant.
 
