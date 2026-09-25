@@ -2,7 +2,7 @@ const source_files = @import("1_base/source_files.zig");
 const semantic_literals = @import("4_semantics/semantic_literals.zig");
 const link = @import("5_codegen/link.zig");
 const lsp = @import("0_commands/lsp.zig");
-const indexed_lsp_service = @import("0_commands/indexed_lsp_service.zig");
+const lsp_service = @import("0_commands/lsp_service.zig");
 const tokenizer = @import("2_tokens/tokenizer.zig");
 const syntax_tree = @import("3_syntax/syntax_tree.zig");
 const syntaxer = @import("3_syntax/syntaxer.zig");
@@ -60,7 +60,7 @@ test {
     _ = source_files;
     _ = link;
     _ = lsp;
-    _ = indexed_lsp_service;
+    _ = lsp_service;
     _ = tokenizer;
     _ = syntax_tree;
     _ = syntaxer;

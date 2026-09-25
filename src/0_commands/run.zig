@@ -1,6 +1,6 @@
 const std = @import("std");
 const build_plan = @import("build_plan.zig");
-const indexed_build = @import("indexed_build.zig");
+const build = @import("build.zig");
 
 fn rejectUnsupportedRunFlags(args: []const []const u8) !void {
     for (args) |arg| {
@@ -47,7 +47,7 @@ pub fn run(
     var flags = parsed.flags;
     if (plan.executable_name) |name| flags.executable_name = name;
 
-    try indexed_build.compileTarget(parsed.target_path, flags, .{}, io, environ_map);
+    try build.compileTarget(parsed.target_path, flags, .{}, io, environ_map);
 
     const result = try std.process.run(allocator, io, .{
         .argv = &.{plan.output_path},

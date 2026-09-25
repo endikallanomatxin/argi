@@ -4,7 +4,7 @@ const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const frontend = @import("frontend_pipeline.zig");
 const build_plan = @import("build_plan.zig");
-const indexed_build = @import("indexed_build.zig");
+const build = @import("build.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
 
 const DiscoverTest = struct {
@@ -152,7 +152,7 @@ pub fn run(
             .sysroot_path = parsed.sysroot_path,
         };
 
-        indexed_build.compileTarget(module_dir, flags, .{
+        build.compileTarget(module_dir, flags, .{
             .frontend_options = .{
                 .semantizing = .{
                     .include_tests = true,
