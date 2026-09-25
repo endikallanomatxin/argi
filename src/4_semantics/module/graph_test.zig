@@ -632,6 +632,26 @@ test "imported abstract inputs become constrained templates" {
     try std.testing.expectEqualStrings("Writer", module.graph.text(reference.name));
 }
 
+test "local concrete type shadows unqualified prelude abstract" {
+    const allocator = std.testing.allocator;
+    const source =
+        "Shadowed : Type = ()\n" ++
+        "consume(.value: Shadowed) -> () := {}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try @import("semantizer.zig").buildLinked(allocator, "shadowing", &.{.{
+        .path = "shadowing/main.rg",
+        .tree = &tree,
+        .source = source,
+    }}, &.{.{ .qualifier = null, .name = "Shadowed" }});
+    defer module.graph.deinit(allocator);
+
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        module.graph.semantic.parameterized_storage.parameterized_functions.items.len,
+    );
+}
+
 test "parameterized call defaults reach caller bindings after instantiation" {
     const allocator = std.testing.allocator;
     const source =

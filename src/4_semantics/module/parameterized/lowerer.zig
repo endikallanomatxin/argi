@@ -375,7 +375,11 @@ pub const Context = struct {
             const qualifier_text = self.tree.tokenTextFromSource(self.source, qualifier_token);
             return self.knownAbstract(qualifier_text, text);
         }
-        return self.localAbstractType(text) != null or self.knownAbstract(null, text);
+        // Local declarations shadow unqualified prelude names regardless of
+        // declaration kind. Only fall back to the linked prelude catalog when
+        // this module does not declare the spelling itself.
+        if (self.localType(text) != null) return self.localAbstractType(text) != null;
+        return self.knownAbstract(null, text);
     }
 
     fn registerAbstractParameter(self: *Context, node: syn.NodeIndex, abstract_name: []const u8) !ir.ComptimeParameterId {
