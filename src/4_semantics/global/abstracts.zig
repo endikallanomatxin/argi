@@ -67,6 +67,10 @@ pub const Resolver = struct {
         generic_instances: usize,
         functions: usize,
     };
+    pub const CacheCheckpoint = struct {
+        positive_len: usize,
+        negative_len: usize,
+    };
     const ConstraintKey = struct {
         module_index: u32,
         constraint: parameterized_storage.AbstractConstraintId,
@@ -88,10 +92,13 @@ pub const Resolver = struct {
     profile_implementation_scans: bool = false,
     profile_io: ?std.Io = null,
     // Automatic cleanup repeatedly probes generic deinit candidates for the
-    // same concrete/abstract pairs. Positive matches remain valid as resolution
-    // advances; negative matches are scoped to a round and graph generation.
+    // same concrete/abstract pairs. Both caches log insertions so speculative
+    // GlobalSG rollback can discard keys that reference reused tail IDs.
+    // Negative matches are also scoped to a round and graph generation.
     known_implementations: std.AutoHashMapUnmanaged(ImplementationKey, void) = .empty,
     known_nonimplementations: std.AutoHashMapUnmanaged(ImplementationKey, GraphGeneration) = .empty,
+    known_implementation_order: std.ArrayList(ImplementationKey) = .empty,
+    known_nonimplementation_order: std.ArrayList(ImplementationKey) = .empty,
     constraint_declarations: std.AutoHashMapUnmanaged(ConstraintKey, global_sg.GlobalDeclId) = .empty,
     resolved_abstract_refs: std.AutoHashMapUnmanaged(AbstractRefKey, global_sg.GlobalDeclId) = .empty,
     cached_implementation_hits: u64 = 0,
@@ -99,12 +106,59 @@ pub const Resolver = struct {
     pub fn deinit(self: *Resolver) void {
         self.known_implementations.deinit(self.allocator);
         self.known_nonimplementations.deinit(self.allocator);
+        self.known_implementation_order.deinit(self.allocator);
+        self.known_nonimplementation_order.deinit(self.allocator);
         self.constraint_declarations.deinit(self.allocator);
         self.resolved_abstract_refs.deinit(self.allocator);
     }
 
     pub fn invalidate_negative_implementation_cache(self: *Resolver) void {
         self.known_nonimplementations.clearRetainingCapacity();
+        self.known_nonimplementation_order.clearRetainingCapacity();
+    }
+
+    pub fn checkpointImplementationCaches(self: *const Resolver) CacheCheckpoint {
+        return .{
+            .positive_len = self.known_implementation_order.items.len,
+            .negative_len = self.known_nonimplementation_order.items.len,
+        };
+    }
+
+    pub fn rollbackImplementationCaches(self: *Resolver, saved: CacheCheckpoint) void {
+        while (self.known_implementation_order.items.len > saved.positive_len) {
+            const index = self.known_implementation_order.items.len - 1;
+            const key = self.known_implementation_order.items[index];
+            self.known_implementation_order.items.len = index;
+            _ = self.known_implementations.remove(key);
+        }
+        while (self.known_nonimplementation_order.items.len > saved.negative_len) {
+            const index = self.known_nonimplementation_order.items.len - 1;
+            const key = self.known_nonimplementation_order.items[index];
+            self.known_nonimplementation_order.items.len = index;
+            _ = self.known_nonimplementations.remove(key);
+        }
+    }
+
+    fn cacheImplementation(self: *Resolver, key: ImplementationKey) !void {
+        if (self.known_implementations.contains(key)) return;
+        try self.cacheImplementation(key);
+        self.known_implementation_order.append(self.allocator, key) catch |err| {
+            _ = self.known_implementations.remove(key);
+            return err;
+        };
+    }
+
+    fn cacheNonImplementation(self: *Resolver, key: ImplementationKey, generation: GraphGeneration) !void {
+        // Negative entries are invalidated between fixed-point rounds. If the
+        // same key survives while the graph grows within a round, keep the old
+        // generation instead of overwriting it: a later rollback can then
+        // never leave a generation stamp produced by discarded graph tails.
+        if (self.known_nonimplementations.contains(key)) return;
+        try self.known_nonimplementations.put(self.allocator, key, generation);
+        self.known_nonimplementation_order.append(self.allocator, key) catch |err| {
+            _ = self.known_nonimplementations.remove(key);
+            return err;
+        };
     }
 
     pub fn tryResolve(
@@ -981,7 +1035,7 @@ pub const Resolver = struct {
                 if (candidate_abstract != abstract_decl) continue;
                 const candidate_type = globalizer.globalType(self.offsets[module_index], implementation.ty);
                 if (global_types.equal(self.graph, concrete, candidate_type)) {
-                    try self.known_implementations.put(self.allocator, key, {});
+                    try self.cacheImplementation(key);
                     self.stats.concrete_hits += 1;
                     return true;
                 }
@@ -991,7 +1045,7 @@ pub const Resolver = struct {
                 };
                 if (inherited == abstract_decl or self.findAbstractDefinition(inherited) == null) continue;
                 if (try self.implementsDepth(concrete, inherited, depth + 1)) {
-                    try self.known_implementations.put(self.allocator, key, {});
+                    try self.cacheImplementation(key);
                     self.stats.concrete_hits += 1;
                     return true;
                 }
@@ -1001,7 +1055,7 @@ pub const Resolver = struct {
                 const candidate_abstract = try self.resolveDeclarationRef(module_index, parameterized.abstract_ref, .abstract_type);
                 if (candidate_abstract != abstract_decl) continue;
                 if (self.matchesImplementationParameterized(module_index, concrete, parameterized) catch false) {
-                    try self.known_implementations.put(self.allocator, key, {});
+                    try self.cacheImplementation(key);
                     self.stats.parameterized_hits += 1;
                     return true;
                 }
@@ -1009,7 +1063,7 @@ pub const Resolver = struct {
         }
         // A failed match can become valid when a generic type is materialized.
         // Reuse it only while the relevant graph pools remain at this generation.
-        if (concrete_resolved) try self.known_nonimplementations.put(self.allocator, key, generation);
+        if (concrete_resolved) try self.cacheNonImplementation(key, generation);
         return false;
     }
 
@@ -1866,4 +1920,46 @@ pub const Resolver = struct {
 test "abstract resolver keeps compile-time relation metadata outside GlobalSG" {
     try std.testing.expect(@sizeOf(Stats) <= 40);
     try std.testing.expect(@sizeOf(global_sg.GlobalDeclId) == 4);
+}
+
+
+test "abstract implementation caches rollback speculative keys" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+
+    var resolver = Resolver{
+        .allocator = allocator,
+        .graph = &graph,
+        .modules = &.{},
+        .offsets = &.{},
+        .core = undefined,
+        .generics = undefined,
+    };
+    defer resolver.deinit();
+
+    const stable = ImplementationKey{ .concrete = @enumFromInt(1), .abstract_decl = @enumFromInt(2) };
+    const speculative_positive = ImplementationKey{ .concrete = @enumFromInt(3), .abstract_decl = @enumFromInt(4) };
+    const speculative_negative = ImplementationKey{ .concrete = @enumFromInt(5), .abstract_decl = @enumFromInt(6) };
+
+    try resolver.cacheImplementation(stable);
+    const saved = resolver.checkpointImplementationCaches();
+    try resolver.cacheImplementation(speculative_positive);
+    try resolver.cacheNonImplementation(speculative_negative, .{
+        .types = 9,
+        .generic_instances = 3,
+        .functions = 7,
+    });
+
+    try std.testing.expect(resolver.known_implementations.contains(stable));
+    try std.testing.expect(resolver.known_implementations.contains(speculative_positive));
+    try std.testing.expect(resolver.known_nonimplementations.contains(speculative_negative));
+
+    resolver.rollbackImplementationCaches(saved);
+
+    try std.testing.expect(resolver.known_implementations.contains(stable));
+    try std.testing.expect(!resolver.known_implementations.contains(speculative_positive));
+    try std.testing.expect(!resolver.known_nonimplementations.contains(speculative_negative));
+    try std.testing.expectEqual(saved.positive_len, resolver.known_implementation_order.items.len);
+    try std.testing.expectEqual(saved.negative_len, resolver.known_nonimplementation_order.items.len);
 }

@@ -585,9 +585,11 @@ pub const Resolver = struct {
         context: reach_context.Context,
     ) !InitializerProbe {
         const checkpoint = self.graph.checkpoint();
+        const side_effect_checkpoint = generic_functions.checkpointSideEffects();
         const saved_stats = generics.stats;
         defer {
             self.graph.rollback(checkpoint);
+            generic_functions.rollbackSideEffects(side_effect_checkpoint);
             generics.stats = saved_stats;
         }
 
@@ -737,9 +739,11 @@ pub const Resolver = struct {
         context: reach_context.Context,
     ) !InitializerProbe {
         const checkpoint = self.graph.checkpoint();
+        const side_effect_checkpoint = generic_functions.checkpointSideEffects();
         const saved_stats = generics.stats;
         defer {
             self.graph.rollback(checkpoint);
+            generic_functions.rollbackSideEffects(side_effect_checkpoint);
             generics.stats = saved_stats;
         }
 

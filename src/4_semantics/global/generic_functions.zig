@@ -70,17 +70,30 @@ pub const Resolver = struct {
     profile_instantiate_body_ns: i96 = 0,
     profile_instance_context_init_ns: i96 = 0,
 
-    pub fn checkpointSideEffects(self: *const Resolver) ?[2]usize {
-        const context = self.ownership_context orelse return null;
-        const checkpoint = self.ownership_checkpoint orelse return null;
-        return checkpoint(context);
+    pub const SideEffectCheckpoint = struct {
+        ownership: ?[2]usize = null,
+        abstracts: ?abstract_mod.Resolver.CacheCheckpoint = null,
+    };
+
+    pub fn checkpointSideEffects(self: *const Resolver) SideEffectCheckpoint {
+        var saved: SideEffectCheckpoint = .{};
+        if (self.ownership_context) |context|
+            if (self.ownership_checkpoint) |checkpoint|
+                saved.ownership = checkpoint(context);
+        if (self.nested_call_context) |abstracts|
+            saved.abstracts = abstracts.checkpointImplementationCaches();
+        return saved;
     }
 
-    pub fn rollbackSideEffects(self: *Resolver, saved: ?[2]usize) void {
-        const checkpoint = saved orelse return;
-        const context = self.ownership_context orelse return;
-        const rollback = self.rollback_ownership orelse return;
-        rollback(context, checkpoint);
+    pub fn rollbackSideEffects(self: *Resolver, saved: SideEffectCheckpoint) void {
+        if (saved.abstracts) |checkpoint|
+            if (self.nested_call_context) |abstracts|
+                abstracts.rollbackImplementationCaches(checkpoint);
+        if (saved.ownership) |checkpoint| {
+            const context = self.ownership_context orelse return;
+            const rollback = self.rollback_ownership orelse return;
+            rollback(context, checkpoint);
+        }
     }
 
     fn profileTimestamp(self: *const Resolver) i96 {
@@ -1549,9 +1562,11 @@ pub const Resolver = struct {
 
     fn matchParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) core_mod.Resolver.CallInputMatch {
         const checkpoint = self.graph.checkpoint();
+        const side_effect_checkpoint = self.checkpointSideEffects();
         const saved_stats = self.generics.stats;
         defer {
             self.graph.rollback(checkpoint);
+            self.rollbackSideEffects(side_effect_checkpoint);
             self.generics.stats = saved_stats;
         }
         const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return .deferred;
