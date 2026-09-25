@@ -6,6 +6,7 @@ const diag = @import("../1_base/diagnostic.zig");
 const token = @import("../2_tokens/token.zig");
 const tokenizer = @import("../2_tokens/tokenizer.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
+const st_print = @import("../3_syntax/syntax_tree_print.zig");
 const syntaxer = @import("../3_syntax/syntaxer.zig");
 const module_sg = @import("../4_semantics/module/graph.zig");
 const module_semantizer = @import("../4_semantics/module/semantizer.zig");
@@ -13,7 +14,7 @@ const global_sg = @import("../4_semantics/global/graph.zig");
 const global_semantizer = @import("../4_semantics/global/semantizer.zig");
 const module_linker = @import("../4_semantics/global/module_linker.zig");
 const global_once_verify = @import("../4_semantics/global/once_verify.zig");
-const module_test_validate = @import("../4_semantics/module/test_validate.zig");
+const module_test_declaration_verify = @import("../4_semantics/module/test_declaration_verify.zig");
 const global_safety_checker = @import("../4_semantics/safety/checker.zig");
 
 pub const FrontendPipeline = struct {
@@ -42,14 +43,12 @@ pub const FrontendPipeline = struct {
     global_graph: ?global_sg.GlobalSemanticGraph = null,
     global_stats: global_semantizer.Stats = .{},
     global_safety_stats: global_safety_checker.SafetyChecker.Stats = .{},
-    syntax_ctx: ?syntaxer.Syntaxer = null,
     safety_ctx: ?global_safety_checker.SafetyChecker = null,
     safety_ns: u64 = 0,
     module_semantizing_ns: u64 = 0,
     global_semantic_ns: u64 = 0,
     module_lowered_functions: u32 = 0,
     syntax_node_count: usize = 0,
-    syntax_roots: []const st.SyntaxRef = &.{},
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -101,18 +100,25 @@ pub const FrontendPipeline = struct {
         self.syntax_node_count = 0;
         for (self.syntax_files.items) |*file| {
             const file_id = file.file_id;
-            self.syntax_ctx = syntaxer.Syntaxer.initFile(self.allocator, file.*, self.source_db.get(file_id).source, self.diagnostics);
+            var syntax_ctx = syntaxer.Syntaxer.initFile(self.allocator, file.*, self.source_db.get(file_id).source, self.diagnostics);
             file.* = .{ .file_id = file_id };
-            file.* = self.syntax_ctx.?.parse() catch |err| {
-                file.* = self.syntax_ctx.?.file;
-                self.syntax_ctx.?.file = .{ .file_id = file_id };
+            file.* = syntax_ctx.parse() catch |err| {
+                file.* = syntax_ctx.file;
+                syntax_ctx.file = .{ .file_id = file_id };
                 return err;
             };
             self.syntax_node_count += file.nodes.len;
             for (file.roots) |node| try self.syntax_root_list.append(file.ref(node));
         }
-        self.syntax_roots = self.syntax_root_list.items;
-        return self.syntax_roots;
+        return self.syntax_root_list.items;
+    }
+
+    pub fn printSyntaxTrees(self: *const FrontendPipeline) void {
+        std.debug.print("\nSYNTAX TREE\n", .{});
+        for (self.syntax_files.items) |*file| {
+            for (file.roots) |node| st_print.printNode(file, self.source_db, node, 0);
+        }
+        std.debug.print("\n", .{});
     }
 
     pub fn syntaxStorageMetrics(self: *const FrontendPipeline) st.FileSyntaxTree.StorageMetrics {
@@ -158,7 +164,7 @@ pub const FrontendPipeline = struct {
         // ModuleSema/GlobalSema can only manufacture secondary unresolved work
         // and pollute the primary parser diagnostic with internal debug noise.
         if (self.diagnostics.hasErrors()) return error.Reported;
-        try module_test_validate.validate(
+        try module_test_declaration_verify.validate(
             self.syntax_files.items,
             self.source_db,
             self.diagnostics,

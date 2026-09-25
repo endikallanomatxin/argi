@@ -1,7 +1,6 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
 const syn = @import("syntax_tree.zig");
-const synp = @import("syntax_tree_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
 pub const SyntaxerError = error{
@@ -1954,12 +1953,5 @@ pub const Syntaxer = struct {
         // ── otherwise parse the expression -----------------------
         const expr = try self.parseExpression();
         return try self.addNode(.return_statement, start, .{ .optional_node = expr.optional() });
-    }
-
-    // ─────────────────────────────  DEBUG  ──────────────────────────────────
-    pub fn printST(self: *Syntaxer) void {
-        std.debug.print("\nSYNTAX TREE\n", .{});
-        for (self.file.roots) |node| synp.printNode(&self.file, &self.diags.source_db, node, 0);
-        std.debug.print("\n", .{});
     }
 };

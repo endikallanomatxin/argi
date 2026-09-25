@@ -325,7 +325,7 @@ fn compileResolvedPlan(
 
     const frontend_start = nowNs(io);
     const graph = pipeline.semantizeGlobalFiles(files.items) catch |err| {
-        if (flags.show_syntax_tree) if (pipeline.syntax_ctx) |*ctx| ctx.printST();
+        if (flags.show_syntax_tree) pipeline.printSyntaxTrees();
         if (flags.show_semantic_graph) if (pipeline.global_graph) |*built| graph_print.print(built);
         dumpDiagnostics(&diagnostics, flags);
         if (!diagnostics.hasErrors()) std.debug.print("indexed semantizing failed without a diagnostic: {s}\n", .{@errorName(err)});
