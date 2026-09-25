@@ -478,6 +478,17 @@ pub const GlobalSemanticGraph = struct {
         self.bindings.items[raw].ty = unresolved_binding_type_poison;
     }
 
+    /// Publish a binding type through the construction-state boundary. New
+    /// resolution code should prefer this over patching the binding slot
+    /// directly so provisional state is updated at the same time.
+    pub fn resolveBindingType(self: *GlobalSemanticGraph, id: GlobalBindingId, ty: GlobalTypeId) !void {
+        const raw: usize = @intFromEnum(id);
+        if (raw >= self.bindings.items.len) return error.InvalidGlobalBindingId;
+        self.bindings.items[raw].ty = ty;
+        if (raw < self.construction.binding_type_resolution.items.len)
+            self.construction.binding_type_resolution.items[raw] = .resolved;
+    }
+
     pub fn reconcileBindingTypeResolution(self: *GlobalSemanticGraph) bool {
         var changed = false;
         const limit = @min(self.construction.binding_type_resolution.items.len, self.bindings.items.len);
@@ -492,6 +503,11 @@ pub const GlobalSemanticGraph = struct {
     pub fn hasUnresolvedBindingTypes(self: *const GlobalSemanticGraph) bool {
         for (self.construction.binding_type_resolution.items) |state| if (state == .unresolved) return true;
         return false;
+    }
+
+    pub fn constructionStateEmpty(self: *const GlobalSemanticGraph) bool {
+        return self.construction.type_resolution.items.len == 0 and
+            self.construction.binding_type_resolution.items.len == 0;
     }
 
     pub fn finishBindingTypeResolution(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) !void {
@@ -730,5 +746,5 @@ test "unresolved global type slots are construction state, not Any" {
     try std.testing.expect(graph.reconcileTypeResolution());
     try std.testing.expect(!graph.hasUnresolvedTypes());
     try graph.finishTypeResolution(allocator);
-    try std.testing.expectEqual(@as(usize, 0), graph.construction.type_resolution.items.len);
+    try std.testing.expect(graph.constructionStateEmpty());
 }

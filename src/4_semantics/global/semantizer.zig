@@ -1254,13 +1254,11 @@ fn retireDormantBindingResolution(
     reachable: *const reachability_mod.FunctionSet,
     dormant_type: global_sg.GlobalTypeId,
 ) !void {
-    const limit = @min(graph.construction.binding_type_resolution.items.len, graph.bindings.items.len);
-    for (graph.construction.binding_type_resolution.items[0..limit], 0..) |*state, raw| {
-        if (state.* != .unresolved) continue;
+    for (0..graph.bindings.items.len) |raw| {
         const binding: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
+        if (!graph.isBindingTypeUnresolved(binding)) continue;
         if (reachable.containsBinding(binding)) continue;
-        graph.bindings.items[raw].ty = dormant_type;
-        state.* = .resolved;
+        try graph.resolveBindingType(binding, dormant_type);
     }
 }
 
@@ -2722,5 +2720,5 @@ test "global semantizer accepts an empty program" {
     try std.testing.expectEqual(@as(usize, 0), result.graph.nodes.items.len);
     try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
     try std.testing.expectEqual(@as(u64, 0), result.stats.pending_attempts);
-    try std.testing.expectEqual(@as(usize, 0), result.graph.construction.type_resolution.items.len);
+    try std.testing.expect(result.graph.constructionStateEmpty());
 }
