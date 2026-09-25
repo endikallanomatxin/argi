@@ -576,13 +576,6 @@ pub const GlobalSemanticGraph = struct {
     }
 };
 
-fn isUnresolvedTypePoison(value: GlobalType) bool {
-    return switch (value) {
-        .declared => |decl| decl == unresolved_type_poison_decl,
-        else => false,
-    };
-}
-
 test "global semantic graph derives symbol module ownership from declarations" {
     const allocator = std.testing.allocator;
     var graph: GlobalSemanticGraph = .{};

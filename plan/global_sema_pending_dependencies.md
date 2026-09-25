@@ -330,10 +330,13 @@ counts remain available under `--stats` for future profiling.
 - [ ] Extend observations only if a future workload shows expensive deferred
       calls with no blocker identified at the current gates. Additional
       resolver families may have other causes.
-- [ ] Inventory every write that can satisfy the chosen prerequisite,
-      including direct slot writes, reconciliation, generic specialization,
-      materialization, reachability expansion and ownership finalization.
-      Identify the event that can be emitted *after* the value is usable.
+- [ ] Inventory every write that can satisfy the chosen prerequisite.
+      Type and binding holes now publish through `resolveType` and
+      `resolveBindingType` rather than relying on reconciliation sweeps, so
+      those transitions already provide explicit wake-event boundaries.
+      Generic specialization, materialization, reachability expansion and
+      ownership finalization still need the same audit before introducing
+      sleepers.
 - [ ] Audit speculative graph rollback and ID reuse. GlobalSG append-only
       rollback is now centralized in `GlobalSemanticGraph.checkpoint/rollback`,
       name-index tails are covered by regression tests, and parameterized
