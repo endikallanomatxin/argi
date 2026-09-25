@@ -67,6 +67,35 @@ from these sums. The detail and overhead of `--stats` changed between commits;
 these are phase-timing comparisons, not a cycle-exact attribution of the
 remaining regression.
 
+## Pool layout and growth audit (2026-09-24, `5f6e86be`)
+
+Temporary `--stats` instrumentation measured `ArrayList` lengths and
+capacities on the string hash map case. The final GlobalSemanticGraph held
+696,913 logical bytes in its pools and reserved 834,404 bytes, about 20%
+headroom. Nodes were the largest pool: 5,530 nodes at 56 bytes each, or
+309,680 logical bytes. Strings used 123,721 logical bytes; functions,
+bindings, fields and generic arguments were each substantially smaller.
+These totals exclude the graph's name indexes and allocator metadata, so
+they describe pool payload rather than full resident memory.
+
+The selected ModuleSemanticGraph pools showed ordinary geometric growth:
+semantic nodes had 3,493 elements and capacity for 4,220 (21% headroom),
+strings had 105,398 bytes and 142,492 capacity (35%), and lexical references
+had 2,141 elements and capacity for 2,917 (36%). Semantic types had 895
+elements and capacity for 1,314 (47%), but only 42 KiB reserved. The module
+storage report also counts logical bytes, not unused capacity or name-index
+allocations; it should not be read as resident heap size.
+
+Reserving exact scratch capacity in the three generic argument/field/variant
+builders was tested and removed. Across 32 alternating pinned ReleaseFast
+pairs, string hash map indexed frontend was 18.072 ms before and 18.099 ms
+after; dynamic array owning mutations was 13.680 and 13.672 ms. GlobalSema
+and generic-instantiation timings showed no consistent gain. The prior block
+node-reference reservation experiment was likewise neutral. Initial GlobalSema
+relocation and linking takes about 0.7 ms in these cases, limiting the likely
+gain from aggressive preallocation of its initial pools. Focus on repeated
+semantic work before changing pool layouts or growth policy.
+
 ## Hypotheses to test
 
 1. A small set of expensive pending operations, especially calls, accounts
