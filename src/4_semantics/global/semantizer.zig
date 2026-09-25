@@ -458,6 +458,8 @@ pub fn semantizeWithOptions(
     defer ownership.deinit();
     generic_functions.ownership_context = &ownership;
     generic_functions.register_defer = ownership_mod.Resolver.registerParameterizedDefer;
+    constructors.ownership_context = &ownership;
+    constructors.register_defer = ownership_mod.Resolver.registerParameterizedDefer;
 
     try core.resolveExternalTypes();
     try generics.resolveExternalTypes();

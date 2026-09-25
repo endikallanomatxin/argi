@@ -2029,6 +2029,12 @@ test "feature_tests/types/17_generic_type_initializer_from_init" {
     try run(test_path);
 }
 
+test "feature_tests/types/260_generic_type_initializer_defer" {
+    const test_path = "tests/feature_tests/types/260_generic_type_initializer_defer";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/types/18_positional_type_initializer" {
     const test_path = "tests/feature_tests/types/18_positional_type_initializer";
     try expectSuccessfulBuild(test_path);

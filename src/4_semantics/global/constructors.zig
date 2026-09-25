@@ -22,6 +22,8 @@ pub const Resolver = struct {
     offsets: []const globalizer.Offsets,
     core: *core_mod.Resolver,
     abstracts: ?*abstract_mod.Resolver = null,
+    ownership_context: ?*anyopaque = null,
+    register_defer: ?*const fn (*anyopaque, global_sg.GlobalNodeId, global_sg.GlobalNodeId) anyerror!void = null,
 
     const InitializerLookup = struct {
         function: ?global_sg.GlobalFunctionId = null,
@@ -91,6 +93,8 @@ pub const Resolver = struct {
                 .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
                 .nested_constructor_context = self,
                 .nested_constructor_resolver = Resolver.resolveNestedCall,
+                .ownership_context = self.ownership_context,
+                .register_defer = self.register_defer,
             };
             const initializer = try self.findGenericInitializer(
                 &generics,
@@ -135,6 +139,8 @@ pub const Resolver = struct {
                         .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
                         .nested_constructor_context = self,
                         .nested_constructor_resolver = Resolver.resolveNestedCall,
+                        .ownership_context = self.ownership_context,
+                        .register_defer = self.register_defer,
                     };
                     selected = (try generic_functions.instantiateInitializer(
                         self.graph.functions.items[@intFromEnum(selected)].declaration,
@@ -246,6 +252,8 @@ pub const Resolver = struct {
                     .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
                     .nested_constructor_context = self,
                     .nested_constructor_resolver = Resolver.resolveNestedCall,
+                    .ownership_context = self.ownership_context,
+                    .register_defer = self.register_defer,
                 };
                 selected = (try generic_functions.instantiateInitializer(
                     self.graph.functions.items[@intFromEnum(selected)].declaration,
@@ -326,6 +334,8 @@ pub const Resolver = struct {
             .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
             .nested_constructor_context = self,
             .nested_constructor_resolver = Resolver.resolveNestedCall,
+            .ownership_context = self.ownership_context,
+            .register_defer = self.register_defer,
         };
 
         // Context can fully determine a generic constructor even when none of
@@ -454,6 +464,8 @@ pub const Resolver = struct {
             .nested_call_resolver = abstract_mod.Resolver.resolveNestedCall,
             .nested_constructor_context = self,
             .nested_constructor_resolver = Resolver.resolveNestedCall,
+            .ownership_context = self.ownership_context,
+            .register_defer = self.register_defer,
         };
         const input = globalizer.globalNode(o, value.input);
         const initializer = try self.findGenericInitializer(
