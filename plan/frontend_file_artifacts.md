@@ -179,20 +179,33 @@ The durable `ModuleSemanticGraph` is built without consulting abstract names
 from other modules. It retains qualified external references such as `dep.A`.
 During whole-program linking, the frontend resolves import aliases against the
 discovered module directories and identifies qualified references to imported
-abstract declarations. Only modules needing that interpretation are lowered
-again into transient linked graphs for GlobalSema. The durable graph remains
-independent of changes in imported modules and is suitable for a module cache.
-Unqualified abstract names from bundled core remain available as prelude names;
-abstracts in user modules require an import qualifier.
+abstract declarations. The transient linked derivative is now built only when
+one of those declarations occurs in a function input position that
+`parameterized_lowerer` would classify as an abstract parameter; matching
+references in outputs or unrelated semantic positions no longer trigger a full
+module rebuild. The durable graph remains independent of changes in imported
+modules and is suitable for a module cache. Unqualified abstract names from
+bundled core remain available as prelude names; abstracts in user modules
+require an import qualifier.
 
-This is an intermediate implementation: linked modules repeat ModuleSema work
-for that compilation. A future pending IR could normalize the affected
-function signatures directly in GlobalSema and avoid rebuilding those modules.
-On the StringHashMap benchmark, this duplicates lowering in seven core modules.
-Eight alternating pinned ReleaseFast pairs measured ModuleSema at 8.1 → 11.9
-ms and frontend at 25.3 → 28.0 ms; DynamicArray frontend was 23.6 → 26.7 ms.
-Remove this cost before relying on clean-build performance gains from the
-module cache boundary.
+This is still an intermediate implementation: modules that genuinely need the
+linked interpretation repeat ModuleSema work for that compilation. The
+pre-trigger-narrowing StringHashMap baseline duplicated lowering in seven core
+modules; eight alternating pinned ReleaseFast pairs measured ModuleSema at
+8.1 → 11.9 ms and frontend at 25.3 → 28.0 ms, while DynamicArray frontend was
+23.6 → 26.7 ms. Re-measure those figures before using them as the current
+baseline.
+
+The durable replacement should encode the source-local fact that an external
+input type *may* be an abstract contract without deciding that question from
+another module. For example, the parameterized IR can retain an
+external-contract candidate associated with the qualified external reference.
+After linking, GlobalSema activates the hidden parameter/constraint and
+abstract-dispatch semantics only when that declaration resolves to an abstract;
+otherwise the ordinary function semantics remain authoritative. The exact IR
+shape should be chosen when implementing this normalization, but the invariant
+is fixed: no second ModuleSema pass should be required to learn a declaration
+kind owned by another module.
 
 ### Must remain pending for GlobalSema
 
@@ -552,9 +565,9 @@ ModuleSema's construction-only state.
 ### Phase 5 — persistent caches
 
 1. Before designing the on-disk format, measure an unchanged in-memory rebuild
-   that reuses durable ModuleSGs. Account separately for the current linked
-   derivative; either eliminate its full ModuleSema rerun or report its cost as
-   unavoidable work in the first cache prototype.
+   that reuses durable ModuleSGs. Re-measure the narrowed linked derivative
+   separately; either eliminate its remaining full ModuleSema reruns or report
+   their cost explicitly in the first cache prototype.
 2. Define an explicit versioned ModuleSG disk format only if the measured reuse
    remains material; do not serialize raw Zig pointer/slice ABI.
 3. Key ModuleSGs by module source set/content plus semantic configuration.
