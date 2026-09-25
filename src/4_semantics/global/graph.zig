@@ -163,6 +163,40 @@ pub const GlobalSemanticGraph = struct {
         }
     };
 
+    const LookupState = struct {
+        function_names: std.StringHashMapUnmanaged(std.ArrayList(GlobalFunctionId)) = .empty,
+        indexed_functions: usize = 0,
+        declaration_names: std.StringHashMapUnmanaged(std.ArrayList(GlobalDeclId)) = .empty,
+        indexed_declarations: usize = 0,
+        parameterized_function_names: std.StringHashMapUnmanaged(std.ArrayList(ParameterizedFunctionCandidate)) = .empty,
+        indexed_parameterized_functions: bool = false,
+
+        fn deinit(self: *LookupState, allocator: std.mem.Allocator) void {
+            var functions = self.function_names.iterator();
+            while (functions.next()) |entry| {
+                allocator.free(entry.key_ptr.*);
+                entry.value_ptr.deinit(allocator);
+            }
+            self.function_names.deinit(allocator);
+
+            var declarations = self.declaration_names.iterator();
+            while (declarations.next()) |entry| {
+                allocator.free(entry.key_ptr.*);
+                entry.value_ptr.deinit(allocator);
+            }
+            self.declaration_names.deinit(allocator);
+
+            var parameterized = self.parameterized_function_names.iterator();
+            while (parameterized.next()) |entry| {
+                allocator.free(entry.key_ptr.*);
+                entry.value_ptr.deinit(allocator);
+            }
+            self.parameterized_function_names.deinit(allocator);
+            self.* = .{};
+        }
+    };
+
+
     modules: std.ArrayList(Module) = .empty,
     module_aliases: std.ArrayList(ModuleAlias) = .empty,
     files: std.ArrayList(File) = .empty,
@@ -205,38 +239,6 @@ pub const GlobalSemanticGraph = struct {
     strings: std.ArrayList(u8) = .empty,
     roots: std.ArrayList(GlobalNodeId) = .empty,
 
-    const LookupState = struct {
-        function_names: std.StringHashMapUnmanaged(std.ArrayList(GlobalFunctionId)) = .empty,
-        indexed_functions: usize = 0,
-        declaration_names: std.StringHashMapUnmanaged(std.ArrayList(GlobalDeclId)) = .empty,
-        indexed_declarations: usize = 0,
-        parameterized_function_names: std.StringHashMapUnmanaged(std.ArrayList(ParameterizedFunctionCandidate)) = .empty,
-        indexed_parameterized_functions: bool = false,
-
-        fn deinit(self: *LookupState, allocator: std.mem.Allocator) void {
-            var functions = self.function_names.iterator();
-            while (functions.next()) |entry| {
-                allocator.free(entry.key_ptr.*);
-                entry.value_ptr.deinit(allocator);
-            }
-            self.function_names.deinit(allocator);
-
-            var declarations = self.declaration_names.iterator();
-            while (declarations.next()) |entry| {
-                allocator.free(entry.key_ptr.*);
-                entry.value_ptr.deinit(allocator);
-            }
-            self.declaration_names.deinit(allocator);
-
-            var parameterized = self.parameterized_function_names.iterator();
-            while (parameterized.next()) |entry| {
-                allocator.free(entry.key_ptr.*);
-                entry.value_ptr.deinit(allocator);
-            }
-            self.parameterized_function_names.deinit(allocator);
-            self.* = .{};
-        }
-    };
 
     // Transient lookup state used while building/querying GlobalSema. The
     // append-only semantic pools remain the source of truth; these indexes are

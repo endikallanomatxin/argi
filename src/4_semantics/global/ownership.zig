@@ -1058,11 +1058,11 @@ test "parameterized defer checkpoint restores resolver side effects" {
 
     try resolver.deferred.append(allocator, .{ .marker = @enumFromInt(1), .value = @enumFromInt(2) });
     resolver.stats.defers = 1;
-    const saved = parameterizedCheckpoint(&resolver);
+    const saved = Resolver.parameterizedCheckpoint(&resolver);
 
     try resolver.deferred.append(allocator, .{ .marker = @enumFromInt(3), .value = @enumFromInt(4) });
     resolver.stats.defers = 2;
-    rollbackParameterizedCheckpoint(&resolver, saved);
+    Resolver.rollbackParameterizedCheckpoint(&resolver, saved);
 
     try std.testing.expectEqual(@as(usize, 1), resolver.deferred.items.len);
     try std.testing.expectEqual(@as(u32, 1), resolver.stats.defers);
