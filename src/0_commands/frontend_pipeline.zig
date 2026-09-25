@@ -250,16 +250,47 @@ pub const FrontendPipeline = struct {
                 .is_bundled_core = source.origin == .bundled_core,
             });
         }
+        // Discover every module before semantic finishing. This exposes the
+        // bundled-core declaration surface early enough to derive the language
+        // prelude without making ordinary ModuleSema depend on arbitrary user
+        // modules.
         try self.module_graphs.ensureTotalCapacity(self.allocator, groups.items.len);
         for (groups.items) |group| {
-            const result = try module_semantizer.build(self.allocator, group.dir, group.files.items);
-            self.module_lowered_functions += result.stats.lowered_functions;
-            self.module_graphs.appendAssumeCapacity(result.graph);
+            var graph = try module_sg.build(self.allocator, group.dir, group.files.items);
+            errdefer graph.deinit(self.allocator);
+            self.module_graphs.appendAssumeCapacity(graph);
+            graph = .{};
         }
 
-        // Durable module graphs depend only on their own source. A qualified
-        // external abstract is classified after imports have been linked, in
-        // a transient derivative used for this whole-program semantizing run.
+        // Bundled core is compiler semantic configuration: its abstracts are
+        // available as unqualified prelude names. Include this configuration in
+        // the durable ModuleSG build/cache key rather than discovering it by
+        // relowering modules after the fact.
+        var prelude_abstracts: std.ArrayList(module_semantizer.QualifiedAbstract) = .empty;
+        defer prelude_abstracts.deinit(self.allocator);
+        for (self.module_graphs.items) |*candidate_module| {
+            if (!candidate_module.is_bundled_core) continue;
+            for (candidate_module.declarations.items) |declaration| {
+                if (declaration.kind != .abstract_type) continue;
+                try prelude_abstracts.append(self.allocator, .{
+                    .qualifier = null,
+                    .name = candidate_module.text(declaration.name),
+                });
+            }
+        }
+
+        // Finish each durable module exactly once with the prelude already
+        // known. Cross-user-module declaration kinds remain unresolved here.
+        for (self.module_graphs.items, 0..) |*module, module_index| {
+            const stats = try module_semantizer.finishLinked(
+                self.allocator,
+                module,
+                groups.items[module_index].files.items,
+                prelude_abstracts.items,
+            );
+            self.module_lowered_functions += stats.lowered_functions;
+        }
+
         var module_dirs: std.ArrayList([]const u8) = .empty;
         defer module_dirs.deinit(self.allocator);
         for (self.module_graphs.items) |*module| try module_dirs.append(self.allocator, module.module_dir);
@@ -270,24 +301,13 @@ pub const FrontendPipeline = struct {
         }
         var selected_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty;
         defer selected_graphs.deinit(self.allocator);
-        var unqualified_abstracts: std.ArrayList(module_semantizer.QualifiedAbstract) = .empty;
-        defer unqualified_abstracts.deinit(self.allocator);
-        for (self.module_graphs.items) |*candidate_module| {
-            // Bundled core declarations are available as unqualified prelude
-            // names. User imports require their explicit source qualifier.
-            if (!candidate_module.is_bundled_core) continue;
-            for (candidate_module.declarations.items) |declaration| {
-                if (declaration.kind != .abstract_type) continue;
-                try unqualified_abstracts.append(self.allocator, .{
-                    .qualifier = null,
-                    .name = candidate_module.text(declaration.name),
-                });
-            }
-        }
+
         for (self.module_graphs.items, 0..) |*module, module_index| {
-            var qualified_abstracts: std.ArrayList(module_semantizer.QualifiedAbstract) = .empty;
-            defer qualified_abstracts.deinit(self.allocator);
-            try qualified_abstracts.appendSlice(self.allocator, unqualified_abstracts.items);
+            // Only imported user/module-qualified abstracts can require a
+            // derivative now; unqualified prelude abstracts were already part
+            // of the one durable finishing pass above.
+            var imported_abstracts: std.ArrayList(module_semantizer.QualifiedAbstract) = .empty;
+            defer imported_abstracts.deinit(self.allocator);
             for (module.semantic.module_aliases.items) |alias| {
                 const target_index = try module_linker.resolveImportPathFromDirs(
                     self.allocator,
@@ -299,23 +319,29 @@ pub const FrontendPipeline = struct {
                 const target = &self.module_graphs.items[target_index];
                 for (target.declarations.items) |declaration| {
                     if (declaration.kind != .abstract_type) continue;
-                    try qualified_abstracts.append(self.allocator, .{
+                    try imported_abstracts.append(self.allocator, .{
                         .qualifier = qualifier,
                         .name = target.text(declaration.name),
                     });
                 }
             }
+
             const needs_linked_graph = module_semantizer.needsLinkedLowering(
                 module,
                 groups.items[module_index].files.items,
-                qualified_abstracts.items,
+                imported_abstracts.items,
             );
             if (needs_linked_graph) {
+                var linked_abstracts: std.ArrayList(module_semantizer.QualifiedAbstract) = .empty;
+                defer linked_abstracts.deinit(self.allocator);
+                try linked_abstracts.appendSlice(self.allocator, prelude_abstracts.items);
+                try linked_abstracts.appendSlice(self.allocator, imported_abstracts.items);
+
                 const linked = try module_semantizer.buildLinked(
                     self.allocator,
                     groups.items[module_index].dir,
                     groups.items[module_index].files.items,
-                    qualified_abstracts.items,
+                    linked_abstracts.items,
                 );
                 try linked_graphs.append(self.allocator, linked.graph);
                 try selected_graphs.append(self.allocator, linked_graphs.items[linked_graphs.items.len - 1]);
