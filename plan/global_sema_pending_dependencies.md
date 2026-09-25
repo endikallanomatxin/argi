@@ -337,13 +337,15 @@ counts remain available under `--stats` for future profiling.
       Generic specialization, materialization, reachability expansion and
       ownership finalization still need the same audit before introducing
       sleepers.
-- [ ] Audit speculative graph rollback and ID reuse. GlobalSG append-only
-      rollback is now centralized in `GlobalSemanticGraph.checkpoint/rollback`,
-      name-index tails are covered by regression tests, and parameterized
-      `#defer` registrations checkpoint Ownership alongside the graph. Pointer
-      interning validates stale IDs after rollback. A future dependency queue
-      must still prove that every resolver-local cache/subscription either
-      survives ID reuse safely or participates in rollback.
+- [x] Audit current speculative graph rollback and ID reuse. GlobalSG
+      append-only rollback is centralized in
+      `GlobalSemanticGraph.checkpoint/rollback`; name-index tails have direct
+      regression coverage; parameterized `#defer` registrations checkpoint
+      Ownership; abstract implementation caches rollback insertions that could
+      reference discarded TypeIds; and pointer interning validates cached IDs
+      against the live graph. A future dependency queue must still prove that
+      any new resolver-local cache/subscription either survives ID reuse safely
+      or participates in rollback.
 
 Decision: the probe did not establish that repeated same-blocker retries
 account for a meaningful share of pending time, so it was removed and sleepers
