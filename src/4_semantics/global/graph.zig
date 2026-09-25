@@ -621,6 +621,68 @@ test "name indexes discard speculative functions before IDs are reused" {
     try std.testing.expectEqual(@as(usize, 1), (try graph.functionsNamed(allocator, "replacement")).len);
 }
 
+test "semantic graph checkpoint restores append-only pools and name indexes" {
+    const allocator = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+
+    const first = try graph.addString(allocator, "first");
+    const discarded = try graph.addString(allocator, "discarded");
+    const replacement = try graph.addString(allocator, "replacement");
+
+    try graph.declarations.append(allocator, .{
+        .kind = .function,
+        .name = first,
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+    });
+    _ = try graph.declarationsNamed(allocator, "first");
+    _ = try graph.functionsNamed(allocator, "first");
+
+    const saved = graph.checkpoint();
+    try graph.declarations.append(allocator, .{
+        .kind = .function,
+        .name = discarded,
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(1),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+    });
+    try graph.nodes.append(allocator, .{
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = null,
+        .content = .break_statement,
+    });
+    _ = try graph.declarationsNamed(allocator, "discarded");
+    _ = try graph.functionsNamed(allocator, "discarded");
+
+    graph.rollback(saved);
+    try std.testing.expectEqual(@as(usize, 1), graph.declarations.items.len);
+    try std.testing.expectEqual(@as(usize, 1), graph.functions.items.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.nodes.items.len);
+    try std.testing.expectEqual(@as(usize, 0), (try graph.declarationsNamed(allocator, "discarded")).len);
+    try std.testing.expectEqual(@as(usize, 0), (try graph.functionsNamed(allocator, "discarded")).len);
+
+    try graph.declarations.append(allocator, .{
+        .kind = .function,
+        .name = replacement,
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(1),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+    });
+    try std.testing.expectEqual(@as(usize, 1), (try graph.declarationsNamed(allocator, "replacement")).len);
+    try std.testing.expectEqual(@as(usize, 1), (try graph.functionsNamed(allocator, "replacement")).len);
+}
+
 test "unresolved global type slots are construction state, not Any" {
     const allocator = std.testing.allocator;
     var graph: GlobalSemanticGraph = .{};
