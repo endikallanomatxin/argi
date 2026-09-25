@@ -148,6 +148,19 @@ pub const GlobalSemanticGraph = struct {
         pool_lengths: [@typeInfo(GlobalSemanticGraph).@"struct".fields.len]usize,
         indexed_functions: usize,
         indexed_declarations: usize,
+        type_resolution_len: usize,
+        binding_type_resolution_len: usize,
+    };
+
+    const ConstructionState = struct {
+        type_resolution: std.ArrayList(TypeResolutionState) = .empty,
+        binding_type_resolution: std.ArrayList(TypeResolutionState) = .empty,
+
+        fn deinit(self: *ConstructionState, allocator: std.mem.Allocator) void {
+            self.type_resolution.deinit(allocator);
+            self.binding_type_resolution.deinit(allocator);
+            self.* = .{};
+        }
     };
 
     modules: std.ArrayList(Module) = .empty,
@@ -157,17 +170,11 @@ pub const GlobalSemanticGraph = struct {
     symbols: std.ArrayList(Symbol) = .empty,
     symbol_declarations: std.ArrayList(GlobalDeclId) = .empty,
     types: std.ArrayList(GlobalType) = .empty,
-    /// Present only while GlobalSema is resolving preallocated type slots.
-    /// Final GlobalSemanticGraph values have this list empty.
-    type_resolution: std.ArrayList(TypeResolutionState) = .empty,
     generic_instances: std.ArrayList(GenericInstance) = .empty,
     functions: std.ArrayList(Function) = .empty,
     function_operators: std.ArrayList(?callable.OperatorKind) = .empty,
     generic_function_instances: std.ArrayList(GenericFunctionInstance) = .empty,
     bindings: std.ArrayList(Binding) = .empty,
-    /// Present only while GlobalSema is inferring bindings whose type was not
-    /// available in ModuleSema. Final graphs always leave this list empty.
-    binding_type_resolution: std.ArrayList(TypeResolutionState) = .empty,
     nodes: std.ArrayList(Node) = .empty,
     blocks: std.ArrayList(Block) = .empty,
     fields: std.ArrayList(Field) = .empty,
@@ -236,6 +243,10 @@ pub const GlobalSemanticGraph = struct {
     // derived state and are not part of a persistent semantic representation.
     lookup: LookupState = .{},
 
+    // Construction-only resolution state. Final graphs empty these tables
+    // before they are exposed to Safety, Codegen or the LSP.
+    construction: ConstructionState = .{},
+
     /// Snapshot append-only graph storage and the mutable lookup-index tails.
     /// This is deliberately not a transaction for resolver-local caches or
     /// side effects; callers must checkpoint those separately when needed.
@@ -245,6 +256,8 @@ pub const GlobalSemanticGraph = struct {
             .pool_lengths = undefined,
             .indexed_functions = self.lookup.indexed_functions,
             .indexed_declarations = self.lookup.indexed_declarations,
+            .type_resolution_len = self.construction.type_resolution.items.len,
+            .binding_type_resolution_len = self.construction.binding_type_resolution.items.len,
         };
         inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
             .@"struct" => @hasField(pool.type, "items"),
@@ -260,6 +273,8 @@ pub const GlobalSemanticGraph = struct {
     pub fn rollback(self: *GlobalSemanticGraph, saved: Checkpoint) void {
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
         self.discardIndexedTail(saved.indexed_functions, saved.indexed_declarations);
+        self.construction.type_resolution.shrinkRetainingCapacity(saved.type_resolution_len);
+        self.construction.binding_type_resolution.shrinkRetainingCapacity(saved.binding_type_resolution_len);
         inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
             .@"struct" => @hasField(pool.type, "items"),
             else => false,
@@ -270,11 +285,12 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn deinit(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
         self.lookup.deinit(allocator);
+        self.construction.deinit(allocator);
         inline for (.{
             &self.modules,            &self.module_aliases,          &self.files,                 &self.declarations,
-            &self.symbols,            &self.symbol_declarations,     &self.types,                 &self.type_resolution,
-            &self.generic_instances,  &self.functions,               &self.function_operators,    &self.generic_function_instances,
-            &self.bindings,           &self.binding_type_resolution, &self.nodes,                 &self.blocks,
+            &self.symbols,            &self.symbol_declarations,     &self.types,                 &self.generic_instances,
+            &self.functions,          &self.function_operators,      &self.generic_function_instances,
+            &self.bindings,           &self.nodes,                   &self.blocks,
             &self.fields,             &self.variants,                &self.generic_arguments,     &self.value_fields,
             &self.switch_cases,       &self.switches,                &self.auto_deinit_fields,    &self.auto_deinits,
             &self.virtual_registries, &self.virtualizes,             &self.virtual_calls,         &self.reach_segments,
@@ -389,7 +405,7 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn isTypeUnresolved(self: *const GlobalSemanticGraph, id: GlobalTypeId) bool {
         const raw: usize = @intFromEnum(id);
-        return raw < self.type_resolution.items.len and self.type_resolution.items[raw] == .unresolved;
+        return raw < self.construction.type_resolution.items.len and self.construction.type_resolution.items[raw] == .unresolved;
     }
 
     /// Mark a preallocated slot as unresolved and replace the old semantic
@@ -399,7 +415,7 @@ pub const GlobalSemanticGraph = struct {
         const raw: usize = @intFromEnum(id);
         if (raw >= self.types.items.len) return error.InvalidGlobalTypeId;
         try self.ensureTypeResolutionCovers(allocator, self.types.items.len);
-        self.type_resolution.items[raw] = .unresolved;
+        self.construction.type_resolution.items[raw] = .unresolved;
         self.types.items[raw] = .{ .declared = unresolved_type_poison_decl };
     }
 
@@ -408,8 +424,8 @@ pub const GlobalSemanticGraph = struct {
     /// observing that the poison payload has been replaced.
     pub fn reconcileTypeResolution(self: *GlobalSemanticGraph) bool {
         var changed = false;
-        const limit = @min(self.type_resolution.items.len, self.types.items.len);
-        for (self.type_resolution.items[0..limit], 0..) |*state, raw| {
+        const limit = @min(self.construction.type_resolution.items.len, self.types.items.len);
+        for (self.construction.type_resolution.items[0..limit], 0..) |*state, raw| {
             if (state.* != .unresolved or isUnresolvedTypePoison(self.types.items[raw])) continue;
             state.* = .resolved;
             changed = true;
@@ -418,7 +434,7 @@ pub const GlobalSemanticGraph = struct {
     }
 
     pub fn hasUnresolvedTypes(self: *const GlobalSemanticGraph) bool {
-        for (self.type_resolution.items) |state| if (state == .unresolved) return true;
+        for (self.construction.type_resolution.items) |state| if (state == .unresolved) return true;
         return false;
     }
 
@@ -427,14 +443,14 @@ pub const GlobalSemanticGraph = struct {
     /// a provisional graph to Safety, Codegen or the LSP.
     pub fn finishTypeResolution(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) !void {
         if (self.hasUnresolvedTypes()) return error.UnresolvedGlobalTypeSlots;
-        self.type_resolution.deinit(allocator);
-        self.type_resolution = .empty;
+        self.construction.type_resolution.deinit(allocator);
+        self.construction.type_resolution = .empty;
     }
 
     fn ensureTypeResolutionCovers(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, count: usize) !void {
-        if (self.type_resolution.items.len >= count) return;
-        try self.type_resolution.ensureTotalCapacity(allocator, count);
-        while (self.type_resolution.items.len < count) self.type_resolution.appendAssumeCapacity(.resolved);
+        if (self.construction.type_resolution.items.len >= count) return;
+        try self.construction.type_resolution.ensureTotalCapacity(allocator, count);
+        while (self.construction.type_resolution.items.len < count) self.construction.type_resolution.appendAssumeCapacity(.resolved);
     }
 
     pub fn function(self: *const GlobalSemanticGraph, id: GlobalFunctionId) Function {
@@ -451,21 +467,21 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn isBindingTypeUnresolved(self: *const GlobalSemanticGraph, id: GlobalBindingId) bool {
         const raw: usize = @intFromEnum(id);
-        return raw < self.binding_type_resolution.items.len and self.binding_type_resolution.items[raw] == .unresolved;
+        return raw < self.construction.binding_type_resolution.items.len and self.construction.binding_type_resolution.items[raw] == .unresolved;
     }
 
     pub fn markBindingTypeUnresolved(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalBindingId) !void {
         const raw: usize = @intFromEnum(id);
         if (raw >= self.bindings.items.len) return error.InvalidGlobalBindingId;
         try self.ensureBindingTypeResolutionCovers(allocator, self.bindings.items.len);
-        self.binding_type_resolution.items[raw] = .unresolved;
+        self.construction.binding_type_resolution.items[raw] = .unresolved;
         self.bindings.items[raw].ty = unresolved_binding_type_poison;
     }
 
     pub fn reconcileBindingTypeResolution(self: *GlobalSemanticGraph) bool {
         var changed = false;
-        const limit = @min(self.binding_type_resolution.items.len, self.bindings.items.len);
-        for (self.binding_type_resolution.items[0..limit], 0..) |*state, raw| {
+        const limit = @min(self.construction.binding_type_resolution.items.len, self.bindings.items.len);
+        for (self.construction.binding_type_resolution.items[0..limit], 0..) |*state, raw| {
             if (state.* != .unresolved or self.bindings.items[raw].ty == unresolved_binding_type_poison) continue;
             state.* = .resolved;
             changed = true;
@@ -474,20 +490,20 @@ pub const GlobalSemanticGraph = struct {
     }
 
     pub fn hasUnresolvedBindingTypes(self: *const GlobalSemanticGraph) bool {
-        for (self.binding_type_resolution.items) |state| if (state == .unresolved) return true;
+        for (self.construction.binding_type_resolution.items) |state| if (state == .unresolved) return true;
         return false;
     }
 
     pub fn finishBindingTypeResolution(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) !void {
         if (self.hasUnresolvedBindingTypes()) return error.UnresolvedGlobalBindingTypes;
-        self.binding_type_resolution.deinit(allocator);
-        self.binding_type_resolution = .empty;
+        self.construction.binding_type_resolution.deinit(allocator);
+        self.construction.binding_type_resolution = .empty;
     }
 
     fn ensureBindingTypeResolutionCovers(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, count: usize) !void {
-        if (self.binding_type_resolution.items.len >= count) return;
-        try self.binding_type_resolution.ensureTotalCapacity(allocator, count);
-        while (self.binding_type_resolution.items.len < count) self.binding_type_resolution.appendAssumeCapacity(.resolved);
+        if (self.construction.binding_type_resolution.items.len >= count) return;
+        try self.construction.binding_type_resolution.ensureTotalCapacity(allocator, count);
+        while (self.construction.binding_type_resolution.items.len < count) self.construction.binding_type_resolution.appendAssumeCapacity(.resolved);
     }
 
     pub fn node(self: *const GlobalSemanticGraph, id: GlobalNodeId) Node {
@@ -522,13 +538,13 @@ pub const GlobalSemanticGraph = struct {
             self.symbols.items.len * @sizeOf(Symbol) +
             self.symbol_declarations.items.len * @sizeOf(GlobalDeclId) +
             self.types.items.len * @sizeOf(GlobalType) +
-            self.type_resolution.items.len * @sizeOf(TypeResolutionState) +
+            self.construction.type_resolution.items.len * @sizeOf(TypeResolutionState) +
             self.generic_instances.items.len * @sizeOf(GenericInstance) +
             self.functions.items.len * @sizeOf(Function) +
             self.function_operators.items.len * @sizeOf(?callable.OperatorKind) +
             self.generic_function_instances.items.len * @sizeOf(GenericFunctionInstance) +
             self.bindings.items.len * @sizeOf(Binding) +
-            self.binding_type_resolution.items.len * @sizeOf(TypeResolutionState) +
+            self.construction.binding_type_resolution.items.len * @sizeOf(TypeResolutionState) +
             self.nodes.items.len * @sizeOf(Node) +
             self.blocks.items.len * @sizeOf(Block) +
             self.fields.items.len * @sizeOf(Field) +
@@ -714,5 +730,5 @@ test "unresolved global type slots are construction state, not Any" {
     try std.testing.expect(graph.reconcileTypeResolution());
     try std.testing.expect(!graph.hasUnresolvedTypes());
     try graph.finishTypeResolution(allocator);
-    try std.testing.expectEqual(@as(usize, 0), graph.type_resolution.items.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.construction.type_resolution.items.len);
 }
