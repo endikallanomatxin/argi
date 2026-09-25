@@ -36,11 +36,3 @@ test "verification helpers validate typed ids and strings" {
     try std.testing.expect(stringFits(.{ .start = 1, .len = 2 }, "abcd"));
     try std.testing.expect(!stringFits(.{ .start = 3, .len = 2 }, "abcd"));
 }
-
-test "compact safety summary engine is linked into internal suite" {
-    _ = @import("safety/summaries.zig");
-}
-
-test "compact safety summary inference is linked into internal suite" {
-    _ = @import("safety/summary_infer.zig");
-}

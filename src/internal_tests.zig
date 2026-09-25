@@ -49,6 +49,8 @@ const global_semantic_ownership = @import("4_semantics/global/ownership.zig");
 const global_semantizer = @import("4_semantics/global/semantizer.zig");
 const global_safety_facts = @import("4_semantics/safety/facts.zig");
 const global_safety_checker = @import("4_semantics/safety/checker.zig");
+const safety_summaries = @import("4_semantics/safety/summaries.zig");
+const safety_summary_infer = @import("4_semantics/safety/summary_infer.zig");
 const global_lsp_index = @import("0_commands/lsp_index.zig");
 const semantic_representation_test = @import("4_semantics/semantic_representation_test.zig");
 
@@ -107,6 +109,8 @@ test {
     _ = global_semantizer;
     _ = global_safety_facts;
     _ = global_safety_checker;
+    _ = safety_summaries;
+    _ = safety_summary_infer;
     _ = global_lsp_index;
     _ = semantic_representation_test;
 
