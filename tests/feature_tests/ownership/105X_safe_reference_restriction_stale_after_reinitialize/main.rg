@@ -8,7 +8,7 @@ deinit(.self: $&Value) -> () := {
 main() -> (.status_code: Int32) := {
     source :: Value = (.number = 0)
     lifetime :: Value = (.number = 1)
-    stale ::= restrict_reference#(.t: &UInt8)(.input = &source.number, .lifetime = &lifetime).reference
+    stale ::= restrict_reference#(.t: &UInt8)(.input = &source.number, .on = &lifetime).reference
     deinit(.self = $&source)
     source = (.number = 0)
     if stale& == 0 {

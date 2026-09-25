@@ -44,6 +44,8 @@ pub const FreshEffectSource = usize;
 /// Symbolic value facts for a function output. All references to caller state
 /// remain expressed as InputPath until call instantiation.
 pub const ValueEffect = struct {
+    /// Preserves the use-site check for declared dependencies across calls.
+    explicit_dependency: bool = false,
     input_dependencies: []const InputDependency = &.{},
     input_places: []const InputPath = &.{},
     input_place_values: []const InputPath = &.{},

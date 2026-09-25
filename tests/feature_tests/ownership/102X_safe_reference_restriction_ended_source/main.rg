@@ -9,7 +9,7 @@ main() -> (.status_code: Int32) := {
     source :: Value = (.number = 0)
     lifetime :: Value = (.number = 1)
     original ::= &source.number
-    restricted ::= restrict_reference#(.t: &UInt8)(.input = original, .lifetime = &lifetime).reference
+    restricted ::= restrict_reference#(.t: &UInt8)(.input = original, .on = &lifetime).reference
     deinit(.self = $&source)
     if restricted& == 0 {
         status_code = 0

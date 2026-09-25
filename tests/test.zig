@@ -3266,6 +3266,26 @@ test "feature_tests/ownership/100_safe_reference_lifetime_restriction" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/286_explicit_value_dependency" {
+    const test_path = "tests/feature_tests/ownership/286_explicit_value_dependency";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/287X_explicit_dependency_after_deinit" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/287X_explicit_dependency_after_deinit",
+        "value depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/288X_explicit_dependency_through_call" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/288X_explicit_dependency_through_call",
+        "value depends on a root that has ended",
+    );
+}
+
 test "feature_tests/ownership/101X_safe_reference_restriction_ended_lifetime" {
     try buildExpectFail(
         "tests/feature_tests/ownership/101X_safe_reference_restriction_ended_lifetime",

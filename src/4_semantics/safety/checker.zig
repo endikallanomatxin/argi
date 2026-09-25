@@ -413,6 +413,8 @@ pub const SafetyChecker = struct {
                 const storage = facts.Place{ .root = binding };
                 const place = self.getPlace(state, storage) orelse break :blk .{};
                 try self.requirePlaceInitialized(function, node.source, storage, place.initializedness, state);
+                if (place.value.explicit_dependency and !state.tracker.dependenciesAreAlive(place.value))
+                    try self.report(node.source, "value depends on a root that has ended", .{});
                 break :blk place.value;
             },
             .move_value => |child| blk: {
@@ -716,6 +718,7 @@ pub const SafetyChecker = struct {
             },
             .reference_offset, .mutable_reference_offset, .reinterpret_reference, .mutable_reinterpret_reference, .read_reference => if (values.len != 0) values[0].referenceCopy() else .{},
             .restrict_reference => try self.restrictReferencePrimitive(values),
+            .depend_on => try self.dependOnPrimitive(values),
             .relocate => try self.relocatePrimitive(source, values, state),
             .trusted_opaque_move, .trusted_opaque_move_in => blk: {
                 try self.applyOpaqueMovePrimitive(function, source, argument_ids, values, state);
@@ -747,6 +750,18 @@ pub const SafetyChecker = struct {
         for (result.dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
         for (values[1].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
         result.dependencies = try dependencies.toOwnedSlice();
+        return result;
+    }
+
+    fn dependOnPrimitive(self: *SafetyChecker, values: []const facts.ValueFacts) !facts.ValueFacts {
+        if (values.len == 0) return .{};
+        var result = values[0];
+        if (values.len == 1) return result;
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+        for (result.dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
+        for (values[1].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
+        result.dependencies = try dependencies.toOwnedSlice();
+        result.explicit_dependency = true;
         return result;
     }
 
@@ -1330,7 +1345,7 @@ pub const SafetyChecker = struct {
         fresh_roots: *std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId),
         fresh_capabilities: *std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId),
     ) !facts.ValueFacts {
-        var result: facts.ValueFacts = .{};
+        var result: facts.ValueFacts = .{ .explicit_dependency = effect.explicit_dependency };
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         for (effect.fresh_dependencies) |fresh| {
             const root = try self.instantiateFreshRoot(fresh, state, fresh_roots);
@@ -1571,6 +1586,7 @@ pub const SafetyChecker = struct {
         }
 
         return .{
+            .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
             .dependencies = try dependencies.toOwnedSlice(),
             .owned_roots = try owned.toOwnedSlice(),
             .fields = try fields.toOwnedSlice(),
@@ -3878,7 +3894,8 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 }
 
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
-    if (left.integer_address != right.integer_address or
+    if (left.explicit_dependency != right.explicit_dependency or
+        left.integer_address != right.integer_address or
         left.foreign_storage != right.foreign_storage or
         left.known_choice_variant != right.known_choice_variant or
         !std.mem.eql(facts.StorageCapabilityId, left.storage_capabilities, right.storage_capabilities) or

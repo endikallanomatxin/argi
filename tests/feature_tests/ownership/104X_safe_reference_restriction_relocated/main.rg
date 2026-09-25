@@ -15,7 +15,7 @@ deinit(.self: $&Holder) -> () := {
 main() -> (.status_code: Int32) := {
     source :: Value = (.number = 0)
     lifetime :: Value = (.number = 1)
-    held :: Holder = (.reference = restrict_reference#(.t: &UInt8)(.input = &source.number, .lifetime = &lifetime).reference)
+    held :: Holder = (.reference = restrict_reference#(.t: &UInt8)(.input = &source.number, .on = &lifetime).reference)
     destination :: Holder = (.reference = &source.number)
     deinit(.self = $&destination)
     relocate(.source = $&held, .destination = $&destination)

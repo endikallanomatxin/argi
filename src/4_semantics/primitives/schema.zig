@@ -60,6 +60,7 @@ pub const SafetyPrimitive = enum {
     mutable_reinterpret_reference,
     read_reference,
     restrict_reference,
+    depend_on,
     trusted_opaque_move,
     trusted_opaque_move_in,
     trusted_opaque_move_out,

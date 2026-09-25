@@ -10,7 +10,7 @@ main() -> (.status_code: Int32) := {
     lifetime :: Value = (.number = 1)
     deinit(.self = $&source)
     source = (.number = 0)
-    fresh ::= restrict_reference#(.t: &UInt8)(.input = &source.number, .lifetime = &lifetime).reference
+    fresh ::= restrict_reference#(.t: &UInt8)(.input = &source.number, .on = &lifetime).reference
     if fresh& == 0 {
         status_code = 0
     } else {

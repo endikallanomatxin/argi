@@ -62,8 +62,10 @@ fn safetyPrimitiveForBundledDeclaration(name: []const u8, file: []const u8) prim
         std.mem.eql(u8, name, "establish_allocation")) return .establish_allocation;
     if (std.mem.endsWith(u8, file, "core/memory/relocation.rg") and
         std.mem.eql(u8, name, "relocate")) return .relocate;
-    if (std.mem.endsWith(u8, file, "core/memory/reference_lifetime.rg") and
-        std.mem.eql(u8, name, "restrict_reference")) return .restrict_reference;
+    if (std.mem.endsWith(u8, file, "core/memory/validity_dependency.rg")) {
+        if (std.mem.eql(u8, name, "restrict_reference")) return .restrict_reference;
+        if (std.mem.eql(u8, name, "depend_on")) return .depend_on;
+    }
     // SourceFile.origin establishes trust before this function is reached.
     // The canonical path only identifies the trusted declaration, so another
     // bundled-core helper with the same name cannot become a primitive.

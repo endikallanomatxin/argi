@@ -125,7 +125,8 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
 }
 
 fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
-    if (a.input_dependencies.len != b.input_dependencies.len or
+    if (a.explicit_dependency != b.explicit_dependency or
+        a.input_dependencies.len != b.input_dependencies.len or
         a.input_places.len != b.input_places.len or
         a.input_place_values.len != b.input_place_values.len or
         a.opaque_generation_dependencies.len != b.opaque_generation_dependencies.len or

@@ -316,6 +316,7 @@ pub const Infer = struct {
             .fresh_owned_roots = left.fresh_owned_roots,
             .fresh_storage_capabilities = left.fresh_storage_capabilities,
             .integer_address = left.integer_address,
+            .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
             .foreign_storage = left.foreign_storage,
         };
     }
@@ -2332,6 +2333,7 @@ pub const Infer = struct {
         override: ?SymbolicInputOverride,
     ) !facts.ValueEffect {
         var result: facts.ValueEffect = .{
+            .explicit_dependency = effect.explicit_dependency,
             .fresh_dependencies = effect.fresh_dependencies,
             .fresh_owned_roots = effect.fresh_owned_roots,
             .fresh_storage_capabilities = effect.fresh_storage_capabilities,
@@ -2544,6 +2546,7 @@ pub const Infer = struct {
         }
 
         return .{
+            .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
             .input_dependencies = try dependencies.toOwnedSlice(),
             .input_places = try input_places.toOwnedSlice(),
             .input_place_values = try input_place_values.toOwnedSlice(),
@@ -2622,6 +2625,15 @@ pub const Infer = struct {
                     try self.inputValueEffect(1, &.{}),
                 );
                 result.input_places = try self.oneInputPath(0, &.{});
+                break :blk result;
+            },
+            .depend_on => blk: {
+                var result = try self.mergeValueEffects(
+                    try self.inputValueEffect(0, &.{}),
+                    try self.inputValueEffect(1, &.{}),
+                );
+                result.input_places = try self.oneInputPath(0, &.{});
+                result.explicit_dependency = true;
                 break :blk result;
             },
             .trusted_opaque_move_out => .{

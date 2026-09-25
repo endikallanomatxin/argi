@@ -80,11 +80,11 @@ The reference graph permits aliases, cycles, and cross-root cycles. Ending one
 root invalidates only uses that depend on it; independent fields and objects in
 other live roots remain usable.
 
-`restrict_reference(.input, .lifetime)` adds the current storage generation of
-`lifetime` to an already safe reference. It preserves the input's pointee,
+`restrict_reference(.input, .on)` adds the current storage generation of
+`on` to an already safe reference. It preserves the input's pointee,
 mutability, provenance, and all previous dependencies; it creates no root,
-ownership, or storage capability. Thus it can only shorten a usable lifetime,
-never extend one.
+ownership, or storage capability. Thus it can only restrict when the reference
+is usable, never extend it.
 
 `trusted_opaque_move`, its storage-aware form
 `trusted_opaque_move_in`, `trusted_opaque_move_out`, and

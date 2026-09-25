@@ -9,8 +9,8 @@ ReferenceChoice : Type = (
 )
 
 restrict_twice#(.t: Type)(.input: t, .first: &Any, .second: &Any) -> (.reference: t) := {
-    intermediate ::= restrict_reference#(.t: t)(.input = input, .lifetime = first).reference
-    reference = restrict_reference#(.t: t)(.input = intermediate, .lifetime = second).reference
+    intermediate ::= restrict_reference#(.t: t)(.input = input, .on = first).reference
+    reference = restrict_reference#(.t: t)(.input = intermediate, .on = second).reference
 }
 
 main(.system: System = System()) -> (.status_code: Int32) := {
@@ -31,8 +31,8 @@ main(.system: System = System()) -> (.status_code: Int32) := {
                             second ::= ~second_payload
                             original ::= source.data
                             readonly ::= read_reference(.base = original).reference
-                            restricted ::= restrict_reference#(.t: $&UInt8)(.input = original, .lifetime = &pair.lifetime).reference
-                            readonly_restricted ::= restrict_reference#(.t: &UInt8)(.input = readonly, .lifetime = &pair.marker).reference
+                            restricted ::= restrict_reference#(.t: $&UInt8)(.input = original, .on = &pair.lifetime).reference
+                            readonly_restricted ::= restrict_reference#(.t: &UInt8)(.input = readonly, .on = &pair.marker).reference
                             chained ::= restrict_twice(.input = restricted, .first = &pair.marker, .second = &second).reference
                             relocated :: &UInt8 = chained
                             relocated = read_reference(.base = restricted).reference

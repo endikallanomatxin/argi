@@ -31,6 +31,10 @@ pub const OpaqueProvenance = struct {
 };
 
 pub const ValueFacts = struct {
+    /// A user-declared dependency must be checked on ordinary value reads,
+    /// including scalars. Other dependencies retain their operation-specific
+    /// checks, such as pointer dereference and opaque storage release.
+    explicit_dependency: bool = false,
     dependencies: []const ValidityDependency = &.{},
     owned_roots: []const ValidityRootId = &.{},
     fields: []const FieldFacts = &.{},
@@ -48,6 +52,7 @@ pub const ValueFacts = struct {
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
         return .{
+            .explicit_dependency = self.explicit_dependency,
             .dependencies = self.dependencies,
             .integer_address = self.integer_address,
             .foreign_storage = self.foreign_storage,

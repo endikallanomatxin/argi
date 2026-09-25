@@ -75,6 +75,14 @@ use(p)            // error: stale reference
 This is intentionally different from a Rust borrow checker that prevents
 many invalidations while borrows remain in scope.
 
+For a value whose validity relation is not visible in its representation,
+`depend_on#(.t: T)(.value = value, .on = &owner).result` attaches the
+owner's storage generation to the returned value. The value keeps its normal
+ownership. Using it after the owner is deinitialized is an error, including
+when the value is a scalar or has passed through another function. Ending the
+owner after the value's last use remains valid. This annotation does not
+silently suppress cleanup or extend the owner's runtime validity.
+
 ## Copy, move and deinit
 
 Copying a reference copies its validity dependencies, never its ownership.
