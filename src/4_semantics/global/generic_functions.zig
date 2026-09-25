@@ -77,9 +77,10 @@ pub const Resolver = struct {
 
     pub fn checkpointSideEffects(self: *const Resolver) SideEffectCheckpoint {
         var saved: SideEffectCheckpoint = .{};
-        if (self.ownership_context) |context|
+        if (self.ownership_context) |context| {
             if (self.ownership_checkpoint) |checkpoint|
                 saved.ownership = checkpoint(context);
+        }
         if (self.nested_call_context) |abstracts|
             saved.abstracts = abstracts.checkpointImplementationCaches();
         return saved;

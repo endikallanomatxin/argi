@@ -1938,9 +1938,9 @@ test "abstract implementation caches rollback speculative keys" {
     };
     defer resolver.deinit();
 
-    const stable = ImplementationKey{ .concrete = @enumFromInt(1), .abstract_decl = @enumFromInt(2) };
-    const speculative_positive = ImplementationKey{ .concrete = @enumFromInt(3), .abstract_decl = @enumFromInt(4) };
-    const speculative_negative = ImplementationKey{ .concrete = @enumFromInt(5), .abstract_decl = @enumFromInt(6) };
+    const stable = Resolver.ImplementationKey{ .concrete = @enumFromInt(1), .abstract_decl = @enumFromInt(2) };
+    const speculative_positive = Resolver.ImplementationKey{ .concrete = @enumFromInt(3), .abstract_decl = @enumFromInt(4) };
+    const speculative_negative = Resolver.ImplementationKey{ .concrete = @enumFromInt(5), .abstract_decl = @enumFromInt(6) };
 
     try resolver.cacheImplementation(stable);
     const saved = resolver.checkpointImplementationCaches();
