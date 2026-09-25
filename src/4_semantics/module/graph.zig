@@ -1,7 +1,5 @@
 const std = @import("std");
 const syn = @import("../../3_syntax/syntax_tree.zig");
-const file_bindings = @import("../lexical/file_bindings.zig");
-const lexical_tables = @import("../lexical/global.zig");
 const semantic_strings = @import("../primitives/strings.zig");
 const primitives = @import("../primitives/schema.zig");
 const callable = @import("../primitives/callable.zig");
@@ -102,7 +100,6 @@ pub const ModuleSemanticGraph = struct {
     structural_choice_variants: std.ArrayList(ChoiceVariant) = .empty,
     generic_type_arguments: std.ArrayList(GenericTypeArgument) = .empty,
     strings: std.ArrayList(u8) = .empty,
-    lexical: lexical_tables.LexicalTables = .{},
     type_references: std.ArrayList(TypeReference) = .empty,
     file_offsets: std.ArrayList(FileOffsets) = .empty,
     semantic: module_storage.Storage = .{},
@@ -120,7 +117,6 @@ pub const ModuleSemanticGraph = struct {
         self.structural_choice_variants.deinit(allocator);
         self.generic_type_arguments.deinit(allocator);
         self.strings.deinit(allocator);
-        self.lexical.deinit(allocator);
         self.type_references.deinit(allocator);
         self.file_offsets.deinit(allocator);
         self.semantic.deinit(allocator);
@@ -151,14 +147,13 @@ pub const ModuleSemanticGraph = struct {
     }
 
     pub fn storageBytes(self: *const ModuleSemanticGraph) usize {
-        const lexical_bytes = self.lexical.storageBytes();
         return self.module_dir.len + self.declarations.items.len * @sizeOf(Declaration) +
             self.symbols.items.len * @sizeOf(Symbol) + self.symbol_declarations.items.len * @sizeOf(ModuleDeclId) +
             self.types.items.len * @sizeOf(ModuleType) + self.functions.items.len * @sizeOf(FunctionInterface) +
             (self.fields.items.len + self.structural_fields.items.len) * @sizeOf(Field) +
             (self.choice_variant_entries.items.len + self.structural_choice_variants.items.len) * @sizeOf(ChoiceVariant) +
             self.generic_type_arguments.items.len * @sizeOf(GenericTypeArgument) +
-            self.strings.items.len + lexical_bytes +
+            self.strings.items.len +
             self.type_references.items.len * @sizeOf(TypeReference) +
             self.file_offsets.items.len * @sizeOf(FileOffsets) +
             self.semantic.storageBytes();
@@ -838,9 +833,6 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
             .source_offset = tree.tokenLocation(name.qualifier_token orelse name.name_token).offset,
         });
     }
-    var lexical = try file_bindings.build(allocator, tree, source, &graph.strings);
-    defer lexical.deinit(allocator);
-    try graph.lexical.appendFileBindings(allocator, graph.strings.items, &lexical, module_file_index);
 }
 
 fn genericParameterCount(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) ?u32 {

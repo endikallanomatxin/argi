@@ -1,8 +1,8 @@
 const std = @import("std");
-const source_db = @import("../../1_base/source_db.zig");
-const graph_mod = @import("../global/graph.zig");
-const types = @import("../global/types.zig");
-const primitives = @import("../primitives/schema.zig");
+const source_db = @import("../1_base/source_db.zig");
+const graph_mod = @import("../4_semantics/global/graph.zig");
+const types = @import("../4_semantics/global/types.zig");
+const primitives = @import("../4_semantics/primitives/schema.zig");
 
 pub const Target = union(enum) {
     function: graph_mod.GlobalFunctionId,

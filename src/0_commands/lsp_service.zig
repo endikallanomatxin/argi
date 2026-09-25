@@ -7,7 +7,7 @@ const token = @import("../2_tokens/token.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
 const graph_mod = @import("../4_semantics/global/graph.zig");
 const global_types = @import("../4_semantics/global/types.zig");
-const editor_index = @import("../4_semantics/lsp/index.zig");
+const editor_index = @import("lsp_index.zig");
 const primitives = @import("../4_semantics/primitives/schema.zig");
 const frontend = @import("frontend_pipeline.zig");
 

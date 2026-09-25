@@ -49,7 +49,7 @@ const global_semantic_ownership = @import("4_semantics/global/ownership.zig");
 const global_semantizer = @import("4_semantics/global/semantizer.zig");
 const global_safety_facts = @import("4_semantics/safety/facts.zig");
 const global_safety_checker = @import("4_semantics/safety/checker.zig");
-const global_lsp_index = @import("4_semantics/lsp/index.zig");
+const global_lsp_index = @import("0_commands/lsp_index.zig");
 const semantic_representation_test = @import("4_semantics/semantic_representation_test.zig");
 
 const global_codegen_types = @import("5_codegen/global_codegen_types.zig");
