@@ -171,7 +171,6 @@ fn printStats(
         if (item.count != 0) std.debug.print("            {s}: {d}, {d:.3} ms\n", .{ field.name, item.count, milliseconds(item.self_ns) });
     }
     std.debug.print("    full-pool materialization:\n", .{});
-    std.debug.print("      binding reconciliation:  {d:.3} ms\n", .{milliseconds(semantic_timings.binding_reconciliation_ns)});
     std.debug.print("      binding defaults:        {d:.3} ms\n", .{milliseconds(semantic_timings.runtime_binding_defaults_ns)});
     std.debug.print("      string literal types:    {d:.3} ms\n", .{milliseconds(semantic_timings.string_literal_types_ns)});
     std.debug.print("      binding types:           {d:.3} ms\n", .{milliseconds(semantic_timings.binding_types_ns)});

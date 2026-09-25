@@ -445,7 +445,7 @@ pub const Resolver = struct {
             if (case.payload_binding) |local_binding| {
                 const payload_ty = hit.variant.payload_type.?;
                 const binding = globalizer.globalBinding(o, local_binding);
-                self.graph.bindings.items[@intFromEnum(binding)].ty = try self.matchBindingType(payload_ty, case.mode);
+                try self.graph.resolveBindingType(binding, try self.matchBindingType(payload_ty, case.mode));
             }
 
             const tag = try self.appendIntNode(hit.variant.value, self.sourceFor(option_ref.source, o));
@@ -609,9 +609,6 @@ pub const Resolver = struct {
         if (self.graph.isTypeUnresolved(element_ty)) return .deferred;
 
         const item_binding = globalizer.globalBinding(o, value.binding);
-        const old_binding_ty = self.graph.bindings.items[@intFromEnum(item_binding)].ty;
-        self.graph.bindings.items[@intFromEnum(item_binding)].ty = element_ty;
-        errdefer self.graph.bindings.items[@intFromEnum(item_binding)].ty = old_binding_ty;
         const item_declaration = try self.appendNode(source, try self.builtin(.Void), .{ .binding_declaration = item_binding });
         const item_assignment = try self.appendNode(source, element_ty, .{ .assignment = .{
             .binding = item_binding,
@@ -648,9 +645,11 @@ pub const Resolver = struct {
         }
 
         const target = globalizer.globalNode(o, value.node);
+        const void_ty = try self.builtin(.Void);
+        try self.graph.resolveBindingType(item_binding, element_ty);
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = source,
-            .ty = try self.builtin(.Void),
+            .ty = void_ty,
             .content = .{ .for_statement = .{
                 .init = init,
                 .condition = condition,

@@ -118,7 +118,7 @@ pub const Resolver = struct {
         return changed;
     }
 
-    pub fn materializeBindingTypes(self: *Resolver) bool {
+    pub fn materializeBindingTypes(self: *Resolver) !bool {
         var changed = false;
         for (self.graph.bindings.items, 0..) |*binding, raw| {
             const id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
@@ -126,7 +126,7 @@ pub const Resolver = struct {
             const initialization = binding.initialization orelse continue;
             const inferred = self.graph.nodes.items[@intFromEnum(initialization)].ty orelse continue;
             if (self.graph.isTypeUnresolved(inferred)) continue;
-            binding.ty = inferred;
+            try self.graph.resolveBindingType(id, inferred);
             self.stats.binding_types += 1;
             changed = true;
         }

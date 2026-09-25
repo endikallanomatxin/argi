@@ -486,17 +486,6 @@ pub const GlobalSemanticGraph = struct {
             self.construction.binding_type_resolution.items[raw] = .resolved;
     }
 
-    pub fn reconcileBindingTypeResolution(self: *GlobalSemanticGraph) bool {
-        var changed = false;
-        const limit = @min(self.construction.binding_type_resolution.items.len, self.bindings.items.len);
-        for (self.construction.binding_type_resolution.items[0..limit], 0..) |*state, raw| {
-            if (state.* != .unresolved or self.bindings.items[raw].ty == unresolved_binding_type_poison) continue;
-            state.* = .resolved;
-            changed = true;
-        }
-        return changed;
-    }
-
     pub fn hasUnresolvedBindingTypes(self: *const GlobalSemanticGraph) bool {
         for (self.construction.binding_type_resolution.items) |state| if (state == .unresolved) return true;
         return false;

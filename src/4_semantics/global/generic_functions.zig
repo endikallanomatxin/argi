@@ -2133,8 +2133,7 @@ pub const Resolver = struct {
                 if (source_ty == null) {
                     if (self.resolver.graph.nodes.items[@intFromEnum(initialization)].ty) |inferred| {
                         if (!self.resolver.graph.isTypeUnresolved(inferred)) {
-                            self.resolver.graph.bindings.items[@intFromEnum(global)].ty = inferred;
-                            _ = self.resolver.graph.reconcileBindingTypeResolution();
+                            try self.resolver.graph.resolveBindingType(global, inferred);
                         }
                     }
                 }
@@ -2701,8 +2700,7 @@ pub const Resolver = struct {
                 const payload_binding = if (case.payload_binding) |local_binding| blk: {
                     const payload = variant.variant.payload_type orelse return error.ParameterizedMatchPayloadOnPayloadlessVariant;
                     const binding = try self.instantiateBinding(local_binding);
-                    self.resolver.graph.bindings.items[@intFromEnum(binding)].ty = try self.matchBindingType(payload, case.mode);
-                    _ = self.resolver.graph.reconcileBindingTypeResolution();
+                    try self.resolver.graph.resolveBindingType(binding, try self.matchBindingType(payload, case.mode));
                     break :blk binding;
                 } else null;
                 const body = try self.instantiateBlock(case.body);
