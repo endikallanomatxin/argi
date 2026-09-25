@@ -20,17 +20,6 @@ pub const Stats = struct {
     cleanup_edges: u32 = 0,
     destructor_successes: u32 = 0,
     destructor_failures: u32 = 0,
-    destructor_repeated_target_type_lookups: u32 = 0,
-    destructor_pointer_address_ns: u64 = 0,
-    destructor_receiver_discovery_ns: u64 = 0,
-    destructor_input_construction_ns: u64 = 0,
-    destructor_dispatch_ns: u64 = 0,
-    destructor_failed_nodes: u64 = 0,
-    destructor_successful_nodes: u64 = 0,
-    destructor_failed_value_fields: u64 = 0,
-    destructor_successful_value_fields: u64 = 0,
-    destructor_failed_strings: u64 = 0,
-    destructor_successful_strings: u64 = 0,
 };
 
 const Deferred = struct { marker: global_sg.GlobalNodeId, value: global_sg.GlobalNodeId };
@@ -64,7 +53,6 @@ pub const Resolver = struct {
     profile_io: ?std.Io = null,
     profile_destructor_calls: usize = 0,
     profile_destructor_ns: i96 = 0,
-    profile_destructor_target_types: std.AutoHashMapUnmanaged(global_sg.GlobalTypeId, void) = .empty,
 
     fn profileNow(self: *const Resolver) i96 {
         if (self.profile_io) |io| return std.Io.Timestamp.now(io, .boot).nanoseconds;
@@ -75,7 +63,6 @@ pub const Resolver = struct {
         self.deferred.deinit(self.allocator);
         self.kept.deinit(self.allocator);
         self.auto_nodes.deinit(self.allocator);
-        self.profile_destructor_target_types.deinit(self.allocator);
     }
 
     pub fn tryResolve(
@@ -666,55 +653,30 @@ pub const Resolver = struct {
         context: reach_context.Context,
         module_index: usize,
     ) !?ResolvedDestructor {
-        const profiling = self.profile_io != null;
         const profile_start = self.profileNow();
-        const node_start = self.graph.nodes.items.len;
-        const field_start = self.graph.value_fields.items.len;
-        const string_start = self.graph.strings.items.len;
         var succeeded = false;
         defer if (self.profile_io) |io| {
             self.profile_destructor_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - profile_start;
             self.profile_destructor_calls += 1;
-            if (succeeded) {
-                self.stats.destructor_successes += 1;
-                self.stats.destructor_successful_nodes += @intCast(self.graph.nodes.items.len - node_start);
-                self.stats.destructor_successful_value_fields += @intCast(self.graph.value_fields.items.len - field_start);
-                self.stats.destructor_successful_strings += @intCast(self.graph.strings.items.len - string_start);
-            } else {
+            if (succeeded)
+                self.stats.destructor_successes += 1
+            else
                 self.stats.destructor_failures += 1;
-                self.stats.destructor_failed_nodes += @intCast(self.graph.nodes.items.len - node_start);
-                self.stats.destructor_failed_value_fields += @intCast(self.graph.value_fields.items.len - field_start);
-                self.stats.destructor_failed_strings += @intCast(self.graph.strings.items.len - string_start);
-            }
         };
         const target_ty = self.graph.nodes.items[@intFromEnum(target)].ty orelse return null;
-        if (profiling) {
-            const entry = try self.profile_destructor_target_types.getOrPut(self.allocator, target_ty);
-            if (entry.found_existing) self.stats.destructor_repeated_target_type_lookups += 1;
-        }
         const dispatch = self.dispatch orelse return error.MissingOwnershipDispatch;
-        var phase_start = self.profileNow();
         const pointer_ty = try self.core.pointerType(target_ty, .read_write);
         const source = self.graph.nodes.items[@intFromEnum(target)].source;
         const address = try self.appendNode(source, pointer_ty, .{ .address_of = target });
-        if (profiling) self.stats.destructor_pointer_address_ns += @intCast(self.profileNow() - phase_start);
 
         var receiver_names = std.StringHashMap(void).init(self.allocator);
         defer receiver_names.deinit();
-        phase_start = self.profileNow();
         try self.collectDestructorReceiverNames(module_index, &receiver_names);
-        if (profiling) self.stats.destructor_receiver_discovery_ns += @intCast(self.profileNow() - phase_start);
 
         var selected: ?ResolvedDestructor = null;
         var names = receiver_names.keyIterator();
         while (names.next()) |name_ptr| {
-            phase_start = self.profileNow();
             const input = try self.singleNamedInput(name_ptr.*, address, source);
-            if (profiling) self.stats.destructor_input_construction_ns += @intCast(self.profileNow() - phase_start);
-            phase_start = self.profileNow();
-            defer {
-                if (profiling) self.stats.destructor_dispatch_ns += @intCast(self.profileNow() - phase_start);
-            }
             const dispatch_result = dispatch.resolveImplicitFunction(
                 module_index,
                 "deinit",

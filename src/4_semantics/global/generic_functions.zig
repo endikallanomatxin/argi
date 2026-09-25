@@ -42,11 +42,6 @@ pub const SelectionProfile = struct {
 
 const ReachInferenceContext = reach_context_mod.Context;
 
-pub const BodyNodeProfile = struct {
-    count: u64 = 0,
-    self_ns: u64 = 0,
-};
-
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -74,18 +69,6 @@ pub const Resolver = struct {
     profile_instantiate_lookup_ns: i96 = 0,
     profile_instantiate_body_ns: i96 = 0,
     profile_instance_context_init_ns: i96 = 0,
-    profile_named_call_empty_initializer_ns: i96 = 0,
-    profile_named_call_reach_copy_ns: i96 = 0,
-    profile_named_call_ordinary_lookup_ns: i96 = 0,
-    profile_named_call_generic_selection_ns: i96 = 0,
-    profile_named_call_completion_ns: i96 = 0,
-    profile_named_call_accounted_ns: i96 = 0,
-    profile_resolved_body_nodes: u64 = 0,
-    profile_pending_body_nodes: u64 = 0,
-    profile_resolved_body_node_ns: i96 = 0,
-    profile_pending_body_node_ns: i96 = 0,
-    profile_pending_body_kinds: [@typeInfo(ir.Pending).@"union".fields.len]BodyNodeProfile = @splat(.{}),
-    profile_expression_kinds: [@typeInfo(ir.PendingExpressionKind).@"enum".fields.len]BodyNodeProfile = @splat(.{}),
 
     pub fn checkpointSideEffects(self: *const Resolver) ?[2]usize {
         const context = self.ownership_context orelse return null;
@@ -107,13 +90,6 @@ pub const Resolver = struct {
 
     fn addProfileTime(self: *Resolver, start: i96, elapsed: *u64) void {
         if (self.profile_io != null) elapsed.* += @intCast(self.profileTimestamp() - start);
-    }
-
-    fn profileNamedCallStage(self: *Resolver, start: i96, accounted_before: i96, elapsed: *i96) void {
-        if (self.profile_io == null) return;
-        const own_ns = self.profileTimestamp() - start - (self.profile_named_call_accounted_ns - accounted_before);
-        elapsed.* += own_ns;
-        self.profile_named_call_accounted_ns += own_ns;
     }
 
     pub fn tryResolve(
@@ -2060,7 +2036,6 @@ pub const Resolver = struct {
         binding_map: []?global_sg.GlobalBindingId,
         node_map: []?global_sg.GlobalNodeId,
         block_map: []?global_sg.GlobalBlockId,
-        profile_accounted_node_ns: i96 = 0,
         function: ?global_sg.GlobalFunctionId = null,
 
         fn init(
@@ -2188,38 +2163,9 @@ pub const Resolver = struct {
                     return global;
                 }
             }
-            const node_started = if (self.resolver.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-            const accounted_before = self.profile_accounted_node_ns;
             const instantiated: global_sg.Node = switch (local) {
-                .resolved => |node| blk: {
-                    const result = try self.instantiateResolvedNode(node);
-                    if (self.resolver.profile_io) |io| {
-                        self.resolver.profile_resolved_body_nodes += 1;
-                        const own_ns = std.Io.Timestamp.now(io, .boot).nanoseconds - node_started - (self.profile_accounted_node_ns - accounted_before);
-                        self.resolver.profile_resolved_body_node_ns += own_ns;
-                        self.profile_accounted_node_ns += own_ns;
-                    }
-                    break :blk result;
-                },
-                .pending => |pending| blk: {
-                    const pending_value = storage.pending.items[@intFromEnum(pending)];
-                    const result = try self.instantiatePendingNode(pending_value);
-                    if (self.resolver.profile_io) |io| {
-                        self.resolver.profile_pending_body_nodes += 1;
-                        const own_ns = std.Io.Timestamp.now(io, .boot).nanoseconds - node_started - (self.profile_accounted_node_ns - accounted_before);
-                        self.resolver.profile_pending_body_node_ns += own_ns;
-                        self.profile_accounted_node_ns += own_ns;
-                        const profile = &self.resolver.profile_pending_body_kinds[@intFromEnum(std.meta.activeTag(pending_value))];
-                        profile.count += 1;
-                        profile.self_ns += @intCast(own_ns);
-                        if (pending_value == .resolve_expression) {
-                            const expression_profile = &self.resolver.profile_expression_kinds[@intFromEnum(pending_value.resolve_expression.kind)];
-                            expression_profile.count += 1;
-                            expression_profile.self_ns += @intCast(own_ns);
-                        }
-                    }
-                    break :blk result;
-                },
+                .resolved => |node| try self.instantiateResolvedNode(node),
+                .pending => |pending| try self.instantiatePendingNode(storage.pending.items[@intFromEnum(pending)]),
             };
             self.resolver.graph.nodes.items[@intFromEnum(global)] = instantiated;
             self.resolver.stats.nodes += 1;
@@ -2790,25 +2736,16 @@ pub const Resolver = struct {
                 else => null,
             };
             if (input_literal) |literal| if (literal.fields.len == 0) {
-                const empty_started = self.resolver.profileTimestamp();
-                const accounted_before = self.resolver.profile_named_call_accounted_ns;
-                defer self.resolver.profileNamedCallStage(empty_started, accounted_before, &self.resolver.profile_named_call_empty_initializer_ns);
                 if (try self.resolveEmptyTypeInitializer(name, source)) |node| return node;
             };
             const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = module_path, .name = name_range, .source = source };
             // Calls in an instantiated body can reach the instance's concrete
             // input bindings, including parameters inferred from generic args.
             const input_bindings = self.resolver.graph.functions.items[@intFromEnum(self.function.?)].input_bindings;
-            const reach_copy_started = self.resolver.profileTimestamp();
-            const reach_accounted_before = self.resolver.profile_named_call_accounted_ns;
             const visible = try self.resolver.allocator.dupe(global_sg.GlobalBindingId, self.resolver.graph.binding_refs.items[input_bindings.start..][0..input_bindings.len]);
             defer self.resolver.allocator.free(visible);
             const nested_reach = ReachInferenceContext.fromGlobal(visible, self.function);
-            self.resolver.profileNamedCallStage(reach_copy_started, reach_accounted_before, &self.resolver.profile_named_call_reach_copy_ns);
             const function = blk: {
-                const generic_started = self.resolver.profileTimestamp();
-                const generic_accounted_before = self.resolver.profile_named_call_accounted_ns;
-                defer self.resolver.profileNamedCallStage(generic_started, generic_accounted_before, &self.resolver.profile_named_call_generic_selection_ns);
                 break :blk if (arguments.len != 0)
                     self.resolver.resolveExplicitGenericFunction(
                         self.module_index,
@@ -2837,13 +2774,10 @@ pub const Resolver = struct {
                         else => return err,
                     }
                 else ordinary_lookup: {
-                    const ordinary_started = self.resolver.profileTimestamp();
-                    const ordinary_accounted_before = self.resolver.profile_named_call_accounted_ns;
                     const ordinary = if (module_path == null)
                         try self.resolver.core.matchUnqualifiedFunctionByNameWithReach(self.module_index, name, input, nested_reach)
                     else
                         try self.resolver.core.matchFunctionByName(self.module_index, reference, input);
-                    self.resolver.profileNamedCallStage(ordinary_started, ordinary_accounted_before, &self.resolver.profile_named_call_ordinary_lookup_ns);
                     if (ordinary == .function) break :ordinary_lookup ordinary.function;
                     break :ordinary_lookup self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, nested_reach) catch |err| {
                         if (self.resolver.nested_constructor_context) |context| {
@@ -2868,9 +2802,6 @@ pub const Resolver = struct {
                     };
                 };
             };
-            const completion_started = self.resolver.profileTimestamp();
-            const completion_accounted_before = self.resolver.profile_named_call_accounted_ns;
-            defer self.resolver.profileNamedCallStage(completion_started, completion_accounted_before, &self.resolver.profile_named_call_completion_ns);
             if (!try self.resolver.core.completeCallInputFieldsWithReach(
                 self.resolver.graph.functions.items[@intFromEnum(function)].input,
                 input,

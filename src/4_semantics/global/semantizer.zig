@@ -74,13 +74,6 @@ pub const Stats = struct {
         generic_instantiation_lookup_ns: u64 = 0,
         generic_instantiation_body_ns: u64 = 0,
         generic_instance_context_init_ns: u64 = 0,
-        named_call_empty_initializer_ns: u64 = 0,
-        named_call_reach_copy_ns: u64 = 0,
-        named_call_ordinary_lookup_ns: u64 = 0,
-        named_call_generic_selection_ns: u64 = 0,
-        named_call_completion_ns: u64 = 0,
-        resolved_body_node_ns: u64 = 0,
-        pending_body_node_ns: u64 = 0,
         post_resolution_ns: u64 = 0,
         verify_ns: u64 = 0,
     };
@@ -112,10 +105,6 @@ pub const Stats = struct {
     generic_bodies_built: u64 = 0,
     generic_bodies_unreachable: u64 = 0,
     generic_reachability_tracked: bool = false,
-    resolved_body_nodes: u64 = 0,
-    pending_body_nodes: u64 = 0,
-    pending_body_kinds: [@typeInfo(@import("../module/parameterized/ir.zig").Pending).@"union".fields.len]generic_functions_mod.BodyNodeProfile = @splat(.{}),
-    expression_kinds: [@typeInfo(@import("../module/parameterized/ir.zig").PendingExpressionKind).@"enum".fields.len]generic_functions_mod.BodyNodeProfile = @splat(.{}),
     timings: Timings = .{},
 };
 
@@ -841,10 +830,6 @@ pub fn semantizeWithOptions(
         .generic_bodies_built = generic_bodies_built,
         .generic_bodies_unreachable = generic_bodies_unreachable,
         .generic_reachability_tracked = reachable != null,
-        .resolved_body_nodes = generic_functions.profile_resolved_body_nodes,
-        .pending_body_nodes = generic_functions.profile_pending_body_nodes,
-        .pending_body_kinds = generic_functions.profile_pending_body_kinds,
-        .expression_kinds = generic_functions.profile_expression_kinds,
     };
 
     const profile_preverify = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
@@ -875,13 +860,6 @@ pub fn semantizeWithOptions(
         .generic_instantiation_lookup_ns = @intCast(generic_functions.profile_instantiate_lookup_ns),
         .generic_instantiation_body_ns = @intCast(generic_functions.profile_instantiate_body_ns),
         .generic_instance_context_init_ns = @intCast(generic_functions.profile_instance_context_init_ns),
-        .named_call_empty_initializer_ns = @intCast(generic_functions.profile_named_call_empty_initializer_ns),
-        .named_call_reach_copy_ns = @intCast(generic_functions.profile_named_call_reach_copy_ns),
-        .named_call_ordinary_lookup_ns = @intCast(generic_functions.profile_named_call_ordinary_lookup_ns),
-        .named_call_generic_selection_ns = @intCast(generic_functions.profile_named_call_generic_selection_ns),
-        .named_call_completion_ns = @intCast(generic_functions.profile_named_call_completion_ns),
-        .resolved_body_node_ns = @intCast(generic_functions.profile_resolved_body_node_ns),
-        .pending_body_node_ns = @intCast(generic_functions.profile_pending_body_node_ns),
         .generic_constraints_ns = @intCast(generic_functions.profile_constraints_ns),
         .post_resolution_ns = @intCast(profile_preverify - profile_postloop),
         .verify_ns = @intCast(profile_end - profile_preverify),

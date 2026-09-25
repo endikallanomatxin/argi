@@ -11,7 +11,6 @@ const types = @import("../4_semantics/global/types.zig");
 const graph_print = @import("../4_semantics/global/print.zig");
 const global_semantizer = @import("../4_semantics/global/semantizer.zig");
 const global_dispatch = @import("../4_semantics/global/dispatch.zig");
-const parameterized_ir = @import("../4_semantics/module/parameterized/ir.zig");
 const planning = @import("build_plan.zig");
 
 pub const BuildFlags = planning.BuildFlags;
@@ -136,13 +135,6 @@ fn printStats(
         milliseconds(semantic_timings.source_generic_selection_ns),
         milliseconds(semantic_timings.source_generic_completion_ns),
     });
-    std.debug.print("      instantiated body named calls self time: empty initializer {d:.3} ms, Reach copy {d:.3} ms, ordinary lookup {d:.3} ms, generic selection/instantiation {d:.3} ms, completion {d:.3} ms\n", .{
-        milliseconds(semantic_timings.named_call_empty_initializer_ns),
-        milliseconds(semantic_timings.named_call_reach_copy_ns),
-        milliseconds(semantic_timings.named_call_ordinary_lookup_ns),
-        milliseconds(semantic_timings.named_call_generic_selection_ns),
-        milliseconds(semantic_timings.named_call_completion_ns),
-    });
     std.debug.print("      generic instantiate: {d:.3} ms, {d} calls, {d} existing\n", .{
         milliseconds(semantic_timings.generic_instantiation_ns),
         semantic.generic_instantiation_calls,
@@ -156,20 +148,6 @@ fn printStats(
     std.debug.print("        bodies built {d}\n", .{semantic.generic_bodies_built});
     if (semantic.generic_reachability_tracked)
         std.debug.print("        unreachable after semantizing {d}\n", .{semantic.generic_bodies_unreachable});
-    std.debug.print("        body node self time: resolved {d} / {d:.3} ms, pending {d} / {d:.3} ms\n", .{
-        semantic.resolved_body_nodes,
-        milliseconds(semantic_timings.resolved_body_node_ns),
-        semantic.pending_body_nodes,
-        milliseconds(semantic_timings.pending_body_node_ns),
-    });
-    inline for (std.meta.fields(parameterized_ir.Pending), 0..) |field, index| {
-        const item = semantic.pending_body_kinds[index];
-        if (item.count != 0) std.debug.print("          {s}: {d}, {d:.3} ms\n", .{ field.name, item.count, milliseconds(item.self_ns) });
-    }
-    inline for (std.meta.fields(parameterized_ir.PendingExpressionKind), 0..) |field, index| {
-        const item = semantic.expression_kinds[index];
-        if (item.count != 0) std.debug.print("            {s}: {d}, {d:.3} ms\n", .{ field.name, item.count, milliseconds(item.self_ns) });
-    }
     std.debug.print("    full-pool materialization:\n", .{});
     std.debug.print("      binding defaults:        {d:.3} ms\n", .{milliseconds(semantic_timings.runtime_binding_defaults_ns)});
     std.debug.print("      string literal types:    {d:.3} ms\n", .{milliseconds(semantic_timings.string_literal_types_ns)});
@@ -231,23 +209,8 @@ fn printStats(
         implicit.ordinary_completion_deferred + implicit.abstract_compatible_completion_deferred + implicit.generic_completion_deferred,
     });
     const destructor = semantic.ownership;
-    std.debug.print("  destructor resolution: {d} success, {d} failed, {d} repeated target TypeId lookups\n", .{
-        destructor.destructor_successes,                    destructor.destructor_failures,
-        destructor.destructor_repeated_target_type_lookups,
-    });
-    std.debug.print("    pointer/address {d:.3} ms, receivers {d:.3} ms, inputs {d:.3} ms, dispatch {d:.3} ms\n", .{
-        milliseconds(destructor.destructor_pointer_address_ns),
-        milliseconds(destructor.destructor_receiver_discovery_ns),
-        milliseconds(destructor.destructor_input_construction_ns),
-        milliseconds(destructor.destructor_dispatch_ns),
-    });
-    std.debug.print("    appended on success: {d} nodes, {d} value fields, {d} string bytes\n", .{
-        destructor.destructor_successful_nodes,   destructor.destructor_successful_value_fields,
-        destructor.destructor_successful_strings,
-    });
-    std.debug.print("    appended on failure: {d} nodes, {d} value fields, {d} string bytes\n", .{
-        destructor.destructor_failed_nodes,   destructor.destructor_failed_value_fields,
-        destructor.destructor_failed_strings,
+    std.debug.print("  destructor resolution: {d} success, {d} failed\n", .{
+        destructor.destructor_successes, destructor.destructor_failures,
     });
     std.debug.print("  post-resolution:             {d:.3} ms\n", .{milliseconds(semantic_timings.post_resolution_ns)});
     std.debug.print("  verify:                      {d:.3} ms\n", .{milliseconds(semantic_timings.verify_ns)});
