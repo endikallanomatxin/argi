@@ -194,6 +194,8 @@ fn expectSuccessfulBuild(name: []const u8) !void {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
+    if (result.term != .exited or result.term.exited != 0)
+        std.debug.print("argi build {s} failed:\n{s}", .{ name, result.stderr });
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
 }
 
@@ -1103,6 +1105,7 @@ test "feature_tests/basics/01_minimal_main" {
 
 test "usecase_tests/01_cat_cli" {
     const test_path = "tests/usecase_tests/01_cat_cli";
+    const expected_help = "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help.\n";
     const input_1 = try pathInTest(test_path, "input.txt");
     defer std.testing.allocator.free(input_1);
     const input_2 = try pathInTest(test_path, "input_2.txt");
@@ -1114,27 +1117,17 @@ test "usecase_tests/01_cat_cli" {
         0,
         "Hello from Argi.\nThis is a tiny cat clone.\nAnd now a second file.\nCat should concatenate both.\n",
     );
-}
-
-test "usecase_tests/01_cat_cli_help_short" {
-    const test_path = "tests/usecase_tests/01_cat_cli";
-    try expectSuccessfulBuild(test_path);
     try runExpectStdoutWithArgs(
         test_path,
         &[_][]const u8{"-h"},
         0,
-        "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help.\n",
+        expected_help,
     );
-}
-
-test "usecase_tests/01_cat_cli_help_long" {
-    const test_path = "tests/usecase_tests/01_cat_cli";
-    try expectSuccessfulBuild(test_path);
     try runExpectStdoutWithArgs(
         test_path,
         &[_][]const u8{"--help"},
         0,
-        "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help.\n",
+        expected_help,
     );
 }
 
@@ -2036,6 +2029,12 @@ test "feature_tests/types/17_generic_type_initializer_from_init" {
     try run(test_path);
 }
 
+test "feature_tests/types/260_generic_type_initializer_defer" {
+    const test_path = "tests/feature_tests/types/260_generic_type_initializer_defer";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/types/18_positional_type_initializer" {
     const test_path = "tests/feature_tests/types/18_positional_type_initializer";
     try expectSuccessfulBuild(test_path);
@@ -2228,7 +2227,7 @@ test "feature_tests/control_flow/14_for_mut_borrowed_dynamic_array" {
 
 test "feature_tests/types/14X_errable_match_unknown_variant" {
     try buildExpectFailExact("tests/feature_tests/types/14X_errable_match_unknown_variant",
-        \\tests/feature_tests/types/14X_errable_match_unknown_variant/main.rg:7:11: error: choice type 'Errable#(.t: Int32, .reasons: choice)' has no variant '..none'
+        \\tests/feature_tests/types/14X_errable_match_unknown_variant/main.rg:7:11: error: choice type 'Errable#(.t: Int32, .reasons: (..test_error))' has no variant '..none'
         \\          ..none {
         \\            ^
         \\
@@ -2710,13 +2709,10 @@ test "feature_tests/ownership/19X_system_noncopyable_argument" {
     );
 }
 
-test "feature_tests/ownership/35X_system_move_by_value" {
-    try buildExpectFailExact("tests/feature_tests/ownership/35X_system_move_by_value",
-        \\tests/feature_tests/ownership/35X_system_move_by_value/main.rg:6:37: error: System cannot be moved by value; pass it by '&' or '$&' instead
-        \\      status_code = consume(.system = ~system)
-        \\                                      ^
-        \\
-    );
+test "feature_tests/ownership/35_system_move_by_value" {
+    const test_path = "tests/feature_tests/ownership/35_system_move_by_value";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
 }
 
 test "feature_tests/ownership/36X_double_move" {
@@ -2915,7 +2911,7 @@ test "feature_tests/ownership/26_distinct_fields_do_not_alias_same_call" {
 }
 
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
-    try buildExpectFail("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal", "type 'Resource' is not copyable");
+    try buildExpectFail("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal", "type 'Resource' cannot be copied implicitly");
 }
 
 test "feature_tests/ownership/28X_ambiguous_copy_assignment" {
@@ -2938,9 +2934,9 @@ test "feature_tests/ownership/39_stable_field_reference_survives_replacement" {
 
 test "feature_tests/ownership/40_raw_pointer_establish_fresh" {
     try buildExpectFailExact("tests/feature_tests/ownership/40_raw_pointer_establish_fresh",
-        \\tests/feature_tests/ownership/40_raw_pointer_establish_fresh/main.rg:1:1: error: fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
-        \\  main() -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/40_raw_pointer_establish_fresh/main.rg:5:56: error: fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
+        \\      reference ::= establish_fresh_reference#(.t: Int32)(.raw = raw)
+        \\                                                         ^
         \\
     );
 }
@@ -2951,18 +2947,18 @@ test "feature_tests/ownership/41_raw_pointer_establish_inherit" {
 
 test "feature_tests/ownership/42X_reference_use_after_root_end" {
     try buildExpectFailExact("tests/feature_tests/ownership/42X_reference_use_after_root_end",
-        \\tests/feature_tests/ownership/42X_reference_use_after_root_end/main.rg:1:1: error: reference depends on a root that has ended
-        \\  main(.system: System) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/42X_reference_use_after_root_end/main.rg:10:8: error: reference depends on a root that has ended
+        \\      if reference& == 0 {
+        \\         ^
         \\
     );
 }
 
 test "feature_tests/ownership/53X_pointer_inputs_may_alias" {
     try buildExpectFailExact("tests/feature_tests/ownership/53X_pointer_inputs_may_alias",
-        \\tests/feature_tests/ownership/53X_pointer_inputs_may_alias/main.rg:1:1: error: reference depends on a root that has ended
-        \\  invalidate_then_read(
-        \\  ^
+        \\tests/feature_tests/ownership/53X_pointer_inputs_may_alias/main.rg:6:23: error: reference depends on a root that has ended
+        \\      value = read_alias&.size
+        \\                        ^
         \\
     );
 }
@@ -2973,9 +2969,9 @@ test "feature_tests/ownership/54_deinit_through_alias_reinitialize" {
 
 test "feature_tests/ownership/55X_deinit_through_alias_read" {
     try buildExpectFailExact("tests/feature_tests/ownership/55X_deinit_through_alias_read",
-        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:1:1: error: reference depends on a root that has ended
-        \\  main(.system: System) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:11:8: error: reference depends on a root that has ended
+        \\      if b&.size == 1 {
+        \\         ^
         \\
     );
 }
@@ -2986,27 +2982,27 @@ test "feature_tests/ownership/56_branch_ownership_cleanup_resolves" {
 
 test "feature_tests/ownership/57X_return_reference_to_local" {
     try buildExpectFailExact("tests/feature_tests/ownership/57X_return_reference_to_local",
-        \\tests/feature_tests/ownership/57X_return_reference_to_local/main.rg:1:1: error: function output cannot depend on a local storage generation that ends before return
+        \\tests/feature_tests/ownership/57X_return_reference_to_local/main.rg:1:12: error: function output cannot depend on a local storage generation that ends before return
         \\  bad() -> (.result: &Int32) := {
-        \\  ^
+        \\             ^
         \\
     );
 }
 
 test "feature_tests/ownership/58X_null_safe_reference" {
     try buildExpectFailExact("tests/feature_tests/ownership/58X_null_safe_reference",
-        \\tests/feature_tests/ownership/58X_null_safe_reference/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
-        \\  main() -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/58X_null_safe_reference/main.rg:3:19: error: an integer address cannot establish a safe reference; use an explicit root establishment boundary
+        \\      reference ::= cast#(.to: $&Int32)(.value = zero)
+        \\                    ^
         \\
     );
 }
 
 test "feature_tests/ownership/59X_branch_deinit_then_use" {
     try buildExpectFailExact("tests/feature_tests/ownership/59X_branch_deinit_then_use",
-        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:1:1: error: place rooted at 'allocation' is maybe_initialized and cannot be used
-        \\  main(.system: System, .condition: Bool = false) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:12:8: error: place rooted at 'allocation' is maybe_initialized and cannot be used
+        \\      if allocation.size == 1 {
+        \\         ^
         \\
     );
 }
@@ -3017,36 +3013,36 @@ test "feature_tests/ownership/60_partial_field_move_cleanup" {
 
 test "feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root",
-        \\tests/feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root/main.rg:1:1: error: fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
-        \\  main() -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root/main.rg:5:50: error: fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
+        \\      safe ::= establish_fresh_reference#(.t: Char)(.raw = raw).reference
+        \\                                                   ^
         \\
     );
 }
 
 test "feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip" {
     try buildExpectFailExact("tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip",
-        \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
-        \\  main() -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:4:20: error: an integer address cannot establish a safe reference; use an explicit root establishment boundary
+        \\      fabricated ::= cast#(.to: &Char)(.value = address)
+        \\                     ^
         \\
     );
 }
 
 test "feature_tests/ownership/63X_malloc_direct_safe_cast" {
     try buildExpectFailExact("tests/feature_tests/ownership/63X_malloc_direct_safe_cast",
-        \\tests/feature_tests/ownership/63X_malloc_direct_safe_cast/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
-        \\  main() -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/63X_malloc_direct_safe_cast/main.rg:4:20: error: an integer address cannot establish a safe reference; use an explicit root establishment boundary
+        \\      fabricated ::= cast#(.to: $&UInt8)(.value = address)
+        \\                     ^
         \\
     );
 }
 
 test "feature_tests/ownership/64X_owned_root_cycle" {
     try buildExpectFailExact("tests/feature_tests/ownership/64X_owned_root_cycle",
-        \\tests/feature_tests/ownership/64X_owned_root_cycle/main.rg:1:1: error: root ownership must be acyclic
-        \\  main(.system: System) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/64X_owned_root_cycle/main.rg:16:5: error: root ownership must be acyclic
+        \\      slot_b& = ~a
+        \\      ^
         \\
     );
 }
@@ -3169,7 +3165,7 @@ test "feature_tests/ownership/84_semantic_relocation" {
 test "feature_tests/ownership/85X_semantic_relocation_double" {
     try buildExpectFail(
         "tests/feature_tests/ownership/85X_semantic_relocation_double",
-        "place rooted at 'source' is moved and cannot be used",
+        "binding 'source' was moved and cannot be used again",
     );
 }
 
@@ -4036,9 +4032,9 @@ test "feature_tests/ownership/218X_conditional_opaque_reference_source_closes_ow
 
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
-        \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended
-        \\  main(.system: System) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:19:8: error: reference depends on a root that has ended
+        \\      if alias& == 0 {
+        \\         ^
         \\
     );
 }
@@ -4049,9 +4045,9 @@ test "feature_tests/ownership/44_cross_root_cycle_survivor_remains_usable" {
 
 test "feature_tests/ownership/45X_cross_root_cycle_stale_edge" {
     try buildExpectFailExact("tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge",
-        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:3:1: error: reference depends on a root that has ended
-        \\  main(.system: System) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:13:8: error: reference depends on a root that has ended
+        \\      if b.to_a& == 0 {
+        \\         ^
         \\
     );
 }
@@ -4062,9 +4058,9 @@ test "feature_tests/ownership/46_deinitialized_place_can_be_replaced" {
 
 test "feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance" {
     try buildExpectFailExact("tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance",
-        \\tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
-        \\  main() -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance/main.rg:4:19: error: an integer address cannot establish a safe reference; use an explicit root establishment boundary
+        \\      reference ::= cast#(.to: $&Int32)(.value = address)
+        \\                    ^
         \\
     );
 }
@@ -4077,27 +4073,27 @@ test "feature_tests/ownership/48_structural_field_move" {
 
 test "feature_tests/ownership/49X_structural_field_use_after_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/49X_structural_field_use_after_move",
-        \\tests/feature_tests/ownership/49X_structural_field_use_after_move/main.rg:10:1: error: place rooted at 'pair' is moved and cannot be used
-        \\  main() -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/49X_structural_field_use_after_move/main.rg:13:19: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/49X_structural_field_use_after_move/main.rg:12:32)
+        \\      status_code = pair.left + pair.right - moved
+        \\                    ^
         \\
     );
 }
 
 test "feature_tests/ownership/50X_branch_may_move_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/50X_branch_may_move_value",
-        \\tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:4:1: error: place rooted at 'pair' is moved and cannot be used
-        \\  main(.condition: Bool = false) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:9:19: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:7:26)
+        \\      status_code = pair.left
+        \\                    ^
         \\
     );
 }
 
 test "feature_tests/ownership/51X_loop_may_move_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/51X_loop_may_move_value",
-        \\tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:4:1: error: place rooted at 'pair' is moved and cannot be used
-        \\  main(.condition: Bool = false) -> (.status_code: Int32) := {
-        \\  ^
+        \\tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:7:27: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:7:26)
+        \\          consume(.value = ~pair.left)
+        \\                            ^
         \\
     );
 }
@@ -4695,7 +4691,7 @@ test "feature_tests/ownership/283_scalar_opaque_read_is_independent" {
 test "feature_tests/ownership/284X_integer_cannot_establish_any_reference" {
     try buildExpectFail(
         "tests/feature_tests/ownership/284X_integer_cannot_establish_any_reference",
-        "an integer address cannot establish a safe reference; use RawPointer and explicit root establishment",
+        "an integer address cannot establish a safe reference; use an explicit root establishment boundary",
     );
 }
 
@@ -4723,6 +4719,18 @@ test "feature_tests/polymorphism/34X_static_abstract_generic_field_identity" {
         "tests/feature_tests/polymorphism/34X_static_abstract_generic_field_identity",
         "no overload of 'accept_b' accepts arguments (.value: Wrapper#(.backend_type: BackendA))",
     );
+}
+
+test "feature_tests/polymorphism/35_generic_specialization_cache_nominal_identity" {
+    const test_path = "tests/feature_tests/polymorphism/35_generic_specialization_cache_nominal_identity";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 12);
+}
+
+test "feature_tests/polymorphism/36_abstract_contract_choice_payload" {
+    const test_path = "tests/feature_tests/polymorphism/36_abstract_contract_choice_payload";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
 }
 
 test "feature_tests/text/10_string_view_c_string_storage" {
@@ -5051,9 +5059,9 @@ test "feature_tests/modules/18_private_struct_field_same_module" {
 
 test "feature_tests/modules/19X_private_struct_field_imported" {
     try buildExpectFailExact("tests/feature_tests/modules/19X_private_struct_field_imported",
-        \\tests/feature_tests/modules/19X_private_struct_field_imported/main.rg:4:32: error: field '_hidden' is private to its module
+        \\tests/feature_tests/modules/19X_private_struct_field_imported/main.rg:4:25: error: field '_hidden' is private to its module
         \\      status_code = point._hidden
-        \\                                 ^
+        \\                          ^
         \\
     );
 }
@@ -5074,6 +5082,12 @@ test "feature_tests/modules/24_imported_generic_abstract_dispatch_prefers_concre
     const test_path = "tests/feature_tests/modules/24_imported_generic_abstract_dispatch_prefers_concrete";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 2);
+}
+
+test "feature_tests/modules/27_imported_abstract_qualified_signature" {
+    const test_path = "tests/feature_tests/modules/27_imported_abstract_qualified_signature";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
 }
 
 test "feature_tests/modules/25X_private_choice_option_imported" {
@@ -5650,4 +5664,111 @@ test "argi test reports empty filter matches" {
 
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("No tests found\n", result.stderr);
+}
+
+test "dormant match payload copy diagnostics respect reachability" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "main.rg",
+        .data =
+        \\Token : Type = (.value: Int32)
+        \\
+        \\deinit(.self: $&Token) -> () := {}
+        \\
+        \\Result : Type = (
+        \\    ..ok(.token: Token)
+        \\    ..error
+        \\)
+        \\
+        \\dormant() -> () := {
+        \\    value : Result = ..ok(.token = Token(.value = 7))
+        \\    match value {
+        \\        ..ok payload {
+        \\            _ ::= payload.token.value
+        \\        }
+        \\        ..error {}
+        \\    }
+        \\}
+        \\
+        \\main() -> (.status_code: Int32 = 0) := {}
+        \\
+        ,
+    });
+
+    const module_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(module_root);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+
+    const result = try runChild(&.{ installed_argi, "build", module_root });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    if (result.term != .exited or result.term.exited != 0)
+        std.debug.print("dormant match payload build failed:\n{s}", .{result.stderr});
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+}
+
+test "dormant pointer diagnostics respect reachability" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "main.rg",
+        .data =
+        \\dormant() -> () := {
+        \\    value :: Int32 = 0
+        \\    reader : &Int32 = &value
+        \\    reader& = 1
+        \\}
+        \\
+        \\main() -> (.status_code: Int32 = 0) := {}
+        \\
+        ,
+    });
+
+    const module_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(module_root);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+
+    const result = try runChild(&.{ installed_argi, "build", module_root });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    if (result.term != .exited or result.term.exited != 0)
+        std.debug.print("dormant pointer build failed:\n{s}", .{result.stderr});
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+}
+
+test "argi check validates dormant function bodies" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "main.rg",
+        .data =
+        \\dormant() -> () := {
+        \\    value :: Int32 = 0
+        \\    reader : &Int32 = &value
+        \\    reader& = 1
+        \\}
+        \\
+        \\main() -> (.status_code: Int32 = 0) := {}
+        \\
+        ,
+    });
+
+    const module_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(module_root);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+
+    const result = try runChild(&.{ installed_argi, "check", module_root });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
 }

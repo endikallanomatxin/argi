@@ -384,8 +384,8 @@ c_string_as_view(
 concat_views(
     .left: &StringView,
     .right: &StringView,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
-    allocator : $&Allocator = #reach allocator, system.allocator
     created ::= string_with_capacity(.allocator = allocator, .capacity = left&.length + right&.length)
     match created {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
@@ -403,6 +403,7 @@ concat_views(
 operator +(
     .left: &String,
     .right: &Char,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     left_view ::= as_view(.self = left)
     right_view ::= c_string_as_view(.text = right)
@@ -412,6 +413,7 @@ operator +(
 operator +(
     .left: &String,
     .right: &StringView,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     left_view ::= as_view(.self = left)
     result = concat_views(.left = &left_view, .right = right)
@@ -420,6 +422,7 @@ operator +(
 operator +(
     .left: &String,
     .right: &String,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     left_view ::= as_view(.self = left)
     right_view ::= as_view(.self = right)
@@ -429,6 +432,7 @@ operator +(
 operator +(
     .left: &StringView,
     .right: &Char,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     right_view ::= c_string_as_view(.text = right)
     result = concat_views(.left = left, .right = &right_view)
@@ -437,6 +441,7 @@ operator +(
 operator +(
     .left: &StringView,
     .right: &StringView,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     result = concat_views(.left = left, .right = right)
 }
@@ -446,6 +451,7 @@ String implements FalliblyCopyable#(.reasons: (..out_of_memory))
 operator +(
     .left: &StringView,
     .right: &String,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     right_view ::= as_view(.self = right)
     result = concat_views(.left = left, .right = &right_view)

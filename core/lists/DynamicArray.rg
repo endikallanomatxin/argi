@@ -58,8 +58,14 @@ deinit #(.t: Type) (
         trusted_opaque_drop(.slot = slot, .allocator = allocator)
         i = i + 1
     }
+    -- Error traces use the all-zero representation as an empty array until
+    -- their first entry is appended. Regular initialization always gives an
+    -- array nonzero capacity, so capacity also records whether backing
+    -- allocation ownership exists.
     trusted_opaque_mark_empty(.storage = $&self&.allocation)
-    deinit(.self = $&self&.allocation)
+    if self&.capacity != 0 {
+        deinit(.self = $&self&.allocation)
+    }
 }
 
 copy #(.t: Type: InfalliblyCopyable) (
@@ -112,8 +118,17 @@ copy #(
     i :: UIntNative = 0
     while i < self&.length {
         ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
-        element ::= copy(.self = ptr)!
-        push_assume_capacity#(.t: t)(.self = $&out, .value = ~element)
+        copied ::= copy(.self = ptr)
+        match copied {
+            ..ok ~ payload {
+                push_assume_capacity#(.t: t)(.self = $&out, .value = ~payload)
+            }
+            ..error ~ err {
+                deinit#(.t: t)(.allocator = allocator, .self = $&out)
+                result = ..error(.reason = err.reason)
+                return
+            }
+        }
         i = i + 1
     }
     result = ..ok ~out

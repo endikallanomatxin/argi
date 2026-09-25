@@ -3,6 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const test_filters = b.option([]const []const u8, "test-filter", "Only run tests whose name contains this text (repeatable)") orelse &.{};
 
     const llvm_include_path, const llvm_lib_path, const llvm_libs_raw = prepareLlvm(b) catch |err| {
         if (err != error.LlvmNotFound) {
@@ -19,6 +20,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        // Zig 0.16 error tracing can fault while recording handled I/O errors
+        // (reproduced in createDirPath when PathAlreadyExists is returned).
+        .error_tracing = if (optimize == .Debug) false else null,
     });
 
     const llvm_c = b.addTranslateC(.{
@@ -57,7 +61,6 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    // Allow argument passing: `zig build run -- arg1 arg2 etc`
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
@@ -78,6 +81,7 @@ pub fn build(b: *std.Build) void {
 
     const exe_tests = b.addTest(.{
         .root_module = tests_mod,
+        .filters = test_filters,
     });
     const run_exe_tests = b.addRunArtifact(exe_tests);
     run_exe_tests.step.dependOn(b.getInstallStep());
@@ -91,18 +95,23 @@ pub fn build(b: *std.Build) void {
     linkLlvmModule(internal_tests_mod, llvm_lib_path, llvm_libs_raw);
     const internal_tests = b.addTest(.{
         .root_module = internal_tests_mod,
+        .filters = test_filters,
     });
     const run_internal_tests = b.addRunArtifact(internal_tests);
 
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_exe_tests.step);
-    test_step.dependOn(&run_internal_tests.step);
-    test_step.dependOn(b.getInstallStep());
+    const internal_test_step = b.step("test-internal", "Run compiler unit tests");
+    internal_test_step.dependOn(&run_internal_tests.step);
+
+    const program_test_step = b.step("test-programs", "Run Argi program tests");
+    program_test_step.dependOn(&run_exe_tests.step);
+    program_test_step.dependOn(b.getInstallStep());
+
+    const test_step = b.step("test", "Run all tests");
+    test_step.dependOn(internal_test_step);
+    test_step.dependOn(program_test_step);
 }
 
 fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, []const u8 } {
-    // Obtain LLVM paths. First try environment variables to avoid spawning
-    // `llvm-config` which might not be supported in restricted environments.
     const env_include = b.graph.environ_map.get("LLVM_INCLUDE_DIR");
     const env_lib = b.graph.environ_map.get("LLVM_LIB_DIR");
     const env_libs = b.graph.environ_map.get("LLVM_LIBS");
@@ -140,6 +149,7 @@ fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, 
 }
 
 const llvm_config_candidates = [_][]const u8{
+    "llvm-config-21",
     "llvm-config",
     "llvm-config-20",
     "llvm-config-19",

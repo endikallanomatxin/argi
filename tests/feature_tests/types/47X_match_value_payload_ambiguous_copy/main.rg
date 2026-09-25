@@ -2,7 +2,9 @@ Payload : Type = (
     .value: Int32,
 )
 
-init(.payload: $&Payload) -> () := {}
+init(.payload: $&Payload, .value: Int32) -> () := {
+    payload& = (.value = value)
+}
 
 deinit(.payload: $&Payload) -> () := {}
 
