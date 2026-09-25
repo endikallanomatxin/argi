@@ -509,9 +509,11 @@ pub const Resolver = struct {
         // be unresolved. Roll every append-only GlobalSG pool back unless the
         // complete iterator loop can be published atomically.
         const checkpoint = self.graph.checkpoint();
+        const side_effect_checkpoint = generic_functions.checkpointSideEffects();
         var committed = false;
         defer if (!committed) {
             self.graph.rollback(checkpoint);
+            generic_functions.rollbackSideEffects(side_effect_checkpoint);
         };
 
         const ForProtocol = struct {

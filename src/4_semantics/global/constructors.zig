@@ -234,14 +234,15 @@ pub const Resolver = struct {
         // Candidate inference interns temporary types and generic identities.
         // Keep the whole attempt transactional: if some dependency is still
         // unresolved, a later fixed-point round must start from the same graph.
+        const generics = self.generics.?;
+        const generic_functions = self.generic_functions.?;
         const checkpoint = self.graph.checkpoint();
+        const side_effect_checkpoint = generic_functions.checkpointSideEffects();
         var committed = false;
         defer if (!committed) {
             self.graph.rollback(checkpoint);
+            generic_functions.rollbackSideEffects(side_effect_checkpoint);
         };
-
-        const generics = self.generics.?;
-        const generic_functions = self.generic_functions.?;
 
         // Context can fully determine a generic constructor even when none of
         // the runtime arguments mention its type parameter (for example an
@@ -318,10 +319,13 @@ pub const Resolver = struct {
         // dependencies in the initializer body are still unresolved. Keep the
         // attempt transactional so failed retries do not accumulate generic
         // identities, instantiated fields, functions or value-field tails.
+        const generic_functions = self.generic_functions.?;
         const checkpoint = self.graph.checkpoint();
+        const side_effect_checkpoint = generic_functions.checkpointSideEffects();
         var committed = false;
         defer if (!committed) {
             self.graph.rollback(checkpoint);
+            generic_functions.rollbackSideEffects(side_effect_checkpoint);
         };
 
         const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {
@@ -336,7 +340,6 @@ pub const Resolver = struct {
         } });
         _ = generics.ensureGenericInstance(ty) catch return .deferred;
 
-        const generic_functions = self.generic_functions.?;
         const input = globalizer.globalNode(o, value.input);
         const initializer = try self.findGenericInitializer(
             generics,

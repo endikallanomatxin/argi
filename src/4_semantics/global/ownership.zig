@@ -192,6 +192,17 @@ pub const Resolver = struct {
         try self.registerDefer(marker, deferred_value);
     }
 
+    pub fn parameterizedCheckpoint(context: *anyopaque) [2]usize {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        return .{ self.deferred.items.len, self.stats.defers };
+    }
+
+    pub fn rollbackParameterizedCheckpoint(context: *anyopaque, saved: [2]usize) void {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        self.deferred.shrinkRetainingCapacity(saved[0]);
+        self.stats.defers = @intCast(saved[1]);
+    }
+
     fn registerDefer(self: *Resolver, marker: global_sg.GlobalNodeId, deferred_value: global_sg.GlobalNodeId) !void {
         try self.deferred.append(self.allocator, .{ .marker = marker, .value = deferred_value });
         try self.makeNoop(marker, self.graph.nodes.items[@intFromEnum(deferred_value)].source);
@@ -1024,4 +1035,36 @@ test "error propagation cleanup captures active lexical obligations" {
     const cleanup = graph.error_propagations.items[0].cleanup_nodes;
     try std.testing.expectEqual(@as(u32, 1), cleanup.len);
     try std.testing.expectEqual(deferred_node, graph.node_refs.items[cleanup.start]);
+}
+
+test "parameterized defer checkpoint restores resolver side effects" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var core = core_mod.Resolver{
+        .allocator = allocator,
+        .graph = &graph,
+        .modules = &.{},
+        .offsets = &.{},
+    };
+    var resolver = Resolver{
+        .allocator = allocator,
+        .graph = &graph,
+        .modules = &.{},
+        .offsets = &.{},
+        .core = &core,
+    };
+    defer resolver.deinit();
+
+    try resolver.deferred.append(allocator, .{ .marker = @enumFromInt(1), .value = @enumFromInt(2) });
+    resolver.stats.defers = 1;
+    const saved = parameterizedCheckpoint(&resolver);
+
+    try resolver.deferred.append(allocator, .{ .marker = @enumFromInt(3), .value = @enumFromInt(4) });
+    resolver.stats.defers = 2;
+    rollbackParameterizedCheckpoint(&resolver, saved);
+
+    try std.testing.expectEqual(@as(usize, 1), resolver.deferred.items.len);
+    try std.testing.expectEqual(@as(u32, 1), resolver.stats.defers);
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(resolver.deferred.items[0].marker));
 }

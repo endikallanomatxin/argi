@@ -60,6 +60,8 @@ pub const Resolver = struct {
     nested_constructor_resolver: ?*const fn (*anyopaque, usize, module_entities.ExternalRef, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, ReachInferenceContext, primitives.SourceRef) anyerror!?global_sg.Node = null,
     ownership_context: ?*anyopaque = null,
     register_defer: ?*const fn (*anyopaque, global_sg.GlobalNodeId, global_sg.GlobalNodeId) anyerror!void = null,
+    ownership_checkpoint: ?*const fn (*anyopaque) [2]usize = null,
+    rollback_ownership: ?*const fn (*anyopaque, [2]usize) void = null,
     stats: Stats = .{},
     profile_io: ?std.Io = null,
     selection_profile: SelectionProfile = .{},
@@ -84,6 +86,19 @@ pub const Resolver = struct {
     profile_pending_body_node_ns: i96 = 0,
     profile_pending_body_kinds: [@typeInfo(ir.Pending).@"union".fields.len]BodyNodeProfile = @splat(.{}),
     profile_expression_kinds: [@typeInfo(ir.PendingExpressionKind).@"enum".fields.len]BodyNodeProfile = @splat(.{}),
+
+    pub fn checkpointSideEffects(self: *const Resolver) ?[2]usize {
+        const context = self.ownership_context orelse return null;
+        const checkpoint = self.ownership_checkpoint orelse return null;
+        return checkpoint(context);
+    }
+
+    pub fn rollbackSideEffects(self: *Resolver, saved: ?[2]usize) void {
+        const checkpoint = saved orelse return;
+        const context = self.ownership_context orelse return;
+        const rollback = self.rollback_ownership orelse return;
+        rollback(context, checkpoint);
+    }
 
     fn profileTimestamp(self: *const Resolver) i96 {
         if (self.profile_io) |io| return std.Io.Timestamp.now(io, .boot).nanoseconds;
@@ -1331,11 +1346,13 @@ pub const Resolver = struct {
         candidates: *std.ArrayList(global_sg.GlobalDeclId),
     ) !bool {
         const checkpoint = self.graph.checkpoint();
+        const side_effect_checkpoint = self.checkpointSideEffects();
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
         const saved_core_stats = self.core.stats;
         defer {
             self.graph.rollback(checkpoint);
+            self.rollbackSideEffects(side_effect_checkpoint);
             self.stats = saved_stats;
             self.generics.stats = saved_generic_stats;
             self.core.stats = saved_core_stats;
@@ -1899,10 +1916,12 @@ pub const Resolver = struct {
             return id;
         }
         const checkpoint = self.graph.checkpoint();
+        const side_effect_checkpoint = self.checkpointSideEffects();
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
         errdefer {
             self.graph.rollback(checkpoint);
+            self.rollbackSideEffects(side_effect_checkpoint);
             self.stats = saved_stats;
             self.generics.stats = saved_generic_stats;
         }

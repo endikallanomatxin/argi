@@ -408,6 +408,8 @@ pub fn semantizeWithOptions(
     defer ownership.deinit();
     generic_functions.ownership_context = &ownership;
     generic_functions.register_defer = ownership_mod.Resolver.registerParameterizedDefer;
+    generic_functions.ownership_checkpoint = ownership_mod.Resolver.parameterizedCheckpoint;
+    generic_functions.rollback_ownership = ownership_mod.Resolver.rollbackParameterizedCheckpoint;
 
     try core.resolveExternalTypes();
     try generics.resolveExternalTypes();
