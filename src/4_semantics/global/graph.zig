@@ -419,18 +419,15 @@ pub const GlobalSemanticGraph = struct {
         self.types.items[raw] = .{ .declared = unresolved_type_poison_decl };
     }
 
-    /// Existing resolvers still patch preallocated slots directly. Until those
-    /// writes all go through one mutation API, reconcile construction state by
-    /// observing that the poison payload has been replaced.
-    pub fn reconcileTypeResolution(self: *GlobalSemanticGraph) bool {
-        var changed = false;
-        const limit = @min(self.construction.type_resolution.items.len, self.types.items.len);
-        for (self.construction.type_resolution.items[0..limit], 0..) |*state, raw| {
-            if (state.* != .unresolved or isUnresolvedTypePoison(self.types.items[raw])) continue;
-            state.* = .resolved;
-            changed = true;
-        }
-        return changed;
+    /// Publish a type through the construction-state boundary. Type holes must
+    /// be resolved through this API so GlobalSema never needs to rediscover
+    /// direct slot writes with a full-pool reconciliation scan.
+    pub fn resolveType(self: *GlobalSemanticGraph, id: GlobalTypeId, value: GlobalType) !void {
+        const raw: usize = @intFromEnum(id);
+        if (raw >= self.types.items.len) return error.InvalidGlobalTypeId;
+        self.types.items[raw] = value;
+        if (raw < self.construction.type_resolution.items.len)
+            self.construction.type_resolution.items[raw] = .resolved;
     }
 
     pub fn hasUnresolvedTypes(self: *const GlobalSemanticGraph) bool {
@@ -742,8 +739,7 @@ test "unresolved global type slots are construction state, not Any" {
     try std.testing.expect(graph.resolvedSemanticType(@enumFromInt(0)) == null);
     try std.testing.expectError(error.UnresolvedGlobalTypeSlots, graph.finishTypeResolution(allocator));
 
-    graph.types.items[0] = .{ .builtin = .Int32 };
-    try std.testing.expect(graph.reconcileTypeResolution());
+    try graph.resolveType(@enumFromInt(0), .{ .builtin = .Int32 });
     try std.testing.expect(!graph.hasUnresolvedTypes());
     try graph.finishTypeResolution(allocator);
     try std.testing.expect(graph.constructionStateEmpty());

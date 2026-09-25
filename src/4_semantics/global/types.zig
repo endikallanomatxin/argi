@@ -135,9 +135,9 @@ pub fn materializeNullable(
     const variant_start: u32 = @intCast(graph.variants.items.len);
     try graph.variants.append(allocator, .{ .name = none_name, .source = source, .value = 0 });
     try graph.variants.append(allocator, .{ .name = some_name, .payload_type = payload_ty, .source = source, .value = 1 });
-    graph.types.items[@intFromEnum(id)] = .{ .structural_choice = .{
+    try graph.resolveType(id, .{ .structural_choice = .{
         .variants = .{ .start = variant_start, .len = 2 },
-    } };
+    } });
 }
 
 /// Destructors receive an address of the owned value. A reference itself is

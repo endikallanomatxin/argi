@@ -54,7 +54,7 @@ pub const Resolver = struct {
                         }
                     }
                     if (resolved_builtin) |builtin_type| {
-                        self.graph.types.items[@intFromEnum(globalizer.globalType(o, local_id))] = .{ .builtin = builtin_type };
+                        try self.graph.resolveType(globalizer.globalType(o, local_id), .{ .builtin = builtin_type });
                         self.stats.external_types += 1;
                         continue;
                     }
@@ -64,7 +64,7 @@ pub const Resolver = struct {
                 if (reference.generic_arguments != null) continue;
                 const target = self.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch continue;
                 const target_type = self.graph.declarations.items[@intFromEnum(target)].type_id orelse continue;
-                self.graph.types.items[@intFromEnum(globalizer.globalType(o, local_id))] = .{ .declared = target };
+                try self.graph.resolveType(globalizer.globalType(o, local_id), .{ .declared = target });
                 _ = target_type;
                 self.stats.external_types += 1;
             }
@@ -496,7 +496,7 @@ pub const Resolver = struct {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
         if (reference.generic_arguments != null) return .not_applicable;
         const target = self.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch return .deferred;
-        self.graph.types.items[@intFromEnum(globalizer.globalType(o, value.destination))] = .{ .declared = target };
+        try self.graph.resolveType(globalizer.globalType(o, value.destination), .{ .declared = target });
         self.stats.external_types += 1;
         return .resolved;
     }
@@ -1996,8 +1996,7 @@ test "address type materializes after its child resolves" {
     var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
     try std.testing.expect(!try resolver.materializeAddresses());
 
-    graph.types.items[@intFromEnum(unresolved_ty)] = .{ .builtin = .Int32 };
-    try std.testing.expect(graph.reconcileTypeResolution());
+    try graph.resolveType(unresolved_ty, .{ .builtin = .Int32 });
     try std.testing.expect(try resolver.materializeAddresses());
     const result_pointer = switch (graph.semanticType(graph.node(@enumFromInt(1)).ty.?)) {
         .pointer => |pointer| pointer,

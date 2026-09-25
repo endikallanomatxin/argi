@@ -148,11 +148,11 @@ pub const Resolver = struct {
             .source = source,
             .value = 1,
         });
-        self.graph.types.items[@intFromEnum(id)] = .{ .inferred_choice = .{
+        try self.graph.resolveType(id, .{ .inferred_choice = .{
             .identity = @intFromEnum(id),
             .kind = .errable,
             .variants = .{ .start = variant_start, .len = 2 },
-        } };
+        } });
     }
 
     fn errorTraceType(self: *const Resolver) ?global_sg.GlobalTypeId {

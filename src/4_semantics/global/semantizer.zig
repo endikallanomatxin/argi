@@ -49,7 +49,6 @@ pub const Stats = struct {
         setup_ns: u64 = 0,
         fixed_point_ns: u64 = 0,
         pending_ns: u64 = 0,
-        type_reconciliation_ns: u64 = 0,
         binding_reconciliation_ns: u64 = 0,
         runtime_binding_defaults_ns: u64 = 0,
         string_literal_types_ns: u64 = 0,
@@ -413,7 +412,6 @@ pub fn semantizeWithOptions(
 
     try core.resolveExternalTypes();
     try generics.resolveExternalTypes();
-    _ = relocation.graph.reconcileTypeResolution();
     _ = try generics.materializeKnownTypes();
     _ = try control.materializeSugarTypes();
 
@@ -528,7 +526,6 @@ pub fn semantizeWithOptions(
     const profile_preloop = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
     var profile_rounds: usize = 0;
     var profile_pending_ns: i96 = 0;
-    var profile_type_reconciliation_ns: i96 = 0;
     var profile_binding_reconciliation_ns: i96 = 0;
     var profile_runtime_binding_defaults_ns: i96 = 0;
     var profile_string_literal_types_ns: i96 = 0;
@@ -581,9 +578,6 @@ pub fn semantizeWithOptions(
             if (options.profile_io) |io| profile_pending_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - pending_start;
 
             var sweep_start = profileTimestamp(options.profile_io);
-            if (relocation.graph.reconcileTypeResolution()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_type_reconciliation_ns);
-            sweep_start = profileTimestamp(options.profile_io);
             if (relocation.graph.reconcileBindingTypeResolution()) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &profile_binding_reconciliation_ns);
             sweep_start = profileTimestamp(options.profile_io);
@@ -752,7 +746,6 @@ pub fn semantizeWithOptions(
         dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
         return error.UnsupportedGlobalSemantic;
     }
-    _ = relocation.graph.reconcileTypeResolution();
     _ = relocation.graph.reconcileBindingTypeResolution();
     if (relocation.graph.hasUnresolvedTypes()) {
         if (options.diagnostics) |diagnostics|
@@ -878,7 +871,6 @@ pub fn semantizeWithOptions(
         .setup_ns = @intCast(profile_preloop - profile_relocated),
         .fixed_point_ns = @intCast(profile_postloop - profile_preloop),
         .pending_ns = @intCast(profile_pending_ns),
-        .type_reconciliation_ns = @intCast(profile_type_reconciliation_ns),
         .binding_reconciliation_ns = @intCast(profile_binding_reconciliation_ns),
         .runtime_binding_defaults_ns = @intCast(profile_runtime_binding_defaults_ns),
         .string_literal_types_ns = @intCast(profile_string_literal_types_ns),

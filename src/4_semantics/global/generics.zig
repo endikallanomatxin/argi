@@ -60,7 +60,7 @@ pub const Resolver = struct {
                 const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch continue;
                 const global_args = try self.relocateModuleArguments(module_index, args);
                 const destination = globalizer.globalType(o, local_id);
-                self.graph.types.items[@intFromEnum(destination)] = .{ .generic = .{ .base = base, .arguments = global_args } };
+                try self.graph.resolveType(destination, .{ .generic = .{ .base = base, .arguments = global_args } });
                 self.stats.type_holes += 1;
             }
         }
@@ -106,7 +106,7 @@ pub const Resolver = struct {
         const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch return .deferred;
         const global_args = try self.relocateModuleArguments(module_index, args);
         const destination = globalizer.globalType(o, value.destination);
-        self.graph.types.items[@intFromEnum(destination)] = .{ .generic = .{ .base = base, .arguments = global_args } };
+        try self.graph.resolveType(destination, .{ .generic = .{ .base = base, .arguments = global_args } });
         _ = try self.ensureGenericInstance(destination);
         self.stats.type_holes += 1;
         return .resolved;
