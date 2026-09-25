@@ -54,8 +54,8 @@ const safety_summary_infer = @import("4_semantics/safety/summary_infer.zig");
 const global_lsp_index = @import("0_commands/lsp_index.zig");
 const semantic_representation_test = @import("4_semantics/semantic_representation_test.zig");
 
-const global_codegen_types = @import("5_codegen/global_codegen_types.zig");
-const global_codegen = @import("5_codegen/global_codegen.zig");
+const type_codegen = @import("5_codegen/type_codegen.zig");
+const codegen = @import("5_codegen/codegen.zig");
 
 test {
     _ = semantic_literals;
@@ -114,6 +114,6 @@ test {
     _ = global_lsp_index;
     _ = semantic_representation_test;
 
-    _ = global_codegen_types;
-    _ = global_codegen;
+    _ = type_codegen;
+    _ = codegen;
 }

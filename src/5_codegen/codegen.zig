@@ -7,7 +7,7 @@ const primitives = @import("../4_semantics/primitives/schema.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 const tok = @import("../2_tokens/token.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
-const type_codegen = @import("global_codegen_types.zig");
+const type_codegen = @import("type_codegen.zig");
 
 pub const CodegenError = error{
     ModuleCreationFailed,
