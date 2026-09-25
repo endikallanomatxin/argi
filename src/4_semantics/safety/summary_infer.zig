@@ -4,7 +4,7 @@ const types = @import("../global/types.zig");
 const primitives = @import("../primitives/schema.zig");
 const facts = @import("facts.zig");
 const summaries = @import("summaries.zig");
-const value_state = @import("../value_state.zig");
+const value_state = @import("value_state.zig");
 
 /// Symbolic SafetySummary inference over the compact GlobalSG.
 ///

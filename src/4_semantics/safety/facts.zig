@@ -1,8 +1,8 @@
 const std = @import("std");
 const graph = @import("../global/graph.zig");
-const place_mod = @import("../place.zig");
-const base = @import("../safety_facts.zig");
-const value_state = @import("../value_state.zig");
+const place_mod = @import("place.zig");
+const base = @import("safety_facts.zig");
+const value_state = @import("value_state.zig");
 const primitives = @import("../primitives/schema.zig");
 
 pub const Place = place_mod.PlaceFor(graph.GlobalBindingId);

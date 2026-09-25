@@ -1,4 +1,4 @@
-const tok = @import("../2_tokens/token.zig");
+const tok = @import("../../2_tokens/token.zig");
 
 pub const Initializedness = enum {
     initialized,

@@ -6,7 +6,7 @@ const types = @import("../global/types.zig");
 const facts = @import("facts.zig");
 const summary_engine = @import("summaries.zig");
 const summary_infer = @import("summary_infer.zig");
-const value_state = @import("../value_state.zig");
+const value_state = @import("value_state.zig");
 const primitives = @import("../primitives/schema.zig");
 
 /// Indexed temporal checker. Program identity is exclusively Global*Id; no
