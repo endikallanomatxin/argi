@@ -5,7 +5,7 @@ Testing is a native Argi language feature.
 Tests are declared explicitly at top level with the same function-like header shape used by `main`, but prefixed with `test`:
 
 ```rg
-test my_test(.system: System = System()) -> !() := {
+test my_test(.system: System) -> !() := {
     testing.expect(true)!
 }
 ```
@@ -13,7 +13,7 @@ test my_test(.system: System = System()) -> !() := {
 V1 supports exactly this surface shape:
 
 - top-level only
-- one input: `.system: System = System()`
+- one input: `.system: System`, supplied by the checked entry wrapper
 - return: `-> !()`
 
 There is no other test syntax in v1.
@@ -64,13 +64,13 @@ They compose with Argi’s existing `Errable` and `!` flow.
 Examples:
 
 ```rg
-test simple_pass(.system: System = System()) -> !() := {
+test simple_pass(.system: System) -> !() := {
     testing.expect(true)!
 }
 ```
 
 ```rg
-test equality(.system: System = System()) -> !() := {
+test equality(.system: System) -> !() := {
     testing.expect_equal(.expected = 1, .actual = 1)!
 }
 ```
@@ -82,7 +82,7 @@ some_fallible_call() -> (.result: Errable#(.t: Int32, .reasons: (..some_reason))
     result = ..error(.reason = ..some_reason)
 }
 
-test expected_error(.system: System = System()) -> !() := {
+test expected_error(.system: System) -> !() := {
     call_result := some_fallible_call()
     testing.expect_error(.expected_reason = ..some_reason, .actual_result = call_result)!
 }

@@ -102,7 +102,7 @@ runtime.
 For example:
 
 ```rg
-main(.system: System = System()) -> !(.status_code: Int32 = 0) := {
+main(.system: System) -> !(.status_code: Int32 = 0) := {
     runtime := FiberRuntime(
         .allocator = system.allocator,
         .threads = system.threads,
@@ -172,7 +172,7 @@ If the caller has created a real runtime and binds it locally, `reach runtime`
 will find the local runtime first:
 
 ```rg
-main(.system: System = System()) -> !(.status_code: Int32 = 0) := {
+main(.system: System) -> !(.status_code: Int32 = 0) := {
     runtime := FiberRuntime(
         .allocator = system.allocator,
         .threads = system.threads,
@@ -465,7 +465,7 @@ In the long term, `main` should run inside the root runtime task, so that main
 itself can call `yield`, `checkpoint`, `sleep`, `await`, channels, etc.
 
 ```rg
-main(.system: System = System()) -> !(.status_code: Int32 = 0) := {
+main(.system: System) -> !(.status_code: Int32 = 0) := {
     runtime : $&Runtime = system.runtime
 
     future := runtime | concurrent($&_, Task({

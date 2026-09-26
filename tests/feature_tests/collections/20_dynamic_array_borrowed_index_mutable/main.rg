@@ -1,4 +1,4 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= system.allocator
 
     arr ::= DynamicArray#(.t: Int32)(.capacity = 2)

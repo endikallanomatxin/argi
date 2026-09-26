@@ -12,10 +12,10 @@
 - Migrate routine allocator and stream dependencies in core and their callers.
 - Cover scope, precedence, generic inference, type errors, and temporal safety.
 
-## Commit 2: checked program entry
+## Commit 2: checked program entry (implemented and validated)
 
 - Represent resource setup, the user entry call, and cleanup before safety.
-- Keep only the host ABI adapter in codegen.
+- Keep only the host ABI adapter in codegen; pass System explicitly.
 - Make the entry scope own resources and make System a reference context.
 - Keep System aggregated at main and use the same lifetime arrangement for
   tests. Bind its fields locally with compact assume declarations.

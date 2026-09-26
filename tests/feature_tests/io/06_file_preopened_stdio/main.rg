@@ -1,4 +1,4 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
     stdin_file ::= system.terminal&.stdin_file
     stdout_file ::= system.terminal&.stdout_file
     stderr_file ::= system.terminal&.stderr_file

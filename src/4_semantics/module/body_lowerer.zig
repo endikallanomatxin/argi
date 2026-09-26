@@ -146,6 +146,7 @@ const Context = struct {
                 .input_bindings = input_range,
                 .output_bindings = output_range,
                 .flags = .{
+                    .is_entry = self.files[self.file_index].is_entry,
                     .is_once = declaration.is_once,
                     .is_test = source_decl.kind == .test_function,
                     .has_declared_body = declaration.body != null,

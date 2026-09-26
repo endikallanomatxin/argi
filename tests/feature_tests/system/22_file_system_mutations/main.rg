@@ -1,4 +1,4 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= system.allocator
 
     src_path ::= from_literal(.data = "tests/feature_tests/system/22_file_system_mutations/build/temp_src.txt")

@@ -38,6 +38,22 @@ pub const SourceDb = struct {
         return .{ .files = files };
     }
 
+    pub fn append(self: *SourceDb, allocator: std.mem.Allocator, source: sf.SourceFile) !FileId {
+        const files = try allocator.alloc(File, self.files.len + 1);
+        errdefer allocator.free(files);
+        @memcpy(files[0..self.files.len], self.files);
+        files[self.files.len] = .{
+            .path = source.path,
+            .source = source.code,
+            .origin = source.origin,
+            .line_starts = try collectLineStarts(allocator, source.code),
+        };
+        const id = self.fileId(self.files.len);
+        allocator.free(self.files);
+        self.files = files;
+        return id;
+    }
+
     pub fn deinit(self: *SourceDb, allocator: std.mem.Allocator) void {
         for (self.files) |file| allocator.free(file.line_starts);
         allocator.free(self.files);

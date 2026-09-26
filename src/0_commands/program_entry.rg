@@ -1,0 +1,31 @@
+-- Resource ownership belongs to this checked scope. The host adapter only
+-- records process arguments and calls this function.
+__argi_entry() -> __ARGI_OUTPUT__ := {
+    allocator_storage ::= CAllocator()
+    assume allocator := $&allocator_storage
+
+    terminal_storage ::= Terminal()
+    terminal ::= $&terminal_storage
+    args_storage ::= Arguments()
+    env_vars_storage ::= EnvironmentVariables()
+    file_sys_storage ::= FileSystem()
+    network_storage ::= Network()
+    proc_man_storage ::= ProcessManager()
+    clock_storage ::= Clock()
+    rand_gen_storage ::= RandomNumberGenerator()
+    ffi_storage ::= ForeignFunctionInterface()
+
+    system :: System = (
+        .allocator = allocator,
+        .terminal = terminal,
+        .args = $&args_storage,
+        .env_vars = $&env_vars_storage,
+        .file_sys = $&file_sys_storage,
+        .network = $&network_storage,
+        .proc_man = $&proc_man_storage,
+        .clock = $&clock_storage,
+        .rand_gen = $&rand_gen_storage,
+        .ffi = $&ffi_storage,
+    )
+    __ARGI_RESULT__ = __ARGI_TARGET__(.system = system)
+}

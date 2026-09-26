@@ -169,6 +169,7 @@ pub const FileInput = struct {
     tree: *const syn.FileSyntaxTree,
     source: []const u8,
     is_bundled_core: bool = false,
+    is_entry: bool = false,
 };
 
 /// Construction-only lookup from durable source provenance back into syntax.

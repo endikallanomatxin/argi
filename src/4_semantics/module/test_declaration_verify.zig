@@ -50,44 +50,31 @@ fn validateOne(
         return false;
     }
     if (input.fields.len != 1) {
-        try diagnostics.add(loc, .semantic, "tests must declare exactly one input: '.system: System = System()'", .{});
+        try diagnostics.add(loc, .semantic, "tests must declare exactly one input: '.system: System'", .{});
         return false;
     }
 
     const system_field = file.structTypeField(input.fields[0]) orelse return false;
     if (!std.mem.eql(u8, file.tokenText(db, system_field.name_token), "system")) {
-        try diagnostics.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System = System()' as their only input", .{});
+        try diagnostics.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System' as their only input", .{});
         return false;
     }
     const system_type_node = system_field.type_node orelse {
-        try diagnostics.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System = System()' as their only input", .{});
+        try diagnostics.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System' as their only input", .{});
         return false;
     };
     const system_type = file.syntaxType(system_type_node) orelse return false;
     switch (system_type) {
         .name => |name| {
             if (!std.mem.eql(u8, file.tokenText(db, name.name_token), "System")) {
-                try diagnostics.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System = System()' as their only input", .{});
+                try diagnostics.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System' as their only input", .{});
                 return false;
             }
         },
         else => {
-            try diagnostics.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System = System()' as their only input", .{});
+            try diagnostics.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System' as their only input", .{});
             return false;
         },
-    }
-
-    const system_default = system_field.default_value orelse {
-        try diagnostics.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System = System()' as their only input", .{});
-        return false;
-    };
-    const default_call = file.functionCall(system_default) orelse {
-        try diagnostics.add(file.location(system_default), .semantic, "tests must declare '.system: System = System()' as their only input", .{});
-        return false;
-    };
-    if (!std.mem.eql(u8, file.tokenText(db, default_call.callee_token), "System")) {
-        try diagnostics.add(file.location(system_default), .semantic, "tests must declare '.system: System = System()' as their only input", .{});
-        return false;
     }
 
     if (output.fields.len != 1) {

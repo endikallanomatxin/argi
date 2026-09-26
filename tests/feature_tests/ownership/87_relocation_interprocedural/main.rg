@@ -2,7 +2,7 @@ move_between#(.t: Type)(.source: $&t, .destination: $&t) -> () := {
     relocate(.source = source, .destination = destination)
 }
 
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= system.allocator
 
     result ::= allocate(.self = system.allocator, .size = 1)

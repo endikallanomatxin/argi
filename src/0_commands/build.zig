@@ -320,6 +320,7 @@ fn compileResolvedPlan(
     var diagnostics = diag.Diagnostics.init(&allocator, files.items);
     var frontend_options = options.frontend_options;
     frontend_options.collect_stats = flags.stats;
+    frontend_options.entry_module_dir = plan.module_dir;
     var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, frontend_options);
     defer pipeline.deinit();
 

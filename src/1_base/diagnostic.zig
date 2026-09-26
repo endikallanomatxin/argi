@@ -21,6 +21,7 @@ pub const Diagnostics = struct {
     arena: *const std.mem.Allocator,
     source_files: []const sf.SourceFile, // slice inmutable
     source_db: source_db.SourceDb,
+    owned_source_files: ?[]sf.SourceFile = null,
     list: std.array_list.Managed(Diagnostic),
 
     pub fn init(
@@ -38,6 +39,19 @@ pub const Diagnostics = struct {
     pub fn deinit(self: *Diagnostics) void {
         self.list.deinit();
         self.source_db.deinit(self.arena.*);
+        if (self.owned_source_files) |files| self.arena.free(files);
+    }
+
+    pub fn appendSource(self: *Diagnostics, source: sf.SourceFile) !source_db.FileId {
+        const files = try self.arena.alloc(sf.SourceFile, self.source_files.len + 1);
+        errdefer self.arena.free(files);
+        @memcpy(files[0..self.source_files.len], self.source_files);
+        files[self.source_files.len] = source;
+        const id = try self.source_db.append(self.arena.*, source);
+        if (self.owned_source_files) |previous| self.arena.free(previous);
+        self.owned_source_files = files;
+        self.source_files = files;
+        return id;
     }
 
     pub fn add(self: *Diagnostics, loc: tok.Location, kind: Kind, comptime fmt: []const u8, args: anytype) !void {

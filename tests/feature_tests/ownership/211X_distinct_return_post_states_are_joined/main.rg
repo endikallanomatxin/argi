@@ -10,7 +10,7 @@ replace(.holder: $&Holder, .condition: Bool, .first: $&UInt8, .second: $&UInt8) 
     }
 }
 
-main(.system: System, .condition: Bool) -> (.status_code: Int32) := {
+main(.system: System, .condition: Bool = false) -> (.status_code: Int32) := {
     first_result ::= allocate(.self = system.allocator, .size = 1)
     second_result ::= allocate(.self = system.allocator, .size = 1)
     match first_result {

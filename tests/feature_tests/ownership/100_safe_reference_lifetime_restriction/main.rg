@@ -13,7 +13,7 @@ restrict_twice#(.t: Type)(.input: t, .first: &Any, .second: &Any) -> (.reference
     reference = restrict_reference#(.t: t)(.input = intermediate, .on = second).reference
 }
 
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= system.allocator
 
     source_result ::= allocate(.self = system.allocator, .size = 1)

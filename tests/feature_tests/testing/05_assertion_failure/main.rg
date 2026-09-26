@@ -1,3 +1,3 @@
-test assertion_failure(.system: System = System()) -> !() := {
+test assertion_failure(.system: System) -> !() := {
     testing.expect(.condition = false)!
 }

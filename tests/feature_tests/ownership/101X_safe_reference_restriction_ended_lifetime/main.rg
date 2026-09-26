@@ -1,4 +1,4 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
     source_result ::= allocate(.self = system.allocator, .size = 1)
     lifetime_result ::= allocate(.self = system.allocator, .size = 1)
     match source_result {

@@ -4,6 +4,6 @@ some_fallible_call() -> (.result: Errable#(.t: Void, .reasons: (..file_not_found
     result = ..error(.reason = ..file_not_found)
 }
 
-test direct_propagation(.system: System = System()) -> !() := {
+test direct_propagation(.system: System) -> !() := {
     some_fallible_call()!
 }

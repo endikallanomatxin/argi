@@ -7,7 +7,7 @@ initialize_left(.p: $&Allocation, .value: Allocation) -> () := {
     p& = ~value
 }
 
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= system.allocator
 
     left_result ::= allocate(.self = system.allocator, .size = 1)

@@ -410,6 +410,9 @@ pub const SafetyChecker = struct {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
             .binding_use => |binding| blk: {
+                // TODO: Reconstruct whole-aggregate reads from projected place
+                // records as well, preserving field updates through intermediate
+                // copies without conflating owning moves with reference copies.
                 const storage = facts.Place{ .root = binding };
                 const place = self.getPlace(state, storage) orelse break :blk .{};
                 try self.requirePlaceInitialized(function, node.source, storage, place.initializedness, state);
@@ -2777,7 +2780,15 @@ pub const SafetyChecker = struct {
             const output = self.valueAtPlace(state, storage) orelse continue;
             if (self.initializednessAtPlace(state, storage) != .initialized or
                 !self.typeContainsPointer(self.graph.bindings.items[@intFromEnum(binding)].ty)) continue;
-            try self.rejectEscapingLocalRoots(function, self.graph.bindings.items[@intFromEnum(binding)].source, output, state);
+            const source = self.graph.bindings.items[@intFromEnum(binding)].source;
+            try self.rejectEscapingLocalRoots(function, source, output, state);
+            // Field assignments have their own authoritative place records.
+            // Returning the parent also returns those updated projections.
+            for (state.places.items) |place| {
+                if (place.storage.eql(storage) or !storage.isPrefixOf(place.storage)) continue;
+                if (place.initializedness != .initialized) continue;
+                try self.rejectEscapingLocalRoots(function, source, place.value, state);
+            }
         }
     }
 

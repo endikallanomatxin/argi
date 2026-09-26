@@ -49,10 +49,13 @@ pub fn roots(
 ) !FunctionSet {
     var result = FunctionSet.init(allocator);
     errdefer result.deinit();
+    const has_entry = for (graph.functions.items) |function| {
+        if (function.flags.is_entry) break true;
+    } else false;
     for (graph.functions.items, 0..) |function, raw| {
         const declaration = graph.declaration(function.declaration);
         const name = graph.text(declaration.name);
-        const entrypoint = if (selected_test_name) |wanted|
+        const entrypoint = if (has_entry) function.flags.is_entry else if (selected_test_name) |wanted|
             function.flags.is_test and std.mem.eql(u8, name, wanted)
         else
             !function.flags.is_test and std.mem.eql(u8, name, "main");
@@ -60,20 +63,6 @@ pub fn roots(
         // inspected while resolving an otherwise reachable caller.
         if (entrypoint or function.flags.uses_inferred_error_reasons)
             _ = try result.include(@enumFromInt(@as(u32, @intCast(raw))));
-        if (entrypoint) for (graph.fields.items[function.input.start..][0..function.input.len]) |field| {
-            if (field.default_value != null or !std.mem.eql(u8, graph.text(field.name), "system")) continue;
-            for (graph.functions.items, 0..) |candidate, candidate_raw| {
-                const candidate_declaration = graph.declaration(candidate.declaration);
-                if (!std.mem.eql(u8, graph.text(candidate_declaration.name), "init") or candidate.input.len != 1) continue;
-                const receiver = graph.fields.items[candidate.input.start].ty;
-                const pointer = switch (graph.types.items[@intFromEnum(receiver)]) {
-                    .pointer => |value| value,
-                    else => continue,
-                };
-                if (types.equal(graph, pointer.child, field.ty))
-                    _ = try result.include(@enumFromInt(@as(u32, @intCast(candidate_raw))));
-            }
-        };
     }
     return result;
 }

@@ -28,6 +28,7 @@ pub const FrontendPipeline = struct {
     pub const Options = struct {
         semantizing: SemantizingOptions = .{},
         collect_stats: bool = false,
+        entry_module_dir: ?[]const u8 = null,
     };
 
     allocator: std.mem.Allocator,
@@ -49,6 +50,9 @@ pub const FrontendPipeline = struct {
     global_semantic_ns: u64 = 0,
     module_lowered_functions: u32 = 0,
     syntax_node_count: usize = 0,
+    entry_source: ?[]const u8 = null,
+    entry_path: ?[]const u8 = null,
+    entry_file: ?source_db.FileId = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -73,6 +77,8 @@ pub const FrontendPipeline = struct {
         for (self.syntax_files.items) |*file| file.deinit(self.allocator);
         self.syntax_files.deinit();
         self.syntax_root_list.deinit();
+        if (self.entry_source) |value| self.allocator.free(value);
+        if (self.entry_path) |value| self.allocator.free(value);
     }
 
     pub fn tokenizeFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !void {
@@ -171,12 +177,65 @@ pub const FrontendPipeline = struct {
             self.options.semantizing.include_tests,
             self.options.semantizing.selected_test_name,
         );
+        try self.appendProgramEntry();
         try self.validateFunctionSignatures();
         try @import("../4_semantics/module/assume_verify.zig").validate(self.allocator, self.syntax_files.items, self.source_db, self.diagnostics);
         if (self.diagnostics.hasErrors()) return error.Reported;
         try self.buildGlobalGraph();
         try self.analyzeGlobalSafety();
         return &self.global_graph.?;
+    }
+
+    // The entry template is ordinary language code in the user's module. It
+    // therefore uses the same dispatch, ownership cleanup, and safety checks
+    // as source functions; codegen has no resource-construction privilege.
+    fn appendProgramEntry(self: *FrontendPipeline) !void {
+        const dir = self.options.entry_module_dir orelse return;
+        const target = self.options.semantizing.selected_test_name orelse "main";
+        var found = false;
+        var takes_system = false;
+        for (self.syntax_files.items) |*file| {
+            const source = self.source_db.get(file.file_id);
+            if (!std.mem.eql(u8, std.fs.path.dirname(source.path) orelse ".", dir)) continue;
+            for (file.roots) |root| {
+                const function = if (file.testDeclaration(root)) |test_decl| test_decl.function else file.functionDeclaration(root) orelse continue;
+                const name = file.tokenText(self.source_db, function.name_token);
+                if (std.mem.eql(u8, name, target)) {
+                    found = true;
+                    if (file.structTypeLiteral(function.input)) |input| {
+                        for (input.fields) |field_node| {
+                            const field = file.structTypeField(field_node) orelse continue;
+                            if (std.mem.eql(u8, file.tokenText(self.source_db, field.name_token), "system")) takes_system = true;
+                        }
+                    }
+                }
+                if (std.mem.eql(u8, name, "__argi_entry")) {
+                    try self.diagnostics.add(file.location(root), .semantic, "'__argi_entry' is reserved for program entry", .{});
+                    return error.Reported;
+                }
+            }
+        }
+        if (!found) return;
+        const is_test = self.options.semantizing.selected_test_name != null;
+        const output = if (is_test) "!()" else "(.status_code: Int32 = 0)";
+        const result = if (is_test) "result" else "status_code";
+        const template = if (takes_system) @embedFile("program_entry.rg") else @embedFile("plain_entry.rg");
+        const with_output = try std.mem.replaceOwned(u8, self.allocator, template, "__ARGI_OUTPUT__", output);
+        defer self.allocator.free(with_output);
+        const with_result = try std.mem.replaceOwned(u8, self.allocator, with_output, "__ARGI_RESULT__", result);
+        defer self.allocator.free(with_result);
+        self.entry_source = try std.mem.replaceOwned(u8, self.allocator, with_result, "__ARGI_TARGET__", target);
+        self.entry_path = try std.fs.path.join(self.allocator, &.{ dir, "<program-entry>" });
+        self.entry_file = try self.diagnostics.appendSource(.{ .path = self.entry_path.?, .code = self.entry_source.? });
+        var tokens = tokenizer.Tokenizer.init(self.allocator, self.diagnostics, self.entry_source.?, self.entry_file.?);
+        defer tokens.deinit();
+        _ = try tokens.tokenize();
+        const file = st.FileSyntaxTree.initOwnedTokens(self.entry_file.?, tokens.takeTokens());
+        var syntax_ctx = syntaxer.Syntaxer.initFile(self.allocator, file, self.entry_source.?, self.diagnostics);
+        const tree = try syntax_ctx.parse();
+        try self.syntax_files.append(tree);
+        self.syntax_node_count += tree.nodes.len;
+        for (tree.roots) |node| try self.syntax_root_list.append(tree.ref(node));
     }
 
     fn validateFunctionSignatures(self: *FrontendPipeline) !void {
@@ -255,6 +314,7 @@ pub const FrontendPipeline = struct {
                 .tree = file,
                 .source = source.source,
                 .is_bundled_core = source.origin == .bundled_core,
+                .is_entry = file.file_id == self.entry_file,
             });
         }
         // Discover every module before semantic finishing. This exposes the

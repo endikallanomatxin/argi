@@ -206,7 +206,7 @@ project-local `.argi-cache/` directory. Package executable outputs live under
 Tests are declared explicitly in source:
 
 ```rg
-test my_test(.system: System = System()) -> !() := {
+test my_test(.system: System) -> !() := {
     testing.expect(true)!
 }
 ```

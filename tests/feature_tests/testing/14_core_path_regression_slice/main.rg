@@ -1,4 +1,4 @@
-test core_path_regression_slice(.system: System = System()) -> !() := {
+test core_path_regression_slice(.system: System) -> !() := {
     assume allocator ::= system.allocator
 
     full :: Path = Path(

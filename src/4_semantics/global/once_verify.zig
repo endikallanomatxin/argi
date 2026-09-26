@@ -19,6 +19,17 @@ pub fn verify(
     defer state.seen_once.deinit();
     defer state.active_functions.deinit();
 
+    var has_entry = false;
+    for (graph.functions.items, 0..) |function, raw| {
+        if (!function.flags.is_entry) continue;
+        has_entry = true;
+        try state.walkFunction(@enumFromInt(@as(u32, @intCast(raw))));
+    }
+    if (has_entry) {
+        if (state.had_error) return error.Reported;
+        return;
+    }
+
     if (selected_test_name) |wanted| {
         for (graph.functions.items, 0..) |function, raw| {
             if (!function.flags.is_test) continue;

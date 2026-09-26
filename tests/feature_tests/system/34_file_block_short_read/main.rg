@@ -1,4 +1,4 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= system.allocator
 
     path ::= from_literal(.data = "tests/feature_tests/system/34_file_block_short_read_temp.bin")

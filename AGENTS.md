@@ -72,6 +72,10 @@ feature first.
 - When validating the compiler locally, prefer:
   `env ZIG_LOCAL_CACHE_DIR=$PWD/.zig-cache ZIG_GLOBAL_CACHE_DIR=$PWD/.zig-global-cache zig build test`
 
+- `zig build` installs the bundled core under `zig-out/lib/argi/core`. Rebuild
+  after editing core before manually invoking `zig-out/bin/argi`, so validation
+  uses the edited library rather than its previous installed copy.
+
 - Current module rules in the compiler:
   - all `.rg` files in a folder share namespace
   - `argi build` compiles a folder module, not a single `.rg` file

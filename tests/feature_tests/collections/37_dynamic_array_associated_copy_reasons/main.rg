@@ -19,7 +19,7 @@ require_array_reasons#(
     .t: Type: FalliblyCopyable#(.reasons: (..copy_failed, ..out_of_memory)),
 )(.value: &t) -> () := {}
 
-main(.system: System = System()) -> (.status_code: Int32 = 0) := {
+main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= system.allocator
 
     source ::= DynamicArray#(.t: FallibleValue)(.capacity = 1)

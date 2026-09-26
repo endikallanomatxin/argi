@@ -570,7 +570,7 @@ test "installed argi test resolves core from its installation prefix outside rep
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "module/main.rg",
         .data =
-        \\test installed_prefix(.system: System = System()) -> !() := {
+        \\test installed_prefix(.system: System) -> !() := {
         \\    testing.expect(.condition = true)!
         \\}
         \\
@@ -637,7 +637,7 @@ test "argi init creates executable package" {
     try expect(std.mem.indexOf(u8, text, "path = \"source/entrypoints/hello\"\n") != null);
     try expect(std.mem.indexOf(u8, text, "[run]\n") != null);
     try expect(std.mem.indexOf(u8, text, "default = \"hello\"\n") != null);
-    try expectEqualStrings("main(.system: System = System()) -> (.status_code: Int32 = 0) := {\n}\n", source_text);
+    try expectEqualStrings("main(.system: System) -> (.status_code: Int32 = 0) := {\n}\n", source_text);
 }
 
 test "argi init lib creates package without executables" {
@@ -724,7 +724,7 @@ test "argi init executable package can print from generated main" {
     try std.Io.Dir.cwd().writeFile(std.testing.io, .{
         .sub_path = source_path,
         .data =
-        \\main(.system: System = System()) -> (.status_code: Int32 = 0) := {
+        \\main(.system: System) -> (.status_code: Int32 = 0) := {
         \\    stdout ::= system.terminal&.stdout_writer
         \\    assume stdout
         \\    print("Hello, World!\n")
@@ -2685,22 +2685,16 @@ test "feature_tests/system/14_file_system_capability" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/18X_system_noncopyable_assignment" {
-    try buildExpectFailExact("tests/feature_tests/ownership/18X_system_noncopyable_assignment",
-        \\tests/feature_tests/ownership/18X_system_noncopyable_assignment/main.rg:2:15: error: type 'System' cannot be copied implicitly; use '~value' to transfer ownership
-        \\      copied := system
-        \\                ^
-        \\
-    );
+test "feature_tests/ownership/18_system_reference_copy_assignment" {
+    const test_path = "tests/feature_tests/ownership/18_system_reference_copy_assignment";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
 }
 
-test "feature_tests/ownership/19X_system_noncopyable_argument" {
-    try buildExpectFailExact("tests/feature_tests/ownership/19X_system_noncopyable_argument",
-        \\tests/feature_tests/ownership/19X_system_noncopyable_argument/main.rg:6:37: error: type 'System' cannot be copied implicitly; use '~value' to transfer ownership
-        \\      status_code = consume(.system = system)
-        \\                                      ^
-        \\
-    );
+test "feature_tests/ownership/19_system_reference_copy_argument" {
+    const test_path = "tests/feature_tests/ownership/19_system_reference_copy_argument";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
 }
 
 test "feature_tests/ownership/35_system_move_by_value" {
@@ -2764,12 +2758,10 @@ test "feature_tests/system/20X_once_duplicate_init" {
     );
 }
 
-test "feature_tests/system/21X_system_duplicate_init" {
-    try buildExpectFailExact("tests/feature_tests/system/21X_system_duplicate_init",
-        \\tests/feature_tests/system/21X_system_duplicate_init/main.rg:2:15: error: once function 'init' is consumed more than once from the reachable entrypoint graph (first use at tests/feature_tests/system/21X_system_duplicate_init/main.rg:1:24 via 'main')
-        \\      second := System()
-        \\                ^
-        \\
+test "feature_tests/system/21X_terminal_duplicate_init" {
+    try buildExpectFailWithoutParseNoise(
+        "tests/feature_tests/system/21X_terminal_duplicate_init",
+        "once function 'init' is consumed more than once",
     );
 }
 
@@ -5305,7 +5297,7 @@ test "feature_tests/testing/08X_test_signature_requires_v1_shape" {
         "tests/feature_tests/testing/08X_test_signature_requires_v1_shape",
         &.{},
         1,
-        "tests must declare exactly one input: '.system: System = System()'",
+        "tests must declare exactly one input: '.system: System'",
     );
 }
 
@@ -5820,4 +5812,17 @@ test "feature_tests/functions/26X_assume_scope_does_not_escape" {
 test "feature_tests/functions/27_assume_automatic_cleanup" {
     try expectSuccessfulBuild("tests/feature_tests/functions/27_assume_automatic_cleanup");
     try runExpect("tests/feature_tests/functions/27_assume_automatic_cleanup", 0);
+}
+
+test "feature_tests/system/36_entry_flushes_stdout" {
+    const test_path = "tests/feature_tests/system/36_entry_flushes_stdout";
+    try expectSuccessfulBuild(test_path);
+    try runExpectStdout(test_path, 0, "A");
+}
+
+test "feature_tests/system/37X_system_local_resource_escape" {
+    try buildExpectFail(
+        "tests/feature_tests/system/37X_system_local_resource_escape",
+        "function output cannot depend on a local storage generation that ends before return",
+    );
 }

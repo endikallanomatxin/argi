@@ -10,7 +10,7 @@ deinit(.self: $&Container) -> () := {
     deinit(.self = $&self&.inner)
 }
 
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
     first_result ::= allocate(.self = system.allocator, .size = 1)
     match first_result {
         ..error _ { status_code = 1 }

@@ -21,7 +21,7 @@ helper(.allocator: $&Allocator) -> (.ok: Bool) := {
     ok = true
 }
 
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
     if helper(.allocator = system.allocator).ok {
         status_code = 0
     } else {

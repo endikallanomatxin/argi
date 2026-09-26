@@ -228,10 +228,12 @@ pub const CodeGenerator = struct {
         }
         try self.functions.put(id, symbol);
 
-        if (self.options.selected_test_name) |wanted| {
-            if (function.flags.is_test and std.mem.eql(u8, name, wanted)) self.selected_test_candidate = id;
-        } else if (self.isWrappableMain(id)) {
-            self.main_candidate = id;
+        if (function.flags.is_entry) {
+            if (self.options.selected_test_name != null) {
+                self.selected_test_candidate = id;
+            } else {
+                self.main_candidate = id;
+            }
         }
         return symbol;
     }
@@ -1971,14 +1973,6 @@ pub const CodeGenerator = struct {
         return c.LLVMConstInBoundsGEP2(c.LLVMTypeOf(constant), global, &indices, 2);
     }
 
-    fn isWrappableMain(self: *CodeGenerator, id: graph_mod.GlobalFunctionId) bool {
-        const function = self.graph.functions.items[@intFromEnum(id)];
-        const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
-        if (!std.mem.eql(u8, self.graph.text(declaration.name), "main") or function.output.len != 1) return false;
-        const field = self.graph.fields.items[function.output.start];
-        return std.mem.eql(u8, self.graph.text(field.name), "status_code") and types.isBuiltin(self.graph, field.ty, .Int32);
-    }
-
     fn generateCMainWrapper(self: *CodeGenerator, main: graph_mod.GlobalFunctionId) !void {
         const symbol = self.functions.get(main) orelse return CodegenError.SymbolNotFound;
         const i32_ty = c.LLVMInt32Type();
@@ -1995,7 +1989,8 @@ pub const CodeGenerator = struct {
         _ = c.LLVMBuildStore(self.builder, c.LLVMGetParam(wrapper, 1), self.runtime_argv_global.?);
         const function = self.graph.functions.items[@intFromEnum(main)];
         const input_type = try self.fieldsLLVMType(function.input);
-        const input = try self.entryInputValue(function.input, input_type);
+        if (function.input.len != 0) return CodegenError.InvalidType;
+        const input = c.LLVMConstNull(input_type);
         var args = [_]llvm.c.LLVMValueRef{input};
         const result = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 1, "argi.main");
         const status = c.LLVMBuildExtractValue(self.builder, result, 0, "status");
@@ -2013,7 +2008,8 @@ pub const CodeGenerator = struct {
         try self.ensureRuntimeArgFunctions();
         const function = self.graph.functions.items[@intFromEnum(test_function)];
         const input_type = try self.fieldsLLVMType(function.input);
-        var args = [_]llvm.c.LLVMValueRef{try self.entryInputValue(function.input, input_type)};
+        if (function.input.len != 0) return CodegenError.InvalidType;
+        var args = [_]llvm.c.LLVMValueRef{c.LLVMConstNull(input_type)};
         const output = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 1, "test");
         if (function.output.len != 1) return CodegenError.InvalidType;
         const result_ty = types.effectiveFieldType(self.graph.fields.items[function.output.start]);
@@ -2039,44 +2035,6 @@ pub const CodeGenerator = struct {
         const is_skipped = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, reason_tag, c.LLVMConstInt(c.LLVMInt32Type(), skipped.index, 0), "test.is_skipped");
         const exit_code = c.LLVMBuildSelect(self.builder, is_skipped, c.LLVMConstInt(i32_ty, 77, 0), c.LLVMConstInt(i32_ty, 1, 0), "test.exit");
         _ = c.LLVMBuildRet(self.builder, exit_code);
-    }
-
-    fn entryInputValue(self: *CodeGenerator, fields: graph_mod.FieldRange, input_type: llvm.c.LLVMTypeRef) !llvm.c.LLVMValueRef {
-        var input = c.LLVMGetUndef(input_type);
-        for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
-            const value = if (field.default_value) |default|
-                (try self.visitNode(default)) orelse return CodegenError.ValueNotFound
-            else if (std.mem.eql(u8, self.graph.text(field.name), "system"))
-                try self.constructEntrySystem(field.ty)
-            else
-                return CodegenError.InvalidType;
-            input = c.LLVMBuildInsertValue(self.builder, input, value.value_ref, @intCast(index), "entry.default");
-        }
-        return input;
-    }
-
-    fn constructEntrySystem(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) !TypedValue {
-        for (self.graph.functions.items, 0..) |candidate, raw| {
-            if (candidate.input.len != 1) continue;
-            const declaration = self.graph.declaration(candidate.declaration);
-            if (!std.mem.eql(u8, self.graph.text(declaration.name), "init")) continue;
-            const receiver = self.graph.fields.items[candidate.input.start].ty;
-            const pointer = switch (self.graph.types.items[@intFromEnum(receiver)]) {
-                .pointer => |value| value,
-                else => continue,
-            };
-            if (!types.equal(self.graph, pointer.child, ty)) continue;
-            const function_id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            const symbol = self.functions.get(function_id) orelse continue;
-            const type_ref = try self.toLLVMType(ty);
-            const storage = c.LLVMBuildAlloca(self.builder, type_ref, "entry.system");
-            const input_type = try self.fieldsLLVMType(candidate.input);
-            const input = c.LLVMBuildInsertValue(self.builder, c.LLVMGetUndef(input_type), storage, 0, "entry.system.pointer");
-            var args = [_]llvm.c.LLVMValueRef{input};
-            _ = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 1, "");
-            return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, storage, "entry.system.value"), .type_ref = type_ref, .ty = ty };
-        }
-        return CodegenError.SymbolNotFound;
     }
 
     fn ensureRuntimeArgGlobals(self: *CodeGenerator) !void {
@@ -2220,8 +2178,19 @@ pub const CodeGenerator = struct {
     }
 
     fn location(self: *CodeGenerator, source: primitives.SourceRef) tok.Location {
-        _ = self;
-        return .{ .file = @enumFromInt(source.file_index), .offset = source.offset };
+        // Global files are grouped by module; generated entry sources need
+        // not occupy the same ordinal in the diagnostics source database.
+        if (source.file_index < self.graph.files.items.len) {
+            const file = self.graph.files.items[source.file_index];
+            const basename = self.graph.text(file.path);
+            const dir = self.graph.text(self.graph.modules.items[@intFromEnum(file.module)].dir);
+            for (self.diags.source_db.files, 0..) |candidate, index| {
+                if (std.mem.eql(u8, std.fs.path.basename(candidate.path), basename) and
+                    std.mem.eql(u8, std.fs.path.dirname(candidate.path) orelse ".", dir))
+                    return .{ .file = self.diags.source_db.fileId(index), .offset = source.offset };
+            }
+        }
+        return .{ .file = @enumFromInt(0), .offset = source.offset };
     }
 
     fn report(self: *CodeGenerator, source: primitives.SourceRef, comptime format: []const u8, args: anytype) !void {

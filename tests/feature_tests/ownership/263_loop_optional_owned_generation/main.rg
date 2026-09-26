@@ -20,7 +20,7 @@ append(.self: $&Holder, .allocator: $&Allocator) -> () := {
     _ ::= push_byte(.self = $&self&.buffer, .byte = 65, .allocator = allocator)
 }
 
-main(.system: System = System()) -> (.status_code: Int32 = 0) := {
+main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= system.allocator
 
     holder ::= Holder(.allocator = system.allocator)

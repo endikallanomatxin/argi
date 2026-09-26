@@ -219,14 +219,23 @@ main (system: $&System&) -> (status_code: $&StatusCode&) := {
 }
 ```
 
-System is a struct that contains all the capabilities of the system.
-(Inspired by Haskell's `IO` monad)
+`System` aggregates references to the process capabilities. The program entry
+scope owns the resources, passes the aggregate to `main(.system: System)`, and
+cleans them up after `main` returns. Copying System copies these references,
+not their resources; safety tracks the dependencies of each copy.
 
-> [!TODO]
-> Decide whether moving `System` by value should be prohibited as well.
-> It is already protected from implicit copies, but allowing `~system` may
-> still be too permissive for a capability root that owns process-level
-> initialization and ambient resources.
+Inside main, select the dependencies needed by ordinary calls:
+
+```rg
+main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume allocator := system.allocator
+    assume stdout := system.terminal&.stdout_writer
+    run()
+}
+```
+
+The entry wrapper is checked by the same ownership and safety rules as other
+functions. System has no owning storage or resource-acquiring constructor.
 
 For capabilities that would otherwise force repetitive argument threading, a
 function may declare a reached argument with `reach`. This keeps the

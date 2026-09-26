@@ -2290,7 +2290,7 @@ fn diagnoseUnresolvedCall(
                 defer message.deinit();
                 try message.print("function '{s}' exists, but no overload matches the provided arguments.\nOverloads with omitted reach defaults:\n", .{name});
                 try message.appendSlice(reach_details.items);
-                try message.appendSlice("\n\nAdd a reachable value in the caller, for example:\n  main(.system: System = System()) -> (.status_code: Int32 = 0) := { ... }\n\nOr pass the omitted argument explicitly.");
+                try message.appendSlice("\n\nAdd a reachable value in the caller, for example:\n  main(.system: System) -> (.status_code: Int32 = 0) := { ... }\n\nOr pass the omitted argument explicitly.");
                 try diagnostics.add(location, .semantic, "{s}", .{message.items});
                 return true;
             }

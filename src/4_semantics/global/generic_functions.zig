@@ -2210,7 +2210,10 @@ pub const Resolver = struct {
                     const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.nodes.items.len)));
                     try self.resolver.graph.nodes.append(self.resolver.allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .break_statement });
                     self.node_map[@intFromEnum(id)] = global;
-                    self.resolver.graph.nodes.items[@intFromEnum(global)] = try self.resolveChoiceLiteral(pending.resolve_expression, expected);
+                    // Resolving payloads can grow the node pool. Compute the
+                    // value before taking the destination slot's address.
+                    const resolved = try self.resolveChoiceLiteral(pending.resolve_expression, expected);
+                    self.resolver.graph.nodes.items[@intFromEnum(global)] = resolved;
                     self.resolver.stats.nodes += 1;
                     return global;
                 }

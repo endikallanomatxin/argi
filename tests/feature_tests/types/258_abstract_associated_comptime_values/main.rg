@@ -31,7 +31,7 @@ require_dimensions#(
     .cols: UIntNative,
 )(.value: &matrix) -> () := {}
 
-main(.system: System = System()) -> (.status_code: Int32 = 0) := {
+main(.system: System) -> (.status_code: Int32 = 0) := {
     matrix ::= Matrix#(.t: Float32, .rows = 3, .cols = 4)(.marker = 0)
     require_dimensions(.value = &matrix)
 }

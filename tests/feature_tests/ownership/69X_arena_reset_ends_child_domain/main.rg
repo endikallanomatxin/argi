@@ -1,4 +1,4 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
     arena :: ArenaAllocator
     initialized ::= init(.p = $&arena, .backing_allocator = system.allocator, .block_size = 32)
     if is(.value = initialized, .variant = ..error) {

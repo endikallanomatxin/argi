@@ -1,3 +1,3 @@
-test equality(.system: System = System()) -> !() := {
+test equality(.system: System) -> !() := {
     testing.expect_equal(.expected = 1, .actual = 1)!
 }

@@ -10,7 +10,7 @@ copy(.self: &FallibleValue, .allocator: $&Allocator) -> (.result: Errable#(.t: F
 
 FallibleValue implements FalliblyCopyable#(.reasons: (..copy_failed))
 
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= system.allocator
     first :: FallibleValue = (.value = 21)
     copied ::= copy(.self = &first)
