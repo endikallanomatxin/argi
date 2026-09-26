@@ -191,6 +191,29 @@ enough:
 safe code -> Trusted Primitive -> raw / opaque / runtime mechanism
 ```
 
+> [!FIX] Bounds safety
+> Temporal validity does not prove that an index or offset is inside an object.
+> Safe collection operations need to check bounds or establish them statically;
+> unchecked reference offsets belong behind a trusted boundary.
+>
+> Bounds also do not establish element identity: after structural mutation, an
+> old index may still be in range but refer to a different element.
+
+> [!IDEA] Uninitialized storage
+> Owning storage is different from owning initialized values. A `DynamicArray`
+> can reserve capacity for N elements while only `len` slots hold live values
+> that may be read, moved or destroyed.
+>
+> Decide how to express this distinction: an `Uninit<T>`-like type, tracked
+> initialization state, or a storage API. It should also cover partial and
+> non-contiguous initialization without exposing uninitialized bytes as live `T`.
+
+> [!IDEA] Alignment and representation validity
+> Live storage is not enough to construct a safe `&T` / `$&T`: it must also have
+> sufficient size and alignment and contain an initialized, valid `T`.
+> Raw-storage initialization needs a way to address storage before that value
+> exists. Decide which guarantees belong in types, checker facts or trusted APIs.
+
 ## Glossary
 
 | Concept | Question answered |

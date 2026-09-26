@@ -128,3 +128,13 @@ This is intentional:
 
 - a `once` function used by test A does not make test B fail
 - the semantics remain relative to the selected test entrypoint, not to an artificial combined runner
+
+> [!IDEA] Compiler tests through the API
+> Run compiler regression fixtures through the compiler API with fresh mutable
+> state per fixture, keeping a small CLI test layer. Avoiding a CLI invocation
+> per fixture need not mean running every test program in the runner's process:
+> worker processes could isolate crashes and let timeouts stop hung tests.
+> This mechanism could reuse REPL and comptime session infrastructure.
+
+> [!IDEA] Explicit test groups
+> Explore a test tree following the module hierarchy.

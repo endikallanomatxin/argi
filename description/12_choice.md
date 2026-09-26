@@ -181,3 +181,15 @@ un checked unwrap ni una operación que cambie silenciosamente la variante.
 
 `match` sigue siendo la herramienta principal cuando interesa cubrir el conjunto
 cerrado completo.
+
+> [!IDEA] Compact choice storage in `core`
+> Explore a generic `CompactChoiceStore` / `PackedChoiceStore` abstraction in
+> the core library rather than adding a choice-storage builtin to the compiler.
+> The store could keep a tag plus a fixed inline payload area, with variants
+> that do not fit using an overflow/extra storage representation.
+>
+> Comptime/reflection can derive the layout and generate typed accessors for the
+> variants, so concrete uses can specialize to zero-overhead code. A good path
+> is to validate the pattern first in real heterogeneous representations such as
+> AST-like storage, and only then extract the reusable abstraction instead of
+> designing a large generic container up front.

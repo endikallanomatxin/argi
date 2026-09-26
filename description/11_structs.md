@@ -99,6 +99,10 @@ y queda muy limpio.
 > Con esto ganamos la información semántica de a qué corresponde lo que estamos usando, sin pagar el precio de pasar todo el struct.
 
 
+> [!IDEA] Structural delegation with `expose`
+> A struct could explicitly expose operations of one of its fields, for example
+> `expose .buffer`, to remove forwarding boilerplate in wrapper types.
+
 ## Memory layout
 
 You can specify:

@@ -270,3 +270,26 @@ Because of that, tooling must make them visible:
 
 This keeps capability threading ergonomic without turning dependencies into
 hidden globals.
+
+> [!IDEA] `assume`
+> `#reach` is particularly attractive for transversal inputs and refactors:
+> adding tracing or another temporary dependency deep in a call tree does not
+> require immediately threading it through every intermediate call site.
+>
+>  Explore semantic parameters that remain real function inputs but may be
+>  omitted, together with a statement such as `assume allocator = value` that
+>  provides a capability from that point to the end of the current scope.
+>
+> - `reach` is better for making temporary refactors more agile. Can propagate
+>   accross the call stack.
+>
+> - `assume` is likely a better mechanism to make the excesive dependency
+>   injection of this language more comfortable. Because:
+>
+>   - It is shown in the call site without lsp help
+>
+>   - The caller decides what can be implicitly passed, dependending on the
+>     LSP.
+>
+>   - Cannot be propagated. Propagating from the call site causes ambiguities.
+

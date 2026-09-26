@@ -96,3 +96,21 @@ https://www.scottredig.com/blog/bonkers_comptime/
 > Buena regla general: primero cerrar bien el lenguaje base; después añadir
 > comptime donde de verdad aporte algo y no solo tape huecos.
 
+> [!IDEA] Comptime and incremental execution
+> Explore a common execution model for comptime, REPL and compiled programs,
+> reusing compiled specializations while their code, inputs and dependencies
+> remain unchanged.
+>
+> One possible architecture is to lower each function to a compact, typed,
+> serializable executable IR. A lightweight VM could execute that IR for
+> comptime and interactive work, while LLVM consumes the same semantics for JIT
+> and AOT native code. This would make REPL, comptime, JIT and normal compilation
+> share most of the pipeline rather than becoming separate execution models.
+>
+> For REPL redefinition, decide whether existing callers use the new definition
+> and what happens to live values when a type changes. Recompilation alone does
+> not resolve how program state survives.
+>
+> A persistent `CompilerSession` could cache generated function specializations
+> by something like `(FunctionId, concrete type arguments, comptime values)`,
+> generating code only when a specialization is first required.

@@ -327,3 +327,10 @@ MyGenericType#(.t: Type) : Type = (
 	.datos : List#(.t: t)
 )
 ```
+
+> [!IDEA] Structural indexing and delimiter cleanup
+> Explore using `.` consistently for statically known structural access,
+> including native arrays: `value.field`, `array.i` or even `array.3`.
+>
+> DynamicArrays, Maps and other library collections can keep explicit
+> `get`/`set` abstractions and polymorphism through `Abstract`.
