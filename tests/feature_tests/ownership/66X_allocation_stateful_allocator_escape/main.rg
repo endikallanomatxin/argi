@@ -18,8 +18,9 @@ LocalAllocator implements Allocator
 LocalAllocator implements Deallocator
 
 make() -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
-    allocator :: LocalAllocator = (.deallocations = 0)
-    result = allocate(.self = $&allocator, .size = 1)
+    allocator_storage :: LocalAllocator = (.deallocations = 0)
+    assume allocator ::= $&allocator_storage
+    result = allocate(.self = $&allocator_storage, .size = 1)
 }
 
 main() -> (.status_code: Int32) := {

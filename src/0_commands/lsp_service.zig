@@ -710,7 +710,7 @@ fn classifyToken(content: token.Content) ?TokenClass {
             .bool_literal => .{ .type_index = TOKEN_INDEX.keyword },
             else => .{ .type_index = TOKEN_INDEX.number },
         },
-        .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once, .keyword_test, .keyword_and, .keyword_or => .{ .type_index = TOKEN_INDEX.keyword },
+        .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once, .keyword_assume, .keyword_reach, .keyword_test, .keyword_and, .keyword_or => .{ .type_index = TOKEN_INDEX.keyword },
         .binary_operator, .comparison_operator, .equal, .arrow, .pipe, .tilde, .bang, .double_bang, .question_mark, .ampersand, .dollar, .colon, .double_colon => .{ .type_index = TOKEN_INDEX.operator },
         else => null,
     };
@@ -735,6 +735,8 @@ fn tokenLength(content: token.Content, source: []const u8, offset: u32) u32 {
         .keyword_break => 5,
         .keyword_continue => 8,
         .keyword_once => 4,
+        .keyword_assume => 6,
+        .keyword_reach => 5,
         .keyword_test => 4,
         .keyword_and => 3,
         .keyword_or => 2,

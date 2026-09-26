@@ -349,6 +349,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
             .source = globalSource(o, value.source),
             .ty = if (unresolved) @enumFromInt(0) else globalType(o, value.ty),
             .initialization = if (value.initialization) |id| globalNode(o, id) else null,
+            .cleanup_arguments = if (value.cleanup_arguments) |id| globalNode(o, id) else null,
             .static_implementer = if (value.static_implementer) |id| globalType(o, id) else null,
             .mutability = value.mutability,
         });
@@ -518,6 +519,7 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .struct_value_literal => |value| .{ .struct_value_literal = .{
                 .fields = relocateEntityRange(global_sg.GlobalValueFieldId, o.value_field_base, value.fields),
                 .dispatch_prefix_positional_count = value.dispatch_prefix_positional_count,
+                .assumed_fields = relocateEntityRange(global_sg.GlobalValueFieldId, o.value_field_base, value.assumed_fields),
             } },
             .struct_field_access => |value| .{ .struct_field_access = .{
                 .value = globalNode(o, value.value),

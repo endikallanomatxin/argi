@@ -200,6 +200,9 @@ pub fn Binding(comptime Ids: type) type {
         source: SourceRef,
         ty: Ids.TypeId,
         initialization: ?Ids.NodeId = null,
+        /// Lexical argument candidates captured where this local is declared,
+        /// for resolving the same dependencies in its implicit destructor.
+        cleanup_arguments: ?Ids.NodeId = null,
         /// Concrete static implementer retained when `ty` exposes an abstract
         /// interface. This is monomorphization evidence, not the visible type.
         static_implementer: ?Ids.TypeId = null,
@@ -416,6 +419,10 @@ pub fn Node(comptime Ids: type) type {
             struct_value_literal: struct {
                 fields: Range(Ids.ValueFieldId),
                 dispatch_prefix_positional_count: u32 = 0,
+                // Lexical candidates for omitted call arguments. Resolution
+                // selects only names present in the callee's input and erases
+                // this pool before safety and codegen see the call.
+                assumed_fields: Range(Ids.ValueFieldId) = .{ .start = 0, .len = 0 },
             },
             struct_field_access: struct {
                 value: Ids.NodeId,

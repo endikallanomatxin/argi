@@ -37,6 +37,8 @@ Outer : Type = (
 )
 
 make_pair(.allocator: $&CountingAllocator) -> (.result: Errable#(.t: Pair, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     first_result ::= allocate(.self = allocator, .size = 1)
     match first_result {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
@@ -57,6 +59,8 @@ make_pair(.allocator: $&CountingAllocator) -> (.result: Errable#(.t: Pair, .reas
 }
 
 run_branch(.allocator: $&CountingAllocator, .condition: Bool) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     first_result ::= allocate(.self = allocator, .size = 1)
     match first_result {
     ..error _ { result = ..error(.reason = ..out_of_memory) }
@@ -79,48 +83,49 @@ run_branch(.allocator: $&CountingAllocator, .condition: Bool) -> (.result: Errab
 }
 
 main() -> (.status_code: Int32) := {
-    allocator :: CountingAllocator = CountingAllocator()
+    allocator_storage :: CountingAllocator = CountingAllocator()
+    assume allocator ::= $&allocator_storage
 
     if 1 == 1 {
-        pair_result ::= make_pair(.allocator = $&allocator)
+        pair_result ::= make_pair(.allocator = $&allocator_storage)
         if is(.value = pair_result, .variant = ..error) { status_code = 3 return }
         pair ::= ~pair_result..ok
         taken ::= ~pair.a
     }
 
     if 1 == 1 {
-        pair_result ::= make_pair(.allocator = $&allocator)
+        pair_result ::= make_pair(.allocator = $&allocator_storage)
         if is(.value = pair_result, .variant = ..error) { status_code = 4 return }
         pair ::= ~pair_result..ok
         deinit(.self = $&pair.a)
     }
 
-    first_branch ::= run_branch(.allocator = $&allocator, .condition = true)
-    second_branch ::= run_branch(.allocator = $&allocator, .condition = false)
+    first_branch ::= run_branch(.allocator = $&allocator_storage, .condition = true)
+    second_branch ::= run_branch(.allocator = $&allocator_storage, .condition = false)
     if is(.value = first_branch, .variant = ..error) or is(.value = second_branch, .variant = ..error) { status_code = 5 return }
 
     if 1 == 1 {
-        pair_result ::= make_pair(.allocator = $&allocator)
+        pair_result ::= make_pair(.allocator = $&allocator_storage)
         if is(.value = pair_result, .variant = ..error) { status_code = 6 return }
         outer ::= Outer(.pair = ~pair_result..ok)
         taken ::= ~outer.pair.a
     }
 
     if 1 == 1 {
-        pair_result ::= make_pair(.allocator = $&allocator)
+        pair_result ::= make_pair(.allocator = $&allocator_storage)
         if is(.value = pair_result, .variant = ..error) { status_code = 7 return }
         pair ::= ~pair_result..ok
         taken ::= ~pair.a
-        replacement ::= allocate(.self = $&allocator, .size = 1)
+        replacement ::= allocate(.self = $&allocator_storage, .size = 1)
         if is(.value = replacement, .variant = ..error) { status_code = 8 return }
         pair.a = ~replacement..ok
     }
 
-    if allocator.alloc_count != 13 {
+    if allocator_storage.alloc_count != 13 {
         status_code = 1
         return
     }
-    if allocator.dealloc_count != 13 {
+    if allocator_storage.dealloc_count != 13 {
         status_code = 2
         return
     }

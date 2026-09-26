@@ -1,4 +1,7 @@
 main(.system: System = System()) -> (.status_code: Int32 = 0) := {
+    assume allocator ::= system.allocator
+    assume stdout ::= system.terminal&.stdout_writer
+
     argc ::= system.args | length(&_)
     if argc >= 2 {
         first_arg := system.args[1]

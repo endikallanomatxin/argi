@@ -50,9 +50,11 @@ arena_min_block_capacity(
 
 init(
     .p: $&ArenaAllocator,
-    .backing_allocator: $&CAllocator = #reach allocator, system.allocator,
+    .backing_allocator: $&CAllocator,
     .block_size: UIntNative = 4096,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume backing_allocator
+
     p&.backing_allocator = backing_allocator
     initialized ::= init#(.t: ArenaBlock)(.p = $&p&.blocks, .allocator = backing_allocator, .capacity = 4)
     if is(.value = initialized, .variant = ..error) {

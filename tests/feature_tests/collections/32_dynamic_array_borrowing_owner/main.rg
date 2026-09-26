@@ -14,6 +14,8 @@ deinit(.self: $&BorrowingOwner) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume allocator ::= system.allocator
+
     external_result ::= allocate(.self = system.allocator, .size = 1)
     first_result ::= allocate(.self = system.allocator, .size = 1)
     second_result ::= allocate(.self = system.allocator, .size = 1)

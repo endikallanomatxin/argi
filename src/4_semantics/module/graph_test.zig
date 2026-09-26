@@ -585,7 +585,7 @@ test "virtual type arguments remain runtime contracts in parameterized IR" {
 
 test "parameterized call defaults preserve reach alternatives" {
     const allocator = std.testing.allocator;
-    const source = "consume#(.t: Type)(.value: t = #reach value, context.value) -> () := {}\n";
+    const source = "consume#(.t: Type)(.value: t = reach value, context.value) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const files = [_]module_graph.FileInput{.{ .path = "reach_template/main.rg", .tree = &tree, .source = source }};
@@ -655,7 +655,7 @@ test "local concrete type shadows unqualified prelude abstract" {
 test "parameterized call defaults reach caller bindings after instantiation" {
     const allocator = std.testing.allocator;
     const source =
-        "consume#(.t: Type)(.item: t = #reach value) -> () := {}\n" ++
+        "consume#(.t: Type)(.item: t = reach value) -> () := {}\n" ++
         "main(.value: Int32) -> () := { consume#(.t: Int32)() }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
@@ -726,7 +726,7 @@ test "named call inputs reject unrelated default-only overloads" {
 test "ordinary reached default selects a caller binding" {
     const allocator = std.testing.allocator;
     const source =
-        "consume(.value: Int32 = #reach value) -> (.result: Int32) := { result = value }\n" ++
+        "consume(.value: Int32 = reach value) -> (.result: Int32) := { result = value }\n" ++
         "main() -> (.result: Int32) := {\n" ++
         "    value :: Int32 = 7\n" ++
         "    result = consume().result\n" ++
@@ -757,7 +757,7 @@ test "ordinary reached default selects a caller binding" {
 test "reached defaults propagate through an intermediate function" {
     const allocator = std.testing.allocator;
     const source =
-        "consume(.value: Int32 = #reach value) -> (.result: Int32) := { result = value }\n" ++
+        "consume(.value: Int32 = reach value) -> (.result: Int32) := { result = value }\n" ++
         "forward() -> (.result: Int32) := { result = consume().result }\n" ++
         "main() -> (.result: Int32) := {\n" ++
         "    value :: Int32 = 7\n" ++

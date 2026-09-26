@@ -8,6 +8,8 @@ initialize_left(.p: $&Allocation, .value: Allocation) -> () := {
 }
 
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     left_result ::= allocate(.self = system.allocator, .size = 1)
     match left_result {
         ..error _ { status_code = 1 }

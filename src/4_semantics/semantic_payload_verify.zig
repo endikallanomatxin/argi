@@ -105,6 +105,7 @@ pub fn binding(comptime Ids: type, value: primitives.Binding(Ids), bounds: Bound
     try require(verify.sourceFits(value.source, bounds.files));
     try require(verify.idFits(value.ty, bounds.types));
     try require(verify.optionalIdFits(value.initialization, bounds.nodes));
+    try require(verify.optionalIdFits(value.cleanup_arguments, bounds.nodes));
     try require(verify.optionalIdFits(value.static_implementer, bounds.types));
 }
 
@@ -251,6 +252,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
         },
         .struct_value_literal => |item| {
             try require(verify.rangeFits(item.fields, bounds.value_fields));
+            try require(verify.rangeFits(item.assumed_fields, bounds.value_fields));
         },
         .struct_field_access => |item| {
             try require(verify.idFits(item.value, bounds.nodes));

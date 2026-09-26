@@ -27,8 +27,10 @@ Terminal : Type = (
 
 once init(
     .p: $&Terminal,
-    .allocator: $&CAllocator = #reach allocator, system.allocator,
+    .allocator: $&CAllocator,
 ) -> () := {
+    assume allocator
+
     init_stdin(.p = $&p&._storage.stdin_file)
     init_stdout(.p = $&p&._storage.stdout_file)
     init_stderr(.p = $&p&._storage.stderr_file)
@@ -62,8 +64,10 @@ once init(
 
 deinit(
     .self: $&Terminal,
-    .allocator: $&CAllocator = #reach allocator, system.allocator,
+    .allocator: $&CAllocator,
 ) -> () := {
+    assume allocator
+
     deinit(.self = self&.stdin_reader, .allocator = allocator)
     deinit(.self = self&.stdout_writer, .allocator = allocator)
     deinit(.self = self&.stderr_writer, .allocator = allocator)
@@ -74,9 +78,12 @@ deinit(
 
 read_line_into_buffer(
     .buffer: $&String,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-    .stdin: $&Reader = #reach stdin, terminal.stdin, system.terminal.stdin,
+    .allocator: $&Allocator,
+    .stdin: $&Reader,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_read_failed))) := {
+    assume allocator
+    assume stdin
+
     clear(.self = buffer)
 
     while 1 == 1 {
@@ -120,9 +127,12 @@ read_line_into_buffer(
 }
 
 read_line(
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-    .stdin: $&Reader = #reach stdin, terminal.stdin, system.terminal.stdin,
+    .allocator: $&Allocator,
+    .stdin: $&Reader,
 ) -> (.result: Errable#(.t: ReadLine, .reasons: (..stream_read_failed, ..out_of_memory))) := {
+    assume allocator
+    assume stdin
+
     --
     -- `read_line()` returns an owning `String`.
     --
@@ -189,8 +199,10 @@ read_line(
 
 print(
     .value: StringView,
-    .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout,
+    .stdout: $&Writer,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    assume stdout
+
     i :: UIntNative = 0
     while i < value.length {
         wrote ::= write_byte(.self = stdout, .byte = bytes_get(.view = &value, .index = i).byte)
@@ -212,15 +224,19 @@ print(
 }
 
 flush(
-    .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout,
+    .stdout: $&Writer,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    assume stdout
+
     result = flush(.self = stdout)
 }
 
 print_error(
     .value: StringView,
-    .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
+    .stderr: $&Writer,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    assume stderr
+
     i :: UIntNative = 0
     while i < value.length {
         wrote ::= write_byte(.self = stderr, .byte = bytes_get(.view = &value, .index = i).byte)
@@ -243,7 +259,9 @@ print_error(
 }
 
 flush_error(
-    .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
+    .stderr: $&Writer,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    assume stderr
+
     result = flush(.self = stderr)
 }

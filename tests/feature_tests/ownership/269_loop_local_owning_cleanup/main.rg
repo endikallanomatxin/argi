@@ -1,4 +1,6 @@
 main(.system: System = System()) -> (.status_code: Int32 = 0) := {
+    assume allocator ::= system.allocator
+
     i :: UIntNative = 0
     while i < 2 {
         local ::= String(.allocator = system.allocator, .capacity = 1)

@@ -21,9 +21,11 @@ DynamicArray #(.t: Type) : Type = (
 
 init #(.t: Type) (
     .p: $&DynamicArray#(.t: t),
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .capacity: UIntNative,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     element_size :: UIntNative = size_of(.type = t)
     actual_capacity ::= capacity
 
@@ -49,9 +51,11 @@ init #(.t: Type) (
 }
 
 deinit #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .self: $&DynamicArray#(.t: t)
 ) -> () := {
+    assume allocator
+
     i :: UIntNative = 0
     while i < self&.length {
         slot ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = i).pointer
@@ -70,8 +74,10 @@ deinit #(.t: Type) (
 
 copy #(.t: Type: InfalliblyCopyable) (
     .self: &DynamicArray#(.t: t),
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: DynamicArray#(.t: t), .reasons: (..out_of_memory))) := {
+    assume allocator
+
     -- Copying an owning element still requires an explicit element copy
     -- operation; a plain slot read is insufficient for owning `t`.
     out :: DynamicArray#(.t: t)
@@ -103,11 +109,13 @@ copy #(
     .element_reasons: Type,
 ) (
     .self: &DynamicArray#(.t: t),
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(
     .t: DynamicArray#(.t: t),
     .reasons: choice_union#(.a: element_reasons, .b: (..out_of_memory)),
 )) := {
+    assume allocator
+
     out :: DynamicArray#(.t: t)
     initialized ::= init#(.t: t)(.p = $&out, .allocator = allocator, .capacity = self&.length)
     if is(.value = initialized, .variant = ..error) {
@@ -155,10 +163,12 @@ dynamic_array_element_rw_pointer #(.t: Type) (
 }
 
 dynamic_array_grow #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .array: $&DynamicArray#(.t: t),
     .min_capacity: UIntNative,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     result = dynamic_array_grow_growing#(.t: t)(.allocator = allocator, .array = array, .min_capacity = min_capacity)
 }
 
@@ -166,10 +176,12 @@ dynamic_array_grow #(.t: Type) (
 -- Callers that must commit an external resource after a successful capacity
 -- check can follow this with `push_assume_capacity` without another OOM point.
 ensure_capacity #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .self: $&DynamicArray#(.t: t),
     .capacity: UIntNative,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     if self&.capacity >= capacity {
         result = ..ok Void()
         return
@@ -178,10 +190,12 @@ ensure_capacity #(.t: Type) (
 }
 
 dynamic_array_grow_growing #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .array: $&DynamicArray#(.t: t),
     .min_capacity: UIntNative,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     element_size :: UIntNative = size_of(.type = t)
     new_capacity ::= array&.capacity
     zero :: UIntNative = 0
@@ -226,10 +240,12 @@ dynamic_array_grow_growing #(.t: Type) (
 }
 
 push #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .self: $&DynamicArray#(.t: t),
     .value: t,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     one :: UIntNative = 1
 
     if self&.length == self&.capacity {
@@ -280,20 +296,24 @@ pop #(.t: Type) (
 }
 
 insert #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .self: $&DynamicArray#(.t: t),
     .i: UIntNative,
     .value: t,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     result = insert_growing#(.t: t)(.allocator = allocator, .self = self, .i = i, .value = ~value)
 }
 
 insert_growing #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .self: $&DynamicArray#(.t: t),
     .i: UIntNative,
     .value: t,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     one :: UIntNative = 1
     current_length ::= self&.length
 

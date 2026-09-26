@@ -1,4 +1,8 @@
 main(.system: System = System()) -> (.status_code: Int32 = 0) := {
+    assume allocator ::= system.allocator
+    assume stdout ::= system.terminal&.stdout_writer
+    assume stdin ::= system.terminal&.stdin_reader
+
     while true {
         next_line_result ::= read_line()
 

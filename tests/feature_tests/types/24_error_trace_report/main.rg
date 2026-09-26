@@ -15,6 +15,7 @@ top() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
+    assume stderr ::= system.terminal&.stderr_file
     result := top()
 
     if is(.value = result, .variant = ..error) {

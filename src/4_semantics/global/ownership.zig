@@ -201,7 +201,7 @@ pub const Resolver = struct {
         }
         // An explicit copy contract does not grant permission to insert that
         // operation implicitly. This also keeps fallible copy results visible.
-        if (self.findUnaryFunction("copy", ty) != null or !self.triviallyCopyable(ty)) {
+        if (self.findCopyFunction(ty) != null or !self.triviallyCopyable(ty)) {
             // A binding use can still carry a temporal move error that Safety
             // must diagnose before the copy permission. Other expressions may
             // be part of overload/initializer matching, where failure here
@@ -228,7 +228,7 @@ pub const Resolver = struct {
     /// not pass through a lowered `resolve_copy` node.
     pub fn canImplicitlyCopy(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
         if (self.implementsNamedAbstract(ty, "ImplicitlyCopyable")) return true;
-        if (self.findUnaryFunction("copy", ty) != null) return false;
+        if (self.findCopyFunction(ty) != null) return false;
         return self.triviallyCopyable(ty);
     }
 
@@ -490,7 +490,11 @@ pub const Resolver = struct {
         if (self.graph.isBindingTypeUnresolved(binding)) return error.UnresolvedAutoDeinitBinding;
         const record = self.graph.bindings.items[@intFromEnum(binding)];
         const target = try self.appendNode(record.source, record.ty, .{ .binding_use = binding });
-        const descriptor = try self.buildAutoDeinit(binding, target, record.ty, context, module_index);
+        var cleanup_context = context;
+        if (record.cleanup_arguments) |input| {
+            cleanup_context.global.assumed_fields = self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields;
+        }
+        const descriptor = try self.buildAutoDeinit(binding, target, record.ty, cleanup_context, module_index);
         var cleanup_node: ?global_sg.GlobalNodeId = null;
         if (descriptor) |resolved| {
             const auto_id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));
@@ -622,6 +626,7 @@ pub const Resolver = struct {
         var names = receiver_names.keyIterator();
         while (names.next()) |name_ptr| {
             const input = try self.singleNamedInput(name_ptr.*, address, source);
+            if (context == .global) self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = context.global.assumed_fields;
             const dispatch_result = dispatch.resolveImplicitFunction(
                 module_index,
                 "deinit",
@@ -745,12 +750,20 @@ pub const Resolver = struct {
         return id;
     }
 
-    fn findUnaryFunction(self: *Resolver, name: []const u8, ty: global_sg.GlobalTypeId) ?global_sg.GlobalFunctionId {
+    fn findCopyFunction(self: *Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalFunctionId {
+        // Explicit copy contracts can require resources such as an allocator.
+        // Those extra inputs do not grant permission for an implicit copy.
         for (self.graph.functions.items, 0..) |function, raw| {
             const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
-            if (!std.mem.eql(u8, self.graph.text(declaration.name), name) or function.input.len != 1) continue;
-            const expected = self.graph.fields.items[function.input.start].ty;
-            if (typeAccepts(self.graph, expected, ty)) return @enumFromInt(@as(u32, @intCast(raw)));
+            if (!std.mem.eql(u8, self.graph.text(declaration.name), "copy")) continue;
+            for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field| {
+                if (!std.mem.eql(u8, self.graph.text(field.name), "self")) continue;
+                const receiver = switch (self.graph.semanticType(field.ty)) {
+                    .pointer => |pointer| pointer.child,
+                    else => field.ty,
+                };
+                if (global_types.equal(self.graph, receiver, ty)) return @enumFromInt(@as(u32, @intCast(raw)));
+            }
         }
         return null;
     }

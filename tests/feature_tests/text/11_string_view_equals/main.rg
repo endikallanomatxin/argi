@@ -1,4 +1,6 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     text ::= String(.length = 6)
     zero :: UIntNative = 0
     one :: UIntNative = 1

@@ -38,6 +38,8 @@ FailFourthAllocator implements Allocator
 FailFourthAllocator implements Deallocator
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume allocator ::= system.allocator
+
     source ::= DynamicArray#(.t: String)(.capacity = 3)
     #defer deinit#(.t: String)(.self = $&source)
 

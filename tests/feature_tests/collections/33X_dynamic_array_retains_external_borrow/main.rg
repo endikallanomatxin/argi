@@ -2,6 +2,7 @@ BorrowingOwner : Type = (.allocation: Allocation, .borrowed: $&UInt8)
 deinit(.self: $&BorrowingOwner) -> () := { deinit(.self = $&self&.allocation) }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume allocator ::= system.allocator
     external_result ::= allocate(.self = system.allocator, .size = 1)
     owned_result ::= allocate(.self = system.allocator, .size = 1)
     match external_result {

@@ -16,13 +16,14 @@ FailingAllocator implements Allocator
 FailingAllocator implements Deallocator
 
 main() -> (.status_code: Int32) := {
-    allocator :: FailingAllocator = (
+    allocator_storage :: FailingAllocator = (
         .allocations = 0,
         .deallocations = 0,
     )
-    result ::= allocate(.self = $&allocator, .size = 8)
+    assume allocator ::= $&allocator_storage
+    result ::= allocate(.self = $&allocator_storage, .size = 8)
     if is(.value = result, .variant = ..error) {
-        status_code = allocator.allocations * 10 + allocator.deallocations - 10
+        status_code = allocator_storage.allocations * 10 + allocator_storage.deallocations - 10
         return
     }
     status_code = 1

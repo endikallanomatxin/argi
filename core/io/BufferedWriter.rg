@@ -16,10 +16,12 @@ BufferedWriter#(.base_type: Type: Writer) : Type = (
 
 init#(.base_type: Type: Writer)(
     .p: $&BufferedWriter#(.base_type: base_type),
-    .allocator: $&CAllocator = #reach allocator, system.allocator,
+    .allocator: $&CAllocator,
     .base: $&base_type,
     .capacity: UIntNative,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     actual_capacity ::= capacity
     one :: UIntNative = 1
 
@@ -46,8 +48,10 @@ init#(.base_type: Type: Writer)(
 
 deinit#(.base_type: Type: Writer)(
     .self: $&BufferedWriter#(.base_type: base_type),
-    .allocator: $&CAllocator = #reach allocator, system.allocator,
+    .allocator: $&CAllocator,
 ) -> () := {
+    assume allocator
+
     buffered_writer_flush(.self = self)
     deinit(.self = $&self&.buffer)
 }

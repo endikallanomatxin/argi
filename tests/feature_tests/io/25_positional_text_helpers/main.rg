@@ -51,8 +51,12 @@ read_byte(.self: $&DummyInput) -> (.result: Errable#(.t: ReadByte, .reasons: (..
 DummyInput implements Reader
 
 main(.system: System = System()) -> (.status_code: Int32 = 0) := {
-    stdout :: DummyOutput = DummyOutput()
-    stderr :: DummyOutput = DummyOutput()
+    assume allocator ::= system.allocator
+
+    stdout_storage :: DummyOutput = DummyOutput()
+    assume stdout ::= $&stdout_storage
+    stderr_storage :: DummyOutput = DummyOutput()
+    assume stderr ::= $&stderr_storage
 
     text ::= String(.length = 1)
     bytes_set(.string = $&text, .index = 0, .value = 65)
@@ -63,29 +67,31 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
     print_error(view)
     flush_error()
 
-    if stdout.write_count != 1 {
+    if stdout_storage.write_count != 1 {
         status_code = 1
         return
     }
 
-    if stdout.flush_count != 2 {
+    if stdout_storage.flush_count != 2 {
         status_code = 2
         return
     }
 
-    if stderr.write_count != 1 {
+    if stderr_storage.write_count != 1 {
         status_code = 3
         return
     }
 
-    if stderr.flush_count != 1 {
+    if stderr_storage.flush_count != 1 {
         status_code = 4
         return
     }
 
-    stdin :: DummyInput = (
+    stdin_storage :: DummyInput = (
+
         .index = 0
     )
+    assume stdin ::= $&stdin_storage
     buffer ::= String(.allocator = system.allocator, .capacity = 4)
     into_buffer ::= read_line_into_buffer($&buffer)
     if is(.value = into_buffer, .variant = ..ok) {
@@ -111,7 +117,7 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
 
     deinit(.self = $&buffer, .allocator = system.allocator)
 
-    stdin = (
+    stdin_storage = (
         .index = 0
     )
     line_result ::= read_line()

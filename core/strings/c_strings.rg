@@ -37,8 +37,10 @@ string_view_has_c_string_layout(
 
 as_c_string(
     .self: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: OwnedCString, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     size :: UIntNative = self.length + 1
     allocated ::= allocate(.self = allocator, .size = size)
     match allocated {

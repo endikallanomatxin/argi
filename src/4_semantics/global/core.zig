@@ -1020,6 +1020,15 @@ pub const Resolver = struct {
     pub const ReachedDefaultProbe = enum { unavailable, deferred, available };
     const ReachedAdaptation = enum { direct, address };
 
+    pub fn callArgumentType(self: *const Resolver, node_id: global_sg.GlobalNodeId) ?global_sg.GlobalTypeId {
+        const node = self.graph.node(node_id);
+        if (node.content == .binding_use) {
+            const binding = self.graph.binding(node.content.binding_use);
+            return binding.static_implementer orelse node.ty;
+        }
+        return node.ty;
+    }
+
     pub fn matchCallInput(self: *Resolver, expected_fields: global_sg.FieldRange, input_node: global_sg.GlobalNodeId) CallInputMatch {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input_node)].content) {
             .struct_value_literal => |value| value,
@@ -1035,7 +1044,7 @@ pub const Resolver = struct {
                     return .deferred;
                 }
                 const supplied_node = self.graph.nodes.items[@intFromEnum(node)];
-                if (supplied_node.ty) |actual| {
+                if (self.callArgumentType(node)) |actual| {
                     if (self.graph.isTypeUnresolved(actual)) {
                         return .deferred;
                     }
@@ -1278,11 +1287,18 @@ pub const Resolver = struct {
     }
 
     fn callArgument(self: *const Resolver, literal: anytype, expected_offset: usize, expected_name: primitives.StringRange) ?global_sg.GlobalNodeId {
+        return self.callArgumentNamed(literal, expected_offset, self.graph.text(expected_name));
+    }
+
+    pub fn callArgumentNamed(self: *const Resolver, literal: anytype, expected_offset: usize, expected_name: []const u8) ?global_sg.GlobalNodeId {
         for (0..literal.fields.len) |supplied_offset| {
             const supplied = self.graph.value_fields.items[literal.fields.start + @as(u32, @intCast(supplied_offset))];
             if (supplied_offset < literal.dispatch_prefix_positional_count or self.graph.text(supplied.name).len == 0) {
                 if (supplied_offset == expected_offset) return supplied.value;
-            } else if (std.mem.eql(u8, self.graph.text(supplied.name), self.graph.text(expected_name))) return supplied.value;
+            } else if (std.mem.eql(u8, self.graph.text(supplied.name), expected_name)) return supplied.value;
+        }
+        for (self.graph.value_fields.items[literal.assumed_fields.start..][0..literal.assumed_fields.len]) |assumed| {
+            if (std.mem.eql(u8, self.graph.text(assumed.name), expected_name)) return assumed.value;
         }
         return null;
     }
@@ -1393,7 +1409,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    /// A local `#reach` declaration uses the same lexical alternatives and
+    /// A local `reach` declaration uses the same lexical alternatives and
     /// concrete-to-abstract adaptation as an omitted reached call argument.
     /// Its declared binding type remains the visible interface; the returned
     /// expression retains the selected value's concrete type.

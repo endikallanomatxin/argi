@@ -1,17 +1,18 @@
 main() -> (.status_code: Int32) := {
-    allocator :: PageAllocator = PageAllocator()
+    allocator_storage :: PageAllocator = PageAllocator()
+    assume allocator ::= $&allocator_storage
 
-    if allocator.page_size == 0 {
+    if allocator_storage.page_size == 0 {
         status_code = 10
         return
     }
 
-    first_result ::= allocate(.self = $&allocator, .size = 1)
+    first_result ::= allocate(.self = $&allocator_storage, .size = 1)
     match first_result {
     ..error _ { status_code = 14 }
     ..ok ~ first_payload {
     first ::= ~first_payload
-    second_result ::= allocate(.self = $&allocator, .size = allocator.page_size + 1)
+    second_result ::= allocate(.self = $&allocator_storage, .size = allocator_storage.page_size + 1)
     match second_result {
     ..error _ { status_code = 15 }
     ..ok ~ second_payload {

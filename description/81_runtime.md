@@ -153,12 +153,12 @@ runtime implementation and the capabilities used to construct it.
 
 ## Reached runtime
 
-Functions may still receive a runtime through `#reach`, but this does not imply
+Functions may still receive a runtime through `reach`, but this does not imply
 that they get real concurrency.
 
 ```rg
 do_work(
-    .runtime: $&Runtime = #reach runtime, system.runtime,
+    .runtime: $&Runtime = reach runtime, system.runtime,
 ) -> !() := {
     runtime | checkpoint($&_)!
     ...
@@ -168,7 +168,7 @@ do_work(
 If the caller only has `system.runtime`, this resolves to the default
 `BlockingRuntime`.
 
-If the caller has created a real runtime and binds it locally, `#reach runtime`
+If the caller has created a real runtime and binds it locally, `reach runtime`
 will find the local runtime first:
 
 ```rg
@@ -193,7 +193,7 @@ No custom runtime created:
     functions use system.runtime -> BlockingRuntime
 
 Custom runtime created locally:
-    functions use local runtime through #reach
+    functions use local runtime through reach
 
 Runtime with OS threads:
     requires explicit thread capability from System
@@ -371,7 +371,7 @@ Example:
 
 ```rg
 heavy_cpu_task(
-    .runtime: $&Runtime = #reach runtime, system.runtime,
+    .runtime: $&Runtime = reach runtime, system.runtime,
 ) -> !() := {
     for i in Range(.start = 0, .end = huge_number) {
         do_step(i)
@@ -409,7 +409,7 @@ Example:
 
 ```rg
 parse_large_file(
-    .runtime: $&Runtime = #reach runtime, system.runtime,
+    .runtime: $&Runtime = reach runtime, system.runtime,
     .content: &String,
 ) -> !(.ast: Ast) := {
     for token in tokenize(content) {
@@ -961,8 +961,8 @@ Example:
 
 ```rg
 read_file(
-    .file_sys: $&FileSystem = #reach file_sys, system.file_sys,
-    .runtime: $&Runtime = #reach runtime, system.runtime,
+    .file_sys: $&FileSystem = reach file_sys, system.file_sys,
+    .runtime: $&Runtime = reach runtime, system.runtime,
     .path: String,
 ) -> !(.content: String) := {
     ...

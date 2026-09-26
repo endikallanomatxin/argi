@@ -11,6 +11,8 @@ deinit(.self: $&Tracked) -> () := {
 }
 
 make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     allocated ::= allocate(.self = allocator, .size = 1)
     match allocated {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
@@ -22,6 +24,8 @@ make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Trac
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume allocator ::= system.allocator
+
     array ::= DynamicArray#(.t: Tracked)(.capacity = 1)
     made ::= make_tracked(.allocator = system.allocator, .id = 7)
     match made {

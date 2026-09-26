@@ -156,6 +156,7 @@ const State = struct {
                 try self.functions.bindings.put(binding_id, {});
                 const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
                 if (binding.initialization) |value| try self.walkNode(value);
+                if (binding.cleanup_arguments) |value| try self.walkNode(value);
             },
             .move_value, .denied_implicit_copy, .address_of => |value| try self.walkNode(value),
             .assignment => |value| {
@@ -214,6 +215,8 @@ const State = struct {
                     try self.walkNode(value);
             },
             .struct_value_literal => |literal| {
+                for (self.graph.value_fields.items[literal.assumed_fields.start..][0..literal.assumed_fields.len]) |field|
+                    try self.walkNode(field.value);
                 for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
                     try self.walkNode(field.value);
             },

@@ -58,8 +58,10 @@ init(
 init(
     .p: $&Path,
     .view: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> () := {
+    assume allocator
+
     text :: String = String(.allocator = allocator, .capacity = view.length)
     pushed ::= push_view(.self = $&text, .view = view)
     match pushed {
@@ -75,8 +77,10 @@ init(
 
 path_with_view(
     .view: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     created ::= string_with_capacity(.allocator = allocator, .capacity = view.length)
     match created {
         ..ok payload {
@@ -100,15 +104,19 @@ path_with_view(
 
 deinit(
     .self: $&Path,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> () := {
+    assume allocator
+
     deinit(.self = $&self&.text, .allocator = allocator)
 }
 
 copy(
     .self: &Path,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     copied ::= copy(.self = &self&.text, .allocator = allocator)
     match copied {
         ..ok ~ payload { result = ..ok (.text = ~payload) }
@@ -221,8 +229,10 @@ extension(
 join_views(
     .left: &StringView,
     .right: &StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     target_capacity ::= left&.length + right&.length
     if left&.length > 0 and right&.length > 0 {
         if path_is_separator(.byte = bytes_get(.view = left, .index = left&.length - 1).byte).ok {
@@ -259,8 +269,10 @@ join_views(
 join(
     .left: &Path,
     .right: &Path,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     left_view ::= as_view(.self = left)
     right_view ::= as_view(.self = right)
     result = join_views(.left = &left_view, .right = &right_view, .allocator = allocator)

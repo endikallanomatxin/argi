@@ -1,6 +1,8 @@
 alloc_one(
     .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: UIntNative, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     allocated ::= allocate(.self = allocator, .size = 1)
     match allocated {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
@@ -13,8 +15,9 @@ alloc_one(
 }
 
 main() -> (.status_code: Int32) := {
-    allocator :: PageAllocator = PageAllocator()
-    allocated ::= alloc_one(.allocator = $&allocator)
+    allocator_storage :: PageAllocator = PageAllocator()
+    assume allocator ::= $&allocator_storage
+    allocated ::= alloc_one(.allocator = $&allocator_storage)
     if is(.value = allocated, .variant = ..error) {
         status_code = 2
         return

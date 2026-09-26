@@ -16,8 +16,8 @@ It’s an early work-in-progress.
 - 🎯 Explicitness without annoyance:
   - ⚠️ Side-effects are always explicit.
   - 🔐 Capability-based design for resource management.
-  - 🪶 `reach` feature for reducing function signature clutter while
-  maintaining explicitness.
+  - 🪶 `assume` for lexical implicit arguments and `reach` for propagating
+    dependencies through intermediate calls.
 - 🚫 No objects or inheritance.
 - 🔀 Polymorphism through:
   - 🎛️ Multiple dispatch

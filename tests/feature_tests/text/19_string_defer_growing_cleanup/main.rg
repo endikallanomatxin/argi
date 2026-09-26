@@ -1,4 +1,6 @@
 helper(.allocator: $&Allocator) -> (.ok: Bool) := {
+    assume allocator
+
     text ::= String(.allocator = allocator, .capacity = 1)
     #defer deinit(.self = $&text, .allocator = allocator)
 

@@ -126,7 +126,7 @@ pub const Resolver = struct {
     };
 
     /// Binary syntax may target a statically specialized operator whose
-    /// trailing capability inputs are supplied by `#reach`. Infer from the
+    /// trailing capability inputs are supplied by `reach`. Infer from the
     /// written operands and caller context before materializing the call.
     pub fn resolveGenericAddition(
         self: *Resolver,
@@ -145,6 +145,10 @@ pub const Resolver = struct {
         const operand_types = [_]global_sg.GlobalTypeId{ left_ty, right_ty };
         const reach = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
         const input = try self.makePositionalInput(&operands);
+        if (value.assumed_arguments) |local| {
+            const assumed = self.graph.node(globalizer.globalNode(o, local)).content.struct_value_literal.assumed_fields;
+            self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = assumed;
+        }
         var chosen: ?global_sg.GlobalFunctionId = null;
         for (self.modules, 0..) |*candidate_module, candidate_module_index| {
             for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
@@ -216,9 +220,13 @@ pub const Resolver = struct {
             value.owner_function,
         );
         const input = try self.makePositionalInput(operands[0..count]);
+        if (value.assumed_arguments) |local| {
+            const assumed = self.graph.node(globalizer.globalNode(o, local)).content.struct_value_literal.assumed_fields;
+            self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = assumed;
+        }
 
         // Parameterized operators use the same inference ingredients as
-        // parameterized calls: explicit operands first, then omitted #reach
+        // parameterized calls: explicit operands first, then omitted reach
         // defaults, then constraints. The receiver is the one index-specific
         // detail: index syntax may implicitly take its address.
         var instantiated = false;
@@ -269,6 +277,7 @@ pub const Resolver = struct {
             operand_types[0],
             operands[0..count],
             operand_types[0..count],
+            input,
         ) orelse return .deferred;
 
         if (selected.addressed_receiver_type) |receiver_ty| {
@@ -381,6 +390,13 @@ pub const Resolver = struct {
             )) return false;
         }
 
+        const literal = self.graph.node(input).content.struct_value_literal;
+        for (storage.fields.items[shape.fields.start + operands.len ..][0 .. shape.fields.len - operands.len], operands.len..) |field, position| {
+            const supplied = self.core.callArgumentNamed(literal, position, self.modules[candidate_module_index].text(field.name)) orelse continue;
+            const actual = self.staticInputType(supplied) orelse return false;
+            if (!try self.inferInputType(candidate_module_index, field.ty, actual, bindings)) return false;
+        }
+
         if (!try self.inferBindingsFromReachDefaults(
             candidate_module_index,
             parameterized.input,
@@ -403,6 +419,7 @@ pub const Resolver = struct {
         collection_ty: global_sg.GlobalTypeId,
         operand_nodes: []const global_sg.GlobalNodeId,
         operand_types: []const global_sg.GlobalTypeId,
+        input: global_sg.GlobalNodeId,
     ) ?ResolvedIndexOperator {
         var chosen: ?ResolvedIndexOperator = null;
 
@@ -414,7 +431,15 @@ pub const Resolver = struct {
 
             var defaults_available = true;
             for (operand_types.len..candidate.input.len) |offset| {
-                if (self.graph.fields.items[candidate.input.start + @as(u32, @intCast(offset))].default_value == null) {
+                const field = self.graph.fields.items[candidate.input.start + @as(u32, @intCast(offset))];
+                const literal = self.graph.node(input).content.struct_value_literal;
+                if (self.core.callArgumentNamed(literal, offset, self.graph.text(field.name))) |supplied| {
+                    const actual = self.core.callArgumentType(supplied) orelse return null;
+                    if (!global_types.equal(self.graph, actual, field.ty) and !self.core.callTypesCompatible(actual, field.ty)) {
+                        defaults_available = false;
+                        break;
+                    }
+                } else if (field.default_value == null) {
                     defaults_available = false;
                     break;
                 }
@@ -476,6 +501,7 @@ pub const Resolver = struct {
         }
 
         const input = try self.makePositionalInput(operands);
+        if (reach == .global) self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = reach.global.assumed_fields;
         var instantiated = false;
         for (self.modules, 0..) |*candidate_module, candidate_module_index| {
             for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
@@ -524,6 +550,7 @@ pub const Resolver = struct {
             operand_types[0],
             operands,
             operand_types[0..operands.len],
+            input,
         ) orelse return null;
 
         if (selected.addressed_receiver_type) |receiver_ty| {
@@ -764,23 +791,14 @@ pub const Resolver = struct {
 
         const fields = storage.fields.items[shape.fields.start + field_offset ..][0 .. shape.fields.len - field_offset];
         for (fields, 0..) |field, expected_position| {
-            for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |value, supplied_position| {
-                const positional = supplied_position < literal.dispatch_prefix_positional_count or self.graph.text(value.name).len == 0;
-                if (if (positional)
-                    expected_position != supplied_position
-                else
-                    !std.mem.eql(u8, module.text(field.name), self.graph.text(value.name))) continue;
-
-                if (allow_contextual_concrete) {
-                    if (self.generics.instantiateParameterizedType(module_index, field.ty, bindings, null)) |expected| {
-                        if (self.core.contextualLiteralFits(value.value, expected)) break;
-                    } else |_| {}
-                }
-
-                const actual = self.staticInputType(value.value) orelse return false;
-                if (!try self.inferInputType(module_index, field.ty, actual, bindings)) return false;
-                break;
+            const value = self.core.callArgumentNamed(literal, expected_position, module.text(field.name)) orelse continue;
+            if (allow_contextual_concrete) {
+                if (self.generics.instantiateParameterizedType(module_index, field.ty, bindings, null)) |expected| {
+                    if (self.core.contextualLiteralFits(value, expected)) continue;
+                } else |_| {}
             }
+            const actual = self.staticInputType(value) orelse return false;
+            if (!try self.inferInputType(module_index, field.ty, actual, bindings)) return false;
         }
         return true;
     }
@@ -835,19 +853,7 @@ pub const Resolver = struct {
 
         const fields = storage.fields.items[shape.fields.start + field_offset ..][0 .. shape.fields.len - field_offset];
         for (fields, 0..) |field, expected_position| {
-            var supplied = false;
-            for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |value, supplied_position| {
-                const positional = supplied_position < literal.dispatch_prefix_positional_count or self.graph.text(value.name).len == 0;
-                if (if (positional)
-                    expected_position == supplied_position
-                else
-                    std.mem.eql(u8, candidate_module.text(field.name), self.graph.text(value.name)))
-                {
-                    supplied = true;
-                    break;
-                }
-            }
-            if (supplied) continue;
+            if (self.core.callArgumentNamed(literal, expected_position, candidate_module.text(field.name)) != null) continue;
 
             const default_id = field.default_value orelse continue;
             const default_node = switch (storage.nodes.items[@intFromEnum(default_id)]) {
@@ -1159,10 +1165,8 @@ pub const Resolver = struct {
             var matches = true;
             var candidate_deferred = false;
             for (storage.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, position| {
-                for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |value, supplied_position| {
-                    const positional = supplied_position < literal.dispatch_prefix_positional_count or self.graph.text(value.name).len == 0;
-                    if (if (positional) position != supplied_position else !std.mem.eql(u8, candidate_module.text(field.name), self.graph.text(value.name))) continue;
-                    const actual = self.graph.nodes.items[@intFromEnum(value.value)].ty orelse {
+                if (self.core.callArgumentNamed(literal, position, candidate_module.text(field.name))) |supplied| {
+                    const actual = self.staticInputType(supplied) orelse {
                         candidate_deferred = true;
                         matches = false;
                         break;
@@ -1172,7 +1176,7 @@ pub const Resolver = struct {
                     // nominal base before allocating inference state or
                     // recursively matching the receiver pattern.
                     if (std.mem.eql(u8, name, "deinit") and
-                        self.graph.nodes.items[@intFromEnum(value.value)].content == .address_of and
+                        self.graph.nodes.items[@intFromEnum(supplied)].content == .address_of and
                         self.definiteDestructorReceiverMismatch(candidate_index, field.ty, actual))
                     {
                         matches = false;
@@ -1188,7 +1192,6 @@ pub const Resolver = struct {
                         matches = false;
                         break;
                     };
-                    break;
                 }
                 if (!matches) break;
             }
@@ -1318,7 +1321,7 @@ pub const Resolver = struct {
             .external => return false,
         };
         const expected_base = globalizer.globalDecl(self.offsets[module_index], local_declaration);
-        // A different concrete nominal base cannot be supplied by #reach or
+        // A different concrete nominal base cannot be supplied by reach or
         // pointer compatibility. Abstract receivers keep the full matcher.
         return self.graph.declarations.items[@intFromEnum(expected_base)].kind == .type and actual_base != expected_base;
     }
@@ -1857,7 +1860,7 @@ pub const Resolver = struct {
 
     /// Materialize a constructor initializer through the same generic
     /// inference used by every other generic call. Field 0 is the compiler
-    /// supplied destination; source arguments and #reach defaults start at 1.
+    /// supplied destination; source arguments and reach defaults start at 1.
     pub fn instantiateInitializer(
         self: *Resolver,
         declaration: global_sg.GlobalDeclId,
@@ -2114,6 +2117,10 @@ pub const Resolver = struct {
                 .mutability = source.mutability,
             });
             self.binding_map[@intFromEnum(id)] = global;
+            if (source.cleanup_arguments) |node| {
+                const arguments = try self.instantiateNode(node);
+                self.resolver.graph.bindings.items[@intFromEnum(global)].cleanup_arguments = arguments;
+            }
             if (source_ty == null) try self.resolver.graph.markBindingTypeUnresolved(self.resolver.allocator, global);
             if (source.initialization) |node| {
                 const initialization = if (source_ty) |ty|
@@ -2385,12 +2392,23 @@ pub const Resolver = struct {
                 } });
                 ty = structural;
             }
+            var assumed: std.ArrayList(global_sg.ValueField) = .empty;
+            defer assumed.deinit(self.resolver.allocator);
+            for (storage.value_fields.items[literal.assumed_fields.start..][0..literal.assumed_fields.len]) |field| {
+                try assumed.append(self.resolver.allocator, .{
+                    .name = try self.copyString(field.name),
+                    .value = try self.instantiateNode(field.value),
+                });
+            }
+            const assumed_start: u32 = @intCast(self.resolver.graph.value_fields.items.len);
+            try self.resolver.graph.value_fields.appendSlice(self.resolver.allocator, assumed.items);
             const start: u32 = @intCast(self.resolver.graph.value_fields.items.len);
             try self.resolver.graph.value_fields.appendSlice(self.resolver.allocator, values.items);
             return .{ .source = self.resolver.sourceFor(self.module_index, node.source), .ty = ty, .content = .{
                 .struct_value_literal = .{
                     .fields = .{ .start = start, .len = @intCast(values.items.len) },
                     .dispatch_prefix_positional_count = literal.dispatch_prefix_positional_count,
+                    .assumed_fields = .{ .start = assumed_start, .len = @intCast(assumed.items.len) },
                 },
             } };
         }
@@ -2461,11 +2479,11 @@ pub const Resolver = struct {
                     const input = if (operands.items.len != 0) operands.items[0] else return error.GenericParameterizedCallWithoutInput;
                     break :blk try self.makeNamedCall(name, value.module_path, args, input, value.source);
                 },
-                .binary => self.resolveBinary(operands.items, value.source, value.detail),
+                .binary => self.resolveBinary(operands.items, value.source, value.detail, value.assumed_arguments),
                 .comparison => self.resolveComparison(operands.items, value.source, value.detail),
                 .logical => self.resolveLogical(operands.items, value.source, value.detail),
-                .index => self.resolveIndex(operands.items, value.source, false),
-                .index_store => self.resolveIndex(operands.items, value.source, true),
+                .index => self.resolveIndex(operands.items, value.source, false, value.assumed_arguments),
+                .index_store => self.resolveIndex(operands.items, value.source, true, value.assumed_arguments),
                 .field_access => if (value.name) |name| self.resolveField(operands.items[0], name, value.source) else error.InvalidParameterizedFieldAccess,
                 .choice_payload => if (value.name) |name| self.resolveChoicePayload(operands.items[0], name, value.source) else error.InvalidParameterizedChoicePayload,
                 .nullable_test => self.resolveNullableTest(operands.items, value.source),
@@ -2872,13 +2890,21 @@ pub const Resolver = struct {
             };
         }
 
-        fn resolveBinary(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {
+        fn resolveBinary(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail, assumed: ?ir.ParameterizedNodeId) !global_sg.Node {
             if (operands.len != 2) return error.InvalidParameterizedBinary;
             const operator: primitives.BinaryOperator = switch (detail) {
                 .binary => |value| value,
                 else => return error.InvalidParameterizedBinary,
             };
             const ty = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty;
+            const right_ty = self.resolver.graph.node(operands[1]).ty;
+            if (operator == .addition and ty != null and right_ty != null and
+                (self.resolver.graph.semanticType(ty.?) != .builtin or self.resolver.graph.semanticType(right_ty.?) != .builtin))
+            {
+                const reach = try self.operatorContext(assumed);
+                defer self.resolver.allocator.free(reach.global.visible_bindings);
+                if (try self.resolver.resolveNestedIndexCall(self.module_index, .add, operands, reach, self.resolver.sourceFor(self.module_index, source))) |call| return call;
+            }
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = ty,
@@ -2955,7 +2981,20 @@ pub const Resolver = struct {
             };
         }
 
-        fn resolveIndex(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, store: bool) !global_sg.Node {
+        fn operatorContext(self: *InstanceContext, assumed: ?ir.ParameterizedNodeId) !ReachInferenceContext {
+            var context = ReachInferenceContext.fromGlobal(&.{}, self.function);
+            if (assumed) |local| {
+                const input = try self.instantiateNode(local);
+                context.global.assumed_fields = self.resolver.graph.node(input).content.struct_value_literal.assumed_fields;
+            }
+            if (self.function) |function| {
+                const bindings = self.resolver.graph.functions.items[@intFromEnum(function)].input_bindings;
+                context.global.visible_bindings = try self.resolver.allocator.dupe(global_sg.GlobalBindingId, self.resolver.graph.binding_refs.items[bindings.start..][0..bindings.len]);
+            }
+            return context;
+        }
+
+        fn resolveIndex(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, store: bool, assumed: ?ir.ParameterizedNodeId) !global_sg.Node {
             if (operands.len < 2) return error.InvalidParameterizedIndex;
             const collection_ty = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedIndexUntyped;
             if (global_types.arrayElement(self.resolver.graph, collection_ty)) |element| {
@@ -2970,18 +3009,11 @@ pub const Resolver = struct {
                 };
             }
 
-            const function_id = self.function orelse return error.ParameterizedIndexRequiresDispatch;
-            const input_bindings = self.resolver.graph.functions.items[@intFromEnum(function_id)].input_bindings;
-            const visible = try self.resolver.allocator.dupe(
-                global_sg.GlobalBindingId,
-                self.resolver.graph.binding_refs.items[input_bindings.start..][0..input_bindings.len],
-            );
-            defer self.resolver.allocator.free(visible);
-            const reach = ReachInferenceContext.fromGlobal(visible, self.function);
-            const operator: @import("../primitives/callable.zig").OperatorKind = if (store) .set else .get;
+            const reach = try self.operatorContext(assumed);
+            defer self.resolver.allocator.free(reach.global.visible_bindings);
             return (try self.resolver.resolveNestedIndexCall(
                 self.module_index,
-                operator,
+                if (store) .set else .get,
                 operands,
                 reach,
                 self.resolver.sourceFor(self.module_index, source),

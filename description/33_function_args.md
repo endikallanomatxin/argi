@@ -137,19 +137,21 @@ copies of the value.
 Some named arguments may be declared as *reached arguments*:
 
 ```argi
-allocate(.allocator: $&Allocator = #reach allocator, system.allocator, .size: UIntNative) -> (.out: Allocation) := {
+allocate(.allocator: $&Allocator = reach allocator, system.allocator, .size: UIntNative) -> (.out: Allocation) := {
     ...
 }
 ```
 
-`#reach name` means:
+`reach name` means:
 
 - the argument is still part of the function interface
 - the caller may pass it explicitly
 - if the caller does not pass it explicitly, the compiler tries to satisfy it
   by reaching a variable with that exact name in the caller context
 
-This is intended for ambient capabilities such as:
+Use `assume` for routine lexical dependencies. Use `reach` when a temporary
+dependency should propagate through intermediate functions without editing
+their signatures, for example:
 
 - `allocator`
 - `system`
@@ -159,13 +161,13 @@ This is intended for ambient capabilities such as:
 The same idea may also be used by operators. Operators are syntactic contracts:
 their principal arguments must correspond to syntax that the user actually
 writes, but they may still have extra defaulted parameters resolved through
-`#reach`.
+`reach`.
 
 For example, an index operator may conceptually have:
 
 ```rg
 operator get[] #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator = reach allocator, system.allocator,
     .self: &DynamicArray#(.t: t),
     .index: UIntNative,
 ) -> (.value: t)
@@ -200,7 +202,7 @@ Reached arguments are resolved by propagation through the call chain.
    implements that abstract is valid.
 8. If no alternative resolves in the current caller scope, the dependency is
    propagated upwards as if the caller itself had an extra argument declared as
-   `.name = #reach ...`.
+   `.name = reach ...`.
 9. The same process is repeated in the next caller: inspect that caller first,
    then try the alternatives left-to-right there.
 10. If the search reaches `main` and still cannot be satisfied, compilation
@@ -220,7 +222,7 @@ Reached arguments may refer to nested capability paths:
 
 ```argi
 print_line(
-    .stdout: $&Writer = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
+    .stdout: $&Writer = reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
     .text: String,
 ) -> () := {
     ...
@@ -266,30 +268,46 @@ Because of that, tooling must make them visible:
 - signature help should show which arguments are reached
 - hover should show the effective reached dependencies of a function
 - call hints should show when a call is supplying arguments implicitly via
-  `#reach`
+  `reach`
 
 This keeps capability threading ergonomic without turning dependencies into
 hidden globals.
 
-> [!IDEA] `assume`
-> `#reach` is particularly attractive for transversal inputs and refactors:
-> adding tracing or another temporary dependency deep in a call tree does not
-> require immediately threading it through every intermediate call site.
->
->  Explore semantic parameters that remain real function inputs but may be
->  omitted, together with a statement such as `assume allocator = value` that
->  provides a capability from that point to the end of the current scope.
->
-> - `reach` is better for making temporary refactors more agile. Can propagate
->   accross the call stack.
->
-> - `assume` is likely a better mechanism to make the excesive dependency
->   injection of this language more comfortable. Because:
->
->   - It is shown in the call site without lsp help
->
->   - The caller decides what can be implicitly passed, dependending on the
->     LSP.
->
->   - Cannot be propagated. Propagating from the call site causes ambiguities.
+### Lexical assumed arguments
 
+`assume name` enables an existing variable as a named input for subsequent
+calls in the current lexical scope and nested scopes. It does not declare a
+variable or evaluate an initializer. It can also prefix a normal variable
+declaration, which declares and enables the binding in one statement:
+
+```argi
+assume allocator := system.allocator
+text ::= String(.capacity = 16)
+```
+
+`assume allocator := expression` is equivalent to `allocator := expression`
+followed by `assume allocator`. The initializer runs once, before the new
+binding becomes visible. The usual declaration rules apply: `:=` declares a
+constant, `::=` declares a mutable variable, and an explicit type is allowed.
+`assume allocator = expression` is not a declaration and is rejected.
+
+For each input, an explicit argument takes precedence over an assumed
+variable with the same name, which takes precedence over the input's default.
+An incompatible assumed variable is an error; it does not fall back to the
+default. Normal argument copying, reference validity, and type rules apply.
+Only inputs declared by the selected callee are supplied.
+
+Assumptions refer to bindings, not snapshots of their values. Reassignment is
+visible to later calls. A nearer declaration shadows the outer variable and
+must itself be enabled with `assume` to supply omitted arguments. Leaving a
+scope restores the enclosing assumptions.
+
+Assumptions do not propagate across calls. A callee receives ordinary inputs
+and must explicitly enable its own variables for calls in its body. The same
+lexical inputs are available for automatic cleanup of locals declared after
+`assume`.
+
+Use `assume` for routine allocator and stream dependencies. `reach` retains
+its existing propagation behavior for dependencies that need to cross
+intermediate functions without editing their signatures, such as temporary
+tracing or debugging output.

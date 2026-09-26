@@ -4,19 +4,25 @@ DummyWriter : Type = (
 
 init(
     .p: $&DummyWriter,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> () := {
+    assume allocator
+
     p&.bytes = String(.allocator = allocator, .capacity = 16)
 }
 
 deinit(
     .self: $&DummyWriter,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> () := {
+    assume allocator
+
     deinit(.self = $&self&.bytes, .allocator = allocator)
 }
 
 write_byte(.self: $&DummyWriter, .byte: UInt8, .allocator: $&Allocator) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    assume allocator
+
     pushed ::= push_byte(.self = $&self&.bytes, .byte = byte, .allocator = allocator)
     if is(.value = pushed, .variant = ..error) {
         result = ..error(.reason = ..stream_write_failed)
@@ -30,6 +36,8 @@ flush(.self: $&DummyWriter) -> (.result: Errable#(.t: Void, .reasons: (..stream_
 }
 
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     buffer ::= String(.allocator = system.allocator, .capacity = 16)
     match push_c_string(.self = $&buffer, .text = "OK") {
         ..ok _ {

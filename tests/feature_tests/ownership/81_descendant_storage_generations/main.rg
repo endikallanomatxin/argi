@@ -11,6 +11,8 @@ deinit(.self: $&Container) -> () := {
 }
 
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     first_result ::= allocate(.self = system.allocator, .size = 1)
     match first_result {
         ..error _ { status_code = 1 }

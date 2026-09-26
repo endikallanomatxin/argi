@@ -1,4 +1,6 @@
 make(.allocator: $&Allocator, .condition: Bool) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     if condition {
         result = ..error(.reason = ..out_of_memory)
         return

@@ -28,10 +28,11 @@ CountingAllocator implements Allocator
 CountingAllocator implements Deallocator
 
 main() -> (.status_code: Int32) := {
-    allocator :: CountingAllocator = (
+    allocator_storage :: CountingAllocator = (
         .alloc_count = 0,
         .dealloc_count = 0,
     )
+    assume allocator ::= $&allocator_storage
 
     literal ::= from_literal(.data = "abc")
     data ::= reinterpret_reference#(.from: Char, .to: UInt8)(.base = literal).reference
@@ -41,7 +42,7 @@ main() -> (.status_code: Int32) := {
             .data = data,
             .length = 3,
         )
-        borrowed_result ::= as_c_string(.self = borrowed_view, .allocator = $&allocator)
+        borrowed_result ::= as_c_string(.self = borrowed_view, .allocator = $&allocator_storage)
         match borrowed_result {
         ..error _ { status_code = 7 }
         ..ok ~ borrowed {
@@ -49,7 +50,7 @@ main() -> (.status_code: Int32) := {
             status_code = 1
             return
         }
-        if allocator.alloc_count != 1 {
+        if allocator_storage.alloc_count != 1 {
             status_code = 2
             return
         }
@@ -57,7 +58,7 @@ main() -> (.status_code: Int32) := {
         }
     }
 
-    if allocator.dealloc_count != 1 {
+    if allocator_storage.dealloc_count != 1 {
         status_code = 3
         return
     }
@@ -67,7 +68,7 @@ main() -> (.status_code: Int32) := {
             .data = data,
             .length = 2,
         )
-        copied_result ::= as_c_string(.self = copied_view, .allocator = $&allocator)
+        copied_result ::= as_c_string(.self = copied_view, .allocator = $&allocator_storage)
         match copied_result {
         ..error _ { status_code = 8 }
         ..ok ~ copied {
@@ -75,7 +76,7 @@ main() -> (.status_code: Int32) := {
             status_code = 4
             return
         }
-        if allocator.alloc_count != 2 {
+        if allocator_storage.alloc_count != 2 {
             status_code = 5
             return
         }
@@ -83,7 +84,7 @@ main() -> (.status_code: Int32) := {
         }
     }
 
-    if allocator.dealloc_count != 2 {
+    if allocator_storage.dealloc_count != 2 {
         status_code = 6
         return
     }

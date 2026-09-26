@@ -16,6 +16,7 @@ pub const Context = union(enum) {
 
     pub const Global = struct {
         visible_bindings: []const global_sg.GlobalBindingId,
+        assumed_fields: @import("../primitives/schema.zig").Range(global_sg.GlobalValueFieldId) = .{ .start = 0, .len = 0 },
         owner_function: ?global_sg.GlobalFunctionId = null,
     };
 

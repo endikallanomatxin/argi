@@ -1,6 +1,7 @@
 main() -> (.status_code: Int32) := {
-    allocator :: CAllocator = CAllocator()
-    allocated ::= allocate(.self = $&allocator, .size = 16)
+    allocator_storage :: CAllocator = CAllocator()
+    assume allocator ::= $&allocator_storage
+    allocated ::= allocate(.self = $&allocator_storage, .size = 16)
     match allocated {
     ..error _ { status_code = 10 }
     ..ok ~ allocation {

@@ -18,8 +18,9 @@ CountingAllocator implements Allocator
 CountingAllocator implements Deallocator
 
 main() -> (.status_code: Int32) := {
-    allocator :: CountingAllocator = (.deallocations = 0)
-    result ::= allocate(.self = $&allocator, .size = 1)
+    allocator_storage :: CountingAllocator = (.deallocations = 0)
+    assume allocator ::= $&allocator_storage
+    result ::= allocate(.self = $&allocator_storage, .size = 1)
     match result {
         ..ok ~ payload {
             allocation ::= ~payload
@@ -32,7 +33,7 @@ main() -> (.status_code: Int32) := {
         }
     }
 
-    if allocator.deallocations == 1 {
+    if allocator_storage.deallocations == 1 {
         status_code = 0
     } else {
         status_code = 1

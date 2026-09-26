@@ -27,10 +27,13 @@ read_byte(.self: $&DummyInput) -> (.result: Errable#(.t: ReadByte, .reasons: (..
 DummyInput implements Reader
 
 main(.system: System = System()) -> (.status_code: Int32) := {
-    stdin :: DummyInput = (
+    assume allocator ::= system.allocator
+
+    stdin_storage :: DummyInput = (
         .index = 0
     )
-    result ::= read_line(.allocator = system.allocator, .stdin = $&stdin)
+    assume stdin ::= $&stdin_storage
+    result ::= read_line(.allocator = system.allocator, .stdin = $&stdin_storage)
 
     if is(.value = result, .variant = ..ok) {
     } else {

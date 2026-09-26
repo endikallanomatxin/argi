@@ -15,11 +15,13 @@ const NamedBinding = struct {
     name: primitives.StringRange,
     id: entities.ModuleBindingId,
     ty: ?entities.ModuleTypeId,
+    assumed: bool = false,
 };
 const RefinedValue = struct {
     name: primitives.StringRange,
     node: entities.ModuleNodeId,
     ty: ?entities.ModuleTypeId,
+    assumed: bool = false,
 };
 const ScopeMark = struct {
     bindings: usize,
@@ -201,6 +203,18 @@ const Context = struct {
         defer nodes.deinit();
         var ret_val: ?entities.ModuleNodeId = null;
         for (block.statements) |statement| {
+            if (self.tree.tag(statement) == .assume_statement) {
+                if (self.tree.assumedDeclaration(statement)) |declaration| {
+                    const value = try self.lowerNode(declaration, null);
+                    try nodes.append(value.node);
+                    ret_val = value.node;
+                }
+                const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(statement));
+                var binding = self.lookupBinding(name) orelse return error.UnknownAssumedVariable;
+                binding.assumed = true;
+                try self.bindings.append(binding);
+                continue;
+            }
             if (try self.lowerLocalModuleAlias(statement)) continue;
             const value = try self.lowerNode(statement, null);
             try nodes.append(value.node);
@@ -366,6 +380,7 @@ const Context = struct {
                 } });
             }
         }
+        try self.captureBindingCleanup(node, binding);
         const name = self.graph.semantic.bindings.items[@intFromEnum(binding)].name;
         try self.bindings.append(.{ .name = name, .id = binding, .ty = semantic_ty });
         return self.resolved(node, semantic_ty, .{ .binding_declaration = binding });
@@ -416,6 +431,7 @@ const Context = struct {
             self.suppress_implicit_copies = true;
         defer self.suppress_implicit_copies = previous_suppression;
         const input = try self.lowerNode(call.input, null);
+        try self.captureAssumedFields(node, input.node);
         const module_path = if (call.module_qualifier) |token_index|
             try self.modulePathForQualifier(token_index)
         else
@@ -435,6 +451,40 @@ const Context = struct {
             .visible_bindings = visible_bindings,
             .owner_function = self.current_function,
         } }, expected);
+    }
+
+    fn captureBindingCleanup(self: *Context, node: syn.NodeIndex, binding: entities.ModuleBindingId) !void {
+        for (self.bindings.items) |visible| {
+            if (!visible.assumed) continue;
+            const input = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
+            try self.captureAssumedFields(node, input.node);
+            self.graph.semantic.bindings.items[@intFromEnum(binding)].cleanup_arguments = input.node;
+            break;
+        }
+    }
+
+    fn captureAssumedFields(self: *Context, source: syn.NodeIndex, input: entities.ModuleNodeId) !void {
+        var fields: std.ArrayList(entities.ValueField) = .empty;
+        defer fields.deinit(self.allocator);
+        for (self.bindings.items, 0..) |binding, index| {
+            if (!binding.assumed) continue;
+            var shadowed = false;
+            for (self.bindings.items[index + 1 ..]) |later| {
+                if (std.mem.eql(u8, self.graph.text(binding.name), self.graph.text(later.name))) {
+                    shadowed = true;
+                    break;
+                }
+            }
+            if (shadowed) continue;
+            const use = try self.valuePosition(source, try self.resolved(source, binding.ty, .{ .binding_use = binding.id }));
+            try fields.append(self.allocator, .{ .name = binding.name, .value = use.node });
+        }
+        const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
+        try self.graph.semantic.value_fields.appendSlice(self.allocator, fields.items);
+        self.graph.semantic.nodes.items[@intFromEnum(input)].resolved.content.struct_value_literal.assumed_fields = .{
+            .start = start,
+            .len = @intCast(fields.items.len),
+        };
     }
 
     fn captureVisibleBindings(self: *Context) !entities.BindingRange {
@@ -580,6 +630,8 @@ const Context = struct {
         const access = self.tree.indexAccess(node).?;
         const value = try self.lowerNode(access.value, null);
         const index = try self.lowerNode(access.index, try self.builtin(.Int32));
+        const assumed = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
+        try self.captureAssumedFields(node, assumed.node);
         const visible_bindings = try self.captureVisibleBindings();
         return self.pending(node, .{ .resolve_index = .{
             .node = self.nextNodeId(),
@@ -588,6 +640,7 @@ const Context = struct {
             .store_value = store,
             .operator = operator,
             .visible_bindings = visible_bindings,
+            .assumed_arguments = assumed.node,
             .owner_function = self.current_function,
         } }, expected);
     }
@@ -644,6 +697,8 @@ const Context = struct {
             .binary_modulo => .modulo,
             else => unreachable,
         };
+        const assumed = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
+        try self.captureAssumedFields(node, assumed.node);
         const visible_bindings = try self.captureVisibleBindings();
         return self.pending(node, .{ .resolve_binary = .{
             .node = self.nextNodeId(),
@@ -651,6 +706,7 @@ const Context = struct {
             .left = lhs.node,
             .right = rhs.node,
             .visible_bindings = visible_bindings,
+            .assumed_arguments = assumed.node,
             .owner_function = self.current_function,
         } }, expected);
     }
@@ -774,6 +830,7 @@ const Context = struct {
             if (statement.mode == .mut_borrow) .variable else .constant,
         );
         try self.pushScope();
+        try self.captureBindingCleanup(node, binding);
         const name = self.graph.semantic.bindings.items[@intFromEnum(binding)].name;
         try self.bindings.append(.{ .name = name, .id = binding, .ty = null });
         const body = try self.lowerBlock(statement.body);
@@ -812,6 +869,7 @@ const Context = struct {
                     null,
                     if (case.mode == .mut_borrow) .variable else .constant,
                 );
+                try self.captureBindingCleanup(case_node, id);
                 payload_binding = id;
                 const name = self.graph.semantic.bindings.items[@intFromEnum(id)].name;
                 try self.bindings.append(.{ .name = name, .id = id, .ty = null });

@@ -229,7 +229,7 @@ System is a struct that contains all the capabilities of the system.
 > initialization and ambient resources.
 
 For capabilities that would otherwise force repetitive argument threading, a
-function may declare a reached argument with `#reach`. This keeps the
+function may declare a reached argument with `reach`. This keeps the
 dependency explicit in the function interface while allowing the compiler and
 LSP to propagate it through intermediate calls.
 

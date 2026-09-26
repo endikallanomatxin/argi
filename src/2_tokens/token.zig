@@ -89,6 +89,8 @@ pub const Content = union(enum(u8)) {
     keyword_break: struct {},
     keyword_continue: struct {},
     keyword_once: struct {},
+    keyword_assume: struct {},
+    keyword_reach: struct {},
     keyword_test: struct {},
     keyword_and: struct {},
     keyword_or: struct {},

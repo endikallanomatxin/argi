@@ -2288,7 +2288,7 @@ fn diagnoseUnresolvedCall(
             if (reach_candidate_count != 0) {
                 var message = std.array_list.Managed(u8).init(allocator);
                 defer message.deinit();
-                try message.print("function '{s}' exists, but no overload matches the provided arguments.\nOverloads with omitted #reach defaults:\n", .{name});
+                try message.print("function '{s}' exists, but no overload matches the provided arguments.\nOverloads with omitted reach defaults:\n", .{name});
                 try message.appendSlice(reach_details.items);
                 try message.appendSlice("\n\nAdd a reachable value in the caller, for example:\n  main(.system: System = System()) -> (.status_code: Int32 = 0) := { ... }\n\nOr pass the omitted argument explicitly.");
                 try diagnostics.add(location, .semantic, "{s}", .{message.items});
@@ -2387,12 +2387,12 @@ fn appendOmittedReachDefaults(
             .reach_directive => |value| value,
             else => continue,
         };
-        try buffer.appendSlice(" = #reach ");
+        try buffer.appendSlice(" = reach ");
         try appendReachAlternatives(buffer, graph, reach_id);
     }
     try buffer.appendSlice(") -> ");
     try appendFieldShape(buffer, graph, function.output);
-    try buffer.appendSlice("\n    omitted #reach defaults:");
+    try buffer.appendSlice("\n    omitted reach defaults:");
 
     for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, field_index| {
         if (callInputSuppliesField(graph, input, field, field_index)) continue;
@@ -2403,7 +2403,7 @@ fn appendOmittedReachDefaults(
         };
         try buffer.appendSlice("\n      - .");
         try buffer.appendSlice(graph.text(field.name));
-        try buffer.appendSlice(" uses #reach [");
+        try buffer.appendSlice(" uses reach [");
         try appendReachAlternatives(buffer, graph, reach_id);
         try buffer.appendSlice("] expected as '");
         try appendTypeName(buffer, graph, field.ty);

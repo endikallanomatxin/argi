@@ -4,10 +4,12 @@ FallibleValue : Type = (
     .value: Int32
 )
 
-copy(.self: &FallibleValue) -> (.result: Errable#(
+copy(.self: &FallibleValue, .allocator: $&Allocator) -> (.result: Errable#(
     .t: FallibleValue,
     .reasons: (..copy_failed),
 )) := {
+    assume allocator
+
     result = ..ok(.value = self&.value)
 }
 
@@ -18,6 +20,8 @@ require_array_reasons#(
 )(.value: &t) -> () := {}
 
 main(.system: System = System()) -> (.status_code: Int32 = 0) := {
+    assume allocator ::= system.allocator
+
     source ::= DynamicArray#(.t: FallibleValue)(.capacity = 1)
     #defer deinit#(.t: FallibleValue)(.self = $&source)
     value ::= FallibleValue(.value = 42)

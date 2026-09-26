@@ -4,11 +4,15 @@ Pair : Type = (
 )
 
 deinit(.self: $&Pair, .allocator: $&Allocator) -> () := {
+    assume allocator
+
     deinit(.self = $&self&.changing, .allocator = allocator)
     deinit(.self = $&self&.stable, .allocator = allocator)
 }
 
 main(.system: System = System()) -> (.status_code: Int32 = 0) := {
+    assume allocator ::= system.allocator
+
     pair ::= Pair(
         .changing = String(.allocator = system.allocator, .capacity = 1),
         .stable = String(.allocator = system.allocator, .capacity = 1),

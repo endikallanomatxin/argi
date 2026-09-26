@@ -15,7 +15,7 @@ roots. A named value copies implicitly only when its type implements
 and ownership transfer is explicit through `~value`. Resource types may
 provide fallible `copy` when independence requires work. Its allocators are
 ordinary arguments: explicit arguments have priority and omitted defaults may
-resolve through `#reach`.
+resolve through `reach`.
 
 Copying a reference or non-owning view copies its dependency, never root
 ownership. An owning copy creates independent resources and roots rather than

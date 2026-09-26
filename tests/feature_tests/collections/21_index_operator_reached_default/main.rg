@@ -5,7 +5,7 @@ ReachedIndexSource : Type = (
 operator get[] #(.t: Type) (
     .self: &ReachedIndexSource,
     .index: UIntNative,
-    .value: t = #reach value,
+    .value: t = reach value,
 ) -> (.out: t) := {
     out = value
 }

@@ -1,4 +1,6 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     path ::= from_literal(.data = "tests/feature_tests/system/23_file_system_read_write/build/temp.txt")
 
     if exists(.self = system.file_sys, .path = path).ok {

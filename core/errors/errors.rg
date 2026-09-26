@@ -19,8 +19,10 @@ Error#(.reasons: Type) : Type = (
 
 write_trace_text(
     .text: &Char,
-    .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
+    .stderr: $&Writer,
 ) -> () := {
+    assume stderr
+
     i :: UIntNative = 0
     bytes ::= reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference
     while 1 == 1 {
@@ -36,8 +38,10 @@ write_trace_text(
 
 write_trace_uint(
     .value: UIntNative,
-    .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
+    .stderr: $&Writer,
 ) -> () := {
+    assume stderr
+
     if value == 0 {
         write_trace_text(.text = "0", .stderr = stderr)
         return
@@ -90,8 +94,10 @@ write_trace_uint(
 
 write_trace_spaces(
     .count: UIntNative,
-    .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
+    .stderr: $&Writer,
 ) -> () := {
+    assume stderr
+
     i :: UIntNative = 0
     while i < count {
         write_byte(.self = stderr, .byte = 32)
@@ -101,8 +107,10 @@ write_trace_spaces(
 
 report_trace(
     .trace: &ErrorTrace,
-    .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
+    .stderr: $&Writer,
 ) -> () := {
+    assume stderr
+
     write_trace_text(.text = "error trace (most recent first):\n", .stderr = stderr)
 
     if trace&.entries.length == 0 {
@@ -150,16 +158,20 @@ report_trace(
 
 report_error #(.reasons: Type) (
     .err: &Error#(.reasons: reasons),
-    .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
+    .stderr: $&Writer,
 ) -> () := {
+    assume stderr
+
     report_trace(.trace = &err&.trace, .stderr = stderr)
 }
 
 report_error #(.reasons: Type) (
     .message: &Char,
     .err: &Error#(.reasons: reasons),
-    .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
+    .stderr: $&Writer,
 ) -> () := {
+    assume stderr
+
     write_trace_text(.text = "error: ", .stderr = stderr)
     write_trace_text(.text = message, .stderr = stderr)
     write_byte(.self = stderr, .byte = 10)

@@ -1,11 +1,12 @@
 main() -> (.status_code: Int32) := {
-    allocator :: CAllocator = CAllocator()
-    src_result ::= allocate(.self = $&allocator, .size = 4)
+    allocator_storage :: CAllocator = CAllocator()
+    assume allocator ::= $&allocator_storage
+    src_result ::= allocate(.self = $&allocator_storage, .size = 4)
     match src_result {
     ..error _ { status_code = 10 }
     ..ok ~ src_payload {
     src_allocation ::= ~src_payload
-    dst_result ::= allocate(.self = $&allocator, .size = 4)
+    dst_result ::= allocate(.self = $&allocator_storage, .size = 4)
     match dst_result {
     ..error _ { status_code = 11 }
     ..ok ~ dst_payload {

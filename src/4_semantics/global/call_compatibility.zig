@@ -193,7 +193,7 @@ pub fn matchInput(
         if (supplied) |node| {
             if (graph.isTypeUnresolved(expected.ty)) return .deferred;
             const supplied_node = graph.nodes.items[@intFromEnum(node)];
-            if (supplied_node.ty) |actual| {
+            if (compatibility.core.callArgumentType(node)) |actual| {
                 if (graph.isTypeUnresolved(actual)) return .deferred;
                 if (types.equal(graph, actual, expected.ty)) {
                     score += 4;
@@ -316,6 +316,9 @@ fn callArgument(
         if (supplied_offset < literal.dispatch_prefix_positional_count or graph.text(supplied.name).len == 0) {
             if (supplied_offset == expected_offset) return supplied.value;
         } else if (std.mem.eql(u8, graph.text(supplied.name), graph.text(expected_name))) return supplied.value;
+    }
+    for (graph.value_fields.items[literal.assumed_fields.start..][0..literal.assumed_fields.len]) |assumed| {
+        if (std.mem.eql(u8, graph.text(assumed.name), graph.text(expected_name))) return assumed.value;
     }
     return null;
 }

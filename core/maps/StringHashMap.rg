@@ -95,10 +95,12 @@ string_hash_map_bucket_index(
 }
 
 string_hash_map_prepare_buckets(
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .buckets: $&DynamicArray#(.t: UIntNative),
     .capacity: UIntNative,
 ) -> () := {
+    assume allocator
+
     init#(.t: UIntNative)(.p = buckets, .allocator = allocator, .capacity = capacity)
 
     i :: UIntNative = 0
@@ -110,9 +112,11 @@ string_hash_map_prepare_buckets(
 
 init#(.value: Type) (
     .p: $&StringHashMap#(.value: value),
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .capacity: UIntNative = 8,
 ) -> () := {
+    assume allocator
+
     bucket_capacity ::= capacity
     if bucket_capacity == 0 {
         bucket_capacity = 1
@@ -123,18 +127,22 @@ init#(.value: Type) (
 }
 
 deinit#(.value: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .self: $&StringHashMap#(.value: value),
 ) -> () := {
+    assume allocator
+
     deinit#(.t: UIntNative)(.allocator = allocator, .self = $&self&.buckets)
     deinit#(.t: StringHashMapEntry#(.value: value))(.allocator = allocator, .self = $&self&.entries)
 }
 
 string_hash_map_rehash#(.value: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .self: $&StringHashMap#(.value: value),
     .bucket_count: UIntNative,
 ) -> () := {
+    assume allocator
+
     old_bucket_count ::= self&.buckets.length
     if old_bucket_count == bucket_count {
         return
@@ -193,11 +201,13 @@ string_hash_map_find_entry_index#(.value: Type) (
 }
 
 put#(.value: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .self: $&StringHashMap#(.value: value),
     .key: &StringView,
     .value: value,
 ) -> () := {
+    assume allocator
+
     found ::= string_hash_map_find_entry_index#(.value: value)(.self = self, .key = key).index
     match found {
         ..some payload {
@@ -238,21 +248,25 @@ put#(.value: Type) (
 }
 
 put#(.value: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .self: $&StringHashMap#(.value: value),
     .key: &Char,
     .value: value,
 ) -> () := {
+    assume allocator
+
     key_view ::= string_hash_map_key_view(.key = key)
     put#(.value: value)(.allocator = allocator, .self = self, .key = &key_view, .value = value)
 }
 
 put#(.value: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .self: $&StringHashMap#(.value: value),
     .key: &String,
     .value: value,
 ) -> () := {
+    assume allocator
+
     key_view ::= string_hash_map_key_view(.key = key)
     put#(.value: value)(.allocator = allocator, .self = self, .key = &key_view, .value = value)
 }

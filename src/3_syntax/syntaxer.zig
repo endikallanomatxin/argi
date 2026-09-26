@@ -831,7 +831,7 @@ pub const Syntaxer = struct {
         return false;
     }
 
-    fn parseReachDirective(self: *Syntaxer, hash_token: syn.TokenIndex) SyntaxerError!syn.NodeIndex {
+    fn parseReachDirective(self: *Syntaxer, keyword_token: syn.TokenIndex) SyntaxerError!syn.NodeIndex {
         const alternatives_top = self.scratch.items.len;
         defer self.scratch.shrinkRetainingCapacity(alternatives_top);
 
@@ -856,7 +856,7 @@ pub const Syntaxer = struct {
             self.skipNewLinesAndComments();
         }
 
-        return try self.addNode(.reach_directive, hash_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[alternatives_top..]) });
+        return try self.addNode(.reach_directive, keyword_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[alternatives_top..]) });
     }
 
     fn findMatchingCloseParenIndex(self: *Syntaxer, open_paren_index: usize) ?usize {
@@ -1261,15 +1261,17 @@ pub const Syntaxer = struct {
             return try self.addNode(if (mutable) .address_of_mut else .address_of, main_token, .{ .node = inner });
         }
 
+        if (self.tokenIs(.keyword_reach)) {
+            const keyword_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+            self.advanceOne();
+            return self.parsePostfix(try self.parseReachDirective(keyword_token));
+        }
+
         if (self.tokenIs(.hash)) {
             const hash_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             const hash_loc = self.tokenLocation();
             self.advanceOne();
             const ident = try self.parseIdentifier();
-            if (std.mem.eql(u8, ident, "reach")) {
-                const node = try self.parseReachDirective(hash_token);
-                return try self.parsePostfix(node);
-            }
             if (!std.mem.eql(u8, ident, "import")) {
                 try self.diags.add(hash_loc, .syntax, "unknown directive '#{s}' in expression position", .{ident});
                 return SyntaxerError.ExpectedDeclarationOrAssignment;
@@ -1566,6 +1568,25 @@ pub const Syntaxer = struct {
         self.skipNewLinesAndComments();
 
         switch (self.currentContent()) {
+            .keyword_assume => {
+                self.advanceOne();
+                const name_index = self.index;
+                const name = try self.parseName();
+                var declaration: ?syn.NodeIndex = null;
+                if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) {
+                    self.index = name_index;
+                    const declared = try self.parseStatement();
+                    if (self.file.symbolDeclaration(declared) == null) {
+                        try self.diags.add(self.file.location(declared), .syntax, "assume requires a variable declaration", .{});
+                        return SyntaxerError.ExpectedIdentifier;
+                    }
+                    declaration = declared;
+                } else if (self.tokenIs(.equal)) {
+                    try self.diags.add(self.tokenLocation(), .syntax, "use ':=' to declare an assumed variable, or 'assume name' for an existing variable", .{});
+                    return SyntaxerError.ExpectedIdentifier;
+                }
+                return self.addNode(.assume_statement, name.token, .{ .optional_node = syn.OptionalNodeIndex.init(declaration) });
+            },
             .keyword_return => return self.parseReturn(),
             .keyword_if => return self.parseIf(),
             .keyword_for => return self.parseFor(),

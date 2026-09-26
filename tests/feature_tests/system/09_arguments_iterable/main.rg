@@ -1,4 +1,6 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     count :: UIntNative = length(.self = system.args).count
     if count < 1 {
         status_code = 1

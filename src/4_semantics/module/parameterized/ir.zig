@@ -185,6 +185,7 @@ pub const PendingExpressionDetail = union(enum(u8)) {
 
 pub const PendingExpression = struct {
     kind: PendingExpressionKind,
+    assumed_arguments: ?ParameterizedNodeId = null,
     operands: primitives.Range(ParameterizedNodeId) = .{ .start = 0, .len = 0 },
     name: ?primitives.StringRange = null,
     module_path: ?primitives.StringRange = null,

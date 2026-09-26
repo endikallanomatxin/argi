@@ -1,4 +1,7 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+    assume backing_allocator ::= system.allocator
+
     arena :: ArenaAllocator
     initialized ::= init(.p = $&arena, .backing_allocator = system.allocator, .block_size = 16)
     if is(.value = initialized, .variant = ..error) {

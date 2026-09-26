@@ -2,7 +2,9 @@ FallibleValue : Type = (
     .value: Int32
 )
 
-copy(.self: &FallibleValue) -> (.result: Errable#(.t: FallibleValue, .reasons: (..copy_failed))) := {
+copy(.self: &FallibleValue, .allocator: $&Allocator) -> (.result: Errable#(.t: FallibleValue, .reasons: (..copy_failed))) := {
+    assume allocator
+
     result = ..ok (.value = self&.value)
 }
 

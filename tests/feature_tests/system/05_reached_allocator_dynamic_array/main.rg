@@ -28,20 +28,23 @@ CountingAllocator implements Allocator
 CountingAllocator implements Deallocator
 
 exercise(
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator = reach allocator, system.allocator,
 ) -> () := {
+    assume allocator
+
     arr ::= DynamicArray#(.t: Int32)(.capacity = 1)
     push(.self = $&arr, .value = 10)
     push(.self = $&arr, .value = 20)
 }
 
 main() -> (.status_code: Int32) := {
-    allocator :: CountingAllocator = (
+    allocator_storage :: CountingAllocator = (
         .alloc_count = 0,
         .dealloc_count = 0,
     )
+    assume allocator ::= $&allocator_storage
 
     exercise()
 
-    status_code = allocator.alloc_count * 10 + allocator.dealloc_count
+    status_code = allocator_storage.alloc_count * 10 + allocator_storage.dealloc_count
 }

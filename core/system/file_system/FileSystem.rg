@@ -24,8 +24,10 @@ exists(
 exists(
     .self: &FileSystem,
     .path: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Bool, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     converted ::= as_c_string(.self = path, .allocator = allocator)
     match converted {
         ..ok ~ payload { result = ..ok exists(.self = self, .path = payload.text).ok }
@@ -62,8 +64,10 @@ remove(
 remove(
     .self: &FileSystem,
     .path: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Bool, .reasons: (..path_remove_failed, ..out_of_memory))) := {
+    assume allocator
+
     converted ::= as_c_string(.self = path, .allocator = allocator)
     match converted {
         ..ok ~ payload { result = remove(.self = self, .path = payload.text) }
@@ -74,8 +78,10 @@ remove(
 remove(
     .self: &FileSystem,
     .path: &Path,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Bool, .reasons: (..path_remove_failed))) := {
+    assume allocator
+
     result = remove(.self = self, .path = &path&.text)
 }
 
@@ -105,8 +111,10 @@ rename(
     .self: &FileSystem,
     .from: StringView,
     .to: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Bool, .reasons: (..path_rename_failed, ..out_of_memory))) := {
+    assume allocator
+
     converted_from ::= as_c_string(.self = from, .allocator = allocator)
     match converted_from {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
@@ -124,8 +132,10 @@ rename(
     .self: &FileSystem,
     .from: &Path,
     .to: &Path,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Bool, .reasons: (..path_rename_failed))) := {
+    assume allocator
+
     result = rename(.self = self, .from = &from&.text, .to = &to&.text)
 }
 
@@ -154,8 +164,10 @@ open_read(
 open_read(
     .self: &FileSystem,
     .path: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed, ..out_of_memory))) := {
+    assume allocator
+
     converted ::= as_c_string(.self = path, .allocator = allocator)
     match converted {
         ..ok ~ payload { result = open_read(.self = self, .path = payload.text) }
@@ -166,8 +178,10 @@ open_read(
 open_read(
     .self: &FileSystem,
     .path: &Path,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+    assume allocator
+
     result = open_read(.self = self, .path = &path&.text)
 }
 
@@ -195,8 +209,10 @@ open_write(
 open_write(
     .self: &FileSystem,
     .path: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed, ..out_of_memory))) := {
+    assume allocator
+
     converted ::= as_c_string(.self = path, .allocator = allocator)
     match converted {
         ..ok ~ payload { result = open_write(.self = self, .path = payload.text) }
@@ -207,8 +223,10 @@ open_write(
 open_write(
     .self: &FileSystem,
     .path: &Path,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+    assume allocator
+
     result = open_write(.self = self, .path = &path&.text)
 }
 
@@ -236,8 +254,10 @@ open_append(
 open_append(
     .self: &FileSystem,
     .path: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed, ..out_of_memory))) := {
+    assume allocator
+
     converted ::= as_c_string(.self = path, .allocator = allocator)
     match converted {
         ..ok ~ payload { result = open_append(.self = self, .path = payload.text) }
@@ -248,16 +268,20 @@ open_append(
 open_append(
     .self: &FileSystem,
     .path: &Path,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+    assume allocator
+
     result = open_append(.self = self, .path = &path&.text)
 }
 
 read_file(
     .self: &FileSystem,
     .path: &Char,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory))) := {
+    assume allocator
+
     open_result ::= open_read(.self = self, .path = path)
     file :: File
     match open_result {
@@ -319,8 +343,10 @@ read_file(
 read_file(
     .self: &FileSystem,
     .path: &String,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory))) := {
+    assume allocator
+
     c_path ::= as_c_string(.self = path)
     result = read_file(.self = self, .path = c_path, .allocator = allocator)
 }
@@ -328,8 +354,10 @@ read_file(
 read_file(
     .self: &FileSystem,
     .path: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory))) := {
+    assume allocator
+
     converted ::= as_c_string(.self = path, .allocator = allocator)
     match converted {
         ..ok ~ payload { result = read_file(.self = self, .path = payload.text, .allocator = allocator) }
@@ -340,8 +368,10 @@ read_file(
 read_file(
     .self: &FileSystem,
     .path: &Path,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory))) := {
+    assume allocator
+
     result = read_file(.self = self, .path = &path&.text, .allocator = allocator)
 }
 
@@ -412,8 +442,10 @@ write_file(
     .self: &FileSystem,
     .path: StringView,
     .text: &String,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed, ..out_of_memory))) := {
+    assume allocator
+
     converted ::= as_c_string(.self = path, .allocator = allocator)
     match converted {
         ..ok ~ payload { result = write_file(.self = self, .path = payload.text, .text = text) }
@@ -425,7 +457,9 @@ write_file(
     .self: &FileSystem,
     .path: &Path,
     .text: &String,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed))) := {
+    assume allocator
+
     result = write_file(.self = self, .path = &path&.text, .text = text)
 }

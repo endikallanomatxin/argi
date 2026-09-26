@@ -15,6 +15,8 @@ deinit(.self: $&Tracked) -> () := {
 }
 
 make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     allocation_result ::= allocate(.self = allocator, .size = 1)
     match allocation_result {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
@@ -50,6 +52,8 @@ BackingAllocator implements Allocator
 BackingAllocator implements Deallocator
 
 main(.system: System) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     backing :: BackingAllocator = BackingAllocator()
     array ::= DynamicArray#(.t: Tracked)(.allocator = $&backing, .capacity = 3)
 

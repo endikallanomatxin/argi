@@ -27,10 +27,11 @@ read_byte(
 DummyInput implements Reader
 
 main() -> (.status_code: Int32) := {
-    stdin :: DummyInput = DummyInput()
-    first_result ::= read_byte(.self = $&stdin)
-    second_result ::= read_byte(.self = $&stdin)
-    third_result ::= read_byte(.self = $&stdin)
+    stdin_storage :: DummyInput = DummyInput()
+    assume stdin ::= $&stdin_storage
+    first_result ::= read_byte(.self = $&stdin_storage)
+    second_result ::= read_byte(.self = $&stdin_storage)
+    third_result ::= read_byte(.self = $&stdin_storage)
     first :: UInt8 = 0
     second :: UInt8 = 0
 

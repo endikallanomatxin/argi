@@ -1,6 +1,8 @@
 Buffer : Type = (.allocation: Allocation)
 
 release(.self: $&Buffer, .allocator: $&Allocator) -> () := {
+    assume allocator
+
     deinit(.self = $&self&.allocation)
 }
 

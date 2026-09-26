@@ -725,6 +725,8 @@ test "argi init executable package can print from generated main" {
         .sub_path = source_path,
         .data =
         \\main(.system: System = System()) -> (.status_code: Int32 = 0) := {
+        \\    stdout ::= system.terminal&.stdout_writer
+        \\    assume stdout
         \\    print("Hello, World!\n")
         \\}
         \\
@@ -2462,16 +2464,8 @@ test "feature_tests/io/25_positional_text_helpers" {
 
 test "feature_tests/io/26X_print_without_system" {
     try buildExpectFailExact("tests/feature_tests/io/26X_print_without_system",
-        \\tests/feature_tests/io/26X_print_without_system/main.rg:2:10: error: function 'print' exists, but no overload matches the provided arguments.
-        \\Overloads with omitted #reach defaults:
-        \\  - print(.value: StringView, .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
-        \\    omitted #reach defaults:
-        \\      - .stdout uses #reach [stdout, terminal.stdout, system.terminal.stdout] expected as '$&Writer'
-        \\
-        \\Add a reachable value in the caller, for example:
-        \\  main(.system: System = System()) -> (.status_code: Int32 = 0) := { ... }
-        \\
-        \\Or pass the omitted argument explicitly.
+        \\tests/feature_tests/io/26X_print_without_system/main.rg:2:10: error: no overload of 'print' accepts arguments (.: StringView). Available signatures:
+        \\  - print (.value: StringView, .stdout: $&Writer) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
         \\      print("Hello, World!\n")
         \\           ^
         \\
@@ -5791,4 +5785,39 @@ test "argi check validates dormant function bodies" {
     defer std.testing.allocator.free(result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+}
+
+test "feature_tests/functions/20_assume_arguments" {
+    const test_path = "tests/feature_tests/functions/20_assume_arguments";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/functions/21X_assume_no_propagation" {
+    try buildExpectFail("tests/feature_tests/functions/21X_assume_no_propagation", "no overload of 'take' accepts arguments");
+}
+
+test "feature_tests/functions/22X_assume_incompatible_default" {
+    try buildExpectFail("tests/feature_tests/functions/22X_assume_incompatible_default", "no overload of 'take' accepts arguments");
+}
+
+test "feature_tests/functions/23X_assume_unknown_variable" {
+    try buildExpectFail("tests/feature_tests/functions/23X_assume_unknown_variable", "assume requires an existing variable; 'missing' is not declared in this scope");
+}
+
+test "feature_tests/functions/24X_assume_initializer" {
+    try buildExpectFail("tests/feature_tests/functions/24X_assume_initializer", "use ':=' to declare an assumed variable, or 'assume name' for an existing variable");
+}
+
+test "feature_tests/functions/25X_assume_stale_reference" {
+    try buildExpectFail("tests/feature_tests/functions/25X_assume_stale_reference", "reference depends on a root that has ended");
+}
+
+test "feature_tests/functions/26X_assume_scope_does_not_escape" {
+    try buildExpectFail("tests/feature_tests/functions/26X_assume_scope_does_not_escape", "no overload of 'take' accepts arguments");
+}
+
+test "feature_tests/functions/27_assume_automatic_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/functions/27_assume_automatic_cleanup");
+    try runExpect("tests/feature_tests/functions/27_assume_automatic_cleanup", 0);
 }

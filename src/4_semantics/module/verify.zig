@@ -195,6 +195,7 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
         },
         .resolve_binary => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.optionalIdFits(value.assumed_arguments, semantic.nodes.items.len));
             try require(verify.idFits(value.left, semantic.nodes.items.len));
             try require(verify.idFits(value.right, semantic.nodes.items.len));
             try require(verify.rangeFits(value.visible_bindings, semantic.binding_refs.items.len));
@@ -207,6 +208,7 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
         },
         .resolve_index => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.optionalIdFits(value.assumed_arguments, semantic.nodes.items.len));
             try require(verify.idFits(value.value, semantic.nodes.items.len));
             try require(verify.idFits(value.index, semantic.nodes.items.len));
             try require(verify.optionalIdFits(value.store_value, semantic.nodes.items.len));

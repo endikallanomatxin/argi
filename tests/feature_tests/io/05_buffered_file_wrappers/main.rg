@@ -1,4 +1,7 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+    assume stdout ::= system.terminal&.stdout_writer
+
     input_file ::= File(.stream_address = 0, .should_close = 0 == 1)
     init_stdin(.p = $&input_file)
     input_reader ::= BufferedReader#(.base_type: File)(.allocator = system.allocator, .base = $&input_file, .capacity = 4)

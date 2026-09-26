@@ -402,6 +402,10 @@ pub const Tokenizer = struct {
                 try self.addToken(tok.Content{ .keyword_break = .{} }, loc);
             } else if (std.mem.eql(u8, word, "continue")) {
                 try self.addToken(tok.Content{ .keyword_continue = .{} }, loc);
+            } else if (std.mem.eql(u8, word, "reach")) {
+                try self.addToken(tok.Content{ .keyword_reach = .{} }, loc);
+            } else if (std.mem.eql(u8, word, "assume")) {
+                try self.addToken(tok.Content{ .keyword_assume = .{} }, loc);
             } else if (std.mem.eql(u8, word, "once")) {
                 try self.addToken(tok.Content{ .keyword_once = .{} }, loc);
             } else if (std.mem.eql(u8, word, "test")) {

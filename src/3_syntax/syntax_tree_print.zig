@@ -42,6 +42,7 @@ pub fn printNode(tree: *const syn.FileSyntaxTree, db: *const source_db.SourceDb,
         printNode(tree, db, operation.rhs, level + 1);
         return;
     }
+    if (tree.assumedDeclaration(node)) |declaration| printNode(tree, db, declaration, level + 1);
     if (tree.unaryOperand(node)) |operand| printNode(tree, db, operand, level + 1);
 }
 

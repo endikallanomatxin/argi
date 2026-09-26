@@ -22,8 +22,10 @@ write_byte(.self: $&DummyOutput, .byte: UInt8) -> (.result: Errable#(.t: Void, .
 DummyOutput implements Writer
 
 flush_stdout(
-    .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout,
+    .stdout: $&Writer = reach stdout, terminal.stdout, system.terminal.stdout,
 ) -> (.value: Int32) := {
+    assume stdout
+
     flush(.self = stdout)
     value = 0
 }
@@ -41,10 +43,12 @@ main() -> (.status_code: Int32) := {
         )
     )
 
-    stdout :: DummyOutput = (
+    stdout_storage :: DummyOutput = (
+
         .flush_count = 0
     )
+    assume stdout ::= $&stdout_storage
 
     flush_stdout()
-    status_code = stdout.flush_count * 10 + system.terminal.stdout.flush_count
+    status_code = stdout_storage.flush_count * 10 + system.terminal.stdout.flush_count
 }

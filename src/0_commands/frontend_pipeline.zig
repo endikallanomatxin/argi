@@ -172,6 +172,7 @@ pub const FrontendPipeline = struct {
             self.options.semantizing.selected_test_name,
         );
         try self.validateFunctionSignatures();
+        try @import("../4_semantics/module/assume_verify.zig").validate(self.allocator, self.syntax_files.items, self.source_db, self.diagnostics);
         if (self.diagnostics.hasErrors()) return error.Reported;
         try self.buildGlobalGraph();
         try self.analyzeGlobalSafety();

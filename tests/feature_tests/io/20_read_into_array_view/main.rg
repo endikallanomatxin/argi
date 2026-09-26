@@ -23,8 +23,9 @@ read_byte(
 DummyInput implements Reader
 
 main() -> (.status_code: Int32) := {
-    allocator :: CAllocator = CAllocator()
-    allocated ::= allocate(.self = $&allocator, .size = 4)
+    allocator_storage :: CAllocator = CAllocator()
+    assume allocator ::= $&allocator_storage
+    allocated ::= allocate(.self = $&allocator_storage, .size = 4)
     match allocated {
     ..error _ { status_code = 10 }
     ..ok ~ allocation {
@@ -33,8 +34,9 @@ main() -> (.status_code: Int32) := {
         .data = allocation.data,
         .length = 4,
     )
-    stdin :: DummyInput = DummyInput()
-    read_result ::= read(.self = $&stdin, .buffer = buffer)
+    stdin_storage :: DummyInput = DummyInput()
+    assume stdin ::= $&stdin_storage
+    read_result ::= read(.self = $&stdin_storage, .buffer = buffer)
 
     if is(.value = read_result, .variant = ..ok) {
     } else {

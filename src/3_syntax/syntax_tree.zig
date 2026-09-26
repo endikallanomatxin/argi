@@ -84,6 +84,7 @@ pub const Node = struct {
         expression_statement,
         identifier,
         pipe_placeholder,
+        assume_statement,
         reach_directive,
         reach_alternative,
         move_expression,
@@ -811,6 +812,11 @@ pub const FileSyntaxTree = struct {
         };
     }
 
+    pub fn assumedDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?NodeIndex {
+        if (tree.tag(node) != .assume_statement) return null;
+        return tree.data(node).optional_node.unwrap();
+    }
+
     pub fn unaryOperand(tree: *const FileSyntaxTree, node: NodeIndex) ?NodeIndex {
         return switch (tree.tag(node)) {
             .expression_statement, .move_expression, .error_propagation, .nullable_test, .defer_statement, .address_of, .address_of_mut, .dereference => tree.data(node).node,
@@ -885,6 +891,8 @@ fn fixedTokenText(content: token.Content) []const u8 {
         .keyword_break => "break",
         .keyword_continue => "continue",
         .keyword_once => "once",
+        .keyword_assume => "assume",
+        .keyword_reach => "reach",
         .keyword_test => "test",
         .keyword_and => "and",
         .keyword_or => "or",

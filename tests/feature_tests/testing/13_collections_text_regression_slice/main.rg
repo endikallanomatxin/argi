@@ -8,6 +8,8 @@ test collections_text_array_slice(.system: System = System()) -> !() := {
 }
 
 test collections_text_format_slice(.system: System = System()) -> !() := {
+    assume allocator ::= system.allocator
+
     text_result ::= format(.value = 7, .allocator = system.allocator)
     match text_result {
         ..ok ~ format_payload {

@@ -2,13 +2,16 @@ FallibleValue : Type = (
     .value: Int32
 )
 
-copy(.self: &FallibleValue) -> (.result: Errable#(.t: FallibleValue, .reasons: (..copy_failed))) := {
+copy(.self: &FallibleValue, .allocator: $&Allocator) -> (.result: Errable#(.t: FallibleValue, .reasons: (..copy_failed))) := {
+    assume allocator
+
     result = ..ok (.value = self&.value)
 }
 
 FallibleValue implements FalliblyCopyable#(.reasons: (..copy_failed))
 
-main() -> (.status_code: Int32) := {
+main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
     first :: FallibleValue = (.value = 21)
     copied ::= copy(.self = &first)
     match copied {

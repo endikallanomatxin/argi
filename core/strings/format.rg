@@ -73,8 +73,10 @@ decimal_digit_byte_i32(
 format_unsigned_decimal_into_u64(
     .out: $&String,
     .value: UInt64,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     if value == 0 {
         result = push_byte(.self = out, .byte = 48, .allocator = allocator)
         return
@@ -133,8 +135,10 @@ format_unsigned_decimal_into_u64(
 format_unsigned_decimal_into_u32(
     .out: $&String,
     .value: UInt32,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     if value == 0 {
         result = push_byte(.self = out, .byte = 48, .allocator = allocator)
         return
@@ -193,8 +197,10 @@ format_unsigned_decimal_into_u32(
 format_signed_decimal_into_i64(
     .out: $&String,
     .value: Int64,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     if value == 0 {
         result = push_byte(.self = out, .byte = 48, .allocator = allocator)
         return
@@ -274,8 +280,10 @@ format_signed_decimal_into_i64(
 format_signed_decimal_into_i32(
     .out: $&String,
     .value: Int32,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     if value == 0 {
         result = push_byte(.self = out, .byte = 48, .allocator = allocator)
         return
@@ -355,16 +363,20 @@ format_signed_decimal_into_i32(
 format_into(
     .out: $&String,
     .value: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     result = push_view(.self = out, .view = value, .allocator = allocator)
 }
 
 format_into(
     .out: $&String,
     .value: Bool,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     if value {
         result = push_c_string(.self = out, .text = "true", .allocator = allocator)
     } else {
@@ -375,39 +387,49 @@ format_into(
 format_into(
     .out: $&String,
     .value: UInt64,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     result = format_unsigned_decimal_into_u64(.out = out, .value = value, .allocator = allocator)
 }
 
 format_into(
     .out: $&String,
     .value: UInt32,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     result = format_unsigned_decimal_into_u32(.out = out, .value = value, .allocator = allocator)
 }
 
 format_into(
     .out: $&String,
     .value: Int64,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     result = format_signed_decimal_into_i64(.out = out, .value = value, .allocator = allocator)
 }
 
 format_into(
     .out: $&String,
     .value: Int32,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     result = format_signed_decimal_into_i32(.out = out, .value = value, .allocator = allocator)
 }
 
 format(
     .value: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = value.length)
     match create_result {
         ..ok ~ view_output_payload {
@@ -428,8 +450,10 @@ format(
 
 format(
     .value: Bool,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 5)
     match create_result {
         ..ok ~ bool_output_payload {
@@ -450,8 +474,10 @@ format(
 
 format(
     .value: UInt64,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 32)
     match create_result {
         ..ok ~ u64_output_payload {
@@ -472,8 +498,10 @@ format(
 
 format(
     .value: UInt32,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 16)
     match create_result {
         ..ok ~ u32_output_payload {
@@ -494,8 +522,10 @@ format(
 
 format(
     .value: Int64,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 32)
     match create_result {
         ..ok ~ i64_output_payload {
@@ -516,8 +546,10 @@ format(
 
 format(
     .value: Int32,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 16)
     match create_result {
         ..ok ~ i32_output_payload {

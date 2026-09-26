@@ -1,4 +1,6 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     path ::= from_literal(.data = "/dev/null")
 
     read_file_result ::= open_read(.self = system.file_sys, .path = path)

@@ -1,4 +1,6 @@
 test core_path_regression_slice(.system: System = System()) -> !() := {
+    assume allocator ::= system.allocator
+
     full :: Path = Path(
         .allocator = system.allocator,
         .view = c_string_as_view(.text = "/tmp/demo/file.txt"),

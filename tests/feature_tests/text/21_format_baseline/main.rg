@@ -1,4 +1,6 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     out_result ::= string_with_capacity(.allocator = system.allocator, .capacity = 0)
     match out_result {
         ..error _ {

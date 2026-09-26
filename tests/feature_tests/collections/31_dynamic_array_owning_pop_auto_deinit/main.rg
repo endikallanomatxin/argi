@@ -14,6 +14,8 @@ take_last(.array: $&DynamicArray#(.t: Tracked)) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume allocator ::= system.allocator
+
     allocated ::= allocate(.self = system.allocator, .size = 1)
     match allocated {
         ..error _ { status_code = 1 }

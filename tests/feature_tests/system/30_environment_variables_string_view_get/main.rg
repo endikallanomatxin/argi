@@ -1,4 +1,6 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     key_literal ::= from_literal(.data = "PATH")
     key ::= as_view(.self = key_literal)
 

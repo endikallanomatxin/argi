@@ -1,4 +1,6 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     map ::= StringHashMap#(.value: Int32)(.capacity = 1)
 
     put#(.value: Int32)(.self = $&map, .key = "alpha", .value = 1)

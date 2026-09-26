@@ -7,6 +7,7 @@ deinit(.self: $&Tracked) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume allocator ::= system.allocator
     allocation_result ::= allocate(.self = system.allocator, .size = 1)
     match allocation_result {
         ..error _ { status_code = 1 }

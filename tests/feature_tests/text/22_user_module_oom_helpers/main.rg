@@ -1,6 +1,8 @@
 make_text(
     .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     created ::= string_with_capacity(.allocator = allocator, .capacity = 4)
     match created {
         ..ok ~ created_payload {
@@ -20,6 +22,8 @@ make_text(
 }
 
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     made ::= make_text(.allocator = system.allocator)
     match made {
         ..ok ~ payload {

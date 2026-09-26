@@ -2,8 +2,9 @@ main () -> (.status_code: Int32) := {
     puts(.string="Hello world!")
 
     size :: UIntNative = 14
-    allocator :: CAllocator = CAllocator()
-    allocated ::= allocate(.self = $&allocator, .size = size)
+    allocator_storage :: CAllocator = CAllocator()
+    assume allocator ::= $&allocator_storage
+    allocated ::= allocate(.self = $&allocator_storage, .size = size)
     match allocated {
         ..error _ {
             status_code = 1

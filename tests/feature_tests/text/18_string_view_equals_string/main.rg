@@ -1,4 +1,6 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     text :: String = String(.allocator = system.allocator, .length = 5)
     bytes_set(.string = $&text, .index = 0, .value = 104)
     bytes_set(.string = $&text, .index = 1, .value = 101)

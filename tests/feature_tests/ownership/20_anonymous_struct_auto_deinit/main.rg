@@ -28,22 +28,23 @@ CountingAllocator implements Allocator
 CountingAllocator implements Deallocator
 
 main() -> (.status_code: Int32) := {
-    allocator :: CountingAllocator = (
+    allocator_storage :: CountingAllocator = (
         .alloc_count = 0,
         .dealloc_count = 0,
     )
+    assume allocator ::= $&allocator_storage
 
     if 1 == 1 {
         value : (
             .text: String
             .ok: Bool
         ) = (
-            .text = String(.allocator = $&allocator, .length = 3),
+            .text = String(.allocator = $&allocator_storage, .length = 3),
             .ok = 1 == 1,
         )
         if value.ok {
         }
     }
 
-    status_code = allocator.alloc_count * 10 + allocator.dealloc_count
+    status_code = allocator_storage.alloc_count * 10 + allocator_storage.dealloc_count
 }

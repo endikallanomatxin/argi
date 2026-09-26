@@ -1,4 +1,6 @@
 main(.system: System) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     text ::= String(.length = 0)
 
     if text.length != 0 {

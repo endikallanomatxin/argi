@@ -23,8 +23,10 @@ environment_variables_get_c_string(
 get(
     .self: &EnvironmentVariables,
     .key: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: ?StringView, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     converted ::= as_c_string(.self = key, .allocator = allocator)
     match converted {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
@@ -37,8 +39,10 @@ get(
 has(
     .self: &EnvironmentVariables,
     .key: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Bool, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     found ::= get(.self = self, .key = key, .allocator = allocator)
     match found {
         ..ok payload { result = ..ok payload? }

@@ -70,6 +70,7 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
             try require(verify.stringFits(value.name, graph.strings.items));
             try require(verify.sourceFits(value.source, graph.file_offsets.items.len));
             try require(verify.optionalIdFits(value.initialization, storage.nodes.items.len));
+            try require(verify.optionalIdFits(value.cleanup_arguments, storage.nodes.items.len));
         }
     }
     for (storage.blocks.items) |value| try payload.block(ir.Ids, value, bounds);
@@ -127,6 +128,7 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, pending: ir.Pendin
         },
         .resolve_expression => |value| {
             try require(verify.rangeFits(value.operands, storage.node_refs.items.len));
+            try require(verify.optionalIdFits(value.assumed_arguments, storage.nodes.items.len));
             if (value.name) |name| try require(verify.stringFits(name, graph.strings.items));
             if (value.module_path) |path| try require(verify.stringFits(path, graph.strings.items));
             try require(verify.rangeFits(value.generic_arguments, storage.generic_arguments.items.len));

@@ -21,8 +21,9 @@ flush(
 DummyOutput implements Writer
 
 main() -> (.status_code: Int32) := {
-    allocator :: CAllocator = CAllocator()
-    allocated ::= allocate(.self = $&allocator, .size = 3)
+    allocator_storage :: CAllocator = CAllocator()
+    assume allocator ::= $&allocator_storage
+    allocated ::= allocate(.self = $&allocator_storage, .size = 3)
     match allocated {
     ..error _ { status_code = 10 }
     ..ok ~ allocation {
@@ -35,10 +36,12 @@ main() -> (.status_code: Int32) := {
     buffer[1] = 3
     buffer[2] = 5
 
-    stdout :: DummyOutput = (
+    stdout_storage :: DummyOutput = (
+
         .write_count = 0,
     )
-    write_result ::= write(.self = $&stdout, .buffer = buffer)
+    assume stdout ::= $&stdout_storage
+    write_result ::= write(.self = $&stdout_storage, .buffer = buffer)
 
     if is(.value = write_result, .variant = ..ok) {
     } else {
@@ -52,7 +55,7 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    if stdout.write_count != 3 {
+    if stdout_storage.write_count != 3 {
         status_code = 13
         return
     }

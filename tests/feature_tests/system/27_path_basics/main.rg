@@ -1,4 +1,6 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     full :: Path = Path(
         .allocator = system.allocator,
         .view = c_string_as_view(.text = "/tmp/demo/file.txt"),

@@ -16,9 +16,11 @@ String : Type = (
 )
 
 string_with_length(
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .length: UIntNative,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     allocation_size ::= length + 1
     allocate_result ::= allocate(.self = allocator, .size = allocation_size)
     match allocate_result {
@@ -37,9 +39,11 @@ string_with_length(
 }
 
 string_with_capacity(
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .capacity: UIntNative,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     actual_capacity ::= capacity
     one :: UIntNative = 1
 
@@ -66,9 +70,11 @@ string_with_capacity(
 
 init (
     .p: $&String,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .length: UIntNative,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     allocation_size ::= length + 1
     allocated ::= allocate(.self = allocator, .size = allocation_size)
     match allocated {
@@ -83,9 +89,11 @@ init (
 
 init (
     .p: $&String,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .capacity: UIntNative,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     actual_capacity ::= capacity
     one :: UIntNative = 1
 
@@ -106,16 +114,20 @@ init (
 }
 
 deinit (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .self: $&String,
 ) -> () := {
+    assume allocator
+
     deinit(.self = $&self&.allocation)
 }
 
 copy (
     .self: &String,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     allocation_size ::= self&.length + 1
     allocated ::= allocate(.self = allocator, .size = allocation_size)
     match allocated {
@@ -215,16 +227,20 @@ string_growth_capacity(
 ensure_capacity(
     .self: $&String,
     .capacity: UIntNative,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     result = ensure_capacity_growing(.self = self, .target_capacity = capacity, .allocator = allocator)
 }
 
 ensure_capacity_growing(
     .self: $&String,
     .target_capacity: UIntNative,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     current_capacity ::= capacity(.self = self).value
     if current_capacity >= target_capacity {
         result = ..ok Void()
@@ -286,8 +302,10 @@ string_append_bytes(
 push_byte(
     .self: $&String,
     .byte: UInt8,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     if has_space(.self = self).ok {
     } else {
         next_capacity ::= string_growth_capacity(.self = self, .min_capacity = self&.length + 1).value
@@ -309,8 +327,10 @@ push_byte(
 push_c_string(
     .self: $&String,
     .text: &Char,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     append_length ::= c_string_length(.text = text).length
     target_capacity ::= self&.length + append_length
     growth_result ::= ensure_capacity_growing(.self = self, .target_capacity = target_capacity, .allocator = allocator)
@@ -334,8 +354,10 @@ push_c_string(
 push_view(
     .self: $&String,
     .view: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     target_capacity ::= self&.length + view.length
     growth_result ::= ensure_capacity_growing(.self = self, .target_capacity = target_capacity, .allocator = allocator)
     match growth_result {
@@ -384,8 +406,10 @@ c_string_as_view(
 concat_views(
     .left: &StringView,
     .right: &StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     created ::= string_with_capacity(.allocator = allocator, .capacity = left&.length + right&.length)
     match created {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
@@ -403,8 +427,10 @@ concat_views(
 operator +(
     .left: &String,
     .right: &Char,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     left_view ::= as_view(.self = left)
     right_view ::= c_string_as_view(.text = right)
     result = concat_views(.left = &left_view, .right = &right_view)
@@ -413,8 +439,10 @@ operator +(
 operator +(
     .left: &String,
     .right: &StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     left_view ::= as_view(.self = left)
     result = concat_views(.left = &left_view, .right = right)
 }
@@ -422,8 +450,10 @@ operator +(
 operator +(
     .left: &String,
     .right: &String,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     left_view ::= as_view(.self = left)
     right_view ::= as_view(.self = right)
     result = concat_views(.left = &left_view, .right = &right_view)
@@ -432,8 +462,10 @@ operator +(
 operator +(
     .left: &StringView,
     .right: &Char,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     right_view ::= c_string_as_view(.text = right)
     result = concat_views(.left = left, .right = &right_view)
 }
@@ -441,8 +473,10 @@ operator +(
 operator +(
     .left: &StringView,
     .right: &StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     result = concat_views(.left = left, .right = right)
 }
 
@@ -451,8 +485,10 @@ String implements FalliblyCopyable#(.reasons: (..out_of_memory))
 operator +(
     .left: &StringView,
     .right: &String,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     right_view ::= as_view(.self = right)
     result = concat_views(.left = left, .right = &right_view)
 }

@@ -31,6 +31,7 @@ pub const QualifiedAbstract = struct {
 const BindingName = struct {
     name: []const u8,
     id: ir.ParameterizedBindingId,
+    assumed: bool = false,
 };
 
 const AbstractParameterBinding = struct {
@@ -774,6 +775,17 @@ pub const Context = struct {
         defer statements.deinit(self.allocator);
         var ret_val: ?ir.ParameterizedNodeId = null;
         for (block.statements) |statement| {
+            if (self.tree.tag(statement) == .assume_statement) {
+                if (self.tree.assumedDeclaration(statement)) |declaration| {
+                    const lowered = try self.lowerBodyNode(declaration);
+                    try statements.append(self.allocator, lowered);
+                    ret_val = lowered;
+                }
+                const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(statement));
+                const binding = self.parameterizedBinding(name) orelse return error.UnknownAssumedVariable;
+                try self.bindings.append(.{ .name = name, .id = binding, .assumed = true });
+                continue;
+            }
             const lowered = try self.lowerBodyNode(statement);
             try statements.append(self.allocator, lowered);
             ret_val = lowered;
@@ -782,10 +794,46 @@ pub const Context = struct {
         try self.graph.semantic.parameterized_storage.ir.node_refs.appendSlice(self.allocator, statements.items);
         const id: ir.ParameterizedBlockId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.blocks.items.len)));
         try self.graph.semantic.parameterized_storage.ir.blocks.append(self.allocator, .{
-            .nodes = .{ .start = start, .len = @intCast(block.statements.len) },
+            .nodes = .{ .start = start, .len = @intCast(statements.items.len) },
             .ret_val = ret_val,
         });
         return id;
+    }
+
+    fn captureBindingCleanup(self: *Context, node: syn.NodeIndex, binding: ir.ParameterizedBindingId) !void {
+        for (self.bindings.items) |visible| {
+            if (!visible.assumed) continue;
+            const input = try self.addResolvedNode(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
+            try self.captureAssumedFields(node, input);
+            self.graph.semantic.parameterized_storage.ir.bindings.items[@intFromEnum(binding)].cleanup_arguments = input;
+            break;
+        }
+    }
+
+    fn captureAssumedFields(self: *Context, source: syn.NodeIndex, input: ir.ParameterizedNodeId) !void {
+        var fields: std.ArrayList(ir.ValueField) = .empty;
+        defer fields.deinit(self.allocator);
+        for (self.bindings.items, 0..) |binding, index| {
+            if (!binding.assumed) continue;
+            var shadowed = false;
+            for (self.bindings.items[index + 1 ..]) |later| {
+                if (std.mem.eql(u8, binding.name, later.name)) {
+                    shadowed = true;
+                    break;
+                }
+            }
+            if (shadowed) continue;
+            const ty = self.graph.semantic.parameterized_storage.ir.bindingType(binding.id);
+            const use = try self.addResolvedNode(source, ty, .{ .binding_use = binding.id });
+            try fields.append(self.allocator, .{ .name = try self.writer.addString(binding.name), .value = use });
+        }
+        const storage = &self.graph.semantic.parameterized_storage.ir;
+        const start: u32 = @intCast(storage.value_fields.items.len);
+        try storage.value_fields.appendSlice(self.allocator, fields.items);
+        storage.nodes.items[@intFromEnum(input)].resolved.content.struct_value_literal.assumed_fields = .{
+            .start = start,
+            .len = @intCast(fields.items.len),
+        };
     }
 
     fn lowerBodyNode(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedNodeId {
@@ -810,6 +858,7 @@ pub const Context = struct {
                         .mutability = .constant,
                     });
                     try self.graph.semantic.parameterized_storage.ir.unresolved_binding_types.append(self.allocator, binding);
+                    try self.captureBindingCleanup(case_node, binding);
                     try self.bindings.append(.{ .name = name, .id = binding });
                     break :blk binding;
                 } else null;
@@ -830,6 +879,7 @@ pub const Context = struct {
         }
         if (self.tree.functionCall(node)) |call| {
             const input = try self.lowerBodyNode(call.input);
+            try self.captureAssumedFields(node, input);
             var arguments: std.ArrayList(ir.GenericArgument) = .empty;
             defer arguments.deinit(self.allocator);
             if (call.type_arguments_struct) |struct_node| {
@@ -877,6 +927,7 @@ pub const Context = struct {
                 .initialization = initialization,
                 .mutability = graph_mod.mutabilityFromSyntax(declaration.mutability),
             });
+            try self.captureBindingCleanup(node, binding);
             if (ty == null) try self.graph.semantic.parameterized_storage.ir.unresolved_binding_types.append(self.allocator, binding);
             try self.bindings.append(.{ .name = name, .id = binding });
             return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .{ .binding_declaration = binding });
@@ -975,7 +1026,15 @@ pub const Context = struct {
             .choice_literal, .choice_some_literal => if (self.tree.choiceLiteral(node)) |literal| try self.writer.addString(self.tree.tokenTextFromSource(self.source, literal.name_token)) else null,
             else => null,
         };
-        return self.addPending(node, kind, operands.items, name, null, parameterizedDetailForTag(self.tree.tag(node)));
+        const assumed = if (kind == .binary or kind == .index or kind == .index_store) blk: {
+            const input = try self.addResolvedNode(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
+            try self.captureAssumedFields(node, input);
+            break :blk input;
+        } else null;
+        const result = try self.addPending(node, kind, operands.items, name, null, parameterizedDetailForTag(self.tree.tag(node)));
+        const pending_id = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(result)].pending;
+        self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.assumed_arguments = assumed;
+        return result;
     }
 
     fn lowerReach(self: *Context, node: syn.NodeIndex) !ir.ParameterizedNodeId {

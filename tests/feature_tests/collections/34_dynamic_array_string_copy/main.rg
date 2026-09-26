@@ -1,4 +1,6 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume allocator ::= system.allocator
+
     array ::= DynamicArray#(.t: String)(.capacity = 1)
     #defer deinit#(.t: String)(.self = $&array)
     text ::= String(.length = 1)

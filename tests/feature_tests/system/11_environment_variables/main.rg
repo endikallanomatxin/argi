@@ -1,4 +1,6 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
+    assume allocator ::= system.allocator
+
     home_literal ::= from_literal(.data = "HOME")
     path_literal ::= from_literal(.data = "PATH")
     missing_literal ::= from_literal(.data = "ARGI_ENV_SHOULD_NOT_EXIST_475")

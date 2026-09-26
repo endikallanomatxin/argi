@@ -1,4 +1,6 @@
 main(.system: System = System()) -> (.status_code: Int32 = 0) := {
+    assume allocator ::= system.allocator
+
     buffer ::= String(.allocator = system.allocator, .capacity = 1)
     first ::= push_byte(.self = $&buffer, .byte = 65, .allocator = system.allocator)
     if is(.value = first, .variant = ..error) {
