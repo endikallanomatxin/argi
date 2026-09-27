@@ -2102,7 +2102,17 @@ pub const Infer = struct {
                 self.bindings.get(binding) orelse .{},
             .move_value => |value| try self.withOwnershipTransfer(try self.inferExpression(function_id, value)),
             .denied_implicit_copy => |value| try self.inferExpression(function_id, value),
-            .address_of => |value| .{ .input_places = try self.inferInputPaths(function_id, value) },
+            .address_of => |value| blk: {
+                if (self.graph.node(value).content == .array_index) {
+                    const index = self.graph.node(value).content.array_index;
+                    // An indexed address borrows the storage reached by the
+                    // array pointer, which may itself be stored in an input
+                    // field. The iterator's pointer field is not the root of
+                    // the indexed element.
+                    break :blk .{ .input_place_values = try self.inferInputPaths(function_id, index.array_ptr) };
+                }
+                break :blk .{ .input_places = try self.inferInputPaths(function_id, value) };
+            },
             .dereference => |value| try self.inferOpaqueRead(
                 function_id,
                 node_id,

@@ -71,8 +71,7 @@ next#(.n: UIntNative, .t: Type) (
     .self: $&ArrayROPointerIterator#(.n = n, .t: t)
 ) -> (.value: &t) := {
     current_index :: UIntNative = self&.index
-    base ::= reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = self&.array).reference
-    value = reference_offset#(.t: t)(.base = base, .elements = current_index).reference
+    value = &self&.array&[current_index]
     self&.index = current_index + 1
 }
 
@@ -86,7 +85,6 @@ next#(.n: UIntNative, .t: Type) (
     .self: $&ArrayRWPointerIterator#(.n = n, .t: t)
 ) -> (.value: $&t) := {
     current_index :: UIntNative = self&.index
-    base ::= mutable_reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = self&.array).reference
-    value = mutable_reference_offset#(.t: t)(.base = base, .elements = current_index).reference
+    value = $&self&.array&[current_index]
     self&.index = current_index + 1
 }

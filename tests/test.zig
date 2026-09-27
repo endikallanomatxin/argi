@@ -1929,12 +1929,6 @@ test "feature_tests/collections/03_arrays" {
     try run(test_path);
 }
 
-test "feature_tests/collections/04_list_view" {
-    const test_path = "tests/feature_tests/collections/04_list_view";
-    try expectSuccessfulBuild(test_path);
-    try run(test_path);
-}
-
 test "feature_tests/collections/07_array_index_uint_native" {
     const test_path = "tests/feature_tests/collections/07_array_index_uint_native";
     try expectSuccessfulBuild(test_path);

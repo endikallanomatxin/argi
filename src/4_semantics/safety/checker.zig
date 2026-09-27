@@ -2651,7 +2651,11 @@ pub const SafetyChecker = struct {
                 const index = variantIndex(self.graph, choice_ty, access.variant) orelse break :blk null;
                 break :blk try self.project(base, .{ .variant = index });
             },
-            .array_index => |access| if (try self.resolvePlace(access.array_ptr, state)) |base| try self.project(base, if (self.staticIndex(access.index)) |index| .{ .static_index = index } else .dynamic_index) else null,
+            .array_index => |access| blk: {
+                const pointer = try self.evaluate(@enumFromInt(0), access.array_ptr, state);
+                const base = pointer.referenced_place orelse break :blk null;
+                break :blk try self.project(base, if (self.staticIndex(access.index)) |index| .{ .static_index = index } else .dynamic_index);
+            },
             else => null,
         };
     }

@@ -129,30 +129,9 @@ Empaqueta, p.ej. u10, u12.
 #### Library views
 
 Views are library abstractions. The language has no native slice type.
-
-```
-ListViewRO#(.list_type: Type, .list_value_type: Type) : Type = (
-    .list: &list_type,
-    .start: UIntNative,
-    .length: UIntNative,
-)
-
-ListViewRW#(.list_type: Type, .list_value_type: Type) : Type = (
-    .list: $&list_type,
-    .start: UIntNative,
-    .length: UIntNative,
-)
-```
-
-Views should stay:
-
-- lightweight,
-- non-owning,
-- explicit,
-- and cheap to copy as descriptors.
-
-Copying a view copies only the descriptor. It never turns the view into an
-owner of the underlying data.
+`ArrayViewRO` and `ArrayView` provide non-owning views of proven
+contiguous storage. A safe constructor derives the extent from its source;
+pointer-and-length construction belongs to trusted code.
 
 The view may still be modeled as a borrowed window into a collection, not
 necessarily as a raw pointer to the first element. The important point is the
