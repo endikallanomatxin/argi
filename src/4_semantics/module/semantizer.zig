@@ -58,7 +58,7 @@ pub fn buildLinked(
 ) !BuildResult {
     var graph = try module_sg.build(allocator, module_dir, files);
     errdefer graph.deinit(allocator);
-    const stats = try finishLinked(allocator, &graph, files, abstract_types);
+    const stats = try finishLinked(allocator, &graph, files, abstract_types, null);
     return .{ .graph = graph, .stats = stats };
 }
 
@@ -71,6 +71,7 @@ pub fn finishLinked(
     graph: *module_sg.ModuleSemanticGraph,
     files: []const module_sg.FileInput,
     abstract_types: []const QualifiedAbstract,
+    diagnostics: ?*diagnostic.Diagnostics,
 ) !BuildStats {
     if (graph.semantic.local_semantics_complete) return error.ModuleSemanticGraphAlreadyComplete;
 
@@ -91,7 +92,7 @@ pub fn finishLinked(
     // each contract body is materialized only after specialization.
     const bodies = try body_lowerer.lowerMissingFunctions(allocator, graph, files);
     const generic_operators = try generic_operator_lowerer.lower(graph, files);
-    const identity_stats = function_identity_lowerer.lower(graph, files);
+    const identity_stats = try function_identity_lowerer.lower(graph, files, diagnostics);
     const relation_stats = try abstract_relation_lowerer.lower(allocator, graph, files);
     const generic_calls = try generic_call_args_lowerer.lower(allocator, graph, files);
 
@@ -161,7 +162,7 @@ test "finishLinked completes an already discovered module graph" {
     var graph = try module_sg.build(allocator, "empty", &.{});
     defer graph.deinit(allocator);
     try std.testing.expect(!graph.semantic.local_semantics_complete);
-    const stats = try finishLinked(allocator, &graph, &.{}, &.{});
+    const stats = try finishLinked(allocator, &graph, &.{}, &.{}, null);
     try std.testing.expect(graph.semantic.local_semantics_complete);
     try std.testing.expect(stats.local_semantics_complete);
 }
@@ -192,6 +193,7 @@ test "finishLinked applies bundled prelude abstracts in one pass" {
         &graph,
         &files,
         &.{.{ .qualifier = null, .name = "PreludeAbstract" }},
+        null,
     );
     try std.testing.expectEqual(@as(usize, 1), graph.semantic.parameterized_storage.parameterized_functions.items.len);
     try std.testing.expectEqual(

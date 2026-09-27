@@ -362,6 +362,7 @@ pub const FrontendPipeline = struct {
                 module,
                 groups.items[module_index].files.items,
                 prelude_abstracts.items,
+                self.diagnostics,
             );
             self.module_lowered_functions += stats.lowered_functions;
         }

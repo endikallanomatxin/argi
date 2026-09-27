@@ -1,29 +1,33 @@
 const std = @import("std");
 const module_sg = @import("graph.zig");
-const primitives = @import("../primitives/schema.zig");
+const registry = @import("../primitives/registry.zig");
+const diagnostics_mod = @import("../../1_base/diagnostic.zig");
 
 pub const Stats = struct {
     deinit_functions: u32 = 0,
     generic_deinit_functions: u32 = 0,
 };
 
-/// Temporal identities must not be inferred by Safety/GlobalSema from a callee
-/// spelling. Resolve them once from the source-level declaration and store the
-/// semantic bit on the normal/generic function record.
+/// Resolve privileged identities from trusted declarations only after their
+/// source signatures have passed the compiler/core contract. Safety and global
+/// semantizing consume the metadata and never re-identify a callee by name.
 pub fn lower(
     graph: *module_sg.ModuleSemanticGraph,
     files: []const module_sg.FileInput,
-) Stats {
+    diagnostics: ?*diagnostics_mod.Diagnostics,
+) !Stats {
     var stats: Stats = .{};
+    try validateBundledPrimitives(graph, files, diagnostics);
 
     for (graph.semantic.function_semantics.items) |*semantic| {
         const function = graph.functions.items[@intFromEnum(semantic.function)];
         const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
         const file = files[declaration.module_file_index];
         const declaration_node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;
-        if (file.is_bundled_core) semantic.safety_primitive = safetyPrimitiveForBundledDeclaration(graph.text(declaration.name), file.path);
+        if (file.is_bundled_core) if (registry.findBundled(graph.text(declaration.name), file.path)) |spec| {
+            semantic.safety_primitive = spec.primitive;
+        };
         if (isDeinit(file, declaration_node)) {
-            // Global destructor lookup indexes declarations by this name.
             std.debug.assert(std.mem.eql(u8, graph.text(declaration.name), "deinit"));
             semantic.flags.is_deinit = true;
             stats.deinit_functions += 1;
@@ -34,7 +38,9 @@ pub fn lower(
         const declaration = graph.declarations.items[@intFromEnum(parameterized.declaration)];
         const file = files[declaration.module_file_index];
         const declaration_node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;
-        if (file.is_bundled_core) parameterized.safety_primitive = safetyPrimitiveForBundledDeclaration(graph.text(declaration.name), file.path);
+        if (file.is_bundled_core) if (registry.findBundled(graph.text(declaration.name), file.path)) |spec| {
+            parameterized.safety_primitive = spec.primitive;
+        };
         if (isDeinit(file, declaration_node)) {
             std.debug.assert(std.mem.eql(u8, graph.text(declaration.name), "deinit"));
             parameterized.is_deinit = true;
@@ -44,42 +50,63 @@ pub fn lower(
     return stats;
 }
 
-fn safetyPrimitiveForBundledDeclaration(name: []const u8, file: []const u8) primitives.SafetyPrimitive {
-    const Entry = struct { name: []const u8, primitive: primitives.SafetyPrimitive };
-    const raw_pointer_entries = [_]Entry{
-        .{ .name = "establish_fresh_reference", .primitive = .establish_fresh_reference },
-        .{ .name = "establish_inherited_reference", .primitive = .establish_inherited_reference },
-        .{ .name = "establish_inherited_storage", .primitive = .establish_inherited_storage },
-        .{ .name = "reference_offset", .primitive = .reference_offset },
-        .{ .name = "mutable_reference_offset", .primitive = .mutable_reference_offset },
-        .{ .name = "reinterpret_reference", .primitive = .reinterpret_reference },
-        .{ .name = "mutable_reinterpret_reference", .primitive = .mutable_reinterpret_reference },
-        .{ .name = "read_reference", .primitive = .read_reference },
-    };
-    if (std.mem.endsWith(u8, file, "core/memory/heap_allocation/RawPointer.rg"))
-        for (raw_pointer_entries) |entry| if (std.mem.eql(u8, name, entry.name)) return entry.primitive;
-    if (std.mem.endsWith(u8, file, "core/memory/heap_allocation/Allocator.rg") and
-        std.mem.eql(u8, name, "establish_allocation")) return .establish_allocation;
-    if (std.mem.endsWith(u8, file, "core/memory/relocation.rg") and
-        std.mem.eql(u8, name, "relocate")) return .relocate;
-    if (std.mem.endsWith(u8, file, "core/memory/validity_dependency.rg")) {
-        if (std.mem.eql(u8, name, "restrict_reference")) return .restrict_reference;
-        if (std.mem.eql(u8, name, "depend_on")) return .depend_on;
+fn validateBundledPrimitives(
+    graph: *const module_sg.ModuleSemanticGraph,
+    files: []const module_sg.FileInput,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
+) !void {
+    for (files, 0..) |file, file_index| {
+        if (!file.is_bundled_core) continue;
+        for (registry.specs) |spec| {
+            if (!registry.matchesPath(spec, file.path)) continue;
+            var found = false;
+            for (graph.declarations.items) |declaration| {
+                if (declaration.module_file_index != file_index) continue;
+                if (declaration.kind != .function) continue;
+                if (std.mem.eql(u8, graph.text(declaration.name), spec.name)) {
+                    const declaration_node = module_sg.declarationSyntaxNode(files, declaration) orelse return error.PrimitiveContractMismatch;
+                    try validatePrimitiveDeclaration(spec, file, declaration_node, diagnostics);
+                    found = true;
+                }
+            }
+            if (found) continue;
+            if (diagnostics) |bag| try bag.add(
+                .{ .file = file.tree.file_id, .offset = 0 },
+                .internal,
+                "bundled core primitive `{s}` is missing from its canonical file",
+                .{spec.name},
+            );
+            return error.PrimitiveContractMismatch;
+        }
     }
-    // SourceFile.origin establishes trust before this function is reached.
-    // The canonical path only identifies the trusted declaration, so another
-    // bundled-core helper with the same name cannot become a primitive.
-    if (std.mem.endsWith(u8, file, "core/memory/opaque_ownership.rg")) {
-        if (std.mem.eql(u8, name, "trusted_opaque_move")) return .trusted_opaque_move;
-        if (std.mem.eql(u8, name, "trusted_opaque_move_in")) return .trusted_opaque_move_in;
-        if (std.mem.eql(u8, name, "trusted_opaque_move_out")) return .trusted_opaque_move_out;
-        if (std.mem.eql(u8, name, "trusted_opaque_relocate")) return .trusted_opaque_relocate;
-        if (std.mem.eql(u8, name, "trusted_opaque_drop")) return .trusted_opaque_drop;
-        if (std.mem.eql(u8, name, "trusted_opaque_mark_empty")) return .trusted_opaque_mark_empty;
+}
+
+fn validatePrimitiveDeclaration(
+    spec: registry.Spec,
+    file: module_sg.FileInput,
+    declaration_node: @import("../../3_syntax/syntax_tree.zig").NodeIndex,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
+) !void {
+    const function = file.tree.functionDeclaration(declaration_node) orelse return error.PrimitiveContractMismatch;
+    if (registry.signatureMatches(spec, file.tree, file.source, function)) return;
+    if (diagnostics) |bag| {
+        const location = file.tree.tokenLocation(function.name_token);
+        if (spec.signatures.len == 1)
+            try bag.add(
+                location,
+                .internal,
+                "bundled core primitive `{s}` has an incompatible signature; expected `{s}`",
+                .{ spec.name, spec.signatures[0] },
+            )
+        else
+            try bag.add(
+                location,
+                .internal,
+                "bundled core primitive `{s}` has an incompatible signature; expected an approved overload",
+                .{spec.name},
+            );
     }
-    if (std.mem.endsWith(u8, file, "core/libc/libc.rg") and std.mem.eql(u8, name, "malloc"))
-        return .raw_allocated_storage;
-    return .none;
+    return error.PrimitiveContractMismatch;
 }
 
 fn isDeinit(file: module_sg.FileInput, node: @import("../../3_syntax/syntax_tree.zig").NodeIndex) bool {
