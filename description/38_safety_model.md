@@ -207,7 +207,9 @@ The owning abstraction supplies size, alignment and occupancy invariants.
 Its trusted operations initialize a vacant slot through the existing opaque
 move-in primitive or extract an occupied slot through opaque move-out.
 `DynamicArray<T>` maintains `[0, length)` as occupied and `[length, capacity)`
-as vacant; safe collection access exposes only the first range.
+as vacant. Its movement operations pass `MaybeUninit<T>` slot handles to a
+trusted relocation primitive; they do not expose empty destinations as `&T` or
+`$&T`. Normal references are formed only after checking `index < length`.
 
 > [!IDEA] Alignment and representation validity
 > Live storage is not enough to construct a safe `&T` / `$&T`: it must also have

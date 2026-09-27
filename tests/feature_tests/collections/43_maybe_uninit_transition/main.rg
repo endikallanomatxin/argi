@@ -4,7 +4,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ payload {
             storage ::= ~payload
-            slot ::= trusted_uninit_slot#(.t: Int32)(.allocation = $&storage, .index = 0)
+            slot ::= trusted_uninit_slot#(.t: Int32)(.allocation = &storage, .index = 0)
             trusted_uninit_write#(.t: Int32)(.allocation = $&storage, .slot = slot, .value = 42)
             value ::= trusted_uninit_take#(.t: Int32)(.allocation = $&storage, .slot = slot)
             trusted_uninit_write#(.t: Int32)(.allocation = $&storage, .slot = slot, .value = 7)

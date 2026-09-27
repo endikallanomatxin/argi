@@ -2328,6 +2328,13 @@ test "feature_tests/collections/51X_array_view_private_constructor" {
     );
 }
 
+test "feature_tests/collections/52X_dynamic_array_vacant_storage_reference" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/52X_dynamic_array_vacant_storage_reference",
+        "no function named 'trusted_dynamic_array_storage_pointer' exists",
+    );
+}
+
 test "feature_tests/control_flow/11_range_default_start_with_step" {
     const test_path = "tests/feature_tests/control_flow/11_range_default_start_with_step";
     try expectSuccessfulBuild(test_path);
