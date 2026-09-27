@@ -113,4 +113,5 @@ https://www.scottredig.com/blog/bonkers_comptime/
 >
 > A persistent `CompilerSession` could cache generated function specializations
 > by something like `(FunctionId, concrete type arguments, comptime values)`,
-> generating code only when a specialization is first required.
+> generating code when first required or after invalidation by changes to its
+> code or dependencies.

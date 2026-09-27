@@ -328,9 +328,9 @@ MyGenericType#(.t: Type) : Type = (
 )
 ```
 
-> [!IDEA] Structural indexing and delimiter cleanup
-> Explore using `.` consistently for statically known structural access,
-> including native arrays: `value.field`, `array.i` or even `array.3`.
+> [!IDEA] Structural indexing
+> Explore using `.` for structural access, including native array indexing:
+> `value.field`, `array.i` or even `array.3`.
 >
 > DynamicArrays, Maps and other library collections can keep explicit
 > `get`/`set` abstractions and polymorphism through `Abstract`.

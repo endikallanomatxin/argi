@@ -134,7 +134,11 @@ This is intentional:
 > state per fixture, keeping a small CLI test layer. Avoiding a CLI invocation
 > per fixture need not mean running every test program in the runner's process:
 > worker processes could isolate crashes and let timeouts stop hung tests.
-> This mechanism could reuse REPL and comptime session infrastructure.
+> This could reuse REPL and comptime session infrastructure while keeping each
+> fixture's mutable state independent.
 
-> [!IDEA] Explicit test groups
-> Explore a test tree following the module hierarchy.
+> [!IDEA] Test autodiscovery
+> Explore automatic discovery of tests into a tree following the module
+> hierarchy, so tooling can list, select and run individual tests or subtrees.
+> Define the discovery scope, including whether imported dependencies contribute
+> tests, while preserving each test's independent root semantics.

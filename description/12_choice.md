@@ -188,8 +188,7 @@ cerrado completo.
 > The store could keep a tag plus a fixed inline payload area, with variants
 > that do not fit using an overflow/extra storage representation.
 >
-> Comptime/reflection can derive the layout and generate typed accessors for the
-> variants, so concrete uses can specialize to zero-overhead code. A good path
-> is to validate the pattern first in real heterogeneous representations such as
-> AST-like storage, and only then extract the reusable abstraction instead of
-> designing a large generic container up front.
+> Comptime/reflection could derive the layout and typed accessors. The aim is
+> to keep common variants compact, accepting extra storage and access costs for
+> larger ones. Validate the pattern in a concrete use such as AST-like storage
+> before extracting a generic abstraction.
