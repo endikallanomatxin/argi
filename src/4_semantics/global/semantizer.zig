@@ -1342,7 +1342,10 @@ fn resolvePendingOperation(
             dispatch.resolveLocalReach(module, o, operation.resolve_local_reach)
         else
             dispatch.resolveCall(module_index, module, o, operation),
-        .indexing => dispatch.resolveIndex(module_index, module, o, operation),
+        .indexing => blk: {
+            const result = try core.tryResolve(module_index, module, o, operation);
+            break :blk if (result == .not_applicable) .deferred else result;
+        },
         .core => blk: {
             const core_result = try core.tryResolve(module_index, module, o, operation);
             if (core_result == .resolved or operation != .resolve_binary) break :blk ownedResult(core_result);

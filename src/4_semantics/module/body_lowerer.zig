@@ -628,17 +628,11 @@ const Context = struct {
         const access = self.tree.indexAccess(node).?;
         const value = try self.lowerNode(access.value, null);
         const index = try self.lowerNode(access.index, try self.builtin(.Int32));
-        const assumed = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
-        try self.captureAssumedFields(node, assumed.node);
-        const visible_bindings = try self.captureVisibleBindings();
         return self.pending(node, .{ .resolve_index = .{
             .node = self.nextNodeId(),
             .value = value.node,
             .index = index.node,
             .store_value = store,
-            .visible_bindings = visible_bindings,
-            .assumed_arguments = assumed.node,
-            .owner_function = self.current_function,
         } }, expected);
     }
 
@@ -648,14 +642,11 @@ const Context = struct {
         const collection = try self.lowerNode(target.value, null);
         const index = try self.lowerNode(target.index, try self.builtin(.Int32));
         const value = try self.lowerNode(assignment.value, expected);
-        const visible_bindings = try self.captureVisibleBindings();
         return self.pending(node, .{ .resolve_index = .{
             .node = self.nextNodeId(),
             .value = collection.node,
             .index = index.node,
             .store_value = value.node,
-            .visible_bindings = visible_bindings,
-            .owner_function = self.current_function,
         } }, expected orelse value.ty);
     }
 

@@ -198,7 +198,7 @@ pub const Resolver = struct {
             .resolve_field => |value| resolution.Result.fromBool(try self.resolveField(module, o, value)),
             .resolve_binary => |value| resolution.Result.fromBool(try self.resolveBinary(module_index, o, value)),
             .resolve_comparison => |value| resolution.Result.fromBool(try self.resolveComparison(module_index, o, value)),
-            .resolve_index => |value| try self.resolveIndex(module_index, o, value),
+            .resolve_index => |value| try self.resolveIndex(o, value),
             .resolve_dereference => |value| try self.resolveDereference(o, value),
             .resolve_address => |value| try self.resolveAddress(o, value),
             else => .not_applicable,
@@ -880,8 +880,7 @@ pub const Resolver = struct {
         return false;
     }
 
-    fn resolveIndex(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
-        _ = module_index;
+    fn resolveIndex(self: *Resolver, o: globalizer.Offsets, value: anytype) !resolution.Result {
         const collection = globalizer.globalNode(o, value.value);
         const index = globalizer.globalNode(o, value.index);
 
@@ -933,38 +932,6 @@ pub const Resolver = struct {
         // Brackets are a structural operation over native arrays. Library
         // collections expose named functions with their own failure contracts.
         return .not_applicable;
-    }
-
-    fn resolveAddressedIndexOperator(self: *Resolver, module_index: usize, operator: callable.OperatorKind, collection_ty: global_sg.GlobalTypeId, operand_nodes: []const global_sg.GlobalNodeId, operand_types: []const global_sg.GlobalTypeId) ?global_sg.GlobalFunctionId {
-        var chosen: ?global_sg.GlobalFunctionId = null;
-        for (self.graph.functions.items, 0..) |candidate, raw| {
-            if (raw >= self.graph.function_operators.items.len or self.graph.function_operators.items[raw] != operator) continue;
-            if (candidate.input.len != operand_types.len) continue;
-            if (!self.declarationVisible(module_index, candidate.declaration, null)) continue;
-            const receiver = self.graph.fields.items[candidate.input.start].ty;
-            const pointer = switch (self.graph.resolvedSemanticType(receiver) orelse continue) {
-                .pointer => |value| value,
-                else => continue,
-            };
-            if (!types.equal(self.graph, collection_ty, receiver) and
-                !self.callTypesCompatible(collection_ty, receiver) and
-                !types.equal(self.graph, pointer.child, collection_ty)) continue;
-            var matches = true;
-            for (1..operand_types.len) |offset| {
-                const expected = self.graph.fields.items[candidate.input.start + @as(u32, @intCast(offset))].ty;
-                if (!types.equal(self.graph, expected, operand_types[offset]) and
-                    !self.callTypesCompatible(operand_types[offset], expected) and
-                    !self.contextualLiteralFits(operand_nodes[offset], expected))
-                {
-                    matches = false;
-                    break;
-                }
-            }
-            if (!matches) continue;
-            if (chosen != null) return null;
-            chosen = @enumFromInt(@as(u32, @intCast(raw)));
-        }
-        return chosen;
     }
 
     pub const CallInputMatch = union(enum) {

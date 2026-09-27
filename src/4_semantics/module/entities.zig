@@ -213,11 +213,6 @@ pub const PendingOperation = union(enum) {
         value: ModuleNodeId,
         index: ModuleNodeId,
         store_value: ?ModuleNodeId = null,
-        // Index expressions retain their surrounding bindings while their
-        // native array type is resolved.
-        visible_bindings: BindingRange = .{ .start = 0, .len = 0 },
-        owner_function: ?ModuleFunctionId = null,
-        assumed_arguments: ?ModuleNodeId = null,
     },
     resolve_dereference: struct {
         node: ModuleNodeId,

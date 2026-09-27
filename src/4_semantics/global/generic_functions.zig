@@ -115,12 +115,11 @@ pub const Resolver = struct {
     ) !resolution.Result {
         return switch (operation) {
             .resolve_call => |value| try self.resolveModuleGenericCall(module_index, module, o, value),
-            .resolve_index => .not_applicable,
             else => .not_applicable,
         };
     }
 
-    const ResolvedIndexOperator = struct {
+    const ResolvedAddressedOperator = struct {
         function: global_sg.GlobalFunctionId,
         addressed_receiver_type: ?global_sg.GlobalTypeId = null,
     };
@@ -183,128 +182,6 @@ pub const Resolver = struct {
             .source = self.graph.node(left).source,
             .ty = try self.core.functionOutputType(function_id),
             .content = .{ .function_call = .{ .callee = function_id, .input = input } },
-        };
-        self.stats.calls += 1;
-        return .resolved;
-    }
-
-    fn resolveGenericIndex(
-        self: *Resolver,
-        module_index: usize,
-        module: *const module_sg.ModuleSemanticGraph,
-        o: globalizer.Offsets,
-        value: anytype,
-    ) !resolution.Result {
-        const collection = globalizer.globalNode(o, value.value);
-        const index = globalizer.globalNode(o, value.index);
-        var operands: [3]global_sg.GlobalNodeId = undefined;
-        operands[0] = collection;
-        operands[1] = index;
-        var count: usize = 2;
-        if (value.store_value) |stored| {
-            operands[2] = globalizer.globalNode(o, stored);
-            count = 3;
-        }
-
-        var operand_types: [3]global_sg.GlobalTypeId = undefined;
-        for (operands[0..count], 0..) |node, offset| {
-            const ty = self.graph.nodes.items[@intFromEnum(node)].ty orelse return .deferred;
-            if (self.graph.isTypeUnresolved(ty)) return .deferred;
-            operand_types[offset] = ty;
-        }
-
-        const reach = ReachInferenceContext.fromModule(
-            module,
-            o,
-            value.visible_bindings,
-            value.owner_function,
-        );
-        const input = try self.makePositionalInput(operands[0..count]);
-        if (value.assumed_arguments) |local| {
-            const assumed = self.graph.node(globalizer.globalNode(o, local)).content.struct_value_literal.assumed_fields;
-            self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = assumed;
-        }
-
-        // Parameterized operators use the same inference ingredients as
-        // parameterized calls: explicit operands first, then omitted reach
-        // defaults, then constraints. The receiver is the one index-specific
-        // detail: index syntax may implicitly take its address.
-        var instantiated = false;
-        for (self.modules, 0..) |*candidate_module, candidate_module_index| {
-            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
-                if (parameterized.dispatch_kind == .abstract_contract) continue;
-                if (parameterized.operator != value.operator) continue;
-                const declaration = globalizer.globalDecl(
-                    self.offsets[candidate_module_index],
-                    parameterized.declaration,
-                );
-                if (!self.core.declarationVisible(module_index, declaration, null)) continue;
-
-                var bindings = try generic_mod.Resolver.Bindings.init(
-                    self.allocator,
-                    candidate_module.semantic.parameterized_storage.comptime_parameters.items.len,
-                );
-                defer bindings.deinit(self.allocator);
-
-                if (!try self.inferOperatorCandidate(
-                    candidate_module_index,
-                    parameterized,
-                    operands[0..count],
-                    operand_types[0..count],
-                    input,
-                    reach,
-                    &bindings,
-                    true,
-                )) continue;
-
-                const arguments = self.appendBoundArguments(
-                    candidate_module_index,
-                    parameterized.parameters,
-                    &bindings,
-                ) catch |err| switch (err) {
-                    error.MissingGenericArgument => continue,
-                    else => return err,
-                };
-                _ = self.instantiate(declaration, arguments) catch continue;
-                instantiated = true;
-            }
-        }
-        if (!instantiated) return .not_applicable;
-
-        const selected = self.resolveInstantiatedIndexOperator(
-            module_index,
-            value.operator,
-            operand_types[0],
-            operands[0..count],
-            operand_types[0..count],
-            input,
-        ) orelse return .deferred;
-
-        if (selected.addressed_receiver_type) |receiver_ty| {
-            const address: global_sg.GlobalNodeId = @enumFromInt(
-                @as(u32, @intCast(self.graph.nodes.items.len)),
-            );
-            try self.graph.nodes.append(self.allocator, .{
-                .source = self.graph.nodes.items[@intFromEnum(collection)].source,
-                .ty = receiver_ty,
-                .content = .{ .address_of = collection },
-            });
-            const literal = self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal;
-            self.graph.value_fields.items[literal.fields.start].value = address;
-        }
-
-        const function = self.graph.functions.items[@intFromEnum(selected.function)];
-        if (!try self.core.completeCallInputFieldsWithReach(function.input, input, reach))
-            return .deferred;
-
-        const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
-            .source = self.graph.nodes.items[@intFromEnum(collection)].source,
-            .ty = try self.core.functionOutputType(selected.function),
-            .content = .{ .function_call = .{
-                .callee = selected.function,
-                .input = input,
-            } },
         };
         self.stats.calls += 1;
         return .resolved;
@@ -412,7 +289,7 @@ pub const Resolver = struct {
         );
     }
 
-    fn resolveInstantiatedIndexOperator(
+    fn resolveInstantiatedAddressedOperator(
         self: *Resolver,
         module_index: usize,
         operator: @import("../primitives/callable.zig").OperatorKind,
@@ -420,8 +297,8 @@ pub const Resolver = struct {
         operand_nodes: []const global_sg.GlobalNodeId,
         operand_types: []const global_sg.GlobalTypeId,
         input: global_sg.GlobalNodeId,
-    ) ?ResolvedIndexOperator {
-        var chosen: ?ResolvedIndexOperator = null;
+    ) ?ResolvedAddressedOperator {
+        var chosen: ?ResolvedAddressedOperator = null;
 
         for (self.graph.functions.items, 0..) |candidate, raw| {
             if (raw >= self.graph.function_operators.items.len or
@@ -483,7 +360,7 @@ pub const Resolver = struct {
         return chosen;
     }
 
-    fn resolveNestedIndexCall(
+    fn resolveNestedAddressedOperatorCall(
         self: *Resolver,
         module_index: usize,
         operator: @import("../primitives/callable.zig").OperatorKind,
@@ -544,7 +421,7 @@ pub const Resolver = struct {
         }
         if (!instantiated) return null;
 
-        const selected = self.resolveInstantiatedIndexOperator(
+        const selected = self.resolveInstantiatedAddressedOperator(
             module_index,
             operator,
             operand_types[0],
@@ -2486,8 +2363,8 @@ pub const Resolver = struct {
                 .binary => self.resolveBinary(operands.items, value.source, value.detail, value.assumed_arguments),
                 .comparison => self.resolveComparison(operands.items, value.source, value.detail),
                 .logical => self.resolveLogical(operands.items, value.source, value.detail),
-                .index => self.resolveIndex(operands.items, value.source, false, value.assumed_arguments),
-                .index_store => self.resolveIndex(operands.items, value.source, true, value.assumed_arguments),
+                .index => self.resolveIndex(operands.items, value.source, false),
+                .index_store => self.resolveIndex(operands.items, value.source, true),
                 .field_access => if (value.name) |name| self.resolveField(operands.items[0], name, value.source) else error.InvalidParameterizedFieldAccess,
                 .choice_payload => if (value.name) |name| self.resolveChoicePayload(operands.items[0], name, value.source) else error.InvalidParameterizedChoicePayload,
                 .nullable_test => self.resolveNullableTest(operands.items, value.source),
@@ -2907,7 +2784,7 @@ pub const Resolver = struct {
             {
                 const reach = try self.operatorContext(assumed);
                 defer self.resolver.allocator.free(reach.global.visible_bindings);
-                if (try self.resolver.resolveNestedIndexCall(self.module_index, .add, operands, reach, self.resolver.sourceFor(self.module_index, source))) |call| return call;
+                if (try self.resolver.resolveNestedAddressedOperatorCall(self.module_index, .add, operands, reach, self.resolver.sourceFor(self.module_index, source))) |call| return call;
             }
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
@@ -2998,8 +2875,8 @@ pub const Resolver = struct {
             return context;
         }
 
-        fn resolveIndex(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, store: bool, assumed: ?ir.ParameterizedNodeId) !global_sg.Node {
-            if (operands.len < 2) return error.InvalidParameterizedIndex;
+        fn resolveIndex(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, store: bool) !global_sg.Node {
+            if (operands.len != (if (store) @as(usize, 3) else 2)) return error.InvalidParameterizedIndex;
             const collection_ty = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedIndexUntyped;
             if (global_types.arrayElement(self.resolver.graph, collection_ty)) |element| {
                 return if (store) .{
@@ -3013,7 +2890,6 @@ pub const Resolver = struct {
                 };
             }
 
-            _ = assumed;
             return error.ParameterizedIndexRequiresArray;
         }
 
