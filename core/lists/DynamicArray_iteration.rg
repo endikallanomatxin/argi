@@ -50,7 +50,7 @@ to_rw_pointer_iterator#(.t: Type) (
 has_next#(.t: Type: ImplicitlyCopyable) (
     .self: &DynamicArrayIterator#(.t: t)
 ) -> (.ok: Bool) := {
-    ok = self&.index < self&.array&.length
+    ok = self&.index < self&.array&._length
 }
 
 next#(.t: Type: ImplicitlyCopyable) (
@@ -66,7 +66,7 @@ next#(.t: Type: ImplicitlyCopyable) (
 has_next#(.t: Type) (
     .self: &DynamicArrayROPointerIterator#(.t: t)
 ) -> (.ok: Bool) := {
-    ok = self&.index < self&.array&.length
+    ok = self&.index < self&.array&._length
 }
 
 next#(.t: Type) (
@@ -80,7 +80,7 @@ next#(.t: Type) (
 has_next#(.t: Type) (
     .self: &DynamicArrayRWPointerIterator#(.t: t)
 ) -> (.ok: Bool) := {
-    ok = self&.index < self&.array&.length
+    ok = self&.index < self&.array&._length
 }
 
 next#(.t: Type) (

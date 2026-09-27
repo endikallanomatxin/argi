@@ -113,13 +113,13 @@ report_trace(
 
     write_trace_text(.text = "error trace (most recent first):\n", .stderr = stderr)
 
-    if trace&.entries.length == 0 {
+    if length#(.t: ErrorTraceEntry)(.self = &trace&.entries).count == 0 {
         write_trace_text(.text = "  <empty>\n", .stderr = stderr)
         flush(.self = stderr)
         return
     }
 
-    i ::= trace&.entries.length
+    i ::= length#(.t: ErrorTraceEntry)(.self = &trace&.entries).count
     while i > 0 {
         entry := dynamic_array_element_ro_pointer#(.t: ErrorTraceEntry)(.array = &trace&.entries, .offset = i - 1).pointer&
         write_trace_text(.text = "  at ", .stderr = stderr)

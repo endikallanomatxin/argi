@@ -14,12 +14,12 @@ main(.system: System) -> (.status_code: Int32) := {
     insert(.self = $&arr, .i = insert_offset, .value = 15)
     push(.self = $&arr, .value = 30)
 
-    if arr.length != 4 {
+    if length#(.t: Int32)(.self = &arr).count != 4 {
         status_code = 1
         return
     }
 
-    if arr.capacity < 4 {
+    if capacity#(.t: Int32)(.self = &arr).count < 4 {
         status_code = 2
         return
     }
@@ -97,7 +97,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    if arr.length != 3 {
+    if length#(.t: Int32)(.self = &arr).count != 3 {
         status_code = 9
         return
     }

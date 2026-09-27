@@ -87,7 +87,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                         return
                     }
                     remaining ::= remaining_result..ok
-                    if array.length != 1 or array.capacity != 1 or remaining&.id != 1 {
+                    if length#(.t: Tracked)(.self = &array).count != 1 or capacity#(.t: Tracked)(.self = &array).count != 1 or remaining&.id != 1 {
                         status_code = 5
                         return
                     }

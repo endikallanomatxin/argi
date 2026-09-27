@@ -43,7 +43,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             }
             popped ::= ~popped_result..ok
 
-            if popped.id != 7 or array.length != 0 or drops != 0 {
+            if popped.id != 7 or length#(.t: Tracked)(.self = &array).count != 0 or drops != 0 {
                 status_code = 2
                 return
             }

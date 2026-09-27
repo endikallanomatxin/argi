@@ -39,6 +39,12 @@ are addressed through `MaybeUninit<T>` handles inside trusted core operations;
 the named safe access functions check `index < length` at runtime.
 `l ::= DynamicArray#(.t: Int32)(.capacity = 3)`
 
+The `_allocation`, `_length`, and `_capacity` fields are private to the lists
+module. Code in other modules reads the logical length and capacity through
+`length(.self = &l).count` and `capacity(.self = &l).count`. It cannot assign
+those fields or fill them with a struct literal; `init` maintains their shared
+invariant.
+
 `DynamicArray` provides explicit `copy()` for infallibly copyable elements and
 for elements implementing `FalliblyCopyable`. The latter obtains the element's
 associated error reasons from its abstract implementation and combines them

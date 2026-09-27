@@ -76,7 +76,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                         return
                                     }
                                     removed ::= ~removed_result..ok
-                                    if removed.id != 1 or array.length != 2 {
+                                    if removed.id != 1 or length#(.t: Tracked)(.self = &array).count != 2 {
                                         status_code = 7
                                         return
                                     }

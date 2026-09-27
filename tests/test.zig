@@ -2287,6 +2287,20 @@ test "feature_tests/collections/45X_array_view_out_of_bounds" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/collections/46X_dynamic_array_private_field" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/46X_dynamic_array_private_field",
+        "field '_length' is private to its module",
+    );
+}
+
+test "feature_tests/collections/47X_dynamic_array_private_literal" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/47X_dynamic_array_private_literal",
+        "field '_allocation' is private to its module",
+    );
+}
+
 test "feature_tests/control_flow/11_range_default_start_with_step" {
     const test_path = "tests/feature_tests/control_flow/11_range_default_start_with_step";
     try expectSuccessfulBuild(test_path);

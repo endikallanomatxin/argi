@@ -1492,6 +1492,32 @@ fn diagnosePrivateFields(
             return true;
         }
     }
+    // A contextual struct literal can initialize a field without producing a
+    // field-access operation. Check its resolved type after construction has
+    // filled the literal, including when it was passed through an assignment.
+    for (graph.nodes.items) |node| {
+        const literal = switch (node.content) {
+            .struct_value_literal => |value| value,
+            else => continue,
+        };
+        const ty = node.ty orelse continue;
+        if (node.source.file_index >= graph.files.items.len) continue;
+        const caller_module = graph.files.items[node.source.file_index].module;
+        for (graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |value_field| {
+            const name = graph.text(value_field.name);
+            if (!std.mem.startsWith(u8, name, "_")) continue;
+            const field = global_types.findField(graph, ty, name) orelse continue;
+            if (field.field.source.file_index >= graph.files.items.len) continue;
+            if (graph.files.items[field.field.source.file_index].module == caller_module) continue;
+            try diagnostics.add(
+                diagnosticLocation(graph, diagnostics, node.source),
+                .semantic,
+                "field '{s}' is private to its module",
+                .{name},
+            );
+            return true;
+        }
+    }
     return false;
 }
 

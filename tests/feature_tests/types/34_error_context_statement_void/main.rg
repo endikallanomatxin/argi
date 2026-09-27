@@ -14,7 +14,7 @@ main() -> (.status_code: Int32) := {
             status_code = 1
         }
         ..error & err {
-            if err&.trace.entries.length != 1 {
+            if length#(.t: ErrorTraceEntry)(.self = &err&.trace.entries).count != 1 {
                 status_code = 2
                 return
             }

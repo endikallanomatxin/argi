@@ -1179,9 +1179,11 @@ pub const CodeGenerator = struct {
         const reason = types.findField(self.graph, error_ty, "reason") orelse return CodegenError.InvalidType;
         const trace = types.findField(self.graph, error_ty, "trace") orelse return CodegenError.InvalidType;
         const entries = types.findField(self.graph, trace.field.ty, "entries") orelse return CodegenError.InvalidType;
-        const allocation = types.findField(self.graph, entries.field.ty, "allocation") orelse return CodegenError.InvalidType;
-        const length = types.findField(self.graph, entries.field.ty, "length") orelse return CodegenError.InvalidType;
-        const capacity = types.findField(self.graph, entries.field.ty, "capacity") orelse return CodegenError.InvalidType;
+        // Error trace append writes DynamicArray's private representation
+        // directly, so these names must match its core declaration.
+        const allocation = types.findField(self.graph, entries.field.ty, "_allocation") orelse return CodegenError.InvalidType;
+        const length = types.findField(self.graph, entries.field.ty, "_length") orelse return CodegenError.InvalidType;
+        const capacity = types.findField(self.graph, entries.field.ty, "_capacity") orelse return CodegenError.InvalidType;
         const data = types.findField(self.graph, allocation.field.ty, "data") orelse return CodegenError.InvalidType;
         const size = types.findField(self.graph, allocation.field.ty, "size") orelse return CodegenError.InvalidType;
         const entry_ty = self.genericTypeArgument(entries.field.ty, "t") orelse return CodegenError.InvalidType;
