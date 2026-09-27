@@ -29,9 +29,9 @@ fread_into(
     .stream: &Any,
 ) -> (.count: UIntNative) := {
     count = fread(
-        .buffer = buffer.data,
+        .buffer = data#(.t: UInt8)(.self = &buffer).pointer,
         .size = 1,
-        .count = buffer.length,
+        .count = length#(.t: UInt8)(.self = &buffer).count,
         .stream = stream,
     ).count
 }
@@ -41,9 +41,9 @@ fwrite_from(
     .stream: &Any,
 ) -> (.count: UIntNative) := {
     count = fwrite(
-        .buffer = &buffer.data&,
+        .buffer = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(.self = &buffer).pointer).reference,
         .size = 1,
-        .count = buffer.length,
+        .count = length#(.t: UInt8)(.self = &buffer).count,
         .stream = stream,
     ).count
 }
@@ -52,10 +52,11 @@ memcpy_bytes(
     .dst: ArrayView#(.t: UInt8),
     .src: ArrayView#(.t: UInt8),
 ) -> () := {
+    if length#(.t: UInt8)(.self = &dst).count > length#(.t: UInt8)(.self = &src).count { abort }
     memcpy(
-        .dst = mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = dst.data).reference,
-        .src = reinterpret_reference#(.from: UInt8, .to: Any)(.base = src.data).reference,
-        .n = dst.length,
+        .dst = mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &dst).pointer).reference,
+        .src = reinterpret_reference#(.from: UInt8, .to: Any)(.base = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(.self = &src).pointer).reference).reference,
+        .n = length#(.t: UInt8)(.self = &dst).count,
     )
 }
 
@@ -63,9 +64,10 @@ memcpy_bytes(
     .dst: ArrayView#(.t: UInt8),
     .src: ArrayViewRO#(.t: UInt8),
 ) -> () := {
+    if length#(.t: UInt8)(.self = &dst).count > length#(.t: UInt8)(.self = &src).count { abort }
     memcpy(
-        .dst = mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = dst.data).reference,
-        .src = reinterpret_reference#(.from: UInt8, .to: Any)(.base = src.data).reference,
-        .n = dst.length,
+        .dst = mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &dst).pointer).reference,
+        .src = reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &src).pointer).reference,
+        .n = length#(.t: UInt8)(.self = &dst).count,
     )
 }

@@ -27,7 +27,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     write_allocation ::= ~write_allocation_result..ok
 
-    write_buffer ::= array_view#(.t: UInt8)(
+    write_buffer ::= trusted_array_view#(.t: UInt8)(
         .data = write_allocation.data,
         .length = 2,
     )
@@ -71,7 +71,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     read_allocation ::= ~read_allocation_result..ok
 
-    read_buffer ::= array_view#(.t: UInt8)(
+    read_buffer ::= trusted_array_view#(.t: UInt8)(
         .data = read_allocation.data,
         .length = 4,
     )

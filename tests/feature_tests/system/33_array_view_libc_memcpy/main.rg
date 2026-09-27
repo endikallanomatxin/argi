@@ -12,11 +12,11 @@ main() -> (.status_code: Int32) := {
     ..ok ~ dst_payload {
     dst_allocation ::= ~dst_payload
 
-    src ::= array_view#(.t: UInt8)(
+    src ::= trusted_array_view#(.t: UInt8)(
         .data = src_allocation.data,
         .length = 4,
     )
-    dst ::= array_view#(.t: UInt8)(
+    dst ::= trusted_array_view#(.t: UInt8)(
         .data = dst_allocation.data,
         .length = 4,
     )

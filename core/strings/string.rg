@@ -149,11 +149,11 @@ copy (
             out :: String = (.allocation = ~payload, .length = self&.length)
 
             if allocation_size > 0 {
-            dst_view ::= array_view#(.t: UInt8)(
+            dst_view ::= trusted_array_view#(.t: UInt8)(
                 .data = out.allocation.data,
                 .length = allocation_size,
             )
-            src_view ::= array_view_ro#(.t: UInt8)(
+            src_view ::= trusted_array_view_ro#(.t: UInt8)(
                 .data = read_reference#(.t: UInt8)(.base = self&.allocation.data).reference,
                 .length = allocation_size,
             )
@@ -269,8 +269,8 @@ ensure_capacity_growing(
             new_data ::= new_allocation.data
 
             if self&.length > 0 {
-                dst_view ::= array_view#(.t: UInt8)(.data = new_data, .length = self&.length)
-                src_view ::= array_view_ro#(.t: UInt8)(.data = read_reference#(.t: UInt8)(.base = self&.allocation.data).reference, .length = self&.length)
+                dst_view ::= trusted_array_view#(.t: UInt8)(.data = new_data, .length = self&.length)
+                src_view ::= trusted_array_view_ro#(.t: UInt8)(.data = read_reference#(.t: UInt8)(.base = self&.allocation.data).reference, .length = self&.length)
                 memcpy_bytes(.dst = dst_view, .src = src_view)
             }
 
@@ -303,13 +303,13 @@ string_append_bytes(
     .self: $&String,
     .source: ArrayViewRO#(.t: UInt8),
 ) -> () := {
-    if source.length > 0 {
+    if length#(.t: UInt8)(.self = &source).count > 0 {
         dest_data ::= mutable_reference_offset#(.t: UInt8)(.base = self&.allocation.data, .elements = self&.length).reference
-        dest_view ::= array_view#(.t: UInt8)(.data = dest_data, .length = source.length)
+        dest_view ::= trusted_array_view#(.t: UInt8)(.data = dest_data, .length = length#(.t: UInt8)(.self = &source).count)
         memcpy_bytes(.dst = dest_view, .src = source)
     }
 
-    self&.length = self&.length + source.length
+    self&.length = self&.length + length#(.t: UInt8)(.self = &source).count
     bytes_set(.string = self, .index = self&.length, .value = 0)
 }
 
@@ -357,7 +357,7 @@ push_c_string(
         }
     }
 
-    source_view ::= array_view_ro#(.t: UInt8)(
+    source_view ::= trusted_array_view_ro#(.t: UInt8)(
         .data = reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,
         .length = append_length,
     )
@@ -383,7 +383,7 @@ push_view(
         }
     }
 
-    source_view ::= array_view_ro#(.t: UInt8)(
+    source_view ::= trusted_array_view_ro#(.t: UInt8)(
         .data = view.data,
         .length = view.length,
     )
@@ -429,8 +429,8 @@ concat_views(
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~ payload {
             temp ::= ~payload
-            left_view ::= array_view_ro#(.t: UInt8)(.data = left&.data, .length = left&.length)
-            right_view ::= array_view_ro#(.t: UInt8)(.data = right&.data, .length = right&.length)
+            left_view ::= trusted_array_view_ro#(.t: UInt8)(.data = left&.data, .length = left&.length)
+            right_view ::= trusted_array_view_ro#(.t: UInt8)(.data = right&.data, .length = right&.length)
             string_append_bytes(.self = $&temp, .source = left_view)
             string_append_bytes(.self = $&temp, .source = right_view)
             result = ..ok ~temp

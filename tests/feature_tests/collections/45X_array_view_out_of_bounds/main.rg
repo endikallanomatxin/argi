@@ -5,7 +5,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..ok ~ payload {
             storage ::= ~payload
             data ::= mutable_reinterpret_reference#(.from: UInt8, .to: Int32)(.base = storage.data).reference
-            view ::= array_view#(.t: Int32)(.data = data, .length = 1)
+            view ::= trusted_array_view#(.t: Int32)(.data = data, .length = 1)
             set_result ::= set(.self = $&view, .index = 1, .value = 42).result
             if is(.value = set_result, .variant = ..error) {
                 if is(.value = set_result..error.reason, .variant = ..out_of_bounds) {

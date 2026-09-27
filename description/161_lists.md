@@ -17,6 +17,21 @@ Collection access uses named operations rather than overload sets.
 > [!TODO] Pensar una forma de definir longitud de forma automática.
 > Igual `[?]T` para que el compilador lo calcule.
 
+#### `ArrayView` and `ArrayViewRO`
+
+The pointer and length fields are private. `array_view#(.t: T)(.data = $&element)`
+creates a one-element view; `array_view#(.n = N, .t: T)(.array = $&array)`
+derives the length from a fixed `[N]T`. The read-only constructors use
+`array_view_ro` and read-only references in the same way. The fixed-array
+constructor requires `N > 0` because the view stores a non-null element
+reference.
+
+A pointer to one element does not establish the extent of a larger region.
+`trusted_array_view` and `trusted_array_view_ro` accept an explicit length only
+at a trusted boundary where the caller knows the backing region is live and
+large enough. View indexing checks the recorded length; it does not discover
+physical bounds from a raw pointer.
+
 
 #### `Allocation`
 

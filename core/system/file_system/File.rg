@@ -165,10 +165,7 @@ read_byte(.self: $&File) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream
     }
 
     byte :: UInt8 = 0
-    byte_view ::= array_view#(.t: UInt8)(
-        .data = $&byte,
-        .length = 1,
-    )
+    byte_view ::= array_view#(.t: UInt8)(.data = $&byte)
     read_count ::= fread_into(
         .buffer = byte_view,
         .stream = file_stream_pointer(.self = self).stream,
@@ -200,10 +197,7 @@ write_byte(.self: $&File, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons
     }
 
     single_byte :: UInt8 = byte
-    byte_view ::= array_view#(.t: UInt8)(
-        .data = $&single_byte,
-        .length = 1,
-    )
+    byte_view ::= array_view#(.t: UInt8)(.data = $&single_byte)
     wrote ::= fwrite_from(
         .buffer = byte_view,
         .stream = file_stream_pointer(.self = self).stream,
@@ -229,7 +223,7 @@ read(
     stream ::= file_stream_pointer(.self = self).stream
     read_count ::= fread_into(.buffer = buffer, .stream = stream).count
 
-    if read_count < buffer.length {
+    if read_count < length#(.t: UInt8)(.self = &buffer).count {
         if ferror(.stream = stream).status != 0 {
             result = ..error(.reason = ..stream_read_failed)
             return
@@ -251,7 +245,7 @@ write(
     stream ::= file_stream_pointer(.self = self).stream
     wrote ::= fwrite_from(.buffer = buffer, .stream = stream).count
 
-    if wrote < buffer.length {
+    if wrote < length#(.t: UInt8)(.self = &buffer).count {
         if ferror(.stream = stream).status != 0 {
             result = ..error(.reason = ..stream_write_failed)
             return

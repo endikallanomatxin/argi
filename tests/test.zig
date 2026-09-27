@@ -2301,6 +2301,33 @@ test "feature_tests/collections/47X_dynamic_array_private_literal" {
     );
 }
 
+test "feature_tests/collections/48_array_view_fixed_storage" {
+    const test_path = "tests/feature_tests/collections/48_array_view_fixed_storage";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/49X_array_view_unproven_length" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/49X_array_view_unproven_length",
+        "no function named 'array_view' exists",
+    );
+}
+
+test "feature_tests/collections/50X_array_view_private_literal" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/50X_array_view_private_literal",
+        "field '_data' is private to its module",
+    );
+}
+
+test "feature_tests/collections/51X_array_view_private_constructor" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/51X_array_view_private_constructor",
+        "field '_data' is private to its module",
+    );
+}
+
 test "feature_tests/control_flow/11_range_default_start_with_step" {
     const test_path = "tests/feature_tests/control_flow/11_range_default_start_with_step";
     try expectSuccessfulBuild(test_path);

@@ -6,7 +6,7 @@ main() -> (.status_code: Int32) := {
     ..error _ { status_code = 10 }
     ..ok ~ allocation {
     data ::= mutable_reinterpret_reference#(.from: UInt8, .to: Int32)(.base = allocation.data).reference
-    values ::= array_view#(.t: Int32)(.data = data, .length = 4)
+    values ::= trusted_array_view#(.t: Int32)(.data = data, .length = 4)
 
     set0 ::= set#(.t: Int32)(.self = $&values, .index = 0, .value = 3).result
     set1 ::= set#(.t: Int32)(.self = $&values, .index = 1, .value = 5).result

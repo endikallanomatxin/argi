@@ -28,7 +28,7 @@ main() -> (.status_code: Int32) := {
     ..error _ { status_code = 10 }
     ..ok ~ allocation {
 
-    buffer ::= array_view#(.t: UInt8)(
+    buffer ::= trusted_array_view#(.t: UInt8)(
         .data = allocation.data,
         .length = 3,
     )
