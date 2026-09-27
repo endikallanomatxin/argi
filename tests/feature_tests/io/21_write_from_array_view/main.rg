@@ -32,9 +32,13 @@ main() -> (.status_code: Int32) := {
         .data = allocation.data,
         .length = 3,
     )
-    buffer[0] = 2
-    buffer[1] = 3
-    buffer[2] = 5
+    first_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 0, .value = 2).result
+    second_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 1, .value = 3).result
+    third_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 2, .value = 5).result
+    if is(.value = first_set, .variant = ..error) or is(.value = second_set, .variant = ..error) or is(.value = third_set, .variant = ..error) {
+        status_code = 14
+        return
+    }
 
     stdout_storage :: DummyOutput = (
 

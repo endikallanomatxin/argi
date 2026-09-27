@@ -115,7 +115,7 @@ pub const Resolver = struct {
     ) !resolution.Result {
         return switch (operation) {
             .resolve_call => |value| try self.resolveModuleGenericCall(module_index, module, o, value),
-            .resolve_index => |value| try self.resolveGenericIndex(module_index, module, o, value),
+            .resolve_index => .not_applicable,
             else => .not_applicable,
         };
     }
@@ -2321,6 +2321,7 @@ pub const Resolver = struct {
                     .move_value => |value| .{ .move_value = try self.instantiateNode(value) },
                     .break_statement => .break_statement,
                     .continue_statement => .continue_statement,
+                    .abort_statement => .abort_statement,
                     else => return error.UnsupportedResolvedParameterizedNode,
                 },
             };
@@ -3012,15 +3013,8 @@ pub const Resolver = struct {
                 };
             }
 
-            const reach = try self.operatorContext(assumed);
-            defer self.resolver.allocator.free(reach.global.visible_bindings);
-            return (try self.resolver.resolveNestedIndexCall(
-                self.module_index,
-                if (store) .set else .get,
-                operands,
-                reach,
-                self.resolver.sourceFor(self.module_index, source),
-            )) orelse error.ParameterizedIndexRequiresDispatch;
+            _ = assumed;
+            return error.ParameterizedIndexRequiresArray;
         }
 
         fn resolveReturn(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {

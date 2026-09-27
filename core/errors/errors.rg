@@ -121,7 +121,7 @@ report_trace(
 
     i ::= trace&.entries.length
     while i > 0 {
-        entry := trace&.entries[i - 1]
+        entry := dynamic_array_element_ro_pointer#(.t: ErrorTraceEntry)(.array = &trace&.entries, .offset = i - 1).pointer&
         write_trace_text(.text = "  at ", .stderr = stderr)
         write_trace_text(.text = entry.source_file, .stderr = stderr)
         write_byte(.self = stderr, .byte = 58)

@@ -41,7 +41,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                     second ::= ~second_payload
                     push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~first)
                     push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~second)
-                    popped ::= pop#(.t: Tracked)(.self = $&array)
+                    popped_result ::= pop#(.t: Tracked)(.self = $&array).result
+                    if is(.value = popped_result, .variant = ..error) {
+                        status_code = 3
+                        return
+                    }
+                    popped ::= ~popped_result..ok
 
                     deinit#(.t: Tracked)(.self = $&array)
                     if first_drops != 1 or second_drops != 0 {

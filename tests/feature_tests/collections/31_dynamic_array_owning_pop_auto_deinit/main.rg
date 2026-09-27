@@ -10,7 +10,9 @@ deinit(.self: $&Tracked) -> () := {
 }
 
 take_last(.array: $&DynamicArray#(.t: Tracked)) -> () := {
-    popped ::= pop#(.t: Tracked)(.self = array)
+    popped_result ::= pop#(.t: Tracked)(.self = array).result
+    if is(.value = popped_result, .variant = ..error) { return }
+    popped ::= ~popped_result..ok
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {

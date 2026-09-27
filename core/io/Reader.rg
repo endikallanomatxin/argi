@@ -15,7 +15,8 @@ read(
             ..ok payload {
                 match payload {
                     ..ok byte {
-                        view[copied] = byte
+                        ptr ::= mutable_reference_offset#(.t: UInt8)(.base = view.data, .elements = copied).reference
+                        ptr& = byte
                         copied = copied + 1
                     }
                     ..end {

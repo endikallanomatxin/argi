@@ -267,6 +267,21 @@ fn runExpect(name: []const u8, expected_code: u8) !void {
     try expectEqual(std.process.Child.Term{ .exited = expected_code }, result.term);
 }
 
+fn runExpectFailure(name: []const u8) !void {
+    const output_path = try outputPathFor(name);
+    defer std.testing.allocator.free(output_path);
+
+    const result = try runChild(&[_][]const u8{output_path});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    switch (result.term) {
+        .exited => |code| try expect(code != 0),
+        .signal, .stopped => {},
+        .unknown => return error.UnexpectedProcessTermination,
+    }
+}
+
 fn run(name: []const u8) !void {
     try runExpect(name, 0);
 }
@@ -1692,10 +1707,11 @@ test "feature_tests/ownership/15X_reassign_after_move" {
     );
 }
 
-test "feature_tests/basics/14_get_and_set_index_operators" {
-    const test_path = "tests/feature_tests/basics/14_get_and_set_index_operators";
-    try expectSuccessfulBuild(test_path);
-    try run(test_path);
+test "feature_tests/basics/14X_get_and_set_index_operators" {
+    try buildExpectFailWithoutParseNoise(
+        "tests/feature_tests/basics/14X_get_and_set_index_operators",
+        "unsupported operator 'get'",
+    );
 }
 
 test "feature_tests/basics/15_size_of_and_alignment_of_builtin_functions" {
@@ -1735,6 +1751,20 @@ test "feature_tests/basics/22_c_union_baseline" {
     const test_path = "tests/feature_tests/basics/22_c_union_baseline";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
+}
+
+test "feature_tests/basics/23_terminal_abort" {
+    const test_path = "tests/feature_tests/basics/23_terminal_abort";
+    try expectSuccessfulBuild(test_path);
+    try runExpectFailure(test_path);
+}
+
+test "feature_tests/basics/24X_abort_is_not_a_call" {
+    try buildExpectFail("tests/feature_tests/basics/24X_abort_is_not_a_call", "abort");
+}
+
+test "feature_tests/basics/25X_abort_is_not_an_expression" {
+    try buildExpectFail("tests/feature_tests/basics/25X_abort_is_not_an_expression", "abort");
 }
 
 test "feature_tests/types/01_choice" {
@@ -2095,10 +2125,11 @@ test "feature_tests/collections/20_dynamic_array_borrowed_index_mutable" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/collections/21_index_operator_reached_default" {
-    const test_path = "tests/feature_tests/collections/21_index_operator_reached_default";
-    try expectSuccessfulBuild(test_path);
-    try runExpect(test_path, 42);
+test "feature_tests/collections/21X_index_operator_reached_default" {
+    try buildExpectFailWithoutParseNoise(
+        "tests/feature_tests/collections/21X_index_operator_reached_default",
+        "unsupported operator 'get'",
+    );
 }
 
 test "feature_tests/collections/22_dynamic_array_borrowed_index_string" {
@@ -2196,6 +2227,62 @@ test "feature_tests/collections/36_dynamic_array_owning_mutations" {
 
 test "feature_tests/collections/37_dynamic_array_associated_copy_reasons" {
     const test_path = "tests/feature_tests/collections/37_dynamic_array_associated_copy_reasons";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/38X_fixed_array_index_out_of_bounds" {
+    const test_path = "tests/feature_tests/collections/38X_fixed_array_index_out_of_bounds";
+    try expectSuccessfulBuild(test_path);
+    try runExpectFailure(test_path);
+}
+
+test "feature_tests/collections/46X_fixed_array_constant_index_out_of_bounds" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/46X_fixed_array_constant_index_out_of_bounds",
+        "array index 2 is out of bounds for length 2",
+    );
+}
+
+test "feature_tests/collections/39X_dynamic_array_get_empty" {
+    const test_path = "tests/feature_tests/collections/39X_dynamic_array_get_empty";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/40X_dynamic_array_set_empty" {
+    const test_path = "tests/feature_tests/collections/40X_dynamic_array_set_empty";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/41X_dynamic_array_remove_empty" {
+    const test_path = "tests/feature_tests/collections/41X_dynamic_array_remove_empty";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/42X_dynamic_array_pop_empty" {
+    const test_path = "tests/feature_tests/collections/42X_dynamic_array_pop_empty";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/43_maybe_uninit_transition" {
+    const test_path = "tests/feature_tests/collections/43_maybe_uninit_transition";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/collections/44X_maybe_uninit_read_before_write" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/44X_maybe_uninit_read_before_write",
+        "no overload of 'read_value' accepts arguments (.value: MaybeUninit#(.t: Int32))",
+    );
+}
+
+test "feature_tests/collections/45X_array_view_out_of_bounds" {
+    const test_path = "tests/feature_tests/collections/45X_array_view_out_of_bounds";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
@@ -2637,10 +2724,11 @@ test "feature_tests/system/07_arguments_access" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/system/08_arguments_index_operator" {
-    const test_path = "tests/feature_tests/system/08_arguments_index_operator";
-    try expectSuccessfulBuild(test_path);
-    try runExpect(test_path, 0);
+test "feature_tests/system/08X_arguments_index_operator" {
+    try buildExpectFailWithoutParseNoise(
+        "tests/feature_tests/system/08X_arguments_index_operator",
+        "indexing is only supported for native arrays",
+    );
 }
 
 test "feature_tests/system/09_arguments_iterable" {
@@ -2661,16 +2749,18 @@ test "feature_tests/system/11_environment_variables" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/system/12_environment_variables_index_operator" {
-    const test_path = "tests/feature_tests/system/12_environment_variables_index_operator";
-    try expectSuccessfulBuild(test_path);
-    try runExpect(test_path, 0);
+test "feature_tests/system/12X_environment_variables_index_operator" {
+    try buildExpectFailWithoutParseNoise(
+        "tests/feature_tests/system/12X_environment_variables_index_operator",
+        "indexing is only supported for native arrays",
+    );
 }
 
-test "feature_tests/system/13_environment_variables_string_view_keys" {
-    const test_path = "tests/feature_tests/system/13_environment_variables_string_view_keys";
-    try expectSuccessfulBuild(test_path);
-    try runExpect(test_path, 0);
+test "feature_tests/system/13X_environment_variables_string_view_keys" {
+    try buildExpectFailWithoutParseNoise(
+        "tests/feature_tests/system/13X_environment_variables_string_view_keys",
+        "indexing is only supported for native arrays",
+    );
 }
 
 test "feature_tests/system/30_environment_variables_string_view_get" {

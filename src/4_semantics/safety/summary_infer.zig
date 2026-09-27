@@ -650,7 +650,7 @@ pub const Infer = struct {
                 flow.reachable = false;
             },
             .code_block => |child| try self.inferInputPostStates(function_id, child, flow, exits),
-            .break_statement, .continue_statement => flow.reachable = false,
+            .break_statement, .continue_statement, .abort_statement => flow.reachable = false,
             .auto_deinit_binding => |auto_id| try self.applyAutoDeinitInputPostStates(function_id, auto_id, states),
             else => try self.inferInputPostStatesExpression(function_id, node_id, states, exits),
         }
@@ -1330,7 +1330,7 @@ pub const Infer = struct {
                 state.emptied.clearRetainingCapacity();
             },
             .code_block => |child| try self.inferOpaqueEmptyBlock(function_id, child, effects, state, exits),
-            .break_statement, .continue_statement => state.reachable = false,
+            .break_statement, .continue_statement, .abort_statement => state.reachable = false,
             .auto_deinit_binding => |auto_id| try self.applyAutoDeinitOpaqueEffects(function_id, auto_id, effects, state),
             else => try self.inferOpaqueEmptyExpression(function_id, node_id, effects, state, exits),
         }

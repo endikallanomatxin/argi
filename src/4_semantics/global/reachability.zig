@@ -139,7 +139,7 @@ const State = struct {
         try self.functions.nodes.put(node_id, {});
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
-            .declaration, .reach_directive, .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal, .break_statement, .continue_statement, .type_literal => {},
+            .declaration, .reach_directive, .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal, .break_statement, .continue_statement, .abort_statement, .type_literal => {},
             .binding_use => |binding| try self.functions.bindings.put(binding, {}),
             .binding_declaration => |binding_id| {
                 try self.functions.bindings.put(binding_id, {});

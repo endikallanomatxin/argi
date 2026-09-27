@@ -286,6 +286,7 @@ const Context = struct {
             .return_statement => self.lowerReturn(node),
             .break_statement => self.resolvedVoid(node, .break_statement),
             .continue_statement => self.resolvedVoid(node, .continue_statement),
+            .abort_statement => self.resolvedVoid(node, .abort_statement),
             .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo => self.lowerBinary(node, expected),
             .compare_equal, .compare_not_equal, .compare_less, .compare_greater, .compare_less_equal, .compare_greater_equal => self.lowerComparison(node),
             .logical_and, .logical_or => self.lowerLogical(node),
@@ -624,10 +625,6 @@ const Context = struct {
     }
 
     fn lowerIndex(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId, store: ?entities.ModuleNodeId) !Lowered {
-        return self.lowerIndexWithOperator(node, expected, store, if (store == null) .get else .set);
-    }
-
-    fn lowerIndexWithOperator(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId, store: ?entities.ModuleNodeId, operator: @import("../primitives/callable.zig").OperatorKind) !Lowered {
         const access = self.tree.indexAccess(node).?;
         const value = try self.lowerNode(access.value, null);
         const index = try self.lowerNode(access.index, try self.builtin(.Int32));
@@ -639,7 +636,6 @@ const Context = struct {
             .value = value.node,
             .index = index.node,
             .store_value = store,
-            .operator = operator,
             .visible_bindings = visible_bindings,
             .assumed_arguments = assumed.node,
             .owner_function = self.current_function,
@@ -658,7 +654,6 @@ const Context = struct {
             .value = collection.node,
             .index = index.node,
             .store_value = value.node,
-            .operator = .set,
             .visible_bindings = visible_bindings,
             .owner_function = self.current_function,
         } }, expected orelse value.ty);
@@ -923,8 +918,6 @@ const Context = struct {
     fn lowerAddress(self: *Context, node: syn.NodeIndex) !Lowered {
         const address = self.tree.addressOf(node).?;
         const pipe_placeholder = self.tree.tag(address.value) == .pipe_placeholder;
-        if (self.tree.tag(address.value) == .index_access)
-            return self.lowerIndexWithOperator(address.value, null, null, if (address.mutability == .read_write) .get_rw_pointer else .get_ro_pointer);
         const value = try self.lowerNode(address.value, null);
         const mutability = graph_mod.pointerMutabilityFromSyntax(address.mutability);
         if (value.ty) |child_ty| {

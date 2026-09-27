@@ -29,6 +29,11 @@ string_with_length(
                 .allocation = ~payload,
                 .length = length,
             )
+            i :: UIntNative = 0
+            while i < length {
+                bytes_set(.string = $&out, .index = i, .value = 0)
+                i = i + 1
+            }
             bytes_set(.string = $&out, .index = length, .value = 0)
             result = ..ok ~out
         }
@@ -80,6 +85,11 @@ init (
     match allocated {
         ..ok ~ payload {
             p& = (.allocation = ~payload, .length = length)
+            i :: UIntNative = 0
+            while i < length {
+                bytes_set(.string = p, .index = i, .value = 0)
+                i = i + 1
+            }
             bytes_set(.string = p, .index = length, .value = 0)
             result = ..ok Void()
         }
@@ -158,6 +168,8 @@ string_byte_reference (
     .string: &String,
     .index: UIntNative,
 ) -> (.reference: &UInt8) := {
+    -- The trailing NUL is initialized and intentionally readable.
+    if index > string&.length { abort }
     reference = reference_offset#(.t: UInt8)(.base = string&.allocation.data, .elements = index)
 }
 
@@ -173,6 +185,8 @@ bytes_set (
     .index: UIntNative,
     .value: UInt8,
 ) -> () := {
+    -- Writers also initialize capacity bytes and the trailing NUL.
+    if index >= string&.allocation.size { abort }
     ptr ::= mutable_reference_offset#(.t: UInt8)(.base = string&.allocation.data, .elements = index).reference
     ptr& = value
 }

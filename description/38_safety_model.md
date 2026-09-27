@@ -191,22 +191,23 @@ enough:
 safe code -> Trusted Primitive -> raw / opaque / runtime mechanism
 ```
 
-> [!FIX] Bounds safety
-> Temporal validity does not prove that an index or offset is inside an object.
-> Safe collection operations need to check bounds or establish them statically;
-> unchecked reference offsets belong behind a trusted boundary.
->
-> Bounds also do not establish element identity: after structural mutation, an
-> old index may still be in range but refer to a different element.
+Temporal validity does not prove that an index or offset is inside an object.
+Fixed arrays check `index < length` in codegen. Core's array views and owning
+collections check their logical lengths before indexed access. The low-level
+reference-offset functions remain trusted operations; callers must supply a
+valid range. Native array indexing traps on a failed check and retains its
+direct value type. Core collections use named, fallible access functions.
+`abort` is a terminal statement: semantizing knows that its path ends and
+codegen emits a runtime trap. Bounds also do not establish element identity
+after mutation.
 
-> [!IDEA] Uninitialized storage
-> Owning storage is different from owning initialized values. A `DynamicArray`
-> can reserve capacity for N elements while only `len` slots hold live values
-> that may be read, moved or destroyed.
->
-> Decide how to express this distinction: an `Uninit<T>`-like type, tracked
-> initialization state, or a storage API. It should also cover partial and
-> non-contiguous initialization without exposing uninitialized bytes as live `T`.
+`Allocation` owns bytes, not values. `MaybeUninit<T>` in core is a typed slot
+handle over those bytes. It has no occupancy flag and does not expose a `T`.
+The owning abstraction supplies size, alignment and occupancy invariants.
+Its trusted operations initialize a vacant slot through the existing opaque
+move-in primitive or extract an occupied slot through opaque move-out.
+`DynamicArray<T>` maintains `[0, length)` as occupied and `[length, capacity)`
+as vacant; safe collection access exposes only the first range.
 
 > [!IDEA] Alignment and representation validity
 > Live storage is not enough to construct a safe `&T` / `$&T`: it must also have

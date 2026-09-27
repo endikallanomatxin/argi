@@ -81,7 +81,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                         status_code = 4
                         return
                     }
-                    remaining ::= &array[0]
+                    remaining_result ::= get_ro_ref#(.t: Tracked)(.self = &array, .index = 0).result
+                    if is(.value = remaining_result, .variant = ..error) {
+                        status_code = 5
+                        return
+                    }
+                    remaining ::= remaining_result..ok
                     if array.length != 1 or array.capacity != 1 or remaining&.id != 1 {
                         status_code = 5
                         return

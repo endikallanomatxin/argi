@@ -31,8 +31,13 @@ main(.system: System) -> (.status_code: Int32) := {
         .data = write_allocation.data,
         .length = 2,
     )
-    write_buffer[0] = 41
-    write_buffer[1] = 42
+    first_set ::= set#(.t: UInt8)(.self = $&write_buffer, .index = 0, .value = 41).result
+    second_set ::= set#(.t: UInt8)(.self = $&write_buffer, .index = 1, .value = 42).result
+    if is(.value = first_set, .variant = ..error) or is(.value = second_set, .variant = ..error) {
+        close(.self = $&file)
+        status_code = 4
+        return
+    }
 
     write_result ::= write(.self = $&file, .buffer = write_buffer)
 
@@ -86,12 +91,22 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    if read_buffer[0] != 41 {
+    first_read ::= get#(.t: UInt8)(.self = &read_buffer, .index = 0).result
+    if is(.value = first_read, .variant = ..error) {
+        status_code = 10
+        return
+    }
+    if first_read..ok != 41 {
         status_code = 10
         return
     }
 
-    if read_buffer[1] != 42 {
+    second_read ::= get#(.t: UInt8)(.self = &read_buffer, .index = 1).result
+    if is(.value = second_read, .variant = ..error) {
+        status_code = 11
+        return
+    }
+    if second_read..ok != 42 {
         status_code = 11
         return
     }

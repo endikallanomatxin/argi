@@ -1014,6 +1014,8 @@ pub const Context = struct {
             return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .break_statement);
         if (self.tree.tag(node) == .continue_statement)
             return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .continue_statement);
+        if (self.tree.tag(node) == .abort_statement)
+            return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .abort_statement);
 
         var operands = std.array_list.Managed(ir.ParameterizedNodeId).init(self.allocator);
         defer operands.deinit();

@@ -72,7 +72,7 @@ arena_free_blocks(
 ) -> () := {
     i :: UIntNative = 0
     while i < self&.blocks.length {
-        block : &ArenaBlock = &self&.blocks[i]
+        block : &ArenaBlock = trusted_dynamic_array_get_ro_ref#(.t: ArenaBlock)(.array = &self&.blocks, .index = i).reference
         free(.address = cast#(.to: UIntNative)(.value = block&.data))
         i = i + 1
     }
@@ -117,7 +117,7 @@ allocate(
     if self&.blocks.length == 0 {
         needs_block = true
     } else {
-        last_block : &ArenaBlock = &self&.blocks[self&.blocks.length - 1]
+        last_block : &ArenaBlock = trusted_dynamic_array_get_ro_ref#(.t: ArenaBlock)(.array = &self&.blocks, .index = self&.blocks.length - 1).reference
         if self&.current_block_offset + required > last_block&.size {
             needs_block = true
         }
@@ -157,7 +157,7 @@ allocate(
         self&.current_block_offset = 0
     }
 
-    active_block : &ArenaBlock = &self&.blocks[self&.blocks.length - 1]
+    active_block : &ArenaBlock = trusted_dynamic_array_get_ro_ref#(.t: ArenaBlock)(.array = &self&.blocks, .index = self&.blocks.length - 1).reference
     child_data ::= mutable_reference_offset#(.t: UInt8)(
         .base = active_block&.data,
         .elements = self&.current_block_offset,

@@ -91,6 +91,7 @@ const State = struct {
             .bool_literal,
             .break_statement,
             .continue_statement,
+            .abort_statement,
             .type_literal,
             => {},
             .binding_declaration => |binding_id| {

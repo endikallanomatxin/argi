@@ -1,7 +1,7 @@
 # Collection types
 
-The only non-library collection types are Arrays. The rest are structs defined
-in the core library.
+The native collection type is the fixed array `[N]T`. There is no native slice
+type; other collections, including views, are library types.
 
 > [!NOTE] Why cannot arrays be defined in the core library? I've tried, but it
 > seems that implementing them always requires some kind of `[]Byte` buffer.

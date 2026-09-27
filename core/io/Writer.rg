@@ -30,7 +30,8 @@ write(
     wrote_count :: UIntNative = 0
 
     while wrote_count < buffer.length {
-        wrote ::= write_byte(.self = self, .byte = buffer[wrote_count])
+        ptr ::= reference_offset#(.t: UInt8)(.base = buffer.data, .elements = wrote_count).reference
+        wrote ::= write_byte(.self = self, .byte = ptr&)
         match wrote {
             ..ok _ {
                 wrote_count = wrote_count + 1

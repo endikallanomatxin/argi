@@ -5,11 +5,21 @@ main(.system: System) -> (.status_code: Int32) := {
     destination ::= DynamicArray#(.t: UIntNative)(.capacity = 1)
 
     push#(.t: UIntNative)(.self = $&source, .value = 7)
-    value ::= source[0]
+    value_result ::= get(.self = &source, .index = 0).result
+    if is(.value = value_result, .variant = ..error) {
+        status_code = 1
+        return
+    }
+    value ::= value_result..ok
     push#(.t: UIntNative)(.self = $&destination, .value = value)
 
     deinit#(.t: UIntNative)(.self = $&source)
-    if destination[0] != 7 {
+    destination_result ::= get(.self = &destination, .index = 0).result
+    if is(.value = destination_result, .variant = ..error) {
+        status_code = 2
+        return
+    }
+    if destination_result..ok != 7 {
         deinit#(.t: UIntNative)(.self = $&destination)
         status_code = 1
         return

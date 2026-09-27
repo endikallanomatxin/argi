@@ -240,26 +240,6 @@ pub const Syntaxer = struct {
             .identifier => {
                 const ident = try self.parseIdentifier();
 
-                if (std.mem.eql(u8, ident, "get") or
-                    std.mem.eql(u8, ident, "set") or
-                    std.mem.eql(u8, ident, "get_ro_pointer") or
-                    std.mem.eql(u8, ident, "get_rw_pointer"))
-                {
-                    if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
-                    self.advanceOne();
-                    if (!self.tokenIs(.close_bracket)) return SyntaxerError.ExpectedRightBracket;
-                    self.advanceOne();
-                    const name = if (std.mem.eql(u8, ident, "get"))
-                        "operator get[]"
-                    else if (std.mem.eql(u8, ident, "set"))
-                        "operator set[]"
-                    else if (std.mem.eql(u8, ident, "get_ro_pointer"))
-                        "operator get_ro_pointer[]"
-                    else
-                        "operator get_rw_pointer[]";
-                    return .{ .token = operator_token, .text = name };
-                }
-
                 try self.diags.add(self.tokenLocation(), .syntax, "unsupported operator '{s}'", .{ident});
                 return SyntaxerError.ExpectedIdentifier;
             },
@@ -1568,6 +1548,15 @@ pub const Syntaxer = struct {
         self.skipNewLinesAndComments();
 
         switch (self.currentContent()) {
+            .keyword_abort => {
+                const token_index: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+                self.advanceOne();
+                if (self.tokenIs(.open_parenthesis)) {
+                    try self.diags.add(self.tokenLocation(), .syntax, "'abort' is a statement and takes no arguments", .{});
+                    return SyntaxerError.ExpectedDeclarationOrAssignment;
+                }
+                return try self.addNode(.abort_statement, token_index, .{ .unused = .{ 0, 0 } });
+            },
             .keyword_assume => {
                 self.advanceOne();
                 const name_index = self.index;

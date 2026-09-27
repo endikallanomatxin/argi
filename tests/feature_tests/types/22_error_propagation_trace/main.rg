@@ -21,7 +21,12 @@ main() -> (.status_code: Int32) := {
             return
         }
 
-        entry := err&.trace.entries[zero]
+        entry_result ::= get#(.t: ErrorTraceEntry)(.self = &err&.trace.entries, .index = zero).result
+        if is(.value = entry_result, .variant = ..error) {
+            status_code = 5
+            return
+        }
+        entry ::= entry_result..ok
         if entry.line != 8 {
             status_code = 2
             return

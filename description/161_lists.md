@@ -2,19 +2,17 @@
 
 ### Owning constructs
 
-#### Array `[N]T`
+#### Native fixed array `[N]T`
 
 Fixed-size arrays:
 
 ```
 a : [3]Int32 = (1, 2, 3)
--- is the same as
-l : Array#(.n = 3, .t: Int32) = (1, 2, 3)
 ```
 
-`Array#(.n = ..., .t: ...)` is the explicit canonical form. `[N]T` is the
-idiomatic sugar. Positional generic arguments may be allowed later, but the
-current documentation uses named arguments.
+`[N]T` is the native fixed array type. Native bracket types represent fixed
+arrays only; slices and views are library abstractions, not native array types.
+Collection access uses named operations rather than overload sets.
 
 > [!TODO] Pensar una forma de definir longitud de forma automática.
 > Igual `[?]T` para que el compilador lo calcule.
@@ -36,6 +34,9 @@ element type, and indexing rules on top of an `Allocation`.
 
 It uses `Allocation` internally, together with metadata such as length,
 capacity, and element type.
+Only slots below `length` contain initialized `T` values. Capacity-only slots
+are addressed through `MaybeUninit<T>` handles inside trusted core operations;
+the named safe access functions check `index < length` at runtime.
 `l ::= DynamicArray#(.t: Int32)(.capacity = 3)`
 
 `DynamicArray` provides explicit `copy()` for infallibly copyable elements and
@@ -44,7 +45,7 @@ associated error reasons from its abstract implementation and combines them
 with `..out_of_memory`. Each element is copied independently; a fallible copy
 rolls back the completed prefix before releasing the new backing allocation.
 
-Indexing follows the language-wide place model:
+Native fixed-array indexing follows the language-wide place model:
 
 ```rg
 arr[i]      -- value access
@@ -53,17 +54,17 @@ $&arr[i]    -- borrowed mutable access
 arr[i] = x  -- assignment through the indexed place
 ```
 
-For `DynamicArray`, the intended operator surface stays split between:
+`DynamicArray` access uses named core operations:
 
-- `get[]` for value access
-- `get_ro_pointer[]` for borrowed read-only access
-- `get_rw_pointer[]` for borrowed mutable access
-- `set[]` for assignment
+- `get(index)` for value access
+- `get_ro_ref(index)` for borrowed read-only access
+- `get_rw_ref(index)` for borrowed mutable access
+- `set(index, value)` for assignment
 
-This is deliberate. `arr[i]` is a normal value use and therefore copies a
-named element implicitly only when its type implements `ImplicitlyCopyable`.
-Other duplication uses `copy(&arr[i])`, while borrowed indexing remains
-explicit through `&place` and `$&place`.
+All four operations are fallible because an index may be outside the
+collection's logical length. Value access copies a named element implicitly
+only when its type implements `ImplicitlyCopyable`; other duplication uses
+`copy(...)`.
 
 Iteration follows the same access-mode split, but at the iterable layer rather
 than the iterator layer:
@@ -104,7 +105,9 @@ Empaqueta, p.ej. u10, u12.
 
 ### Reference constructs
 
-#### Views / slices
+#### Library views
+
+Views are library abstractions. The language has no native slice type.
 
 ```
 ListViewRO#(.list_type: Type, .list_value_type: Type) : Type = (
@@ -174,11 +177,12 @@ l | slice (((0, 10), (0, 20)))  -- 2D slice
 
 ### List Abstracts
 
-- Indexable#(.t: T) → lectura indexada: `length()` y `get[]`.
-- IndexableMutable#(.t: T) → añade `set[]`.
-- Resizable#(.t: T) → añade `push`, `pop`, `insert`, … (solo para los dinámicos).
+- `Indexable<T>` requires `length` and fallible `get_ro_ref`.
+- `IndexableMutable<T>` also requires fallible `get_rw_ref`.
+- `IndexableValue<T>` adds fallible `get` for implicitly copyable elements.
+- `Resizable<T>` specifies fallible `push`, `pop`, `insert`, and `remove`.
 
-`[N]T`, `Array#(.n = N, .t: T)`, `ListViewRO#(.list_type = X, .list_value_type = T)` y
-`ListViewRW#(.list_type = X, .list_value_type = T)` cumplen `Indexable`;
-los que tengan memoria mutable cumplen `IndexableMutable`; y solo `DynamicArray#(.t: T)`
-(dinámico) cumple `Resizable`.
+These named contracts are defined in `core/lists/List.rg`. `DynamicArray` and
+`ArrayView` expose corresponding operations, but `core` does not yet declare
+that they implement these abstracts. Native `[N]T` uses built-in `[]` and does
+not acquire an `Indexable` implementation through operator overloading.

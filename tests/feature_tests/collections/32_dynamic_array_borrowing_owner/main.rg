@@ -39,7 +39,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                 return
                             }
 
-                            popped ::= pop#(.t: BorrowingOwner)(.self = $&array)
+                            popped_result ::= pop#(.t: BorrowingOwner)(.self = $&array).result
+                            if is(.value = popped_result, .variant = ..error) {
+                                status_code = 5
+                                return
+                            }
+                            popped ::= ~popped_result..ok
                             observed ::= popped.borrowed&
                             if observed == 255 { status_code = 5 }
                             deinit#(.t: BorrowingOwner)(.self = $&array)

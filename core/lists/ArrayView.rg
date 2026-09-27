@@ -18,6 +18,14 @@ ArrayViewRO#(.t: Type) : Type = (
 ArrayView#(.t: Type) implements ImplicitlyCopyable
 ArrayViewRO#(.t: Type) implements ImplicitlyCopyable
 
+length#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.count: UIntNative) := {
+    count = self&.length
+}
+
+length#(.t: Type)(.self: &ArrayViewRO#(.t: t)) -> (.count: UIntNative) := {
+    count = self&.length
+}
+
 array_view_ro#(.t: Type)(.data: &t, .length: UIntNative) -> (.array: ArrayViewRO#(.t: t)) := {
     array = (.data = data, .length = length)
 }
@@ -26,6 +34,9 @@ array_view#(.t: Type)(
     .data: $&t,
     .length: UIntNative,
 ) -> (.array: ArrayView#(.t: t)) := {
+    -- The caller must supply a contiguous, initialized range of this length.
+    -- TODO: carry allocation bounds into view construction so this precondition
+    -- can be enforced for callers outside trusted low-level code.
     array = (
         .data = data,
         .length = length,
@@ -41,25 +52,61 @@ array_view_from_raw#(.t: Type)(
     array = array_view#(.t: t)(.data = data, .length = length)
 }
 
-array_view_element_reference#(.t: Type)(
+get_ro_ref#(.t: Type)(
     .self: &ArrayView#(.t: t),
     .index: UIntNative,
-) -> (.reference: &t) := {
-    reference = reference_offset#(.t: t)(.base = self&.data, .elements = index)
+) -> (.result: Errable#(.t: &t, .reasons: (..out_of_bounds))) := {
+    if index >= self&.length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    result = ..ok reference_offset#(.t: t)(.base = self&.data, .elements = index).reference
 }
 
-operator get[]#(.t: Type)(
+get_ro_ref#(.t: Type)(
+    .self: &ArrayViewRO#(.t: t),
+    .index: UIntNative,
+) -> (.result: Errable#(.t: &t, .reasons: (..out_of_bounds))) := {
+    if index >= self&.length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    result = ..ok reference_offset#(.t: t)(.base = self&.data, .elements = index).reference
+}
+
+get_rw_ref#(.t: Type)(
+    .self: $&ArrayView#(.t: t),
+    .index: UIntNative,
+) -> (.result: Errable#(.t: $&t, .reasons: (..out_of_bounds))) := {
+    if index >= self&.length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    result = ..ok mutable_reference_offset#(.t: t)(.base = self&.data, .elements = index).reference
+}
+
+get#(.t: Type: ImplicitlyCopyable)(
     .self: &ArrayView#(.t: t),
     .index: UIntNative,
-) -> (.value: t) := {
-    value = array_view_element_reference#(.t: t)(.self = self, .index = index).reference&
+) -> (.result: Errable#(.t: t, .reasons: (..out_of_bounds))) := {
+    if index >= self&.length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    ptr ::= reference_offset#(.t: t)(.base = self&.data, .elements = index).reference
+    result = ..ok ptr&
 }
 
-operator set[]#(.t: Type)(
+set#(.t: Type: ImplicitlyCopyable)(
     .self: $&ArrayView#(.t: t),
     .index: UIntNative,
     .value: t,
-) -> () := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_bounds))) := {
+    if index >= self&.length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
     ptr ::= mutable_reference_offset#(.t: t)(.base = self&.data, .elements = index)
     ptr& = value
+    result = ..ok Void()
 }

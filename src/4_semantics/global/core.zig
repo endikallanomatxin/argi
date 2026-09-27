@@ -881,6 +881,7 @@ pub const Resolver = struct {
     }
 
     fn resolveIndex(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
+        _ = module_index;
         const collection = globalizer.globalNode(o, value.value);
         const index = globalizer.globalNode(o, value.index);
 
@@ -929,45 +930,9 @@ pub const Resolver = struct {
             self.stats.indexes += 1;
             return .resolved;
         }
-        const operator: callable.OperatorKind = value.operator;
-        var operands: [3]global_sg.GlobalNodeId = undefined;
-        operands[0] = collection;
-        operands[1] = index;
-        var count: usize = 2;
-        if (value.store_value) |local| {
-            operands[2] = globalizer.globalNode(o, local);
-            count = 3;
-        }
-        var operand_types: [3]global_sg.GlobalTypeId = undefined;
-        for (operands[0..count], 0..) |node, i| operand_types[i] = self.graph.nodes.items[@intFromEnum(node)].ty orelse return .deferred;
-        const function = self.resolveOperator(module_index, operator, operands[0..count], operand_types[0..count]) catch blk: {
-            break :blk self.resolveAddressedIndexOperator(
-                module_index,
-                operator,
-                collection_ty,
-                operands[0..count],
-                operand_types[0..count],
-            ) orelse return .not_applicable;
-        };
-        const receiver_ty = self.graph.fields.items[self.graph.functions.items[@intFromEnum(function)].input.start].ty;
-        if (!types.equal(self.graph, collection_ty, receiver_ty) and !self.callTypesCompatible(collection_ty, receiver_ty)) {
-            const address: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
-            try self.graph.nodes.append(self.allocator, .{
-                .source = self.graph.node(collection).source,
-                .ty = receiver_ty,
-                .content = .{ .address_of = collection },
-            });
-            operands[0] = address;
-        }
-        const input = try self.makeCallInput(function, operands[0..count]);
-        const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
-            .source = self.graph.nodes.items[@intFromEnum(collection)].source,
-            .ty = try self.functionOutputType(function),
-            .content = .{ .function_call = .{ .callee = function, .input = input } },
-        };
-        self.stats.indexes += 1;
-        return .resolved;
+        // Brackets are a structural operation over native arrays. Library
+        // collections expose named functions with their own failure contracts.
+        return .not_applicable;
     }
 
     fn resolveAddressedIndexOperator(self: *Resolver, module_index: usize, operator: callable.OperatorKind, collection_ty: global_sg.GlobalTypeId, operand_nodes: []const global_sg.GlobalNodeId, operand_types: []const global_sg.GlobalTypeId) ?global_sg.GlobalFunctionId {

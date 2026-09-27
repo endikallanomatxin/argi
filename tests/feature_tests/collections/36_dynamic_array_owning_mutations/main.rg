@@ -59,20 +59,39 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                     }
 
                                     one :: UIntNative = 1
-                                    array[one] = ~fourth
+                                    replacement_result ::= set#(.t: Tracked)(.self = $&array, .index = one, .value = ~fourth, .allocator = system.allocator).result
+                                    if is(.value = replacement_result, .variant = ..error) {
+                                        status_code = 5
+                                        return
+                                    }
                                     if second_drops != 1 {
                                         status_code = 6
                                         return
                                     }
 
                                     zero :: UIntNative = 0
-                                    removed ::= remove#(.t: Tracked)(.self = $&array, .i = zero)
+                                    removed_result ::= remove#(.t: Tracked)(.self = $&array, .i = zero).result
+                                    if is(.value = removed_result, .variant = ..error) {
+                                        status_code = 7
+                                        return
+                                    }
+                                    removed ::= ~removed_result..ok
                                     if removed.id != 1 or array.length != 2 {
                                         status_code = 7
                                         return
                                     }
-                                    first_remaining ::= dynamic_array_element_ro_pointer#(.t: Tracked)(.array = &array, .offset = 0).pointer
-                                    second_remaining ::= dynamic_array_element_ro_pointer#(.t: Tracked)(.array = &array, .offset = 1).pointer
+                                    first_remaining_result ::= get_ro_ref#(.t: Tracked)(.self = &array, .index = 0).result
+                                    second_remaining_result ::= get_ro_ref#(.t: Tracked)(.self = &array, .index = 1).result
+                                    if is(.value = first_remaining_result, .variant = ..error) {
+                                        status_code = 8
+                                        return
+                                    }
+                                    if is(.value = second_remaining_result, .variant = ..error) {
+                                        status_code = 8
+                                        return
+                                    }
+                                    first_remaining ::= first_remaining_result..ok
+                                    second_remaining ::= second_remaining_result..ok
                                     if first_remaining&.id != 4 or second_remaining&.id != 3 {
                                         status_code = 8
                                         return

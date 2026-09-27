@@ -50,12 +50,22 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    if buffer[0] != 65 {
+    first_result ::= get(.self = &buffer, .index = 0).result
+    if is(.value = first_result, .variant = ..error) {
+        status_code = 13
+        return
+    }
+    if first_result..ok != 65 {
         status_code = 13
         return
     }
 
-    if buffer[1] != 66 {
+    second_result ::= get(.self = &buffer, .index = 1).result
+    if is(.value = second_result, .variant = ..error) {
+        status_code = 14
+        return
+    }
+    if second_result..ok != 66 {
         status_code = 14
         return
     }

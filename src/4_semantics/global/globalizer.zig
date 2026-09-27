@@ -593,6 +593,7 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .switch_statement => |id| .{ .switch_statement = globalSwitch(o, id) },
             .break_statement => .break_statement,
             .continue_statement => .continue_statement,
+            .abort_statement => .abort_statement,
             .address_of => |id| .{ .address_of = globalNode(o, id) },
             .dereference => |value| .{ .dereference = .{
                 .pointer = globalNode(o, value.pointer),
