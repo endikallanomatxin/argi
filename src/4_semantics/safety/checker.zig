@@ -7,6 +7,7 @@ const facts = @import("facts.zig");
 const summary_engine = @import("summaries.zig");
 const summary_infer = @import("summary_infer.zig");
 const value_state = @import("value_state.zig");
+const primitive_transfer = @import("primitive_transfer.zig");
 const primitives = @import("../primitives/schema.zig");
 
 /// Indexed temporal checker. Program identity is exclusively Global*Id; no
@@ -693,18 +694,18 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         source: primitives.SourceRef,
     ) !facts.ValueFacts {
-        return switch (primitive) {
-            .none => .{},
-            .raw_allocated_storage => blk: {
+        return switch (primitive_transfer.forPrimitive(primitive).value) {
+            .empty => .{},
+            .raw_storage => blk: {
                 const id: facts.StorageCapabilityId = @enumFromInt(state.storage_capabilities.items.len);
                 try state.storage_capabilities.append(.available);
                 break :blk .{ .foreign_storage = true, .storage_capabilities = try self.oneCapability(id) };
             },
-            .establish_fresh_reference => blk: {
+            .fresh_reference => blk: {
                 try self.report(source, "fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries", .{});
                 break :blk .{};
             },
-            .establish_allocation, .establish_inherited_reference, .establish_inherited_storage => blk: {
+            .allocation, .inherited_reference, .inherited_storage => blk: {
                 const root = try state.tracker.establish(.fresh);
                 if ((primitive == .establish_allocation or primitive == .establish_inherited_storage) and values.len != 0) {
                     for (values[0].storage_capabilities) |capability| {
@@ -720,52 +721,42 @@ pub const SafetyChecker = struct {
                     .owned_roots = if (primitive == .establish_allocation) try self.oneRoot(root) else &.{},
                 };
             },
-            .reference_offset, .mutable_reference_offset, .reinterpret_reference, .mutable_reinterpret_reference, .read_reference => if (values.len != 0) values[0].referenceCopy() else .{},
-            .restrict_reference => try self.restrictReferencePrimitive(values),
-            .depend_on => try self.dependOnPrimitive(values),
+            .reference_copy => if (values.len != 0) values[0].referenceCopy() else .{},
+            .restrict_reference, .depend_on => |transfer| try self.dependencyPrimitive(values, transfer),
             .relocate => try self.relocatePrimitive(source, values, state),
-            .trusted_opaque_move, .trusted_opaque_move_in => blk: {
+            .opaque_move => blk: {
                 try self.applyOpaqueMovePrimitive(function, source, argument_ids, values, state);
                 break :blk .{};
             },
-            .trusted_opaque_move_out => try self.opaqueMoveOutPrimitive(argument_ids, values, state),
-            .trusted_opaque_relocate => blk: {
+            .opaque_move_out => try self.opaqueMoveOutPrimitive(argument_ids, values, state),
+            .opaque_relocate => blk: {
                 if (values.len != 0) try self.rejectOpaqueRelocation(source, state, values[0]);
                 break :blk .{};
             },
-            .trusted_opaque_mark_empty => blk: {
+            .opaque_mark_empty => blk: {
                 if (try self.primitiveArgumentStorage(argument_ids, values, 0, state)) |storage|
                     self.markOpaqueStorageEmpty(state, storage);
                 break :blk .{};
             },
             // Slot destruction is trusted runtime behavior. Domain emptiness is
             // communicated explicitly by mark_empty and by summaries.
-            .trusted_opaque_drop => .{},
+            .opaque_drop => .{},
         };
     }
 
-    fn restrictReferencePrimitive(self: *SafetyChecker, values: []const facts.ValueFacts) !facts.ValueFacts {
+    fn dependencyPrimitive(
+        self: *SafetyChecker,
+        values: []const facts.ValueFacts,
+        transfer: primitive_transfer.Transfer.Value,
+    ) !facts.ValueFacts {
         if (values.len == 0) return .{};
-
-        var result = values[0].referenceCopy();
-        if (values.len == 1) return result;
-
-        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
-        for (result.dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
-        for (values[1].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
-        result.dependencies = try dependencies.toOwnedSlice();
-        return result;
-    }
-
-    fn dependOnPrimitive(self: *SafetyChecker, values: []const facts.ValueFacts) !facts.ValueFacts {
-        if (values.len == 0) return .{};
-        var result = values[0];
+        var result = if (transfer == .restrict_reference) values[0].referenceCopy() else values[0];
         if (values.len == 1) return result;
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         for (result.dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
         for (values[1].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
         result.dependencies = try dependencies.toOwnedSlice();
-        result.explicit_dependency = true;
+        if (transfer == .depend_on) result.explicit_dependency = true;
         return result;
     }
 
@@ -787,22 +778,27 @@ pub const SafetyChecker = struct {
             try self.requireInitialized(@enumFromInt(0), source, source_state);
             return .{};
         }
-        switch (self.initializednessAtPlace(state, destination)) {
-            .initialized => {
-                try self.report(source, "relocate destination is initialized", .{});
-                return .{};
-            },
-            .maybe_initialized => {
-                try self.report(source, "relocate destination may be initialized", .{});
-                return .{};
-            },
-            .deinitialized => try self.refreshStorageGenerationChecked(source, state, destination),
-            .moved => {},
-        }
+        const destination_state = self.initializednessAtPlace(state, destination);
+        if (!try self.requireAvailableRelocationDestination(source, destination_state)) return .{};
+        if (destination_state == .deinitialized)
+            try self.refreshStorageGenerationChecked(source, state, destination);
         const value = self.valueAtPlace(state, source_place) orelse return .{};
         try self.setPlace(state, destination, .initialized, value);
         try self.markMoved(state, source_place, .{}, source);
         return .{};
+    }
+
+    fn requireAvailableRelocationDestination(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        initializedness: value_state.Initializedness,
+    ) !bool {
+        switch (initializedness) {
+            .initialized => try self.report(source, "relocate destination is initialized", .{}),
+            .maybe_initialized => try self.report(source, "relocate destination may be initialized", .{}),
+            .deinitialized, .moved => return true,
+        }
+        return false;
     }
 
     fn applyOpaqueMovePrimitive(
@@ -813,29 +809,29 @@ pub const SafetyChecker = struct {
         values: []const facts.ValueFacts,
         state: *FunctionState,
     ) !void {
-        if (values.len == 3) {
-            try self.closeOpaqueOwnedRoots(source, values[2], state, null);
-            if (try self.primitiveArgumentStorage(argument_ids, values, 0, state)) |storage| {
+        const operands = primitive_transfer.opaqueMoveOperands(values.len) orelse return;
+        if (operands.storage) |storage_index| {
+            try self.closeOpaqueOwnedRoots(source, values[operands.owner], state, null);
+            if (try self.primitiveArgumentStorage(argument_ids, values, storage_index, state)) |storage| {
                 try self.markOpaqueArgumentAccess(argument_ids, 1, state, storage);
-                try self.hideOpaqueDependencies(state, storage, values[2]);
+                try self.hideOpaqueDependencies(state, storage, values[operands.owner]);
                 return;
             }
-            const root_binding = self.primitiveArgumentRootBinding(argument_ids, 0);
+            const root_binding = self.primitiveArgumentRootBinding(argument_ids, storage_index);
             if (root_binding != null and self.functionInputIndex(function, root_binding.?) != null) return;
-            if (valueHasDependency(values[2]))
+            if (valueHasDependency(values[operands.owner]))
                 try self.report(source, "opaque ownership storage requires an identifiable storage domain place", .{});
             return;
         }
-        if (values.len == 2) {
-            if (hasExternalOpaqueDependency(values[1], values[1].owned_roots)) {
-                try self.report(source, "opaque ownership storage cannot hide dependencies on external roots", .{});
-                return;
-            }
-            try self.closeOpaqueOwnedRoots(source, values[1], state, null);
-            if (try self.inferOpaqueDomain(state, values[0])) |storage| {
-                try self.markOpaqueArgumentAccess(argument_ids, 0, state, storage);
-                try self.hideOpaqueDependencies(state, storage, values[1]);
-            }
+        const owner = values[operands.owner];
+        if (hasExternalOpaqueDependency(owner, owner.owned_roots)) {
+            try self.report(source, "opaque ownership storage cannot hide dependencies on external roots", .{});
+            return;
+        }
+        try self.closeOpaqueOwnedRoots(source, owner, state, null);
+        if (try self.inferOpaqueDomain(state, values[0])) |storage| {
+            try self.markOpaqueArgumentAccess(argument_ids, 0, state, storage);
+            try self.hideOpaqueDependencies(state, storage, owner);
         }
     }
 
@@ -1126,14 +1122,8 @@ pub const SafetyChecker = struct {
 
             if (post_state.requires_available_destination) {
                 if (self.getPlace(state, target)) |current| {
-                    if (current.initializedness == .initialized) {
-                        try self.report(source, "relocate destination is initialized", .{});
+                    if (!try self.requireAvailableRelocationDestination(source, current.initializedness))
                         continue;
-                    }
-                    if (current.initializedness == .maybe_initialized) {
-                        try self.report(source, "relocate destination may be initialized", .{});
-                        continue;
-                    }
                 }
             }
 

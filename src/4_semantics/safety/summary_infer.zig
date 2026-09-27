@@ -5,6 +5,7 @@ const primitives = @import("../primitives/schema.zig");
 const facts = @import("facts.zig");
 const summaries = @import("summaries.zig");
 const value_state = @import("value_state.zig");
+const primitive_transfer = @import("primitive_transfer.zig");
 
 /// Symbolic SafetySummary inference over the compact GlobalSG.
 ///
@@ -796,22 +797,23 @@ pub const Infer = struct {
     ) !void {
         const arguments = self.structArguments(input) orelse return;
         const callee_function = self.graph.function(callee);
-        if (callee_function.safety_primitive == .trusted_opaque_move or
-            callee_function.safety_primitive == .trusted_opaque_move_in)
-        {
-            if (arguments.len >= 2) {
-                const source_index: usize = if (arguments.len == 3) 2 else 1;
-                const targets = try self.inferInputPaths(function_id, arguments[source_index].value);
-                const storage = if (arguments.len == 3) blk: {
-                    const storage_targets = try self.inferInputPaths(function_id, arguments[0].value);
-                    break :blk if (storage_targets.len == 1) storage_targets[0] else null;
-                } else null;
-                try self.recordOpaqueOwnershipConsumption(states, targets, .definite, storage);
-            }
-            return;
+        const input_transfer = primitive_transfer.forPrimitive(callee_function.safety_primitive).input;
+        switch (input_transfer) {
+            .consume_opaque_owner => {
+                if (primitive_transfer.opaqueMoveOperands(arguments.len)) |operands| {
+                    const targets = try self.inferInputPaths(function_id, arguments[operands.owner].value);
+                    const storage = if (operands.storage) |storage_index| blk: {
+                        const storage_targets = try self.inferInputPaths(function_id, arguments[storage_index].value);
+                        break :blk if (storage_targets.len == 1) storage_targets[0] else null;
+                    } else null;
+                    try self.recordOpaqueOwnershipConsumption(states, targets, .definite, storage);
+                }
+                return;
+            },
+            .ignore => return,
+            .none, .relocate => {},
         }
-        if (callee_function.safety_primitive == .trusted_opaque_relocate) return;
-        if (callee_function.safety_primitive == .relocate) {
+        if (input_transfer == .relocate) {
             if (arguments.len != 2) return;
             const source_targets = try self.inferInputPaths(function_id, arguments[0].value);
             const destination_targets = try self.inferInputPaths(function_id, arguments[1].value);
@@ -1522,28 +1524,25 @@ pub const Infer = struct {
     ) !void {
         const arguments = self.structArguments(input) orelse return;
         const callee_function = self.graph.function(callee);
-        switch (callee_function.safety_primitive) {
-            .trusted_opaque_move => {
+        switch (primitive_transfer.forPrimitive(callee_function.safety_primitive).opaque_state) {
+            .clear_empty => {
                 state.emptied.clearRetainingCapacity();
                 return;
             },
-            .trusted_opaque_move_in => {
+            .store_hidden => {
                 if (arguments.len != 3) return;
                 const storages = try self.inferInputPaths(function_id, arguments[0].value);
                 const hidden = try self.inferExpression(function_id, arguments[2].value);
-                for (storages) |storage| {
-                    self.removeOpaqueStorageRelease(&state.emptied, storage);
-                    try self.recordOpaqueStorageEffect(effects, storage, hidden);
-                }
+                try self.recordOpaqueStorageWrites(effects, state, storages, hidden);
                 return;
             },
-            .trusted_opaque_mark_empty => {
+            .mark_empty => {
                 if (arguments.len != 1) return;
                 const storages = try self.inferInputPaths(function_id, arguments[0].value);
-                for (storages) |storage| try self.recordOpaqueStorageRelease(&state.emptied, storage);
+                try self.recordOpaqueStorageEmpties(state, storages);
                 return;
             },
-            else => {},
+            .none => {},
         }
         const summary = self.engine.summaryFor(callee) orelse return;
         try self.applyOpaqueEmptySummary(function_id, summary, input, effects, state, null);
@@ -1564,16 +1563,34 @@ pub const Infer = struct {
             if (effect.storage.input_index >= arguments.len) continue;
             const storages = try self.substituteRequiredInputPath(function_id, effect.storage, arguments, override);
             const hidden = try self.substituteOutputWithOverride(function_id, effect.hidden_dependencies, arguments, override);
-            for (storages) |storage| {
-                self.removeOpaqueStorageRelease(&state.emptied, storage);
-                try self.recordOpaqueStorageEffect(effects, storage, hidden);
-            }
+            try self.recordOpaqueStorageWrites(effects, state, storages, hidden);
         }
         for (summary.opaque_storage_empties) |empty| {
             if (empty.input_index >= arguments.len) continue;
             const storages = try self.substituteRequiredInputPath(function_id, empty, arguments, override);
-            for (storages) |storage| try self.recordOpaqueStorageRelease(&state.emptied, storage);
+            try self.recordOpaqueStorageEmpties(state, storages);
         }
+    }
+
+    fn recordOpaqueStorageWrites(
+        self: *Infer,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueEmptyState,
+        storages: []const facts.InputPath,
+        hidden: facts.ValueEffect,
+    ) !void {
+        for (storages) |storage| {
+            self.removeOpaqueStorageRelease(&state.emptied, storage);
+            try self.recordOpaqueStorageEffect(effects, storage, hidden);
+        }
+    }
+
+    fn recordOpaqueStorageEmpties(
+        self: *Infer,
+        state: *OpaqueEmptyState,
+        storages: []const facts.InputPath,
+    ) !void {
+        for (storages) |storage| try self.recordOpaqueStorageRelease(&state.emptied, storage);
     }
 
     fn joinOpaqueEmptyFallthrough(
@@ -2617,45 +2634,26 @@ pub const Infer = struct {
     }
 
     fn primitiveValueEffect(self: *Infer, primitive: primitives.SafetyPrimitive, source: facts.FreshEffectSource) !facts.ValueEffect {
-        return switch (primitive) {
-            .none, .relocate => .{},
-            .establish_fresh_reference => .{ .fresh_dependencies = try self.oneFresh(source) },
-            .establish_inherited_reference, .establish_inherited_storage => self.inputValueEffect(1, &.{}),
-            .establish_allocation => self.ownedAllocationEffect(source),
-            .raw_allocated_storage => .{ .foreign_storage = true, .fresh_storage_capabilities = try self.oneFresh(source) },
-            .reference_offset,
-            .mutable_reference_offset,
-            .reinterpret_reference,
-            .mutable_reinterpret_reference,
-            .read_reference,
-            => self.inputValueEffect(0, &.{}),
-            .restrict_reference => blk: {
+        return switch (primitive_transfer.forPrimitive(primitive).value) {
+            .reference_copy => self.inputValueEffect(0, &.{}),
+            .restrict_reference, .depend_on => |transfer| blk: {
                 var result = try self.mergeValueEffects(
                     try self.inputValueEffect(0, &.{}),
                     try self.inputValueEffect(1, &.{}),
                 );
                 result.input_places = try self.oneInputPath(0, &.{});
+                result.explicit_dependency = transfer == .depend_on;
                 break :blk result;
             },
-            .depend_on => blk: {
-                var result = try self.mergeValueEffects(
-                    try self.inputValueEffect(0, &.{}),
-                    try self.inputValueEffect(1, &.{}),
-                );
-                result.input_places = try self.oneInputPath(0, &.{});
-                result.explicit_dependency = true;
-                break :blk result;
-            },
-            .trusted_opaque_move_out => .{
+            .empty, .relocate, .opaque_move, .opaque_relocate, .opaque_drop, .opaque_mark_empty => .{},
+            .fresh_reference => .{ .fresh_dependencies = try self.oneFresh(source) },
+            .inherited_reference, .inherited_storage => self.inputValueEffect(1, &.{}),
+            .allocation => self.ownedAllocationEffect(source),
+            .raw_storage => .{ .foreign_storage = true, .fresh_storage_capabilities = try self.oneFresh(source) },
+            .opaque_move_out => .{
                 .opaque_storage_dependencies = try self.oneInputPath(0, &.{}),
                 .fresh_owned_roots = try self.oneFresh(source),
             },
-            .trusted_opaque_move,
-            .trusted_opaque_move_in,
-            .trusted_opaque_relocate,
-            .trusted_opaque_drop,
-            .trusted_opaque_mark_empty,
-            => .{},
         };
     }
 
