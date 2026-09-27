@@ -650,7 +650,7 @@ pub const Infer = struct {
                 flow.reachable = false;
             },
             .code_block => |child| try self.inferInputPostStates(function_id, child, flow, exits),
-            .break_statement, .continue_statement => flow.reachable = false,
+            .break_statement, .continue_statement, .abort_statement => flow.reachable = false,
             .auto_deinit_binding => |auto_id| try self.applyAutoDeinitInputPostStates(function_id, auto_id, states),
             else => try self.inferInputPostStatesExpression(function_id, node_id, states, exits),
         }
@@ -1330,7 +1330,7 @@ pub const Infer = struct {
                 state.emptied.clearRetainingCapacity();
             },
             .code_block => |child| try self.inferOpaqueEmptyBlock(function_id, child, effects, state, exits),
-            .break_statement, .continue_statement => state.reachable = false,
+            .break_statement, .continue_statement, .abort_statement => state.reachable = false,
             .auto_deinit_binding => |auto_id| try self.applyAutoDeinitOpaqueEffects(function_id, auto_id, effects, state),
             else => try self.inferOpaqueEmptyExpression(function_id, node_id, effects, state, exits),
         }
@@ -2102,7 +2102,17 @@ pub const Infer = struct {
                 self.bindings.get(binding) orelse .{},
             .move_value => |value| try self.withOwnershipTransfer(try self.inferExpression(function_id, value)),
             .denied_implicit_copy => |value| try self.inferExpression(function_id, value),
-            .address_of => |value| .{ .input_places = try self.inferInputPaths(function_id, value) },
+            .address_of => |value| blk: {
+                if (self.graph.node(value).content == .array_index) {
+                    const index = self.graph.node(value).content.array_index;
+                    // An indexed address borrows the storage reached by the
+                    // array pointer, which may itself be stored in an input
+                    // field. The iterator's pointer field is not the root of
+                    // the indexed element.
+                    break :blk .{ .input_place_values = try self.inferInputPaths(function_id, index.array_ptr) };
+                }
+                break :blk .{ .input_places = try self.inferInputPaths(function_id, value) };
+            },
             .dereference => |value| try self.inferOpaqueRead(
                 function_id,
                 node_id,

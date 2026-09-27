@@ -15,25 +15,39 @@ main(.system: System) -> (.status_code: Int32) := {
     copied ::= ~copied_result..ok
     #defer deinit(.self = $&copied, .allocator = system.allocator)
 
-    copied[0] = 99
+    set_result ::= set(.self = $&copied, .index = 0, .value = 99, .allocator = system.allocator).result
+    if is(.value = set_result, .variant = ..error) {
+        status_code = 6
+        return
+    }
     push(.self = $&copied, .value = 30, .allocator = system.allocator)
 
-    if arr.length != 2 {
+    if length#(.t: Int32)(.self = &arr).count != 2 {
         status_code = 1
         return
     }
 
-    if copied.length != 3 {
+    if length#(.t: Int32)(.self = &copied).count != 3 {
         status_code = 2
         return
     }
 
-    if arr[0] != 10 {
+    first_result ::= get(.self = &arr, .index = 0).result
+    if is(.value = first_result, .variant = ..error) {
+        status_code = 3
+        return
+    }
+    if first_result..ok != 10 {
         status_code = 3
         return
     }
 
-    if copied[0] != 99 {
+    copied_first_result ::= get(.self = &copied, .index = 0).result
+    if is(.value = copied_first_result, .variant = ..error) {
+        status_code = 4
+        return
+    }
+    if copied_first_result..ok != 99 {
         status_code = 4
         return
     }

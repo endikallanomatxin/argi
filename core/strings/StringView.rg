@@ -9,6 +9,7 @@ string_view_byte_address(
     .self: &StringView,
     .index: UIntNative,
 ) -> (.reference: &UInt8) := {
+    if index >= self&.length { abort }
     reference = reference_offset#(.t: UInt8)(.base = self&.data, .elements = index)
 }
 

@@ -552,6 +552,13 @@ pub const CodeGenerator = struct {
                 try self.genContinue(node.source);
                 break :blk null;
             },
+            .abort_statement => blk: {
+                const trap_type = c.LLVMFunctionType(c.LLVMVoidType(), null, 0, 0);
+                const trap = c.LLVMGetNamedFunction(self.module, "llvm.trap") orelse c.LLVMAddFunction(self.module, "llvm.trap", trap_type);
+                _ = c.LLVMBuildCall2(self.builder, trap_type, trap, null, 0, "");
+                _ = c.LLVMBuildUnreachable(self.builder);
+                break :blk null;
+            },
             .address_of => |target| try self.addressOf(node_id, target),
             .dereference => |deref| try self.dereference(deref),
             .pointer_assignment => |assignment| blk: {
@@ -712,7 +719,7 @@ pub const CodeGenerator = struct {
         const index = (try self.visitNode(access.index)) orelse return CodegenError.ValueNotFound;
         const array_type = try self.toLLVMType(access.array_type);
         const element_type = try self.toLLVMType(access.element_type);
-        const element_ptr = try self.arrayElementPointer(pointer.value_ref, array_type, index.value_ref);
+        const element_ptr = try self.arrayElementPointer(pointer.value_ref, array_type, index.value_ref, access.array_type);
         return .{ .value_ref = c.LLVMBuildLoad2(self.builder, element_type, element_ptr, "array.elem"), .type_ref = element_type, .ty = access.element_type };
     }
 
@@ -721,11 +728,24 @@ pub const CodeGenerator = struct {
         const index = (try self.visitNode(store.index)) orelse return CodegenError.ValueNotFound;
         const value = (try self.visitNode(store.value)) orelse return CodegenError.ValueNotFound;
         const array_type = try self.toLLVMType(store.array_type);
-        const element_ptr = try self.arrayElementPointer(pointer.value_ref, array_type, index.value_ref);
+        const element_ptr = try self.arrayElementPointer(pointer.value_ref, array_type, index.value_ref, store.array_type);
         _ = c.LLVMBuildStore(self.builder, value.value_ref, element_ptr);
     }
 
-    fn arrayElementPointer(self: *CodeGenerator, pointer: llvm.c.LLVMValueRef, array_type: llvm.c.LLVMTypeRef, index: llvm.c.LLVMValueRef) !llvm.c.LLVMValueRef {
+    fn arrayElementPointer(self: *CodeGenerator, pointer: llvm.c.LLVMValueRef, array_type: llvm.c.LLVMTypeRef, index: llvm.c.LLVMValueRef, semantic_type: graph_mod.GlobalTypeId) !llvm.c.LLVMValueRef {
+        const length = types.arrayLength(self.graph, semantic_type) orelse return CodegenError.InvalidType;
+        const limit = c.LLVMConstInt(c.LLVMTypeOf(index), length, 0);
+        const inside = c.LLVMBuildICmp(self.builder, c.LLVMIntULT, index, limit, "array.index.inside");
+        const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
+        const valid_block = c.LLVMAppendBasicBlock(function, "array.index.valid");
+        const invalid_block = c.LLVMAppendBasicBlock(function, "array.index.invalid");
+        _ = c.LLVMBuildCondBr(self.builder, inside, valid_block, invalid_block);
+        c.LLVMPositionBuilderAtEnd(self.builder, invalid_block);
+        const trap_type = c.LLVMFunctionType(c.LLVMVoidType(), null, 0, 0);
+        const trap = c.LLVMGetNamedFunction(self.module, "llvm.trap") orelse c.LLVMAddFunction(self.module, "llvm.trap", trap_type);
+        _ = c.LLVMBuildCall2(self.builder, trap_type, trap, null, 0, "");
+        _ = c.LLVMBuildUnreachable(self.builder);
+        c.LLVMPositionBuilderAtEnd(self.builder, valid_block);
         const native = try self.nativeUIntType();
         const zero = c.LLVMConstInt(native, 0, 0);
         var indices = [_]llvm.c.LLVMValueRef{ zero, index };
@@ -1026,7 +1046,7 @@ pub const CodeGenerator = struct {
                 const index = (try self.visitNode(access.index)) orelse return CodegenError.ValueNotFound;
                 const array_type = try self.toLLVMType(access.array_type);
                 const element_type = try self.toLLVMType(access.element_type);
-                const pointer = try self.arrayElementPointer(base.value_ref, array_type, index.value_ref);
+                const pointer = try self.arrayElementPointer(base.value_ref, array_type, index.value_ref, access.array_type);
                 break :blk .{ .value_ref = pointer, .type_ref = c.LLVMPointerType(element_type, 0), .ty = access.element_type };
             },
             .dereference => |deref| (try self.visitNode(deref.pointer)) orelse return CodegenError.ValueNotFound,
@@ -1159,9 +1179,11 @@ pub const CodeGenerator = struct {
         const reason = types.findField(self.graph, error_ty, "reason") orelse return CodegenError.InvalidType;
         const trace = types.findField(self.graph, error_ty, "trace") orelse return CodegenError.InvalidType;
         const entries = types.findField(self.graph, trace.field.ty, "entries") orelse return CodegenError.InvalidType;
-        const allocation = types.findField(self.graph, entries.field.ty, "allocation") orelse return CodegenError.InvalidType;
-        const length = types.findField(self.graph, entries.field.ty, "length") orelse return CodegenError.InvalidType;
-        const capacity = types.findField(self.graph, entries.field.ty, "capacity") orelse return CodegenError.InvalidType;
+        // Error trace append writes DynamicArray's private representation
+        // directly, so these names must match its core declaration.
+        const allocation = types.findField(self.graph, entries.field.ty, "_allocation") orelse return CodegenError.InvalidType;
+        const length = types.findField(self.graph, entries.field.ty, "_length") orelse return CodegenError.InvalidType;
+        const capacity = types.findField(self.graph, entries.field.ty, "_capacity") orelse return CodegenError.InvalidType;
         const data = types.findField(self.graph, allocation.field.ty, "data") orelse return CodegenError.InvalidType;
         const size = types.findField(self.graph, allocation.field.ty, "size") orelse return CodegenError.InvalidType;
         const entry_ty = self.genericTypeArgument(entries.field.ty, "t") orelse return CodegenError.InvalidType;

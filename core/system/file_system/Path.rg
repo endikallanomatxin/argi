@@ -245,7 +245,7 @@ join_views(
     match created {
         ..ok ~ created_text {
             text ::= ~created_text
-            left_bytes ::= array_view_ro#(.t: UInt8)(.data = left&.data, .length = left&.length)
+            left_bytes ::= _trusted_array_view_ro#(.t: UInt8)(.data = left&.data, .length = left&.length)
             string_append_bytes(.self = $&text, .source = left_bytes)
 
             if left&.length > 0 and right&.length > 0 {
@@ -255,7 +255,7 @@ join_views(
                 }
             }
 
-            right_bytes ::= array_view_ro#(.t: UInt8)(.data = right&.data, .length = right&.length)
+            right_bytes ::= _trusted_array_view_ro#(.t: UInt8)(.data = right&.data, .length = right&.length)
             string_append_bytes(.self = $&text, .source = right_bytes)
             result = ..ok (.text = ~text)
             return

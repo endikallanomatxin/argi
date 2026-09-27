@@ -43,7 +43,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    if arena.blocks.length != 1 {
+    if length#(.t: ArenaBlock)(.self = &arena.blocks).count != 1 {
         deinit(.self = $&first)
         deinit(.self = $&second)
         deinit(.self = $&arena)
@@ -57,7 +57,7 @@ main(.system: System) -> (.status_code: Int32) := {
 
     reset(.self = $&arena)
 
-    if arena.blocks.length != 0 {
+    if length#(.t: ArenaBlock)(.self = &arena.blocks).count != 0 {
         deinit(.self = $&arena)
         status_code = 13
         return

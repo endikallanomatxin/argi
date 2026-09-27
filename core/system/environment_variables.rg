@@ -49,12 +49,3 @@ has(
         ..error _ { result = ..error(.reason = ..out_of_memory) }
     }
 }
-
-operator get[](
-    .self: &EnvironmentVariables,
-    .index: StringView,
-) -> (.result: Errable#(.t: ?StringView, .reasons: (..out_of_memory))) := {
-    allocator :: CAllocator = CAllocator()
-    found ::= get(.self = self, .key = index, .allocator = $&allocator)
-    result = ~found
-}

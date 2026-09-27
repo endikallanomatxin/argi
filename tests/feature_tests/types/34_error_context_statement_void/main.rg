@@ -14,12 +14,17 @@ main() -> (.status_code: Int32) := {
             status_code = 1
         }
         ..error & err {
-            if err&.trace.entries.length != 1 {
+            if length#(.t: ErrorTraceEntry)(.self = &err&.trace.entries).count != 1 {
                 status_code = 2
                 return
             }
 
-            entry := err&.trace.entries[0]
+            entry_result ::= get#(.t: ErrorTraceEntry)(.self = &err&.trace.entries, .index = 0).result
+            if is(.value = entry_result, .variant = ..error) {
+                status_code = 4
+                return
+            }
+            entry ::= entry_result..ok
             context_view ::= as_view(.self = entry.context)
             if equals(.left = context_view, .right = "while stepping").ok {
                 status_code = 0

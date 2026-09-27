@@ -4,7 +4,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
     argc ::= system.args | length(&_)
     if argc >= 2 {
-        first_arg := system.args[1]
+        first_arg := argument_view_at(.self = system.args, .index = 1)
         if first_arg == "-h" or first_arg == "--help" {
             print(.value = "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help.\n")
             return
@@ -18,7 +18,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
     i :: UIntNative = 1
     while i < argc {
-        path := system.args[i]
+        path := argument_at(.self = system.args, .index = i)
         text_result ::= read_file(system.file_sys, path)
         match text_result {
             ..ok ~ payload {

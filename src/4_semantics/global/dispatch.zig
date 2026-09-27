@@ -305,17 +305,4 @@ pub const Resolver = struct {
         return .{ .function = function, .input = input };
     }
 
-    pub fn resolveIndex(
-        self: *Resolver,
-        module_index: usize,
-        module: *const module_sg.ModuleSemanticGraph,
-        o: globalizer.Offsets,
-        operation: module_entities.PendingOperation,
-    ) !resolution.Result {
-        const core_result = try self.core.tryResolve(module_index, module, o, operation);
-        if (!core_result.allowsFallback()) return core_result;
-
-        const generic_result = try self.generic_functions.tryResolve(module_index, module, o, operation);
-        return if (generic_result.allowsFallback()) .deferred else generic_result;
-    }
 };

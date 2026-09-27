@@ -88,22 +88,44 @@ Addable : Abstract = (
 )
 ```
 
-To use with generics:
+The named collection contracts currently defined in `core/lists/List.rg` are:
 
 ```
 Indexable#(.t: Type) : Abstract = (
-	operator get[] (.self: &Self, .i: UIntNative) -> (.value: t)
+	length(.self: &Self) -> (.count: UIntNative)
+	get_ro_ref(.self: &Self, .index: UIntNative) ->
+	    (.result: Errable#(.t: &t, .reasons: (..out_of_bounds)))
+)
+
+IndexableMutable#(.t: Type) : Abstract = (
+	length(.self: &Self) -> (.count: UIntNative)
+	get_ro_ref(.self: &Self, .index: UIntNative) ->
+	    (.result: Errable#(.t: &t, .reasons: (..out_of_bounds)))
+	get_rw_ref(.self: $&Self, .index: UIntNative) ->
+	    (.result: Errable#(.t: $&t, .reasons: (..out_of_bounds)))
+)
+
+IndexableValue#(.t: Type: ImplicitlyCopyable) : Abstract = (
+	get(.self: &Self, .index: UIntNative) ->
+	    (.result: Errable#(.t: t, .reasons: (..out_of_bounds)))
 )
 
 Resizable#(.t: Type) : Abstract = (
-	operator get[] (.self: &Self, .i: UIntNative) -> (.value: t)
-	operator set[] (.self: $&Self, .i: UIntNative, .value: t) -> ()
-	push (.self: $&Self, .value: t) -> ()
+	push(.self: $&Self, .value: t, .allocator: $&Allocator) ->
+	    (.result: Errable#(.t: Void, .reasons: (..out_of_memory)))
+	pop(.self: $&Self) ->
+	    (.result: Errable#(.t: t, .reasons: (..empty)))
+	insert(.self: $&Self, .i: UIntNative, .value: t,
+	       .allocator: $&Allocator) ->
+	    (.result: Errable#(.t: Void,
+	                      .reasons: (..out_of_memory, ..out_of_bounds)))
+	remove(.self: $&Self, .i: UIntNative) ->
+	    (.result: Errable#(.t: t, .reasons: (..out_of_bounds)))
 )
-
-DynamicArray#(.t: Type) implements Resizable#(.t: t)
-Array#(.n: UIntNative, .t: Type) implements Indexable#(.t: t)
 ```
+
+`DynamicArray` exposes corresponding functions, but does not yet declare an
+explicit `implements Resizable` relationship.
 
 To compose them:
 
@@ -188,10 +210,10 @@ AbstractMatrix#(
 
 
     -- Get item
-    operator get[] (.m: &Self, .i: IndexingSpec) -> (.r: t)
+    get (.m: &Self, .i: IndexingSpec) -> (.r: Errable#(.t: t, .reasons: (..out_of_bounds)))
 
     -- Set item
-    operator set[] (.m: $&Self, .i: IndexingSpec, .v: t) -> ()
+    set (.m: $&Self, .i: IndexingSpec, .v: t) -> (.r: Errable#(.t: Void, .reasons: (..out_of_bounds)))
 
 
     -- Addable with other matrix types of the same shape

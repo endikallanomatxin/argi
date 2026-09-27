@@ -7,7 +7,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         return
     }
 
-    old_alias ::= &array[0]
+    old_alias_result ::= get_ro_ref(.self = &array, .index = 0).result
+    if is(.value = old_alias_result, .variant = ..error) {
+        status_code = 3
+        return
+    }
+    old_alias ::= old_alias_result..ok
     second_push ::= push#(.t: Int32)(.self = $&array, .value = 20)
     if is(.value = second_push, .variant = ..error) {
         status_code = 2

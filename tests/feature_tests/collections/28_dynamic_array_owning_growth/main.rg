@@ -53,7 +53,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                 status_code = 4
                                 return
                             }
-                            if array.length != 3 or array.capacity < 3 {
+                            if length#(.t: Tracked)(.self = &array).count != 3 or capacity#(.t: Tracked)(.self = &array).count < 3 {
                                 status_code = 5
                                 return
                             }

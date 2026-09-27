@@ -118,6 +118,7 @@ file around.
   describes the change, not the process used to discover it. Avoid vague or
   temporary subjects such as `fix stuff`, `update`, or `wip`. Use the
   repository's natural subject style; do not add Conventional Commit prefixes.
+  Keep every line of a commit message at 72 characters or fewer.
 
 - If you think some important information is missing from this guide, please
 add it. If you learn something non-obvious, document it here so future work is

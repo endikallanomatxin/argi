@@ -484,6 +484,7 @@ pub fn Node(comptime Ids: type) type {
             switch_statement: Ids.SwitchId,
             break_statement,
             continue_statement,
+            abort_statement,
             address_of: Ids.NodeId,
             dereference: struct {
                 pointer: Ids.NodeId,

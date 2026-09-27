@@ -70,19 +70,18 @@ init(
 arena_free_blocks(
     .self: $&ArenaAllocator,
 ) -> () := {
-    i :: UIntNative = 0
-    while i < self&.blocks.length {
-        block : &ArenaBlock = &self&.blocks[i]
-        free(.address = cast#(.to: UIntNative)(.value = block&.data))
-        i = i + 1
+    while length#(.t: ArenaBlock)(.self = &self&.blocks).count != 0 {
+        removed ::= pop#(.t: ArenaBlock)(.self = $&self&.blocks)
+        match removed {
+            ..ok ~ block {
+                free(.address = cast#(.to: UIntNative)(.value = block.data))
+            }
+            ..error _ { abort }
+        }
     }
 
-    self&.blocks.length = 0
+    _trusted_dynamic_array_mark_empty#(.t: ArenaBlock)(.self = $&self&.blocks)
     self&.current_block_offset = 0
-    -- Every runtime block descriptor has been consumed by the loop above.
-    -- The backing DynamicArray remains allocated but its opaque slots are now
-    -- logically empty.
-    trusted_opaque_mark_empty(.storage = $&self&.blocks.allocation)
 }
 
 reset(
@@ -91,9 +90,7 @@ reset(
     arena_free_blocks(.self = self)
     deinit(.self = $&self&.domain)
     init(.p = $&self&.domain)
-    -- Re-establishing the arena generation does not repopulate its block
-    -- storage. Keep that fact visible in the composed safety summary.
-    trusted_opaque_mark_empty(.storage = $&self&.blocks.allocation)
+    _trusted_dynamic_array_mark_empty#(.t: ArenaBlock)(.self = $&self&.blocks)
 }
 
 deinit(
@@ -114,10 +111,10 @@ allocate(
     }
 
     needs_block :: Bool = false
-    if self&.blocks.length == 0 {
+    if length#(.t: ArenaBlock)(.self = &self&.blocks).count == 0 {
         needs_block = true
     } else {
-        last_block : &ArenaBlock = &self&.blocks[self&.blocks.length - 1]
+        last_block : &ArenaBlock = _trusted_dynamic_array_get_ro_ref#(.t: ArenaBlock)(.array = &self&.blocks, .index = length#(.t: ArenaBlock)(.self = &self&.blocks).count - 1).reference
         if self&.current_block_offset + required > last_block&.size {
             needs_block = true
         }
@@ -128,7 +125,7 @@ allocate(
         metadata_ready ::= ensure_capacity#(.t: ArenaBlock)(
             .allocator = self&.backing_allocator,
             .self = $&self&.blocks,
-            .capacity = self&.blocks.length + 1,
+            .capacity = length#(.t: ArenaBlock)(.self = &self&.blocks).count + 1,
         )
         if is(.value = metadata_ready, .variant = ..error) {
             result = ..error(.reason = ..out_of_memory)
@@ -157,7 +154,7 @@ allocate(
         self&.current_block_offset = 0
     }
 
-    active_block : &ArenaBlock = &self&.blocks[self&.blocks.length - 1]
+    active_block : &ArenaBlock = _trusted_dynamic_array_get_ro_ref#(.t: ArenaBlock)(.array = &self&.blocks, .index = length#(.t: ArenaBlock)(.self = &self&.blocks).count - 1).reference
     child_data ::= mutable_reference_offset#(.t: UInt8)(
         .base = active_block&.data,
         .elements = self&.current_block_offset,

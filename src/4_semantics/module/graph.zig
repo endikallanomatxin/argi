@@ -188,10 +188,6 @@ pub fn operatorKindFromSyntax(value: syn.OperatorName) callable.OperatorKind {
         .add => .add,
         .equal => .equal,
         .not_equal => .not_equal,
-        .get => .get,
-        .set => .set,
-        .get_ro_pointer => .get_ro_pointer,
-        .get_rw_pointer => .get_rw_pointer,
     };
 }
 
@@ -798,10 +794,6 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
                     .add => "operator +",
                     .equal => "operator ==",
                     .not_equal => "operator !=",
-                    .get => "operator get[]",
-                    .set => "operator set[]",
-                    .get_ro_pointer => "operator get_ro_pointer[]",
-                    .get_rw_pointer => "operator get_rw_pointer[]",
                 },
             }
         else

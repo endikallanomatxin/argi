@@ -697,6 +697,8 @@ pub fn semantizeWithOptions(
                 return error.Reported;
             if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
+            if (try diagnoseUnresolvedIndex(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                return error.Reported;
             if (try diagnoseUnresolvedCopy(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
             // A denied copy may already be represented in the graph so Safety
@@ -961,6 +963,7 @@ fn diagnoseInvalidPointerOperations(
                 return true;
             },
             .array_index => |access| {
+                if (try diagnoseConstantArrayIndex(graph, access.array_type, access.index, diagnostics)) return true;
                 const index_ty = graph.node(access.index).ty orelse continue;
                 if (global_types.isBuiltin(graph, index_ty, .UIntNative)) continue;
                 // Integer literals retain their default type until a consumer gives
@@ -980,6 +983,9 @@ fn diagnoseInvalidPointerOperations(
                     );
                 }
                 return true;
+            },
+            .array_store => |store| {
+                if (try diagnoseConstantArrayIndex(graph, store.array_type, store.index, diagnostics)) return true;
             },
             else => {},
         }
@@ -1015,6 +1021,39 @@ fn diagnoseInvalidPointerOperations(
         return true;
     }
     return false;
+}
+
+fn constantArrayIndex(graph: *const global_sg.GlobalSemanticGraph, node_id: global_sg.GlobalNodeId, depth: u8) ?i64 {
+    if (depth == 0) return null;
+    return switch (graph.node(node_id).content) {
+        .int_literal => |value| value,
+        .binding_use => |binding_id| blk: {
+            const binding = graph.binding(binding_id);
+            if (binding.mutability != .constant) break :blk null;
+            break :blk if (binding.initialization) |initializer| constantArrayIndex(graph, initializer, depth - 1) else null;
+        },
+        .move_value => |value| constantArrayIndex(graph, value, depth - 1),
+        .explicit_cast => |cast| constantArrayIndex(graph, cast.value, depth - 1),
+        else => null,
+    };
+}
+
+fn diagnoseConstantArrayIndex(
+    graph: *const global_sg.GlobalSemanticGraph,
+    array_type: global_sg.GlobalTypeId,
+    index: global_sg.GlobalNodeId,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
+) !bool {
+    const raw = constantArrayIndex(graph, index, 8) orelse return false;
+    const length = global_types.arrayLength(graph, array_type) orelse return false;
+    if (raw >= 0 and @as(u64, @intCast(raw)) < length) return false;
+    if (diagnostics) |sink| try sink.add(
+        diagnosticLocation(graph, sink, graph.node(index).source),
+        .semantic,
+        "array index {d} is out of bounds for length {d}",
+        .{ raw, length },
+    );
+    return true;
 }
 
 fn diagnoseUnresolvedPropagatedReach(
@@ -1303,7 +1342,10 @@ fn resolvePendingOperation(
             dispatch.resolveLocalReach(module, o, operation.resolve_local_reach)
         else
             dispatch.resolveCall(module_index, module, o, operation),
-        .indexing => dispatch.resolveIndex(module_index, module, o, operation),
+        .indexing => blk: {
+            const result = try core.tryResolve(module_index, module, o, operation);
+            break :blk if (result == .not_applicable) .deferred else result;
+        },
         .core => blk: {
             const core_result = try core.tryResolve(module_index, module, o, operation);
             if (core_result == .resolved or operation != .resolve_binary) break :blk ownedResult(core_result);
@@ -1446,6 +1488,32 @@ fn diagnosePrivateFields(
             if (@intFromEnum(owner_module) == module_index) continue;
             try diagnostics.add(
                 diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], access.source)),
+                .semantic,
+                "field '{s}' is private to its module",
+                .{name},
+            );
+            return true;
+        }
+    }
+    // A contextual struct literal can initialize a field without producing a
+    // field-access operation. Check its resolved type after construction has
+    // filled the literal, including when it was passed through an assignment.
+    for (graph.nodes.items) |node| {
+        const literal = switch (node.content) {
+            .struct_value_literal => |value| value,
+            else => continue,
+        };
+        const ty = node.ty orelse continue;
+        if (node.source.file_index >= graph.files.items.len) continue;
+        const caller_module = graph.files.items[node.source.file_index].module;
+        for (graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |value_field| {
+            const name = graph.text(value_field.name);
+            if (!std.mem.startsWith(u8, name, "_")) continue;
+            const field = global_types.findField(graph, ty, name) orelse continue;
+            if (field.field.source.file_index >= graph.files.items.len) continue;
+            if (graph.files.items[field.field.source.file_index].module == caller_module) continue;
+            try diagnostics.add(
+                diagnosticLocation(graph, diagnostics, node.source),
                 .semantic,
                 "field '{s}' is private to its module",
                 .{name},
@@ -1625,7 +1693,9 @@ fn functionDeclarationVisibleForDiagnostic(
     const owner = graph.moduleForDeclaration(declaration) orelse return false;
     const own_module = @intFromEnum(owner) == current_module;
     const name = graph.text(graph.declarations.items[@intFromEnum(declaration)].name);
-    if (!own_module and std.mem.startsWith(u8, name, "_")) return false;
+    const core_peer = graph.modules.items[current_module].is_bundled_core and
+        graph.modules.items[@intFromEnum(owner)].is_bundled_core;
+    if (!own_module and !core_peer and std.mem.startsWith(u8, name, "_")) return false;
     if (qualified_module) |wanted| return owner == wanted;
     return own_module or graph.modules.items[@intFromEnum(owner)].is_bundled_core;
 }
@@ -1815,6 +1885,42 @@ fn diagnoseUnresolvedChoice(
     return false;
 }
 
+fn diagnoseUnresolvedIndex(
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    resolved: []const bool,
+    reachable: ?*const reachability_mod.FunctionSet,
+    offsets: []const globalizer.Offsets,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    var flat: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
+            defer flat += 1;
+            const access = switch (operation) {
+                .resolve_index => |value| value,
+                else => continue,
+            };
+            const owner = if (operation_index < module.semantic.pending_owner_functions.items.len)
+                if (module.semantic.pending_owner_functions.items[operation_index]) |value| globalizer.globalFunction(offsets[module_index], value) else null
+            else
+                null;
+            if (resolved[flat] or (reachable != null and owner != null and !reachable.?.contains(owner.?))) continue;
+            const collection = graph.node(globalizer.globalNode(offsets[module_index], access.value));
+            const ty = collection.ty orelse continue;
+            if (graph.isTypeUnresolved(ty) or global_types.arrayElement(graph, ty) != null) continue;
+            try diagnostics.add(
+                diagnosticLocation(graph, diagnostics, collection.source),
+                .semantic,
+                "indexing is only supported for native arrays; use a named collection operation",
+                .{},
+            );
+            return true;
+        }
+    }
+    return false;
+}
+
 fn diagnoseUnresolvedCopy(
     allocator: std.mem.Allocator,
     graph: *const global_sg.GlobalSemanticGraph,
@@ -1921,7 +2027,9 @@ fn diagnoseUnresolvedCall(
             if (reference.module_path) |path| {
                 const target = qualified_module orelse continue;
                 const has_name = declarationNameExistsInModule(graph, target, name, &.{ .function, .test_function });
-                if (has_name and @intFromEnum(target) != module_index and std.mem.startsWith(u8, name, "_")) {
+                const core_peer = graph.modules.items[module_index].is_bundled_core and
+                    graph.modules.items[@intFromEnum(target)].is_bundled_core;
+                if (has_name and @intFromEnum(target) != module_index and !core_peer and std.mem.startsWith(u8, name, "_")) {
                     try diagnostics.add(location, .semantic, "function '{s}' is private to its module", .{name});
                     return true;
                 }

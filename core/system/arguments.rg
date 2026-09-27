@@ -70,11 +70,15 @@ argument_view_at(
     )
 }
 
-operator get[](
+get(
     .self: &Arguments,
     .index: UIntNative,
-) -> (.view: StringView) := {
-    view = argument_view_at(.self = self, .index = index)
+) -> (.result: Errable#(.t: StringView, .reasons: (..out_of_bounds))) := {
+    if index >= self&.count {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    result = ..ok argument_view_at(.self = self, .index = index)
 }
 
 to_iterator(
@@ -96,7 +100,7 @@ next(
     .self: $&ArgumentsIterator,
 ) -> (.value: StringView) := {
     current_index :: UIntNative = self&.index
-    value = self&.args[current_index]
+    value = argument_view_at(.self = self&.args, .index = current_index)
     self& = (
         .args = self&.args,
         .index = current_index + 1,

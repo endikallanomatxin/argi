@@ -2,64 +2,133 @@ ArrayView#(.t: Type) : Type = (
     --
     -- Non-owning view over a contiguous mutable region of elements.
     --
-    -- This is a general core descriptor. Interop layers can lower it to the
-    -- concrete ABI shape a foreign boundary expects, but the language-level
-    -- concept is simply a mutable `pointer + length` view.
+    -- The pointer and length must describe the same live region. Ordinary
+    -- constructors derive the length from a referenced object; raw storage
+    -- requires an explicit trusted boundary.
     --
-    .data   : $&t
-    .length : UIntNative
+    ._data   : $&t
+    ._length : UIntNative
 )
 
 ArrayViewRO#(.t: Type) : Type = (
-    .data   : &t
-    .length : UIntNative
+    ._data   : &t
+    ._length : UIntNative
 )
 
 ArrayView#(.t: Type) implements ImplicitlyCopyable
 ArrayViewRO#(.t: Type) implements ImplicitlyCopyable
 
-array_view_ro#(.t: Type)(.data: &t, .length: UIntNative) -> (.array: ArrayViewRO#(.t: t)) := {
-    array = (.data = data, .length = length)
+length#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.count: UIntNative) := {
+    count = self&._length
 }
 
-array_view#(.t: Type)(
+length#(.t: Type)(.self: &ArrayViewRO#(.t: t)) -> (.count: UIntNative) := {
+    count = self&._length
+}
+
+data#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.pointer: $&t) := {
+    pointer = self&._data
+}
+
+data#(.t: Type)(.self: &ArrayViewRO#(.t: t)) -> (.pointer: &t) := {
+    pointer = self&._data
+}
+
+array_view_ro#(.t: Type)(.data: &t) -> (.array: ArrayViewRO#(.t: t)) := {
+    array = (._data = data, ._length = 1)
+}
+
+array_view#(.t: Type)(.data: $&t) -> (.array: ArrayView#(.t: t)) := {
+    array = (._data = data, ._length = 1)
+}
+
+array_view_ro#(.n: UIntNative, .t: Type)(
+    .array: &Array#(.n = n, .t: t),
+) -> (.view: ArrayViewRO#(.t: t)) := {
+    if n == 0 { abort }
+    first ::= reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = array).reference
+    view = (._data = first, ._length = n)
+}
+
+array_view#(.n: UIntNative, .t: Type)(
+    .array: $&Array#(.n = n, .t: t),
+) -> (.view: ArrayView#(.t: t)) := {
+    if n == 0 { abort }
+    first ::= mutable_reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = array).reference
+    view = (._data = first, ._length = n)
+}
+
+-- Core callers must prove the requested contiguous range belongs to the
+-- live backing storage and initialize an element before reading it.
+_trusted_array_view_ro#(.t: Type)(.data: &t, .length: UIntNative) -> (.array: ArrayViewRO#(.t: t)) := {
+    array = (._data = data, ._length = length)
+}
+
+_trusted_array_view#(.t: Type)(
     .data: $&t,
     .length: UIntNative,
 ) -> (.array: ArrayView#(.t: t)) := {
     array = (
-        .data = data,
-        .length = length,
+        ._data = data,
+        ._length = length,
     )
 }
 
-array_view_from_raw#(.t: Type)(
-    .raw: RawPointer#(.t: t),
-    .root: $&Any,
-    .length: UIntNative,
-) -> (.array: ArrayView#(.t: t)) := {
-    data ::= establish_inherited_reference#(.t: t)(.raw = raw, .root = root)
-    array = array_view#(.t: t)(.data = data, .length = length)
-}
-
-array_view_element_reference#(.t: Type)(
+get_ro_ref#(.t: Type)(
     .self: &ArrayView#(.t: t),
     .index: UIntNative,
-) -> (.reference: &t) := {
-    reference = reference_offset#(.t: t)(.base = self&.data, .elements = index)
+) -> (.result: Errable#(.t: &t, .reasons: (..out_of_bounds))) := {
+    if index >= self&._length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    result = ..ok reference_offset#(.t: t)(.base = self&._data, .elements = index).reference
 }
 
-operator get[]#(.t: Type)(
+get_ro_ref#(.t: Type)(
+    .self: &ArrayViewRO#(.t: t),
+    .index: UIntNative,
+) -> (.result: Errable#(.t: &t, .reasons: (..out_of_bounds))) := {
+    if index >= self&._length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    result = ..ok reference_offset#(.t: t)(.base = self&._data, .elements = index).reference
+}
+
+get_rw_ref#(.t: Type)(
+    .self: $&ArrayView#(.t: t),
+    .index: UIntNative,
+) -> (.result: Errable#(.t: $&t, .reasons: (..out_of_bounds))) := {
+    if index >= self&._length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    result = ..ok mutable_reference_offset#(.t: t)(.base = self&._data, .elements = index).reference
+}
+
+get#(.t: Type: ImplicitlyCopyable)(
     .self: &ArrayView#(.t: t),
     .index: UIntNative,
-) -> (.value: t) := {
-    value = array_view_element_reference#(.t: t)(.self = self, .index = index).reference&
+) -> (.result: Errable#(.t: t, .reasons: (..out_of_bounds))) := {
+    if index >= self&._length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    ptr ::= reference_offset#(.t: t)(.base = self&._data, .elements = index).reference
+    result = ..ok ptr&
 }
 
-operator set[]#(.t: Type)(
+set#(.t: Type: ImplicitlyCopyable)(
     .self: $&ArrayView#(.t: t),
     .index: UIntNative,
     .value: t,
-) -> () := {
-    ptr ::= mutable_reference_offset#(.t: t)(.base = self&.data, .elements = index)
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_bounds))) := {
+    if index >= self&._length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    ptr ::= mutable_reference_offset#(.t: t)(.base = self&._data, .elements = index)
     ptr& = value
+    result = ..ok Void()
 }

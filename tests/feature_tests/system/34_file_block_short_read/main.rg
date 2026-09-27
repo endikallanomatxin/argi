@@ -20,19 +20,15 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     file ::= ~create_result..ok
 
-    write_allocation_result ::= allocate(.self = system.allocator, .size = 2)
-    if is(.value = write_allocation_result, .variant = ..error) {
-        status_code = 3
+    write_bytes : Array#(.n = 2, .t: UInt8) = (0, 0)
+    write_buffer ::= array_view(.array = $&write_bytes)
+    first_set ::= set#(.t: UInt8)(.self = $&write_buffer, .index = 0, .value = 41).result
+    second_set ::= set#(.t: UInt8)(.self = $&write_buffer, .index = 1, .value = 42).result
+    if is(.value = first_set, .variant = ..error) or is(.value = second_set, .variant = ..error) {
+        close(.self = $&file)
+        status_code = 4
         return
     }
-    write_allocation ::= ~write_allocation_result..ok
-
-    write_buffer ::= array_view#(.t: UInt8)(
-        .data = write_allocation.data,
-        .length = 2,
-    )
-    write_buffer[0] = 41
-    write_buffer[1] = 42
 
     write_result ::= write(.self = $&file, .buffer = write_buffer)
 
@@ -59,17 +55,8 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     file = ~open_result..ok
 
-    read_allocation_result ::= allocate(.self = system.allocator, .size = 4)
-    if is(.value = read_allocation_result, .variant = ..error) {
-        status_code = 7
-        return
-    }
-    read_allocation ::= ~read_allocation_result..ok
-
-    read_buffer ::= array_view#(.t: UInt8)(
-        .data = read_allocation.data,
-        .length = 4,
-    )
+    read_bytes : Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
+    read_buffer ::= array_view(.array = $&read_bytes)
 
     read_result ::= read(.self = $&file, .buffer = read_buffer)
     close(.self = $&file)
@@ -86,12 +73,22 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    if read_buffer[0] != 41 {
+    first_read ::= get#(.t: UInt8)(.self = &read_buffer, .index = 0).result
+    if is(.value = first_read, .variant = ..error) {
+        status_code = 10
+        return
+    }
+    if first_read..ok != 41 {
         status_code = 10
         return
     }
 
-    if read_buffer[1] != 42 {
+    second_read ::= get#(.t: UInt8)(.self = &read_buffer, .index = 1).result
+    if is(.value = second_read, .variant = ..error) {
+        status_code = 11
+        return
+    }
+    if second_read..ok != 42 {
         status_code = 11
         return
     }

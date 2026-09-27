@@ -1014,6 +1014,8 @@ pub const Context = struct {
             return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .break_statement);
         if (self.tree.tag(node) == .continue_statement)
             return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .continue_statement);
+        if (self.tree.tag(node) == .abort_statement)
+            return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .abort_statement);
 
         var operands = std.array_list.Managed(ir.ParameterizedNodeId).init(self.allocator);
         defer operands.deinit();
@@ -1026,7 +1028,7 @@ pub const Context = struct {
             .choice_literal, .choice_some_literal => if (self.tree.choiceLiteral(node)) |literal| try self.writer.addString(self.tree.tokenTextFromSource(self.source, literal.name_token)) else null,
             else => null,
         };
-        const assumed = if (kind == .binary or kind == .index or kind == .index_store) blk: {
+        const assumed = if (kind == .binary) blk: {
             const input = try self.addResolvedNode(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
             try self.captureAssumedFields(node, input);
             break :blk input;

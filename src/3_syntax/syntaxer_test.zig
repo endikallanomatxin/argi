@@ -106,8 +106,7 @@ test "compact syntaxing accepts positive feature programs" {
 }
 
 test "compact syntaxing preserves adversarial grammar distinctions" {
-    try expectTags("tests/feature_tests/basics/14_get_and_set_index_operators/main.rg", &.{
-        .function_declaration,
+    try expectTags("tests/feature_tests/collections/07_array_index_uint_native/main.rg", &.{
         .index_access,
         .index_assignment,
     });

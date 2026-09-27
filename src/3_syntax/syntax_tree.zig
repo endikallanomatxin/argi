@@ -112,6 +112,7 @@ pub const Node = struct {
         error_context,
         nullable_test,
         index_access,
+        abort_statement,
         return_statement,
         break_statement,
         continue_statement,
@@ -232,10 +233,6 @@ pub const OperatorName = enum {
     add,
     equal,
     not_equal,
-    get,
-    set,
-    get_ro_pointer,
-    get_rw_pointer,
 };
 pub const IfStatement = struct { condition: NodeIndex, then_block: NodeIndex, else_block: ?NodeIndex };
 pub const FunctionCall = struct {
@@ -513,14 +510,6 @@ pub const FileSyntaxTree = struct {
                 .equal => .{ .operator = .equal },
                 .not_equal => .{ .operator = .not_equal },
                 else => null,
-            },
-            .identifier => |range| blk: {
-                const text = range.slice(source);
-                if (std.mem.eql(u8, text, "get")) break :blk .{ .operator = .get };
-                if (std.mem.eql(u8, text, "set")) break :blk .{ .operator = .set };
-                if (std.mem.eql(u8, text, "get_ro_pointer")) break :blk .{ .operator = .get_ro_pointer };
-                if (std.mem.eql(u8, text, "get_rw_pointer")) break :blk .{ .operator = .get_rw_pointer };
-                break :blk null;
             },
             else => null,
         };
@@ -881,6 +870,7 @@ fn fixedTokenText(content: token.Content) []const u8 {
         .dot => ".",
         .double_dot => "..",
         .comma => ",",
+        .keyword_abort => "abort",
         .keyword_return => "return",
         .keyword_if => "if",
         .keyword_else => "else",

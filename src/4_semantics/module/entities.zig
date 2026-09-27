@@ -213,13 +213,6 @@ pub const PendingOperation = union(enum) {
         value: ModuleNodeId,
         index: ModuleNodeId,
         store_value: ?ModuleNodeId = null,
-        operator: callable.OperatorKind = .get,
-        // Index operators participate in the same contextual resolution as
-        // ordinary calls: generic arguments and omitted reach defaults may
-        // depend on bindings visible at the index expression.
-        visible_bindings: BindingRange = .{ .start = 0, .len = 0 },
-        owner_function: ?ModuleFunctionId = null,
-        assumed_arguments: ?ModuleNodeId = null,
     },
     resolve_dereference: struct {
         node: ModuleNodeId,

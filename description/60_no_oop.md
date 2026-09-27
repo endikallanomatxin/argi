@@ -83,39 +83,9 @@ print(my_vec|cast(_))
 ```
 
 
-### Indexables
+### Acceso por índice
 
-Como ofrecer la sintaxis de \[\], para que la gente la implemente en sus tipos.
-En python es \_\_getitem\_\_ y \_\_setitem\_\_. Para numpy por ejemplo.
-Go no tiene de estos, igual se puede prescindir.
-
-```
-Indexable#(.t: Type) : Abstract = (
-    get[](.self: Self, .index: Int) -> (.value: t)
-    set[](.self: $&Self, .index: Int, .value: t) -> ()
-)
-```
-
-```
-MiLista : Type = (
-    .elementos: List#(.t: Int)
-)
-
-get[](.self: MiLista, .index: Int) -> (.value: Int) := {
-    return self.elementos[index]
-}
-
-set[](.self: $&MiLista, .index: Int, .value: Int) -> () := {
-    self.elementos[index] = value
-}
-
-MiLista implements Indexable#(.t: Int)
-```
-
-```
-my_list : Milista = (1, 2, 3)
-print lista[0]  -- Llama a `get`
-lista[1] = 25    -- Llama a `set`
-```
-
-O igual se puede hacer con operator overloading.
+La sintaxis `[]` es una operación estructural de los arrays nativos. No se
+puede implementar para tipos de usuario. Las colecciones de biblioteca
+ofrecen funciones con nombre para leer, escribir o tomar referencias a sus
+elementos, con la comprobación de rango que corresponda a cada colección.

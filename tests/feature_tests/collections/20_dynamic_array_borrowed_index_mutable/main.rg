@@ -7,18 +7,38 @@ main(.system: System) -> (.status_code: Int32) := {
     push(.self = $&arr, .value = 10, .allocator = system.allocator)
     push(.self = $&arr, .value = 20, .allocator = system.allocator)
 
-    first_ptr : $&Int32 = $&arr[0]
+    first_ptr_result ::= get_rw_ref(.self = $&arr, .index = 0).result
+    if is(.value = first_ptr_result, .variant = ..error) {
+        status_code = 1
+        return
+    }
+    first_ptr : $&Int32 = first_ptr_result..ok
     first_ptr& = 99
 
-    if arr[0] != 99 {
+    first_result ::= get(.self = &arr, .index = 0).result
+    if is(.value = first_result, .variant = ..error) {
+        status_code = 2
+        return
+    }
+    if first_result..ok != 99 {
         status_code = 1
         return
     }
 
-    second_ptr : $&Int32 = $&arr[1]
+    second_ptr_result ::= get_rw_ref(.self = $&arr, .index = 1).result
+    if is(.value = second_ptr_result, .variant = ..error) {
+        status_code = 3
+        return
+    }
+    second_ptr : $&Int32 = second_ptr_result..ok
     second_ptr& = 77
 
-    if arr[1] != 77 {
+    second_result ::= get(.self = &arr, .index = 1).result
+    if is(.value = second_result, .variant = ..error) {
+        status_code = 4
+        return
+    }
+    if second_result..ok != 77 {
         status_code = 2
         return
     }

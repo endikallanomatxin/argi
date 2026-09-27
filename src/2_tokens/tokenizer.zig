@@ -384,7 +384,9 @@ pub const Tokenizer = struct {
                 _ = self.advance();
             }
             const word = self.source[start..self.location.offset];
-            if (std.mem.eql(u8, word, "return")) {
+            if (std.mem.eql(u8, word, "abort")) {
+                try self.addToken(tok.Content{ .keyword_abort = .{} }, loc);
+            } else if (std.mem.eql(u8, word, "return")) {
                 try self.addToken(tok.Content{ .keyword_return = .{} }, loc);
             } else if (std.mem.eql(u8, word, "if")) {
                 try self.addToken(tok.Content{ .keyword_if = .{} }, loc);

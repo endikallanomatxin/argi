@@ -158,29 +158,18 @@ their signatures, for example:
 - `stdout`
 - `logger`
 
-The same idea may also be used by operators. Operators are syntactic contracts:
-their principal arguments must correspond to syntax that the user actually
-writes, but they may still have extra defaulted parameters resolved through
-`reach`.
-
-For example, an index operator may conceptually have:
+The same idea may also be used by operators with written operands. Collection
+access uses ordinary named functions. For example, `get` needs only the array
+and index; operations that allocate, such as `push`, also take an allocator:
 
 ```rg
-operator get[] #(.t: Type) (
-    .allocator: $&Allocator = reach allocator, system.allocator,
-    .self: &DynamicArray#(.t: t),
-    .index: UIntNative,
-) -> (.value: t)
+assume allocator ::= system.allocator
+push(.self = $&arr, .value = 42)
+value_result ::= get(.self = &arr, .index = 0).result
 ```
 
-and the user still writes only:
-
-```rg
-arr[i]
-```
-
-If a caller needs to control the allocator explicitly, that should be done
-through a normal function rather than through operator syntax.
+`get` returns an `Errable` with `..out_of_bounds`; it has no allocator input.
+Calls to both functions follow the ordinary argument resolution rules above.
 
 ### Resolution rules
 

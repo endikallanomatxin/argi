@@ -191,22 +191,30 @@ enough:
 safe code -> Trusted Primitive -> raw / opaque / runtime mechanism
 ```
 
-> [!FIX] Bounds safety
-> Temporal validity does not prove that an index or offset is inside an object.
-> Safe collection operations need to check bounds or establish them statically;
-> unchecked reference offsets belong behind a trusted boundary.
->
-> Bounds also do not establish element identity: after structural mutation, an
-> old index may still be in range but refer to a different element.
+Core helpers that call these primitives and maintain collection invariants
+are private to bundled core modules. Their `_trusted_*` names do not grant
+compiler privileges; user modules cannot call them to claim an arbitrary
+view extent or initialized slot.
 
-> [!IDEA] Uninitialized storage
-> Owning storage is different from owning initialized values. A `DynamicArray`
-> can reserve capacity for N elements while only `len` slots hold live values
-> that may be read, moved or destroyed.
->
-> Decide how to express this distinction: an `Uninit<T>`-like type, tracked
-> initialization state, or a storage API. It should also cover partial and
-> non-contiguous initialization without exposing uninitialized bytes as live `T`.
+Temporal validity does not prove that an index or offset is inside an object.
+Fixed arrays check `index < length` in codegen. Core's array views and owning
+collections check their logical lengths before indexed access. The low-level
+reference-offset functions remain trusted operations; callers must supply a
+valid range. Native array indexing traps on a failed check and retains its
+direct value type. Core collections use named, fallible access functions.
+`abort` is a terminal statement: semantizing knows that its path ends and
+codegen emits a runtime trap. Bounds also do not establish element identity
+after mutation.
+
+`Allocation` owns bytes, not values. `MaybeUninit<T>` in core is a typed slot
+handle over those bytes. It has no occupancy flag and does not expose a `T`.
+The owning abstraction supplies size, alignment and occupancy invariants.
+Its private helpers initialize a vacant slot through the existing opaque
+move-in primitive or extract an occupied slot through opaque move-out.
+`DynamicArray<T>` maintains `[0, length)` as occupied and `[length, capacity)`
+as vacant. Its movement operations pass `MaybeUninit<T>` slot handles to a
+trusted relocation primitive; they do not expose empty destinations as `&T` or
+`$&T`. Normal references are formed only after checking `index < length`.
 
 > [!IDEA] Alignment and representation validity
 > Live storage is not enough to construct a safe `&T` / `$&T`: it must also have

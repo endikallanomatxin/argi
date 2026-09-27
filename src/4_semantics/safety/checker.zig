@@ -333,6 +333,7 @@ pub const SafetyChecker = struct {
                     if (loop_transfers) |transfers| try self.mergeLoopTransfer(&transfers.continue_state, state);
                     state.reachable = false;
                 },
+                .abort_statement => state.reachable = false,
                 .code_block => |nested| try self.validateBlock(function, nested, state, loop_transfers),
                 else => _ = try self.evaluate(function, node_id, state),
             }
@@ -586,7 +587,7 @@ pub const SafetyChecker = struct {
                 try self.validateIntegerLiteral(node.source, node.ty, value);
                 break :blk .{};
             },
-            .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .type_initializer, .testing_expect_error, .reach_directive, .break_statement, .continue_statement => .{},
+            .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .type_initializer, .testing_expect_error, .reach_directive, .break_statement, .continue_statement, .abort_statement => .{},
             else => .{},
         };
     }
@@ -2650,7 +2651,11 @@ pub const SafetyChecker = struct {
                 const index = variantIndex(self.graph, choice_ty, access.variant) orelse break :blk null;
                 break :blk try self.project(base, .{ .variant = index });
             },
-            .array_index => |access| if (try self.resolvePlace(access.array_ptr, state)) |base| try self.project(base, if (self.staticIndex(access.index)) |index| .{ .static_index = index } else .dynamic_index) else null,
+            .array_index => |access| blk: {
+                const pointer = try self.evaluate(@enumFromInt(0), access.array_ptr, state);
+                const base = pointer.referenced_place orelse break :blk null;
+                break :blk try self.project(base, if (self.staticIndex(access.index)) |index| .{ .static_index = index } else .dynamic_index);
+            },
             else => null,
         };
     }

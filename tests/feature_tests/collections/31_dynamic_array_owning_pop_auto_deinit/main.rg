@@ -10,7 +10,9 @@ deinit(.self: $&Tracked) -> () := {
 }
 
 take_last(.array: $&DynamicArray#(.t: Tracked)) -> () := {
-    popped ::= pop#(.t: Tracked)(.self = array)
+    popped_result ::= pop#(.t: Tracked)(.self = array).result
+    if is(.value = popped_result, .variant = ..error) { return }
+    popped ::= ~popped_result..ok
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
@@ -24,7 +26,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             array ::= DynamicArray#(.t: Tracked)(.capacity = 1)
             push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~item)
             take_last(.array = $&array)
-            if drops != 1 or array.length != 0 {
+            if drops != 1 or length#(.t: Tracked)(.self = &array).count != 0 {
                 status_code = 2
                 return
             }
