@@ -450,7 +450,11 @@ pub const Resolver = struct {
         const owner = self.graph.moduleForDeclaration(declaration) orelse return false;
         const own_module = @intFromEnum(owner) == current_module;
         const name = self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name);
-        if (!own_module and std.mem.startsWith(u8, name, "_")) return false;
+        // Bundled core modules form one trusted implementation boundary.
+        // Private helpers remain invisible to ordinary user modules.
+        const core_peer = self.graph.modules.items[current_module].is_bundled_core and
+            self.graph.modules.items[@intFromEnum(owner)].is_bundled_core;
+        if (!own_module and !core_peer and std.mem.startsWith(u8, name, "_")) return false;
         if (qualified_module) |wanted| return owner == wanted;
         return own_module or self.graph.modules.items[@intFromEnum(owner)].is_bundled_core;
     }

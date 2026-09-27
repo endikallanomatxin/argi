@@ -191,6 +191,11 @@ enough:
 safe code -> Trusted Primitive -> raw / opaque / runtime mechanism
 ```
 
+Core helpers that call these primitives and maintain collection invariants
+are private to bundled core modules. Their `_trusted_*` names do not grant
+compiler privileges; user modules cannot call them to claim an arbitrary
+view extent or initialized slot.
+
 Temporal validity does not prove that an index or offset is inside an object.
 Fixed arrays check `index < length` in codegen. Core's array views and owning
 collections check their logical lengths before indexed access. The low-level
@@ -204,7 +209,7 @@ after mutation.
 `Allocation` owns bytes, not values. `MaybeUninit<T>` in core is a typed slot
 handle over those bytes. It has no occupancy flag and does not expose a `T`.
 The owning abstraction supplies size, alignment and occupancy invariants.
-Its trusted operations initialize a vacant slot through the existing opaque
+Its private helpers initialize a vacant slot through the existing opaque
 move-in primitive or extract an occupied slot through opaque move-out.
 `DynamicArray<T>` maintains `[0, length)` as occupied and `[length, capacity)`
 as vacant. Its movement operations pass `MaybeUninit<T>` slot handles to a

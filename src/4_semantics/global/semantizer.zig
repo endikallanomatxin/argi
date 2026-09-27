@@ -1693,7 +1693,9 @@ fn functionDeclarationVisibleForDiagnostic(
     const owner = graph.moduleForDeclaration(declaration) orelse return false;
     const own_module = @intFromEnum(owner) == current_module;
     const name = graph.text(graph.declarations.items[@intFromEnum(declaration)].name);
-    if (!own_module and std.mem.startsWith(u8, name, "_")) return false;
+    const core_peer = graph.modules.items[current_module].is_bundled_core and
+        graph.modules.items[@intFromEnum(owner)].is_bundled_core;
+    if (!own_module and !core_peer and std.mem.startsWith(u8, name, "_")) return false;
     if (qualified_module) |wanted| return owner == wanted;
     return own_module or graph.modules.items[@intFromEnum(owner)].is_bundled_core;
 }
@@ -2025,7 +2027,9 @@ fn diagnoseUnresolvedCall(
             if (reference.module_path) |path| {
                 const target = qualified_module orelse continue;
                 const has_name = declarationNameExistsInModule(graph, target, name, &.{ .function, .test_function });
-                if (has_name and @intFromEnum(target) != module_index and std.mem.startsWith(u8, name, "_")) {
+                const core_peer = graph.modules.items[module_index].is_bundled_core and
+                    graph.modules.items[@intFromEnum(target)].is_bundled_core;
+                if (has_name and @intFromEnum(target) != module_index and !core_peer and std.mem.startsWith(u8, name, "_")) {
                     try diagnostics.add(location, .semantic, "function '{s}' is private to its module", .{name});
                     return true;
                 }

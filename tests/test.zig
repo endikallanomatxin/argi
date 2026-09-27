@@ -2262,16 +2262,10 @@ test "feature_tests/collections/42X_dynamic_array_pop_empty" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/collections/43_maybe_uninit_transition" {
-    const test_path = "tests/feature_tests/collections/43_maybe_uninit_transition";
-    try expectSuccessfulBuild(test_path);
-    try run(test_path);
-}
-
-test "feature_tests/collections/44X_maybe_uninit_read_before_write" {
+test "feature_tests/collections/44X_uninit_helper_private" {
     try buildExpectFail(
-        "tests/feature_tests/collections/44X_maybe_uninit_read_before_write",
-        "no overload of 'read_value' accepts arguments (.value: MaybeUninit#(.t: Int32))",
+        "tests/feature_tests/collections/44X_uninit_helper_private",
+        "no function named '_trusted_uninit_slot' exists",
     );
 }
 
@@ -2326,6 +2320,20 @@ test "feature_tests/collections/52X_dynamic_array_vacant_storage_reference" {
     try buildExpectFail(
         "tests/feature_tests/collections/52X_dynamic_array_vacant_storage_reference",
         "no function named 'trusted_dynamic_array_storage_pointer' exists",
+    );
+}
+
+test "feature_tests/collections/53X_array_view_trusted_helper_private" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/53X_array_view_trusted_helper_private",
+        "no function named '_trusted_array_view' exists",
+    );
+}
+
+test "feature_tests/collections/54X_dynamic_array_trusted_helper_private" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/54X_dynamic_array_trusted_helper_private",
+        "no function named '_trusted_dynamic_array_get' exists",
     );
 }
 

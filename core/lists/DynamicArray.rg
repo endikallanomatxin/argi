@@ -28,7 +28,7 @@ capacity #(.t: Type)(.self: &DynamicArray#(.t: t)) -> (.count: UIntNative) := {
 
 -- An owner that has consumed every element may need to expose the empty
 -- opaque storage state to the safety checker before ending a temporal root.
-trusted_dynamic_array_mark_empty #(.t: Type)(.self: $&DynamicArray#(.t: t)) -> () := {
+_trusted_dynamic_array_mark_empty #(.t: Type)(.self: $&DynamicArray#(.t: t)) -> () := {
     if self&._length != 0 { abort }
     trusted_opaque_mark_empty(.storage = $&self&._allocation)
 }
@@ -170,8 +170,8 @@ dynamic_array_element_ro_pointer #(.t: Type) (
     .offset: UIntNative,
 ) -> (.pointer: &t) := {
     if offset >= array&._length { abort }
-    slot ::= trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
-    pointer = trusted_uninit_borrow_ro#(.t: t)(.allocation = &array&._allocation, .slot = slot).reference
+    slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
+    pointer = _trusted_uninit_borrow_ro#(.t: t)(.allocation = &array&._allocation, .slot = slot).reference
 }
 
 dynamic_array_element_rw_pointer #(.t: Type) (
@@ -179,8 +179,8 @@ dynamic_array_element_rw_pointer #(.t: Type) (
     .offset: UIntNative,
 ) -> (.pointer: $&t) := {
     if offset >= array&._length { abort }
-    slot ::= trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
-    pointer = trusted_uninit_borrow_rw#(.t: t)(.allocation = $&array&._allocation, .slot = slot).reference
+    slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
+    pointer = _trusted_uninit_borrow_rw#(.t: t)(.allocation = $&array&._allocation, .slot = slot).reference
 }
 
 dynamic_array_grow #(.t: Type) (
@@ -241,9 +241,9 @@ dynamic_array_grow_growing #(.t: Type) (
             new_allocation ::= ~payload
             i :: UIntNative = 0
             while i < array&._length {
-                old_slot ::= trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = i)
-                new_slot ::= trusted_uninit_slot#(.t: t)(.allocation = &new_allocation, .index = i)
-                trusted_uninit_relocate#(.t: t)(
+                old_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = i)
+                new_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &new_allocation, .index = i)
+                _trusted_uninit_relocate#(.t: t)(
                     .source_allocation = &array&._allocation,
                     .source = old_slot,
                     .destination_allocation = &new_allocation,
@@ -301,8 +301,8 @@ push_assume_capacity #(.t: Type) (
 ) -> () := {
     if self&._length >= self&._capacity { abort }
     offset ::= self&._length
-    slot ::= trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = offset)
-    trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~value)
+    slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = offset)
+    _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~value)
     self&._length = offset + 1
 }
 
@@ -315,8 +315,8 @@ pop #(.t: Type) (
     }
     one :: UIntNative = 1
     new_length ::= self&._length - one
-    slot ::= trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = new_length)
-    moved_out ::= trusted_uninit_take#(.t: t)(.allocation = $&self&._allocation, .slot = slot)
+    slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = new_length)
+    moved_out ::= _trusted_uninit_take#(.t: t)(.allocation = $&self&._allocation, .slot = slot)
     self&._length = new_length
     result = ..ok ~moved_out
 }
@@ -372,9 +372,9 @@ insert_growing #(.t: Type) (
     cursor ::= current_length
     while cursor > i {
         source_index ::= cursor - one
-        source_slot ::= trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = source_index)
-        destination_slot ::= trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = cursor)
-        trusted_uninit_relocate#(.t: t)(
+        source_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = source_index)
+        destination_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = cursor)
+        _trusted_uninit_relocate#(.t: t)(
             .source_allocation = &self&._allocation,
             .source = source_slot,
             .destination_allocation = &self&._allocation,
@@ -383,8 +383,8 @@ insert_growing #(.t: Type) (
         cursor = source_index
     }
 
-    slot ::= trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = i)
-    trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~value)
+    slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = i)
+    _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~value)
     self&._length = current_length + one
     result = ..ok Void()
 }
@@ -399,14 +399,14 @@ remove #(.t: Type) (
     }
     one :: UIntNative = 1
     new_length ::= self&._length - one
-    removed_slot ::= trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = i)
-    moved_out ::= trusted_uninit_take#(.t: t)(.allocation = $&self&._allocation, .slot = removed_slot)
+    removed_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = i)
+    moved_out ::= _trusted_uninit_take#(.t: t)(.allocation = $&self&._allocation, .slot = removed_slot)
 
     cursor ::= i
     while cursor < new_length {
-        source_slot ::= trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = cursor + one)
-        destination_slot ::= trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = cursor)
-        trusted_uninit_relocate#(.t: t)(
+        source_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = cursor + one)
+        destination_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = cursor)
+        _trusted_uninit_relocate#(.t: t)(
             .source_allocation = &self&._allocation,
             .source = source_slot,
             .destination_allocation = &self&._allocation,
@@ -478,28 +478,28 @@ set #(.t: Type) (
 -- Internal collection operations may rely on their own index invariants.
 -- These entrypoints still check length at runtime, but do not add Errable to
 -- every internal lookup in an already validated data structure.
-trusted_dynamic_array_get #(.t: Type: ImplicitlyCopyable) (
+_trusted_dynamic_array_get #(.t: Type: ImplicitlyCopyable) (
     .array: &DynamicArray#(.t: t),
     .index: UIntNative,
 ) -> (.value: t) := {
     value = dynamic_array_element_ro_pointer#(.t: t)(.array = array, .offset = index).pointer&
 }
 
-trusted_dynamic_array_get_ro_ref #(.t: Type) (
+_trusted_dynamic_array_get_ro_ref #(.t: Type) (
     .array: &DynamicArray#(.t: t),
     .index: UIntNative,
 ) -> (.reference: &t) := {
     reference = dynamic_array_element_ro_pointer#(.t: t)(.array = array, .offset = index).pointer
 }
 
-trusted_dynamic_array_get_rw_ref #(.t: Type) (
+_trusted_dynamic_array_get_rw_ref #(.t: Type) (
     .array: $&DynamicArray#(.t: t),
     .index: UIntNative,
 ) -> (.reference: $&t) := {
     reference = dynamic_array_element_rw_pointer#(.t: t)(.array = array, .offset = index).pointer
 }
 
-trusted_dynamic_array_set #(.t: Type) (
+_trusted_dynamic_array_set #(.t: Type) (
     .array: $&DynamicArray#(.t: t),
     .index: UIntNative,
     .value: t,

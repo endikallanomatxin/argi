@@ -153,15 +153,15 @@ string_hash_map_rehash#(.value: Type) (
 
     i :: UIntNative = 0
     while i < length#(.t: StringHashMapEntry#(.value: value))(.self = &self&.entries).count {
-        entry ::= trusted_dynamic_array_get#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = i)
+        entry ::= _trusted_dynamic_array_get#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = i)
         bucket_index ::= string_hash_map_bucket_index(.bucket_count = length#(.t: UIntNative)(.self = &self&.buckets).count, .key = &entry.key).index
-        next ::= trusted_dynamic_array_get#(.t: UIntNative)(.array = &self&.buckets, .index = bucket_index)
-        trusted_dynamic_array_set#(.t: StringHashMapEntry#(.value: value))(.array = $&self&.entries, .index = i, .value = (
+        next ::= _trusted_dynamic_array_get#(.t: UIntNative)(.array = &self&.buckets, .index = bucket_index)
+        _trusted_dynamic_array_set#(.t: StringHashMapEntry#(.value: value))(.array = $&self&.entries, .index = i, .value = (
             .key = entry.key,
             .value = entry.value,
             .next = next,
         ))
-        trusted_dynamic_array_set#(.t: UIntNative)(.array = $&self&.buckets, .index = bucket_index, .value = i + 1)
+        _trusted_dynamic_array_set#(.t: UIntNative)(.array = $&self&.buckets, .index = bucket_index, .value = i + 1)
         i = i + 1
     }
 }
@@ -176,7 +176,7 @@ string_hash_map_find_entry_index#(.value: Type) (
     }
 
     bucket_index ::= string_hash_map_bucket_index(.bucket_count = length#(.t: UIntNative)(.self = &self&.buckets).count, .key = key).index
-    current ::= trusted_dynamic_array_get#(.t: UIntNative)(.array = &self&.buckets, .index = bucket_index)
+    current ::= _trusted_dynamic_array_get#(.t: UIntNative)(.array = &self&.buckets, .index = bucket_index)
 
     if current == 0 {
         index = ..none
@@ -185,7 +185,7 @@ string_hash_map_find_entry_index#(.value: Type) (
 
     current_index ::= current - 1
     while 1 == 1 {
-        entry ::= trusted_dynamic_array_get#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = current_index)
+        entry ::= _trusted_dynamic_array_get#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = current_index)
         if equals(.left = entry.key, .right = key&).ok {
             index = ..some(.value = current_index)
             return
@@ -211,8 +211,8 @@ put#(.value: Type) (
     found ::= string_hash_map_find_entry_index#(.value: value)(.self = self, .key = key).index
     match found {
         ..some payload {
-            entry ::= trusted_dynamic_array_get#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = payload.value)
-            trusted_dynamic_array_set#(.t: StringHashMapEntry#(.value: value))(.array = $&self&.entries, .index = payload.value, .value = (
+            entry ::= _trusted_dynamic_array_get#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = payload.value)
+            _trusted_dynamic_array_set#(.t: StringHashMapEntry#(.value: value))(.array = $&self&.entries, .index = payload.value, .value = (
                 .key = entry.key,
                 .value = value,
                 .next = entry.next,
@@ -234,7 +234,7 @@ put#(.value: Type) (
 
     new_index ::= length#(.t: StringHashMapEntry#(.value: value))(.self = &self&.entries).count
     bucket_index ::= string_hash_map_bucket_index(.bucket_count = length#(.t: UIntNative)(.self = &self&.buckets).count, .key = key).index
-    head ::= trusted_dynamic_array_get#(.t: UIntNative)(.array = &self&.buckets, .index = bucket_index)
+    head ::= _trusted_dynamic_array_get#(.t: UIntNative)(.array = &self&.buckets, .index = bucket_index)
     push#(.t: StringHashMapEntry#(.value: value))(
         .allocator = allocator,
         .self = $&self&.entries,
@@ -244,7 +244,7 @@ put#(.value: Type) (
             .next = head,
         ),
     )
-    trusted_dynamic_array_set#(.t: UIntNative)(.array = $&self&.buckets, .index = bucket_index, .value = new_index + 1)
+    _trusted_dynamic_array_set#(.t: UIntNative)(.array = $&self&.buckets, .index = bucket_index, .value = new_index + 1)
 }
 
 put#(.value: Type) (
@@ -278,7 +278,7 @@ get#(.value: Type) (
     found ::= string_hash_map_find_entry_index#(.value: value)(.self = self, .key = key).index
     match found {
         ..some payload {
-            entry ::= trusted_dynamic_array_get#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = payload.value)
+            entry ::= _trusted_dynamic_array_get#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = payload.value)
             value = ..some(.value = entry.value)
         }
         ..none {
@@ -337,18 +337,18 @@ string_hash_map_retarget_entry_index#(.value: Type) (
     bucket_index ::= string_hash_map_bucket_index(.bucket_count = length#(.t: UIntNative)(.self = &self&.buckets).count, .key = &entry_key).index
     target_old ::= old_index + 1
     target_new ::= new_index + 1
-    current ::= trusted_dynamic_array_get#(.t: UIntNative)(.array = &self&.buckets, .index = bucket_index)
+    current ::= _trusted_dynamic_array_get#(.t: UIntNative)(.array = &self&.buckets, .index = bucket_index)
 
     if current == target_old {
-        trusted_dynamic_array_set#(.t: UIntNative)(.array = $&self&.buckets, .index = bucket_index, .value = target_new)
+        _trusted_dynamic_array_set#(.t: UIntNative)(.array = $&self&.buckets, .index = bucket_index, .value = target_new)
         return
     }
 
     while current != 0 {
         current_index ::= current - 1
-        current_entry ::= trusted_dynamic_array_get#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = current_index)
+        current_entry ::= _trusted_dynamic_array_get#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = current_index)
         if current_entry.next == target_old {
-            trusted_dynamic_array_set#(.t: StringHashMapEntry#(.value: value))(.array = $&self&.entries, .index = current_index, .value = (
+            _trusted_dynamic_array_set#(.t: StringHashMapEntry#(.value: value))(.array = $&self&.entries, .index = current_index, .value = (
                 .key = current_entry.key,
                 .value = current_entry.value,
                 .next = target_new,
@@ -369,19 +369,19 @@ delete#(.value: Type) (
     }
 
     bucket_index ::= string_hash_map_bucket_index(.bucket_count = length#(.t: UIntNative)(.self = &self&.buckets).count, .key = key).index
-    current ::= trusted_dynamic_array_get#(.t: UIntNative)(.array = &self&.buckets, .index = bucket_index)
+    current ::= _trusted_dynamic_array_get#(.t: UIntNative)(.array = &self&.buckets, .index = bucket_index)
     previous :: UIntNative = 0
 
     while current != 0 {
         current_index ::= current - 1
-        entry ::= trusted_dynamic_array_get#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = current_index)
+        entry ::= _trusted_dynamic_array_get#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = current_index)
         if equals(.left = entry.key, .right = key&).ok {
             if previous == 0 {
-                trusted_dynamic_array_set#(.t: UIntNative)(.array = $&self&.buckets, .index = bucket_index, .value = entry.next)
+                _trusted_dynamic_array_set#(.t: UIntNative)(.array = $&self&.buckets, .index = bucket_index, .value = entry.next)
             } else {
                 previous_index ::= previous - 1
-                previous_entry ::= trusted_dynamic_array_get#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = previous_index)
-                trusted_dynamic_array_set#(.t: StringHashMapEntry#(.value: value))(.array = $&self&.entries, .index = previous_index, .value = (
+                previous_entry ::= _trusted_dynamic_array_get#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = previous_index)
+                _trusted_dynamic_array_set#(.t: StringHashMapEntry#(.value: value))(.array = $&self&.entries, .index = previous_index, .value = (
                     .key = previous_entry.key,
                     .value = previous_entry.value,
                     .next = entry.next,
@@ -395,8 +395,8 @@ delete#(.value: Type) (
                 ..ok ~ payload {
                     last_entry ::= ~payload
                     if current_index != last_index {
-                        trusted_dynamic_array_set#(.t: StringHashMapEntry#(.value: value))(.array = $&self&.entries, .index = current_index, .value = ~last_entry)
-                        moved_entry ::= trusted_dynamic_array_get_ro_ref#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = current_index).reference
+                        _trusted_dynamic_array_set#(.t: StringHashMapEntry#(.value: value))(.array = $&self&.entries, .index = current_index, .value = ~last_entry)
+                        moved_entry ::= _trusted_dynamic_array_get_ro_ref#(.t: StringHashMapEntry#(.value: value))(.array = &self&.entries, .index = current_index).reference
                         string_hash_map_retarget_entry_index#(.value: value)(
                             .self = self,
                             .entry = moved_entry,

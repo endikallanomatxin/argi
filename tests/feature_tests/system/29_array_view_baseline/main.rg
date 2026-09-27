@@ -1,12 +1,6 @@
 main() -> (.status_code: Int32) := {
-    allocator_storage :: CAllocator = CAllocator()
-    assume allocator ::= $&allocator_storage
-    allocated ::= allocate(.self = $&allocator_storage, .size = 16)
-    match allocated {
-    ..error _ { status_code = 10 }
-    ..ok ~ allocation {
-    data ::= mutable_reinterpret_reference#(.from: UInt8, .to: Int32)(.base = allocation.data).reference
-    values ::= trusted_array_view#(.t: Int32)(.data = data, .length = 4)
+    data : Array#(.n = 4, .t: Int32) = (0, 0, 0, 0)
+    values ::= array_view(.array = $&data)
 
     set0 ::= set#(.t: Int32)(.self = $&values, .index = 0, .value = 3).result
     set1 ::= set#(.t: Int32)(.self = $&values, .index = 1, .value = 5).result
@@ -49,6 +43,4 @@ main() -> (.status_code: Int32) := {
         return
     }
     status_code = second_result..ok + third_result..ok
-    }
-    }
 }

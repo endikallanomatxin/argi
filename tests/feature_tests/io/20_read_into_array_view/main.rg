@@ -23,17 +23,8 @@ read_byte(
 DummyInput implements Reader
 
 main() -> (.status_code: Int32) := {
-    allocator_storage :: CAllocator = CAllocator()
-    assume allocator ::= $&allocator_storage
-    allocated ::= allocate(.self = $&allocator_storage, .size = 4)
-    match allocated {
-    ..error _ { status_code = 10 }
-    ..ok ~ allocation {
-
-    buffer ::= trusted_array_view#(.t: UInt8)(
-        .data = allocation.data,
-        .length = 4,
-    )
+    bytes : Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
+    buffer ::= array_view(.array = $&bytes)
     stdin_storage :: DummyInput = DummyInput()
     assume stdin ::= $&stdin_storage
     read_result ::= read(.self = $&stdin_storage, .buffer = buffer)
@@ -71,6 +62,4 @@ main() -> (.status_code: Int32) := {
     }
 
     status_code = 0
-    }
-    }
 }

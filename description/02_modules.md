@@ -28,6 +28,8 @@ Today the compiler implements:
   - `../dep` relative to the parent module
   - `.../dep` relative to the project root
 - `_private_name` hidden across module boundaries
+- bundled `core` modules may use each other's private helpers; user modules
+  cannot access them
 - transitive imports
 - import cycle detection
 

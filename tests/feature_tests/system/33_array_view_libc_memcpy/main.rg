@@ -1,25 +1,8 @@
 main() -> (.status_code: Int32) := {
-    allocator_storage :: CAllocator = CAllocator()
-    assume allocator ::= $&allocator_storage
-    src_result ::= allocate(.self = $&allocator_storage, .size = 4)
-    match src_result {
-    ..error _ { status_code = 10 }
-    ..ok ~ src_payload {
-    src_allocation ::= ~src_payload
-    dst_result ::= allocate(.self = $&allocator_storage, .size = 4)
-    match dst_result {
-    ..error _ { status_code = 11 }
-    ..ok ~ dst_payload {
-    dst_allocation ::= ~dst_payload
-
-    src ::= trusted_array_view#(.t: UInt8)(
-        .data = src_allocation.data,
-        .length = 4,
-    )
-    dst ::= trusted_array_view#(.t: UInt8)(
-        .data = dst_allocation.data,
-        .length = 4,
-    )
+    src_bytes : Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
+    dst_bytes : Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
+    src ::= array_view(.array = $&src_bytes)
+    dst ::= array_view(.array = $&dst_bytes)
 
     src_set0 ::= set#(.t: UInt8)(.self = $&src, .index = 0, .value = 3).result
     src_set1 ::= set#(.t: UInt8)(.self = $&src, .index = 1, .value = 5).result
@@ -72,8 +55,4 @@ main() -> (.status_code: Int32) := {
         return
     }
     status_code = 0
-    }
-}
-}
-}
 }

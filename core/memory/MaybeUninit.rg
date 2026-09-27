@@ -7,7 +7,7 @@ MaybeUninit #(.t: Type) : Type = (
 
 -- Low-level slot construction. The caller owns a suitably aligned allocation
 -- with room for index and must keep its occupancy invariant separately.
-trusted_uninit_slot#(.t: Type)(
+_trusted_uninit_slot#(.t: Type)(
     .allocation: &Allocation,
     .index: UIntNative,
 ) -> (.slot: MaybeUninit#(.t: t)) := {
@@ -20,7 +20,7 @@ trusted_uninit_slot#(.t: Type)(
 -- a normal reference. The handle itself never claims an initialized T. Borrow
 -- provenance follows the backing data generation, so replacing the allocation
 -- invalidates aliases to its former slots.
-trusted_uninit_borrow_ro#(.t: Type)(
+_trusted_uninit_borrow_ro#(.t: Type)(
     .allocation: &Allocation,
     .slot: MaybeUninit#(.t: t),
 ) -> (.reference: &t) := {
@@ -32,7 +32,7 @@ trusted_uninit_borrow_ro#(.t: Type)(
     reference = read_reference#(.t: t)(.base = mutable).reference
 }
 
-trusted_uninit_borrow_rw#(.t: Type)(
+_trusted_uninit_borrow_rw#(.t: Type)(
     .allocation: $&Allocation,
     .slot: MaybeUninit#(.t: t),
 ) -> (.reference: $&t) := {
@@ -45,7 +45,7 @@ trusted_uninit_borrow_rw#(.t: Type)(
 
 -- Initializes an empty slot and transfers ownership into the allocation's
 -- opaque domain. It must be called exactly once before reading that slot.
-trusted_uninit_write#(.t: Type)(
+_trusted_uninit_write#(.t: Type)(
     .allocation: $&Allocation,
     .slot: MaybeUninit#(.t: t),
     .value: t,
@@ -63,7 +63,7 @@ trusted_uninit_write#(.t: Type)(
 
 -- Extracts a value known to occupy the slot. The caller must mark it empty
 -- in its own invariant before another read or destruction is possible.
-trusted_uninit_take#(.t: Type)(
+_trusted_uninit_take#(.t: Type)(
     .allocation: $&Allocation,
     .slot: MaybeUninit#(.t: t),
 ) -> (.value: t) := {
@@ -80,7 +80,7 @@ trusted_uninit_take#(.t: Type)(
 -- Relocates a live opaque value into a distinct empty slot. Neither slot is
 -- exposed as a T to the collection; the transient references exist only at
 -- this trusted ownership transition.
-trusted_uninit_relocate#(.t: Type)(
+_trusted_uninit_relocate#(.t: Type)(
     .source_allocation: &Allocation,
     .source: MaybeUninit#(.t: t),
     .destination_allocation: &Allocation,

@@ -27,9 +27,9 @@ constructor requires `N > 0` because the view stores a non-null element
 reference.
 
 A pointer to one element does not establish the extent of a larger region.
-`trusted_array_view` and `trusted_array_view_ro` accept an explicit length only
-at a trusted boundary where the caller knows the backing region is live and
-large enough. View indexing checks the recorded length; it does not discover
+Private core helpers accept an explicit length only where the implementation
+knows the backing region is live and large enough. User modules cannot call
+these helpers. View indexing checks the recorded length; it does not discover
 physical bounds from a raw pointer.
 
 

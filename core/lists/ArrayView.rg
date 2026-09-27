@@ -58,13 +58,13 @@ array_view#(.n: UIntNative, .t: Type)(
     view = (._data = first, ._length = n)
 }
 
--- Trusted callers must prove the requested contiguous range belongs to the
+-- Core callers must prove the requested contiguous range belongs to the
 -- live backing storage and initialize an element before reading it.
-trusted_array_view_ro#(.t: Type)(.data: &t, .length: UIntNative) -> (.array: ArrayViewRO#(.t: t)) := {
+_trusted_array_view_ro#(.t: Type)(.data: &t, .length: UIntNative) -> (.array: ArrayViewRO#(.t: t)) := {
     array = (._data = data, ._length = length)
 }
 
-trusted_array_view#(.t: Type)(
+_trusted_array_view#(.t: Type)(
     .data: $&t,
     .length: UIntNative,
 ) -> (.array: ArrayView#(.t: t)) := {
@@ -72,15 +72,6 @@ trusted_array_view#(.t: Type)(
         ._data = data,
         ._length = length,
     )
-}
-
-trusted_array_view_from_raw#(.t: Type)(
-    .raw: RawPointer#(.t: t),
-    .root: $&Any,
-    .length: UIntNative,
-) -> (.array: ArrayView#(.t: t)) := {
-    data ::= establish_inherited_reference#(.t: t)(.raw = raw, .root = root)
-    array = trusted_array_view#(.t: t)(.data = data, .length = length)
 }
 
 get_ro_ref#(.t: Type)(

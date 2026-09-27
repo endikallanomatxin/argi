@@ -80,7 +80,7 @@ arena_free_blocks(
         }
     }
 
-    trusted_dynamic_array_mark_empty#(.t: ArenaBlock)(.self = $&self&.blocks)
+    _trusted_dynamic_array_mark_empty#(.t: ArenaBlock)(.self = $&self&.blocks)
     self&.current_block_offset = 0
 }
 
@@ -90,7 +90,7 @@ reset(
     arena_free_blocks(.self = self)
     deinit(.self = $&self&.domain)
     init(.p = $&self&.domain)
-    trusted_dynamic_array_mark_empty#(.t: ArenaBlock)(.self = $&self&.blocks)
+    _trusted_dynamic_array_mark_empty#(.t: ArenaBlock)(.self = $&self&.blocks)
 }
 
 deinit(
@@ -114,7 +114,7 @@ allocate(
     if length#(.t: ArenaBlock)(.self = &self&.blocks).count == 0 {
         needs_block = true
     } else {
-        last_block : &ArenaBlock = trusted_dynamic_array_get_ro_ref#(.t: ArenaBlock)(.array = &self&.blocks, .index = length#(.t: ArenaBlock)(.self = &self&.blocks).count - 1).reference
+        last_block : &ArenaBlock = _trusted_dynamic_array_get_ro_ref#(.t: ArenaBlock)(.array = &self&.blocks, .index = length#(.t: ArenaBlock)(.self = &self&.blocks).count - 1).reference
         if self&.current_block_offset + required > last_block&.size {
             needs_block = true
         }
@@ -154,7 +154,7 @@ allocate(
         self&.current_block_offset = 0
     }
 
-    active_block : &ArenaBlock = trusted_dynamic_array_get_ro_ref#(.t: ArenaBlock)(.array = &self&.blocks, .index = length#(.t: ArenaBlock)(.self = &self&.blocks).count - 1).reference
+    active_block : &ArenaBlock = _trusted_dynamic_array_get_ro_ref#(.t: ArenaBlock)(.array = &self&.blocks, .index = length#(.t: ArenaBlock)(.self = &self&.blocks).count - 1).reference
     child_data ::= mutable_reference_offset#(.t: UInt8)(
         .base = active_block&.data,
         .elements = self&.current_block_offset,
