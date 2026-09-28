@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 Holder : Type = (.reference: $&UInt8)
 Observer : Type = (
     .target: $&Holder
@@ -23,8 +24,8 @@ main(.system: System) -> (.status_code: Int32) := {
                 ..error _ { status_code = 2 }
                 ..ok ~ new_payload {
                     new ::= ~new_payload
-                    holder ::= Holder(.reference = trusted_allocation_byte_rw(.allocation = $&old, .offset = 0).reference)
-                    replace_on_exit(.holder = $&holder, .new_reference = trusted_allocation_byte_rw(.allocation = $&new, .offset = 0).reference)
+                    holder ::= Holder(.reference = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&old, .offset = 0).reference)
+                    replace_on_exit(.holder = $&holder, .new_reference = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&new, .offset = 0).reference)
                     deinit(.self = $&new)
                     observed ::= holder.reference&
                     deinit(.self = $&old)

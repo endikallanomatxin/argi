@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 CountingAllocator : Type = (.deallocations: Int32)
 
 allocate(.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
@@ -24,7 +25,7 @@ main() -> (.status_code: Int32) := {
     match result {
         ..ok ~ payload {
             allocation ::= ~payload
-            byte_pointer_27 ::= trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
+            byte_pointer_27 ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
             byte_pointer_27& = 7
             deinit(.self = $&allocation)
         }

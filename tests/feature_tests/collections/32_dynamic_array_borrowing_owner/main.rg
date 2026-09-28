@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 BorrowingOwner : Type = (
     .id: Int32
     .allocation: Allocation
@@ -30,8 +31,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                         ..error _ { status_code = 3 }
                         ..ok ~ second_payload {
                             array ::= DynamicArray#(.t: BorrowingOwner)(.capacity = 1)
-                            first ::= BorrowingOwner(.id = 1, .allocation = ~first_payload, .borrowed = trusted_allocation_byte_rw(.allocation = $&external, .offset = 0).reference)
-                            second ::= BorrowingOwner(.id = 2, .allocation = ~second_payload, .borrowed = trusted_allocation_byte_rw(.allocation = $&external, .offset = 0).reference)
+                            first ::= BorrowingOwner(.id = 1, .allocation = ~first_payload, .borrowed = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&external, .offset = 0).reference)
+                            second ::= BorrowingOwner(.id = 2, .allocation = ~second_payload, .borrowed = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&external, .offset = 0).reference)
                             first_push ::= push#(.t: BorrowingOwner)(.self = $&array, .value = ~first)
                             second_push ::= push#(.t: BorrowingOwner)(.self = $&array, .value = ~second)
                             if is(.value = first_push, .variant = ..error) or is(.value = second_push, .variant = ..error) {

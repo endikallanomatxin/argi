@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 Pair : Type = (
     .lifetime: Allocation
     .marker: Int32
@@ -31,7 +32,7 @@ main(.system: System) -> (.status_code: Int32) := {
                             source ::= ~source_payload
                             pair :: Pair = (.lifetime = ~first_payload, .marker = 7)
                             second ::= ~second_payload
-                            original ::= trusted_allocation_byte_rw(.allocation = $&source, .offset = 0).reference
+                            original ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&source, .offset = 0).reference
                             readonly ::= read_reference(.base = original).reference
                             restricted ::= restrict_reference#(.t: $&UInt8)(.input = original, .on = &pair.lifetime).reference
                             readonly_restricted ::= restrict_reference#(.t: &UInt8)(.input = readonly, .on = &pair.marker).reference

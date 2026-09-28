@@ -57,10 +57,7 @@ allocate(
     .size: UIntNative,
     .alignment: UIntNative,
 ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
-    if alignment == 0 {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
+    _require_allocation_alignment(.alignment = alignment)
     page_size ::= page_allocator_page_size(.self = self).size
     physical_alignment ::= page_size
     if physical_alignment < alignment { physical_alignment = alignment }

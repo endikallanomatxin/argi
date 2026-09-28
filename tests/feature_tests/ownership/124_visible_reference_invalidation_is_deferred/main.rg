@@ -1,10 +1,11 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 main(.system: System) -> (.status_code: Int32) := {
     allocated ::= allocate(.self = system.allocator, .size = 1)
     match allocated {
         ..error _ { status_code = 1 }
         ..ok ~ payload {
             allocation ::= ~payload
-            visible ::= trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
+            visible ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
 
             -- Merely keeping a precise reference alive does not prevent the
             -- operation that ends its root. The checker rejects only a later

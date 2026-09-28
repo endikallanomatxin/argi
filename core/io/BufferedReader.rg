@@ -59,7 +59,7 @@ deinit#(.base_type: Type: Reader)(
 
 read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_type)) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
     if self&.start < self&.end {
-        ptr ::= trusted_allocation_byte_ro(.allocation = &self&.buffer, .offset = self&.start).reference
+        ptr ::= _trusted_allocation_byte_ro(.allocation = &self&.buffer, .offset = self&.start).reference
         result = ..ok ..ok ptr&
         self&.start = self&.start + 1
         return
@@ -83,7 +83,7 @@ read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_t
     }
 
     payload ::= first_payload..ok
-    ptr ::= trusted_allocation_byte_rw(.allocation = $&self&.buffer, .offset = 0).reference
+    ptr ::= _trusted_allocation_byte_rw(.allocation = $&self&.buffer, .offset = 0).reference
     ptr& = payload
     self&.start = 1
     self&.end = 1

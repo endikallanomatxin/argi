@@ -4,6 +4,17 @@ Allocator : Abstract = (
     allocate(.self: $&Self, .size: UIntNative, .alignment: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory)))
 )
 
+-- Every implementation checks this low-level precondition before acquiring
+-- storage. A zero or non-power-of-two alignment is a programming error.
+_require_allocation_alignment(.alignment: UIntNative) -> () := {
+    if alignment == 0 { abort }
+    remaining ::= alignment
+    while remaining % 2 == 0 {
+        remaining = remaining / 2
+    }
+    if remaining != 1 { abort }
+}
+
 Deallocator : Abstract = (
     deallocate(.self: $&Self, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> ()
 )
@@ -34,10 +45,7 @@ init(.p: $&CAllocator) -> () := {
 }
 
 allocate(.self: $&CAllocator, .size: UIntNative, .alignment: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
-    if alignment == 0 {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
+    _require_allocation_alignment(.alignment = alignment)
     physical_alignment ::= alignment
     pointer_alignment ::= alignment_of(.type = UIntNative)
     if physical_alignment < pointer_alignment { physical_alignment = pointer_alignment }
@@ -124,13 +132,13 @@ deinit(
 
 -- Explicit trusted establishment into raw storage. Callers must prove bounds,
 -- alignment, and initialization before reading; an Allocation alone cannot.
-trusted_allocation_byte_ro(.allocation: &Allocation, .offset: UIntNative) -> (.reference: &UInt8) := {
+_trusted_allocation_byte_ro(.allocation: &Allocation, .offset: UIntNative) -> (.reference: &UInt8) := {
     raw ::= raw_pointer#(.t: UInt8)(.address = allocation&.data.address + offset).raw
     mutable ::= establish_allocation_slot#(.t: UInt8)(.allocation = allocation, .slot = raw, .anchor = allocation&.anchor).reference
     reference = read_reference#(.t: UInt8)(.base = mutable).reference
 }
 
-trusted_allocation_byte_rw(.allocation: $&Allocation, .offset: UIntNative) -> (.reference: $&UInt8) := {
+_trusted_allocation_byte_rw(.allocation: $&Allocation, .offset: UIntNative) -> (.reference: $&UInt8) := {
     raw ::= raw_pointer#(.t: UInt8)(.address = allocation&.data.address + offset).raw
     reference = establish_allocation_slot#(.t: UInt8)(.allocation = allocation, .slot = raw, .anchor = allocation&.anchor).reference
 }

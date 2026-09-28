@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 TrackedBorrowing : Type = (
     .id: Int32
     .reference: &UInt8
@@ -32,7 +33,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ slots_payload {
             slots ::= ~slots_payload
-            slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: TrackedBorrowing)(.base = trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
+            slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: TrackedBorrowing)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
             store_local(
                 .storage = $&slots,
                 .slot = slot,

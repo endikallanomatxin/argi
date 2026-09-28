@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= system.allocator
 
@@ -9,7 +10,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             status_code = 1
             return
         }
-        data ::= trusted_allocation_byte_rw(.allocation = $&local.allocation, .offset = 0).reference
+        data ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&local.allocation, .offset = 0).reference
         if data& != 65 {
             status_code = 2
             return

@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 store_wrapper#(.t: Type)(.slot: $&t, .value: t) -> () := {
     trusted_opaque_move#(.t: t)(.destination = slot, .source = ~value)
 }
@@ -14,7 +15,7 @@ main(.system: System) -> (.status_code: Int32) := {
                 ..error _ { status_code = 2 }
                 ..ok ~ slot_payload {
                     slot_allocation ::= ~slot_payload
-                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = trusted_allocation_byte_rw(.allocation = $&slot_allocation, .offset = 0).reference).reference
+                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slot_allocation, .offset = 0).reference).reference
                     store_wrapper#(.t: Allocation)(.slot = slot, .value = ~allocation)
                     trusted_opaque_drop#(.t: Allocation)(.slot = slot)
                     deinit(.self = $&slot_allocation)

@@ -225,6 +225,11 @@ sufficient size and alignment and contain an initialized, valid `T`.
 `Allocator.allocate` receives size and alignment without knowing `T`. Trusted
 slot operations establish typed references only under the owner's occupancy
 invariant, and Safety ties their validity to the allocation and its anchor.
+The low-level alignment argument must be a nonzero power of two. Allocators
+abort on an invalid request; the typed helper obtains a valid value from
+`alignment_of(T)`. The check currently remains at the allocator boundary,
+even for typed calls, because Argi does not yet run an interprocedural LLVM IR
+optimization pipeline.
 
 ## Glossary
 

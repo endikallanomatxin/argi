@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 BorrowingOwner : Type = (.allocation: Allocation, .borrowed: $&UInt8)
 deinit(.self: $&BorrowingOwner) -> () := { deinit(.self = $&self&.allocation) }
 
@@ -13,7 +14,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                 ..error _ { status_code = 2 }
                 ..ok ~ owned_payload {
                     array ::= DynamicArray#(.t: BorrowingOwner)(.capacity = 1)
-                    value ::= BorrowingOwner(.allocation = ~owned_payload, .borrowed = trusted_allocation_byte_rw(.allocation = $&external, .offset = 0).reference)
+                    value ::= BorrowingOwner(.allocation = ~owned_payload, .borrowed = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&external, .offset = 0).reference)
                     push_assume_capacity#(.t: BorrowingOwner)(.self = $&array, .value = ~value)
                     deinit(.self = $&external)
                 }

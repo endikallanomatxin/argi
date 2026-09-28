@@ -2337,6 +2337,13 @@ test "feature_tests/collections/54X_dynamic_array_trusted_helper_private" {
     );
 }
 
+test "feature_tests/collections/55X_allocation_byte_helper_private" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/55X_allocation_byte_helper_private",
+        "no function named '_trusted_allocation_byte_rw' exists",
+    );
+}
+
 test "feature_tests/control_flow/11_range_default_start_with_step" {
     const test_path = "tests/feature_tests/control_flow/11_range_default_start_with_step";
     try expectSuccessfulBuild(test_path);
@@ -3073,7 +3080,7 @@ test "feature_tests/ownership/41_raw_pointer_establish_inherit" {
 
 test "feature_tests/ownership/42X_reference_use_after_root_end" {
     try buildExpectFailExact("tests/feature_tests/ownership/42X_reference_use_after_root_end",
-        \\tests/feature_tests/ownership/42X_reference_use_after_root_end/main.rg:10:8: error: reference depends on a root that has ended
+        \\tests/feature_tests/ownership/42X_reference_use_after_root_end/main.rg:11:8: error: reference depends on a root that has ended
         \\      if reference& == 0 {
         \\         ^
         \\
@@ -3166,7 +3173,7 @@ test "feature_tests/ownership/63X_malloc_direct_safe_cast" {
 
 test "feature_tests/ownership/64X_owned_root_cycle" {
     try buildExpectFailExact("tests/feature_tests/ownership/64X_owned_root_cycle",
-        \\tests/feature_tests/ownership/64X_owned_root_cycle/main.rg:16:5: error: root ownership must be acyclic
+        \\tests/feature_tests/ownership/64X_owned_root_cycle/main.rg:17:5: error: root ownership must be acyclic
         \\      slot_b& = ~a
         \\      ^
         \\
@@ -4178,7 +4185,7 @@ test "feature_tests/ownership/218X_conditional_opaque_reference_source_closes_ow
 
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
-        \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:19:8: error: reference depends on a root that has ended
+        \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:20:8: error: reference depends on a root that has ended
         \\      if alias& == 0 {
         \\         ^
         \\
@@ -4191,7 +4198,7 @@ test "feature_tests/ownership/44_cross_root_cycle_survivor_remains_usable" {
 
 test "feature_tests/ownership/45X_cross_root_cycle_stale_edge" {
     try buildExpectFailExact("tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge",
-        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:13:8: error: reference depends on a root that has ended
+        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:14:8: error: reference depends on a root that has ended
         \\      if b.to_a& == 0 {
         \\         ^
         \\
@@ -5980,6 +5987,30 @@ test "feature_tests/system/37_c_allocator_alignment" {
     const test_path = "tests/feature_tests/system/37_c_allocator_alignment";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
+}
+
+test "feature_tests/system/38X_c_allocator_invalid_alignment" {
+    const test_path = "tests/feature_tests/system/38X_c_allocator_invalid_alignment";
+    try expectSuccessfulBuild(test_path);
+    try runExpectFailure(test_path);
+}
+
+test "feature_tests/system/39X_page_allocator_invalid_alignment" {
+    const test_path = "tests/feature_tests/system/39X_page_allocator_invalid_alignment";
+    try expectSuccessfulBuild(test_path);
+    try runExpectFailure(test_path);
+}
+
+test "feature_tests/system/40X_arena_allocator_invalid_alignment" {
+    const test_path = "tests/feature_tests/system/40X_arena_allocator_invalid_alignment";
+    try expectSuccessfulBuild(test_path);
+    try runExpectFailure(test_path);
+}
+
+test "feature_tests/system/41X_c_allocator_zero_alignment" {
+    const test_path = "tests/feature_tests/system/41X_c_allocator_zero_alignment";
+    try expectSuccessfulBuild(test_path);
+    try runExpectFailure(test_path);
 }
 
 test "feature_tests/system/37X_system_local_resource_escape" {

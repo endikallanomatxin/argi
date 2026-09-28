@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 Borrowing : Type = (
     .reference: $&UInt8
 )
@@ -24,8 +25,8 @@ main(.system: System) -> (.status_code: Int32) := {
                 ..error _ { status_code = 2 }
                 ..ok ~ storage_payload {
                     storage ::= ~storage_payload
-                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = trusted_allocation_byte_rw(.allocation = $&storage, .offset = 0).reference).reference
-                    value :: Borrowing = (.reference = trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference)
+                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&storage, .offset = 0).reference).reference
+                    value :: Borrowing = (.reference = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference)
                     trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(.storage = $&storage, .destination = slot, .source = ~value)
                     trusted_opaque_drop(.slot = slot)
                     first ::= target.size == 1

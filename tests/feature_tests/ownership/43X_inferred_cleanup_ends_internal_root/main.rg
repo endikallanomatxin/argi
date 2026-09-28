@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 Buffer : Type = (
     .allocation: Allocation
 )
@@ -13,7 +14,7 @@ main(.system: System) -> (.status_code: Int32) := {
     ..ok ~ payload {
     allocation ::= ~payload
     buffer :: Buffer = (.allocation = ~allocation)
-    alias ::= trusted_allocation_byte_rw(.allocation = $&buffer.allocation, .offset = 0).reference
+    alias ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&buffer.allocation, .offset = 0).reference
 
     release(.self = $&buffer, .allocator = system.allocator)
     if alias& == 0 {

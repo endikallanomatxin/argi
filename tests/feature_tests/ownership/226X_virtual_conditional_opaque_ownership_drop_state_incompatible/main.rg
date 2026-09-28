@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 OpaqueStorer : Abstract = (
     store(.self: $&Self, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> ()
 )
@@ -44,7 +45,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ slot_payload {
             storage ::= ~slot_payload
-            slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Tracked)(.base = trusted_allocation_byte_rw(.allocation = $&storage, .offset = 0).reference).reference
+            slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Tracked)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&storage, .offset = 0).reference).reference
             keeping ::= Keeping(.marker = 0)
             register_keeping(.value = $&keeping)
             implementation ::= Consuming(.marker = 0)

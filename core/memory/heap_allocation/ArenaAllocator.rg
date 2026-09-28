@@ -20,7 +20,8 @@ deinit(.self: $&ArenaDomain) -> () := {
 
 ArenaAllocator : Type = (
     --
-    -- Simple bump arena backed by another allocator.
+    -- Simple bump arena with libc-backed blocks. Its metadata uses a caller-
+    -- supplied CAllocator.
     --
     -- Individual `deallocate()` calls are ignored. Memory is reclaimed only by
     -- `reset()` or `deinit()`.
@@ -28,7 +29,7 @@ ArenaAllocator : Type = (
     -- This baseline intentionally targets copyable payloads and compiler-style
     -- scratch allocations, not long-lived fine-grained ownership.
     --
-    .backing_allocator    : $&CAllocator
+    .metadata_allocator   : $&CAllocator
     .blocks               : DynamicArray#(.t: ArenaBlock)
     .domain               : ArenaDomain
     .block_size           : UIntNative
@@ -50,13 +51,13 @@ arena_min_block_capacity(
 
 init(
     .p: $&ArenaAllocator,
-    .backing_allocator: $&CAllocator,
+    .metadata_allocator: $&CAllocator,
     .block_size: UIntNative = 4096,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    assume backing_allocator
+    assume metadata_allocator
 
-    p&.backing_allocator = backing_allocator
-    initialized ::= init#(.t: ArenaBlock)(.p = $&p&.blocks, .allocator = backing_allocator, .capacity = 4)
+    p&.metadata_allocator = metadata_allocator
+    initialized ::= init#(.t: ArenaBlock)(.p = $&p&.blocks, .allocator = metadata_allocator, .capacity = 4)
     if is(.value = initialized, .variant = ..error) {
         result = ..error(.reason = ..out_of_memory)
         return
@@ -98,7 +99,7 @@ deinit(
 ) -> () := {
     arena_free_blocks(.self = self)
     deinit(.self = $&self&.domain)
-    deinit(.allocator = self&.backing_allocator, .self = $&self&.blocks)
+    deinit(.allocator = self&.metadata_allocator, .self = $&self&.blocks)
 }
 
 allocate(
@@ -106,10 +107,7 @@ allocate(
     .size: UIntNative,
     .alignment: UIntNative,
 ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
-    if alignment == 0 {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
+    _require_allocation_alignment(.alignment = alignment)
     required ::= size
     if required == 0 {
         required = 1
@@ -140,7 +138,7 @@ allocate(
         }
         new_block_size ::= arena_min_block_capacity(.requested = minimum_size, .block_size = self&.block_size).capacity
         metadata_ready ::= ensure_capacity#(.t: ArenaBlock)(
-            .allocator = self&.backing_allocator,
+            .allocator = self&.metadata_allocator,
             .self = $&self&.blocks,
             .capacity = length#(.t: ArenaBlock)(.self = &self&.blocks).count + 1,
         )

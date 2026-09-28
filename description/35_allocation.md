@@ -1,162 +1,49 @@
-## Allocators
+## Allocators and raw storage
 
-Similar to zig, they are are used to allocate and deallocate memory.
+An `Allocator` reserves storage by size and alignment. It does not construct
+values or know their type:
 
-Ownership and copying are defined separately in `32_copying_behaviour.md`.
-They are orthogonal concepts.
-In particular, using an allocator and implementing `deinit()` does not make a
-type automatically copyable.
-
-```
+```rg
 Allocator : Abstract = (
-	allocate(
-		.self: $&Self,
-		.size: UIntNative,
-	) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory)))
+    allocate(.self: $&Self, .size: UIntNative, .alignment: UIntNative)
+        -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory)))
 )
 ```
 
-Allocation failure is represented only by `..error ..out_of_memory`. The error
-variant contains no `Allocation`, establishes no safe reference or Validity Root, and
-leaves no allocation cleanup pending. Physical storage is checked before it is
-converted into safe storage. A successful zero-size request is valid and its
-`Allocation` is still passed to the stored deallocator by `deinit()`.
+The low-level alignment must be a nonzero power of two. Implementations check
+this precondition and `abort` if it is violated; an invalid alignment is not
+`..out_of_memory`. The typed `allocate#(.t: T)(.count)` helper computes the
+size and alignment from `T`, checks multiplication overflow, and still returns
+raw `Allocation` storage. A zero-size allocation is valid. Allocation failure
+returns no storage, safe reference, or cleanup obligation.
 
-Allocators más típicos en zig:
-- **PageAllocator**
-  - Allocates memory from the OS, using `mmap` or `VirtualAlloc`.
-  - Used for general-purpose allocations at runtime.
-- **ArenaAllocator**
-  - Allocates memory in chunks from the heap.
-  - Useful for compilers, parsers, and loaders that need to allocate a lot of
-  memory at once.
-- **FixedBufferAllocator**
-  - Allocates memory from a fixed-size buffer, which can be on the stack.
-  - Used for temporary allocations without heap overhead.
-- **GeneralPurposeAllocator**
-  - A general-purpose allocator with additional safety features like redzones
-  and leak detection.
-  - Used for debugging applications.
-- **ThreadLocalAllocator**
-  - A bump-pointer allocator per thread with a fallback mechanism.
-  - Used in multi-threaded applications to avoid contention.
-- **CAllocator**
-  - Uses `malloc` and `free` from the C standard library.
-  - Useful for integrating with C libraries.
+`Allocation.data` is a non-dereferenceable `RawPointer<UInt8>`. The allocation
+also records the requested size and alignment, a temporal anchor, and an erased
+deallocator. Physical rounding is an implementation detail of the allocator.
 
-
-Para crear un nuevo allocator, tiene que tomar la capability `memory` de
-`system` y usarla para crear un nuevo allocator.
-
-```
-init (.memory: &System.Memory) -> (.allocator: PageAllocator) := { ... }
-```
-
-
-## Allocation
-
-Successful allocators return an `Allocation` struct instead of a single
-pointer. This keeps the size and the erased stateful deallocator needed to
-release the storage later.
-
-```
+```rg
 Allocation : Type = (
-	.data        : $&UInt8
-	.size        : UIntNative
-	.deallocator : Virtual#(.abstract: Deallocator)
+    .data: RawPointer#(.t: UInt8)
+    .size: UIntNative
+    .alignment: UIntNative
+    .anchor: &Any
+    .deallocator: Virtual#(.abstract: Deallocator)
 )
 ```
 
-`Allocation` should become the basic owning heap primitive in `core`.
+Higher-level owners such as `String` and `DynamicArray<T>` keep their own
+occupancy and length invariants. `MaybeUninit<T>` identifies a suitable slot;
+only initialization establishes a live `T`. Trusted core helpers can establish
+references to slots under the owner's bounds, alignment, and occupancy
+invariants. Safety ties those references to the allocation's root and anchor,
+so releasing or resetting the storage invalidates them.
 
-That means higher-level owning types such as:
+`CAllocator` obtains aligned heap storage from libc. `PageAllocator` requests
+page-aligned libc storage while preserving the requested size in `Allocation`.
+`ArenaAllocator` uses libc for its physical blocks and a caller-supplied
+`CAllocator` for block metadata; `reset` ends the shared arena lifetime and
+releases the blocks. Individual child deallocations do not release a block.
 
-- strings,
-- dynamic lists,
-- maps,
-- buffers,
-
-should ideally compose an `Allocation` internally instead of each inventing a
-different low-level ownership representation.
-
-`Allocation` owns raw bytes only. It should not itself imply list semantics,
-string semantics, or view semantics.
-
-When initializing types, allocators are passed as arguments,
-
-```
-init (
-    size     : Int,
-    allocator: Allocator
-) -> (.ha: Allocation) := {
-	ha = Allocation (
-		.data      = allocator|allocate(size)
-		.size      = size
-		.allocator = allocator
-	)
-}
-```
-
-```
-my_buf : Allocation = init(1024, my_allocator)
-```
-
-
-In a type:
-
-```
-HashMap#(.key: Type, .value: Type) : Type = (
-	.data      : Allocation
-)
-
-
-init#(.key: Type, .value: Type) (
-    hm: $&HashMap#(.key: key, .value: value),
-    allocator: &Allocator,
-    content: MapLiteral,
-) -> () :=  {
-	hm& = (
-        .data = allocation_init(.size = 1024)
-    )
-	...
-}
-
--- When adding stuff check capacity and reallocate if necessary.
-
-deinit#(.key: Type, .value: Type) (hm: $&HashMap#(.key: key, .value: value)) -> () := {
-	allocation_deinit(.allocation = hm&.data)
-}
-
-copy#(.key: Type, .value: Type) (
-    hm: HashMap#(.key: key, .value: value),
-    allocator: &Allocator,
-) -> (.out: HashMap#(.key: key, .value: value)) := {
-	-- allocate new storage and duplicate the contents
-}
-```
-
-```
-my_map : HashMap#(.key: String, .value: Int32) = HashMap#(.key: String, .value: Int32)(
-    my_allocator,
-    ("a" = 1, "b" = 2),
-)
-```
-
-If `HashMap` provides `copy()`, callers can request an independent map with
-`copy(&map)`. It is copied implicitly only if it separately implements
-`ImplicitlyCopyable`, which an allocating map normally should not. Otherwise it
-can be borrowed with `&`/`$&` or transferred with `~map`.
-
-This separation is useful:
-
-- allocator strategy is one concern,
-- ownership and copying are another,
-- borrowed views should remain a third, separate concern.
-
-> [!FIX] Reflexionar sobre la sintaxis para incializar un mapa.
-> Lo ideal sería:
-> ```
-> my_map := ("a"=1, "b"=2)
-> ```
-> El no tener un default allocator perjudica mucho la ergonomía del lenguaje.
-> Pensar en hacer que no sea una capability
+Using an allocator and implementing `deinit()` does not make a type implicitly
+copyable. Ownership, copying, and borrowed views remain separate concerns; see
+`32_copying_behaviour.md` and `38_safety_model.md`.

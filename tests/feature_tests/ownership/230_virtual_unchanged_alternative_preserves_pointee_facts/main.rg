@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 Mutator : Abstract = (
     mutate(.self: $&Self) -> ()
 )
@@ -31,7 +32,7 @@ main(.system: System) -> (.status_code: Int32) := {
             target ::= ~target_payload
             noop ::= Noop(.marker = 0)
             register_noop(.value = $&noop)
-            state ::= Stateful(.reference = trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference, .counter = 0)
+            state ::= Stateful(.reference = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference, .counter = 0)
             if 1 == 1 {
                 virtual ::= to_virtual#(.abstract: Mutator)(.value = $&state)
                 mutate(.self = $&virtual)

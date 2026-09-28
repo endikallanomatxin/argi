@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 Pair : Type = (
     .changing: String
     .stable: String
@@ -21,7 +22,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if is(.value = stable_push, .variant = ..error) {
         return
     }
-    stable_data ::= trusted_allocation_byte_rw(.allocation = $&pair.stable.allocation, .offset = 0).reference
+    stable_data ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&pair.stable.allocation, .offset = 0).reference
     i :: UIntNative = 0
     while i < 2 {
         pushed ::= push_byte(.self = $&pair.changing, .byte = 65, .allocator = system.allocator)

@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 Observer : Type = (.reference: $&UInt8)
 Wrapper : Type = (.observer: Observer)
 
@@ -15,7 +16,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ payload {
             allocation ::= ~payload
-            stale ::= trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
+            stale ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
             deinit(.self = $&allocation)
             observe_on_exit(.reference = stale)
             status_code = 0

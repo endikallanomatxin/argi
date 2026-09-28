@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 Tracked : Type = (.id: Int32)
 
 first_drops :: Int32 = 0
@@ -31,7 +32,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ payload {
             slots ::= ~payload
-            first_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Tracked)(.base = trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
+            first_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Tracked)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
             second_slot ::= mutable_reference_offset#(.t: Tracked)(.base = first_slot, .elements = 1).reference
             third_slot ::= mutable_reference_offset#(.t: Tracked)(.base = first_slot, .elements = 2).reference
 

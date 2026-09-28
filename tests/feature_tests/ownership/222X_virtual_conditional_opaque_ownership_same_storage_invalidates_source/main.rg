@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 OpaqueStorer : Abstract = (
     store(
         .self: $&Self,
@@ -51,13 +52,13 @@ main(.system: System) -> (.status_code: Int32) := {
                 ..error _ { status_code = 2 }
                 ..ok ~ slot_payload {
                     slot_storage ::= ~slot_payload
-                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = trusted_allocation_byte_rw(.allocation = $&slot_storage, .offset = 0).reference).reference
+                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slot_storage, .offset = 0).reference).reference
                     container ::= Container(.marker = 0)
                     keeping ::= Keeping(.marker = 0)
                     register_keeping(.value = $&keeping)
                     implementation ::= Consuming(.marker = 0)
                     virtual ::= to_virtual#(.abstract: OpaqueStorer)(.value = $&implementation)
-                    source ::= Borrowing(.reference = trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference)
+                    source ::= Borrowing(.reference = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference)
                     store(.self = $&virtual, .storage = $&container, .slot = slot, .source = $&source)
                     trusted_opaque_mark_empty(.storage = $&container)
                     if source.reference& == 0 {

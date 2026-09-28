@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 Borrowing : Type = (
     .reference: &Int32
 )
@@ -10,7 +11,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ slots_payload {
             slots ::= ~slots_payload
-            slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
+            slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
 
             -- Precision is discarded at the slot boundary, but the dependency
             -- on `external` survives in the storage-level opaque summary.

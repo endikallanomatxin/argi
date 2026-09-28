@@ -249,9 +249,9 @@ Failure is decided at the raw-storage boundary. `..error ..out_of_memory`
 therefore carries no `Allocation`, safe reference, Validity Root, or cleanup obligation;
 `StorageCapability` is consumed only on successful establishment.
 
-`ArenaAllocator(backing_allocator)` composes a caller-selected physical
-allocator with grouped lifetime. Its safe allocations inherit one arena root;
-reset or deinitialization ends that root and releases backing blocks. Cleaning
+`ArenaAllocator(metadata_allocator)` uses the supplied `CAllocator` for block
+metadata and libc for the physical blocks. Its allocations share one arena root;
+reset or deinitialization ends that root and releases the blocks. Cleaning
 an individual arena-backed child does not end the arena. Logical detach need
 not free storage, so aliases can remain valid until grouped cleanup.
 

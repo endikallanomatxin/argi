@@ -1,9 +1,10 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= system.allocator
-    assume backing_allocator ::= system.allocator
+    assume metadata_allocator ::= system.allocator
 
     arena :: ArenaAllocator
-    initialized ::= init(.p = $&arena, .backing_allocator = system.allocator, .block_size = 0)
+    initialized ::= init(.p = $&arena, .metadata_allocator = system.allocator, .block_size = 0)
     if is(.value = initialized, .variant = ..error) {
         status_code = 1
         return
@@ -21,9 +22,9 @@ main(.system: System) -> (.status_code: Int32) := {
                 status_code = 3
                 return
             }
-            byte_pointer_24 ::= trusted_allocation_byte_rw(.allocation = $&child, .offset = 0).reference
+            byte_pointer_24 ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&child, .offset = 0).reference
             byte_pointer_24& = 7
-            if trusted_allocation_byte_rw(.allocation = $&child, .offset = 0).reference& != 7 {
+            if unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&child, .offset = 0).reference& != 7 {
                 status_code = 4
                 return
             }

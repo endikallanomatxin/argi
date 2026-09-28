@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 Borrowing : Type = (
     .reference: $&UInt8
 )
@@ -27,10 +28,10 @@ main(.system: System) -> (.status_code: Int32) := {
                         ..ok ~ second_payload {
                             second ::= ~second_payload
                             container :: Container = (.first = ~first, .second = ~second)
-                            first_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = trusted_allocation_byte_rw(.allocation = $&container.first, .offset = 0).reference).reference
-                            second_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = trusted_allocation_byte_rw(.allocation = $&container.second, .offset = 0).reference).reference
-                            first_value :: Borrowing = (.reference = trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference)
-                            second_value :: Borrowing = (.reference = trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference)
+                            first_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&container.first, .offset = 0).reference).reference
+                            second_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&container.second, .offset = 0).reference).reference
+                            first_value :: Borrowing = (.reference = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference)
+                            second_value :: Borrowing = (.reference = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference)
                             trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(.storage = $&container.first, .destination = first_slot, .source = ~first_value)
                             trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(.storage = $&container.second, .destination = second_slot, .source = ~second_value)
                             trusted_opaque_drop(.slot = first_slot)

@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 AddressSensitive : Type = (
     .value: UInt8
     .reference: Nullable#(.t: $&UInt8)
@@ -12,7 +13,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ slots_payload {
             slots ::= ~slots_payload
-            source_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: AddressSensitive)(.base = trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
+            source_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: AddressSensitive)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
             destination_slot ::= mutable_reference_offset#(.t: AddressSensitive)(.base = source_slot, .elements = 1).reference
             value :: AddressSensitive = (.value = 7, .reference = ..none)
 

@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 Rewriter : Abstract = (
     rewrite(.reference: $&UInt8, .target: $&Self) -> ()
 )
@@ -24,15 +25,15 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ old_payload {
             old ::= ~old_payload
-            keeping :: Keeping = (.reference = trusted_allocation_byte_rw(.allocation = $&old, .offset = 0).reference)
+            keeping :: Keeping = (.reference = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&old, .offset = 0).reference)
             register_keeping(.value = $&keeping)
             match target_result {
                 ..error _ { status_code = 2 }
                 ..ok ~ target_payload {
                     target ::= ~target_payload
-                    value :: Rewriting = (.reference = trusted_allocation_byte_rw(.allocation = $&old, .offset = 0).reference)
+                    value :: Rewriting = (.reference = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&old, .offset = 0).reference)
                     virtual ::= to_virtual#(.abstract: Rewriter)(.value = $&value)
-                    rewrite(.reference = trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference, .target = $&virtual)
+                    rewrite(.reference = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference, .target = $&virtual)
                     deinit(.self = $&target)
                     if value.reference& == 0 {
                         status_code = 0

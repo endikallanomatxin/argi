@@ -1,3 +1,4 @@
+unsafe_allocation := #import("../../_support/unsafe_allocation")
 Result : Type = (
     ..ok Allocation
     ..error Int32
@@ -12,7 +13,7 @@ main(.system: System) -> (.status_code: Int32 = 1) := {
     match allocated {
         ..error _ { status_code = 2 }
         ..ok ~ allocation {
-            stale ::= trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
+            stale ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
             result : Result = ..ok ~allocation
             payload ::= ~result..ok
 
