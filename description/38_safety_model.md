@@ -101,6 +101,8 @@ b = ~a
 ```
 
 Move is not relocation. It does not retarget references into the old Place.
+An internal reference that still names a moved field cannot be dereferenced
+through the destination value, even while the old storage remains allocated.
 `deinit` performs the logical termination of an owning value: physical
 cleanup, termination of roots it owns, and deinitialization of its Place.
 Physical cleanup and temporal validity are separate concerns.

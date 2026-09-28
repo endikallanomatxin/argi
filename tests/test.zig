@@ -3548,10 +3548,11 @@ test "feature_tests/ownership/122_trusted_opaque_relocate" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/123_self_referential_movable" {
-    const test_path = "tests/feature_tests/ownership/123_self_referential_movable";
-    try expectSuccessfulBuild(test_path);
-    try runExpect(test_path, 0);
+test "feature_tests/ownership/123X_self_referential_move_does_not_retarget" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/123X_self_referential_move_does_not_retarget",
+        "value was moved",
+    );
 }
 
 test "feature_tests/ownership/123X_opaque_relocate_self_reference" {
@@ -4862,6 +4863,46 @@ test "feature_tests/ownership/286X_uninitialized_allocation_read" {
     try buildExpectFail(
         "tests/feature_tests/ownership/286X_uninitialized_allocation_read",
         "is not dereferenceable; expected '&T' or '$&T'",
+    );
+}
+
+test "feature_tests/ownership/287X_aggregate_copy_after_projected_reference_write" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/287X_aggregate_copy_after_projected_reference_write",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/288X_aggregate_read_after_field_move" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/288X_aggregate_read_after_field_move",
+        "place rooted at 'pair' is moved and cannot be used",
+    );
+}
+
+test "feature_tests/ownership/289_aggregate_copy_after_field_replacement" {
+    const test_path = "tests/feature_tests/ownership/289_aggregate_copy_after_field_replacement";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/290_aggregate_copy_after_disjoint_branch_writes" {
+    const test_path = "tests/feature_tests/ownership/290_aggregate_copy_after_disjoint_branch_writes";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/291X_aggregate_read_after_field_deinit" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/291X_aggregate_read_after_field_deinit",
+        "value was deinitialized",
+    );
+}
+
+test "feature_tests/ownership/292X_nested_aggregate_copy_after_projected_write" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/292X_nested_aggregate_copy_after_projected_write",
+        "reference depends on a root that has ended",
     );
 }
 

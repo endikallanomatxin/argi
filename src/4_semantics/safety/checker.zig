@@ -416,15 +416,14 @@ pub const SafetyChecker = struct {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
             .binding_use => |binding| blk: {
-                // TODO: Reconstruct whole-aggregate reads from projected place
-                // records as well, preserving field updates through intermediate
-                // copies without conflating owning moves with reference copies.
                 const storage = facts.Place{ .root = binding };
                 const place = self.getPlace(state, storage) orelse break :blk .{};
                 try self.requirePlaceInitialized(function, node.source, storage, place.initializedness, state);
-                if (place.value.explicit_dependency and !state.tracker.dependenciesAreAlive(place.value))
+                try self.requireDescendantsInitialized(function, node.source, storage, state);
+                const value = try self.reconstructPlaceValue(state, storage, place.value);
+                if (valueHasDeadExplicitDependency(value, state))
                     try self.report(node.source, "value depends on a root that has ended", .{});
-                break :blk place.value;
+                break :blk value;
             },
             .move_value => |child| blk: {
                 const value = try self.evaluate(function, child, state);
@@ -452,7 +451,8 @@ pub const SafetyChecker = struct {
                 if (pointer.referenced_place) |storage| {
                     const initializedness = self.initializednessAtPlace(state, storage);
                     try self.requireInitialized(function, node.source, initializedness);
-                    value = self.valueAtPlace(state, storage) orelse .{};
+                    try self.requireDescendantsInitialized(function, node.source, storage, state);
+                    value = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
                 }
                 break :blk try self.envelopeOpaqueRead(state, value, node.ty, pointer);
             },
@@ -464,8 +464,9 @@ pub const SafetyChecker = struct {
                     const initializedness = self.initializednessAtPlace(state, storage);
                     try self.requirePlaceInitialized(function, node.source, storage, initializedness, state);
                     if (self.valueAtPlace(state, storage)) |value| {
+                        try self.requireDescendantsInitialized(function, node.source, storage, state);
                         const provenance = try self.opaqueProvenanceCarriedByAccess(access.value, state);
-                        break :blk try self.addOpaqueReadEnvelope(value, node.ty, provenance);
+                        break :blk try self.addOpaqueReadEnvelope(try self.reconstructPlaceValue(state, storage, value), node.ty, provenance);
                     }
                 }
                 const aggregate = try self.evaluate(function, access.value, state);
@@ -481,7 +482,8 @@ pub const SafetyChecker = struct {
                     const storage = try self.project(base, projection);
                     const initializedness = self.initializednessAtPlace(state, storage);
                     try self.requirePlaceInitialized(function, node.source, storage, initializedness, state);
-                    value = self.valueAtPlace(state, storage) orelse .{};
+                    try self.requireDescendantsInitialized(function, node.source, storage, state);
+                    value = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
                 }
                 break :blk try self.envelopeOpaqueRead(state, value, node.ty, pointer);
             },
@@ -1776,6 +1778,98 @@ pub const SafetyChecker = struct {
         return null;
     }
 
+    fn requireDescendantsInitialized(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, storage: facts.Place, state: *FunctionState) !void {
+        for (state.places.items) |projected| {
+            if (!storage.isPrefixOf(projected.storage) or storage.eql(projected.storage)) continue;
+            if (projected.initializedness != .initialized)
+                try self.requirePlaceInitialized(function, source, projected.storage, projected.initializedness, state);
+        }
+    }
+
+    /// A projected write is authoritative for its part of an aggregate. Fold
+    /// those records into a value read so copies and moves carry the current
+    /// fields, including changes made through nested places.
+    fn reconstructPlaceValue(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, original: facts.ValueFacts) !facts.ValueFacts {
+        var result = original;
+        for (state.places.items, 0..) |entry, entry_index| {
+            if (!storage.isPrefixOf(entry.storage) or entry.storage.projections.len <= storage.projections.len) continue;
+            const projection = entry.storage.projections[storage.projections.len];
+            var already_seen = false;
+            for (state.places.items[0..entry_index]) |prior| {
+                if (storage.isPrefixOf(prior.storage) and prior.storage.projections.len > storage.projections.len and
+                    projection.eql(prior.storage.projections[storage.projections.len]))
+                {
+                    already_seen = true;
+                    break;
+                }
+            }
+            if (already_seen) continue;
+            const child_storage = facts.Place{
+                .root = storage.root,
+                .projections = entry.storage.projections[0 .. storage.projections.len + 1],
+            };
+            const inherited = try self.projectValueFacts(original, &.{projection});
+            const child_value = if (self.getPlace(state, child_storage)) |exact| exact.value else inherited;
+            const child = try self.reconstructPlaceValue(state, child_storage, child_value);
+            switch (projection) {
+                .field, .static_index => |index| {
+                    const field_index: u32 = @intCast(index);
+                    var fields = std.array_list.Managed(facts.FieldFacts).init(self.allocator);
+                    var replaced = false;
+                    for (result.fields) |field| {
+                        if (field.index == field_index) {
+                            const stored = try self.allocator.create(facts.ValueFacts);
+                            stored.* = child;
+                            try fields.append(.{ .index = field_index, .value = stored });
+                            replaced = true;
+                        } else try fields.append(field);
+                    }
+                    if (!replaced) {
+                        const stored = try self.allocator.create(facts.ValueFacts);
+                        stored.* = child;
+                        try fields.append(.{ .index = field_index, .value = stored });
+                    }
+                    result.fields = try fields.toOwnedSlice();
+                },
+                .variant => |index| {
+                    var variants = std.array_list.Managed(facts.VariantFacts).init(self.allocator);
+                    var replaced = false;
+                    for (result.variants) |variant| {
+                        if (variant.index == index) {
+                            const stored = try self.allocator.create(facts.ValueFacts);
+                            stored.* = child;
+                            try variants.append(.{ .index = index, .value = stored });
+                            replaced = true;
+                        } else try variants.append(variant);
+                    }
+                    if (!replaced) {
+                        const stored = try self.allocator.create(facts.ValueFacts);
+                        stored.* = child;
+                        try variants.append(.{ .index = index, .value = stored });
+                    }
+                    result.variants = try variants.toOwnedSlice();
+                },
+                .dynamic_index => result = try self.mergeValueFacts(result, child),
+                .dereference => {},
+            }
+        }
+        return result;
+    }
+
+    fn inheritedPlaceFacts(self: *SafetyChecker, state: *const FunctionState, storage: facts.Place) !facts.PlaceFacts {
+        var depth = storage.projections.len;
+        while (depth > 0) {
+            depth -= 1;
+            const ancestor = facts.Place{ .root = storage.root, .projections = storage.projections[0..depth] };
+            if (findPlaceConst(state, ancestor)) |place| return .{
+                .storage = storage,
+                .initializedness = place.initializedness,
+                .value = try self.projectValueFacts(place.value, storage.projections[depth..]),
+            };
+        }
+        return .{ .storage = storage };
+    }
+
     fn refreshStorageGeneration(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) !void {
         _ = self;
         var index: usize = 0;
@@ -3029,18 +3123,29 @@ pub const SafetyChecker = struct {
 
         for (left.places.items) |left_place| {
             var merged = left_place;
-            if (findPlaceConst(right, left_place.storage)) |right_place| {
+            // A projection written on only one path still has a value on the
+            // other path: it inherits that path's nearest aggregate record.
+            const right_place = if (findPlaceConst(right, left_place.storage)) |exact| exact.* else try self.inheritedPlaceFacts(right, left_place.storage);
+            merged.initializedness = joinInitializedness(left_place.initializedness, right_place.initializedness);
+            merged.moved_at = if (merged.initializedness == .moved)
+                if (left_place.initializedness == .moved) left_place.moved_at else right_place.moved_at
+            else
+                null;
+            merged.value = try self.mergeValueFacts(left_place.value, right_place.value);
+            try joined.places.append(merged);
+        }
+        for (right.places.items) |right_place| {
+            if (findPlaceConst(left, right_place.storage) == null) {
+                const left_place = try self.inheritedPlaceFacts(left, right_place.storage);
+                var merged = right_place;
                 merged.initializedness = joinInitializedness(left_place.initializedness, right_place.initializedness);
                 merged.moved_at = if (merged.initializedness == .moved)
                     if (left_place.initializedness == .moved) left_place.moved_at else right_place.moved_at
                 else
                     null;
                 merged.value = try self.mergeValueFacts(left_place.value, right_place.value);
+                try joined.places.append(merged);
             }
-            try joined.places.append(merged);
-        }
-        for (right.places.items) |right_place| {
-            if (findPlaceConst(left, right_place.storage) == null) try joined.places.append(right_place);
         }
 
         for (left.ownership_edges.items) |edge| try joined.ownership_edges.append(edge);
@@ -3888,6 +3993,13 @@ fn valueHasDependency(value: facts.ValueFacts) bool {
     if (value.dependencies.len != 0) return true;
     for (value.fields) |field| if (valueHasDependency(field.value.*)) return true;
     for (value.variants) |variant| if (valueHasDependency(variant.value.*)) return true;
+    return false;
+}
+
+fn valueHasDeadExplicitDependency(value: facts.ValueFacts, state: *const SafetyChecker.FunctionState) bool {
+    if (value.explicit_dependency and !state.tracker.dependenciesAreAlive(value)) return true;
+    for (value.fields) |field| if (valueHasDeadExplicitDependency(field.value.*, state)) return true;
+    for (value.variants) |variant| if (valueHasDeadExplicitDependency(variant.value.*, state)) return true;
     return false;
 }
 
