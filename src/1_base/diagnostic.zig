@@ -16,7 +16,7 @@ pub const Diagnostic = struct {
     msg: []const u8,
 };
 
-/// Pequeño *bag* que vive en un `Allocator` (arena está bien)
+/// A small *bag* allocated from an `Allocator` (an arena works well).
 pub const Diagnostics = struct {
     arena: *const std.mem.Allocator,
     source_files: []const sf.SourceFile, // slice inmutable
@@ -76,7 +76,7 @@ pub const Diagnostics = struct {
 
     pub fn dumpWithLimit(self: *Diagnostics, max_count: usize) !void {
         for (self.source_files, 0..) |f, file_index| {
-            // pre-split en líneas para subrayado
+            // Pre-split into lines for highlighting.
             var lines_it = std.mem.splitAny(u8, f.code, "\n");
             var lines = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
             defer lines.deinit();

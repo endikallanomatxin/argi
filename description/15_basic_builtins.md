@@ -2,7 +2,7 @@
 
 ### Booleans
 
-and, or, not... se escriben como keywords
+`and`, `or`, `not`, and similar operators are written as keywords.
 
 Literals are:
 - `true`
@@ -43,4 +43,3 @@ Numbers only allow operatiions and comparisons between same types, so, if you wa
 
 
 ## Characters and Strings
-

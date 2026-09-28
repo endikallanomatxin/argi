@@ -151,8 +151,8 @@ fn printLinkerFailure(
     }
 }
 
-/// Compila el `LLVMModuleRef` que llega de `codegen.generate` a objeto
-/// y lo enlaza con la libc del sistema produciendo `output_path`.
+/// Compiles the `LLVMModuleRef` from `codegen.generate` into an object
+/// and links it with the system libc to produce `output_path`.
 pub fn linkWithLibc(
     module: llvm.c.LLVMModuleRef,
     triple: [:0]const u8,

@@ -23,10 +23,10 @@ It causes:
 ```
 m1 : Map = ()
 m2 := m1
-m2 | put($&_, "key", "value") -- Cambia el original
+m2 | put($&_, "key", "value") -- Mutates the original.
 
 m1 | deinit($&_)
-m2 | deinit($&_) -- Double free error
+m2 | deinit($&_) -- Double-free error.
 ```
 
 In manually managed laguages, to avoid that you usually need to know about the

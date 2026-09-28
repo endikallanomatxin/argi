@@ -3,26 +3,25 @@
 Abstract types should be one of the main reusable abstraction mechanisms of the
 language. They are primarily for expressing static contracts.
 
-- Permiten definir qué funciones deben poder llamarse sobre un tipo.
+- They let you define which functions must be callable on a type.
 
-- Obligan a especificar explícitamente qué tipos subyacen al abstract type.
+- They require explicitly specifying which types underlie the abstract type.
 
-- Permiten definir un tipo por defecto, que será el que se inicialice si se usa
-  como tipo al ser declarado.
+- They let you define a default type, which is initialized when the abstract is
+  used as a declared type.
 
-- NO permiten definir propiedades (Para evitar malas prácticas)
+- They do NOT allow properties (to avoid bad practices).
 
-- Se pueden componer.
+- They can be composed.
 
-- Se contempla extenderlos fuera de sus módulos de origen; las reglas de
-  visibilidad y autorización siguen abiertas.
+- They may be extended outside their source modules; visibility and
+  authorization rules remain open questions.
 
-- Si se usan en la firma de una función, se monomorfiza por defecto; para usar
-despacho dinámico en runtime, hay que usar `Virtual#(AbstractType)`.
+- When used in a function signature, they are monomorphized by default. Use
+  `Virtual#(AbstractType)` for dynamic dispatch at runtime.
 
-- Los tipos concretos que implementan un abstract pueden tener parámetros de
-  comptime extra, pero tienen que poder mapear explícitamente los parámetros del
-  contrato abstracto.
+- Concrete types implementing an abstract may have extra comptime parameters,
+  but must explicitly map the abstract's parameters in the abstract contract.
 
 ## Associated parameters
 
@@ -55,16 +54,16 @@ For example, resolving `FalliblyCopyable` for a type determines its unique
 `.reasons` choice, while resolving `Iterator` determines its unique `.t`.
 
 
-## Declaración
+## Declaration
 
-En el cuerpo del abstract, se pueden usar Self como el tipo que lo implementa.
+Inside an abstract body, `Self` can be used as the implementing type.
 
 
-Así se declara un abstract:
+An abstract is declared like this:
 
 ```
 Animal : Abstract = (
-	-- Las funciones se definen con la sintaxis de currying.
+	-- Functions use currying syntax.
 	speak(.who: Self) -> (.text: String)
 )
 
@@ -72,16 +71,16 @@ speak (.d: Dog) -> (.s: String) := {
 	return "Woof"
 }
 
--- Requiere manifestación explícita de la implementación.
+-- Requires an explicit implementation declaration.
 Dog implements Animal
 
--- Permite definir un valor por defecto.
+-- Allows defining a default value.
 Animal defaultsto Dog
 ```
 
 > [!CHECK] Valorar default
-> Como la sintaxis cómoda para definición de listas al final no se va a dar,
-> igual no tiene sentido esto.
+> Since convenient syntax for defining lists at the end is not planned,
+> perhaps this is not useful.
 
 ```
 Addable : Abstract = (
@@ -148,9 +147,9 @@ be the same, to express that, use compile-time-parameters.
     foo#(.t: Type: ExampleAbstract) (.a: t, .b: t) -> (.r: t) := { ... }
     ```
 
-    Todas las llamadas a funciones que usan abstracts se podrían expresar
-    usando generics en realidad. El caso habitual de uso de abstracts, es
-    cómodo cuando no se asume nada del input.
+    All function calls using abstracts could in fact be expressed with
+    generics. Abstracts are convenient in the common case where nothing is
+    assumed about the input.
 
 
 - When specifying an interaction between two types from abstracts to more
@@ -242,12 +241,12 @@ AbstractMatrix#(
 > [!TODO] The visibility and orphan rules for external `implements` remain
 > open alongside cross-module overload lookup; see `131_multiple_dispatch.md`.
 
-> [!TODO] Subtyping con genéricos.
-> ¿Vector<Int64> es usable donde se espera Vector<Number>?
+> [!TODO] Subtyping with generics.
+> Can `Vector<Int64>` be used where `Vector<Number>` is expected?
 
 
-> [!TODO] Where clauses en la cabecera de funciones y de los abstracts.
-> Pensar si merece la pena.
+> [!TODO] Where clauses in function and abstract headers.
+> Consider whether this is worthwhile.
 
 > [!TODO]
-> Se permite que el abstract aporte tipos asociados?
+> Can an abstract provide associated types?

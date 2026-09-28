@@ -1,15 +1,15 @@
 ### NO OOP
 
-No hay objetos.
+There are no objects.
 
-Para dar la comodidad de llamar a métodos de objetos con un punto, se puede usar el pipe operator.
+To get the convenience of calling object methods with a dot, use the pipe operator.
 
 ```
-obj | method(_)  -- como hacer obj.method()
+obj | method(_)  -- equivalent to obj.method()
 ```
 
 
-Para recibir referencias a métodos, se usa el pipe operator con un ampersand.
+To get a method reference, use the pipe operator with an ampersand.
 
 ```
 length (v:&Vector&) -> (l: Float) := {
@@ -21,7 +21,7 @@ l = my_vect | length(_)
 ```
 
 
-Para hacer el análogo \_\_init\_\_:
+To provide an equivalent to `__init__`:
 
 ```
 Expr : Type = (
@@ -40,7 +40,7 @@ init (s: String) -> (e: Expr) := {
 my_expr : Expr = "x^2"
 ```
 
-Con más info en el nombre si requieren desambiguación:
+Use a more descriptive name when disambiguation is needed:
 
 ```
 Vector : Type = struct (
@@ -63,7 +63,7 @@ new_vector_from_polar(.r: Float, .theta: Float) := (.v: Vector) {
 my_vect = new_vector_from_polar (2, PI)
 ```
 
-Para definir el comportamiento de operadores, se usa operator overloading
+Use operator overloading to define operator behavior.
 
 ```plaintext
 operator + (.v1: Vector, .v2: Vector) -> (v: Vector) := {
@@ -72,7 +72,7 @@ operator + (.v1: Vector, .v2: Vector) -> (v: Vector) := {
 ```
 
 
-Para definir como se convierten en strings u otros castings.
+Define conversions to strings and other types as follows:
 
 ```
 cast (v: Vector) -> (s: String) := {
@@ -83,9 +83,9 @@ print(my_vec|cast(_))
 ```
 
 
-### Acceso por índice
+### Index access
 
-La sintaxis `[]` es una operación estructural de los arrays nativos. No se
-puede implementar para tipos de usuario. Las colecciones de biblioteca
-ofrecen funciones con nombre para leer, escribir o tomar referencias a sus
-elementos, con la comprobación de rango que corresponda a cada colección.
+The `[]` syntax is a structural operation on native arrays. It cannot be
+implemented for user-defined types. Library collections provide named
+functions for reading, writing, or taking references to their elements, with
+the appropriate bounds checks for each collection.

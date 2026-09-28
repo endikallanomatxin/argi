@@ -1,18 +1,18 @@
 ## In-expression variable creation
 
-En la mayoría de lenguajes, si anidas llamadas de funciones, no puedes pasarle a una como input una referencia al output de otra. Como esas variables intermedias no existe, no pueden crearse referencias.
-Pero esto le quita mucha ergonomía al lenguaje, sobre todo al piping de funciones.
+In most languages, when function calls are nested, you cannot pass a reference to one call's output as another call's input. The intermediate variables do not exist, so references to them cannot be created.
+This makes the language less ergonomic, especially when piping function calls.
 
-En nuestro lenguaje, cuando hay funciones anidadas o pipeadas:
+In our language, when calls are nested or piped:
 
-- Las variables intermedias se crean automáticamente.
-- Si la función que las usa necesita una referencia &, entonces son constantes, si necesita una $&, entonces son variables.
-- Si no se hace keep de las variables dentro de la siguiente función, se desinicializan tras esa siguiente función.
+- Intermediate variables are created automatically.
+- If the function using a variable needs an `&` reference, the variable is constant; if it needs `$&`, the variable is mutable.
+- Unless a variable is kept inside the next function, it is deinitialized after that call.
 
 
-Ejemplos:
+Examples:
 
-Caso de builder pattern:
+Builder pattern:
 
 ```
 body :=
@@ -23,7 +23,7 @@ body :=
     | finish(&_)
 ```
 
-Función que necesita referencia para paralelizar:
+Function that needs a reference for parallel processing:
 
 ```
 result :=
@@ -32,4 +32,3 @@ result :=
     | parallel_process_that_only_reads(&_)
     | parallel_process_that_writes(~&_)
 ```
-

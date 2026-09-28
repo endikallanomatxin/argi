@@ -1,22 +1,22 @@
-Copiar a zig, que lo hace muy bien.
+Follow Zig's approach, which works very well.
 
-Igual se podría hacer que:
+Perhaps this could work as follows:
 
 ```
-a = 1  -- Esto sea un comentario en linea
+a = 1  -- This is an inline comment.
 
 --
-Esto sea un comentario multilinea
+This is a multiline comment.
 --
 
-b = 2  --- Esto sea un comentario de documentación en línea
+b = 2  --- This is an inline documentation comment.
 
 ---
-Esto sea un comentario de documentación multilinea
+This is a multiline documentation comment.
 ---
 ```
 
-Y los --- se recopilen cuando hagas.
+And collect the `---` documentation comments when building documentation.
 
 ```bash
 argi doc
@@ -25,4 +25,3 @@ argi doc
 ```bash
 argi serve-doc
 ```
-

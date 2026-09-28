@@ -21,8 +21,8 @@ Available literals:
     - Array literals:
 	- Arrays if constant
 	- DynamicArrays if variable
-	(mierda, necesitamos un allocator, así que igual siempre static y si
-	quieres dynamic usas el constructor)
+	(An allocator is required; perhaps collections should always be static, and
+	users should use a constructor when dynamic storage is needed.)
 
 The intended default heap-backed resizable list in `core` is `DynamicArray`.
 

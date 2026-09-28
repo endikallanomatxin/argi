@@ -1,6 +1,6 @@
 const std = @import("std");
 
-/// Buffer in-memory de un fichero fuente.
+/// In-memory buffer for a source file.
 pub const SourceFile = struct {
     path: []const u8, // ruta (relativa a cwd)
     code: []const u8, // contenido completo
@@ -636,13 +636,13 @@ fn collectModuleOrder(
     try ordered_dirs.append(try alloc.dupe(u8, dir_path));
 }
 
-/// Lee un único fichero.
+/// Reads a single file.
 pub fn readFile(alloc: *const std.mem.Allocator, io: std.Io, path: []const u8) !SourceFile {
-    const code = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc.*, .limited(1 << 24)); // 16 MiB máx.
+    const code = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc.*, .limited(1 << 24)); // 16 MiB maximum.
     return .{ .path = try alloc.dupe(u8, path), .code = code };
 }
 
-/// Reúne todos los .rg de `core_dir` + el `user_path`.
+/// Collects all `.rg` files from `core_dir` and `user_path`.
 pub fn collect(
     alloc: *const std.mem.Allocator,
     io: std.Io,
@@ -819,7 +819,7 @@ pub fn collectWithEntrySourceWithOptions(
     try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files);
     markBundledCore(list.items[core_start..]);
 
-    // ─── carpeta del entrypoint del usuario y imports explícitos ─────────
+    // ─── user entry-point directory and explicit imports ────────────────
     const user_dir = std.fs.path.dirname(user_path) orelse ".";
     const root_module_dir = try alloc.dupe(u8, user_dir);
     defer alloc.free(root_module_dir);
@@ -847,7 +847,7 @@ pub fn collectWithEntrySourceWithOptions(
         try collectRgFilesInDir(alloc, io, &list, dir_path, skip_path, &seen_files);
     }
 
-    // ─── entrypoint del usuario al final ─────────────────────────────────
+    // ─── user entry point at the end ────────────────────────────────────
     for (list.items) |*source_file| {
         if (!std.mem.eql(u8, source_file.path, user_path)) continue;
 
@@ -865,7 +865,7 @@ pub fn collectWithEntrySourceWithOptions(
     return list;
 }
 
-/// Libera los `code` y la lista.
+/// Frees the `code` buffers and the list.
 pub fn freeList(
     alloc: *const std.mem.Allocator,
     list: *std.array_list.Managed(SourceFile),

@@ -45,8 +45,8 @@ pub const Tokenizer = struct {
         };
     }
 
-    /// Llama a `lexNextToken` repetidas veces hasta terminar, y devuelve
-    /// una vista prestada de los tokens generados.
+    /// Calls `lexNextToken` repeatedly until completion and returns a borrowed
+    /// view of the generated tokens.
     pub fn tokenize(self: *Tokenizer) !tok.View {
         // Source code typically needs one token for roughly four bytes. This
         // keeps the direct SoA construction from repeatedly relocating its
@@ -61,7 +61,7 @@ pub const Tokenizer = struct {
                 }
             };
         }
-        // Añadir el token EOF al final
+        // Append the EOF token.
         try self.addToken(tok.Content{ .eof = .{} }, self.location);
         return tok.View.init(&self.tokens);
     }
@@ -73,7 +73,7 @@ pub const Tokenizer = struct {
         return tokens;
     }
 
-    /// Añade un token a la lista de tokens, actualizando la ubicación actual.
+    /// Adds a token to the token list and updates the current location.
     pub fn addToken(self: *Tokenizer, content: tok.Content, location: tok.Location) !void {
         const token = tok.Token{
             .content = content,
@@ -426,7 +426,7 @@ pub const Tokenizer = struct {
             return;
         }
 
-        // Para tokens individuales según el carácter:
+        // Handle single-character tokens:
         switch (current) {
             '#' => {
                 try self.addToken(tok.Content{ .hash = .{} }, loc);
@@ -453,7 +453,7 @@ pub const Tokenizer = struct {
                 // Check for double colon
                 if (self.peekNext() == ':') {
                     try self.addToken(tok.Content{ .double_colon = .{} }, loc);
-                    _ = self.advance(); // Avanzar el segundo ':'
+                    _ = self.advance(); // Advance past the second ':'.
                 } else {
                     try self.addToken(tok.Content{ .colon = .{} }, loc);
                 }
@@ -461,7 +461,7 @@ pub const Tokenizer = struct {
             '=' => {
                 if (self.peekNext() == '=') {
                     try self.addToken(tok.Content{ .comparison_operator = .equal }, loc);
-                    _ = self.advance(); // Avanzar el segundo '='
+                    _ = self.advance(); // Advance past the second '='.
                 } else {
                     try self.addToken(tok.Content{ .equal = .{} }, loc);
                 }
@@ -469,10 +469,10 @@ pub const Tokenizer = struct {
             '!' => {
                 if (self.peekNext() == '=') {
                     try self.addToken(tok.Content{ .comparison_operator = .not_equal }, loc);
-                    _ = self.advance(); // Avanzar el segundo '!'
+                    _ = self.advance(); // Advance past the second '!'.
                 } else if (self.peekNext() == '!') {
                     try self.addToken(tok.Content{ .double_bang = .{} }, loc);
-                    _ = self.advance(); // Avanzar el segundo '!'
+                    _ = self.advance(); // Advance past the second '!'.
                 } else {
                     try self.addToken(tok.Content{ .bang = .{} }, loc);
                 }
@@ -480,7 +480,7 @@ pub const Tokenizer = struct {
             '<' => {
                 if (self.peekNext() == '=') {
                     try self.addToken(tok.Content{ .comparison_operator = .less_than_or_equal }, loc);
-                    _ = self.advance(); // Avanzar el '='
+                    _ = self.advance(); // Advance past '='.
                 } else {
                     try self.addToken(tok.Content{ .comparison_operator = .less_than }, loc);
                 }
@@ -488,7 +488,7 @@ pub const Tokenizer = struct {
             '>' => {
                 if (self.peekNext() == '=') {
                     try self.addToken(tok.Content{ .comparison_operator = .greater_than_or_equal }, loc);
-                    _ = self.advance(); // Avanzar el '='
+                    _ = self.advance(); // Advance past '='.
                 } else {
                     try self.addToken(tok.Content{ .comparison_operator = .greater_than }, loc);
                 }
@@ -532,36 +532,36 @@ pub const Tokenizer = struct {
                 try self.addToken(tok.Content{ .question_mark = .{} }, loc);
             },
             '\'' => {
-                // Salta la comilla de apertura
+                // Skip the opening quote.
                 _ = self.advance();
 
-                // 1. ¿escape (`\`) o carácter directo?
+                // 1. Escape (`\\`) or literal character?
                 var char_val: u8 = undefined;
                 if (self.peek() == null) {
                     try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
                     return TokenizerError.UnknownCharacter;
                 }
                 if (self.peek().? == '\\') { // -- escape --
-                    _ = self.advance(); // salta la '\'
+                    _ = self.advance(); // Skip the backslash.
 
                     const esc = self.peek() orelse {
                         try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
                         return TokenizerError.UnknownCharacter;
                     };
                     char_val = switch (esc) {
-                        'n' => '\n', // salto de línea
-                        't' => '\t', // tabulador
-                        'r' => '\r', // retorno de carro
-                        '\\' => '\\', // barra invertida
-                        '\'' => '\'', // comilla simple
+                        'n' => '\n', // newline
+                        't' => '\t', // tab
+                        'r' => '\r', // carriage return
+                        '\\' => '\\', // backslash
+                        '\'' => '\'', // single quote
                         '0' => 0, // NUL
                         else => {
                             try self.diagnostics.add(loc, .syntax, "unsupported escape: \\{c}", .{esc});
                             return TokenizerError.UnknownCharacter;
                         },
                     };
-                    _ = self.advance(); // salta la letra de escape
-                } else { // -- carácter simple --
+                    _ = self.advance(); // Skip the escape character.
+                } else { // -- ordinary character --
                     if (self.peek().? == '\'') {
                         try self.diagnostics.add(loc, .syntax, "empty char literal", .{});
                         return TokenizerError.UnknownCharacter;
@@ -570,12 +570,12 @@ pub const Tokenizer = struct {
                     _ = self.advance();
                 }
 
-                // 2. debe venir la comilla de cierre
+                // 2. The closing quote must follow.
                 if (self.peek() != '\'') {
                     try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
                     return TokenizerError.UnknownCharacter;
                 }
-                _ = self.advance(); // salta la comilla de cierre
+                _ = self.advance(); // Skip the closing quote.
 
                 try self.addToken(
                     tok.Content{ .literal = tok.TokenLiteral{ .char_literal = char_val } },
@@ -585,20 +585,20 @@ pub const Tokenizer = struct {
             },
 
             '"' => {
-                // saltamos la comilla inicial
+                // Skip the opening quote.
                 _ = self.advance();
                 const text_start = self.location.offset;
 
-                // recopilamos caracteres, gestionando escapes
+                // Collect characters while handling escapes.
                 while (self.peek()) |c| {
                     if (c == '"') break;
                     if (c == '\\') {
-                        _ = self.advance(); // salta '\'
+                        _ = self.advance(); // Skip '\'
                         const esc = self.peek() orelse {
                             try self.diagnostics.add(loc, .syntax, "unterminated string literal", .{});
                             return TokenizerError.UnknownCharacter;
                         };
-                        switch (esc) { // escapes comunes
+                        switch (esc) { // Common escapes.
                             'n', 't', 'r', '\\', '"', '0' => {},
                             else => {
                                 try self.diagnostics.add(loc, .syntax, "unsupported escape: \\{c}", .{esc});
@@ -615,7 +615,7 @@ pub const Tokenizer = struct {
                     return TokenizerError.UnknownCharacter;
                 }
                 const text_end = self.location.offset;
-                // cerramos comilla
+                // Close the quote.
                 _ = self.advance();
 
                 try self.addToken(
@@ -626,7 +626,7 @@ pub const Tokenizer = struct {
             },
             else => {
                 try self.diagnostics.add(loc, .syntax, "unrecognized character: '{c}'", .{current});
-                _ = self.advance(); // saltamos y seguimos
+                _ = self.advance(); // Skip it and continue.
                 return;
             },
         }
@@ -691,12 +691,12 @@ fn expectNumericLiteralToken(source: []const u8, expected_tag: LiteralTag) !void
 }
 
 test "tokenizer crash resistance at EOF" {
-    try expectTokenizerDiagnostics("-- comentario sin newline final", false);
+    try expectTokenizerDiagnostics("-- comment without trailing newline", false);
     try expectTokenizerDiagnostics("0", false);
     try expectTokenizerDiagnostics("0x", true);
     try expectTokenizerDiagnostics("0b", true);
     try expectTokenizerDiagnostics("1e", true);
-    try expectTokenizerDiagnostics("\"string sin cerrar", true);
+    try expectTokenizerDiagnostics("\"unterminated string", true);
     try expectTokenizerDiagnostics("'c", true);
     try expectTokenizerDiagnostics("-", false);
 }

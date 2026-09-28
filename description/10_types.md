@@ -10,7 +10,7 @@ Types are named using PascalCase, and variables are named using snake_case.
 
 Types are casted using the cast function.
 
-- Con multiple dispatch en el return type:
+- With multiple dispatch on the return type:
 
     ```
     cast (t: MyType) -> (s: String) := {
@@ -21,7 +21,7 @@ Types are casted using the cast function.
     ```
 
 
-- Con multiple dispatch considerando ==:
+- With multiple dispatch using `==`:
 
     ```
     cast (.t: MyType, .t: Type == String) -> (.s: String) := {
@@ -31,11 +31,11 @@ Types are casted using the cast function.
     print( "My type:" + my_var|cast(_, String) )
     ```
 
-- Con multiple dispatch sin usar ==, obliga a que todos los tipos a los que se
-puede castear ocurran dentro de la misma función, por ejemplo usando switch. Es
-poco ampliable.
+- With multiple dispatch without using `==`, all types that can be cast must
+occur inside the same function, for example in a `switch`. This is
+not very extensible.
 
-- Con generics:
+- With generics:
 
 	```
 	cast#(.t: Type) (.v: t) -> (s: String) := {
@@ -57,9 +57,9 @@ poco ampliable.
 	}
 	```
 
-> [!TODO] Decidir como se hace esto usando multiple dispatch.
+> [!TODO] Decide how to do this with multiple dispatch.
 
-Se resuelve gracias al multiple dispatch.
+It is resolved through multiple dispatch.
 
 Types are not automatically casted for arithmetic operations. 
 
@@ -69,7 +69,7 @@ canonical integer type for pointer-sized values.
 
 ## Type checking
 
-Types are nominal, not structura.
+Types are nominal, not structural.
 
 
 It is checked at compiletime.
@@ -79,30 +79,31 @@ It is checked at compiletime.
 ```
 
 > [!TODO]
-> Si queremos introspección compile-time sobre abstracts o contracts, definir una
-> sintaxis específica para ello en vez de reutilizar `implements`, que hoy es
-> una declaración.
+> If we want compile-time introspection on abstracts or contracts, define
+> dedicated syntax for it instead of reusing `implements`, which is currently
+> a declaration.
 
 > [!TODO]
-> Sub-typing de List#(.t: User) vs List#(.t: Person) (variancia).
+> Subtyping of `List#(.t: User)` vs. `List#(.t: Person)` (variance).
 
 Inline declaration requires commas, but they can be ommited when using new lines.
 
 ## Alias
 
-Se hace con la misma sintaxis que para la definición de tipos.
+This uses the same syntax as type definitions.
 
 ```
-Name : Type = String  -- Uff pero esto es el abstract o el tipo.
+Name : Type = String  -- Is this the abstract or the type?
 ```
 
-Los aliases son inputs válidos para funciones con input del tipo subyacente.
+Aliases are valid inputs to functions that take the underlying type.
 
-> Seguro?
-> Esto para los aliases vendría bien:
-> Go introdujo la posibilidad de usar `~` (tilde) para indicar subyacencia, o sea `T` puede ser cualquier tipo cuyo subyacente sea `int`, `float64`, etc.
-> Igual conviene ser estricto para que realmente pueda ser útil.
-> Pero bueno, todavía ni siquiera hemos decidido si el casting automático es bueno.
+> Is this safe?
+> This could be useful for aliases:
+> Go introduced `~` (tilde) to indicate an underlying type. `T` can then be any
+> type whose underlying type is `int`, `float64`, and so on.
+> Perhaps it is better to be strict so this feature remains useful.
+> We have not yet decided whether automatic casting is a good idea.
 
 
 ## Private vs. Public
@@ -118,5 +119,5 @@ To make variables private, just use:
 ## Notes
 
 - UTF8 names? to insert LaTeX symbols: `\delta` + Tab. (from julia)
-- Si dices que `x: float` y luego dices `x = 1`, sabe que en realidad quieres decir `1.0`. (from Odin)
-- `x, y = y, x` se tiene que poder hacer.
+- If you write `x: float` and then `x = 1`, it understands that you mean `1.0`. (From Odin.)
+- `x, y = y, x` must be supported.

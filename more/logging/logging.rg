@@ -19,7 +19,7 @@ StdLogger : Type = (
 )
 
 init(.t: Type = StdLogger, .stdout: $&Writer, .stderr: $&Writer) -> (.out: StdLogger) := {
-    -- TODO: Pensar como eso se puede declarar usando la sintaxis cómoda de init.
+    -- TODO: Consider how to declare this with the convenient init syntax.
     return StdLogger(.stdout = stdout, .stderr = stderr)
 }
 

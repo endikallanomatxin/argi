@@ -6,11 +6,10 @@ Codecs is a name for englobing a set of modules that are used to encode and deco
 - `serialization`
 
 
-Linkea con zlib
-- Qué ofrece: compresión / descompresión DEFLATE (gzip, PNG, ZIP).
-- Por qué importa: es el estándar para pares de datos comprimidos en red, formatos de archivo y sistemas embebidos. Casi cualquier proyecto que haga I/O pesado lo enlaza dinámicamente para obtener máxima velocidad sin reinventar el algoritmo.
+Link against zlib.
+- What it provides: DEFLATE compression and decompression (gzip, PNG, ZIP).
+- Why it matters: it is the standard for compressed network data, file formats, and embedded systems. Nearly any project with heavy I/O links it dynamically for maximum speed without reimplementing the algorithm.
 
-linkea con FFmpeg (libavcodec / libavformat / libavutil)
-- Qué ofrecen: códecs de audio/vídeo (H.264, VP9, AAC…), wrappers de contenedores (MP4, MKV) y utilidades varias.
-- Por qué importa: servidores de streaming, editores de vídeo, reproductores multimedia y hasta videojuegos utilizan FFmpeg para transcodificar, extraer frames o mezclar pistas sin escribir un solo bit de ensamblador de códecs.
-
+Link against FFmpeg (libavcodec / libavformat / libavutil).
+- What they provide: audio and video codecs (H.264, VP9, AAC…), container wrappers (MP4, MKV), and assorted utilities.
+- Why they matter: streaming servers, video editors, media players, and even games use FFmpeg to transcode, extract frames, or mix tracks without writing codec assembly code.

@@ -1,6 +1,5 @@
 ## Postponing statement execution
 
-Ejecutar cosas en otro momento:
-- Defer: hasta que acabe el scope
-- Lazy: hasta que alguien lo necesite
-
+Run code later:
+- Defer: when the scope ends.
+- Lazy: when the value is needed.

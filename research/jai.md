@@ -92,7 +92,7 @@ He shows an idea:
 
 Arrays should be range checked in debug.
 
-Ejemplo de array respecto de C:
+Array example compared with C:
 
 ```c
 struct Mesh {
@@ -266,7 +266,7 @@ f := (x: flaot) -> float [y] { return x * y; }
 
 We don't want the capture to be considered part of the type. So let's keep the type clean on the left.
 
-Yo can apply the capture to any block.
+You can apply the capture to any block.
 
 It is useful to start the layout for dividing your code into functions.
 
@@ -386,7 +386,8 @@ build_common :: () {
 
 ## [Iteration and arrays, uninitialized values, enums](https://www.youtube.com/watch?v=-UPFH0eWHEI&list=PLmV5I2fxaiCKfxMBrNsU1kgKJXD3PkyxO&index=4)
 
-for y while son una discontinuidad en como se escribe codigo. funcion parecida sintaxis distinta. Hay que buscar syntax uniforme.
+`for` and `while` are inconsistent in how they are written: similar functions
+use different syntax. A uniform syntax should be found.
 
 ```
 // 4. Array types
@@ -431,9 +432,10 @@ Note: In the future you will be able to set index sizes, in some way like:
 */
 ```
 
-El indicador de que es un vector [] tiene que ir antes del tipo.
+The `[]` marker indicating a vector must precede the type.
 
-Hay `[N]` para arrays de tamaño fijo,`[]` para arrays de tamaño desconocido (input de función, por ejemplo) y `[...]` para arrays de tamaño dinámico.
+`[N]` denotes fixed-size arrays, `[]` arrays of unknown size (such as function
+inputs), and `[...]` dynamically sized arrays.
 
 
 
@@ -588,16 +590,16 @@ Door :: struct {
 > would make it easy to put your data in SOA.
 
 
-Se pone tras declarar el vector:
+It is placed after declaring the vector:
 
 ```
 a : [N] Vector3;
 b : [N] SOA Vector3;
 ```
 
-Se comporta igual que si fuera un AOS.
+It behaves as if it were an AoS.
 
-También se aplica a punteros
+This also applies to pointers.
 
 ```c
 Door :: struct {
@@ -607,7 +609,7 @@ Door :: struct {
 };
 ```
 
-No entiendo muy bien como funciona eso.
+I do not quite understand how this works.
 
 Making a struct SOA by default:
 
@@ -617,10 +619,10 @@ Entity :: struct SOA {
 };
 ```
 
-Eso hace que siempre que se cree una lista de eso se comporte como SOA, y así evitas ponerlo cada vez.
-Con una sola palabra, haces todo más eficiente.
+This makes every list of this type use SoA, so the annotation does not need to
+be repeated. One word makes everything more efficient.
 
-Luego se puede usar `AOS` para sobreescribirlo en un caso concreto.
+`AOS` can then override this for a specific case.
 
 ```c
 my_array : [N] AOS Entity;
@@ -632,7 +634,7 @@ AOS and SOA pointers can be automatically casted.
 
 ## [Demo: Run-time (and compile time) type information](https://youtu.be/JoNkttD_MUs?si=REPgtvNieUCQhWNn)
 
-Any type sirve para las llamadas de las funciones que polimorficas en runtime.
+`Any` is used for calls to functions that are polymorphic at runtime.
 
 ```jai
 Any :: struct {
@@ -642,7 +644,7 @@ Any :: struct {
 
 ```
 
-Varargs se hacen unpackeando listas: ..list
+Varargs are implemented by unpacking lists: `..list`.
 
 ```jai
 function_with_varargs :: (args: ..) {
@@ -659,13 +661,12 @@ Metaprogramming:
 - You can set compilation options whle compiling. Insie a #run you can say: do
 not produce an executable. That way it behaves like a script.
 
-- You have a compile time directive that you take a string and insert it as
-code. (He likes it, i think is dangerous. Igual una forma de arreglarlo sería
-que la string fuera de tipo code o algo así.)
+- You have a compile-time directive that takes a string and inserts it as
+code. (He likes it; I think it is dangerous. Perhaps this could be addressed
+by giving the string a `code` type or something similar.)
 
 Other:
 
 - StringBuilder is kind of a linked list of strings reference for build. Annd then when you ask it to convert to string, it concatenates all the strings in the linked list and returns a single string, also dealocating the linked list.
 
 ...
-

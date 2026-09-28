@@ -137,7 +137,7 @@ pub const TokenLiteral = union(enum(u8)) {
 
     regular_float_literal: TextRange,
     scientific_float_literal: TextRange,
-    // TODO: Usar una r como separador para periódicos.
+    // TODO: Use `r` as a separator for repeating decimals.
 
     char_literal: u8,
     string_literal: TextRange,

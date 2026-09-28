@@ -16,33 +16,33 @@
 
 ## Implementations
 
-1. Estática estructural (tipo Go/anytype pero chequeada):
-	Monomorfización, cero overhead de llamada, inlining posible.
-	Errores claros en compilación si falta un método/campo.
-	Riesgo:
-		crecimiento de binario si hay muchas instancias.
-	Para:
-		Algoritmos genéricos de rendimiento crítico.
-		Cuando el tipo concreto es conocido en el punto de instanciación.
-		APIs que quieras que se optimicen por inlining/const-prop.
+1. Static structural (like Go/anytype, but checked):
+	Monomorphization, zero call overhead, and possible inlining.
+	Clear compile-time errors when a method or field is missing.
+	Risk:
+		Binary growth when there are many instances.
+	Use for:
+		Performance-critical generic algorithms.
+		Cases where the concrete type is known at the instantiation site.
+		APIs that should benefit from inlining or constant propagation.
 
-2. Dinámica con vtable (objeto de interfaz):
-	Un “puntero gordo” { data_ptr, vtable_ptr }, despacho en runtime.
-	Costes:
-		indirecta, no-inline por defecto, gestionar ownership/lifetime del data_ptr.
-	Para:
-		Listas heterogéneas de “cosas que cumplen X”.
-		Cargas de plugins, FFI, separación en módulos con ABI estable.
-		Cuando quieres reducir tamaño de código aun pagando una indirecta.
+2. Dynamic dispatch with a vtable (interface object):
+	A “fat pointer” { data_ptr, vtable_ptr } with runtime dispatch.
+	Costs:
+		Indirect call, no inlining by default, and managing data_ptr ownership and lifetime.
+	Use for:
+		Heterogeneous lists of “things that satisfy X”.
+		Plugins, FFI, and module boundaries with a stable ABI.
+		Cases where reducing code size is worth an indirect call.
 
-3. Dinámica con tagged_union (suma cerrada)
+3. Dynamic dispatch with a tagged union (closed sum)
 
 ## Ergonomy constructs
 
 ### Multiple dispatch
 
-Permite que operaciones sobre distintos datos tengan el mismo nombre.
-(OOP hace esto por objeto, 1 argumento, multiple dispatch lo permite en todos)
+Lets operations on different data types share a name.
+(OOP does this per object, with one argument; multiple dispatch allows it for all arguments.)
 
 ### Generics (for parametric polymorphism)
 
@@ -54,34 +54,34 @@ most ergonomic way.
 
 ### Abstract types (for subtype polymorphism)
 
-Unifica static y dynamic dispatch bajo el mismo constructo.
-Por defecto se monomorfiza, pero se puede convertir en Virtual si se quiere
-hacer dinámico at runtime.
+Unifies static and dynamic dispatch under one construct.
+It is monomorphized by default, but can be converted to `Virtual` for runtime
+dynamic dispatch.
 
 ### Virtual types (for dynamic polymorphism)
 
-Virtual types: Es para usar Vtable
+Virtual types are used for vtables.
 
 ```
 Virtual#(Foo) : Type = (
-    .data_ptr : &Any       -- o inline storage si SBO
-    .vtable   : &Foo.Vtbl  -- tabla de fn ptrs derivada del Abstract
-    .meta     : Meta       -- type_id, flags de ownership, storage, etc.
+    .data_ptr : &Any       -- or inline storage for SBO
+    .vtable   : &Foo.Vtbl  -- function pointer table derived from the Abstract
+    .meta     : Meta       -- type_id, ownership flags, storage, etc.
 )
 ```
 
-Requiere un allocator.
+Requires an allocator.
 
-Para que un abstract sea Virtual-safe:
+For an abstract to be Virtual-safe:
 
-- Sus métodos tienen que tener una sola opción posible de dispatch.
+- Its methods must have exactly one possible dispatch target.
 
-- No puede tener Abstract input fields.
+- It cannot have Abstract input fields.
 
 > [!CHECK]
-> Esto va a ser especialemente molesto para inputs como allocators, o ints que
-> se usan como índice... que usar abstracts viene bien, va a obligar a concretar
-> muchas cosas en lugar de hacerlas polimórficas.
+> This may be especially inconvenient for inputs such as allocators or integers
+> used as indices. Abstracts are useful in these cases, but this would require
+> making many things concrete instead of polymorphic.
 
 Uso:
 

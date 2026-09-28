@@ -1,4 +1,4 @@
--- Así con generics
+-- Example using generics.
 
 Complex#(.t: Type: Float) : Type = (
   .re : t
@@ -16,7 +16,7 @@ mul#(.t: Type: Float) (.a: Complex#(.t: t), .b: Complex#(.t: t)) -> (.out: Compl
 }
 
 
--- Así con abstracts
+-- Example using abstracts.
 
 Complex : Abstract = (
 	operator + (.left: Self, .right: Self) -> (.result: Self)
@@ -31,10 +31,10 @@ Complex16 implements Complex
 Complex32 implements Complex
 Complex64 implements Complex
 Complex128 implements Complex
--- El número del nombre corresponde a lo que ocupa cada COMPONENTE del número
+-- The number in the name is the size of each COMPONENT of the number.
 Complex defaultsto Complex32
 
 Complex implements Number
 
 
--- TODO: Pensar en como hacerlo.
+-- TODO: Consider how to implement this.

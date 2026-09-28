@@ -1,20 +1,19 @@
 ## Uncertainty and units
 
 ```
--- Para físicos e ingenieros:
-NumberWithUncertainty -- Trabajar en esto, igual interesa poder usar el signo +-
-NumberWithUnits       -- Es una idea, igual viene bien para aplicaciones de ingeniería.
+-- For physicists and engineers:
+NumberWithUncertainty -- Explore this; supporting the ± sign may be useful.
+NumberWithUnits       -- An idea that may be useful for engineering applications.
 ```
 
-Hay que pensar que tener unidades no perjudique el desempeño. Que solo se considere para el desarollo, pero no al ejecutar.
+Units should not affect performance. They should be considered only during development, not at runtime.
 
 ## Tracking probability distributions through operations
 
-Si tienes una distribución de probabilidad y marcas sus percentiles (0..100, por ejemplo) puedes utilizar ese vector para representarla.
+You can represent a probability distribution with a vector of its percentiles (for example, 0..100).
 
-Puedes trackear a través de las operaciones.
+The distribution can be tracked through operations:
 
-- Aplicas la trasformación a los percentiles.
-- Igual hay que cosiderar la deformación correspondiente también (si se estira por un factor, tiene que reducirse por el mismo factor.)
-
+- Apply the transformation to the percentiles.
+- Account for the corresponding change in density as well (if the distribution stretches by a factor, its density must shrink by the same factor).
 

@@ -49,32 +49,33 @@ In the first case the caller must pass a temporary owned `String`, use
 In the second case `File` is passed by mutable reference because files are not
 copyable.
 
-> También tiene sentido usarlo en los access de los structs
+> It also makes sense to use this for struct access.
 
 
 ### Default behaviour
 
-(esto es un punto a favor de mojo)
+(This is an advantage of Mojo.)
 
-El tema es que que sea READ by default es lo más cómodo+seguro.
-Pero en nuestro lenguaje hay que ponerle &
+Having READ be the default is the most convenient and safest option.
+But our language requires `&`.
 
-Podríamos hacer que si lo has pasado por value, si dentro de la función no se
-modifica, entonces el lsp te lo pone como & automáticamente.
+If an argument is passed by value and is not modified inside the function, the
+LSP could automatically change it to `&`.
 
 
 ### Default values for references
 
-(esto es otro punto a favor de mojo)
+(This is another advantage of Mojo.)
 
-Otro tema es que si pasas por read en mojo, es muy natural darle un = "default"
+Another point is that when passing by read in Mojo, it feels natural to give it a default value.
 
-Pero para nosotros, darle un default requiere crear un valor en otra parte y referenciarlo.
+For us, providing a default requires creating a value elsewhere and referencing it.
 
-Igual podemos establecer que los structs y los functions con argumentos por referencia inicializan lo que necesiten en el caller site.
+Perhaps structs and functions with reference arguments could initialize what
+they need at the caller site.
 
-> En mojo, argumentos por referencia mutable no pueden tener default values.
-> No se muy bien por qué. Igual es solo para evitar el antipattern.
+> In Mojo, mutable reference arguments cannot have default values.
+> I am not sure why; perhaps this is just to avoid the anti-pattern.
 
 
 ---

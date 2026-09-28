@@ -1,14 +1,15 @@
 # Errors
 
-Dirección aceptada:
-- Propagación y ergonomía en la línea de Zig.
-- Contexto y traza humana acumulable al propagar, en la línea de `anyhow`.
-- La identidad del error ya no es un `Type` arbitrario: es una `choice option`
-  nominal.
+Accepted direction:
+- Propagation and ergonomics along the lines of Zig.
+- Accumulated human-readable context and traces during propagation, as in
+  `anyhow`.
+- An error is no longer identified by an arbitrary `Type`; it is identified by
+  a nominal `choice option`.
 
 ## Choice options
 
-Una `choice option` se declara suelta:
+A `choice option` is declared on its own:
 
 ```rg
 ..file_not_found
@@ -16,35 +17,34 @@ Una `choice option` se declara suelta:
 ..invalid_format
 ```
 
-Semántica:
-- Cada declaración define un símbolo nominal.
-- El compilador asigna a cada opción un id numérico único durante la
-  compilación.
-- Ese id es la identidad real de la opción.
-- El texto `..name` solo es la forma de referirse a ella.
+Semantics:
+- Each declaration defines a nominal symbol.
+- The compiler assigns each option a unique numeric ID during compilation.
+- That ID is the option's actual identity.
+- The text `..name` is only how the option is referenced.
 
-No hay autodeclaración por uso:
-- `..file_not_found` en posición de valor referencia una opción existente.
-- Si no existe, es error.
+Use does not declare an option:
+- `..file_not_found` in value position refers to an existing option.
+- If it does not exist, it is an error.
 
 ## Open choices
 
-Las opciones se agrupan en `choices` cerrados cuando hace falta tipado o
-exhaustividad.
+Options are grouped into closed `choices` when typing or exhaustiveness is
+needed.
 
 ```rg
 reason : (..file_not_found, ..permission_denied) = ..permission_denied
 ```
 
-Un `choice` puede ser:
-- anónimo, como en el ejemplo anterior
-- nombrado, usando un alias o tipo del lenguaje
+A `choice` can be:
+- anonymous, as in the previous example
+- named, using a language alias or type
 
-Los `choices` usados para errores son cerrados y finitos.
+The `choices` used for errors are closed and finite.
 
 ## Error values
 
-La traza sigue viviendo dentro del propio error.
+The trace remains part of the error itself.
 
 ```rg
 Error#(.reasons: Choice) : Type = (
@@ -54,12 +54,12 @@ Error#(.reasons: Choice) : Type = (
 ```
 
 Restricciones:
-- `.reason` debe ser un `choice` sin payloads
-- `.trace` mantiene el mecanismo actual de entradas de traza
+- `.reason` must be a `choice` without payloads.
+- `.trace` uses the current trace-entry mechanism.
 
 ## Error unions
 
-`Errable` queda definido sobre un conjunto de razones:
+`Errable` is defined over a set of reasons:
 
 ```rg
 Errable#(.t: Type, .reasons: Choice) : Type = (
@@ -68,12 +68,12 @@ Errable#(.t: Type, .reasons: Choice) : Type = (
 )
 ```
 
-Consecuencias:
-- una función declara el conjunto de razones que puede devolver
-- `!` permite propagar un subconjunto hacia un superset compatible
-- el remapeo de tags entre conjuntos distintos lo hace el compilador/codegen
+Consequences:
+- A function declares the set of reasons it can return.
+- `!` can propagate a subset into a compatible superset.
+- The compiler/codegen remaps tags between different sets.
 
-Ejemplo:
+Example:
 
 ```rg
 ..file_not_found
@@ -120,8 +120,8 @@ looking at the actual propagation and return sites in the function body. That
 inferred subset is surfaced in tooling hover even when the full declared
 `.reasons` are still written explicitly in source.
 
-En `core`, la misma idea ya se usa para fallos de apertura, de sistema de
-ficheros y de streams:
+In `core`, the same idea is already used for file opening, filesystem, and
+stream failures:
 
 ```rg
 ..file_open_failed
@@ -148,24 +148,23 @@ write_byte(.self: $&Writer, .byte: UInt8)
     -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
 ```
 
-`read_line()` y `read_file()` ya propagan `..out_of_memory` de forma explícita.
-`read_line()` y `read_file()` delegan ya la creación y el crecimiento del buffer
-en helpers fallibles de `String`.
+`read_line()` and `read_file()` explicitly propagate `..out_of_memory`.
+They delegate buffer creation and growth to fallible `String` helpers.
 
-En `core`, la dirección idiomática para operaciones de crecimiento o reserva ya
-no es:
-- puntero crudo + comparar con `0`
-- `Bool` para decir si la reserva salió bien
+In `core`, the idiomatic approach for growth or allocation operations is no
+longer:
+- a raw pointer checked against `0`
+- a `Bool` indicating whether allocation succeeded
 
-Sino:
+Instead, use:
 - `allocate(...) -> Errable#(.t: Allocation, .reasons: (..out_of_memory))`
-- helpers como `string_with_capacity(...)`
-- operaciones de crecimiento que devuelven `Errable#(.t: Void, .reasons: (..out_of_memory))`
+- helpers such as `string_with_capacity(...)`
+- growth operations returning `Errable#(.t: Void, .reasons: (..out_of_memory))`
 
-Eso ya se aplica en `String` y en las rutas fallibles de `DynamicArray`
+This is already used in `String` and the fallible paths of `DynamicArray`
 (`push_growing`, `insert_growing`, `dynamic_array_grow_growing`).
 
-EOF sigue fuera del canal de error:
+EOF remains outside the error channel:
 
 ```rg
 ReadByte : Choice = (
@@ -176,51 +175,47 @@ ReadByte : Choice = (
 
 ## Propagation
 
-`!` y `!!`:
-- hacen short-circuit
-- ejecutan `defer`s
-- añaden una entrada a la traza
-- exigen que el `Errable` actual pueda representar todas las razones
-  propagadas
-- pueden usarse tanto en posición de expresión como como sentencia pura, por
-  ejemplo `step()!`, cuando el valor `..ok` no interesa
+`!` and `!!`:
+- short-circuit
+- execute `defer`s
+- add an entry to the trace
+- require the current `Errable` to represent every propagated reason
+- can be used in expression position or as a standalone statement, for example
+  `step()!`, when the `..ok` value is not needed
 
-Hoy ya se usan de forma normal en contextos de expresión comunes:
+They are already used in common expression contexts:
 - bindings: `value := read_file()!`
-- argumentos de llamada: `use(.x = read_int()!)`
+- call arguments: `use(.x = read_int()!)`
 - condiciones: `if ready()! { ... }`
 - asignaciones: `cached = load()!`
 - sentencias puras: `flush()!`
 
-`!!` además adjunta contexto textual a la entrada de traza.
+`!!` also attaches textual context to the trace entry.
 
-Dirección actual de la inferencia de reasons:
-- la firma sigue escribiendo el conjunto completo declarado
-- `-> !T` ya permite omitir `.reasons` en el caso especial de un único
-  resultado `result`
-- `Errable#(.t: T)` sin `.reasons` también se acepta ya en outputs de función
-  explícitos
-- semántica calcula un subconjunto inferido a partir de `return`, asignaciones a
-  outputs y propagaciones con `!` / `!!`
-- el hover muestra ese subconjunto inferido para que se pueda consultar sin
-  ruido extra en el código
-- el siguiente paso será permitir omitir `.reasons` en más sitios una vez esta
-  inferencia sea suficientemente robusta también entre módulos
+Current direction for reason inference:
+- The signature still spells out the complete declared set.
+- `-> !T` already allows `.reasons` to be omitted in the special case of a
+  single `result` output.
+- `Errable#(.t: T)` without `.reasons` is also accepted in explicit function
+  outputs.
+- Semantizing infers a subset from `return`, output assignments, and `!` / `!!`
+  propagation.
+- Hover shows this inferred subset without adding noise to the code.
+- The next step is to allow `.reasons` to be omitted in more places once this
+  inference is robust enough across modules.
 
 ## Exhaustividad
 
-La exhaustividad se chequea contra un `choice` cerrado, no contra una opción
-suelta.
+Exhaustiveness is checked against a closed `choice`, not a standalone option.
 
-Eso permite:
-- `match` sobre `Errable`
-- chequeos sobre `.reason`
-- remapeo seguro entre subconjuntos y supersets de razones
+This enables:
+- `match` on `Errable`
+- checks on `.reason`
+- safe remapping between subsets and supersets of reasons
 
 ## Future Ergonomics
 
-Propuesta futura aceptada como dirección de ergonomía, pero todavía no
-implementada:
+Future ergonomics proposal, accepted as a direction but not yet implemented:
 
 ```argi
 my_thing := fallible() handle value, error {
@@ -236,24 +231,24 @@ my_thing := fallible() handle value, error {
 }
 ```
 
-Semántica esperada:
-- `handle` sería azúcar específica para `Errable`
-- la expresión a la izquierda debe tener tipo `Errable#(.t: T, ...)`
-- `value` sería el slot de resultado común
-- si el `Errable` es `..ok x`, entonces `value = x`
-- si es `..error(...)`, el bloque se ejecuta con `error` bindeado al payload
-  completo del error
-- dentro del bloque se usa `match` normal sobre `error.reason`
-- el bloque no devuelve valor de forma especial; solo asigna a `value`
-- la construcción completa produce `value`
-- el compilador debería exigir que `value` quede asignado en todos los caminos
-  del bloque de error
+Expected semantics:
+- `handle` would be syntactic sugar specific to `Errable`.
+- The expression on the left must have type `Errable#(.t: T, ...)`.
+- `value` would be the shared result slot.
+- If the `Errable` is `..ok x`, then `value = x`.
+- If it is `..error(...)`, the block runs with `error` bound to the complete
+  error payload.
+- Use regular `match` on `error.reason` inside the block.
+- The block does not return a value specially; it only assigns to `value`.
+- The complete construct produces `value`.
+- The compiler should require `value` to be assigned on every path through the
+  error block.
 
-Motivación:
-- no introduce un `match` nuevo
-- no introduce bloques que devuelvan valor
-- no cambia la semántica de `return`
-- es solo azúcar ergonómica sobre el patrón habitual de consumir un `Errable`
-  localmente y producir un valor final
-- cubre el caso dominante en el que una función quiere manejar un `Errable`
-  localmente en vez de seguir propagándolo
+Motivation:
+- It does not introduce a new `match` form.
+- It does not introduce value-returning blocks.
+- It does not change `return` semantics.
+- It is only ergonomic sugar over the common pattern of handling an `Errable`
+  locally and producing a final value.
+- It covers the common case where a function handles an `Errable` locally
+  instead of propagating it.

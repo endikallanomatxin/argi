@@ -48,6 +48,11 @@ This repository contains a compiler for a new programming language written in Zi
 
 ## Guidelines
 
+- Write all repository-authored content in English, including documentation,
+  comments, TODOs, plans, commit messages, and user-facing text. Preserve other
+  languages only when they are required by an example, test fixture, or the
+  language feature being documented.
+
 - To add a new feature:
     1. Checkout the language description and `more/` to understand the
        feature.

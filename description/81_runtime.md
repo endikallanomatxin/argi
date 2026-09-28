@@ -664,7 +664,7 @@ Channel operations are side-effects and may suspend the current task.
 
 ---
 
-Ejemplos / Código antiguo:
+Examples / Old code:
 
 ```
 funcion_enviadora (c:Channel) -> () := {
@@ -723,12 +723,12 @@ print(channel|get)
 ```
 a: Spot(Int)
 branch {
-	a|put funcion 1
+	a|put function 1
 }
 
 b: Spot(Int)
 branch {
-	b|put funcion 2
+	b|put function 2
 }
 
 c = a|get + b|get
@@ -823,10 +823,10 @@ Writers block both readers and other writers.
 
 Like mutexes, RW locks should be runtime-aware.
 
-> En una charla de zig sobre concurrencia
-> (https://www.youtube.com/watch?v=x1N9JPPPC18&list=WL&index=3) dice que es
-> mejor usar RW locks que mutexes, porque los lectores solo bloquean a los
-> escritores, y no a otros lectores.
+> In a Zig talk about concurrency
+> (https://www.youtube.com/watch?v=x1N9JPPPC18&list=WL&index=3), the speaker says
+> RW locks are better than mutexes because readers block writers, but not other
+> readers.
 
 ---
 
@@ -1115,13 +1115,12 @@ Shared mutable state:
 ---
 
 >[!QUESTION]
->Lo único que no habría que permitir closures, porque no está claro como se va
->a comportar no?
+> The only thing that should perhaps be disallowed is closures, since their
+> behavior is unclear.
 
-Tiene sentido no permitir que el input no sean deep_copies o mutex o channels?
-La mutabilidad como se gestiona?
+Does it make sense to require inputs to be deep copies, mutexes, or channels?
+How should mutability be managed?
 
 >[!ERROR]
->En go las goroutines no puedes return. Eso es una asyn func.
->Igual la clave es encontrar una sintaxis que me permita hacer algo similar de
->forma sencilla.
+> In Go, goroutines cannot return; that is an async function.
+> Perhaps the key is finding syntax that makes something similar easy to write.

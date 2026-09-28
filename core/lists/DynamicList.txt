@@ -56,6 +56,6 @@ DoublyLinkedList#(.t: Type) : Type = (
 Rope#(.t: Type) : Type = (
 	---
 	Linked list of StaticArray
-	O un Btree, no se. Decidir como implementamos esto.
+	Or a B-tree; decide how to implement this.
 	---
 )

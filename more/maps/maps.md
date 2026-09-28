@@ -18,21 +18,20 @@ Maps (array_hash_map, hash_map, static_string_map)
 
 ##### Maps
 
-Value puede o no ser heterogéneo (`Any`). El key no puede nunca ser heterogéneo. 
-_(Esto es una limitación artificial para evitar código mierdoso. En go por ejemplo no se puede y no entiendo en qué contexto podría ser útil. Mejor evitarlo.)_
-Si se pone un abstract con default, entonces se tomará como el tipo del key.
+The value may be heterogeneous (`Any`); the key must always be homogeneous.
+_(This is an intentional limitation to discourage poor code. Go also disallows it, and it is unclear when heterogeneous keys would be useful.)_
+If an abstract with a default is provided, that default becomes the key type.
 
 ```
--- Un típico dict
+-- A typical dictionary
 notas : Map<String, Int> = [
 	"Mikel"=8
 	"Jon"=9
 ]
 ```
 
-Por defecto si haces:
+By default, this:
 ```
 notas := ["Mikel"=8, "Jon"=9]
 ```
-infiere los tipos.
-
+infers the types.

@@ -1,4 +1,4 @@
-# Funciones
+# Functions
 
 Functions are first class citizen.
 
@@ -19,8 +19,8 @@ Functions may also be marked with `once` to express that the function is meant
 to be consumed at most once from the reachable call graph of the compiled
 entrypoint. See [`44_once.md`](./44_once.md).
 
-- Todos los parámetros viajan en un único struct de entrada (in).
-- Todos los resultados se devuelven en un único struct de salida (out).
+- All parameters are passed in a single input struct (`in`).
+- All results are returned in a single output struct (`out`).
 
 
 return variables are initialized (to zero) if named.
@@ -36,9 +36,9 @@ calculate_stats (.l: List#(.t: Float)) -> (.mean: Float, .standard_deviation: Fl
 ```
 
 > [!CHECK]
-> Los argumentos de salida, cuando se inicializan?
-> Usan su init? O simplemente son el struct que los representa, sin campos.
-> Igual esperan a su primera asignación para llamar a init.
+> When are output arguments initialized?
+> Do they use their `init`, or are they just the struct that represents them,
+> with no fields? Perhaps they wait for their first assignment before calling `init`.
 
 
 Most extended syntax to add documentation
@@ -67,7 +67,7 @@ The empty struct literal is like saying void:
 
 ```
 my_function () -> () := {
-	-- No recibe ni devuelve nada
+	-- Receives and returns nothing.
 }
 ```
 
@@ -76,8 +76,8 @@ my_function () -> () := {
 
 ## Pipe operator
 
-Llama a la función de la derecha con los argumentos devueltos por la función de
-la izquierda. A veces hay que usar currying para cuadrar argumentos.
+Calls the function on the right with the arguments returned by the function on
+the left. Sometimes currying is needed to make the arguments fit.
 
 ```
 my_var | my_func
@@ -86,28 +86,28 @@ my_var | my_func (_.a, other_arg, _.b)  -- Multiple piped arguments
 ```
 
 > [!IDEA]
-> Si los output arguments son named, se pueden usar en lugar de los _1, _2...
-> Pensar en como hacerlo para que no colisione con los nombres de las variables.
+> If output arguments are named, they could be used instead of `_1`, `_2`, etc.
+> Consider how to do this without colliding with variable names.
 
-Si se pasa por referencia:
+When passing by reference:
 
 ```
 my_var | my_func &_
 my_var | my_func (&_, second_arg)
 ```
 
-Permite emular la comodidad de los objetos.
+This provides the convenience of objects.
 
-> [!FIX] Si la función que opera sobre un "objeto" proviene me un módulo,
-> habría que mencionar el módulo. Es un poco tedioso.
+> [!FIX] If the function operating on an “object” comes from a module, the
+> module would need to be mentioned. This is a little tedious.
 
 
 #### Automatic dereferencing syntax
 
-Es habitual que dentro de la función que recibe los punteros, realmente
-querramos tratar el valor al que apunta el puntero como el propio valor.
+Inside a function that receives pointers, it is common to want to treat the
+pointed-to value as the value itself.
 
-Para eso, se puede usar la sintaxis de dereferencia automática:
+Automatic dereferencing syntax can be used for this:
 
 ```rg
 funcion_que_lee &Map<String,Int>& := {
@@ -120,15 +120,14 @@ funcion_que_escribe $&Map<String,Int>& := {
 ```
 
 
-Esto hace que dentro de la función se pueda usar directamente `datos` y que se
-comporte como si hicieras `datos&`.
+This lets the function use `datos` directly, as if it had written `datos&`.
 
-Siempre que solo se use el valor y no se haga nada con el puntero en sí, el
-compilador te recomendará usar esta sintaxis. Así se garantiza que cuando se
-pasa un puntero a las funciones de dentro, se vea el &datos y el $&datos, y
-quede claro que estás pasando por referencia.
+Whenever only the value is used and nothing is done with the pointer itself,
+the compiler will recommend this syntax. This ensures that when a pointer is
+passed to inner functions, `&datos` or `$&datos` is visible and the reference
+passing is clear.
 
-> [!TODO] Actualizar el resto del código a esta sintaxis
+> [!TODO] Update the rest of the code to use this syntax.
 
 
 #### Side effects
@@ -150,40 +149,39 @@ For example, accessing a database:
 import db
 
 main system:$&System -> sc:StatusCode := {
-	-- Creamos una conexión a la base de datos
+	-- Create a database connection.
 	db_conn = db.open_database("my_db")
 
-	-- Llamada a una función pura que consulta la base de datos
+	-- Call a pure function that queries the database.
 	user = query_user($&db_conn, 123)
 }
 
 query_user (.db_conn: $&DbConnection, .user_id: Int) -> (.user: ?User) := {
-	-- Acceso a la db
+	-- Access the database.
 	row = db_conn|execute($&_, "SELECT * FROM user WHERE id = ?", user_id)
 	if row == null { user = null }
 	user = parse_user(row)
 }
 ```
 
-> [!NOTE] Igual hemos dado con una buena sintaxis para nombrar a los argumentos si queremos.
-> Y si no ponemos nada, que sean in y out, para tener una sintaxis cómoda para lambdas rápidas.
+> [!NOTE] This may be a good syntax for naming arguments when needed.
+> If no names are provided, use `in` and `out` for concise lambda syntax.
 
 
 ##### Closures
 
-Veo distintas formas de closures posibles:
+Several forms of closures are possible:
 
 - Uso de variables de un scope exterior.
 
-	- Por valor, no problem. Se captura el dato en la función. No requiere
-	indicación de side-effect.
+	- By value: capture the data in the function. No side-effect annotation is
+	required.
 
-	- Por referencia, probablemente lo mismo.
+	- By reference: probably the same.
 
-	- Por referencia mutable, REQUIERE INDICACIÓN DE SIDE EFFECT.
+	- By mutable reference: REQUIRES A SIDE-EFFECT ANNOTATION.
 
-- Reasignación de variables de un scope exterior. REQUIERE INDICACIÓN DE SIDE
-EFFECT.
+- Reassigning variables from an outer scope. REQUIRES A SIDE-EFFECT ANNOTATION.
 
 ```
 variable := 4
@@ -195,15 +193,15 @@ contador$ () -> () := {
 contador$ () -- variable = 5
 ```
 
-> [!CHECK] Es así como debe llamarse a una función sin argumentos de entrada?
+> [!CHECK] Is this how a function with no input arguments should be called?
 
-Así queda claro (y con una sintaxis similar a la de los argumentos) si una
-función tiene side effects.
+This makes it clear, with syntax similar to function arguments, whether a
+function has side effects.
 
-> [!TODO] Pensar si realmente queremos permitir closures con side effects.
-> Haskell, por ejemplo, no lo permite. Y en realidad me parece bastatante
-> anti-pattern, igual es mejor prohibirlo. Así el lenguaje queda más limpio, y
-> encima $ colorea las funciones.
+> [!TODO] Consider whether closures with side effects should be allowed.
+> Haskell does not allow them, for example. They may be an anti-pattern and
+> could be prohibited to keep the language cleaner; `$` would also mark the
+> effectful functions clearly.
 
 
 ##### Capabilities
@@ -214,7 +212,7 @@ passed to other functions as needed.
 
 ```
 main (system: $&System&) -> (status_code: $&StatusCode&) := {
-    -- Aquí se puede usar system para acceder a las capacidades del sistema
+    -- Use system here to access system capabilities.
     ...
 }
 ```
@@ -264,16 +262,16 @@ Examples of use:
 
 ```rg
 main (system: $&System&) -> (status_code: $&StatusCode&) := {
-	-- Acceso a la consola
+	-- Access the console.
 	system.terminal | print ($&_, "Hello, world")
 
-	-- Acceso a los argumentos de la línea de comandos
+	-- Access command-line arguments.
 	arg0 = system.args[0]
 
-	-- Acceso a las variables de entorno
+	-- Access environment variables.
 	env_var = system.env_vars | get (&_, "MY_ENV_VAR")
 
-	-- Acceso al sistema de archivos
+	-- Access the file system.
 	file1 = system.file_sys | open_read (&_, "my_file.txt")
 	content = system.file_sys | read_file (&_, "my_file.txt")
 	file2 = system.file_sys | open_write (&_, "output.txt")
@@ -342,11 +340,11 @@ Rng : Abstract = (
 
 
 > [!IDEA]
-> Podría haber nombres de resevados, que si los usas automáticamente se pone el
-> input en todas las llamadas a funciones hasta llegar a main.
+> There could be reserved names that automatically add the input to every
+> function call up to `main` when used.
 > file_sys, terminal, env_vars, args
-> Así es cómodo meter un print por ejemplo.
-> Si guardas y algunas de estas no usaste, se borra del input.
+> This would make it convenient to add a `print`, for example.
+> If the program is saved and some of these are unused, they are removed from the input.
 
 
 ##### The case for printing
@@ -358,14 +356,14 @@ import fs
 
 
 main (system: $&System&) -> (status_code: $&StatusCode&) := {
-	-- Creamos un archivo de IO
+	-- Create an I/O file.
 	stdo = system.terminal.stdout_buffered_writer
 
-	-- Llamada a una función pura que imprime
+	-- Call a pure function that prints.
 	do_something_pure(123, log = $&stdo)
 }
 
--- Podemos usar el hecho de que tome stdo para controlar si queremos que imprima
+-- We can use the `stdo` argument to control whether it prints.
 do_something_pure(a: Int, $&log: Buffer? = null) -> () := {
 	if log { log|write($&_, "Hello, world\n") }
 }
@@ -380,28 +378,27 @@ Halting is a capability.
 
 ### Dispatch
 
-Multiple dispatch como Julia.
+Multiple dispatch, as in Julia.
 
-Pero hay que ehacer monomorfización de las funciones en tiempo de compilación.
+The functions must be monomorphized at compile time.
 
-Te permite funcionamiento similar al del static dispatch por objetos, pero de
-una forma más flexible.
+This provides behavior similar to object-based static dispatch, but more
+flexibly.
 
-Da error cuando hay ambigüedad en especificidad, pero se encarga el compilador
-de evitarlo.
+Ambiguous specificity is an error, and the compiler detects it.
 
 > [!NOTE]
 > Function signatures are part of the callable interface, so every input and
 > output field in a function declaration must spell out its type explicitly.
 > Defaults may provide fallback values, but they do not infer signature types.
 
-En go, no se puede definir métodos de struct de otros paquetes. Eso es una
-mierda!
+In Go, methods cannot be defined for structs from other packages. That is
+frustrating.
 
 #### Multiple dispatch for default implementations
 
-Se puede usar para hacer implementaciones por defecto para cualquier struct por
-ejemplo (consiguiendo funcionalidades como los derive macros de rust)
+It can be used to provide default implementations for any struct, for example,
+providing functionality similar to Rust derive macros.
 
 ```rg
 to(.self: &Struct, .to: Type = String) -> (.string: String) := {
@@ -413,12 +410,11 @@ to(.self: &Struct, .to: Type = String) -> (.string: String) := {
 ```
 
 > [!IDEA]
-> Para que algo sea hasheable todos sus campos tienen que ser hasheables. Si
-> esa verificación en una comptime function se puede usar para el lsp.
-> Igual se podría pensar como algo similar a una interface, pero que en lugar
-> de checkear que cuadra con el input de una función, lo que se puede hacer es
-> correr algo en comptime que depende de lo que devuelva cumpla o no la
-> interface.
+> For a value to be hashable, all its fields must be hashable. If this can be
+> checked in a comptime function, the LSP could use that check.
+> This could be similar to an interface, except that instead of checking
+> whether a value matches a function's input, comptime code would run depending
+> on whether the value satisfies the interface.
 
 
 > [!CHECK]
@@ -450,17 +446,19 @@ operator - (&v: Vector) := Vector {
 
 ### Currying
 
-El currying puede quedar superlimpio en algunas ocasiones.
+Currying can be very clean in some cases.
 
-Por ejemplo en go, http.HandleFunc("patron", funcion) requiere que la función tenga como argumentos (r, w) y eso impide que puedas ponerle argumentos como tu base de datos o plantillas (lo que es necesario para hacerlo con funciones puras y no a través de globales.)
+For example, Go's `http.HandleFunc("pattern", function)` requires the function
+to take `(r, w)` as arguments. This prevents passing other arguments, such as a
+database or templates, which are needed to use pure functions instead of globals.
 
-Una buena forma sería una sintaxis cómoda de hacer currying.
+A convenient currying syntax would help.
 
 ```
 mux | HandleFunc($&_, "pattern", my_function(_a, _b, database, templates))
 ```
 
-> [!CHECK] Pensar en como se lleva la sintaxis de currying con la nueva sintaxis de funciones.
+> [!CHECK] Consider how currying syntax fits with the new function syntax.
 
 
 ### Silently ignoring return values

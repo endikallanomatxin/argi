@@ -1,16 +1,16 @@
 -- forkIO :: IO () → IO ThreadId
--- Lanza una acción en un nuevo hilo ligero (green thread), devolviendo su identificador.
+-- Starts an action in a new lightweight thread (green thread) and returns its identifier.
 -- killThread :: ThreadId → IO ()
--- Termina un hilo lanzado con forkIO.
+-- Finishes a thread started with forkIO.
 -- newMVar :: a → IO (MVar a)
--- Crea una variable mutable sincronizada (MVar) con un valor inicial.
+-- Creates a synchronized mutable variable (MVar) with an initial value.
 -- takeMVar :: MVar a → IO a
--- Lee y bloquea la MVar hasta que tenga un valor, dejándola vacía.
+-- Reads and locks the MVar until it has a value, leaving it empty.
 -- putMVar :: MVar a → a → IO ()
--- Escribe en una MVar; si ya está llena, bloquea hasta que se vacíe.
+-- Writes to an MVar; if it is full, blocks until it becomes empty.
 -- newIORef :: a → IO (IORef a)
--- Crea una referencia mutable no bloqueante.
+-- Creates a non-blocking mutable reference.
 -- readIORef :: IORef a → IO a
--- Lee el valor de la referencia.
+-- Reads the value of the reference.
 -- writeIORef :: IORef a → a → IO ()
--- Escribe un valor en la referencia.
+-- Writes a value to the reference.

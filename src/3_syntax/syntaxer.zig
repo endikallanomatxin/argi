@@ -321,7 +321,7 @@ pub const Syntaxer = struct {
 
     // ────────────────────────────  TYPE ANNOTATIONS ──────────────────────────
     fn parseType(self: *Syntaxer) SyntaxerError!?syn.NodeIndex {
-        // permitimos omitir la anotación
+        // Allow the annotation to be omitted.
         if (self.tokenIs(.equal) or self.tokenIs(.comma) or self.tokenIs(.close_parenthesis))
             return null;
 
@@ -975,7 +975,7 @@ pub const Syntaxer = struct {
         } });
     }
 
-    // ────────────────────────── postfix “.campo” chain ───────────────────────
+    // ────────────────────────── postfix “.field” chain ───────────────────────
     fn parsePostfix(self: *Syntaxer, mut: syn.NodeIndex) !syn.NodeIndex {
         var node = mut;
         while (true) {
@@ -1307,7 +1307,7 @@ pub const Syntaxer = struct {
                     self.advanceOne();
                     type_args_struct = try self.parseStructTypeLiteral();
                 }
-                if (self.tokenIs(.open_parenthesis)) { // llamada
+                if (self.tokenIs(.open_parenthesis)) { // Call.
                     const struct_value_literal = try self.parseCollectionLiteral(true);
                     const extra = try self.addExtra(syn.CallExtra{
                         .module_qualifier = .none,
@@ -1328,18 +1328,18 @@ pub const Syntaxer = struct {
                 break :blk try self.addNode(.literal, literal_token, .{ .unused = .{ 0, 0 } });
             },
 
-            // ─── struct value literal o list literal ─────────────────────────────────
+            // ─── struct value literal or list literal ────────────────────────────────
             .open_parenthesis => blk: {
                 break :blk try self.parseCollectionLiteral(false);
             },
 
-            // ─── bloque `{}` embebido ───────────────────────────────────────
+            // ─── embedded `{}` block ───────────────────────────────────────
             .open_brace => try self.parseCodeBlock(),
 
             else => return SyntaxerError.ExpectedIntLiteral,
         };
 
-        // aplica cadenas de “.campo”
+        // Apply “.field” chains.
         return try self.parsePostfix(base);
     }
 
@@ -1947,8 +1947,8 @@ pub const Syntaxer = struct {
 
         self.advanceOne(); // consume 'return'
 
-        // ── ¿hay algo más en la línea?  --------------------------
-        // Si lo siguiente es fin de línea, un '}', o EOF, NO hay expresión.
+        // ── Is there anything else on the line?  -----------------
+        // If the next token is a newline, '}', or EOF, there is no expression.
         switch (self.currentContent()) {
             .new_line, .close_brace, .eof => {
                 return try self.addNode(.return_statement, start, .{ .optional_node = .none });

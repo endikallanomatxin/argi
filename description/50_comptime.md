@@ -2,99 +2,99 @@
 
 (from zig and jai)
 
-Permite hacer:
-- Metaprogramming / macros, pero usando el mismo lenguaje.
+It enables:
+- Metaprogramming and macros written in the same language.
 	This is particularly useful for building efficient and flexible abstractions.
 
 Comptime is powerful, but it should remain secondary to the core language
 model. It should not become the default escape hatch for missing features in
 types, modules or dispatch.
 
-Lo vamos a hacer con # (inspirado en Jai):
+Use `#` for this (inspired by Jai):
 
 https://github.com/Ivo-Balbaert/The_Way_to_Jai/blob/main/book/26A_Metaprogramming.md
 
-Sí:
+Yes:
 
 - `name#(.param = value)` to define generics that will be monomorphized at compile time.
 
-- `#run` para ejecutar código en tiempo de compilación.
+- `#run` to execute code at compile time.
 
-- `#import` para importar código de otros archivos, como un include en C.
+- `#import` to import code from other files, like a C include.
 
-- `#is_compile_time` para comprobar si el código se está ejecutando en tiempo de compilación.
+- `#is_compile_time` to check whether code is executing at compile time.
 
-- `#typeof` para obtener el tipo de una variable o expresión en tiempo de compilación.
+- `#typeof` to get the type of a variable or expression at compile time.
 
-    Cuando se aplica a un abstract, como este se monomorfiza, se puede resolver.
+    When applied to an abstract, it can be resolved because the abstract is
+    monomorphized.
 
-- `#if` para condicionales en tiempo de compilación, como en C.
-    #if is tested at compile-time. When its condition returns true, that block of code is compiled, otherwise it is not compiled.
-    No es lo mismo que `#run if (...) { ... }`, que se ejecuta en tiempo de compilación.
+- `#if` for compile-time conditionals, as in C.
+    `#if` is tested at compile time. When its condition is true, that block of
+    code is compiled; otherwise, it is not.
+    This is not the same as `#run if (...) { ... }`, which executes at compile
+    time.
 
-- `#atcalls` para ejecutar código en tiempo de compilación en cada llamada a
-    una función. Sirve para validar argumentos y dar errores en tiempo de
-    compilación, por ejemplo.
+- `#atcalls` to execute code at compile time on every function call. For
+    example, it can validate arguments and report compile-time errors.
 
-    Igual todas las funciones corridas en tiempo de compilación deberían
-    devolver un error.
+    Perhaps all functions executed at compile time should be able to return an
+    error.
 
     >[!TODO]
-    >Pensar en una forma de usar esto para que las librerías puedan levantar
-    >errores de compilación o avisos en el lsp cuando no se usan bien.
+    >Find a way for libraries to use this to report compile-time errors or LSP
+    >warnings when they are used incorrectly.
 
->[!IDEA] Ergonomy for allocator, stdio, async...
+>[!IDEA] Ergonomics for allocator, stdio, async...
 > #bringsystemallocator, #bringsystemstdo, #bringsystemasync
 > When the file is saved, the necessary declarations will be modified to bring
 > the required system resource.
 > It deletes itself at save time.
 >
-> (Aunque eso mas que compile time es como save time) Igual podría plantearse
-> una version distinta del #, que en lugar de al compilar, sea al
-> guardar/analizar con el lsp. y sirva para macros de auto-reescritura del
-> archivo al guardar
+> (This is closer to save time than compile time.) A different version of `#`
+> could run when saving or during LSP analysis, and support macros that rewrite
+> the file on save.
 
-> Conviene ir con cuidado con cualquier mecanismo que reescriba código de forma
-> poco visible. Aunque sea cómodo, puede perjudicar mucho la trazabilidad.
+> Be careful with mechanisms that rewrite code in ways that are hard to see.
+> They can make changes difficult to trace, even when convenient.
 
 
-No se:
+Unclear:
 
-- `#maintain` para decirle que las variables que tomaron un valor en tiempo de
-compilación lo mantengan.
+- `#maintain` to tell variables that received a value at compile time to keep it.
 
 - `#code`
 
-No me gusta:
+I do not like:
 
-- `#insert` es un poco como macros, igual demasiado sucio que use strings.
+- `#insert` is somewhat like macros; using strings may be too messy.
 
 
 > [!CHECK]
-> Había descartado la idea de que comptime se use para hacer generics y
-> interfaces, pero igual merece la pena darle la vuelta. El ejemplo que enseña
-> ThePrimeagen sobre quak() es interesante.
+> I had ruled out using comptime for generics and interfaces, but it may be
+> worth reconsidering. The example shown
+> ThePrimeagen's discussion of `quak()` is interesting.
 > https://youtu.be/Vxq6Qc-uAmE?si=-K0XTw2lAMFC10tM
-> Eso sí me gusta, pero no me gusta que tengas que usar anytype, que es
-> demasiado opaco y no le dejas claro al usuario qué tipo de datos espera.
-> Además con eso no cumples todo lo que necesitas de las generics.
+> I like that part, but I dislike requiring `anytype`: it is too opaque and
+> does not tell the user what data type is expected. It also does not provide
+> everything generics need.
 >
-> La mayor discrepancia: para que los tipos que devuelven las funcones puedan
-> considerarse equivalentes, hay que hacer structural typing, en lugar de nominal.
-> Eso es una mierda.
+> The main difference is that function return types must use structural typing
+> instead of nominal typing to be considered equivalent.
+> That is awful.
 
 https://www.scottredig.com/blog/bonkers_comptime/
 
 
 > [!CHECK]
-> En un video de entrevista al de Odin y al de Elixir, de Primeagen y TJ,
-> ginger bill dice que la metaprogramación suele reflejar carencias del
-> lenguaje y que cuando se usa, el programa se vuelve muy difícil de debugear.
-> Así que igual es interesante ver qué pasa con ello en Zig y Jai antes de
-> implementarlo.
+> In an interview with the creators of Odin and Elixir by ThePrimeagen and TJ,
+> Ginger Bill says metaprogramming often reflects gaps in a language and can
+> make programs very difficult to debug.
+> It may be useful to see how this works in Zig and Jai before
+> implementing it.
 >
-> Buena regla general: primero cerrar bien el lenguaje base; después añadir
-> comptime donde de verdad aporte algo y no solo tape huecos.
+> A good rule of thumb: first finish the core language, then add comptime where
+> it provides real value instead of merely filling gaps.
 
 > [!IDEA] Comptime and incremental execution
 > Explore a common execution model for comptime, REPL and compiled programs,

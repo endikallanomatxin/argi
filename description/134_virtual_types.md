@@ -1,44 +1,44 @@
 # Virtual types (vtable-based dynamic dispatch)
 
-> “Abstract siempre monomorfiza; si quieres despacho dinámico lo pides explícitamente.”
+> “Abstracts are always monomorphized; request dynamic dispatch explicitly.”
 
-## Aplicación
+## Use cases
 
-* **Colecciones heterogéneas**
-* **Cargas de plugins / FFI**: objetos pasados por interfaz estable.
-* **Reducción de bloat en el compilado**: una llamada indirecta en vez de N versiones monomorfizadas.
-* **Límites claros**: el usuario **elige** cuándo pagar la indirecta.
-- **Coste**: 1 carga de puntero + 1 **indirect call**.
+* **Heterogeneous collections**
+* **Plugins / FFI**: objects passed through a stable interface.
+* **Smaller binaries**: one indirect call instead of N monomorphized versions.
+* **Clear boundaries**: the user **chooses** when to pay for the indirect call.
+- **Cost**: 1 pointer load + 1 **indirect call**.
 
-Regla de oro:
+Rule of thumb:
 
-* “**Hot loop** cerrado en memoria/cómputo” → estático (genéricos).
-* “**Fronteras** (IO/FFI/plugins) y heterogeneidad” → `Virtual`.
+* “A **hot loop** limited by memory or compute” → static (generics).
+* “**Boundaries** (IO/FFI/plugins) and heterogeneous data” → `Virtual`.
 
 ## Virtual-safety
 
-Un método del `Abstract` es **virtual-safe** si, tras el borrado de tipo:
+A method of an `Abstract` is **virtual-safe** if, after type erasure:
 
-- **Parámetros y retorno** son **erase-safe**:
-  - primitivas/POD, punteros, slices…
-  - **Virtual#(X)** (si necesitas otro abstract).
-- **No** aparecen tipos abstractos “puros” ni genéricos libres **en la firma**.
-- **Sin genéricos en la vtable**: las firmas deben ser **monomórficas** tras borrar.
+- **Parameters and return values** are **erase-safe**:
+  - primitives/POD, pointers, slices…
+  - **Virtual#(X)** (if another abstract is needed).
+- **No** pure abstract types or free generics appear **in the signature**.
+- **No generics in the vtable**: signatures must be **monomorphic** after erasure.
 
-> Multiple dispatch (MD) **no** es virtual-safe.
+> Multiple dispatch (MD) is **not** virtual-safe.
 
-## Definición
+## Definition
 
 ```argi
 Virtual#(.abstract: Abstract) : Type = (
   .allocator: &Allocator
-  .data_ptr : &Any        -- fat pointer al dato
+  .data_ptr : &Any        -- fat pointer to the data
   .vtable   : &VTable#(abstract)
   .meta     : Meta        -- type_id, drop_fn, flags, storage, etc.
 )
 ```
 
-## Creación
+## Creation
 
 ```argi
 assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
@@ -54,7 +54,7 @@ do_something (v: Virtual#(Shape)) -> () := {
 }
 ```
 
-O más ergonómico y compatible:
+Or, more ergonomic and compatible:
 
 ```argi
 do_something (v: Shape) -> () := {
@@ -62,28 +62,27 @@ do_something (v: Shape) -> () := {
 }
 ```
 
-> [!CHECK] Es buena idea que Virtual#(Abstract) cumpla Abstract?
-> Lo hace muy cómodo. Hay que valorar si trae alguna complicación.
+> [!CHECK] Should `Virtual#(Abstract)` implement `Abstract`?
+> This is convenient. Consider whether it introduces complications.
 
 
 ## Interoperabilidad y ABI
 
-Pensar en como customizar el funcionamiento de Virtual para que encaje bien con distintos escenarios:
+Consider how to customize `Virtual` to fit different scenarios:
 
-- Especificación del orden de las funciones.
+- Specify the order of functions.
 - ...
 
 
 > [!IDEA]
-> Igual se puede hacer overloadeando `to_virtual`.
-> Podría ser Virtual una especie de Abstract que se puede implementar?
+> Perhaps this can be done by overloading `to_virtual`.
+> Could `Virtual` be a kind of implementable Abstract?
 
 
 ---
 
 ## Multiple dispatch compatibility
 
-> [!TODO] Explorar vtables con multiple dispatch.
-> Podría hacerse como un grafo de decisiones de dispatch y que se aplique
-> curriando funciones.
-> Explorar la idea.
+> [!TODO] Explore vtables with multiple dispatch.
+> This could be modeled as a dispatch decision graph applied by currying
+> functions. Explore this idea.

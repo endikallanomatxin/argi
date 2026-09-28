@@ -30,12 +30,12 @@ Structs' types are structural only when anonymous.
 
 ## Protected fields
 
-Es importante proteger algunos campos para conseguir una mejor encapsulación.
+It is important to protect some fields to provide better encapsulation.
 
-Los campos que empiecen por _ serán privados y no podrán ser accedidos desde
-fuera del package.
+Fields starting with `_` will be private and cannot be accessed from
+outside the package.
 
-Por ejemplo:
+For example:
 
 ```
 MyStruct : Type = (
@@ -51,7 +51,7 @@ set_x(s: MyStruct, x: Int) {
 }
 ```
 
-También puede ser útil para garantizar que un struct se inicializa correctamente.
+This can also help ensure that a struct is initialized correctly.
 
 ```
 MyStruct : Type = (
@@ -71,32 +71,35 @@ We use dynamic dispatch by return type to create the initializer.
 my_var := MyType(1, 2, 3)
 ```
 
-Esto realmente es:
+This is really:
 
 ```
 my_var : MyType
 init($&my_var, 1, 2, 3)
 ```
 
-y queda muy limpio.
+This keeps the syntax very clean.
 
 
 > [!IDEA] Struct field types
-> Cuando tienes una app web en go por ejemplo, tienes structs para tus models que tienen un montón de campos que más adelante no vas a usar siempre al completo.
-> A veces aunque solo tengas que usar el campo del ID pasas el struct entero para al menos mantener la semántica.
-> Igual se podría hacer que cuando se define un struct también se definen tipos nuevos.
+> For example, in a Go web app, model structs can have many fields that are not
+> always used in full.
+> Sometimes you pass the whole struct even when you only need its ID field, just
+> to preserve the semantics.
+> Perhaps defining a struct could also define new types.
 > 
-> Por ejemplo:
+> For example:
 >
 >	```
 >	User := (
 >		ID    :: Int64
 >		Name  :: String
 >	)
->	userIDs : List(User.ID)  -- En lugar de Users, o simplemente Int64
+>	userIDs : List(User.ID)  -- Instead of Users, or simply Int64.
 >	```
 >
-> Con esto ganamos la información semántica de a qué corresponde lo que estamos usando, sin pagar el precio de pasar todo el struct.
+> This gives us semantic information about what we are using without the cost
+> of passing the entire struct.
 
 
 > [!IDEA] Structural delegation with `expose`
@@ -161,7 +164,7 @@ StructLayout : Type = (
 )
 ```
 
-Herramientas para inspeccionar layout:
+Tools for inspecting layout:
 
 ```
 inspect_layout MyStruct
@@ -175,17 +178,16 @@ b        4         4       4
 c        8         2       2
 Total size: 12 bytes (4 bytes of padding)
 ```
-igual incluso un dibujito
+perhaps even a small diagram
 ```
 A...BBBBCC..
 ```
-que se podría poner debajo de la declaración en el editor.
+that could appear below the declaration in the editor.
 
 
-El lenguaje debe proporcionar funciones estándar para interactuar con el layout en tiempo de ejecución:
-- **`align_of`**: Devuelve la alineación de un tipo.
-- **`size_of`**: Devuelve el tamaño de un tipo.
-- **`offset_of`**: Devuelve el offset de un campo en una estructura.
+The language should provide standard functions for querying layout at runtime:
+- **`align_of`**: Returns the alignment of a type.
+- **`size_of`**: Returns the size of a type.
+- **`offset_of`**: Returns the offset of a field in a struct.
 
-`size_of` y `align_of` deberían devolver `UIntNative`.
-
+`size_of` and `align_of` should return `UIntNative`.

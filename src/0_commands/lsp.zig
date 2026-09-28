@@ -159,7 +159,7 @@ const LanguageServer = struct {
                     self.respondInternalErrorOrLog(&writer, id, "rename failed");
                 };
             } else {
-                // Método desconocido -> ignorar
+                // Ignore unknown methods.
             }
         }
     }
@@ -343,7 +343,7 @@ const LanguageServer = struct {
         try stream.beginObject();
         try stream.objectField("tokenTypes");
         try stream.beginArray();
-        // usa los que vayas a producir ya en el MVP:
+        // Use the ones that will be produced in the MVP:
         try stream.write("namespace");
         try stream.write("type");
         try stream.write("function");
@@ -358,14 +358,14 @@ const LanguageServer = struct {
         try stream.endArray();
         try stream.objectField("tokenModifiers");
         try stream.beginArray();
-        try stream.write("declaration"); // opcional, ya
-        try stream.write("readonly"); // opcional
+        try stream.write("declaration"); // Optional, already supported.
+        try stream.write("readonly"); // Optional.
         try stream.endArray();
         try stream.endObject();
 
         // soporte
         try stream.objectField("full");
-        try stream.write(true); // MVP: full, sin delta
+        try stream.write(true); // MVP: full, without deltas.
         try stream.objectField("range");
         try stream.write(false);
         try stream.endObject();
@@ -549,8 +549,8 @@ const LanguageServer = struct {
         const uri_value = getField(&text_document_value.object, "uri") orelse return;
         if (uri_value != .string) return;
 
-        // La spec manda un "range" aquí; por ahora lo ignoramos (MVP),
-        // pero lo parseamos para que no falle si viene.
+        // The spec requires a "range" here. For now, ignore it (MVP),
+        // but parse it so the request does not fail when it is present.
         _ = getField(&params.object, "range");
 
         if (self.service) |*svc| {

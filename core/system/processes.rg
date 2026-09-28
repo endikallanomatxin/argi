@@ -17,7 +17,7 @@ once init(.p: $&ProcessManager) -> () := {
 -- 
 -- 
 -- read(ph: $&ProcessHandle&) : !String {
---     -- Igual debería tener streams el handle para esto.
+--     -- The handle may need streams for this as well.
 --     ...
 -- }
 -- 

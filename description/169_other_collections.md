@@ -6,12 +6,12 @@
 
 ## Queues
 
-### RingBuffer (circular, fijo o dinámico)
-Para colas, audio, telemetría.
+### RingBuffer (circular, fixed or dynamic)
+For queues, audio, and telemetry.
 RingBuffer#(.t) = (.ptr:&t, .cap:Int, .head:Int, .tail:Int)
 
-### Deque (doble extremo, dinámico)
-Generaliza ring buffer con crecimiento.
+### Deque (double-ended, dynamic)
+Generalizes a ring buffer with growth.
 Deque#(.t) = (.ptr:&t, .len:Int, .cap:Int, .front:Int, .alloc:&Allocator)
 
 
@@ -33,4 +33,3 @@ More info on collection types in `../library/collections/`
 - zipping iterator
 - enumerating iterator
 - sliding window iterator
-

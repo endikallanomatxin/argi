@@ -1,23 +1,23 @@
 ## Strings
 
-ThePrimeagen dice que go string handling is mid, rust is amazing.
+ThePrimeagen says Go's string handling is mediocre, while Rust's is amazing.
 
 Two literals:
 
 - `'c'` for characters
 - `"string"` for strings
 
-Un string se debería poder "ver" de varias formas explícitas:
+A string should be explicitly viewable in several forms:
 
-- `bytes`: los bytes UTF-8 crudos.
-- `codepoints`: valores Unicode escalares decodificados desde esos bytes.
-- `graphemes`: unidades visuales percibidas por el usuario.
+- `bytes`: the raw UTF-8 bytes.
+- `codepoints`: Unicode scalar values decoded from those bytes.
+- `graphemes`: visual units perceived by the user.
 
-`String` no debería ser indexable directamente por defecto. Eso mezcla dos
+`String` should not be directly indexable by default. This mixes two
 preguntas distintas:
 
-- acceso por byte,
-- acceso por unidad de texto.
+- byte access,
+- text-unit access.
 
 ```
 my_string | bytes_get(&_, 4)  -- The fourth byte
@@ -166,4 +166,4 @@ later, but the base owner/view split should already be real and usable.
 > 	</div>
 > 	"""
 > ```
-> Podría hacerse conectándose al lsp de turno.
+> This could be done by connecting to the active LSP.

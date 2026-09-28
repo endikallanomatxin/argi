@@ -14,7 +14,8 @@ if a == 2 {
 
 #### Match
 
-De odin: cada case es su propio scope, `implicit break` por defecto, y si en lugar de eso quieres que siga le pones un `fallthrough` o algo así.
+From Odin: each case has its own scope, with an implicit `break` by default.
+Use `fallthrough` or something similar when execution should continue.
 
 ```
 match x (
@@ -32,14 +33,15 @@ match x (
 ```
 
 > [!NOTE]
-> Aquí, como hemos quitado () para representar las funciones, podríamos usarlas para mejorar la sintaxis si fuera necesario.
+> Since we removed `()` to represent functions, we could use them to improve
+> the syntax if needed.
 
-Rust creo que hace esto muy bien.
-Gleam también.
+I think Rust handles this very well.
+Gleam does too.
 
 > [!CHECK]
 >
-> En JAI un switch se hace como algo así:
+> In JAI, a switch looks something like this:
 > 
 > ```
 > if bar == {
@@ -55,12 +57,12 @@ Gleam también.
 > }
 > ```
 > 
-> Eso es como multiplexar una == y me parece muy buena idea, es más potente todavía que un match.
+> This is like multiplexing `==`. It seems like a very good idea, even more
+> powerful than `match`.
 > 
-> Darle una vuelta.
+> Think this through.
 
-Los bindings de patrón en `match` deben seguir el mismo modelo general de
-access modes:
+Pattern bindings in `match` should follow the same general access mode model:
 
 ```rg
 match value {
@@ -81,13 +83,13 @@ match value {
 }
 ```
 
-Regla unificada:
+Unified rule:
 
-- `name` bindea por valor
-- `& name` bindea una referencia read-only
-- `$& name` bindea una referencia mutable
-- `~ name` bindea por move
-- `_` ignora el valor
+- `name` binds by value.
+- `& name` binds a read-only reference.
+- `$& name` binds a mutable reference.
+- `~ name` binds by move.
+- `_` ignores the value.
 
 
 ## Loops
@@ -116,7 +118,7 @@ while eps < e-5 {
 }
 ```
 
-Para siempre:
+Forever:
 
 ```plaintext
 loop
@@ -126,15 +128,16 @@ loop
 
 ### List comprehensions
 
-No me gustan, pero son muy cómodos para cosas pequeñas y no creo que tengan mucho riesgo de usarse mal en exceso. No pasa nada por implementarlos.
+I do not like them, but they are convenient for small tasks and do not seem
+especially prone to misuse. It is fine to implement them.
 
 ```
 (i*2 for i in Range(.start = 1, .end = 10))
 ```
 
-O igual del revés:
-- Se lee antes que se trata de un list comprehension.
-- Queda más limpio para multiples líneas,
+Or perhaps the other way around:
+- It is immediately clear that this is a list comprehension.
+- It is cleaner across multiple lines.
 
 ```
 evens = (for i in Range(.start = 1, .end = 10) {yield i*2})
@@ -142,18 +145,17 @@ evens = (for i in Range(.start = 1, .end = 10) {yield i*2})
 evens = (for i in Range(.start = 1, .end = 10); i*2)
 ```
 
->[!TODO] Darle una vuelta a la sintaxis.
+>[!TODO] Reconsider the syntax.
 
 ### Iterators
 
-Los `Iterator` gestionan cómo se recorren o procesan las colecciones, pero se
-definen en un tipo nuevo para mantener independencia respecto a los propios
-datos.
+`Iterator` types manage how collections are traversed or processed. They are
+defined separately to keep them independent from the collection data itself.
 
-`for` debe consumir un `Iterable`, no un `Iterator` directamente. El iterable
-expone `to_iterator`, y el iterador mantiene el estado mutable del recorrido.
+`for` must consume an `Iterable`, not an `Iterator` directly. The iterable
+exposes `to_iterator`, and the iterator holds the mutable traversal state.
 
-Se puede hacer a través de `Abstract`:
+This can be expressed with `Abstract`:
 
 ```
 Iterable#(.t: Type) : Abstract = (
@@ -174,43 +176,41 @@ Iterator#(.t: Type) : Abstract = (
 )
 ```
 
-La decisión de diseño es mantener un único abstract `Iterator`. Lo que cambia
-según el modo de iteración no es la interfaz del iterador, sino el abstract
-`Iterable` que la colección decide implementar.
+The design keeps a single `Iterator` abstract. The iteration mode changes the
+`Iterable` abstract that the collection implements, not the iterator interface.
 
-Eso deja el modelo así:
+This gives the following model:
 
-- `Iterable#(.t: T)` para `for item in value`
-- `ROPointerIterable#(.t: T)` para `for & item in value`
-- `RWPointerIterable#(.t: T)` para `for $& item in value`
+- `Iterable#(.t: T)` for `for item in value`
+- `ROPointerIterable#(.t: T)` for `for & item in value`
+- `RWPointerIterable#(.t: T)` for `for $& item in value`
 
-Cada uno construye un `Iterator`, pero con distinto tipo de elemento:
+Each constructs an `Iterator`, but with a different element type:
 
-- `Iterator#(.t: T)` para iteración por valor
-- `Iterator#(.t: &T)` para iteración prestada read-only
-- `Iterator#(.t: $&T)` para iteración prestada mutable
+- `Iterator#(.t: T)` for iteration by value
+- `Iterator#(.t: &T)` for borrowed read-only iteration
+- `Iterator#(.t: $&T)` for borrowed mutable iteration
 
-Nota conceptual útil: en Rust el `for` sigue siendo uno solo, pero el modo de
-iteración lo decide el tipo de la expresión que se le pasa.
+Useful conceptual note: Rust still has a single `for`, but the type of the
+expression passed to it determines the iteration mode.
 
 ```
-for x in v      -- consume la colección
-for x in &v     -- itera por referencia inmutable
-for x in &mut v -- itera por referencia mutable
+for x in v      -- consumes the collection
+for x in &v     -- iterates by immutable reference
+for x in &mut v -- iterates by mutable reference
 ```
 
-Eso sale de distintas implementaciones de conversión a iterador para:
+This comes from different iterator conversions for:
 
 - `Vec<T>`
 - `&Vec<T>`
 - `&mut Vec<T>`
 
-La idea interesante para Argi es conservar el mismo principio: `for` consume un
-`Iterable`, y el tipo exacto del valor que se le pase debería poder determinar
-si la iteración es por valor, por referencia inmutable o por referencia
-mutable.
+The useful idea for Argi is to keep the same principle: `for` consumes an
+`Iterable`, and the exact type of the value passed to it should determine
+whether iteration is by value, immutable reference, or mutable reference.
 
-Dirección futura dentro del mismo marco:
+Future direction within the same model:
 
 ```rg
 for item in arr {
@@ -226,30 +226,32 @@ for ~ item in arr {
 }
 ```
 
-Eso debe comportarse como el análogo en `for` de `place`, `&place`, `$&place`
-y `~place`.
+This should make `for` behave like the iteration equivalent of `place`,
+`&place`, `$&place`, and `~place`.
 
-Para `0.1`, el recorte implementado se centra en:
+For `0.1`, the implemented subset focuses on:
 
 - `for item in value`
 - `for & item in value`
 - `for $& item in value`
 
-La iteración por transferencia:
+Iteration by transfer:
 
 ```rg
 for ~ item in value {
 }
 ```
 
-se deja explícitamente para `0.2`, porque necesita cerrar mejor la semántica de
-consumo de colecciones e iteradores.
+is explicitly deferred to `0.2`, because the semantics for consuming
+collections and iterators need more work.
 
-Se puede hacer igual también que las funciones map(), filter() y demás tengan versiones que consumen iteradores (para lazy evaluation) o listas.
-_(Pensar en una forma de que esto sirva para vectorizar funciones. Que si la función llamada tiene una versión vector la tome, si no elemento a elemento)_
+Functions such as `map()` and `filter()` could also have versions that consume
+iterators (for lazy evaluation) or lists.
+_(Consider how this could support vectorizing functions: use a vector version
+when the called function has one, otherwise process each element.)_
 
 
-Y para hacer que tu tipo pueda ser iterable:
+To make your type iterable:
 
 ```
 MyType : Type = struct (
@@ -294,7 +296,7 @@ to_ro_pointer_iterator(.value: &MyType) -> (.iterator: MyTypeROIterator) := {
 }
 
 next(.self: $&MyTypeROIterator) -> (.value: &Int) := {
-    -- devolvería una referencia al elemento actual
+    -- Returns a reference to the current element.
 }
 ```
 
@@ -304,7 +306,7 @@ for element in my_collection {
     print(element)
 }
 
--- Se podría escribir como:
+-- This could be written as:
 
 it ::= to_iterator(.value = &my_collection)
 while has_next(.self = &it) {
@@ -313,12 +315,12 @@ while has_next(.self = &it) {
 }
 ```
 
-El `for` debe tragar un `Iterable` del modo adecuado:
+`for` must accept the appropriate `Iterable`:
 
-- `for item in x` requiere `Iterable`
-- `for & item in x` requiere `ROPointerIterable`
-- `for $& item in x` requiere `RWPointerIterable`
+- `for item in x` requires `Iterable`.
+- `for & item in x` requires `ROPointerIterable`.
+- `for $& item in x` requires `RWPointerIterable`.
 
 Ideas:
-- Concatenar iteradores con comas: `Range(.start = 1, .end = 5), Range(.start = 80, .end = 92)`
-- En julia: The dot after sin causes the trigonometric function to be “broadcast” to each element of x.
+- Concatenate iterators with commas: `Range(.start = 1, .end = 5), Range(.start = 80, .end = 92)`.
+- In Julia, the dot after `sin` broadcasts the trigonometric function to each element of `x`.

@@ -15,11 +15,11 @@ expr(.s: String) -> (.out: Expr) := {
 my_expr :: Expr = expr(.s = "x^2")
 ```
 
-Funciones: `simplify(expr)`, `expand(expr)`, `factor(expr)`, `diff(expr, x)`, `integrate(expr, x)`.
+Functions: `simplify(expr)`, `expand(expr)`, `factor(expr)`, `diff(expr, x)`, `integrate(expr, x)`.
 
-**Módulos y librerías adicionales**:
+**Additional modules and libraries**:
 
-- Un módulo `sym.diff` para derivación automática.
-- Un módulo `sym.int` para integración simbólica.
-- Un módulo `sym.linalg` para manipular matrices simbólicas.
-- Un módulo `sym.series` para expandir en series de potencias.
+- A `sym.diff` module for automatic differentiation.
+- A `sym.int` module for symbolic integration.
+- A `sym.linalg` module for manipulating symbolic matrices.
+- A `sym.series` module for expanding power series.

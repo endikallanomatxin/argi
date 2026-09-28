@@ -1,31 +1,31 @@
 # Compiletime-parameters
 
-- Se monomorfizan.
-- Se pueden no poner y el compilador los infiere.
-- Mismo sistema para tipos y funciones.
-- Pueden tener valores por defecto.
+- They are monomorphized.
+- They can be omitted and inferred by the compiler.
+- The same system is used for types and functions.
+- They can have default values.
 
 
-## Sintaxis
+## Syntax
 
-### Declaración
+### Declaration
 
-Usa `#( … )` para **declarar** parámetros genéricos. El binder puede aparecer en:
+Use `#( … )` to **declare** generic parameters. The binder can appear in:
 
-* declaraciones de **tipos** y **abstracts**,
-* **funciones** y **operadores**.
+* declarations of **types** and **abstracts**,
+* **functions** and **operators**.
 
 ```argi
--- Tipo genérico
+-- Generic type
 Vec#(.t: Type, .n: UIntNative) : Type = ( ... )
 
--- Función genérica
+-- Generic function
 max#(.t: Type) (.a: t, .b: t) -> (.result: t) := {
     if a > b { result = a } else { result = b }
 }
 ```
 
-### Uso
+### Usage
 
 ```argi
 let v : Vec#(.t: Float32, .n = 3) = (1.0, 2.0, 3.0)
@@ -41,7 +41,7 @@ generic arguments may still be considered later for ergonomics.
 
 ```argi
 sum#(.t: Type: Number) (.xs: []t) -> (.result: t)
--- t debe implementar el abstract Number
+-- t must implement the Number abstract
 ```
 
 ## Constraint Design
@@ -160,13 +160,13 @@ In short:
 - only add `where(...)` if the simple bounded model is no longer enough
 
 
-## Interación con Multiple Dispatch
+## Interaction with Multiple Dispatch
 
-* **Identidad** = `nombre + patrón de tipos de los parámetros`.
-* El bloque `#(...)` **no** forma parte de la identidad; solo **declara** los genéricos usados.
-* **Prohibido duplicar** la misma firma con o sin `#(...)` (redefinición).
+* **Identity** = `name + parameter type pattern`.
+* The `#(...)` block is **not** part of the identity; it only **declares** the generics used.
+* The same signature cannot be duplicated with or without `#(...)` (redefinition).
 
 
-## Interacción con Virtual types
+## Interaction with Virtual types
 
-* **Generics no van en la vtable.** Los métodos de vtable deben ser **monomórficos** tras borrar tipos.
+* **Generics do not go in the vtable.** Vtable methods must be **monomorphic** after type erasure.

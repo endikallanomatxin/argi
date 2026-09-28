@@ -1,6 +1,6 @@
 ## Standard library
 
-En general, copiemos la de zig, y si algo no está, copiemos la de go.
+In general, follow Zig's standard library; if something is missing, follow Go's.
 
 
 From Zig, not incorporated:
@@ -25,7 +25,7 @@ From Zig, not incorporated:
 	start
 	valgrind  -- Memory management issue detector
 	zig  -- Zig compiler source itself (not meant for use from the language)
-	     -- Igual podríamos hacer que sí estuviera pensado para ser usando desde build.rg
+	     -- We could also consider making this usable from build.rg.
 
 CHATGPT not incorporated:
 
@@ -41,9 +41,9 @@ CHATGPT not incorporated:
  │    ├── channel
  │    ├── atomic
  │    └── ...
- ├── reflect/  (si tu lenguaje tiene introspección/reflexión)
+ ├── reflect/  (if the language supports introspection/reflection)
  ├── debug/    (profilers, asserts ampliados, dumps, etc.)
- └── build/    (si tienes un “build script” estilo Zig/Go)
+ └── build/    (if there is a Zig/Go-style build script)
 
 
 From Go std, not incorporated:
@@ -71,4 +71,3 @@ From Go std, not incorporated:
 - unique
 - unsafe
 - weak
-

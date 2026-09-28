@@ -14,8 +14,8 @@ a : [3]Int32 = (1, 2, 3)
 arrays only; slices and views are library abstractions, not native array types.
 Collection access uses named operations rather than overload sets.
 
-> [!TODO] Pensar una forma de definir longitud de forma automática.
-> Igual `[?]T` para que el compilador lo calcule.
+> [!TODO] Find a way to define the length automatically.
+> Perhaps `[?]T` could let the compiler calculate it.
 
 #### `ArrayView` and `ArrayViewRO`
 
@@ -148,14 +148,14 @@ such as `keep`.
 
 #### Sentinel slice
 
-`[null-terminated]T` o `SentinelSlice#(.t: Type, .sentinel: t)`
+`[null-terminated]T` or `SentinelSlice#(.t: Type, .sentinel: t)`
 
-Slice con sentinela (terminado)
-Ideal C-strings u otros protocolos.
+Sentinel-terminated slice
+Useful for C strings and other protocols.
 
 #### Strided slices
 
-Para vistas de columnas, canales de imagen, etc.
+For column views, image channels, and similar uses.
 `StridedSlice#(.t) = (.ptr:$&t, .len:Int, .stride:Int)`
 
 
@@ -171,8 +171,8 @@ l | slice (((0, 10), (0, 20)))  -- 2D slice
 ```
 
 > [!CHECK]
-> La list abstract type podría darse cuenta de que list literals anidados la
-> cumplen?
+> The list abstract type could detect that nested list literals
+> satisfy this?
 
 
 ### List Abstracts

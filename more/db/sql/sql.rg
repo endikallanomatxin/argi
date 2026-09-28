@@ -17,7 +17,7 @@ my_db : SQLDB = init(_, ...)
 
 result = my_db
          | from(&_, "produce")
-	 | where(&_, "item == banana")  -- Igual estas expresiones también las podemos integrar
+	 | where(&_, "item == banana")  -- These expressions could be integrated too.
 	 | group_by(&_, "item")
 	 | order_by(&_, "item", ..desc)
 ---

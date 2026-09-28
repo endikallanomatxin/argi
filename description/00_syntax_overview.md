@@ -30,8 +30,8 @@ Nestable comments?
 --- Doc comments, like zig
 ```
 
-Hacer que no haya comentarios multilinea podría hacer que se
-pueda tokenizar todo en paralelo.
+Removing multiline comments might make it possible to tokenize everything in
+parallel.
 
 ## Variable and constant declaration
 
@@ -59,35 +59,33 @@ struct.
 
 ## Pointers
 
-Para obtener la referencia a una variable (como en c, go, rust...):
+To get a reference to a variable (as in C, Go, Rust, and others):
 
 ```
 p = &x
 ```
 
-Para desreferenciar un puntero:
+To dereference a pointer:
 
 ```
 x = p&
 ```
 
-Su tipo es:
+Its type is:
 
 ```
 p: &Int
 ```
 
-- No puede ser nulo.
-(Si se quiere hacer nulo, usar un nullable: `?&Int`. Más adelante hay más sobre
-esto.)
+- It cannot be null.
+(To allow null, use a nullable: `?&Int`. See below for more information.)
 
-- No se puede hacer aritmética con punteros.
-Si quieres hacerlo, tienes que convertirlo en un tipo numérico, hacer la
-aritmética y luego volverlo a convertir en un puntero. Es suficientemente
-incómodo como para no hacerlo sin querer, te obliga a ser explícito para
-cagarla.
+- Pointer arithmetic is not allowed.
+To perform it, convert the pointer to a numeric type, do the arithmetic, then
+convert it back to a pointer. This is inconvenient enough to prevent accidental
+use and requires an explicit step that could fail.
 
-El tipo numérico canónico para eso es `UIntNative`.
+The canonical numeric type for this is `UIntNative`.
 
 
 ### Read-only vs read-write pointers
@@ -96,8 +94,8 @@ There are two types of pointers:
 - Read-only pointers: `&T`
 - Read-write pointers: `$&T` ($ is for side effects)
 
-> [!TODO] Puede pasarse un puntero $& a una función que espera un &?
-> Requerimos casteo explícito?
+> [!TODO] Can a `$&` pointer be passed to a function expecting `&`?
+> Is an explicit cast required?
 
 
 ## Code blocks
@@ -110,15 +108,15 @@ This is also used for loops and conditional, so locally declared variables are n
 This forces the good practice of declaring variables before loops and conditionals, instead of inside them.
 
 > [!CHECK]
-> Valorar que los bloques de código no puedan tomar nada de fuera como en Jai.
-> Pero pensar una sintaxis cómoda para autollamar un bloque rollo función
-> anónima. Es todavía más higiénico, pero pensar en como hacerlo sencillo.
+> Consider preventing code blocks from capturing anything from outside, as in Jai.
+> Also consider convenient syntax for invoking a block like an anonymous
+> function. This is even more hygienic, but the syntax should remain simple.
 
 > [!NOTE]
-> En go, si hacer `v1, v2 := ...` dentro de un bloque, eso no declara solo las
-> no declaradas, sino todas, haciendo que si una existía de antes, se eclipse.
-> En nuestro lenguaje eso no debería pasar, si existe fuera, entonces no se
-> re-declara si se hacen varias a la vez. Solo cuando se hace una.
+> In Go, writing `v1, v2 := ...` inside a block declares all variables, not
+> only the undeclared ones. A variable that already exists is shadowed.
+> Our language should avoid this: if a variable exists outside the block, it
+> should not be redeclared when several are declared together, only when one is.
 
 
 ## Functions
@@ -144,8 +142,8 @@ When calling functions:
 - output structs with a single field are automatically unpacked (to avoid unnecessary verbosity).
 
 > [!CHECK]
-> Valorar que no se haga unpacking automático y que los defaults se
-> autorrellenen en el call site para que el código sea forward-compatible.
+> Consider avoiding automatic unpacking and filling in defaults at the call
+> site to make the code forward-compatible.
 
 
 ```
@@ -158,18 +156,18 @@ When a function has multiple fields in the output struct, you get the struct.
 -- Without unpacking:
 r = divmod(7, 3)
 
--- Para extraer sólo un campo:
+-- To extract only one field:
 quot, _ = divmod(7, 3)
--- o
+-- or
 quot = divmod(7, 3).quot
 
--- Para extraer ambos:
+-- To extract both:
 quot, rem = divmod(7, 3)
 ```
 
-> [!NOTE] Como diferenciamos entonces entre un struct literal y un list literal?
-> Es un collection literal, que se puede _interpretar_ como un list, struct,
-> map o choice literal.
+> [!NOTE] How do we distinguish a struct literal from a list literal?
+> It is a collection literal that can be _interpreted_ as a list, struct,
+> map, or choice literal.
 
 
 Anonymous functions can be defined like here:
@@ -194,7 +192,7 @@ my_var | my_func (_.a, other_arg, _.b)  -- Multiple piped arguments
 result | is(_, ..error)                -- Positional arguments also work with builtins
 ```
 
-Se puede pasar por referencia sin necesidad de crear las variables intermedias.
+Values can be passed by reference without creating intermediate variables.
 
 ```
 my_var | my_func (&_, second_arg)
@@ -252,16 +250,15 @@ init ($&my_thing, "something", 12, true)
 
 > [!NOTE] init() is the only function allowed to receive uninitialized arguments.
 >
-> El primer parámetro de init puede ser un puntero a memoria reservada pero no
-> inicializada de ese tipo.
+> The first parameter of `init` can be a pointer to memory allocated for that
+> type but not yet initialized.
 > 
-> Chequeos estáticos dentro de init:
-> - Write-only sobre *out: no se permite leer campos hasta que estén escritos
->   (idealmente, nunca leer el out).
-> - Definite initialization: en todas las rutas de éxito, todos los campos han
->   sido escritos.
-> - No escape/no alias: el puntero no puede escaparse (no guardarlo en globals,
->   no capturarlo en closures, no pasarlo a hilos).
+> Static checks inside `init`:
+> - Write-only access to `out`: fields cannot be read before they are written
+>   (ideally, never read `out`).
+> - Definite initialization: every field must be written on every successful path.
+> - No escape or aliasing: the pointer cannot escape (do not store it globally,
+>   capture it in closures, or pass it to threads).
 
 
 If wanted you can return an empty errable:
@@ -281,37 +278,37 @@ copy only when its type implements `ImplicitlyCopyable`. Other types require
 explicit `copy(&value)` or explicit ownership transfer with `~value`.
 
 > [!NOTE]
-> Si hay rutas de error/early-return, garantiza que el valor queda en estado
-> no-inicializado (no se llamará deinit), o que se limpia parcial antes de
-> salir.
-> - Solo se invoca deinit en objetos inicializados.
-> - Si init falla (devuelve error), no se llama deinit sobre esa ranura.
+> On error or early-return paths, ensure the value remains uninitialized
+> (`deinit` will not be called), or that partial initialization is cleaned up
+> before returning.
+> - `deinit` is called only on initialized objects.
+> - If `init` fails (returns an error), `deinit` is not called on that slot.
 
-> [!NOTE] Para usar el stack, hay que inlinear las funciones de init.
-> Si quieres que el objeto esté en el stack, el alloca no se puede llamar
-> dentro de una función.
-> Por ejemplo, si quisiéramos hacer Array como parte de la librería estándar,
-> tendría que tener esta firma:
+> [!NOTE] To use the stack, `init` functions must be inlined.
+> If the object should be on the stack, `alloca` cannot be called inside a
+> function.
+> For example, if `Array` were part of the standard library, it would need
+> this signature:
 > ```
 > init#(.t: Type, .n: UIntNative)(.a: &Array#(.t), .source: ListLiteral#(.t)) -> () #inline { ... }
 > ```
 
 > [!IDEA]
-> Si usamos init para el casting, en realidad queda bastante bien porque si es
-> posible se inlinea probablemente.
-> Podría hacerse a través del overloading de la funcón de init.
+> Using `init` for casting could work well because it will likely be inlined
+> when possible.
+> This could be done by overloading the `init` function.
 >
 > `init(out: $&TargetType, in: SourceType) -> ()`
-> Se usaría:
+> It would be used like this:
 > `new = TargetType(source_value)`
 
 > [!FIX]
-> La llamada a las funciones init tiene el mismo nombre que el tipo, eso hace
-> que no se pueda referenciar a la función de init por su nombre. No sé si será
-> problema.
+> Calls to `init` functions use the same name as the type, so the `init`
+> function cannot be referenced by name. It is unclear whether this is a problem.
 
 > [!CHECK]
-> La variable resultate de la inicialización va en el input o en el output de la declaración?
+> Should the variable produced by initialization be part of the declaration's
+> input or output?
 
 
 ## Generics
@@ -324,7 +321,7 @@ explicit `copy(&value)` or explicit ownership transfer with `~value`.
 
 ```
 MyGenericType#(.t: Type) : Type = (
-	.datos : List#(.t: t)
+	.data : List#(.t: t)
 )
 ```
 
