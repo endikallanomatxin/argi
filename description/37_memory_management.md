@@ -249,7 +249,7 @@ Failure is decided at the raw-storage boundary. `..error ..out_of_memory`
 therefore carries no `Allocation`, safe reference, Validity Root, or cleanup obligation;
 `StorageCapability` is consumed only on successful establishment.
 
-`ArenaAllocator(metadata_allocator)` uses the supplied `CAllocator` for block
+`ArenaAllocator(metadata_allocator)` uses the supplied allocator for block
 metadata and libc for the physical blocks. Its allocations share one arena root;
 reset or deinitialization ends that root and releases the blocks. Cleaning
 an individual arena-backed child does not end the arena. Logical detach need

@@ -17,7 +17,7 @@ BufferedReader#(.base_type: Type: Reader) : Type = (
 
 init#(.base_type: Type: Reader)(
     .p: $&BufferedReader#(.base_type: base_type),
-    .allocator: $&CAllocator,
+    .allocator: $&Allocator,
     .base: $&base_type,
     .capacity: UIntNative,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -50,7 +50,7 @@ init#(.base_type: Type: Reader)(
 
 deinit#(.base_type: Type: Reader)(
     .self: $&BufferedReader#(.base_type: base_type),
-    .allocator: $&CAllocator,
+    .allocator: $&Allocator,
 ) -> () := {
     assume allocator
 

@@ -6,7 +6,8 @@ Borrowing : Type = (
 external :: UInt8 = 9
 
 main(.system: System) -> (.status_code: Int32) := {
-    deallocator ::= to_virtual#(.abstract: Deallocator)(.value = system.allocator)
+    c_allocator ::= CAllocator()
+    deallocator ::= to_virtual#(.abstract: Deallocator)(.value = $&c_allocator)
 
     borrowing_slots_storage ::= malloc(.size = size_of(.type = Borrowing))
     borrowing_slots ::= establish_allocation(

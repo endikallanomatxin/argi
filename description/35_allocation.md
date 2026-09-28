@@ -38,11 +38,24 @@ references to slots under the owner's bounds, alignment, and occupancy
 invariants. Safety ties those references to the allocation's root and anchor,
 so releasing or resetting the storage invalidates them.
 
-`CAllocator` obtains aligned heap storage from libc. `PageAllocator` requests
-page-aligned libc storage while preserving the requested size in `Allocation`.
-`ArenaAllocator` uses libc for its physical blocks and a caller-supplied
-`CAllocator` for block metadata; `reset` ends the shared arena lifetime and
-releases the blocks. Individual child deallocations do not release a block.
+`PageAllocator` obtains anonymous virtual-memory mappings and releases them
+with `munmap`. It maps extra pages for requests aligned beyond the page size,
+then unmaps the unused edges. `GeneralPurposeAllocator` is the default for
+`System` and for implicit `Allocator` parameters. It groups small requests by
+power-of-two size class in page-backed buckets. Each bucket has a bitmap of
+live slots; freed slots are not reused while that bucket remains mapped.
+Requests larger than half a page go directly to page mappings and are tracked
+separately. `has_live_allocations()` reports whether either kind of allocation
+remains live; repeated frees of tracked allocations abort. Both allocators preserve
+the requested size and alignment in `Allocation`. The current implementation
+uses POSIX mappings; it does not yet provide Zig's stack-trace diagnostics or
+thread synchronization.
+
+`CAllocator` remains available for storage acquired from libc, including
+explicit `malloc`/`free` interoperation. `ArenaAllocator` uses libc for its
+physical blocks and a caller-supplied allocator for block metadata; `reset`
+ends the shared arena lifetime and releases the blocks. Individual child
+deallocations do not release a block.
 
 Using an allocator and implementing `deinit()` does not make a type implicitly
 copyable. Ownership, copying, and borrowed views remain separate concerns; see

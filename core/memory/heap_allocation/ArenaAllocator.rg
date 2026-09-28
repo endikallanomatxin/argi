@@ -21,7 +21,7 @@ deinit(.self: $&ArenaDomain) -> () := {
 ArenaAllocator : Type = (
     --
     -- Simple bump arena with libc-backed blocks. Its metadata uses a caller-
-    -- supplied CAllocator.
+    -- supplied allocator.
     --
     -- Individual `deallocate()` calls are ignored. Memory is reclaimed only by
     -- `reset()` or `deinit()`.
@@ -29,7 +29,7 @@ ArenaAllocator : Type = (
     -- This baseline intentionally targets copyable payloads and compiler-style
     -- scratch allocations, not long-lived fine-grained ownership.
     --
-    .metadata_allocator   : $&CAllocator
+    .metadata_allocator   : $&Allocator
     .blocks               : DynamicArray#(.t: ArenaBlock)
     .domain               : ArenaDomain
     .block_size           : UIntNative
@@ -51,7 +51,7 @@ arena_min_block_capacity(
 
 init(
     .p: $&ArenaAllocator,
-    .metadata_allocator: $&CAllocator,
+    .metadata_allocator: $&Allocator,
     .block_size: UIntNative = 4096,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     assume metadata_allocator

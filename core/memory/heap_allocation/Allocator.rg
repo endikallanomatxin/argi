@@ -76,7 +76,7 @@ deallocate(.self: $&CAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative
 
 CAllocator implements Allocator
 CAllocator implements Deallocator
-Allocator defaultsto CAllocator
+Allocator defaultsto GeneralPurposeAllocator
 
 -- Heap storage needs no region lifetime beyond its own root. This initialized
 -- marker gives the uniform anchor field a stable lifetime without making the

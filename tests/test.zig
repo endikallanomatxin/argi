@@ -6007,8 +6007,26 @@ test "feature_tests/system/40X_arena_allocator_invalid_alignment" {
     try runExpectFailure(test_path);
 }
 
+test "feature_tests/system/41_general_purpose_allocator" {
+    const test_path = "tests/feature_tests/system/41_general_purpose_allocator";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/system/41X_c_allocator_zero_alignment" {
     const test_path = "tests/feature_tests/system/41X_c_allocator_zero_alignment";
+    try expectSuccessfulBuild(test_path);
+    try runExpectFailure(test_path);
+}
+
+test "feature_tests/system/42X_general_purpose_allocator_invalid_alignment" {
+    const test_path = "tests/feature_tests/system/42X_general_purpose_allocator_invalid_alignment";
+    try expectSuccessfulBuild(test_path);
+    try runExpectFailure(test_path);
+}
+
+test "feature_tests/system/43X_general_purpose_large_double_free" {
+    const test_path = "tests/feature_tests/system/43X_general_purpose_large_double_free";
     try expectSuccessfulBuild(test_path);
     try runExpectFailure(test_path);
 }

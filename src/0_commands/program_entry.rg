@@ -1,7 +1,7 @@
 -- Resource ownership belongs to this checked scope. The host adapter only
 -- records process arguments and calls this function.
 __argi_entry() -> __ARGI_OUTPUT__ := {
-    allocator_storage ::= CAllocator()
+    allocator_storage ::= GeneralPurposeAllocator()
     assume allocator := $&allocator_storage
 
     terminal_storage ::= Terminal()

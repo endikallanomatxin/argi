@@ -27,7 +27,7 @@ Terminal : Type = (
 
 once init(
     .p: $&Terminal,
-    .allocator: $&CAllocator,
+    .allocator: $&GeneralPurposeAllocator,
 ) -> () := {
     assume allocator
 
@@ -64,7 +64,7 @@ once init(
 
 deinit(
     .self: $&Terminal,
-    .allocator: $&CAllocator,
+    .allocator: $&GeneralPurposeAllocator,
 ) -> () := {
     assume allocator
 

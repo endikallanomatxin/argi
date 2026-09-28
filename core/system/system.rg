@@ -1,6 +1,6 @@
 -- References to resources owned by the checked program entry scope.
 System : Type = (
-  .allocator : $&CAllocator
+  .allocator : $&GeneralPurposeAllocator
   .terminal  : $&Terminal
   .args      : $&Arguments
   .env_vars  : $&EnvironmentVariables

@@ -16,7 +16,7 @@ BufferedWriter#(.base_type: Type: Writer) : Type = (
 
 init#(.base_type: Type: Writer)(
     .p: $&BufferedWriter#(.base_type: base_type),
-    .allocator: $&CAllocator,
+    .allocator: $&Allocator,
     .base: $&base_type,
     .capacity: UIntNative,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -48,7 +48,7 @@ init#(.base_type: Type: Writer)(
 
 deinit#(.base_type: Type: Writer)(
     .self: $&BufferedWriter#(.base_type: base_type),
-    .allocator: $&CAllocator,
+    .allocator: $&Allocator,
 ) -> () := {
     assume allocator
 
