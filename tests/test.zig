@@ -4850,7 +4850,7 @@ test "feature_tests/ownership/285_reference_can_erase_to_any" {
 test "feature_tests/ownership/286X_uninitialized_allocation_read" {
     try buildExpectFail(
         "tests/feature_tests/ownership/286X_uninitialized_allocation_read",
-        "an integer address cannot establish a safe reference; use an explicit root establishment boundary",
+        "is not dereferenceable; expected '&T' or '$&T'",
     );
 }
 

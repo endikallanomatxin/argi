@@ -691,6 +691,8 @@ pub fn semantizeWithOptions(
         if (options.diagnostics) |diagnostics| {
             if (try diagnoseUnresolvedPointerArithmetic(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
+            if (try diagnoseUnresolvedDereference(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                return error.Reported;
             if (try diagnoseUnresolvedQualifiedTypes(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
                 return error.Reported;
             if (try diagnoseUnresolvedQualifiedNames(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
@@ -882,6 +884,50 @@ fn diagnoseInvalidMatchPayloadCopies(
             );
         }
         return true;
+    }
+    return false;
+}
+
+fn diagnoseUnresolvedDereference(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    resolved: []const bool,
+    reachable: ?*const reachability_mod.FunctionSet,
+    offsets: []const globalizer.Offsets,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    var flat: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
+            defer flat += 1;
+            const dereference = switch (operation) {
+                .resolve_dereference => |value| value,
+                else => continue,
+            };
+            const owner = if (operation_index < module.semantic.pending_owner_functions.items.len)
+                if (module.semantic.pending_owner_functions.items[operation_index]) |value|
+                    globalizer.globalFunction(offsets[module_index], value)
+                else
+                    null
+            else
+                null;
+            if (resolved[flat] or (reachable != null and owner != null and !reachable.?.contains(owner.?))) continue;
+            const operand = globalizer.globalNode(offsets[module_index], dereference.pointer);
+            const ty = graph.node(operand).ty orelse continue;
+            if (graph.isTypeUnresolved(ty)) continue;
+            if (graph.semanticType(ty) == .pointer) continue;
+            var type_name = std.array_list.Managed(u8).init(allocator);
+            defer type_name.deinit();
+            try appendTypeName(&type_name, graph, ty);
+            try diagnostics.add(
+                diagnosticLocation(graph, diagnostics, graph.node(operand).source),
+                .semantic,
+                "type '{s}' is not dereferenceable; expected '&T' or '$&T'",
+                .{type_name.items},
+            );
+            return true;
+        }
     }
     return false;
 }
