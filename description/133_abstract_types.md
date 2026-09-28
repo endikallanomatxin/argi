@@ -14,7 +14,8 @@ language. They are primarily for expressing static contracts.
 
 - Se pueden componer.
 
-- Se pueden extender fuera de sus módulos de origen.
+- Se contempla extenderlos fuera de sus módulos de origen; las reglas de
+  visibilidad y autorización siguen abiertas.
 
 - Si se usan en la firma de una función, se monomorfiza por defecto; para usar
 despacho dinámico en runtime, hay que usar `Virtual#(AbstractType)`.
@@ -238,10 +239,8 @@ AbstractMatrix#(
 
 ---
 
-> [!TODO] Pensar si implementar orphan rule o permitir type piracy como julia.
->
-> Conviene tomarse esto en serio pronto. Si se permite demasiada libertad aquí,
-> el lenguaje puede ganar expresividad pero perder modularidad y predictibilidad.
+> [!TODO] The visibility and orphan rules for external `implements` remain
+> open alongside cross-module overload lookup; see `131_multiple_dispatch.md`.
 
 > [!TODO] Subtyping con genéricos.
 > ¿Vector<Int64> es usable donde se espera Vector<Number>?
