@@ -33,18 +33,18 @@ backing_freed_after_elements :: Bool = false
 
 init(.p: $&BackingAllocator) -> () := {}
 
-allocate(.self: $&BackingAllocator, .size: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+allocate(.self: $&BackingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
     storage ::= malloc(.size = size)
     address :: UIntNative = cast#(.to: UIntNative)(.value = storage)
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation ::= establish_allocation(.storage = storage, .size = size, .deallocator = deallocator)
+    allocation ::= establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
     result = ..ok ~allocation
 }
 
-deallocate(.self: $&BackingAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
+deallocate(.self: $&BackingAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
     backing_freed_after_elements = first_drops == 1 and second_drops == 1 and third_drops == 1
     backing_deallocations = backing_deallocations + 1
-    address :: UIntNative = cast#(.to: UIntNative)(.value = data)
+    address :: UIntNative = data.address
     free(.address = address)
 }
 

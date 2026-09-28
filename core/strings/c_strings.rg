@@ -16,7 +16,7 @@ from_literal(
 as_c_string(
     .self: &String,
 ) -> (.text: &Char) := {
-    text = reinterpret_reference#(.from: UInt8, .to: Char)(.base = self&.allocation.data).reference
+    text = reinterpret_reference#(.from: UInt8, .to: Char)(.base = trusted_allocation_byte_ro(.allocation = &self&.allocation, .offset = 0).reference).reference
 }
 
 string_view_has_c_string_layout(
@@ -50,7 +50,7 @@ as_c_string(
         }
         ..ok ~ payload {
             allocation ::= ~payload
-            data ::= allocation.data
+            data ::= trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
 
             i :: UIntNative = 0
             while i < self.length {

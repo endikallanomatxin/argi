@@ -15,7 +15,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ payload {
             allocation ::= ~payload
-            stale ::= allocation.data
+            stale ::= trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
             deinit(.self = $&allocation)
             observe_on_exit(.reference = stale)
             status_code = 0

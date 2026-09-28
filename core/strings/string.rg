@@ -150,11 +150,11 @@ copy (
 
             if allocation_size > 0 {
             dst_view ::= _trusted_array_view#(.t: UInt8)(
-                .data = out.allocation.data,
+                .data = trusted_allocation_byte_rw(.allocation = $&out.allocation, .offset = 0).reference,
                 .length = allocation_size,
             )
             src_view ::= _trusted_array_view_ro#(.t: UInt8)(
-                .data = read_reference#(.t: UInt8)(.base = self&.allocation.data).reference,
+                .data = trusted_allocation_byte_ro(.allocation = &self&.allocation, .offset = 0).reference,
                 .length = allocation_size,
             )
             memcpy_bytes(.dst = dst_view, .src = src_view)
@@ -170,7 +170,7 @@ string_byte_reference (
 ) -> (.reference: &UInt8) := {
     -- The trailing NUL is initialized and intentionally readable.
     if index > string&.length { abort }
-    reference = reference_offset#(.t: UInt8)(.base = string&.allocation.data, .elements = index)
+    reference = trusted_allocation_byte_ro(.allocation = &string&.allocation, .offset = index).reference
 }
 
 bytes_get (
@@ -187,7 +187,7 @@ bytes_set (
 ) -> () := {
     -- Writers also initialize capacity bytes and the trailing NUL.
     if index >= string&.allocation.size { abort }
-    ptr ::= mutable_reference_offset#(.t: UInt8)(.base = string&.allocation.data, .elements = index).reference
+    ptr ::= trusted_allocation_byte_rw(.allocation = $&string&.allocation, .offset = index).reference
     ptr& = value
 }
 
@@ -195,7 +195,7 @@ as_view(
     .self: &String,
 ) -> (.view: StringView) := {
     view = (
-        .data = read_reference#(.t: UInt8)(.base = self&.allocation.data).reference,
+        .data = trusted_allocation_byte_ro(.allocation = &self&.allocation, .offset = 0).reference,
         .length = self&.length,
     )
 }
@@ -266,11 +266,11 @@ ensure_capacity_growing(
     match allocate_result {
         ..ok ~ payload {
             new_allocation ::= ~payload
-            new_data ::= new_allocation.data
+            new_data ::= trusted_allocation_byte_rw(.allocation = $&new_allocation, .offset = 0).reference
 
             if self&.length > 0 {
                 dst_view ::= _trusted_array_view#(.t: UInt8)(.data = new_data, .length = self&.length)
-                src_view ::= _trusted_array_view_ro#(.t: UInt8)(.data = read_reference#(.t: UInt8)(.base = self&.allocation.data).reference, .length = self&.length)
+                src_view ::= _trusted_array_view_ro#(.t: UInt8)(.data = trusted_allocation_byte_ro(.allocation = &self&.allocation, .offset = 0).reference, .length = self&.length)
                 memcpy_bytes(.dst = dst_view, .src = src_view)
             }
 
@@ -304,7 +304,7 @@ string_append_bytes(
     .source: ArrayViewRO#(.t: UInt8),
 ) -> () := {
     if length#(.t: UInt8)(.self = &source).count > 0 {
-        dest_data ::= mutable_reference_offset#(.t: UInt8)(.base = self&.allocation.data, .elements = self&.length).reference
+        dest_data ::= trusted_allocation_byte_rw(.allocation = $&self&.allocation, .offset = self&.length).reference
         dest_view ::= _trusted_array_view#(.t: UInt8)(.data = dest_data, .length = length#(.t: UInt8)(.self = &source).count)
         memcpy_bytes(.dst = dest_view, .src = source)
     }

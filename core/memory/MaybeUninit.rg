@@ -12,23 +12,19 @@ _trusted_uninit_slot#(.t: Type)(
     .index: UIntNative,
 ) -> (.slot: MaybeUninit#(.t: t)) := {
     offset ::= index * size_of(.type = t)
-    address ::= cast#(.to: UIntNative)(.value = allocation&.data) + offset
+    address ::= allocation&.data.address + offset
     slot = (.raw = raw_pointer#(.t: t)(.address = address).raw)
 }
 
 -- Only an owner that has established occupancy may turn a slot handle into
 -- a normal reference. The handle itself never claims an initialized T. Borrow
--- provenance follows the backing data generation, so replacing the allocation
--- invalidates aliases to its former slots.
+-- provenance follows the Allocation's owned root and region anchor, so
+-- replacing or ending the storage invalidates aliases to its former slots.
 _trusted_uninit_borrow_ro#(.t: Type)(
     .allocation: &Allocation,
     .slot: MaybeUninit#(.t: t),
 ) -> (.reference: &t) := {
-    storage_root ::= read_reference#(.t: UInt8)(.base = allocation&.data).reference
-    mutable ::= establish_inherited_reference#(.t: t)(
-        .raw = slot.raw,
-        .root = cast#(.to: &Any)(.value = storage_root),
-    ).reference
+    mutable ::= establish_allocation_slot#(.t: t)(.allocation = allocation, .slot = slot.raw, .anchor = allocation&.anchor).reference
     reference = read_reference#(.t: t)(.base = mutable).reference
 }
 
@@ -36,11 +32,7 @@ _trusted_uninit_borrow_rw#(.t: Type)(
     .allocation: $&Allocation,
     .slot: MaybeUninit#(.t: t),
 ) -> (.reference: $&t) := {
-    storage_root ::= read_reference#(.t: UInt8)(.base = allocation&.data).reference
-    reference = establish_inherited_reference#(.t: t)(
-        .raw = slot.raw,
-        .root = cast#(.to: &Any)(.value = storage_root),
-    ).reference
+    reference = establish_allocation_slot#(.t: t)(.allocation = allocation, .slot = slot.raw, .anchor = allocation&.anchor).reference
 }
 
 -- Initializes an empty slot and transfers ownership into the allocation's
@@ -50,10 +42,7 @@ _trusted_uninit_write#(.t: Type)(
     .slot: MaybeUninit#(.t: t),
     .value: t,
 ) -> () := {
-    destination ::= establish_inherited_reference#(.t: t)(
-        .raw = slot.raw,
-        .root = cast#(.to: &Any)(.value = allocation),
-    ).reference
+    destination ::= establish_allocation_slot#(.t: t)(.allocation = allocation, .slot = slot.raw, .anchor = allocation&.anchor).reference
     trusted_opaque_move_in#(.t: t, .storage_type: Allocation)(
         .storage = allocation,
         .destination = destination,
@@ -67,10 +56,7 @@ _trusted_uninit_take#(.t: Type)(
     .allocation: $&Allocation,
     .slot: MaybeUninit#(.t: t),
 ) -> (.value: t) := {
-    source ::= establish_inherited_reference#(.t: t)(
-        .raw = slot.raw,
-        .root = cast#(.to: &Any)(.value = allocation),
-    ).reference
+    source ::= establish_allocation_slot#(.t: t)(.allocation = allocation, .slot = slot.raw, .anchor = allocation&.anchor).reference
     value = trusted_opaque_move_out#(.t: t, .storage_type: Allocation)(
         .storage = allocation,
         .slot = source,
@@ -86,15 +72,7 @@ _trusted_uninit_relocate#(.t: Type)(
     .destination_allocation: &Allocation,
     .destination: MaybeUninit#(.t: t),
 ) -> () := {
-    source_root ::= read_reference#(.t: UInt8)(.base = source_allocation&.data).reference
-    destination_root ::= read_reference#(.t: UInt8)(.base = destination_allocation&.data).reference
-    source_ref ::= establish_inherited_reference#(.t: t)(
-        .raw = source.raw,
-        .root = cast#(.to: &Any)(.value = source_root),
-    ).reference
-    destination_ref ::= establish_inherited_reference#(.t: t)(
-        .raw = destination.raw,
-        .root = cast#(.to: &Any)(.value = destination_root),
-    ).reference
+    source_ref ::= establish_allocation_slot#(.t: t)(.allocation = source_allocation, .slot = source.raw, .anchor = source_allocation&.anchor).reference
+    destination_ref ::= establish_allocation_slot#(.t: t)(.allocation = destination_allocation, .slot = destination.raw, .anchor = destination_allocation&.anchor).reference
     trusted_opaque_relocate(.source = source_ref, .destination = destination_ref)
 }

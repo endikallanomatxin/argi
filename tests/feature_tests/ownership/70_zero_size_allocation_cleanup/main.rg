@@ -1,15 +1,15 @@
 CountingAllocator : Type = (.deallocations: Int32)
 
-allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+allocate(.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
     storage ::= malloc(.size = 1)
     deallocator ::= to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation ::= establish_allocation(.storage = storage, .size = size, .deallocator = deallocator)
+    allocation ::= establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
     result = ..ok ~allocation
 }
 
-deallocate(.self: $&CountingAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
+deallocate(.self: $&CountingAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
     self&.deallocations = self&.deallocations + 1
-    free(.address = cast#(.to: UIntNative)(.value = data))
+    free(.address = data.address)
 }
 
 CountingAllocator implements Allocator

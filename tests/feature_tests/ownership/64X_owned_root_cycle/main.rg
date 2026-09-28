@@ -9,8 +9,8 @@ main(.system: System) -> (.status_code: Int32) := {
     ..error _ { status_code = 2 }
     ..ok ~ payload_b {
     b ::= ~payload_b
-    slot_a ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = a.data).reference
-    slot_b ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = b.data).reference
+    slot_a ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = trusted_allocation_byte_rw(.allocation = $&a, .offset = 0).reference).reference
+    slot_b ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = trusted_allocation_byte_rw(.allocation = $&b, .offset = 0).reference).reference
 
     slot_a& = ~b
     slot_b& = ~a

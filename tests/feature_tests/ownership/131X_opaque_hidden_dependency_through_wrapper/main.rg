@@ -25,8 +25,8 @@ main(.system: System) -> (.status_code: Int32) := {
                 ..error _ { status_code = 2 }
                 ..ok ~ slots_payload {
                     slots ::= ~slots_payload
-                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = slots.data).reference
-                    hidden :: Borrowing = (.reference = target.data)
+                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
+                    hidden :: Borrowing = (.reference = trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference)
                     store_borrow(.storage = $&slots, .slot = slot, .value = ~hidden)
                     deinit(.self = $&target)
                     status_code = 0

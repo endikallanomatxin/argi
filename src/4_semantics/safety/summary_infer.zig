@@ -283,6 +283,9 @@ pub const Infer = struct {
         var input_place_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (left.input_place_values) |input| try appendInputPath(&input_place_values, input);
         for (right.input_place_values) |input| try appendInputPath(&input_place_values, input);
+        var input_owned_roots = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (left.input_owned_roots) |input| try appendInputPath(&input_owned_roots, input);
+        for (right.input_owned_roots) |input| try appendInputPath(&input_owned_roots, input);
         var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (left.opaque_generation_dependencies) |input| try appendInputPath(&opaque_generations, input);
         for (right.opaque_generation_dependencies) |input| try appendInputPath(&opaque_generations, input);
@@ -308,6 +311,7 @@ pub const Infer = struct {
             .input_dependencies = try dependencies.toOwnedSlice(),
             .input_places = try input_places.toOwnedSlice(),
             .input_place_values = try input_place_values.toOwnedSlice(),
+            .input_owned_roots = try input_owned_roots.toOwnedSlice(),
             .opaque_generation_dependencies = try opaque_generations.toOwnedSlice(),
             .opaque_storage_dependencies = try opaque_storages.toOwnedSlice(),
             .fields = fields,
@@ -1806,6 +1810,7 @@ pub const Infer = struct {
             .input_dependencies = input_dependencies,
             .input_places = effect.input_places,
             .input_place_values = effect.input_place_values,
+            .input_owned_roots = effect.input_owned_roots,
             .opaque_generation_dependencies = effect.opaque_generation_dependencies,
             .opaque_storage_dependencies = effect.opaque_storage_dependencies,
             .fields = fields,
@@ -2392,6 +2397,13 @@ pub const Infer = struct {
         result.input_place_values = try input_place_values.toOwnedSlice();
         result = try self.mergeValueEffects(result, input_place_value_overrides);
 
+        var input_owned_roots = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (effect.input_owned_roots) |path| {
+            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            for (mapped) |candidate| try appendInputPath(&input_owned_roots, candidate);
+        }
+        result.input_owned_roots = try input_owned_roots.toOwnedSlice();
+
         var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.opaque_generation_dependencies) |path| {
             const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
@@ -2484,6 +2496,7 @@ pub const Infer = struct {
         result.input_dependencies = dependencies;
         result.input_places = try self.projectInputPaths(effect.input_places, projection);
         result.input_place_values = try self.projectInputPaths(effect.input_place_values, projection);
+        result.input_owned_roots = try self.projectInputPaths(effect.input_owned_roots, projection);
         result.fields = &.{};
         result.variants = &.{};
         result.known_choice_variant = null;
@@ -2516,6 +2529,9 @@ pub const Infer = struct {
         var input_place_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (left.input_place_values) |value| try appendInputPath(&input_place_values, value);
         for (right.input_place_values) |value| try appendInputPath(&input_place_values, value);
+        var input_owned_roots = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (left.input_owned_roots) |value| try appendInputPath(&input_owned_roots, value);
+        for (right.input_owned_roots) |value| try appendInputPath(&input_owned_roots, value);
         var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (left.opaque_generation_dependencies) |value| try appendInputPath(&opaque_generations, value);
         for (right.opaque_generation_dependencies) |value| try appendInputPath(&opaque_generations, value);
@@ -2577,6 +2593,7 @@ pub const Infer = struct {
             .input_dependencies = try dependencies.toOwnedSlice(),
             .input_places = try input_places.toOwnedSlice(),
             .input_place_values = try input_place_values.toOwnedSlice(),
+            .input_owned_roots = try input_owned_roots.toOwnedSlice(),
             .opaque_generation_dependencies = try opaque_generations.toOwnedSlice(),
             .opaque_storage_dependencies = try opaque_storages.toOwnedSlice(),
             .fields = try fields.toOwnedSlice(),
@@ -2635,11 +2652,19 @@ pub const Infer = struct {
 
     fn primitiveValueEffect(self: *Infer, primitive: primitives.SafetyPrimitive, source: facts.FreshEffectSource) !facts.ValueEffect {
         return switch (primitive_transfer.forPrimitive(primitive).value) {
-            .reference_copy => self.inputValueEffect(0, &.{}),
+            .reference_copy => self.withoutOwnershipTransfer(try self.inputValueEffect(0, &.{})),
+            .allocation_slot => blk: {
+                var result = try self.withoutOwnershipTransfer(try self.inputValueEffect(2, &.{}));
+                result.input_owned_roots = try self.oneInputPath(0, &.{});
+                break :blk result;
+            },
             .restrict_reference, .depend_on => |transfer| blk: {
                 var result = try self.mergeValueEffects(
-                    try self.inputValueEffect(0, &.{}),
-                    try self.inputValueEffect(1, &.{}),
+                    if (transfer == .depend_on)
+                        try self.inputValueEffect(0, &.{})
+                    else
+                        try self.withoutOwnershipTransfer(try self.inputValueEffect(0, &.{})),
+                    try self.withoutOwnershipTransfer(try self.inputValueEffect(1, &.{})),
                 );
                 result.input_places = try self.oneInputPath(0, &.{});
                 result.explicit_dependency = transfer == .depend_on;
@@ -2647,7 +2672,7 @@ pub const Infer = struct {
             },
             .empty, .relocate, .opaque_move, .opaque_relocate, .opaque_drop, .opaque_mark_empty => .{},
             .fresh_reference => .{ .fresh_dependencies = try self.oneFresh(source) },
-            .inherited_reference, .inherited_storage => self.inputValueEffect(1, &.{}),
+            .inherited_reference, .inherited_storage => self.withoutOwnershipTransfer(try self.inputValueEffect(1, &.{})),
             .allocation => self.ownedAllocationEffect(source),
             .raw_storage => .{ .foreign_storage = true, .fresh_storage_capabilities = try self.oneFresh(source) },
             .opaque_move_out => .{
@@ -2658,16 +2683,21 @@ pub const Infer = struct {
     }
 
     fn ownedAllocationEffect(self: *Infer, source: facts.FreshEffectSource) !facts.ValueEffect {
-        const fields = try self.allocator.alloc(facts.OutputFieldEffect, 3);
+        // Keep this structural effect in the same order as Allocation. Raw
+        // data carries the fresh lifetime, while scalar layout fields and the
+        // static heap anchor do not transfer ownership from the allocator.
+        const fields = try self.allocator.alloc(facts.OutputFieldEffect, 5);
         const data = try self.allocator.create(facts.ValueEffect);
         data.* = .{ .fresh_dependencies = try self.oneFresh(source) };
-        const size = try self.allocator.create(facts.ValueEffect);
-        size.* = .{};
-        const allocator_effect = try self.allocator.create(facts.ValueEffect);
-        allocator_effect.* = try self.inputValueEffect(2, &.{});
+        const empty = try self.allocator.create(facts.ValueEffect);
+        empty.* = .{};
+        const deallocator_effect = try self.allocator.create(facts.ValueEffect);
+        deallocator_effect.* = try self.withoutOwnershipTransfer(try self.inputValueEffect(3, &.{}));
         fields[0] = .{ .index = 0, .value = data };
-        fields[1] = .{ .index = 1, .value = size };
-        fields[2] = .{ .index = 2, .value = allocator_effect };
+        fields[1] = .{ .index = 1, .value = empty };
+        fields[2] = .{ .index = 2, .value = empty };
+        fields[3] = .{ .index = 3, .value = empty };
+        fields[4] = .{ .index = 4, .value = deallocator_effect };
         return .{ .fresh_owned_roots = try self.oneFresh(source), .fields = fields };
     }
 
@@ -2858,6 +2888,7 @@ fn valueEffectEqual(left: facts.ValueEffect, right: facts.ValueEffect) bool {
         left.input_dependencies.len != right.input_dependencies.len or
         left.input_places.len != right.input_places.len or
         left.input_place_values.len != right.input_place_values.len or
+        left.input_owned_roots.len != right.input_owned_roots.len or
         left.opaque_generation_dependencies.len != right.opaque_generation_dependencies.len or
         left.opaque_storage_dependencies.len != right.opaque_storage_dependencies.len or
         left.fields.len != right.fields.len or left.variants.len != right.variants.len) return false;
@@ -2865,6 +2896,7 @@ fn valueEffectEqual(left: facts.ValueEffect, right: facts.ValueEffect) bool {
         if (!containsInputDependency(&.{a}, b)) return false;
     for (left.input_places, right.input_places) |a, b| if (!inputPathEqualFree(a, b)) return false;
     for (left.input_place_values, right.input_place_values) |a, b| if (!inputPathEqualFree(a, b)) return false;
+    for (left.input_owned_roots, right.input_owned_roots) |a, b| if (!inputPathEqualFree(a, b)) return false;
     for (left.opaque_generation_dependencies, right.opaque_generation_dependencies) |a, b| if (!inputPathEqualFree(a, b)) return false;
     for (left.opaque_storage_dependencies, right.opaque_storage_dependencies) |a, b| if (!inputPathEqualFree(a, b)) return false;
     for (left.fields, right.fields) |a, b|

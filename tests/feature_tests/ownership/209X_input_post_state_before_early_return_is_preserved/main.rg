@@ -19,8 +19,8 @@ main(.system: System, .condition: Bool = false) -> (.status_code: Int32) := {
                 ..error _ { status_code = 2 }
                 ..ok ~ second_payload {
                     second ::= ~second_payload
-                    holder ::= Holder(.reference = second.data)
-                    replace(.holder = $&holder, .condition = condition, .first = first.data, .second = second.data)
+                    holder ::= Holder(.reference = trusted_allocation_byte_rw(.allocation = $&second, .offset = 0).reference)
+                    replace(.holder = $&holder, .condition = condition, .first = trusted_allocation_byte_rw(.allocation = $&first, .offset = 0).reference, .second = trusted_allocation_byte_rw(.allocation = $&second, .offset = 0).reference)
                     deinit(.self = $&first)
                     observed ::= holder.reference&
                     deinit(.self = $&second)

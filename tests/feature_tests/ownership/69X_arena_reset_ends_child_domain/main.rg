@@ -11,7 +11,8 @@ main(.system: System) -> (.status_code: Int32) := {
         ..ok ~ payload {
             child ::= ~payload
             reset(.self = $&arena)
-            child.data& = 1
+            byte_pointer_14 ::= trusted_allocation_byte_rw(.allocation = $&child, .offset = 0).reference
+            byte_pointer_14& = 1
         }
     }
 

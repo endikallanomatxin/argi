@@ -9,7 +9,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             status_code = 1
             return
         }
-        data ::= local.allocation.data
+        data ::= trusted_allocation_byte_rw(.allocation = $&local.allocation, .offset = 0).reference
         if data& != 65 {
             status_code = 2
             return

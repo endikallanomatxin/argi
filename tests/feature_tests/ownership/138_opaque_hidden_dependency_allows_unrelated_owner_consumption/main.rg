@@ -11,9 +11,10 @@ main(.system: System) -> (.status_code: Int32) := {
     borrowing_slots ::= establish_allocation(
         .storage = borrowing_slots_storage,
         .size = size_of(.type = Borrowing),
+        .alignment = 1,
         .deallocator = deallocator,
     )
-    borrowing_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = borrowing_slots.data).reference
+    borrowing_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = trusted_allocation_byte_rw(.allocation = $&borrowing_slots, .offset = 0).reference).reference
     hidden :: Borrowing = (.reference = &external)
     trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
         .storage = $&borrowing_slots,
@@ -22,14 +23,15 @@ main(.system: System) -> (.status_code: Int32) := {
     )
 
     unrelated_storage ::= malloc(.size = 1)
-    unrelated ::= establish_allocation(.storage = unrelated_storage, .size = 1, .deallocator = deallocator)
+    unrelated ::= establish_allocation(.storage = unrelated_storage, .size = 1, .alignment = 1, .deallocator = deallocator)
     owner_slots_storage ::= malloc(.size = size_of(.type = Allocation))
     owner_slots ::= establish_allocation(
         .storage = owner_slots_storage,
         .size = size_of(.type = Allocation),
+        .alignment = 1,
         .deallocator = deallocator,
     )
-    owner_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = owner_slots.data).reference
+    owner_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = trusted_allocation_byte_rw(.allocation = $&owner_slots, .offset = 0).reference).reference
     trusted_opaque_move_in#(.t: Allocation, .storage_type: Allocation)(
         .storage = $&owner_slots,
         .destination = owner_slot,

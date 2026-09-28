@@ -18,7 +18,8 @@ main(.system: System) -> (.status_code: Int32) := {
         }
         ..ok ~ first_payload {
             first ::= ~first_payload
-            first.data& = 1
+            byte_pointer_21 ::= trusted_allocation_byte_rw(.allocation = $&first, .offset = 0).reference
+            byte_pointer_21& = 1
             deinit(.self = $&first)
             reset(.self = $&arena)
         }
@@ -33,7 +34,8 @@ main(.system: System) -> (.status_code: Int32) := {
         }
         ..ok ~ second_payload {
             second ::= ~second_payload
-            second.data& = 2
+            byte_pointer_36 ::= trusted_allocation_byte_rw(.allocation = $&second, .offset = 0).reference
+            byte_pointer_36& = 2
             deinit(.self = $&second)
             reset(.self = $&arena)
         }

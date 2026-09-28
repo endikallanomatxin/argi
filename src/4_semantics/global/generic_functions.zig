@@ -480,6 +480,12 @@ pub const Resolver = struct {
             self.stats.calls += 1;
             return .resolved;
         }
+        if (reference.module_path == null and std.mem.eql(u8, name, "alignment_of")) {
+            const node = (try self.makeAlignmentOf(input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
+            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            self.stats.calls += 1;
+            return .resolved;
+        }
         const reach: ReachInferenceContext = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
         const function = blk: {
             const started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
@@ -1735,6 +1741,32 @@ pub const Resolver = struct {
         };
     }
 
+    fn makeAlignmentOf(
+        self: *Resolver,
+        input: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+    ) !?global_sg.Node {
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |value| value,
+            else => return null,
+        };
+        var measured_type: ?global_sg.GlobalTypeId = null;
+        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
+            if (!std.mem.eql(u8, self.graph.text(field.name), "type")) continue;
+            measured_type = switch (self.graph.nodes.items[@intFromEnum(field.value)].content) {
+                .type_literal => |ty| ty,
+                else => return null,
+            };
+            break;
+        }
+        const alignment = global_types.alignmentOf(self.graph, measured_type orelse return error.AlignmentOfTypeMissing) catch return null;
+        return .{
+            .source = source,
+            .ty = try self.generics.internType(.{ .builtin = .UIntNative }),
+            .content = .{ .int_literal = std.math.cast(i64, alignment) orelse return error.TypeAlignmentOverflow },
+        };
+    }
+
     /// Materialize a constructor initializer through the same generic
     /// inference used by every other generic call. Field 0 is the compiler
     /// supplied destination; source arguments and reach defaults start at 1.
@@ -2643,6 +2675,8 @@ pub const Resolver = struct {
                 return (try self.resolver.makeExplicitCast(arguments, input, self.resolver.sourceFor(self.module_index, source))) orelse error.CastInputMustBeStruct;
             if (module_path == null and std.mem.eql(u8, name, "size_of"))
                 return (try self.resolver.makeSizeOf(input, self.resolver.sourceFor(self.module_index, source))) orelse error.SizeOfInputMustBeStruct;
+            if (module_path == null and std.mem.eql(u8, name, "alignment_of"))
+                return (try self.resolver.makeAlignmentOf(input, self.resolver.sourceFor(self.module_index, source))) orelse error.AlignmentOfInputMustBeStruct;
             if (module_path == null and std.mem.eql(u8, name, "is"))
                 return self.resolveChoiceTest(input, source);
             const input_literal = switch (self.resolver.graph.nodes.items[@intFromEnum(input)].content) {

@@ -12,7 +12,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ payload {
             allocation ::= ~payload
-            pointer ::= allocation.data
+            pointer ::= trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
             deinit(.self = $&allocation)
             observed ::= outer(.p = pointer).result
             if observed == 0 { status_code = 0 } else { status_code = 2 }

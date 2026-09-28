@@ -1,5 +1,5 @@
 ArenaBlock : Type = (
-    .data: $&UInt8
+    .data: RawPointer#(.t: UInt8)
     .size: UIntNative
 )
 
@@ -74,7 +74,7 @@ arena_free_blocks(
         removed ::= pop#(.t: ArenaBlock)(.self = $&self&.blocks)
         match removed {
             ..ok ~ block {
-                free(.address = cast#(.to: UIntNative)(.value = block.data))
+                free(.address = block.data.address)
             }
             ..error _ { abort }
         }
@@ -104,24 +104,41 @@ deinit(
 allocate(
     .self: $&ArenaAllocator,
     .size: UIntNative,
+    .alignment: UIntNative,
 ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+    if alignment == 0 {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     required ::= size
     if required == 0 {
         required = 1
     }
 
+    aligned_offset :: UIntNative = 0
     needs_block :: Bool = false
     if length#(.t: ArenaBlock)(.self = &self&.blocks).count == 0 {
         needs_block = true
     } else {
         last_block : &ArenaBlock = _trusted_dynamic_array_get_ro_ref#(.t: ArenaBlock)(.array = &self&.blocks, .index = length#(.t: ArenaBlock)(.self = &self&.blocks).count - 1).reference
-        if self&.current_block_offset + required > last_block&.size {
+        base ::= last_block&.data.address
+        cursor ::= base + self&.current_block_offset
+        remainder ::= cursor % alignment
+        padding :: UIntNative = 0
+        if remainder != 0 { padding = alignment - remainder }
+        aligned_offset = self&.current_block_offset + padding
+        if cursor < base or aligned_offset < self&.current_block_offset or aligned_offset > last_block&.size or required > last_block&.size - aligned_offset {
             needs_block = true
         }
     }
 
     if needs_block {
-        new_block_size ::= arena_min_block_capacity(.requested = required, .block_size = self&.block_size).capacity
+        minimum_size ::= required + alignment - 1
+        if minimum_size < required {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+        new_block_size ::= arena_min_block_capacity(.requested = minimum_size, .block_size = self&.block_size).capacity
         metadata_ready ::= ensure_capacity#(.t: ArenaBlock)(
             .allocator = self&.backing_allocator,
             .self = $&self&.blocks,
@@ -136,50 +153,45 @@ allocate(
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        block_data ::= establish_inherited_storage#(.t: UInt8)(
+        block_storage ::= establish_inherited_storage(
             .address = raw_address,
             -- Physical storage is incorporated into the arena's existing
             -- temporal domain instead of manufacturing a child root.
             .root = cast#(.to: $&Any)(.value = $&self&.domain),
-        ).reference
+        ).raw
         -- Metadata capacity was secured before acquiring physical storage, so
-        -- publishing this safe reference has no later fallible rollback path.
+        -- publishing this block has no later fallible rollback path.
         push_assume_capacity#(.t: ArenaBlock)(
             .self = $&self&.blocks,
             .value = (
-                .data = block_data,
+                .data = block_storage,
                 .size = new_block_size,
             ),
         )
         self&.current_block_offset = 0
+        remainder ::= raw_address % alignment
+        if remainder != 0 { aligned_offset = alignment - remainder }
     }
 
     active_block : &ArenaBlock = _trusted_dynamic_array_get_ro_ref#(.t: ArenaBlock)(.array = &self&.blocks, .index = length#(.t: ArenaBlock)(.self = &self&.blocks).count - 1).reference
-    child_data ::= mutable_reference_offset#(.t: UInt8)(
-        .base = active_block&.data,
-        .elements = self&.current_block_offset,
-    ).reference
-    raw ::= raw_pointer#(.t: UInt8)(.address = cast#(.to: UIntNative)(.value = child_data))
-    data ::= establish_inherited_reference#(.t: UInt8)(
-        .raw = raw,
-        -- The domain Place is shared by every child. Reset replaces that
-        -- domain without manufacturing a root per child allocation.
-        .root = cast#(.to: $&Any)(.value = $&self&.domain),
-    ).reference
+    address ::= active_block&.data.address + aligned_offset
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
     allocation :: Allocation = (
-        .data = data,
+        .data = raw_pointer#(.t: UInt8)(.address = address).raw,
         .size = size,
+        .alignment = alignment,
+        .anchor = cast#(.to: &Any)(.value = $&self&.domain),
         .deallocator = deallocator,
     )
-    self&.current_block_offset = self&.current_block_offset + required
+    self&.current_block_offset = aligned_offset + required
     result = ..ok ~allocation
 }
 
 deallocate(
     .self: $&ArenaAllocator,
-    .data: $&UInt8,
+    .data: RawPointer#(.t: UInt8),
     .size: UIntNative,
+    .alignment: UIntNative,
 ) -> () := {
 }
 

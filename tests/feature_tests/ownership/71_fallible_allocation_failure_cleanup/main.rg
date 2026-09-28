@@ -3,12 +3,12 @@ FailingAllocator : Type = (
     .deallocations: Int32
 )
 
-allocate(.self: $&FailingAllocator, .size: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+allocate(.self: $&FailingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
     self&.allocations = self&.allocations + 1
     result = ..error(.reason = ..out_of_memory)
 }
 
-deallocate(.self: $&FailingAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
+deallocate(.self: $&FailingAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
     self&.deallocations = self&.deallocations + 1
 }
 

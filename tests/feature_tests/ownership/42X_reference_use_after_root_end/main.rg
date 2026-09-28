@@ -4,7 +4,7 @@ main(.system: System) -> (.status_code: Int32) := {
     ..error _ { status_code = 1 }
     ..ok ~ payload {
     allocation ::= ~payload
-    reference ::= allocation.data
+    reference ::= trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
 
     deinit(.self = $&allocation)
     if reference& == 0 {

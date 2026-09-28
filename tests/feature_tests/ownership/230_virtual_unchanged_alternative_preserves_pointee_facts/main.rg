@@ -31,7 +31,7 @@ main(.system: System) -> (.status_code: Int32) := {
             target ::= ~target_payload
             noop ::= Noop(.marker = 0)
             register_noop(.value = $&noop)
-            state ::= Stateful(.reference = target.data, .counter = 0)
+            state ::= Stateful(.reference = trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference, .counter = 0)
             if 1 == 1 {
                 virtual ::= to_virtual#(.abstract: Mutator)(.value = $&state)
                 mutate(.self = $&virtual)

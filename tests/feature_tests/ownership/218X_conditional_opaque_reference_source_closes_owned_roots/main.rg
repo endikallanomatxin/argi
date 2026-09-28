@@ -23,12 +23,12 @@ main(.system: System, .skip: Bool = false) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ source_payload {
             source ::= ~source_payload
-            alias ::= source.data
+            alias ::= trusted_allocation_byte_rw(.allocation = $&source, .offset = 0).reference
             match slot_result {
                 ..error _ { status_code = 2 }
                 ..ok ~ slot_payload {
                     slot_storage ::= ~slot_payload
-                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = slot_storage.data).reference
+                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = trusted_allocation_byte_rw(.allocation = $&slot_storage, .offset = 0).reference).reference
                     container ::= Container(.marker = 0)
                     store_conditionally(.storage = $&container, .slot = slot, .source = $&source, .skip = skip)
                     if alias& == 0 {

@@ -33,7 +33,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ slots_payload {
             slots ::= ~slots_payload
-            base ::= mutable_reinterpret_reference#(.from: UInt8, .to: Tracked)(.base = slots.data).reference
+            base ::= mutable_reinterpret_reference#(.from: UInt8, .to: Tracked)(.base = trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
             a ::= mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 0).reference
             b ::= mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 1).reference
             c ::= mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 2).reference

@@ -31,7 +31,7 @@ main(.system: System) -> (.status_code: Int32) := {
                             source ::= ~source_payload
                             pair :: Pair = (.lifetime = ~first_payload, .marker = 7)
                             second ::= ~second_payload
-                            original ::= source.data
+                            original ::= trusted_allocation_byte_rw(.allocation = $&source, .offset = 0).reference
                             readonly ::= read_reference(.base = original).reference
                             restricted ::= restrict_reference#(.t: $&UInt8)(.input = original, .on = &pair.lifetime).reference
                             readonly_restricted ::= restrict_reference#(.t: &UInt8)(.input = readonly, .on = &pair.marker).reference

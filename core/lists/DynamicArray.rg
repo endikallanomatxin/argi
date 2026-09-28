@@ -52,7 +52,7 @@ init #(.t: Type) (
         result = ..error(.reason = ..out_of_memory)
         return
     }
-    allocated ::= allocate(.self = allocator, .size = bytes)
+    allocated ::= allocate#(.t: t)(.self = allocator, .count = actual_capacity)
     match allocated {
         ..ok ~ payload {
             p& = (
@@ -171,7 +171,8 @@ dynamic_array_element_ro_pointer #(.t: Type) (
 ) -> (.pointer: &t) := {
     if offset >= array&._length { abort }
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
-    pointer = _trusted_uninit_borrow_ro#(.t: t)(.allocation = &array&._allocation, .slot = slot).reference
+    mutable ::= establish_allocation_slot#(.t: t)(.allocation = &array&._allocation, .slot = slot.raw, .anchor = array&._allocation.anchor).reference
+    pointer = read_reference#(.t: t)(.base = mutable).reference
 }
 
 dynamic_array_element_rw_pointer #(.t: Type) (
@@ -180,7 +181,7 @@ dynamic_array_element_rw_pointer #(.t: Type) (
 ) -> (.pointer: $&t) := {
     if offset >= array&._length { abort }
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
-    pointer = _trusted_uninit_borrow_rw#(.t: t)(.allocation = $&array&._allocation, .slot = slot).reference
+    pointer = establish_allocation_slot#(.t: t)(.allocation = &array&._allocation, .slot = slot.raw, .anchor = array&._allocation.anchor).reference
 }
 
 dynamic_array_grow #(.t: Type) (
@@ -235,7 +236,7 @@ dynamic_array_grow_growing #(.t: Type) (
         result = ..error(.reason = ..out_of_memory)
         return
     }
-    allocate_result ::= allocate(.self = allocator, .size = new_bytes)
+    allocate_result ::= allocate#(.t: t)(.self = allocator, .count = new_capacity)
     match allocate_result {
         ..ok ~ payload {
             new_allocation ::= ~payload

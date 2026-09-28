@@ -34,7 +34,7 @@ init(.p: $&FailSecondAllocator) -> () := {
     p& = (.allocations = 0, .deallocations = 0)
 }
 
-allocate(.self: $&FailSecondAllocator, .size: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+allocate(.self: $&FailSecondAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
     if self&.allocations != 0 {
         result = ..error(.reason = ..out_of_memory)
         return
@@ -42,13 +42,13 @@ allocate(.self: $&FailSecondAllocator, .size: UIntNative) -> (.result: Errable#(
     self&.allocations = self&.allocations + 1
     storage ::= malloc(.size = size)
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation ::= establish_allocation(.storage = storage, .size = size, .deallocator = deallocator)
+    allocation ::= establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
     result = ..ok ~allocation
 }
 
-deallocate(.self: $&FailSecondAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
+deallocate(.self: $&FailSecondAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
     self&.deallocations = self&.deallocations + 1
-    address :: UIntNative = cast#(.to: UIntNative)(.value = data)
+    address :: UIntNative = data.address
     free(.address = address)
 }
 

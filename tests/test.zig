@@ -3640,7 +3640,7 @@ test "feature_tests/ownership/136_opaque_dependency_summary_does_not_duplicate_o
 test "feature_tests/ownership/137X_opaque_hidden_dependency_blocks_owner_consumption" {
     try buildExpectFail(
         "tests/feature_tests/ownership/137X_opaque_hidden_dependency_blocks_owner_consumption",
-        "cannot end a root while opaque storage hides a dependency on it",
+        "opaque ownership storage requires no live external aliases to the consumed root",
     );
 }
 
@@ -3653,7 +3653,7 @@ test "feature_tests/ownership/138_opaque_hidden_dependency_allows_unrelated_owne
 test "feature_tests/ownership/139X_opaque_hidden_dependency_blocks_owner_consumption_through_wrapper" {
     try buildExpectFail(
         "tests/feature_tests/ownership/139X_opaque_hidden_dependency_blocks_owner_consumption_through_wrapper",
-        "cannot end a root while opaque storage hides a dependency on it",
+        "opaque ownership storage requires no live external aliases to the consumed root",
     );
 }
 
@@ -4847,6 +4847,13 @@ test "feature_tests/ownership/285_reference_can_erase_to_any" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/286X_uninitialized_allocation_read" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/286X_uninitialized_allocation_read",
+        "an integer address cannot establish a safe reference; use an explicit root establishment boundary",
+    );
+}
+
 test "feature_tests/polymorphism/32_static_abstract_generic_fields" {
     const test_path = "tests/feature_tests/polymorphism/32_static_abstract_generic_fields";
     try expectSuccessfulBuild(test_path);
@@ -5958,6 +5965,12 @@ test "feature_tests/system/36_entry_flushes_stdout" {
     const test_path = "tests/feature_tests/system/36_entry_flushes_stdout";
     try expectSuccessfulBuild(test_path);
     try runExpectStdout(test_path, 0, "A");
+}
+
+test "feature_tests/system/37_c_allocator_alignment" {
+    const test_path = "tests/feature_tests/system/37_c_allocator_alignment";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
 }
 
 test "feature_tests/system/37X_system_local_resource_escape" {

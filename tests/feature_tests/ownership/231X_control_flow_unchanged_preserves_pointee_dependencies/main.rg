@@ -18,7 +18,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ target_payload {
             target ::= ~target_payload
-            state ::= Stateful(.reference = target.data, .counter = 0)
+            state ::= Stateful(.reference = trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference, .counter = 0)
             mutate_conditionally(.self = $&state, .condition = true)
             deinit(.self = $&target)
             if state.reference& == 0 {

@@ -716,12 +716,32 @@ pub const SafetyChecker = struct {
                             state.storage_capabilities.items[raw] = .consumed;
                     }
                 }
+                var fields: []const facts.FieldFacts = &.{};
+                if (primitive == .establish_allocation) {
+                    const data = try self.allocator.create(facts.ValueFacts);
+                    data.* = .{ .dependencies = try self.oneDependency(root) };
+                    const data_field = try self.allocator.alloc(facts.FieldFacts, 1);
+                    data_field[0] = .{ .index = 0, .value = data };
+                    fields = data_field;
+                }
                 break :blk .{
                     .dependencies = try self.oneDependency(root),
                     .owned_roots = if (primitive == .establish_allocation) try self.oneRoot(root) else &.{},
+                    .fields = fields,
                 };
             },
             .reference_copy => if (values.len != 0) values[0].referenceCopy() else .{},
+            .allocation_slot => blk: {
+                if (values.len < 3) break :blk .{};
+                var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+                if (values[0].referenced_place) |place| {
+                    if (self.valueAtPlace(state, place)) |allocation_value| {
+                        for (allocation_value.owned_roots) |root| try appendDependencyFact(&dependencies, .{ .root = root });
+                    }
+                }
+                for (values[2].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
+                break :blk .{ .dependencies = try dependencies.toOwnedSlice() };
+            },
             .restrict_reference, .depend_on => |transfer| try self.dependencyPrimitive(values, transfer),
             .relocate => try self.relocatePrimitive(source, values, state),
             .opaque_move => blk: {
@@ -1386,6 +1406,14 @@ pub const SafetyChecker = struct {
                 for (path.projections) |projection| target = try self.project(target, projection);
                 try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
                 referenced_place = target;
+            }
+        }
+        for (effect.input_owned_roots) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var place = arguments[path.input_index].referenced_place orelse continue;
+            for (path.projections) |projection| place = try self.project(place, projection);
+            if (self.valueAtPlace(state, place)) |value| {
+                for (value.owned_roots) |root| try appendDependencyFact(&dependencies, .{ .root = root });
             }
         }
         result.dependencies = try dependencies.toOwnedSlice();

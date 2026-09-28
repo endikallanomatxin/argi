@@ -33,11 +33,11 @@ main(.system: System) -> (.status_code: Int32) := {
                 ..error _ { status_code = 2 }
                 ..ok ~ storage_payload {
                     storage ::= ~storage_payload
-                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = storage.data).reference
-                    initial :: Borrowing = (.reference = target.data)
+                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = trusted_allocation_byte_rw(.allocation = $&storage, .offset = 0).reference).reference
+                    initial :: Borrowing = (.reference = trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference)
                     trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(.storage = $&storage, .destination = slot, .source = ~initial)
                     trusted_opaque_drop(.slot = slot)
-                    release_then_initialize(.storage = $&storage, .slot = slot, .reference = target.data)
+                    release_then_initialize(.storage = $&storage, .slot = slot, .reference = trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference)
                     deinit(.self = $&target)
                     status_code = 0
                 }

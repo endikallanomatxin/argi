@@ -17,7 +17,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ first_payload {
             storage ::= ~first_payload
-            first_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = storage.data).reference
+            first_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = trusted_allocation_byte_rw(.allocation = $&storage, .offset = 0).reference).reference
             first_value :: Borrowing = (.reference = $&external)
             trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
                 .storage = $&storage,
@@ -32,7 +32,7 @@ main(.system: System) -> (.status_code: Int32) := {
                 ..error _ { status_code = 2 }
                 ..ok ~ second_payload {
                     storage = ~second_payload
-                    second_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = storage.data).reference
+                    second_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = trusted_allocation_byte_rw(.allocation = $&storage, .offset = 0).reference).reference
                     second_value :: Borrowing = (.reference = $&external)
                     trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
                         .storage = $&storage,

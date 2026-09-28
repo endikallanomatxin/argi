@@ -12,7 +12,7 @@ main(.system: System) -> (.status_code: Int32 = 1) := {
     match allocated {
         ..error _ { status_code = 2 }
         ..ok ~ allocation {
-            stale ::= allocation.data
+            stale ::= trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
             result : Result = ..ok ~allocation
             payload ::= ~result..ok
 

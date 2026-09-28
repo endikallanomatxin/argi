@@ -12,7 +12,7 @@ init(.p: $&FailFourthAllocator) -> () := {
     )
 }
 
-allocate(.self: $&FailFourthAllocator, .size: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+allocate(.self: $&FailFourthAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
     self&.allocation_attempts = self&.allocation_attempts + 1
     if self&.allocation_attempts == 4 {
         result = ..error(.reason = ..out_of_memory)
@@ -20,17 +20,17 @@ allocate(.self: $&FailFourthAllocator, .size: UIntNative) -> (.result: Errable#(
     }
     storage ::= malloc(.size = size)
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation ::= establish_allocation(.storage = storage, .size = size, .deallocator = deallocator)
+    allocation ::= establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
     result = ..ok ~allocation
 }
 
-deallocate(.self: $&FailFourthAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
+deallocate(.self: $&FailFourthAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
     three :: UIntNative = 3
     if size == three * size_of(.type = String) {
         self&.backing_freed_after_elements = self&.deallocations == 2
     }
     self&.deallocations = self&.deallocations + 1
-    address :: UIntNative = cast#(.to: UIntNative)(.value = data)
+    address :: UIntNative = data.address
     free(.address = address)
 }
 

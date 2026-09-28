@@ -4,7 +4,7 @@ CountingAllocator : Type = (
     .dealloc_count: Int32 = 0
 )
 
-allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+allocate(.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
     storage ::= malloc(.size = size)
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = storage)
     self& = (
@@ -13,12 +13,12 @@ allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.result: Errable#(.t
         .dealloc_count = self&.dealloc_count,
     )
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation ::= establish_allocation(.storage = storage, .size = size, .deallocator = deallocator)
+    allocation ::= establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
     result = ..ok ~allocation
 }
 
-deallocate(.self: $&CountingAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
-    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = data)
+deallocate(.self: $&CountingAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
+    raw_addr :: UIntNative = data.address
     free(.address = raw_addr)
     self& = (
         .last_alloc_size = self&.last_alloc_size,

@@ -4,7 +4,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ payload {
             allocation ::= ~payload
-            visible ::= allocation.data
+            visible ::= trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
 
             -- Merely keeping a precise reference alive does not prevent the
             -- operation that ends its root. The checker rejects only a later

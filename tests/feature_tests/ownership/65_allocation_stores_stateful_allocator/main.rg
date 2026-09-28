@@ -1,16 +1,16 @@
 CountingAllocator : Type = (.deallocations: Int32)
 
-allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+allocate(.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
     storage ::= malloc(.size = size)
     address :: UIntNative = cast#(.to: UIntNative)(.value = storage)
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation ::= establish_allocation(.storage = storage, .size = size, .deallocator = deallocator)
+    allocation ::= establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
     result = ..ok ~allocation
 }
 
-deallocate(.self: $&CountingAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
+deallocate(.self: $&CountingAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
     self&.deallocations = self&.deallocations + 1
-    address :: UIntNative = cast#(.to: UIntNative)(.value = data)
+    address :: UIntNative = data.address
     free(.address = address)
 }
 
@@ -24,7 +24,8 @@ main() -> (.status_code: Int32) := {
     match result {
         ..ok ~ payload {
             allocation ::= ~payload
-            allocation.data& = 7
+            byte_pointer_27 ::= trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
+            byte_pointer_27& = 7
             deinit(.self = $&allocation)
         }
         ..error _ {

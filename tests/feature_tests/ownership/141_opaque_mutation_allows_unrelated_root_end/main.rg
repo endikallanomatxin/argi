@@ -18,7 +18,7 @@ main(.system: System) -> (.status_code: Int32) := {
                 ..error _ { status_code = 2 }
                 ..ok ~ unrelated_payload {
                     unrelated ::= ~unrelated_payload
-                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: AddressSensitive)(.base = slots.data).reference
+                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: AddressSensitive)(.base = trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
                     value :: AddressSensitive = (.reference = ..none)
                     trusted_opaque_move_in#(.t: AddressSensitive, .storage_type: Allocation)(
                         .storage = $&slots,

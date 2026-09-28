@@ -12,8 +12,8 @@ main(.system: System) -> (.status_code: Int32) := {
     ..error _ { status_code = 4 }
     ..ok ~ payload_b {
     allocation_b ::= ~payload_b
-    ref_a ::= allocation_a.data
-    ref_b ::= allocation_b.data
+    ref_a ::= trusted_allocation_byte_rw(.allocation = $&allocation_a, .offset = 0).reference
+    ref_b ::= trusted_allocation_byte_rw(.allocation = $&allocation_b, .offset = 0).reference
     a :: A = (.value = 3, .to_b = ref_b)
     b :: B = (.value = 5, .to_a = ref_a)
 

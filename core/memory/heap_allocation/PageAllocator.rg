@@ -55,25 +55,41 @@ init(
 allocate(
     .self: $&PageAllocator,
     .size: UIntNative,
+    .alignment: UIntNative,
 ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+    if alignment == 0 {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     page_size ::= page_allocator_page_size(.self = self).size
-    aligned_size ::= page_allocator_round_up(.size = size, .alignment = page_size).rounded
-    address ::= malloc(.size = aligned_size).address
+    physical_alignment ::= page_size
+    if physical_alignment < alignment { physical_alignment = alignment }
+    if physical_alignment == 0 {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
+    aligned_size ::= page_allocator_round_up(.size = size, .alignment = physical_alignment).rounded
+    if aligned_size < size {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
+    address ::= aligned_alloc(.alignment = physical_alignment, .size = aligned_size).address
     if address == 0 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation ::= establish_allocation(.storage = address, .size = aligned_size, .deallocator = deallocator)
+    allocation ::= establish_allocation(.storage = address, .size = size, .alignment = alignment, .deallocator = deallocator)
     result = ..ok ~allocation
 }
 
 deallocate(
     .self: $&PageAllocator,
-    .data: $&UInt8,
+    .data: RawPointer#(.t: UInt8),
     .size: UIntNative,
+    .alignment: UIntNative,
 ) -> () := {
-    free(.address = cast#(.to: UIntNative)(.value = data))
+    free(.address = data.address)
 }
 
 PageAllocator implements Allocator

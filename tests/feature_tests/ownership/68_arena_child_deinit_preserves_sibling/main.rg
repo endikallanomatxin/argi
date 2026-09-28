@@ -26,9 +26,10 @@ main(.system: System) -> (.status_code: Int32) := {
                     second ::= ~second_payload
 
                     deinit(.self = $&first)
-                    second.data& = 23
+                    byte_pointer_29 ::= trusted_allocation_byte_rw(.allocation = $&second, .offset = 0).reference
+                    byte_pointer_29& = 23
 
-                    if second.data& == 23 {
+                    if trusted_allocation_byte_rw(.allocation = $&second, .offset = 0).reference& == 23 {
                         status_code = 0
                     } else {
                         status_code = 1

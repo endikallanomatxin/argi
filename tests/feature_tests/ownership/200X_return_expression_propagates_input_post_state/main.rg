@@ -20,7 +20,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..ok ~ payload {
             target ::= ~payload
             holder ::= Borrowing(.reference = $&old_root)
-            result ::= store_from_return(.slot = $&holder, .reference = target.data).result
+            result ::= store_from_return(.slot = $&holder, .reference = trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference).result
             deinit(.self = $&target)
             observed ::= holder.reference&
             status_code = 0

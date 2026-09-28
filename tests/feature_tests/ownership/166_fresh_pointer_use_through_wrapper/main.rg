@@ -8,7 +8,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ payload {
             allocation ::= ~payload
-            observed ::= read(.p = allocation.data).result
+            observed ::= read(.p = trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference).result
             if observed == 0 { status_code = 0 } else { status_code = 2 }
             deinit(.self = $&allocation)
         }

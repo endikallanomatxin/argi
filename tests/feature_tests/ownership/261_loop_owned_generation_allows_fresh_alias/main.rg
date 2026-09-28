@@ -16,7 +16,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         i = i + 1
     }
 
-    fresh_data ::= buffer.allocation.data
+    fresh_data ::= trusted_allocation_byte_rw(.allocation = $&buffer.allocation, .offset = 0).reference
     if fresh_data& != 65 {
         status_code = 2
         return

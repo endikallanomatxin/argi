@@ -60,14 +60,14 @@ buffered_writer_byte_address#(.base_type: Type: Writer)(
     .self: &BufferedWriter#(.base_type: base_type),
     .index: UIntNative,
 ) -> (.address: UIntNative) := {
-    base :: UIntNative = cast#(.to: UIntNative)(.value = self&.buffer.data)
+    base :: UIntNative = self&.buffer.data.address
     address = base + index
 }
 
 buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
     while i < self&.length {
-        ptr ::= reference_offset#(.t: UInt8)(.base = self&.buffer.data, .elements = i).reference
+        ptr ::= trusted_allocation_byte_ro(.allocation = &self&.buffer, .offset = i).reference
         wrote ::= write_byte(.self = self&.base, .byte = ptr&)
         if is(.value = wrote, .variant = ..error) {
             self&.length = 0
@@ -89,7 +89,7 @@ buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_
 }
 
 write_byte#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type), .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    ptr ::= mutable_reference_offset#(.t: UInt8)(.base = self&.buffer.data, .elements = self&.length).reference
+    ptr ::= trusted_allocation_byte_rw(.allocation = $&self&.buffer, .offset = self&.length).reference
     ptr& = byte
     next_length ::= self&.length + 1
     self&.length = next_length

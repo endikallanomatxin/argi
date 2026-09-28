@@ -50,7 +50,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ slot_payload {
             storage ::= ~slot_payload
-            slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Tracked)(.base = storage.data).reference
+            slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Tracked)(.base = trusted_allocation_byte_rw(.allocation = $&storage, .offset = 0).reference).reference
             second ::= Second(.marker = 0)
             register_second(.value = $&second)
             implementation ::= First(.marker = 0)

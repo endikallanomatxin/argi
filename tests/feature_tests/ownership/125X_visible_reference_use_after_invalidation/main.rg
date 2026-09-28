@@ -4,7 +4,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ payload {
             allocation ::= ~payload
-            visible ::= allocation.data
+            visible ::= trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
             deinit(.self = $&allocation)
 
             -- Invalidation itself was legal; this use is not.

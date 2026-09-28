@@ -10,12 +10,12 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ payload {
             allocation ::= ~payload
-            alias ::= allocation.data
+            alias ::= trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference
             match slot_result {
                 ..error _ { status_code = 2 }
                 ..ok ~ slot_payload {
                     slot_allocation ::= ~slot_payload
-                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = slot_allocation.data).reference
+                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = trusted_allocation_byte_rw(.allocation = $&slot_allocation, .offset = 0).reference).reference
                     store_wrapper#(.t: Allocation)(.slot = slot, .value = ~allocation)
                     alias& = 0
                     status_code = 0

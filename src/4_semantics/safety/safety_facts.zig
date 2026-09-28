@@ -49,6 +49,8 @@ pub const ValueEffect = struct {
     input_dependencies: []const InputDependency = &.{},
     input_places: []const InputPath = &.{},
     input_place_values: []const InputPath = &.{},
+    /// Roots owned by the value at an input reference's place, borrowed as dependencies.
+    input_owned_roots: []const InputPath = &.{},
     opaque_generation_dependencies: []const InputPath = &.{},
     opaque_storage_dependencies: []const InputPath = &.{},
     fields: []const OutputFieldEffect = &.{},

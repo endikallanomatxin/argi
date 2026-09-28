@@ -16,7 +16,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                 ..error _ { status_code = 2 }
                 ..ok ~ owned_payload {
                     value ::= Owner(.allocation = ~owned_payload)
-                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Owner)(.base = slots.data).reference
+                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Owner)(.base = trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
                     store_one(.storage = $&slots, .slot = slot, .value = ~value)
                     trusted_opaque_drop(.slot = slot)
                     trusted_opaque_mark_empty(.storage = $&slots)

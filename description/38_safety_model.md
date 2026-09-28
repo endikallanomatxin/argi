@@ -32,15 +32,16 @@ Heap allocation, for example, has the following relationships:
 
 ```text
 Allocation owns R
-Allocation.data depends on R
+references established from Allocation.data depend on R
 ```
 
 An arena may instead own one root shared by many allocations:
 
 ```text
 Arena owns Rarena
-allocation1.data depends on Rarena
-allocation2.data depends on Rarena
+allocation1.anchor depends on Rarena
+allocation2.anchor depends on Rarena
+references established from either allocation depend on Rarena
 ```
 
 Ownership and validity dependency are different relations. A value may own a
@@ -206,9 +207,12 @@ direct value type. Core collections use named, fallible access functions.
 codegen emits a runtime trap. Bounds also do not establish element identity
 after mutation.
 
-`Allocation` owns bytes, not values. `MaybeUninit<T>` in core is a typed slot
-handle over those bytes. It has no occupancy flag and does not expose a `T`.
-The owning abstraction supplies size, alignment and occupancy invariants.
+`Allocation.data` is a `RawPointer<UInt8>`, which identifies an address without
+claiming that an initialized byte lives there. An allocation records the
+requested size and alignment; a separate initialized anchor carries the
+underlying allocator or arena lifetime. `MaybeUninit<T>` in core is a typed
+slot handle over that storage. It has no occupancy flag and does not expose a
+`T`. The owning abstraction supplies size, alignment and occupancy invariants.
 Its private helpers initialize a vacant slot through the existing opaque
 move-in primitive or extract an occupied slot through opaque move-out.
 `DynamicArray<T>` maintains `[0, length)` as occupied and `[length, capacity)`
@@ -216,11 +220,11 @@ as vacant. Its movement operations pass `MaybeUninit<T>` slot handles to a
 trusted relocation primitive; they do not expose empty destinations as `&T` or
 `$&T`. Normal references are formed only after checking `index < length`.
 
-> [!IDEA] Alignment and representation validity
-> Live storage is not enough to construct a safe `&T` / `$&T`: it must also have
-> sufficient size and alignment and contain an initialized, valid `T`.
-> Raw-storage initialization needs a way to address storage before that value
-> exists. Decide which guarantees belong in types, checker facts or trusted APIs.
+Live storage is not enough to construct a safe `&T` / `$&T`: it must also have
+sufficient size and alignment and contain an initialized, valid `T`.
+`Allocator.allocate` receives size and alignment without knowing `T`. Trusted
+slot operations establish typed references only under the owner's occupancy
+invariant, and Safety ties their validity to the allocation and its anchor.
 
 ## Glossary
 

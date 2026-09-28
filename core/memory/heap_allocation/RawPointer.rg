@@ -24,11 +24,11 @@ establish_inherited_reference#(.t: Type)(
 -- Incorporates newly acquired physical storage into an existing temporal
 -- domain. Unlike ordinary raw alias establishment, this consumes the unique
 -- StorageCapability carried by the physical address.
-establish_inherited_storage#(.t: Type)(
+establish_inherited_storage(
     .address: UIntNative,
     .root: &Any,
-) -> (.reference: $&t) := {
-    reference = cast#(.to: $&t)(.value = address)
+) -> (.raw: RawPointer#(.t: UInt8)) := {
+    raw = raw_pointer#(.t: UInt8)(.address = address).raw
 }
 
 reference_offset#(.t: Type)(

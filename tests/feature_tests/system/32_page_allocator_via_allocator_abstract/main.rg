@@ -8,7 +8,7 @@ alloc_one(
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~ payload {
             allocation ::= ~payload
-            result = ..ok cast#(.to: UIntNative)(.value = allocation.data)
+            result = ..ok allocation.data.address
             deinit(.self = $&allocation)
         }
     }

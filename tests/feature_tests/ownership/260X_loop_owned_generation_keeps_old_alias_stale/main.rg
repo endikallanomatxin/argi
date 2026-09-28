@@ -4,7 +4,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if is(.value = first, .variant = ..error) {
         return
     }
-    old_data ::= buffer.allocation.data
+    old_data ::= trusted_allocation_byte_rw(.allocation = $&buffer.allocation, .offset = 0).reference
     i :: UIntNative = 0
     while i < 1 {
         pushed ::= push_byte(.self = $&buffer, .byte = 66, .allocator = system.allocator)

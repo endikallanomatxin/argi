@@ -21,8 +21,9 @@ main(.system: System) -> (.status_code: Int32) := {
                 status_code = 3
                 return
             }
-            child.data& = 7
-            if child.data& != 7 {
+            byte_pointer_24 ::= trusted_allocation_byte_rw(.allocation = $&child, .offset = 0).reference
+            byte_pointer_24& = 7
+            if trusted_allocation_byte_rw(.allocation = $&child, .offset = 0).reference& != 7 {
                 status_code = 4
                 return
             }

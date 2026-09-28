@@ -13,7 +13,7 @@ main(.system: System) -> (.status_code: Int32) := {
     ..ok ~ payload {
     allocation ::= ~payload
     buffer :: Buffer = (.allocation = ~allocation)
-    alias ::= buffer.allocation.data
+    alias ::= trusted_allocation_byte_rw(.allocation = $&buffer.allocation, .offset = 0).reference
 
     release(.self = $&buffer, .allocator = system.allocator)
     if alias& == 0 {
