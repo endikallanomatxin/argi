@@ -408,12 +408,41 @@ pub const CodeGenerator = struct {
         for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding| {
             const record = self.graph.bindings.items[@intFromEnum(binding)];
             try self.allocateLocalBinding(binding, record.initialization);
+            // Tests returning !() succeed when execution reaches the end of
+            // the body. Materialize that success before statements can
+            // propagate an error into the result binding.
+            if (function.flags.is_test and record.initialization == null)
+                try self.initializeTestResult(binding);
         }
 
         _ = try self.genBlock(body);
         const current = c.LLVMGetInsertBlock(self.builder);
         if (current != null and c.LLVMGetBasicBlockTerminator(current) == null)
             try self.emitImplicitReturn(function);
+    }
+
+    fn initializeTestResult(self: *CodeGenerator, binding: graph_mod.GlobalBindingId) !void {
+        const storage = self.bindings.getPtr(binding) orelse return CodegenError.SymbolNotFound;
+        const ok = types.findVariant(self.graph, storage.ty, "ok") orelse return CodegenError.InvalidType;
+        const payload_ty = ok.variant.payload_type orelse return CodegenError.InvalidType;
+        var result = c.LLVMGetUndef(storage.type_ref);
+        result = c.LLVMBuildInsertValue(
+            self.builder,
+            result,
+            c.LLVMConstInt(c.LLVMInt32Type(), ok.index, 0),
+            0,
+            "test.initial.ok.tag",
+        );
+        result = c.LLVMBuildInsertValue(
+            self.builder,
+            result,
+            c.LLVMConstNull(try self.toLLVMType(payload_ty)),
+            ok.index + 1,
+            "test.initial.ok.payload",
+        );
+        _ = c.LLVMBuildStore(self.builder, result, storage.ref);
+        storage.initialized = true;
+        if (storage.drop_state) |drop| self.storeDropState(drop, true);
     }
 
     fn allocateLocalBinding(self: *CodeGenerator, binding: graph_mod.GlobalBindingId, initialization: ?graph_mod.GlobalNodeId) !void {

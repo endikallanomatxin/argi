@@ -20,9 +20,8 @@ test core_path_regression_slice(.system: System) -> !() := {
         }
     }
 
-    -- TODO: A named ?StringView temporary currently misbehaves when matched
-    -- after this call; keep the direct match until that codegen issue is fixed.
-    match extension(.self = &full).value {
+    ext ::= extension(.self = &full).value
+    match ext {
         ..some payload {
             testing.expect(.condition = payload.value == ".txt")!
         }

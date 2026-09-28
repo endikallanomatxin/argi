@@ -5502,6 +5502,15 @@ test "feature_tests/testing/14_core_path_regression_slice" {
     );
 }
 
+test "feature_tests/testing/15_named_optional_view_return" {
+    try argiTestExpectStderr(
+        "tests/feature_tests/testing/15_named_optional_view_return",
+        &.{},
+        0,
+        "PASS named_optional_view_return\n",
+    );
+}
+
 test "argi help lists supported 0.1 commands" {
     const result = try runArgiCommand(&.{"help"});
     defer std.testing.allocator.free(result.stdout);
