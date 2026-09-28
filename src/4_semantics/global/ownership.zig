@@ -261,8 +261,11 @@ pub const Resolver = struct {
     ) anyerror!void {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
-            .binding_declaration => |binding| if (self.graph.bindings.items[@intFromEnum(binding)].initialization) |initialization|
-                try self.finalizeExpressionCleanup(initialization, active, defers),
+            .binding_declaration => |binding| {
+                const record = self.graph.bindings.items[@intFromEnum(binding)];
+                if (!record.deferred_initialization) if (record.initialization) |initialization|
+                    try self.finalizeExpressionCleanup(initialization, active, defers);
+            },
             .error_propagation => |propagation_id| {
                 const propagation = &self.graph.error_propagations.items[@intFromEnum(propagation_id)];
                 try self.finalizeExpressionCleanup(propagation.errable_value, active, defers);
@@ -502,6 +505,8 @@ pub const Resolver = struct {
             cleanup_node = try self.appendNode(record.source, try self.builtin(.Void), .{ .auto_deinit_binding = auto_id });
             self.stats.auto_deinits += 1;
         }
+        if (record.deferred_initialization)
+            self.graph.bindings.items[@intFromEnum(binding)].reinitialize_cleanup = cleanup_node;
         try self.auto_nodes.append(self.allocator, .{ .binding = binding, .node = cleanup_node });
     }
 

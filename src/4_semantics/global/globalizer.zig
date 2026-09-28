@@ -349,6 +349,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
             .source = globalSource(o, value.source),
             .ty = if (unresolved) @enumFromInt(0) else globalType(o, value.ty),
             .initialization = if (value.initialization) |id| globalNode(o, id) else null,
+            .deferred_initialization = value.deferred_initialization,
             .cleanup_arguments = if (value.cleanup_arguments) |id| globalNode(o, id) else null,
             .static_implementer = if (value.static_implementer) |id| globalType(o, id) else null,
             .mutability = value.mutability,

@@ -202,6 +202,10 @@ pub fn Binding(comptime Ids: type) type {
         source: SourceRef,
         ty: Ids.TypeId,
         initialization: ?Ids.NodeId = null,
+        /// The initializer supplies the inferred type; evaluation happens at
+        /// the address expression that materializes this temporary.
+        deferred_initialization: bool = false,
+        reinitialize_cleanup: ?Ids.NodeId = null,
         /// Lexical argument candidates captured where this local is declared,
         /// for resolving the same dependencies in its implicit destructor.
         cleanup_arguments: ?Ids.NodeId = null,

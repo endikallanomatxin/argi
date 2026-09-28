@@ -70,6 +70,7 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
             try require(verify.stringFits(value.name, graph.strings.items));
             try require(verify.sourceFits(value.source, graph.file_offsets.items.len));
             try require(verify.optionalIdFits(value.initialization, storage.nodes.items.len));
+            try require(verify.optionalIdFits(value.reinitialize_cleanup, storage.nodes.items.len));
             try require(verify.optionalIdFits(value.cleanup_arguments, storage.nodes.items.len));
         }
     }

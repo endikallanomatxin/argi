@@ -589,7 +589,8 @@ pub const Infer = struct {
         const states = &flow.states;
         switch (node.content) {
             .binding_declaration => |binding| {
-                if (self.graph.binding(binding).initialization) |initialization|
+                const record = self.graph.binding(binding);
+                if (!record.deferred_initialization) if (record.initialization) |initialization|
                     try self.inferInputPostStatesExpression(function_id, initialization, states, exits);
             },
             .assignment => |assignment| try self.inferInputPostStatesExpression(function_id, assignment.value, states, exits),
@@ -1325,7 +1326,8 @@ pub const Infer = struct {
         const node = self.graph.node(node_id);
         switch (node.content) {
             .binding_declaration => |binding| {
-                if (self.graph.binding(binding).initialization) |initialization|
+                const record = self.graph.binding(binding);
+                if (!record.deferred_initialization) if (record.initialization) |initialization|
                     try self.inferOpaqueEmptyExpression(function_id, initialization, effects, state, exits);
             },
             .assignment => |assignment| try self.inferOpaqueEmptyExpression(function_id, assignment.value, effects, state, exits),
@@ -1931,7 +1933,8 @@ pub const Infer = struct {
 
         switch (node.content) {
             .binding_declaration => |binding| {
-                if (self.graph.binding(binding).initialization) |initialization|
+                const record = self.graph.binding(binding);
+                if (!record.deferred_initialization) if (record.initialization) |initialization|
                     try self.inferRequiredLiveInputsNode(function_id, initialization, required);
             },
             .assignment => |assignment| try self.inferRequiredLiveInputsNode(function_id, assignment.value, required),

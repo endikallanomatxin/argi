@@ -234,14 +234,14 @@ pub const SafetyChecker = struct {
                     const record = self.graph.bindings.items[@intFromEnum(binding)];
                     const storage = facts.Place{ .root = binding };
                     try self.beginLexicalStorage(state, storage);
-                    const value = if (record.initialization) |initialization| blk: {
+                    const value = if (!record.deferred_initialization) if (record.initialization) |initialization| blk: {
                         try self.validateContextualIntegerLiteral(initialization, record.ty);
                         const expression = self.graph.node(initialization);
                         if (expression.content == .type_initializer)
                             break :blk try self.evaluateTypeInitializer(function, expression.source, expression.content.type_initializer, record.ty, storage, state);
                         break :blk try self.evaluate(function, initialization, state);
-                    } else facts.ValueFacts{};
-                    try self.setPlace(state, .{ .root = binding }, if (record.initialization != null) .initialized else .deinitialized, value);
+                    } else facts.ValueFacts{} else facts.ValueFacts{};
+                    try self.setPlace(state, .{ .root = binding }, if (record.initialization != null and !record.deferred_initialization) .initialized else .deinitialized, value);
                 },
                 .assignment => |assignment| {
                     const binding = self.graph.binding(assignment.binding);
@@ -2795,6 +2795,27 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         allow_moved_destination: bool,
     ) !facts.ValueFacts {
+        if (self.graph.node(child).content == .assignment) {
+            const assignment = self.graph.node(child).content.assignment;
+            const binding = self.graph.binding(assignment.binding);
+            if (binding.deferred_initialization) {
+                const place = facts.Place{ .root = assignment.binding };
+                // Re-evaluating a loop condition replaces the previous
+                // temporary and starts a new storage generation.
+                if (binding.reinitialize_cleanup) |cleanup| {
+                    const cleanup_node = self.graph.node(cleanup);
+                    if (cleanup_node.content == .auto_deinit_binding)
+                        try self.applyAutoDeinit(function, cleanup_node.content.auto_deinit_binding, state);
+                }
+                try self.refreshStorageGenerationChecked(source, state, place);
+                const initialized = self.graph.node(assignment.value);
+                const value = if (initialized.content == .type_initializer)
+                    try self.evaluateTypeInitializer(function, initialized.source, initialized.content.type_initializer, binding.ty, place, state)
+                else
+                    try self.evaluate(function, assignment.value, state);
+                try self.setPlace(state, place, .initialized, value);
+            }
+        }
         try self.validateAddressAccess(function, source, child, state);
         const storage = try self.resolvePlace(child, state);
         if (!allow_moved_destination) if (storage) |target| if (self.initializednessAtPlace(state, target) == .moved)
@@ -2859,6 +2880,10 @@ pub const SafetyChecker = struct {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
             .binding_use => |binding| facts.Place{ .root = binding },
+            .assignment => |assignment| if (self.graph.binding(assignment.binding).deferred_initialization)
+                facts.Place{ .root = assignment.binding }
+            else
+                null,
             .move_value => |child| self.resolvePlace(child, state),
             .address_of => |child| self.resolvePlace(child, state),
             .dereference => |deref| blk: {

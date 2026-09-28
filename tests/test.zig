@@ -6022,6 +6022,30 @@ test "feature_tests/functions/27_assume_automatic_cleanup" {
     try runExpect("tests/feature_tests/functions/27_assume_automatic_cleanup", 0);
 }
 
+test "feature_tests/functions/28_assume_constructor_temporary" {
+    try expectSuccessfulBuild("tests/feature_tests/functions/28_assume_constructor_temporary");
+    try runExpect("tests/feature_tests/functions/28_assume_constructor_temporary", 0);
+}
+
+test "feature_tests/functions/29X_assume_constructor_temporary_escape" {
+    try buildExpectFail(
+        "tests/feature_tests/functions/29X_assume_constructor_temporary_escape",
+        "function output cannot depend on a local storage generation that ends before return",
+    );
+}
+
+test "feature_tests/functions/30_reference_to_constructor_expression" {
+    try expectSuccessfulBuild("tests/feature_tests/functions/30_reference_to_constructor_expression");
+    try runExpect("tests/feature_tests/functions/30_reference_to_constructor_expression", 0);
+}
+
+test "feature_tests/functions/31X_reference_to_constructor_temporary_escape" {
+    try buildExpectFail(
+        "tests/feature_tests/functions/31X_reference_to_constructor_temporary_escape",
+        "function output cannot depend on a local storage generation that ends before return",
+    );
+}
+
 test "feature_tests/system/36_entry_flushes_stdout" {
     const test_path = "tests/feature_tests/system/36_entry_flushes_stdout";
     try expectSuccessfulBuild(test_path);

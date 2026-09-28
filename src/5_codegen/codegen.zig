@@ -520,7 +520,7 @@ pub const CodeGenerator = struct {
                     try self.ensureGlobalInitialized(binding);
                 } else {
                     const record = self.graph.bindings.items[@intFromEnum(binding)];
-                    try self.allocateLocalBinding(binding, record.initialization);
+                    try self.allocateLocalBinding(binding, if (record.deferred_initialization) null else record.initialization);
                 }
                 break :blk null;
             },
@@ -1064,6 +1064,14 @@ pub const CodeGenerator = struct {
     fn addressablePointer(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) anyerror!TypedValue {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
+            .assignment => |assignment| blk: {
+                const record = self.graph.binding(assignment.binding);
+                if (!record.deferred_initialization) return CodegenError.InvalidType;
+                if (record.reinitialize_cleanup) |cleanup| _ = try self.visitNode(cleanup);
+                _ = try self.visitNode(node_id);
+                const storage = self.bindings.get(assignment.binding) orelse return CodegenError.SymbolNotFound;
+                break :blk .{ .value_ref = storage.ref, .type_ref = c.LLVMPointerType(storage.type_ref, 0), .ty = node.ty };
+            },
             .binding_use => |binding| blk: {
                 if (self.global_bindings.contains(binding)) try self.ensureGlobalInitialized(binding);
                 const storage = self.bindings.get(binding) orelse return CodegenError.SymbolNotFound;

@@ -2023,6 +2023,7 @@ pub const Resolver = struct {
                 else
                     @enumFromInt(0),
                 .initialization = null,
+                .deferred_initialization = source.deferred_initialization,
                 .mutability = source.mutability,
             });
             self.binding_map[@intFromEnum(id)] = global;
@@ -2975,7 +2976,15 @@ pub const Resolver = struct {
 
         fn resolveAddress(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {
             if (operands.len != 1) return error.InvalidParameterizedAddressOf;
-            const child = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedAddressUntyped;
+            const child = switch (self.resolver.graph.node(operands[0]).content) {
+                .assignment => |assignment| blk: {
+                    if (self.resolver.graph.isBindingTypeUnresolved(assignment.binding)) return error.ParameterizedAddressUntyped;
+                    const ty = self.resolver.graph.binding(assignment.binding).ty;
+                    self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty = ty;
+                    break :blk ty;
+                },
+                else => self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedAddressUntyped,
+            };
             const mutability: primitives.PointerMutability = switch (detail) {
                 .pointer_mutability => |value| value,
                 else => return error.InvalidParameterizedAddressOf,

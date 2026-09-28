@@ -63,6 +63,7 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
             try require(verify.stringFits(value.name, graph.strings.items));
             try require(verify.sourceFits(value.source, graph.file_offsets.items.len));
             try require(verify.optionalIdFits(value.initialization, semantic.nodes.items.len));
+            try require(verify.optionalIdFits(value.reinitialize_cleanup, semantic.nodes.items.len));
         } else try payload.binding(entities.Ids, value, bounds);
     }
     for (semantic.blocks.items) |value| try payload.block(entities.Ids, value, bounds);

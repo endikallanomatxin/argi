@@ -101,6 +101,7 @@ const Context = struct {
     expression_mode: ExpressionMode = .body,
     suppress_implicit_copies: bool = false,
     current_function: ?entities.ModuleFunctionId = null,
+    temporary_declarations: ?*std.array_list.Managed(entities.ModuleNodeId) = null,
 
     fn lowerFunctions(self: *Context) !Stats {
         var stats: Stats = .{};
@@ -202,11 +203,18 @@ const Context = struct {
         defer self.popScope();
         var nodes = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
         defer nodes.deinit();
+        var temporaries = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
+        defer temporaries.deinit();
+        const previous_temporaries = self.temporary_declarations;
+        self.temporary_declarations = &temporaries;
+        defer self.temporary_declarations = previous_temporaries;
         var ret_val: ?entities.ModuleNodeId = null;
         for (block.statements) |statement| {
+            temporaries.clearRetainingCapacity();
             if (self.tree.tag(statement) == .assume_statement) {
                 if (self.tree.assumedDeclaration(statement)) |declaration| {
                     const value = try self.lowerNode(declaration, null);
+                    try nodes.appendSlice(temporaries.items);
                     try nodes.append(value.node);
                     ret_val = value.node;
                 }
@@ -218,6 +226,7 @@ const Context = struct {
             }
             if (try self.lowerLocalModuleAlias(statement)) continue;
             const value = try self.lowerNode(statement, null);
+            try nodes.appendSlice(temporaries.items);
             try nodes.append(value.node);
             ret_val = value.node;
         }
@@ -911,6 +920,37 @@ const Context = struct {
         const pipe_placeholder = self.tree.tag(address.value) == .pipe_placeholder;
         const value = try self.lowerNode(address.value, null);
         const mutability = graph_mod.pointerMutabilityFromSyntax(address.mutability);
+        if (!pipe_placeholder and !self.syntaxIsAddressable(address.value)) {
+            if (self.temporary_declarations) |temporaries| {
+                // Reserve storage in the enclosing block, but initialize it
+                // at this expression so branches and short circuits stay lazy.
+                const name = try self.writer.addString("#address_temporary");
+                const storage = if (value.ty) |ty|
+                    try self.writer.addBinding(.{
+                        .name = name,
+                        .source = self.sourceRef(address.value),
+                        .ty = ty,
+                        .initialization = value.node,
+                        .deferred_initialization = true,
+                        .mutability = .variable,
+                    })
+                else blk: {
+                    const id = try self.writer.addUnresolvedBinding(name, self.sourceRef(address.value), value.node, .variable);
+                    self.graph.semantic.bindings.items[@intFromEnum(id)].deferred_initialization = true;
+                    break :blk id;
+                };
+                try self.captureBindingCleanup(address.value, storage);
+                const declaration = try self.resolved(address.value, value.ty, .{ .binding_declaration = storage });
+                try temporaries.append(declaration.node);
+                const assignment = try self.resolved(address.value, value.ty, .{ .assignment = .{ .binding = storage, .value = value.node } });
+                return self.pending(node, .{ .resolve_address = .{
+                    .node = self.nextNodeId(),
+                    .value = assignment.node,
+                    .mutability = mutability,
+                    .collapse_existing_pointer = false,
+                } }, null);
+            }
+        }
         if (value.ty) |child_ty| {
             if (pipe_placeholder) if (try self.pointerChild(child_ty)) |_| return value;
             if (!pipe_placeholder or try views.typeView(self.graph, child_ty) != .external) {
@@ -924,6 +964,16 @@ const Context = struct {
             .mutability = mutability,
             .collapse_existing_pointer = pipe_placeholder,
         } }, null);
+    }
+
+    fn syntaxIsAddressable(self: *const Context, node: syn.NodeIndex) bool {
+        return switch (self.tree.tag(node)) {
+            .identifier, .dereference => true,
+            .struct_field_access => self.syntaxIsAddressable(self.tree.structFieldAccess(node).?.value),
+            .choice_payload_access => self.syntaxIsAddressable(self.tree.choicePayloadAccess(node).?.value),
+            .index_access => self.syntaxIsAddressable(self.tree.indexAccess(node).?.value),
+            else => false,
+        };
     }
 
     fn lowerDereference(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {

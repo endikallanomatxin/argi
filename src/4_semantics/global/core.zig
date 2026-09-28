@@ -716,7 +716,15 @@ pub const Resolver = struct {
 
     fn resolveAddress(self: *Resolver, o: globalizer.Offsets, value: anytype) !resolution.Result {
         const child_node = globalizer.globalNode(o, value.value);
-        const child = self.graph.nodes.items[@intFromEnum(child_node)].ty orelse return .deferred;
+        const child = switch (self.graph.node(child_node).content) {
+            .assignment => |assignment| blk: {
+                if (self.graph.isBindingTypeUnresolved(assignment.binding)) return .deferred;
+                const ty = self.graph.binding(assignment.binding).ty;
+                self.graph.nodes.items[@intFromEnum(child_node)].ty = ty;
+                break :blk ty;
+            },
+            else => self.graph.nodes.items[@intFromEnum(child_node)].ty orelse return .deferred,
+        };
         if (self.graph.isTypeUnresolved(child)) return .deferred;
         if (value.collapse_existing_pointer) switch (self.graph.types.items[@intFromEnum(child)]) {
             .pointer => |pointer| if (value.mutability == .read_only or pointer.mutability == .read_write) {

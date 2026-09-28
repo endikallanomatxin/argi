@@ -189,6 +189,7 @@ pub const Context = struct {
     file_index: u32 = 0,
     tree: *const syn.FileSyntaxTree = undefined,
     source: []const u8 = &.{},
+    temporary_declarations: ?*std.ArrayList(ir.ParameterizedNodeId) = null,
 
     fn lowerDeclarations(self: *Context) !Stats {
         var stats: Stats = .{};
@@ -773,11 +774,18 @@ pub const Context = struct {
         defer self.bindings.shrinkRetainingCapacity(binding_mark);
         var statements: std.ArrayList(ir.ParameterizedNodeId) = .empty;
         defer statements.deinit(self.allocator);
+        var temporaries: std.ArrayList(ir.ParameterizedNodeId) = .empty;
+        defer temporaries.deinit(self.allocator);
+        const previous_temporaries = self.temporary_declarations;
+        self.temporary_declarations = &temporaries;
+        defer self.temporary_declarations = previous_temporaries;
         var ret_val: ?ir.ParameterizedNodeId = null;
         for (block.statements) |statement| {
+            temporaries.clearRetainingCapacity();
             if (self.tree.tag(statement) == .assume_statement) {
                 if (self.tree.assumedDeclaration(statement)) |declaration| {
                     const lowered = try self.lowerBodyNode(declaration);
+                    try statements.appendSlice(self.allocator, temporaries.items);
                     try statements.append(self.allocator, lowered);
                     ret_val = lowered;
                 }
@@ -787,6 +795,7 @@ pub const Context = struct {
                 continue;
             }
             const lowered = try self.lowerBodyNode(statement);
+            try statements.appendSlice(self.allocator, temporaries.items);
             try statements.append(self.allocator, lowered);
             ret_val = lowered;
         }
@@ -1017,6 +1026,36 @@ pub const Context = struct {
         if (self.tree.tag(node) == .abort_statement)
             return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .abort_statement);
 
+        if (self.tree.addressOf(node)) |address| {
+            if (self.temporary_declarations) |temporaries| {
+                if (!self.syntaxIsAddressable(address.value)) {
+                    // Keep the reservation in the enclosing block and the
+                    // initializer at the expression's evaluation point.
+                    const initialized = try self.lowerBodyNode(address.value);
+                    const storage = &self.graph.semantic.parameterized_storage.ir;
+                    const ty: ?ir.ParameterizedTypeId = switch (storage.nodes.items[@intFromEnum(initialized)]) {
+                        .resolved => |value| value.ty,
+                        .pending => null,
+                    };
+                    const binding: ir.ParameterizedBindingId = @enumFromInt(@as(u32, @intCast(storage.bindings.items.len)));
+                    try storage.bindings.append(self.allocator, .{
+                        .name = try self.writer.addString("#address_temporary"),
+                        .source = self.sourceRef(address.value),
+                        .ty = ty orelse ir.unresolved_binding_type_poison,
+                        .initialization = initialized,
+                        .deferred_initialization = true,
+                        .mutability = .variable,
+                    });
+                    try self.captureBindingCleanup(address.value, binding);
+                    if (ty == null) try storage.unresolved_binding_types.append(self.allocator, binding);
+                    const declaration = try self.addResolvedNode(address.value, try self.parameterizedBuiltin(.Void), .{ .binding_declaration = binding });
+                    try temporaries.append(self.allocator, declaration);
+                    const assignment = try self.addResolvedNode(address.value, ty, .{ .assignment = .{ .binding = binding, .value = initialized } });
+                    return self.addPending(node, .address_of, &.{assignment}, null, null, parameterizedDetailForTag(self.tree.tag(node)));
+                }
+            }
+        }
+
         var operands = std.array_list.Managed(ir.ParameterizedNodeId).init(self.allocator);
         defer operands.deinit();
         try self.collectBodyOperands(node, &operands);
@@ -1037,6 +1076,16 @@ pub const Context = struct {
         const pending_id = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(result)].pending;
         self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.assumed_arguments = assumed;
         return result;
+    }
+
+    fn syntaxIsAddressable(self: *const Context, node: syn.NodeIndex) bool {
+        return switch (self.tree.tag(node)) {
+            .identifier, .dereference => true,
+            .struct_field_access => self.syntaxIsAddressable(self.tree.structFieldAccess(node).?.value),
+            .choice_payload_access => self.syntaxIsAddressable(self.tree.choicePayloadAccess(node).?.value),
+            .index_access => self.syntaxIsAddressable(self.tree.indexAccess(node).?.value),
+            else => false,
+        };
     }
 
     fn lowerReach(self: *Context, node: syn.NodeIndex) !ir.ParameterizedNodeId {
