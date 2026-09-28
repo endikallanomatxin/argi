@@ -1,5 +1,6 @@
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
     path ::= from_literal(.data = "tests/feature_tests/system/23_file_system_read_write/build/temp.txt")
 
@@ -12,7 +13,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    text ::= String(.allocator = system.allocator, .length = 4)
+    text ::= String(.allocator = $&allocator_storage, .length = 4)
     bytes_set(.string = $&text, .index = 0, .value = 65)
     bytes_set(.string = $&text, .index = 1, .value = 114)
     bytes_set(.string = $&text, .index = 2, .value = 103)

@@ -30,14 +30,15 @@ make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Trac
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
     array ::= DynamicArray#(.t: Tracked)(.capacity = 4)
 
-    first_result ::= make_tracked(.allocator = system.allocator, .id = 1)
-    second_result ::= make_tracked(.allocator = system.allocator, .id = 2)
-    third_result ::= make_tracked(.allocator = system.allocator, .id = 3)
-    fourth_result ::= make_tracked(.allocator = system.allocator, .id = 4)
+    first_result ::= make_tracked(.allocator = $&allocator_storage, .id = 1)
+    second_result ::= make_tracked(.allocator = $&allocator_storage, .id = 2)
+    third_result ::= make_tracked(.allocator = $&allocator_storage, .id = 3)
+    fourth_result ::= make_tracked(.allocator = $&allocator_storage, .id = 4)
     match first_result {
         ..error _ { status_code = 1 }
         ..ok ~ first {
@@ -59,7 +60,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                     }
 
                                     one :: UIntNative = 1
-                                    replacement_result ::= set#(.t: Tracked)(.self = $&array, .index = one, .value = ~fourth, .allocator = system.allocator).result
+                                    replacement_result ::= set#(.t: Tracked)(.self = $&array, .index = one, .value = ~fourth, .allocator = $&allocator_storage).result
                                     if is(.value = replacement_result, .variant = ..error) {
                                         status_code = 5
                                         return

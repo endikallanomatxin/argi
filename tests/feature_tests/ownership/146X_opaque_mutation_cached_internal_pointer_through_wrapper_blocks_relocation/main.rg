@@ -11,7 +11,8 @@ set_next(.slot: $&AddressSensitive, .target: $&UInt8) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    slots_result ::= allocate(.self = system.allocator, .size = size_of(.type = AddressSensitive) * 2)
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    slots_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = AddressSensitive) * 2)
     match slots_result {
         ..error _ { status_code = 1 }
         ..ok ~ slots_payload {

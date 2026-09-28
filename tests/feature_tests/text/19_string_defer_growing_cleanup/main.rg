@@ -22,7 +22,8 @@ helper(.allocator: $&Allocator) -> (.ok: Bool) := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    if helper(.allocator = system.allocator).ok {
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    if helper(.allocator = $&allocator_storage).ok {
         status_code = 0
     } else {
         status_code = 1

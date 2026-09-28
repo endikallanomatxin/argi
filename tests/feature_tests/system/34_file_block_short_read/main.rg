@@ -1,5 +1,6 @@
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
     path ::= from_literal(.data = "tests/feature_tests/system/34_file_block_short_read_temp.bin")
 

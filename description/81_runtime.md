@@ -103,8 +103,13 @@ For example:
 
 ```rg
 main(.system: System) -> !(.status_code: Int32 = 0) := {
+    allocator_storage :: GeneralPurposeAllocator = GeneralPurposeAllocator(
+        .backing_allocator = system.page_allocator,
+    )
+    assume allocator ::= $&allocator_storage
+
     runtime := FiberRuntime(
-        .allocator = system.allocator,
+        .allocator = allocator,
         .threads = system.threads,
         .count = 4,
     )
@@ -173,8 +178,13 @@ will find the local runtime first:
 
 ```rg
 main(.system: System) -> !(.status_code: Int32 = 0) := {
+    allocator_storage :: GeneralPurposeAllocator = GeneralPurposeAllocator(
+        .backing_allocator = system.page_allocator,
+    )
+    assume allocator ::= $&allocator_storage
+
     runtime := FiberRuntime(
-        .allocator = system.allocator,
+        .allocator = allocator,
         .threads = system.threads,
         .count = 4,
     )
@@ -1081,5 +1091,4 @@ La mutabilidad como se gestiona?
 >En go las goroutines no puedes return. Eso es una asyn func.
 >Igual la clave es encontrar una sintaxis que me permita hacer algo similar de
 >forma sencilla.
-
 

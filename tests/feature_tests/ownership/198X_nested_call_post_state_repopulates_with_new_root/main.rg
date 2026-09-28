@@ -18,8 +18,9 @@ reset_and_store(.storage: $&Allocation, .slot: $&Borrowing, .reference: $&UInt8)
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    new_root_result ::= allocate(.self = system.allocator, .size = 1)
-    storage_result ::= allocate(.self = system.allocator, .size = size_of(.type = Borrowing))
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    new_root_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    storage_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
     match new_root_result {
         ..error _ { status_code = 1 }
         ..ok ~ new_root_payload {

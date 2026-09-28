@@ -3,7 +3,8 @@ sum_pair (.a: Int32, .b: Int32) -> (.sum: Int32) := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
     arr ::= DynamicArray#(.t: Int32)(.capacity = 1)
     #defer deinit(.self = $&arr)
 

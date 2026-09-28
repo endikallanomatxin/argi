@@ -28,20 +28,21 @@ make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Trac
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
     array ::= DynamicArray#(.t: Tracked)(.capacity = 1)
-    first_result ::= make_tracked(.allocator = system.allocator, .id = 1)
+    first_result ::= make_tracked(.allocator = $&allocator_storage, .id = 1)
     match first_result {
         ..error _ { status_code = 1 }
         ..ok ~ first_payload {
             first ::= ~first_payload
-            second_result ::= make_tracked(.allocator = system.allocator, .id = 2)
+            second_result ::= make_tracked(.allocator = $&allocator_storage, .id = 2)
             match second_result {
                 ..error _ { status_code = 2 }
                 ..ok ~ second_payload {
                     second ::= ~second_payload
-                    third_result ::= make_tracked(.allocator = system.allocator, .id = 3)
+                    third_result ::= make_tracked(.allocator = $&allocator_storage, .id = 3)
                     match third_result {
                         ..error _ { status_code = 3 }
                         ..ok ~ third_payload {

@@ -15,11 +15,12 @@ deinit(.self: $&BorrowingOwner) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
-    external_result ::= allocate(.self = system.allocator, .size = 1)
-    first_result ::= allocate(.self = system.allocator, .size = 1)
-    second_result ::= allocate(.self = system.allocator, .size = 1)
+    external_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    first_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    second_result ::= allocate(.self = $&allocator_storage, .size = 1)
     match external_result {
         ..error _ { status_code = 1 }
         ..ok ~ external_payload {

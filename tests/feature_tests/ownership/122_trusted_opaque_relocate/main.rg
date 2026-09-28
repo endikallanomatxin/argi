@@ -29,7 +29,7 @@ make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Trac
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    slots_result ::= allocate(.self = system.allocator, .size = size_of(.type = Tracked) * 8)
+    slots_result ::= allocate(.self = system.page_allocator, .size = size_of(.type = Tracked) * 8)
     match slots_result {
         ..error _ { status_code = 1 }
         ..ok ~ slots_payload {
@@ -44,15 +44,15 @@ main(.system: System) -> (.status_code: Int32) := {
             g ::= mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 6).reference
             h ::= mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 7).reference
 
-            first_result ::= make_tracked(.allocator = system.allocator, .id = 1)
+            first_result ::= make_tracked(.allocator = system.page_allocator, .id = 1)
             match first_result {
                 ..error _ { status_code = 2 }
                 ..ok ~ first_payload {
-                    second_result ::= make_tracked(.allocator = system.allocator, .id = 2)
+                    second_result ::= make_tracked(.allocator = system.page_allocator, .id = 2)
                     match second_result {
                         ..error _ { status_code = 3 }
                         ..ok ~ second_payload {
-                            third_result ::= make_tracked(.allocator = system.allocator, .id = 3)
+                            third_result ::= make_tracked(.allocator = system.page_allocator, .id = 3)
                             match third_result {
                                 ..error _ { status_code = 4 }
                                 ..ok ~ third_payload {

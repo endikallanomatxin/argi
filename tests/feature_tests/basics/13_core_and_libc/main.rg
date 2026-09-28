@@ -1,9 +1,9 @@
 unsafe_allocation := #import("../../_support/unsafe_allocation")
-main () -> (.status_code: Int32) := {
+main (.system: System) -> (.status_code: Int32) := {
     puts(.string="Hello world!")
 
     size :: UIntNative = 14
-    allocator_storage :: CAllocator = CAllocator()
+    allocator_storage :: CAllocator = CAllocator(.ffi = system.ffi)
     assume allocator ::= $&allocator_storage
     allocated ::= allocate(.self = $&allocator_storage, .size = size)
     match allocated {

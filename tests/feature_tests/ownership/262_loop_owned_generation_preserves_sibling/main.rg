@@ -12,20 +12,21 @@ deinit(.self: $&Pair, .allocator: $&Allocator) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
     pair ::= Pair(
-        .changing = String(.allocator = system.allocator, .capacity = 1),
-        .stable = String(.allocator = system.allocator, .capacity = 1),
+        .changing = String(.allocator = $&allocator_storage, .capacity = 1),
+        .stable = String(.allocator = $&allocator_storage, .capacity = 1),
     )
-    stable_push ::= push_byte(.self = $&pair.stable, .byte = 42, .allocator = system.allocator)
+    stable_push ::= push_byte(.self = $&pair.stable, .byte = 42, .allocator = $&allocator_storage)
     if is(.value = stable_push, .variant = ..error) {
         return
     }
     stable_data ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&pair.stable.allocation, .offset = 0).reference
     i :: UIntNative = 0
     while i < 2 {
-        pushed ::= push_byte(.self = $&pair.changing, .byte = 65, .allocator = system.allocator)
+        pushed ::= push_byte(.self = $&pair.changing, .byte = 65, .allocator = $&allocator_storage)
         if is(.value = pushed, .variant = ..error) {
             status_code = 1
             return
@@ -38,5 +39,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         status_code = 2
         return
     }
-    deinit(.self = $&pair, .allocator = system.allocator)
+    deinit(.self = $&pair, .allocator = $&allocator_storage)
 }

@@ -17,12 +17,13 @@ extract(.slot: $&Borrowing) -> (.result: $&UInt8) := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    domain_result ::= allocate(.self = system.allocator, .size = 1)
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    domain_result ::= allocate(.self = $&allocator_storage, .size = 1)
     match domain_result {
         ..error _ { status_code = 1 }
         ..ok ~ domain_payload {
             domain ::= ~domain_payload
-            backing_result ::= allocate(.self = system.allocator, .size = size_of(.type = Borrowing))
+            backing_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
             match backing_result {
                 ..error _ {
                     deinit(.self = $&domain)

@@ -1,11 +1,12 @@
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
     arr ::= DynamicArray#(.t: Int32)(.capacity = 1)
-    #defer deinit(.self = $&arr, .allocator = system.allocator)
+    #defer deinit(.self = $&arr, .allocator = $&allocator_storage)
 
-    push(.self = $&arr, .value = 10, .allocator = system.allocator)
-    push(.self = $&arr, .value = 20, .allocator = system.allocator)
+    push(.self = $&arr, .value = 10, .allocator = $&allocator_storage)
+    push(.self = $&arr, .value = 20, .allocator = $&allocator_storage)
 
     copied_result ::= copy#(.t: Int32)(.self = &arr)
     if is(.value = copied_result, .variant = ..error) {
@@ -13,14 +14,14 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
     copied ::= ~copied_result..ok
-    #defer deinit(.self = $&copied, .allocator = system.allocator)
+    #defer deinit(.self = $&copied, .allocator = $&allocator_storage)
 
-    set_result ::= set(.self = $&copied, .index = 0, .value = 99, .allocator = system.allocator).result
+    set_result ::= set(.self = $&copied, .index = 0, .value = 99, .allocator = $&allocator_storage).result
     if is(.value = set_result, .variant = ..error) {
         status_code = 6
         return
     }
-    push(.self = $&copied, .value = 30, .allocator = system.allocator)
+    push(.self = $&copied, .value = 30, .allocator = $&allocator_storage)
 
     if length#(.t: Int32)(.self = &arr).count != 2 {
         status_code = 1

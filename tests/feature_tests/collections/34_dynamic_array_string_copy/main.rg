@@ -1,5 +1,6 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
     array ::= DynamicArray#(.t: String)(.capacity = 1)
     #defer deinit#(.t: String)(.self = $&array)
@@ -11,7 +12,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         return
     }
 
-    copied_result ::= copy(.self = &array, .allocator = system.allocator)
+    copied_result ::= copy(.self = &array, .allocator = $&allocator_storage)
     match copied_result {
         ..error _ { status_code = 2 }
         ..ok ~ copied_payload {

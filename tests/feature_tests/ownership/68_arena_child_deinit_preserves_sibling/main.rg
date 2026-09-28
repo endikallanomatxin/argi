@@ -1,10 +1,11 @@
 unsafe_allocation := #import("../../_support/unsafe_allocation")
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
-    assume metadata_allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
+    assume backing_allocator ::= $&allocator_storage
 
     arena :: ArenaAllocator
-    initialized ::= init(.p = $&arena, .metadata_allocator = system.allocator, .block_size = 32)
+    initialized ::= init(.p = $&arena, .backing_allocator = $&allocator_storage, .block_size = 32)
     if is(.value = initialized, .variant = ..error) {
         status_code = 4
         return

@@ -22,7 +22,8 @@ flush(.self: $&DummyOutput) -> (.result: Errable#(.t: Void, .reasons: (..stream_
 DummyOutput implements Writer
 
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
     stderr_storage :: DummyOutput = (
         .write_count = 0,
         .flush_count = 0,

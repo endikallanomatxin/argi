@@ -1,5 +1,5 @@
-main() -> (.status_code: Int32) := {
-    raw ::= malloc(.size = 1)
+main(.system: System) -> (.status_code: Int32) := {
+    raw ::= malloc(.size = 1, .ffi = system.ffi)
     address ::= cast#(.to: UIntNative)(.value = raw)
     fabricated ::= cast#(.to: $&UInt8)(.value = address)
     fabricated& = 1

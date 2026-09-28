@@ -5,10 +5,11 @@ deinit(.self: $&Holder) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
-    result ::= allocate(.self = system.allocator, .size = 1)
-    replacement_result ::= allocate(.self = system.allocator, .size = 1)
+    result ::= allocate(.self = $&allocator_storage, .size = 1)
+    replacement_result ::= allocate(.self = $&allocator_storage, .size = 1)
     match result {
         ..error _ { status_code = 1 }
         ..ok ~ payload {

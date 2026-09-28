@@ -4,12 +4,13 @@ Borrowing : Type = (
 )
 
 main(.system: System) -> (.status_code: Int32) := {
-    deallocator ::= to_virtual#(.abstract: Deallocator)(.value = system.allocator)
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    deallocator ::= to_virtual#(.abstract: Deallocator)(.value = $&allocator_storage)
 
-    target_storage ::= malloc(.size = 1)
+    target_storage ::= malloc(.size = 1, .ffi = system.ffi)
     target ::= establish_allocation(.storage = target_storage, .size = 1, .alignment = 1, .deallocator = deallocator)
 
-    borrowing_slots_storage ::= malloc(.size = size_of(.type = Borrowing))
+    borrowing_slots_storage ::= malloc(.size = size_of(.type = Borrowing), .ffi = system.ffi)
     borrowing_slots ::= establish_allocation(
         .storage = borrowing_slots_storage,
         .size = size_of(.type = Borrowing),
@@ -24,7 +25,7 @@ main(.system: System) -> (.status_code: Int32) := {
         .source = ~hidden,
     )
 
-    owner_slots_storage ::= malloc(.size = size_of(.type = Allocation))
+    owner_slots_storage ::= malloc(.size = size_of(.type = Allocation), .ffi = system.ffi)
     owner_slots ::= establish_allocation(
         .storage = owner_slots_storage,
         .size = size_of(.type = Allocation),

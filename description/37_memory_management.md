@@ -19,7 +19,8 @@ resolve through `reach`.
 
 Copying a reference or non-owning view copies its dependency, never root
 ownership. An owning copy creates independent resources and roots rather than
-duplicating ownership of an existing root.
+duplicating ownership of an existing root. Allocating operations receive an
+allocator argument explicitly; there is no implicit default allocator.
 
 `~value` moves the complete value out of its place. The source becomes moved;
 the destination receives its dependencies and owned roots. Roots keep
@@ -249,11 +250,31 @@ Failure is decided at the raw-storage boundary. `..error ..out_of_memory`
 therefore carries no `Allocation`, safe reference, Validity Root, or cleanup obligation;
 `StorageCapability` is consumed only on successful establishment.
 
-`ArenaAllocator(metadata_allocator)` uses the supplied allocator for block
-metadata and libc for the physical blocks. Its allocations share one arena root;
-reset or deinitialization ends that root and releases the blocks. Cleaning
-an individual arena-backed child does not end the arena. Logical detach need
-not free storage, so aliases can remain valid until grouped cleanup.
+`System` provides `$&Memory` and `$&PageAllocator` capabilities. `Memory` is
+initialized from the operating system and maps/unmaps page-rounded physical
+storage through private backend bindings. `map_pages` returns an `Allocation`
+whose size is the rounded physical extent. `PageAllocator(memory)` adapts this
+capability to the general allocator interface and returns an `Allocation` with
+the requested size and alignment. The system does not grant general FFI access
+as a consequence of exposing memory capabilities.
+
+Allocator composition is explicit. A `GeneralPurposeAllocator` receives a
+backing allocator and obtains both blocks and metadata through that allocator,
+with no direct operating-system calls. Programs choose the chain, commonly
+using `system.page_allocator` as the backing allocator. `ArenaAllocator`
+stores each backing `Allocation` receipt in a linked header within its block,
+so it needs no separate metadata allocation or collection. Its allocations
+share one arena root; reset or deinitialization ends that root and releases
+the blocks through their receipts. Cleaning an individual arena-backed child
+does not end the arena. Logical detach need not free storage, so aliases can
+remain valid until grouped cleanup.
+
+The unbuffered terminal `File` streams are resource capabilities. Stream
+wrappers that need state are constructed explicitly with a program-selected
+allocator, so the program entry itself does not allocate. `CAllocator` is an
+explicit libc interoperation path configured with `system.ffi`. This boundary
+does not imply universal enforcement of foreign allocation: legacy public raw
+`malloc` bindings remain available.
 
 Immediate individual deletion with persistent aliases belongs in an explicit
 runtime abstraction such as a generated handle, not universal reference

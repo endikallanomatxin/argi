@@ -11,7 +11,8 @@ deinit(.self: $&Container) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    first_result ::= allocate(.self = system.allocator, .size = 1)
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    first_result ::= allocate(.self = $&allocator_storage, .size = 1)
     match first_result {
         ..error _ { status_code = 1 }
         ..ok ~ first_payload {
@@ -19,7 +20,7 @@ main(.system: System) -> (.status_code: Int32) := {
             old ::= &container.inner
             deinit(.self = $&container)
 
-            second_result ::= allocate(.self = system.allocator, .size = 2)
+            second_result ::= allocate(.self = $&allocator_storage, .size = 2)
             match second_result {
                 ..error _ { status_code = 2 }
                 ..ok ~ second_payload {

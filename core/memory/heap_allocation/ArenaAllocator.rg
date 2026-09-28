@@ -1,178 +1,123 @@
-ArenaBlock : Type = (
-    .data: RawPointer#(.t: UInt8)
+_ArenaBlock : Type = (
+    .storage: Allocation
+    .next: UIntNative
     .size: UIntNative
 )
 
--- Structural temporal anchor. Its identity is the `ArenaAllocator.domain`
--- Place, so it deliberately carries no reference back to its owner. The
--- marker is retained because empty values currently require an `init` path
--- that cannot initialize itself without a recursive resolution cycle.
-ArenaDomain : Type = (
-    .marker: Bool
-)
+-- Replacing the complete domain establishes a new storage generation after
+-- reset. Updating only the marker would leave the former generation ended.
+ArenaDomain : Type = (.marker: Bool)
+init(.p: $&ArenaDomain) -> () := { p& = (.marker = false) }
+deinit(.self: $&ArenaDomain) -> () := {}
 
-init(.p: $&ArenaDomain) -> () := {
-    p& = (.marker = false)
-}
-
-deinit(.self: $&ArenaDomain) -> () := {
-}
-
+-- Backing receipts live in block headers. No metadata or storage is acquired
+-- until the first allocation; all blocks come from the chosen backing policy.
 ArenaAllocator : Type = (
-    --
-    -- Simple bump arena with libc-backed blocks. Its metadata uses a caller-
-    -- supplied allocator.
-    --
-    -- Individual `deallocate()` calls are ignored. Memory is reclaimed only by
-    -- `reset()` or `deinit()`.
-    --
-    -- This baseline intentionally targets copyable payloads and compiler-style
-    -- scratch allocations, not long-lived fine-grained ownership.
-    --
-    .metadata_allocator   : $&Allocator
-    .blocks               : DynamicArray#(.t: ArenaBlock)
-    .domain               : ArenaDomain
-    .block_size           : UIntNative
-    .current_block_offset : UIntNative
+    ._backing_allocator: Virtual#(.abstract: Allocator)
+    .domain: ArenaDomain
+    ._block_head: UIntNative
+    .block_count: UIntNative
+    .block_size: UIntNative
+    ._current_block_offset: UIntNative
 )
 
-arena_min_block_capacity(
-    .requested: UIntNative,
-    .block_size: UIntNative,
-) -> (.capacity: UIntNative) := {
-    capacity = block_size
-    if capacity == 0 {
-        capacity = 1
-    }
-    if capacity < requested {
-        capacity = requested
-    }
-}
-
-init(
-    .p: $&ArenaAllocator,
-    .metadata_allocator: $&Allocator,
-    .block_size: UIntNative = 4096,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    assume metadata_allocator
-
-    p&.metadata_allocator = metadata_allocator
-    initialized ::= init#(.t: ArenaBlock)(.p = $&p&.blocks, .allocator = metadata_allocator, .capacity = 4)
-    if is(.value = initialized, .variant = ..error) {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
+init(.p: $&ArenaAllocator, .backing_allocator: $&Allocator, .block_size: UIntNative = 4096) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    p&._backing_allocator = to_virtual#(.abstract: Allocator)(.value = backing_allocator)
     init(.p = $&p&.domain)
-    p&.block_size = arena_min_block_capacity(.requested = 1, .block_size = block_size).capacity
-    p&.current_block_offset = 0
+    p&._block_head = 0
+    p&.block_count = 0
+    p&.block_size = block_size
+    if p&.block_size == 0 { p&.block_size = 1 }
+    p&._current_block_offset = 0
     result = ..ok Void()
 }
 
-arena_free_blocks(
-    .self: $&ArenaAllocator,
-) -> () := {
-    while length#(.t: ArenaBlock)(.self = &self&.blocks).count != 0 {
-        removed ::= pop#(.t: ArenaBlock)(.self = $&self&.blocks)
-        match removed {
-            ..ok ~ block {
-                free(.address = block.data.address)
-            }
-            ..error _ { abort }
-        }
-    }
-
-    _trusted_dynamic_array_mark_empty#(.t: ArenaBlock)(.self = $&self&.blocks)
-    self&.current_block_offset = 0
+_trusted_arena_block(.address: UIntNative, .owner: $&ArenaAllocator) -> (.block: $&_ArenaBlock) := {
+    raw ::= raw_pointer#(.t: _ArenaBlock)(.address = address).raw
+    block = establish_inherited_reference#(.t: _ArenaBlock)(.raw = raw, .root = cast#(.to: &Any)(.value = $&owner&.domain)).reference
 }
 
-reset(
-    .self: $&ArenaAllocator,
-) -> () := {
+arena_free_blocks(.self: $&ArenaAllocator) -> () := {
+    while self&._block_head != 0 {
+        block ::= _trusted_arena_block(.address = self&._block_head, .owner = self).block
+        next ::= block&.next
+        storage ::= trusted_opaque_move_out#(.t: Allocation, .storage_type: _ArenaBlock)(.storage = block, .slot = $&block&.storage).result
+        self&._block_head = next
+        deinit(.self = $&storage)
+    }
+    self&.block_count = 0
+    self&._current_block_offset = 0
+}
+
+reset(.self: $&ArenaAllocator) -> () := {
     arena_free_blocks(.self = self)
     deinit(.self = $&self&.domain)
     init(.p = $&self&.domain)
-    _trusted_dynamic_array_mark_empty#(.t: ArenaBlock)(.self = $&self&.blocks)
 }
 
-deinit(
-    .self: $&ArenaAllocator,
-) -> () := {
+deinit(.self: $&ArenaAllocator) -> () := {
     arena_free_blocks(.self = self)
     deinit(.self = $&self&.domain)
-    deinit(.allocator = self&.metadata_allocator, .self = $&self&.blocks)
 }
 
-allocate(
-    .self: $&ArenaAllocator,
-    .size: UIntNative,
-    .alignment: UIntNative,
-) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+allocate(.self: $&ArenaAllocator, .size: UIntNative, .alignment: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
     _require_allocation_alignment(.alignment = alignment)
     required ::= size
-    if required == 0 {
-        required = 1
-    }
-
+    if required == 0 { required = 1 }
     aligned_offset :: UIntNative = 0
-    needs_block :: Bool = false
-    if length#(.t: ArenaBlock)(.self = &self&.blocks).count == 0 {
-        needs_block = true
-    } else {
-        last_block : &ArenaBlock = _trusted_dynamic_array_get_ro_ref#(.t: ArenaBlock)(.array = &self&.blocks, .index = length#(.t: ArenaBlock)(.self = &self&.blocks).count - 1).reference
-        base ::= last_block&.data.address
-        cursor ::= base + self&.current_block_offset
+    needs_block :: Bool = true
+    if self&._block_head != 0 {
+        block ::= _trusted_arena_block(.address = self&._block_head, .owner = self).block
+        cursor ::= self&._block_head + self&._current_block_offset
         remainder ::= cursor % alignment
         padding :: UIntNative = 0
         if remainder != 0 { padding = alignment - remainder }
-        aligned_offset = self&.current_block_offset + padding
-        if cursor < base or aligned_offset < self&.current_block_offset or aligned_offset > last_block&.size or required > last_block&.size - aligned_offset {
-            needs_block = true
+        aligned_offset = self&._current_block_offset + padding
+        if aligned_offset >= self&._current_block_offset and aligned_offset <= block&.size {
+            if required <= block&.size - aligned_offset { needs_block = false }
         }
     }
-
     if needs_block {
-        minimum_size ::= required + alignment - 1
-        if minimum_size < required {
+        header_size ::= size_of(.type = _ArenaBlock)
+        minimum ::= header_size + required
+        if minimum < required {
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        new_block_size ::= arena_min_block_capacity(.requested = minimum_size, .block_size = self&.block_size).capacity
-        metadata_ready ::= ensure_capacity#(.t: ArenaBlock)(
-            .allocator = self&.metadata_allocator,
-            .self = $&self&.blocks,
-            .capacity = length#(.t: ArenaBlock)(.self = &self&.blocks).count + 1,
-        )
-        if is(.value = metadata_ready, .variant = ..error) {
+        padded ::= minimum + alignment - 1
+        if padded < minimum {
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        raw_address ::= malloc(.size = new_block_size).address
-        if raw_address == 0 {
-            result = ..error(.reason = ..out_of_memory)
-            return
+        new_size ::= self&.block_size + header_size
+        if new_size < header_size { new_size = padded }
+        if new_size < padded { new_size = padded }
+        block_alignment ::= alignment
+        header_alignment ::= alignment_of(.type = _ArenaBlock)
+        if block_alignment < header_alignment { block_alignment = header_alignment }
+        allocated ::= allocate(.self = $&self&._backing_allocator, .size = new_size, .alignment = block_alignment)
+        match allocated {
+            ..error _ {
+                result = ..error(.reason = ..out_of_memory)
+                return
+            }
+            ..ok ~ payload {
+                storage ::= ~payload
+                address ::= storage.data.address
+                block ::= _trusted_arena_block(.address = address, .owner = self).block
+                trusted_opaque_move(.destination = $&block&.storage, .source = ~storage)
+                block&.next = self&._block_head
+                block&.size = new_size
+                self&._block_head = address
+                self&.block_count = self&.block_count + 1
+                aligned_offset = header_size
+                cursor ::= address + header_size
+                remainder ::= cursor % alignment
+                if remainder != 0 { aligned_offset = header_size + alignment - remainder }
+            }
         }
-        block_storage ::= establish_inherited_storage(
-            .address = raw_address,
-            -- Physical storage is incorporated into the arena's existing
-            -- temporal domain instead of manufacturing a child root.
-            .root = cast#(.to: $&Any)(.value = $&self&.domain),
-        ).raw
-        -- Metadata capacity was secured before acquiring physical storage, so
-        -- publishing this block has no later fallible rollback path.
-        push_assume_capacity#(.t: ArenaBlock)(
-            .self = $&self&.blocks,
-            .value = (
-                .data = block_storage,
-                .size = new_block_size,
-            ),
-        )
-        self&.current_block_offset = 0
-        remainder ::= raw_address % alignment
-        if remainder != 0 { aligned_offset = alignment - remainder }
     }
-
-    active_block : &ArenaBlock = _trusted_dynamic_array_get_ro_ref#(.t: ArenaBlock)(.array = &self&.blocks, .index = length#(.t: ArenaBlock)(.self = &self&.blocks).count - 1).reference
-    address ::= active_block&.data.address + aligned_offset
+    address ::= self&._block_head + aligned_offset
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
     allocation :: Allocation = (
         .data = raw_pointer#(.t: UInt8)(.address = address).raw,
@@ -181,17 +126,10 @@ allocate(
         .anchor = cast#(.to: &Any)(.value = $&self&.domain),
         .deallocator = deallocator,
     )
-    self&.current_block_offset = aligned_offset + required
+    self&._current_block_offset = aligned_offset + required
     result = ..ok ~allocation
 }
 
-deallocate(
-    .self: $&ArenaAllocator,
-    .data: RawPointer#(.t: UInt8),
-    .size: UIntNative,
-    .alignment: UIntNative,
-) -> () := {
-}
-
+deallocate(.self: $&ArenaAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {}
 ArenaAllocator implements Allocator
 ArenaAllocator implements Deallocator

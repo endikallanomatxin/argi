@@ -14,8 +14,8 @@ alloc_one(
     }
 }
 
-main() -> (.status_code: Int32) := {
-    allocator_storage :: PageAllocator = PageAllocator()
+main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage :: PageAllocator = PageAllocator(.memory = system.memory)
     assume allocator ::= $&allocator_storage
     allocated ::= alloc_one(.allocator = $&allocator_storage)
     if is(.value = allocated, .variant = ..error) {

@@ -24,10 +24,11 @@ make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Trac
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
     array ::= DynamicArray#(.t: Tracked)(.capacity = 1)
-    made ::= make_tracked(.allocator = system.allocator, .id = 7)
+    made ::= make_tracked(.allocator = $&allocator_storage, .id = 7)
     match made {
         ..error _ {
             deinit#(.t: Tracked)(.self = $&array)

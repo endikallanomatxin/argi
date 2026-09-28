@@ -4,8 +4,8 @@ store_wrapper#(.t: Type)(.slot: $&t, .value: t) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    source_result ::= allocate(.self = system.allocator, .size = 1)
-    slot_result ::= allocate(.self = system.allocator, .size = size_of(.type = Allocation))
+    source_result ::= allocate(.self = system.page_allocator, .size = 1)
+    slot_result ::= allocate(.self = system.page_allocator, .size = size_of(.type = Allocation))
 
     match source_result {
         ..error _ { status_code = 1 }

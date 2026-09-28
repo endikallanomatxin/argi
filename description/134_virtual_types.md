@@ -41,8 +41,12 @@ Virtual#(.abstract: Abstract) : Type = (
 ## Creación
 
 ```argi
+allocator_storage :: GeneralPurposeAllocator = GeneralPurposeAllocator(
+  .backing_allocator = system.page_allocator,
+)
+assume allocator ::= $&allocator_storage
 s : Rectangle = (1, 2)
-vs := s | to_virtual(_, Shape, system.allocator)
+vs := s | to_virtual(_, Shape, allocator)
 ```
 
 ## Uso

@@ -3,7 +3,8 @@ measure(.view: StringView) -> (.count: UIntNative) := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
     text ::= String(.length = 4)
     bytes_set(.string = $&text, .index = 0, .value = 65)
@@ -16,10 +17,10 @@ main(.system: System) -> (.status_code: Int32) := {
 
     if measure(.view = second_view).count != 4 {
         status_code = 1
-        deinit(.self = $&text, .allocator = system.allocator)
+        deinit(.self = $&text, .allocator = $&allocator_storage)
         return
     }
 
-    deinit(.self = $&text, .allocator = system.allocator)
+    deinit(.self = $&text, .allocator = $&allocator_storage)
     status_code = 0
 }

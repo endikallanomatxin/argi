@@ -7,9 +7,10 @@ store_one(.storage: $&Allocation, .slot: $&BorrowingOwner, .value: BorrowingOwne
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    external_result ::= allocate(.self = system.allocator, .size = 1)
-    slots_result ::= allocate(.self = system.allocator, .size = size_of(.type = BorrowingOwner))
-    owned_result ::= allocate(.self = system.allocator, .size = 1)
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    external_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    slots_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = BorrowingOwner))
+    owned_result ::= allocate(.self = $&allocator_storage, .size = 1)
     match external_result {
         ..error _ { status_code = 1 }
         ..ok ~ external_payload {

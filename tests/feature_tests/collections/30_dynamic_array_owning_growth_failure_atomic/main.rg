@@ -26,12 +26,15 @@ make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Trac
 }
 
 FailSecondAllocator : Type = (
+    .ffi: $&ForeignFunctionInterface
     .allocations: Int32
     .deallocations: Int32
 )
 
-init(.p: $&FailSecondAllocator) -> () := {
-    p& = (.allocations = 0, .deallocations = 0)
+init(.p: $&FailSecondAllocator, .ffi: $&ForeignFunctionInterface) -> () := {
+    p&.ffi = ffi
+    p&.allocations = 0
+    p&.deallocations = 0
 }
 
 allocate(.self: $&FailSecondAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
@@ -40,7 +43,7 @@ allocate(.self: $&FailSecondAllocator, .size: UIntNative, .alignment: UIntNative
         return
     }
     self&.allocations = self&.allocations + 1
-    storage ::= malloc(.size = size)
+    storage ::= malloc(.size = size, .ffi = self&.ffi)
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
     allocation ::= establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
     result = ..ok ~allocation
@@ -49,18 +52,19 @@ allocate(.self: $&FailSecondAllocator, .size: UIntNative, .alignment: UIntNative
 deallocate(.self: $&FailSecondAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
     self&.deallocations = self&.deallocations + 1
     address :: UIntNative = data.address
-    free(.address = address)
+    free(.address = address, .ffi = self&.ffi)
 }
 
 FailSecondAllocator implements Allocator
 FailSecondAllocator implements Deallocator
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
-    backing ::= FailSecondAllocator()
+    backing ::= FailSecondAllocator(.ffi = system.ffi)
     array ::= DynamicArray#(.t: Tracked)(.allocator = $&backing, .capacity = 1)
-    first_result ::= make_tracked(.allocator = system.allocator, .id = 1)
+    first_result ::= make_tracked(.allocator = $&allocator_storage, .id = 1)
     match first_result {
         ..error _ { status_code = 1 }
         ..ok ~ first_payload {
@@ -71,7 +75,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                 return
             }
 
-            second_result ::= make_tracked(.allocator = system.allocator, .id = 2)
+            second_result ::= make_tracked(.allocator = $&allocator_storage, .id = 2)
             match second_result {
                 ..error _ { status_code = 3 }
                 ..ok ~ second_payload {

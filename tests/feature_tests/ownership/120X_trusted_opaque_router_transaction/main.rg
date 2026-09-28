@@ -19,11 +19,12 @@ store_pair(
 }
 
 main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
     route :: Int32 = 7
-    first_result ::= allocate(.self = system.allocator, .size = 1)
-    second_result ::= allocate(.self = system.allocator, .size = 1)
+    first_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    second_result ::= allocate(.self = $&allocator_storage, .size = 1)
     slots_result ::= allocate(
-        .self = system.allocator,
+        .self = $&allocator_storage,
         .size = size_of(.type = Allocation) + size_of(.type = Router),
     )
 

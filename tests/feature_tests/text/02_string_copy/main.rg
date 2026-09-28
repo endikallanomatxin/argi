@@ -1,5 +1,6 @@
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
     original ::= String(.length = 3)
     bytes_set(.string = $&original, .index = 0, .value = 65)
     bytes_set(.string = $&original, .index = 1, .value = 114)

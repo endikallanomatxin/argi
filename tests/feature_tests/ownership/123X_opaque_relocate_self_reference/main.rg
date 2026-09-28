@@ -5,11 +5,12 @@ SelfRef : Type = (
 )
 
 main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
     seed :: Int32 = 0
     value :: SelfRef = (.value = 7, .reference = &seed)
     value.reference = &value.value
 
-    slots_result ::= allocate(.self = system.allocator, .size = size_of(.type = SelfRef))
+    slots_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = SelfRef))
     match slots_result {
         ..error _ { status_code = 1 }
         ..ok ~ slots_payload {

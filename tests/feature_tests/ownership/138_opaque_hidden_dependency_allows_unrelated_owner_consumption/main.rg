@@ -6,10 +6,10 @@ Borrowing : Type = (
 external :: UInt8 = 9
 
 main(.system: System) -> (.status_code: Int32) := {
-    c_allocator ::= CAllocator()
+    c_allocator ::= CAllocator(.ffi = system.ffi)
     deallocator ::= to_virtual#(.abstract: Deallocator)(.value = $&c_allocator)
 
-    borrowing_slots_storage ::= malloc(.size = size_of(.type = Borrowing))
+    borrowing_slots_storage ::= malloc(.size = size_of(.type = Borrowing), .ffi = system.ffi)
     borrowing_slots ::= establish_allocation(
         .storage = borrowing_slots_storage,
         .size = size_of(.type = Borrowing),
@@ -24,9 +24,9 @@ main(.system: System) -> (.status_code: Int32) := {
         .source = ~hidden,
     )
 
-    unrelated_storage ::= malloc(.size = 1)
+    unrelated_storage ::= malloc(.size = 1, .ffi = system.ffi)
     unrelated ::= establish_allocation(.storage = unrelated_storage, .size = 1, .alignment = 1, .deallocator = deallocator)
-    owner_slots_storage ::= malloc(.size = size_of(.type = Allocation))
+    owner_slots_storage ::= malloc(.size = size_of(.type = Allocation), .ffi = system.ffi)
     owner_slots ::= establish_allocation(
         .storage = owner_slots_storage,
         .size = size_of(.type = Allocation),

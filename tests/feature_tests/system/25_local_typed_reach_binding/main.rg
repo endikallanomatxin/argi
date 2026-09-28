@@ -1,5 +1,6 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator : $&Allocator = reach allocator, system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator : $&GeneralPurposeAllocator = $&allocator_storage
 
     text :: String = String(.allocator = allocator, .capacity = 3)
     push_c_string(.self = $&text, .text = "ok")

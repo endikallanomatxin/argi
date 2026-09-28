@@ -22,10 +22,11 @@ store_wrapper(.slot: $&Tracked, .value: Tracked) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
     slots_result ::= allocate(
-        .self = system.allocator,
+        .self = $&allocator_storage,
         .size = size_of(.type = Tracked) + size_of(.type = Tracked) + size_of(.type = Tracked),
     )
     match slots_result {

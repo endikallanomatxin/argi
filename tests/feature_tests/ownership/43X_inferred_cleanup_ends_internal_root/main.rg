@@ -8,7 +8,8 @@ release(.self: $&Buffer, .allocator: $&Allocator) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    allocated ::= allocate(.self = system.allocator, .size = 1)
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    allocated ::= allocate(.self = $&allocator_storage, .size = 1)
     match allocated {
     ..error _ { status_code = 1 }
     ..ok ~ payload {
@@ -16,7 +17,7 @@ main(.system: System) -> (.status_code: Int32) := {
     buffer :: Buffer = (.allocation = ~allocation)
     alias ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&buffer.allocation, .offset = 0).reference
 
-    release(.self = $&buffer, .allocator = system.allocator)
+    release(.self = $&buffer, .allocator = $&allocator_storage)
     if alias& == 0 {
         status_code = 0
     }

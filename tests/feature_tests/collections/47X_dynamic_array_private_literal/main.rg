@@ -1,6 +1,6 @@
 main (.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
-    allocated ::= allocate(.self = system.allocator, .size = 4)
+    assume allocator ::= $&allocator_storage
+    allocated ::= allocate(.self = $&allocator_storage, .size = 4)
     match allocated {
         ..ok ~ payload {
             array :: DynamicArray#(.t: Int32) = (

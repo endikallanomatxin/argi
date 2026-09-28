@@ -1,11 +1,12 @@
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
     arr ::= DynamicArray#(.t: Int32)(.capacity = 2)
-    #defer deinit(.self = $&arr, .allocator = system.allocator)
+    #defer deinit(.self = $&arr, .allocator = $&allocator_storage)
 
-    push(.self = $&arr, .value = 10, .allocator = system.allocator)
-    push(.self = $&arr, .value = 20, .allocator = system.allocator)
+    push(.self = $&arr, .value = 10, .allocator = $&allocator_storage)
+    push(.self = $&arr, .value = 20, .allocator = $&allocator_storage)
 
     first_ptr_result ::= get_rw_ref(.self = $&arr, .index = 0).result
     if is(.value = first_ptr_result, .variant = ..error) {

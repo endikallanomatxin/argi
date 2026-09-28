@@ -1,14 +1,15 @@
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
-    left :: String = String(.allocator = system.allocator, .length = 5)
+    left :: String = String(.allocator = $&allocator_storage, .length = 5)
     bytes_set(.string = $&left, .index = 0, .value = 104)
     bytes_set(.string = $&left, .index = 1, .value = 101)
     bytes_set(.string = $&left, .index = 2, .value = 108)
     bytes_set(.string = $&left, .index = 3, .value = 108)
     bytes_set(.string = $&left, .index = 4, .value = 111)
 
-    right :: String = String(.allocator = system.allocator, .length = 6)
+    right :: String = String(.allocator = $&allocator_storage, .length = 6)
     bytes_set(.string = $&right, .index = 0, .value = 32)
     bytes_set(.string = $&right, .index = 1, .value = 119)
     bytes_set(.string = $&right, .index = 2, .value = 111)

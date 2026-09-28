@@ -137,7 +137,7 @@ copies of the value.
 Some named arguments may be declared as *reached arguments*:
 
 ```argi
-allocate(.allocator: $&Allocator = reach allocator, system.allocator, .size: UIntNative) -> (.out: Allocation) := {
+allocate(.allocator: $&Allocator = reach allocator, .size: UIntNative) -> (.out: Allocation) := {
     ...
 }
 ```
@@ -163,7 +163,10 @@ access uses ordinary named functions. For example, `get` needs only the array
 and index; operations that allocate, such as `push`, also take an allocator:
 
 ```rg
-assume allocator ::= system.allocator
+allocator_storage :: GeneralPurposeAllocator = GeneralPurposeAllocator(
+    .backing_allocator = system.page_allocator,
+)
+assume allocator ::= $&allocator_storage
 push(.self = $&arr, .value = 42)
 value_result ::= get(.self = &arr, .index = 0).result
 ```
@@ -270,7 +273,10 @@ variable or evaluate an initializer. It can also prefix a normal variable
 declaration, which declares and enables the binding in one statement:
 
 ```argi
-assume allocator := system.allocator
+allocator_storage :: GeneralPurposeAllocator = GeneralPurposeAllocator(
+    .backing_allocator = system.page_allocator,
+)
+assume allocator ::= $&allocator_storage
 text ::= String(.capacity = 16)
 ```
 

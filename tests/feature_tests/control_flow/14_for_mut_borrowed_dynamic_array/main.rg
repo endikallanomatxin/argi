@@ -1,10 +1,11 @@
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
     dyn ::= DynamicArray#(.t: Int32)(.capacity = 2)
-    #defer deinit(.self = $&dyn, .allocator = system.allocator)
-    push(.self = $&dyn, .value = 7, .allocator = system.allocator)
-    push(.self = $&dyn, .value = 8, .allocator = system.allocator)
+    #defer deinit(.self = $&dyn, .allocator = $&allocator_storage)
+    push(.self = $&dyn, .value = 7, .allocator = $&allocator_storage)
+    push(.self = $&dyn, .value = 8, .allocator = $&allocator_storage)
 
     for $& value in dyn {
         value& = value& + 10

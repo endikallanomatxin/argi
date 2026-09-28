@@ -27,14 +27,18 @@ make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Trac
     }
 }
 
-BackingAllocator : Type = ()
+BackingAllocator : Type = (
+    .ffi: $&ForeignFunctionInterface
+)
 backing_deallocations :: Int32 = 0
 backing_freed_after_elements :: Bool = false
 
-init(.p: $&BackingAllocator) -> () := {}
+init(.p: $&BackingAllocator, .ffi: $&ForeignFunctionInterface) -> () := {
+    p&.ffi = ffi
+}
 
 allocate(.self: $&BackingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
-    storage ::= malloc(.size = size)
+    storage ::= malloc(.size = size, .ffi = self&.ffi)
     address :: UIntNative = cast#(.to: UIntNative)(.value = storage)
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
     allocation ::= establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
@@ -45,29 +49,30 @@ deallocate(.self: $&BackingAllocator, .data: RawPointer#(.t: UInt8), .size: UInt
     backing_freed_after_elements = first_drops == 1 and second_drops == 1 and third_drops == 1
     backing_deallocations = backing_deallocations + 1
     address :: UIntNative = data.address
-    free(.address = address)
+    free(.address = address, .ffi = self&.ffi)
 }
 
 BackingAllocator implements Allocator
 BackingAllocator implements Deallocator
 
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
-    backing :: BackingAllocator = BackingAllocator()
+    backing :: BackingAllocator = BackingAllocator(.ffi = system.ffi)
     array ::= DynamicArray#(.t: Tracked)(.allocator = $&backing, .capacity = 3)
 
-    first_result ::= make_tracked(.allocator = system.allocator, .id = 1)
+    first_result ::= make_tracked(.allocator = $&allocator_storage, .id = 1)
     match first_result {
         ..error _ { status_code = 10 }
         ..ok ~ first_payload {
             first ::= ~first_payload
-            second_result ::= make_tracked(.allocator = system.allocator, .id = 2)
+            second_result ::= make_tracked(.allocator = $&allocator_storage, .id = 2)
             match second_result {
                 ..error _ { status_code = 11 }
                 ..ok ~ second_payload {
                     second ::= ~second_payload
-                    third_result ::= make_tracked(.allocator = system.allocator, .id = 3)
+                    third_result ::= make_tracked(.allocator = $&allocator_storage, .id = 3)
                     match third_result {
                         ..error _ { status_code = 12 }
                         ..ok ~ third_payload {

@@ -7,7 +7,8 @@ deinit(.self: $&Value) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    first_result ::= allocate(.self = system.allocator, .size = size_of(.type = Value))
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    first_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Value))
     match first_result {
         ..error _ { status_code = 1 }
         ..ok ~ first_payload {
@@ -22,7 +23,7 @@ main(.system: System) -> (.status_code: Int32) := {
             trusted_opaque_drop(.slot = stale_slot)
             deinit(.self = $&slots)
 
-            second_result ::= allocate(.self = system.allocator, .size = size_of(.type = Value))
+            second_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Value))
             match second_result {
                 ..error _ { status_code = 2 }
                 ..ok ~ second_payload {

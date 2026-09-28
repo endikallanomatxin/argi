@@ -1,13 +1,15 @@
 CountingAllocator : Type = (
+    .ffi: $&ForeignFunctionInterface
     .last_alloc_size: UIntNative = 0
     .alloc_count: Int32 = 0
     .dealloc_count: Int32 = 0
 )
 
 allocate(.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
-    storage ::= malloc(.size = size)
+    storage ::= malloc(.size = size, .ffi = self&.ffi)
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = storage)
     self& = (
+        .ffi = self&.ffi,
         .last_alloc_size = size,
         .alloc_count = self&.alloc_count + 1,
         .dealloc_count = self&.dealloc_count,
@@ -19,8 +21,9 @@ allocate(.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative =
 
 deallocate(.self: $&CountingAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
     raw_addr :: UIntNative = data.address
-    free(.address = raw_addr)
+    free(.address = raw_addr, .ffi = self&.ffi)
     self& = (
+        .ffi = self&.ffi,
         .last_alloc_size = self&.last_alloc_size,
         .alloc_count = self&.alloc_count,
         .dealloc_count = self&.dealloc_count + 1,
@@ -30,8 +33,9 @@ deallocate(.self: $&CountingAllocator, .data: RawPointer#(.t: UInt8), .size: UIn
 CountingAllocator implements Allocator
 CountingAllocator implements Deallocator
 
-main() -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
     allocator_storage :: CountingAllocator = (
+        .ffi = system.ffi,
         .last_alloc_size = 0,
         .alloc_count = 0,
         .dealloc_count = 0,

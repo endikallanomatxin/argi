@@ -1,7 +1,8 @@
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
-    buffer ::= String(.allocator = system.allocator, .capacity = 8)
+    buffer ::= String(.allocator = $&allocator_storage, .capacity = 8)
 
     match push_byte(.self = $&buffer, .byte = 79) {
         ..ok _ {
@@ -38,6 +39,6 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    deinit(.self = $&buffer, .allocator = system.allocator)
+    deinit(.self = $&buffer, .allocator = $&allocator_storage)
     status_code = 0
 }

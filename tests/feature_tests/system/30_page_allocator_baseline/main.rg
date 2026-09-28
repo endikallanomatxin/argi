@@ -1,5 +1,5 @@
-main() -> (.status_code: Int32) := {
-    allocator_storage :: PageAllocator = PageAllocator()
+main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage :: PageAllocator = PageAllocator(.memory = system.memory)
     assume allocator ::= $&allocator_storage
 
     if allocator_storage.page_size == 0 {

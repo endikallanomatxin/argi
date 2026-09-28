@@ -1,5 +1,6 @@
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
     home_string ::= String(.length = 4)
     bytes_set(.string = $&home_string, .index = 0, .value = 72)
@@ -28,6 +29,6 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    deinit(.self = $&home_string, .allocator = system.allocator)
+    deinit(.self = $&home_string, .allocator = $&allocator_storage)
     status_code = 0
 }

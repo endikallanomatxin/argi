@@ -8,13 +8,14 @@ initialize_left(.p: $&Allocation, .value: Allocation) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
-    left_result ::= allocate(.self = system.allocator, .size = 1)
+    left_result ::= allocate(.self = $&allocator_storage, .size = 1)
     match left_result {
         ..error _ { status_code = 1 }
         ..ok ~ left_payload {
-            right_result ::= allocate(.self = system.allocator, .size = 2)
+            right_result ::= allocate(.self = $&allocator_storage, .size = 2)
             match right_result {
                 ..error _ { status_code = 2 }
                 ..ok ~ right_payload {
@@ -22,7 +23,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     sibling ::= &pair.right
                     deinit(.self = $&pair.left)
 
-                    replacement_result ::= allocate(.self = system.allocator, .size = 3)
+                    replacement_result ::= allocate(.self = $&allocator_storage, .size = 3)
                     match replacement_result {
                         ..error _ { status_code = 3 }
                         ..ok ~ replacement_payload {

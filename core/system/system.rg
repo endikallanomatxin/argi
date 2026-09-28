@@ -1,6 +1,7 @@
 -- References to resources owned by the checked program entry scope.
 System : Type = (
-  .allocator : $&GeneralPurposeAllocator
+  .memory    : $&Memory
+  .page_allocator: $&PageAllocator
   .terminal  : $&Terminal
   .args      : $&Arguments
   .env_vars  : $&EnvironmentVariables

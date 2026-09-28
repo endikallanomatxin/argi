@@ -1,5 +1,6 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
     array ::= DynamicArray#(.t: Int32)(.capacity = 1)
     first_push ::= push#(.t: Int32)(.self = $&array, .value = 10)
     if is(.value = first_push, .variant = ..error) {

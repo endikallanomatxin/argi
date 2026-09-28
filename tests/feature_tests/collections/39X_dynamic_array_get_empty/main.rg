@@ -1,5 +1,6 @@
 main (.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
     values :: DynamicArray#(.t: Int32) = DynamicArray#(.t: Int32)(.capacity = 1)
     #defer deinit(.self = $&values)
 

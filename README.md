@@ -13,6 +13,9 @@ It’s an early work-in-progress.
 
 - 🧩 Consistency and simplicity.
 - 🧮 Manual but very ergonomic memory management.
+- 🧰 Explicit allocator composition: programs choose a backing allocator for
+  general-purpose and arena storage; allocating functions take it as an
+  argument.
 - 🎯 Explicitness without annoyance:
   - ⚠️ Side-effects are always explicit.
   - 🔐 Capability-based design for resource management.

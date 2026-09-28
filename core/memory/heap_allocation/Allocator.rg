@@ -39,9 +39,12 @@ allocate#(.t: Type)(.self: $&Allocator) -> (.result: Errable#(.t: Allocation, .r
     result = allocate#(.t: t)(.self = self, .count = 1)
 }
 
-CAllocator : Type = ()
+CAllocator : Type = (
+    .ffi: $&ForeignFunctionInterface
+)
 
-init(.p: $&CAllocator) -> () := {
+init(.p: $&CAllocator, .ffi: $&ForeignFunctionInterface) -> () := {
+    p&.ffi = ffi
 }
 
 allocate(.self: $&CAllocator, .size: UIntNative, .alignment: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
@@ -60,7 +63,7 @@ allocate(.self: $&CAllocator, .size: UIntNative, .alignment: UIntNative) -> (.re
             return
         }
     }
-    address ::= aligned_alloc(.alignment = physical_alignment, .size = physical_size).address
+    address ::= aligned_alloc(.alignment = physical_alignment, .size = physical_size, .ffi = self&.ffi).address
     if address == 0 {
         result = ..error(.reason = ..out_of_memory)
         return
@@ -71,12 +74,11 @@ allocate(.self: $&CAllocator, .size: UIntNative, .alignment: UIntNative) -> (.re
 }
 
 deallocate(.self: $&CAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
-    free(.address = data.address)
+    free(.address = data.address, .ffi = self&.ffi)
 }
 
 CAllocator implements Allocator
 CAllocator implements Deallocator
-Allocator defaultsto GeneralPurposeAllocator
 
 -- Heap storage needs no region lifetime beyond its own root. This initialized
 -- marker gives the uniform anchor field a stable lifetime without making the

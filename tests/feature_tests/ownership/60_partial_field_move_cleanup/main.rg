@@ -1,12 +1,14 @@
 CountingAllocator : Type = (
+    .ffi: $&ForeignFunctionInterface
     .alloc_count: Int32 = 0
     .dealloc_count: Int32 = 0
 )
 
 allocate(.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
-    storage ::= malloc(.size = size)
+    storage ::= malloc(.size = size, .ffi = self&.ffi)
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = storage)
     self& = (
+        .ffi = self&.ffi,
         .alloc_count = self&.alloc_count + 1,
         .dealloc_count = self&.dealloc_count,
     )
@@ -17,8 +19,9 @@ allocate(.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative =
 
 deallocate(.self: $&CountingAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
     raw_addr :: UIntNative = data.address
-    free(.address = raw_addr)
+    free(.address = raw_addr, .ffi = self&.ffi)
     self& = (
+        .ffi = self&.ffi,
         .alloc_count = self&.alloc_count,
         .dealloc_count = self&.dealloc_count + 1,
     )
@@ -82,8 +85,8 @@ run_branch(.allocator: $&CountingAllocator, .condition: Bool) -> (.result: Errab
     }
 }
 
-main() -> (.status_code: Int32) := {
-    allocator_storage :: CountingAllocator = CountingAllocator()
+main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage :: CountingAllocator = CountingAllocator(.ffi = system.ffi)
     assume allocator ::= $&allocator_storage
 
     if 1 == 1 {

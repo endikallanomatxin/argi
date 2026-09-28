@@ -2,6 +2,7 @@
 -- the second. The links are raw addresses, so moving metadata does not end
 -- the independent temporal roots of allocations returned to callers.
 _GeneralPurposeBucket : Type = (
+    .storage: Allocation
     .next: UIntNative
     .slot_size: UIntNative
     .next_slot: UIntNative
@@ -9,6 +10,8 @@ _GeneralPurposeBucket : Type = (
 )
 
 _GeneralPurposeLarge : Type = (
+    .metadata: Allocation
+    .storage: Allocation
     .next: UIntNative
     .address: UIntNative
     .size: UIntNative
@@ -16,16 +19,17 @@ _GeneralPurposeLarge : Type = (
 )
 
 GeneralPurposeAllocator : Type = (
-    .page_size: UIntNative
-    .bucket_head: UIntNative
-    .large_head: UIntNative
+    ._backing_allocator: Virtual#(.abstract: Allocator)
+    ._page_size: UIntNative
+    ._bucket_head: UIntNative
+    ._large_head: UIntNative
 )
 
-init(.p: $&GeneralPurposeAllocator) -> () := {
-    p&.page_size = getpagesize().size
-    if p&.page_size == 0 { p&.page_size = 4096 }
-    p&.bucket_head = 0
-    p&.large_head = 0
+init(.p: $&GeneralPurposeAllocator, .backing_allocator: $&Allocator) -> () := {
+    p&._backing_allocator = to_virtual#(.abstract: Allocator)(.value = backing_allocator)
+    p&._page_size = 4096
+    p&._bucket_head = 0
+    p&._large_head = 0
 }
 
 -- Only bundled core may turn the allocator's live metadata address into a
@@ -40,8 +44,8 @@ _trusted_general_purpose_large(.address: UIntNative, .owner: $&GeneralPurposeAll
     record = establish_inherited_reference#(.t: _GeneralPurposeLarge)(.raw = raw, .root = cast#(.to: &Any)(.value = owner)).reference
 }
 
--- Anonymous mappings start zero-filled. The bitmap occupies the remainder
--- of the metadata page after _GeneralPurposeBucket.
+-- The bitmap follows _GeneralPurposeBucket in the first backing page and is
+-- initialized explicitly, regardless of the backing allocator's contents.
 _trusted_general_purpose_used_word(
     .bucket_address: UIntNative,
     .slot: UIntNative,
@@ -79,10 +83,10 @@ _general_purpose_small_address(
     .self: $&GeneralPurposeAllocator,
     .slot_size: UIntNative,
 ) -> (.result: Errable#(.t: UIntNative, .reasons: (..out_of_memory))) := {
-    bucket_address :: UIntNative = self&.bucket_head
+    bucket_address :: UIntNative = self&._bucket_head
     while bucket_address != 0 {
         bucket ::= _trusted_general_purpose_bucket(.address = bucket_address, .owner = self).bucket
-        if bucket&.slot_size == slot_size and bucket&.next_slot < self&.page_size / slot_size {
+        if bucket&.slot_size == slot_size and bucket&.next_slot < self&._page_size / slot_size {
             slot ::= bucket&.next_slot
             bits_per_word ::= size_of(.type = UIntNative) * 8
             bit ::= _general_purpose_bit(.index = slot % bits_per_word).bit
@@ -90,31 +94,44 @@ _general_purpose_small_address(
             word& = word& + bit
             bucket&.next_slot = slot + 1
             bucket&.live_count = bucket&.live_count + 1
-            address ::= bucket_address + self&.page_size + slot * slot_size
+            address ::= bucket_address + self&._page_size + slot * slot_size
             result = ..ok address
             return
         }
         bucket_address = bucket&.next
     }
 
-    mapping_size ::= self&.page_size * 2
-    if mapping_size < self&.page_size {
+    mapping_size ::= self&._page_size * 2
+    if mapping_size < self&._page_size {
         result = ..error(.reason = ..out_of_memory)
         return
     }
-    mapped_address ::= _page_allocator_map_anonymous(.length = mapping_size).address
-    if mapped_address + 1 == 0 {
-        result = ..error(.reason = ..out_of_memory)
-        return
+    allocated ::= allocate(.self = $&self&._backing_allocator, .size = mapping_size, .alignment = self&._page_size)
+    match allocated {
+        ..error _ { result = ..error(.reason = ..out_of_memory) }
+        ..ok ~ payload {
+            backing ::= ~payload
+            mapped_address ::= backing.data.address
+            bucket ::= _trusted_general_purpose_bucket(.address = mapped_address, .owner = self).bucket
+            trusted_opaque_move(.destination = $&bucket&.storage, .source = ~backing)
+            bucket&.next = self&._bucket_head
+            bucket&.slot_size = slot_size
+            bucket&.next_slot = 1
+            bucket&.live_count = 1
+            word_count ::= self&._page_size / slot_size
+            slot :: UIntNative = 0
+            while slot < word_count {
+                word ::= _trusted_general_purpose_used_word(.bucket_address = mapped_address, .slot = slot, .owner = self).word
+                word& = 0
+                slot = slot + size_of(.type = UIntNative) * 8
+            }
+            word ::= _trusted_general_purpose_used_word(.bucket_address = mapped_address, .slot = 0, .owner = self).word
+            word& = 1
+            self&._bucket_head = mapped_address
+            address ::= mapped_address + self&._page_size
+            result = ..ok address
+        }
     }
-    bucket ::= _trusted_general_purpose_bucket(.address = mapped_address, .owner = self).bucket
-    one :: UIntNative = 1
-    bucket& = (.next = self&.bucket_head, .slot_size = slot_size, .next_slot = one, .live_count = one)
-    word ::= _trusted_general_purpose_used_word(.bucket_address = mapped_address, .slot = 0, .owner = self).word
-    word& = one
-    self&.bucket_head = mapped_address
-    address ::= mapped_address + self&.page_size
-    result = ..ok address
 }
 
 _general_purpose_large_address(
@@ -122,21 +139,33 @@ _general_purpose_large_address(
     .size: UIntNative,
     .alignment: UIntNative,
 ) -> (.result: Errable#(.t: UIntNative, .reasons: (..out_of_memory))) := {
-    mapped ::= _page_allocator_map_aligned(.size = size, .alignment = alignment, .page_size = self&.page_size)
-    match mapped {
+    allocated ::= allocate(.self = $&self&._backing_allocator, .size = size, .alignment = alignment)
+    match allocated {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
-        ..ok address {
-            record_address ::= _page_allocator_map_anonymous(.length = self&.page_size).address
-            if record_address + 1 == 0 {
-                mapped_size ::= page_allocator_round_up(.size = size, .alignment = self&.page_size).rounded
-                if munmap(.address = address, .length = mapped_size).status != 0 { abort }
-                result = ..error(.reason = ..out_of_memory)
-                return
+        ..ok ~ payload {
+            backing ::= ~payload
+            metadata ::= allocate(.self = $&self&._backing_allocator, .size = size_of(.type = _GeneralPurposeLarge), .alignment = alignment_of(.type = _GeneralPurposeLarge))
+            match metadata {
+                ..error _ {
+                    deinit(.self = $&backing)
+                    result = ..error(.reason = ..out_of_memory)
+                }
+                ..ok ~ metadata_payload {
+                    record_storage ::= ~metadata_payload
+                    record_address ::= record_storage.data.address
+                    record ::= _trusted_general_purpose_large(.address = record_address, .owner = self).record
+                    address ::= backing.data.address
+                    -- Large storage and its metadata retain their own receipts.
+                    trusted_opaque_move(.destination = $&record&.storage, .source = ~backing)
+                    record&.next = self&._large_head
+                    record&.address = address
+                    record&.size = size
+                    record&.alignment = alignment
+                    trusted_opaque_move(.destination = $&record&.metadata, .source = ~record_storage)
+                    self&._large_head = record_address
+                    result = ..ok address
+                }
             }
-            record ::= _trusted_general_purpose_large(.address = record_address, .owner = self).record
-            record& = (.next = self&.large_head, .address = address, .size = size, .alignment = alignment)
-            self&.large_head = record_address
-            result = ..ok address
         }
     }
 }
@@ -149,7 +178,7 @@ allocate(
     _require_allocation_alignment(.alignment = alignment)
     slot_size ::= _general_purpose_slot_size(.size = size, .alignment = alignment).slot_size
     mapped :: Errable#(.t: UIntNative, .reasons: (..out_of_memory))
-    if slot_size > self&.page_size / 2 {
+    if slot_size > self&._page_size / 2 {
         mapped = _general_purpose_large_address(.self = self, .size = size, .alignment = alignment)
     } else {
         mapped = _general_purpose_small_address(.self = self, .slot_size = slot_size)
@@ -171,23 +200,24 @@ deallocate(
     .alignment: UIntNative,
 ) -> () := {
     slot_size ::= _general_purpose_slot_size(.size = size, .alignment = alignment).slot_size
-    if slot_size > self&.page_size / 2 {
+    if slot_size > self&._page_size / 2 {
         previous_address :: UIntNative = 0
-        record_address :: UIntNative = self&.large_head
+        record_address :: UIntNative = self&._large_head
         while record_address != 0 {
             record ::= _trusted_general_purpose_large(.address = record_address, .owner = self).record
             if record&.address == data.address {
                 if record&.size != size or record&.alignment != alignment { abort }
                 next_address ::= record&.next
                 if previous_address == 0 {
-                    self&.large_head = next_address
+                    self&._large_head = next_address
                 } else {
                     previous ::= _trusted_general_purpose_large(.address = previous_address, .owner = self).record
                     previous&.next = next_address
                 }
-                mapped_size ::= page_allocator_round_up(.size = size, .alignment = self&.page_size).rounded
-                if munmap(.address = data.address, .length = mapped_size).status != 0 { abort }
-                if munmap(.address = record_address, .length = self&.page_size).status != 0 { abort }
+                storage ::= trusted_opaque_move_out#(.t: Allocation, .storage_type: _GeneralPurposeLarge)(.storage = record, .slot = $&record&.storage).result
+                metadata ::= trusted_opaque_move_out#(.t: Allocation, .storage_type: _GeneralPurposeLarge)(.storage = record, .slot = $&record&.metadata).result
+                deinit(.self = $&storage)
+                deinit(.self = $&metadata)
                 return
             }
             previous_address = record_address
@@ -197,11 +227,11 @@ deallocate(
         return
     }
     previous_address :: UIntNative = 0
-    bucket_address :: UIntNative = self&.bucket_head
+    bucket_address :: UIntNative = self&._bucket_head
     while bucket_address != 0 {
         bucket ::= _trusted_general_purpose_bucket(.address = bucket_address, .owner = self).bucket
-        data_start ::= bucket_address + self&.page_size
-        if data.address >= data_start and data.address - data_start < self&.page_size {
+        data_start ::= bucket_address + self&._page_size
+        if data.address >= data_start and data.address - data_start < self&._page_size {
             if bucket&.slot_size != slot_size { abort }
             offset ::= data.address - data_start
             if offset % slot_size != 0 { abort }
@@ -217,12 +247,13 @@ deallocate(
             if bucket&.live_count == 0 {
                 next_address ::= bucket&.next
                 if previous_address == 0 {
-                    self&.bucket_head = next_address
+                    self&._bucket_head = next_address
                 } else {
                     previous ::= _trusted_general_purpose_bucket(.address = previous_address, .owner = self).bucket
                     previous&.next = next_address
                 }
-                if munmap(.address = bucket_address, .length = self&.page_size * 2).status != 0 { abort }
+                storage ::= trusted_opaque_move_out#(.t: Allocation, .storage_type: _GeneralPurposeBucket)(.storage = bucket, .slot = $&bucket&.storage).result
+                deinit(.self = $&storage)
             }
             return
         }
@@ -233,7 +264,7 @@ deallocate(
 }
 
 has_live_allocations(.self: &GeneralPurposeAllocator) -> (.has_live: Bool) := {
-    has_live = self&.bucket_head != 0 or self&.large_head != 0
+    has_live = self&._bucket_head != 0 or self&._large_head != 0
 }
 
 GeneralPurposeAllocator implements Allocator

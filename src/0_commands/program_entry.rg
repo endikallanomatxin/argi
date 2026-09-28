@@ -1,8 +1,8 @@
 -- Resource ownership belongs to this checked scope. The host adapter only
 -- records process arguments and calls this function.
 __argi_entry() -> __ARGI_OUTPUT__ := {
-    allocator_storage ::= GeneralPurposeAllocator()
-    assume allocator := $&allocator_storage
+    memory_storage ::= Memory()
+    page_allocator_storage ::= PageAllocator(.memory = $&memory_storage)
 
     terminal_storage ::= Terminal()
     terminal ::= $&terminal_storage
@@ -16,7 +16,8 @@ __argi_entry() -> __ARGI_OUTPUT__ := {
     ffi_storage ::= ForeignFunctionInterface()
 
     system :: System = (
-        .allocator = allocator,
+        .memory = $&memory_storage,
+        .page_allocator = $&page_allocator_storage,
         .terminal = terminal,
         .args = $&args_storage,
         .env_vars = $&env_vars_storage,

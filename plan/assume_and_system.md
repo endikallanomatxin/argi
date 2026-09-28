@@ -22,3 +22,16 @@
 - Validate cleanup, safety rejection of invalid entry lifetimes, and generated IR.
 
 The active release checklist is plan/0.2.md; plan/0.1.md no longer exists.
+
+## Explicit memory policy (implemented and validated)
+
+- The checked entry owns `Memory` and a `PageAllocator` backed by it. System
+  exposes references to these capabilities without selecting program policy.
+- Programs construct `GeneralPurposeAllocator` with an explicit backing
+  allocator and enable it with `assume`; allocating functions retain explicit
+  allocator inputs. Arena blocks also use their chosen backing allocator.
+- Terminal initialization has no allocation; buffered adapters require a
+  program-selected allocator. C allocation wrappers require the FFI capability.
+- Safety applies constructor effects and preserves backing dependencies across
+  erased allocator dispatch. Compiler-generated error-trace allocations remain
+  a separate runtime exception tracked in plan/0.2.md.

@@ -1,8 +1,9 @@
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
     full :: Path = Path(
-        .allocator = system.allocator,
+        .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "/tmp/demo/file.txt"),
     )
 
@@ -53,15 +54,15 @@ main(.system: System) -> (.status_code: Int32) := {
     }
 
     base :: Path = Path(
-        .allocator = system.allocator,
+        .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "/tmp/demo"),
     )
     child :: Path = Path(
-        .allocator = system.allocator,
+        .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "child.txt"),
     )
 
-    joined_result ::= join(.left = &base, .right = &child, .allocator = system.allocator)
+    joined_result ::= join(.left = &base, .right = &child, .allocator = $&allocator_storage)
     match joined_result {
         ..ok ~ payload {
             joined ::= ~payload
@@ -71,7 +72,7 @@ main(.system: System) -> (.status_code: Int32) := {
                 status_code = 8
                 return
             }
-            deinit(.self = $&joined, .allocator = system.allocator)
+            deinit(.self = $&joined, .allocator = $&allocator_storage)
         }
         ..error _ {
             status_code = 9
@@ -79,8 +80,8 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    deinit(.self = $&child, .allocator = system.allocator)
-    deinit(.self = $&base, .allocator = system.allocator)
-    deinit(.self = $&full, .allocator = system.allocator)
+    deinit(.self = $&child, .allocator = $&allocator_storage)
+    deinit(.self = $&base, .allocator = $&allocator_storage)
+    deinit(.self = $&full, .allocator = $&allocator_storage)
     status_code = 0
 }

@@ -36,9 +36,10 @@ flush(.self: $&DummyWriter) -> (.result: Errable#(.t: Void, .reasons: (..stream_
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
-    buffer ::= String(.allocator = system.allocator, .capacity = 16)
+    buffer ::= String(.allocator = $&allocator_storage, .capacity = 16)
     match push_c_string(.self = $&buffer, .text = "OK") {
         ..ok _ {
         }
@@ -53,13 +54,13 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    writer ::= DummyWriter(.allocator = system.allocator)
+    writer ::= DummyWriter(.allocator = $&allocator_storage)
     i :: UIntNative = 0
     while i < buffer.length {
-        write_byte(.self = $&writer, .byte = bytes_get(.string = &buffer, .index = i).byte, .allocator = system.allocator)
+        write_byte(.self = $&writer, .byte = bytes_get(.string = &buffer, .index = i).byte, .allocator = $&allocator_storage)
         i = i + 1
     }
-    write_byte(.self = $&writer, .byte = 10, .allocator = system.allocator)
+    write_byte(.self = $&writer, .byte = 10, .allocator = $&allocator_storage)
 
     if writer.bytes.length != 3 {
         status_code = 2
@@ -82,7 +83,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    deinit(.self = $&buffer, .allocator = system.allocator)
-    deinit(.self = $&writer, .allocator = system.allocator)
+    deinit(.self = $&buffer, .allocator = $&allocator_storage)
+    deinit(.self = $&writer, .allocator = $&allocator_storage)
     status_code = 0
 }

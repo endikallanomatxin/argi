@@ -26,8 +26,8 @@ verify(.counter: $&Int32, .status: $&Int32) -> () := {
     }
 }
 
-main () -> (.status_code: Int32) := {
-    allocator_storage :: CAllocator = CAllocator()
+main (.system: System) -> (.status_code: Int32) := {
+    allocator_storage :: CAllocator = CAllocator(.ffi = system.ffi)
     assume allocator ::= $&allocator_storage
     counter :: Int32 = 0
     status_code = 9

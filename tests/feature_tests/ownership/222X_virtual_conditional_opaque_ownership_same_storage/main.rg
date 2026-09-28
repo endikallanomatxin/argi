@@ -42,8 +42,9 @@ register_keeping(.value: $&Keeping) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    target_result ::= allocate(.self = system.allocator, .size = 1)
-    slot_result ::= allocate(.self = system.allocator, .size = size_of(.type = Borrowing))
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    target_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    slot_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
     match target_result {
         ..error _ { status_code = 1 }
         ..ok ~ target_payload {

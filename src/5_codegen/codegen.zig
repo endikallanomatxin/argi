@@ -206,7 +206,10 @@ pub const CodeGenerator = struct {
 
         if (is_extern) {
             const signature = try self.externSignature(function, name);
-            const name_z = try self.dupZ(name);
+            // Bundled memory bindings remain module-private in Argi while
+            // resolving the platform's public C symbols at link time.
+            const external_name = self.externSymbolName(function, name);
+            const name_z = try self.dupZ(external_name);
             const ref = c.LLVMAddFunction(self.module, name_z.ptr, signature.fn_type);
             if (signature.uses_sret) {
                 const kind = c.LLVMGetEnumAttributeKindForName("sret", 4);
@@ -240,6 +243,23 @@ pub const CodeGenerator = struct {
 
     const ExternSignature = struct { fn_type: llvm.c.LLVMTypeRef, return_type: llvm.c.LLVMTypeRef, uses_sret: bool };
 
+    fn externSymbolName(self: *CodeGenerator, function: graph_mod.Function, name: []const u8) []const u8 {
+        const source = self.graph.declaration(function.declaration).source;
+        if (source.file_index >= self.graph.files.items.len) return name;
+        const file = self.graph.files.items[source.file_index];
+        if (!self.graph.modules.items[@intFromEnum(file.module)].is_bundled_core) return name;
+        const aliases = .{
+            .{ "_memory_mmap", "mmap" },
+            .{ "_memory_munmap", "munmap" },
+            .{ "_memory_getpagesize", "getpagesize" },
+            .{ "_malloc", "malloc" },
+            .{ "_aligned_alloc", "aligned_alloc" },
+            .{ "_free", "free" },
+        };
+        inline for (aliases) |alias| if (std.mem.eql(u8, name, alias[0])) return alias[1];
+        return name;
+    }
+
     fn externSignature(self: *CodeGenerator, function: graph_mod.Function, name: []const u8) !ExternSignature {
         const uses_sret = function.output.len > 1;
         const total: usize = function.input.len + @as(usize, if (uses_sret) 1 else 0);
@@ -252,7 +272,7 @@ pub const CodeGenerator = struct {
         }
         for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index|
             params[cursor + index] = try self.toLLVMType(field.ty);
-        if (std.mem.eql(u8, name, "free") and function.input.len == 1)
+        if (std.mem.eql(u8, self.externSymbolName(function, name), "free") and function.input.len == 1)
             params[cursor] = c.LLVMPointerType(c.LLVMInt8Type(), 0);
 
         var ret = c.LLVMVoidType();
@@ -1375,13 +1395,16 @@ pub const CodeGenerator = struct {
     }
 
     fn callRuntimeAllocation(self: *CodeGenerator, size: llvm.c.LLVMValueRef) !llvm.c.LLVMValueRef {
-        const function = try self.runtimeFunction("malloc");
+        // TODO: Error traces still allocate implicitly through libc. Give trace
+        // storage an explicit policy before claiming allocation-free error
+        // propagation; these private bindings preserve the existing behavior.
+        const function = try self.runtimeFunction("_malloc");
         var arguments = [_]llvm.c.LLVMValueRef{size};
         return c.LLVMBuildCall2(self.builder, function.type_ref, function.ref, &arguments, 1, "trace.malloc");
     }
 
     fn callRuntimeFree(self: *CodeGenerator, pointer: llvm.c.LLVMValueRef) !void {
-        const function = try self.runtimeFunction("free");
+        const function = try self.runtimeFunction("_free");
         var arguments = [_]llvm.c.LLVMValueRef{pointer};
         _ = c.LLVMBuildCall2(self.builder, function.type_ref, function.ref, &arguments, 1, "");
     }
@@ -1677,7 +1700,7 @@ pub const CodeGenerator = struct {
         const name = self.graph.text(declaration.name);
         for (self.graph.fields.items[callee.input.start..][0..callee.input.len], 0..) |field, index| {
             const raw = c.LLVMBuildExtractValue(self.builder, input.value_ref, @intCast(index), "extern.arg");
-            if (std.mem.eql(u8, name, "free") and callee.input.len == 1)
+            if (std.mem.eql(u8, self.externSymbolName(callee, name), "free") and callee.input.len == 1)
                 args[cursor + index] = c.LLVMBuildIntToPtr(self.builder, raw, c.LLVMPointerType(c.LLVMInt8Type(), 0), "free.address")
             else
                 args[cursor + index] = raw;

@@ -15,11 +15,12 @@ restrict_twice#(.t: Type)(.input: t, .first: &Any, .second: &Any) -> (.reference
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
-    source_result ::= allocate(.self = system.allocator, .size = 1)
-    first_result ::= allocate(.self = system.allocator, .size = 1)
-    second_result ::= allocate(.self = system.allocator, .size = 1)
+    source_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    first_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    second_result ::= allocate(.self = $&allocator_storage, .size = 1)
     match source_result {
         ..error _ { status_code = 1 }
         ..ok ~ source_payload {

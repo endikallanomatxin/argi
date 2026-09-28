@@ -2276,9 +2276,11 @@ test "feature_tests/collections/45X_array_view_out_of_bounds" {
 }
 
 test "feature_tests/collections/46X_dynamic_array_private_field" {
-    try buildExpectFail(
-        "tests/feature_tests/collections/46X_dynamic_array_private_field",
-        "field '_length' is private to its module",
+    try buildExpectFailExact("tests/feature_tests/collections/46X_dynamic_array_private_field",
+        \\tests/feature_tests/collections/46X_dynamic_array_private_field/main.rg:5:11: error: field '_length' is private to its module
+        \\      array._length = 100
+        \\            ^
+        \\
     );
 }
 
@@ -3080,7 +3082,7 @@ test "feature_tests/ownership/41_raw_pointer_establish_inherit" {
 
 test "feature_tests/ownership/42X_reference_use_after_root_end" {
     try buildExpectFailExact("tests/feature_tests/ownership/42X_reference_use_after_root_end",
-        \\tests/feature_tests/ownership/42X_reference_use_after_root_end/main.rg:11:8: error: reference depends on a root that has ended
+        \\tests/feature_tests/ownership/42X_reference_use_after_root_end/main.rg:12:8: error: reference depends on a root that has ended
         \\      if reference& == 0 {
         \\         ^
         \\
@@ -3102,7 +3104,7 @@ test "feature_tests/ownership/54_deinit_through_alias_reinitialize" {
 
 test "feature_tests/ownership/55X_deinit_through_alias_read" {
     try buildExpectFailExact("tests/feature_tests/ownership/55X_deinit_through_alias_read",
-        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:11:8: error: reference depends on a root that has ended
+        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:12:8: error: reference depends on a root that has ended
         \\      if b&.size == 1 {
         \\         ^
         \\
@@ -3133,7 +3135,7 @@ test "feature_tests/ownership/58X_null_safe_reference" {
 
 test "feature_tests/ownership/59X_branch_deinit_then_use" {
     try buildExpectFailExact("tests/feature_tests/ownership/59X_branch_deinit_then_use",
-        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:12:8: error: place rooted at 'allocation' is maybe_initialized and cannot be used
+        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:13:8: error: place rooted at 'allocation' is maybe_initialized and cannot be used
         \\      if allocation.size == 1 {
         \\         ^
         \\
@@ -3173,7 +3175,7 @@ test "feature_tests/ownership/63X_malloc_direct_safe_cast" {
 
 test "feature_tests/ownership/64X_owned_root_cycle" {
     try buildExpectFailExact("tests/feature_tests/ownership/64X_owned_root_cycle",
-        \\tests/feature_tests/ownership/64X_owned_root_cycle/main.rg:17:5: error: root ownership must be acyclic
+        \\tests/feature_tests/ownership/64X_owned_root_cycle/main.rg:18:5: error: root ownership must be acyclic
         \\      slot_b& = ~a
         \\      ^
         \\
@@ -4104,9 +4106,11 @@ test "feature_tests/ownership/206_auto_deinit_release_propagates_through_wrapper
 }
 
 test "feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper" {
-    try buildExpectFail(
-        "tests/feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper",
-        "reference depends on a root that has ended",
+    try buildExpectFailExact("tests/feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper",
+        \\tests/feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper/main.rg:31:34: error: reference depends on a root that has ended
+        \\                      observed ::= holder.reference&
+        \\                                   ^
+        \\
     );
 }
 
@@ -4185,7 +4189,7 @@ test "feature_tests/ownership/218X_conditional_opaque_reference_source_closes_ow
 
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
-        \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:20:8: error: reference depends on a root that has ended
+        \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:21:8: error: reference depends on a root that has ended
         \\      if alias& == 0 {
         \\         ^
         \\
@@ -4198,7 +4202,7 @@ test "feature_tests/ownership/44_cross_root_cycle_survivor_remains_usable" {
 
 test "feature_tests/ownership/45X_cross_root_cycle_stale_edge" {
     try buildExpectFailExact("tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge",
-        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:14:8: error: reference depends on a root that has ended
+        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:15:8: error: reference depends on a root that has ended
         \\      if b.to_a& == 0 {
         \\         ^
         \\
@@ -6036,4 +6040,34 @@ test "feature_tests/system/37X_system_local_resource_escape" {
         "tests/feature_tests/system/37X_system_local_resource_escape",
         "function output cannot depend on a local storage generation that ends before return",
     );
+}
+
+test "feature_tests/system/44_memory_allocator_composition" {
+    const test_path = "tests/feature_tests/system/44_memory_allocator_composition";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/system/45X_c_allocator_missing_ffi" {
+    try buildExpectFail("tests/feature_tests/system/45X_c_allocator_missing_ffi", "ffi");
+}
+
+test "feature_tests/system/46X_general_purpose_allocator_missing_backing_allocator" {
+    try buildExpectFail("tests/feature_tests/system/46X_general_purpose_allocator_missing_backing_allocator", "backing_allocator");
+}
+
+test "feature_tests/system/47X_page_allocator_missing_memory" {
+    try buildExpectFail("tests/feature_tests/system/47X_page_allocator_missing_memory", "memory");
+}
+
+test "feature_tests/system/48X_general_purpose_backing_ended" {
+    try buildExpectFail("tests/feature_tests/system/48X_general_purpose_backing_ended", "reference depends on a root that has ended");
+}
+
+test "feature_tests/system/49X_initializer_temporary_ends_backing" {
+    try buildExpectFail("tests/feature_tests/system/49X_initializer_temporary_ends_backing", "main.rg:28:24: error: reference depends on a root that has ended");
+}
+
+test "feature_tests/system/50X_initializer_summary_ends_backing" {
+    try buildExpectFail("tests/feature_tests/system/50X_initializer_summary_ends_backing", "reference depends on a root that has ended");
 }

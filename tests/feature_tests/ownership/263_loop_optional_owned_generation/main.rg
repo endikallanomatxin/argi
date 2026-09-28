@@ -21,12 +21,13 @@ append(.self: $&Holder, .allocator: $&Allocator) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
-    holder ::= Holder(.allocator = system.allocator)
+    holder ::= Holder(.allocator = $&allocator_storage)
     i :: UIntNative = 0
     while i < 1 {
-        append(.self = $&holder, .allocator = system.allocator)
+        append(.self = $&holder, .allocator = $&allocator_storage)
         i = i + 1
     }
 
@@ -34,5 +35,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         status_code = 1
         return
     }
-    deinit(.self = $&holder, .allocator = system.allocator)
+    deinit(.self = $&holder, .allocator = $&allocator_storage)
 }

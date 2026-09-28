@@ -18,14 +18,9 @@ access ( .path : &Char, .mode : Int32 ) -> ( .status : Int32 ) : ExternFunction
 
 -- Memory management
 alloca ( .size : UIntNative ) -> ( .pointer: $&Any ) : ExternFunction
-malloc ( .size : UIntNative ) -> ( .address: UIntNative ) : ExternFunction
-aligned_alloc ( .alignment : UIntNative, .size : UIntNative ) -> ( .address: UIntNative ) : ExternFunction
-getpagesize ( ) -> ( .size : UIntNative ) : ExternFunction
--- POSIX virtual-memory mapping used by the page-backed allocators.
--- MAP_FAILED is the all-ones address.
-mmap ( .hint: UIntNative, .length: UIntNative, .protection: Int32, .flags: Int32, .file_descriptor: Int32, .offset: UIntNative ) -> ( .address: UIntNative ) : ExternFunction
-munmap ( .address: UIntNative, .length: UIntNative ) -> ( .status: Int32 ) : ExternFunction
-free ( .address: UIntNative ) -> () : ExternFunction
+_malloc ( .size : UIntNative ) -> ( .address: UIntNative ) : ExternFunction
+_aligned_alloc ( .alignment : UIntNative, .size : UIntNative ) -> ( .address: UIntNative ) : ExternFunction
+_free ( .address: UIntNative ) -> () : ExternFunction
 memcpy ( .dst  : $&Any, .src : &Any, .n : UIntNative ) -> () : ExternFunction
 
 fread_into(
@@ -74,4 +69,15 @@ memcpy_bytes(
         .src = reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &src).pointer).reference,
         .n = length#(.t: UInt8)(.self = &dst).count,
     )
+}
+
+-- Explicit access to the C runtime. Memory does not grant this capability.
+malloc(.size: UIntNative, .ffi: $&ForeignFunctionInterface) -> (.address: UIntNative) := {
+    address = _malloc(.size = size).address
+}
+aligned_alloc(.alignment: UIntNative, .size: UIntNative, .ffi: $&ForeignFunctionInterface) -> (.address: UIntNative) := {
+    address = _aligned_alloc(.alignment = alignment, .size = size).address
+}
+free(.address: UIntNative, .ffi: $&ForeignFunctionInterface) -> () := {
+    _free(.address = address)
 }

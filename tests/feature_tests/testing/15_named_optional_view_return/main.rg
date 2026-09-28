@@ -1,11 +1,12 @@
 test named_optional_view_return(.system: System) -> !() := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
     path :: Path = Path(
-        .allocator = system.allocator,
+        .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "/tmp/file.txt"),
     )
-    #defer deinit(.self = $&path, .allocator = system.allocator)
+    #defer deinit(.self = $&path, .allocator = $&allocator_storage)
 
     name ::= file_name(.self = &path).value
     match name {

@@ -38,7 +38,7 @@ pub const specs = [_]Spec{
         "#(.t: Type)(.slot: $&t, .allocator: $&Allocator) -> ()",
     } },
     .{ .primitive = .trusted_opaque_mark_empty, .path = "core/memory/opaque_ownership.rg", .name = "trusted_opaque_mark_empty", .signatures = &.{"#(.t: Type)(.storage: $&t) -> ()"} },
-    .{ .primitive = .raw_allocated_storage, .path = "core/libc/libc.rg", .name = "malloc", .signatures = &.{"(.size: UIntNative) -> (.address: UIntNative)"}, .declaration = .extern_function },
+    .{ .primitive = .raw_allocated_storage, .path = "core/libc/libc.rg", .name = "_malloc", .signatures = &.{"(.size: UIntNative) -> (.address: UIntNative)"}, .declaration = .extern_function },
 };
 
 comptime {

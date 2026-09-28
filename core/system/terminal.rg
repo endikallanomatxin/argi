@@ -1,76 +1,40 @@
 TerminalStorage : Type = (
-    .stdin_file   : File
-    .stdout_file  : File
-    .stderr_file  : File
-    .stdin_reader : BufferedReader#(.base_type: File)
-    .stdout_writer: BufferedWriter#(.base_type: File)
-    .stderr_writer: BufferedWriter#(.base_type: File)
+    .stdin_file: File
+    .stdout_file: File
+    .stderr_file: File
 )
 
+-- Canonical endpoints do not allocate. Programs may wrap these borrowed
+-- streams in BufferedReader/BufferedWriter using their chosen allocator.
 Terminal : Type = (
-    ._storage      : TerminalStorage
-    .stdin_file    : $&File
-    .stdout_file   : $&File
-    .stderr_file   : $&File
-    .stdin_reader  : $&BufferedReader#(.base_type: File)
-    .stdout_writer : $&BufferedWriter#(.base_type: File)
-    .stderr_writer : $&BufferedWriter#(.base_type: File)
-    --
-    -- High-level stdio endpoints stay abstract so helpers can depend on
-    -- `Reader`/`Writer`, while the raw file handles and concrete buffered
-    -- wrappers remain explicit and reachable separately.
-    --
-    .stdin         : $&Reader
-    .stdout        : $&Writer
-    .stderr        : $&Writer
+    ._storage: TerminalStorage
+    .stdin_file: $&File
+    .stdout_file: $&File
+    .stderr_file: $&File
+    .stdin_reader: $&File
+    .stdout_writer: $&File
+    .stderr_writer: $&File
+    .stdin: $&Reader
+    .stdout: $&Writer
+    .stderr: $&Writer
 )
 
-once init(
-    .p: $&Terminal,
-    .allocator: $&GeneralPurposeAllocator,
-) -> () := {
-    assume allocator
-
+once init(.p: $&Terminal) -> () := {
     init_stdin(.p = $&p&._storage.stdin_file)
     init_stdout(.p = $&p&._storage.stdout_file)
     init_stderr(.p = $&p&._storage.stderr_file)
-
-    p&._storage.stdin_reader = BufferedReader#(.base_type: File)(
-        .allocator = allocator,
-        .base = $&p&._storage.stdin_file,
-        .capacity = 256,
-    )
-    p&._storage.stdout_writer = BufferedWriter#(.base_type: File)(
-        .allocator = allocator,
-        .base = $&p&._storage.stdout_file,
-        .capacity = 256,
-    )
-    p&._storage.stderr_writer = BufferedWriter#(.base_type: File)(
-        .allocator = allocator,
-        .base = $&p&._storage.stderr_file,
-        .capacity = 256,
-    )
-
     p&.stdin_file = $&p&._storage.stdin_file
     p&.stdout_file = $&p&._storage.stdout_file
     p&.stderr_file = $&p&._storage.stderr_file
-    p&.stdin_reader = $&p&._storage.stdin_reader
-    p&.stdout_writer = $&p&._storage.stdout_writer
-    p&.stderr_writer = $&p&._storage.stderr_writer
-    p&.stdin = $&p&._storage.stdin_reader
-    p&.stdout = $&p&._storage.stdout_writer
-    p&.stderr = $&p&._storage.stderr_file
+    p&.stdin_reader = p&.stdin_file
+    p&.stdout_writer = p&.stdout_file
+    p&.stderr_writer = p&.stderr_file
+    p&.stdin = p&.stdin_file
+    p&.stdout = p&.stdout_file
+    p&.stderr = p&.stderr_file
 }
 
-deinit(
-    .self: $&Terminal,
-    .allocator: $&GeneralPurposeAllocator,
-) -> () := {
-    assume allocator
-
-    deinit(.self = self&.stdin_reader, .allocator = allocator)
-    deinit(.self = self&.stdout_writer, .allocator = allocator)
-    deinit(.self = self&.stderr_writer, .allocator = allocator)
+deinit(.self: $&Terminal) -> () := {
     close(.self = self&.stdin_file)
     close(.self = self&.stdout_file)
     close(.self = self&.stderr_file)

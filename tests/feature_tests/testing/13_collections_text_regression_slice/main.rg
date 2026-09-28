@@ -8,13 +8,14 @@ test collections_text_array_slice(.system: System) -> !() := {
 }
 
 test collections_text_format_slice(.system: System) -> !() := {
-    assume allocator ::= system.allocator
+    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
-    text_result ::= format(.value = 7, .allocator = system.allocator)
+    text_result ::= format(.value = 7, .allocator = $&allocator_storage)
     match text_result {
         ..ok ~ format_payload {
             text ::= ~format_payload
-            #defer deinit(.self = $&text, .allocator = system.allocator)
+            #defer deinit(.self = $&text, .allocator = $&allocator_storage)
             view ::= as_view(.self = &text)
             testing.expect(.condition = view == "7")!
         }

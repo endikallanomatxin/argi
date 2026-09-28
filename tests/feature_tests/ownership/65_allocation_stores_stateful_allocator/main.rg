@@ -1,8 +1,10 @@
 unsafe_allocation := #import("../../_support/unsafe_allocation")
-CountingAllocator : Type = (.deallocations: Int32)
+CountingAllocator : Type = (
+    .ffi: $&ForeignFunctionInterface
+    .deallocations: Int32)
 
 allocate(.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
-    storage ::= malloc(.size = size)
+    storage ::= malloc(.size = size, .ffi = self&.ffi)
     address :: UIntNative = cast#(.to: UIntNative)(.value = storage)
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
     allocation ::= establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
@@ -12,13 +14,13 @@ allocate(.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative =
 deallocate(.self: $&CountingAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
     self&.deallocations = self&.deallocations + 1
     address :: UIntNative = data.address
-    free(.address = address)
+    free(.address = address, .ffi = self&.ffi)
 }
 
 CountingAllocator implements Allocator
 CountingAllocator implements Deallocator
 
-main() -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
     allocator_storage :: CountingAllocator = (.deallocations = 0)
     assume allocator ::= $&allocator_storage
     result ::= allocate(.self = $&allocator_storage, .size = 1)

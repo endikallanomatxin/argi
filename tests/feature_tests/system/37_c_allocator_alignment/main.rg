@@ -1,5 +1,5 @@
-main() -> (.status_code: Int32) := {
-    allocator :: CAllocator = CAllocator()
+main(.system: System) -> (.status_code: Int32) := {
+    allocator :: CAllocator = CAllocator(.ffi = system.ffi)
     allocated ::= allocate(.self = $&allocator, .size = 1, .alignment = 64)
     match allocated {
         ..error _ { status_code = 1 }
