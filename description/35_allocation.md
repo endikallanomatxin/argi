@@ -55,7 +55,7 @@ example:
 
 ```rg
 allocator_storage ::= GeneralPurposeAllocator(
-    .backing_allocator = system.page_allocator
+    .allocator = system.page_allocator
 )
 assume allocator ::= $&allocator_storage
 ```
@@ -65,10 +65,15 @@ compatibility: a `GeneralPurposeAllocator` backed by an `ArenaAllocator` is
 currently incompatible. The canonical `PageAllocator` →
 `GeneralPurposeAllocator` → `ArenaAllocator` chain works. This makes the
 allocation chain visible and composable. The current general-purpose allocator
-groups small requests by power-of-two size class in
-page-backed buckets. Each bucket has a bitmap of live slots; freed slots are
-not reused while that bucket remains mapped. Requests larger than half a page
-go directly to the backing allocator and are tracked separately.
+groups small requests by power-of-two size class. Its internal `_bucket_size`
+is a 4096-byte chunk size, independent of the operating system's page size:
+one chunk holds metadata and the other holds aligned slots. Each bucket has a
+bitmap of live slots and a search cursor; freeing a slot lowers the cursor when
+necessary, so allocations find the first free bit without skipping holes. A
+completely empty bucket returns its backing storage. Each allocation establishes
+a fresh temporal root, including when it reuses an address. Requests larger
+than half the chunk size go directly to the backing allocator and are tracked
+separately.
 `has_live_allocations()` reports whether either kind remains live; repeated
 frees of tracked allocations abort. Thread synchronization and stack-trace
 diagnostics are not provided yet.

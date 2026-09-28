@@ -12,7 +12,7 @@ BackingAllocator implements Allocator
 
 main(.system: System) -> (.status_code: Int32) := {
     backing ::= BackingAllocator(.page = system.page_allocator)
-    allocator ::= GeneralPurposeAllocator(.backing_allocator = $&backing)
+    allocator ::= GeneralPurposeAllocator(.allocator = $&backing)
     deinit(.self = $&backing)
     result ::= allocate(.self = $&allocator, .size = 8)
     status_code = 0

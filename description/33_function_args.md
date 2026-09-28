@@ -164,7 +164,7 @@ and index; operations that allocate, such as `push`, also take an allocator:
 
 ```rg
 allocator_storage :: GeneralPurposeAllocator = GeneralPurposeAllocator(
-    .backing_allocator = system.page_allocator,
+    .allocator = system.page_allocator,
 )
 assume allocator ::= $&allocator_storage
 push(.self = $&arr, .value = 42)
@@ -274,7 +274,7 @@ declaration, which declares and enables the binding in one statement:
 
 ```argi
 allocator_storage :: GeneralPurposeAllocator = GeneralPurposeAllocator(
-    .backing_allocator = system.page_allocator,
+    .allocator = system.page_allocator,
 )
 assume allocator ::= $&allocator_storage
 text ::= String(.capacity = 16)

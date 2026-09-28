@@ -12,7 +12,7 @@ replace(.holder: $&Holder, .condition: Bool, .first: $&UInt8, .second: $&UInt8) 
 }
 
 main(.system: System, .condition: Bool = false) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     first_result ::= allocate(.self = $&allocator_storage, .size = 1)
     second_result ::= allocate(.self = $&allocator_storage, .size = 1)
     match first_result {

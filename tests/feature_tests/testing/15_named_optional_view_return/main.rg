@@ -1,5 +1,5 @@
 test named_optional_view_return(.system: System) -> !() := {
-    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
     path :: Path = Path(

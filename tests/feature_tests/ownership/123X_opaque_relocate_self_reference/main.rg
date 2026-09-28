@@ -5,7 +5,7 @@ SelfRef : Type = (
 )
 
 main(.system: System) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     seed :: Int32 = 0
     value :: SelfRef = (.value = 7, .reference = &seed)
     value.reference = &value.value

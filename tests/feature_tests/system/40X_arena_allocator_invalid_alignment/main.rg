@@ -1,8 +1,8 @@
 main(.system: System) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
     arena :: ArenaAllocator
-    initialized ::= init(.p = $&arena, .backing_allocator = $&allocator_storage)
+    initialized ::= init(.p = $&arena, .allocator = $&allocator_storage)
     if is(.value = initialized, .variant = ..error) {
         status_code = 1
         return

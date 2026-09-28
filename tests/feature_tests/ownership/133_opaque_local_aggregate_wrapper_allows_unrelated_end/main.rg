@@ -22,7 +22,7 @@ store_borrow(
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     unrelated_result ::= allocate(.self = $&allocator_storage, .size = 1)
     slots_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
     match unrelated_result {

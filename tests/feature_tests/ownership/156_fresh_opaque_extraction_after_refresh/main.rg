@@ -9,7 +9,7 @@ deinit(.self: $&Borrowing) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     first_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
     match first_result {
         ..error _ { status_code = 1 }

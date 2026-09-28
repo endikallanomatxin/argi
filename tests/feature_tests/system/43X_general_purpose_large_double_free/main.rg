@@ -1,5 +1,5 @@
 main(.system: System) -> (.status_code: Int32) := {
-    allocator ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocated ::= allocate(.self = $&allocator, .size = 5000, .alignment = 4096)
     match allocated {
         ..error _ { status_code = 1 }

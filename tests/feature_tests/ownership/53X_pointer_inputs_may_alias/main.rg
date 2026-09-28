@@ -7,7 +7,7 @@ invalidate_then_read(
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocated ::= allocate(.self = $&allocator_storage, .size = 1)
     match allocated {
     ..error _ { status_code = 1 }

@@ -42,7 +42,7 @@ Virtual#(.abstract: Abstract) : Type = (
 
 ```argi
 allocator_storage :: GeneralPurposeAllocator = GeneralPurposeAllocator(
-  .backing_allocator = system.page_allocator,
+  .allocator = system.page_allocator,
 )
 assume allocator ::= $&allocator_storage
 s : Rectangle = (1, 2)

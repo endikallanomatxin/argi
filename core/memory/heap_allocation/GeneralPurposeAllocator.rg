@@ -1,11 +1,11 @@
--- Buckets use two mapped pages: metadata in the first and aligned slots in
--- the second. The links are raw addresses, so moving metadata does not end
--- the independent temporal roots of allocations returned to callers.
+-- Buckets use two equal-sized backing chunks: metadata in the first and
+-- aligned slots in the second. Raw links keep metadata independent of the
+-- temporal roots of allocations returned to callers.
 _GeneralPurposeBucket : Type = (
     .storage: Allocation
     .next: UIntNative
     .slot_size: UIntNative
-    .next_slot: UIntNative
+    .search_slot: UIntNative
     .live_count: UIntNative
 )
 
@@ -20,20 +20,20 @@ _GeneralPurposeLarge : Type = (
 
 GeneralPurposeAllocator : Type = (
     ._backing_allocator: Virtual#(.abstract: Allocator)
-    ._page_size: UIntNative
+    ._bucket_size: UIntNative
     ._bucket_head: UIntNative
     ._large_head: UIntNative
 )
 
-init(.p: $&GeneralPurposeAllocator, .backing_allocator: $&Allocator) -> () := {
-    p&._backing_allocator = to_virtual#(.abstract: Allocator)(.value = backing_allocator)
-    p&._page_size = 4096
+init(.p: $&GeneralPurposeAllocator, .allocator: $&Allocator) -> () := {
+    p&._backing_allocator = to_virtual#(.abstract: Allocator)(.value = allocator)
+    p&._bucket_size = 4096
     p&._bucket_head = 0
     p&._large_head = 0
 }
 
 -- Only bundled core may turn the allocator's live metadata address into a
--- reference. The page stays mapped until its last slot is released.
+-- reference. The backing block stays live until its last slot is released.
 _trusted_general_purpose_bucket(.address: UIntNative, .owner: $&GeneralPurposeAllocator) -> (.bucket: $&_GeneralPurposeBucket) := {
     raw ::= raw_pointer#(.t: _GeneralPurposeBucket)(.address = address).raw
     bucket = establish_inherited_reference#(.t: _GeneralPurposeBucket)(.raw = raw, .root = cast#(.to: &Any)(.value = owner)).reference
@@ -44,7 +44,7 @@ _trusted_general_purpose_large(.address: UIntNative, .owner: $&GeneralPurposeAll
     record = establish_inherited_reference#(.t: _GeneralPurposeLarge)(.raw = raw, .root = cast#(.to: &Any)(.value = owner)).reference
 }
 
--- The bitmap follows _GeneralPurposeBucket in the first backing page and is
+-- The bitmap follows _GeneralPurposeBucket in the first backing chunk and is
 -- initialized explicitly, regardless of the backing allocator's contents.
 _trusted_general_purpose_used_word(
     .bucket_address: UIntNative,
@@ -86,27 +86,38 @@ _general_purpose_small_address(
     bucket_address :: UIntNative = self&._bucket_head
     while bucket_address != 0 {
         bucket ::= _trusted_general_purpose_bucket(.address = bucket_address, .owner = self).bucket
-        if bucket&.slot_size == slot_size and bucket&.next_slot < self&._page_size / slot_size {
-            slot ::= bucket&.next_slot
+        slot_count ::= self&._bucket_size / slot_size
+        if bucket&.slot_size == slot_size and bucket&.live_count < slot_count {
+            -- The cursor never skips a free slot: release lowers it whenever
+            -- necessary. The bitmap skips occupied slots after a reused hole.
+            slot ::= bucket&.search_slot
             bits_per_word ::= size_of(.type = UIntNative) * 8
-            bit ::= _general_purpose_bit(.index = slot % bits_per_word).bit
-            word ::= _trusted_general_purpose_used_word(.bucket_address = bucket_address, .slot = slot, .owner = self).word
-            word& = word& + bit
-            bucket&.next_slot = slot + 1
-            bucket&.live_count = bucket&.live_count + 1
-            address ::= bucket_address + self&._page_size + slot * slot_size
-            result = ..ok address
-            return
+            while slot < slot_count {
+                bit ::= _general_purpose_bit(.index = slot % bits_per_word).bit
+                word ::= _trusted_general_purpose_used_word(.bucket_address = bucket_address, .slot = slot, .owner = self).word
+                quotient ::= word& / bit
+                if quotient % 2 == 0 {
+                    word& = word& + bit
+                    bucket&.search_slot = slot + 1
+                    bucket&.live_count = bucket&.live_count + 1
+                    address ::= bucket_address + self&._bucket_size + slot * slot_size
+                    result = ..ok address
+                    return
+                }
+                slot = slot + 1
+            }
+            -- A non-full bucket must have a free bit at or after the cursor.
+            abort
         }
         bucket_address = bucket&.next
     }
 
-    mapping_size ::= self&._page_size * 2
-    if mapping_size < self&._page_size {
+    mapping_size ::= self&._bucket_size * 2
+    if mapping_size < self&._bucket_size {
         result = ..error(.reason = ..out_of_memory)
         return
     }
-    allocated ::= allocate(.self = $&self&._backing_allocator, .size = mapping_size, .alignment = self&._page_size)
+    allocated ::= allocate(.self = $&self&._backing_allocator, .size = mapping_size, .alignment = self&._bucket_size)
     match allocated {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~ payload {
@@ -116,9 +127,9 @@ _general_purpose_small_address(
             trusted_opaque_move(.destination = $&bucket&.storage, .source = ~backing)
             bucket&.next = self&._bucket_head
             bucket&.slot_size = slot_size
-            bucket&.next_slot = 1
+            bucket&.search_slot = 1
             bucket&.live_count = 1
-            word_count ::= self&._page_size / slot_size
+            word_count ::= self&._bucket_size / slot_size
             slot :: UIntNative = 0
             while slot < word_count {
                 word ::= _trusted_general_purpose_used_word(.bucket_address = mapped_address, .slot = slot, .owner = self).word
@@ -128,7 +139,7 @@ _general_purpose_small_address(
             word ::= _trusted_general_purpose_used_word(.bucket_address = mapped_address, .slot = 0, .owner = self).word
             word& = 1
             self&._bucket_head = mapped_address
-            address ::= mapped_address + self&._page_size
+            address ::= mapped_address + self&._bucket_size
             result = ..ok address
         }
     }
@@ -178,7 +189,7 @@ allocate(
     _require_allocation_alignment(.alignment = alignment)
     slot_size ::= _general_purpose_slot_size(.size = size, .alignment = alignment).slot_size
     mapped :: Errable#(.t: UIntNative, .reasons: (..out_of_memory))
-    if slot_size > self&._page_size / 2 {
+    if slot_size > self&._bucket_size / 2 {
         mapped = _general_purpose_large_address(.self = self, .size = size, .alignment = alignment)
     } else {
         mapped = _general_purpose_small_address(.self = self, .slot_size = slot_size)
@@ -200,7 +211,7 @@ deallocate(
     .alignment: UIntNative,
 ) -> () := {
     slot_size ::= _general_purpose_slot_size(.size = size, .alignment = alignment).slot_size
-    if slot_size > self&._page_size / 2 {
+    if slot_size > self&._bucket_size / 2 {
         previous_address :: UIntNative = 0
         record_address :: UIntNative = self&._large_head
         while record_address != 0 {
@@ -230,19 +241,19 @@ deallocate(
     bucket_address :: UIntNative = self&._bucket_head
     while bucket_address != 0 {
         bucket ::= _trusted_general_purpose_bucket(.address = bucket_address, .owner = self).bucket
-        data_start ::= bucket_address + self&._page_size
-        if data.address >= data_start and data.address - data_start < self&._page_size {
+        data_start ::= bucket_address + self&._bucket_size
+        if data.address >= data_start and data.address - data_start < self&._bucket_size {
             if bucket&.slot_size != slot_size { abort }
             offset ::= data.address - data_start
             if offset % slot_size != 0 { abort }
             slot ::= offset / slot_size
-            if slot >= bucket&.next_slot { abort }
             bits_per_word ::= size_of(.type = UIntNative) * 8
             bit ::= _general_purpose_bit(.index = slot % bits_per_word).bit
             word ::= _trusted_general_purpose_used_word(.bucket_address = bucket_address, .slot = slot, .owner = self).word
             quotient ::= word& / bit
             if quotient % 2 == 0 { abort }
             word& = word& - bit
+            if slot < bucket&.search_slot { bucket&.search_slot = slot }
             bucket&.live_count = bucket&.live_count - 1
             if bucket&.live_count == 0 {
                 next_address ::= bucket&.next

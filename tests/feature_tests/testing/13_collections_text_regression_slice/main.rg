@@ -8,7 +8,7 @@ test collections_text_array_slice(.system: System) -> !() := {
 }
 
 test collections_text_format_slice(.system: System) -> !() := {
-    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
     text_result ::= format(.value = 7, .allocator = $&allocator_storage)

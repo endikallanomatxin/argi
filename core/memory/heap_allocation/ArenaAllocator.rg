@@ -21,8 +21,8 @@ ArenaAllocator : Type = (
     ._current_block_offset: UIntNative
 )
 
-init(.p: $&ArenaAllocator, .backing_allocator: $&Allocator, .block_size: UIntNative = 4096) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    p&._backing_allocator = to_virtual#(.abstract: Allocator)(.value = backing_allocator)
+init(.p: $&ArenaAllocator, .allocator: $&Allocator, .block_size: UIntNative = 4096) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    p&._backing_allocator = to_virtual#(.abstract: Allocator)(.value = allocator)
     init(.p = $&p&.domain)
     p&._block_head = 0
     p&.block_count = 0

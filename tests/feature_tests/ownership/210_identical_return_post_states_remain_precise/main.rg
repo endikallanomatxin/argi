@@ -10,7 +10,7 @@ replace(.holder: $&Holder, .condition: Bool, .reference: $&UInt8) -> () := {
 }
 
 main(.system: System, .condition: Bool = true) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     result ::= allocate(.self = $&allocator_storage, .size = 1)
     match result {
         ..error _ { status_code = 1 }

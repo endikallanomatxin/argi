@@ -8,7 +8,7 @@ initialize_left(.p: $&Allocation, .value: Allocation) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
     left_result ::= allocate(.self = $&allocator_storage, .size = 1)

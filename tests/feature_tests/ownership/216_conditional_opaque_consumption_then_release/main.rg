@@ -21,7 +21,7 @@ store_conditionally(
 }
 
 main(.system: System, .skip: Bool = false) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     target_result ::= allocate(.self = $&allocator_storage, .size = 1)
     slot_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
     match target_result {

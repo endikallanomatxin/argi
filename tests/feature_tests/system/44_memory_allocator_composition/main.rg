@@ -27,7 +27,7 @@ TrackingAllocator implements Deallocator
 
 main(.system: System) -> (.status_code: Int32) := {
     tracker :: TrackingAllocator = (.backing = system.page_allocator, .allocations = 0, .deallocations = 0)
-    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = $&tracker)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = $&tracker)
     assume allocator ::= $&allocator_storage
     if tracker.allocations != 0 { status_code = 1
         return }
@@ -37,7 +37,7 @@ main(.system: System) -> (.status_code: Int32) := {
     if tracker.allocations == 0 or tracker.allocations != tracker.deallocations { status_code = 2
         return }
     arena :: ArenaAllocator
-    initialized ::= init(.p = $&arena, .backing_allocator = $&allocator_storage, .block_size = 64)
+    initialized ::= init(.p = $&arena, .allocator = $&allocator_storage, .block_size = 64)
     if is(.value = initialized, .variant = ..error) { status_code = 3
         return }
     previous ::= tracker.allocations

@@ -9,7 +9,7 @@ make(.allocator: $&Allocator, .condition: Bool) -> (.result: Errable#(.t: Alloca
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     failed ::= make(.allocator = $&allocator_storage, .condition = true)
     match failed {
         ..error _ {

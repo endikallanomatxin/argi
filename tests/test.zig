@@ -6053,7 +6053,7 @@ test "feature_tests/system/45X_c_allocator_missing_ffi" {
 }
 
 test "feature_tests/system/46X_general_purpose_allocator_missing_backing_allocator" {
-    try buildExpectFail("tests/feature_tests/system/46X_general_purpose_allocator_missing_backing_allocator", "backing_allocator");
+    try buildExpectFail("tests/feature_tests/system/46X_general_purpose_allocator_missing_backing_allocator", "allocator");
 }
 
 test "feature_tests/system/47X_page_allocator_missing_memory" {
@@ -6070,4 +6070,20 @@ test "feature_tests/system/49X_initializer_temporary_ends_backing" {
 
 test "feature_tests/system/50X_initializer_summary_ends_backing" {
     try buildExpectFail("tests/feature_tests/system/50X_initializer_summary_ends_backing", "reference depends on a root that has ended");
+}
+
+test "feature_tests/system/51_general_purpose_slot_reuse" {
+    const test_path = "tests/feature_tests/system/51_general_purpose_slot_reuse";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/system/52X_general_purpose_reused_slot_borrow" {
+    try buildExpectFail("tests/feature_tests/system/52X_general_purpose_reused_slot_borrow", "reference depends on a root that has ended");
+}
+
+test "feature_tests/system/53X_general_purpose_small_double_free" {
+    const test_path = "tests/feature_tests/system/53X_general_purpose_small_double_free";
+    try expectSuccessfulBuild(test_path);
+    try runExpectFailure(test_path);
 }

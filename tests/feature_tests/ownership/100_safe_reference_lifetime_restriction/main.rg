@@ -15,7 +15,7 @@ restrict_twice#(.t: Type)(.input: t, .first: &Any, .second: &Any) -> (.reference
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.backing_allocator = system.page_allocator)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
     source_result ::= allocate(.self = $&allocator_storage, .size = 1)
