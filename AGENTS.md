@@ -33,6 +33,8 @@ This repository contains a compiler for a new programming language written in Zi
 > It might be necessary to set the following environment variables to make zig work:
 > `ZIG_LOCAL_CACHE_DIR="$PWD/.zig-cache"`
 > `ZIG_GLOBAL_CACHE_DIR="$PWD/.zig-global-cache"`
+> If Zig still selects a read-only global cache, use
+> `zig build --global-cache-dir .zig-global-cache test`.
 >
 > The current compiler has been updated to run with Zig `0.16.x`. If the local
 > Zig version differs significantly, check `build.zig` and stdlib API
