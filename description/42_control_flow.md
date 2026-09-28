@@ -32,14 +32,14 @@ match x (
 )
 ```
 
-> [!NOTE]
+> [!IDEA]
 > Since we removed `()` to represent functions, we could use them to improve
 > the syntax if needed.
 
 I think Rust handles this very well.
 Gleam does too.
 
-> [!CHECK]
+> [!QUESTION]
 >
 > In JAI, a switch looks something like this:
 > 
@@ -145,7 +145,7 @@ evens = (for i in Range(.start = 1, .end = 10) {yield i*2})
 evens = (for i in Range(.start = 1, .end = 10); i*2)
 ```
 
->[!TODO] Reconsider the syntax.
+>[!QUESTION] Reconsider the syntax.
 
 ### Iterators
 
@@ -229,21 +229,19 @@ for ~ item in arr {
 This should make `for` behave like the iteration equivalent of `place`,
 `&place`, `$&place`, and `~place`.
 
-For `0.1`, the implemented subset focuses on:
-
-- `for item in value`
-- `for & item in value`
-- `for $& item in value`
-
-Iteration by transfer:
+Transfer iteration has the form:
 
 ```rg
 for ~ item in value {
 }
 ```
 
-is explicitly deferred to `0.2`, because the semantics for consuming
-collections and iterators need more work.
+> [!QUESTION]
+> Define how transfer iteration consumes collections and iterators.
+
+> [!IMPLEMENTATION]
+> The compiler currently supports `for item`, `for & item`, and `for $& item`.
+> Transfer iteration is not supported yet.
 
 Functions such as `map()` and `filter()` could also have versions that consume
 iterators (for lazy evaluation) or lists.

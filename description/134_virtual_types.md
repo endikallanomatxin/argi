@@ -62,7 +62,7 @@ do_something (v: Shape) -> () := {
 }
 ```
 
-> [!CHECK] Should `Virtual#(Abstract)` implement `Abstract`?
+> [!QUESTION] Should `Virtual#(Abstract)` implement `Abstract`?
 > This is convenient. Consider whether it introduces complications.
 
 
@@ -83,6 +83,6 @@ Consider how to customize `Virtual` to fit different scenarios:
 
 ## Multiple dispatch compatibility
 
-> [!TODO] Explore vtables with multiple dispatch.
+> [!IDEA] Explore vtables with multiple dispatch.
 > This could be modeled as a dispatch decision graph applied by currying
 > functions. Explore this idea.

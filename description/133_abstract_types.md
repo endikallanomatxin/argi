@@ -78,7 +78,7 @@ Dog implements Animal
 Animal defaultsto Dog
 ```
 
-> [!CHECK] Valorar default
+> [!QUESTION] Valorar default
 > Since convenient syntax for defining lists at the end is not planned,
 > perhaps this is not useful.
 
@@ -238,15 +238,15 @@ AbstractMatrix#(
 
 ---
 
-> [!TODO] The visibility and orphan rules for external `implements` remain
+> [!QUESTION] The visibility and orphan rules for external `implements` remain
 > open alongside cross-module overload lookup; see `131_multiple_dispatch.md`.
 
-> [!TODO] Subtyping with generics.
+> [!QUESTION] Subtyping with generics.
 > Can `Vector<Int64>` be used where `Vector<Number>` is expected?
 
 
-> [!TODO] Where clauses in function and abstract headers.
+> [!QUESTION] Where clauses in function and abstract headers.
 > Consider whether this is worthwhile.
 
-> [!TODO]
+> [!QUESTION]
 > Can an abstract provide associated types?

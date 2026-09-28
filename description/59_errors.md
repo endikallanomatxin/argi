@@ -213,9 +213,12 @@ This enables:
 - checks on `.reason`
 - safe remapping between subsets and supersets of reasons
 
-## Future Ergonomics
+## Handling errors
 
-Future ergonomics proposal, accepted as a direction but not yet implemented:
+`handle` provides a shorter form for handling an `Errable`:
+
+> [!IMPLEMENTATION]
+> The `handle` form is not implemented yet.
 
 ```argi
 my_thing := fallible() handle value, error {

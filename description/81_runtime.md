@@ -1,12 +1,12 @@
 # Runtime (future design proposal)
 
-This document explores a possible async and concurrency runtime. The
-`Runtime`, `Task`, `Future`, thread capabilities, and synchronization APIs below
-are proposals, not current language or core library features. The current
-`System` is defined in `core/system/system.rg`; it provides `.memory`,
-`.page_allocator`, and other process capabilities, but no `.allocator`,
-`.threads`, or `.runtime` fields. Code examples below are sketches and may
-need syntax and ownership updates before implementation.
+> [!IDEA]
+> This document explores a possible async and concurrency runtime. The
+> examples are sketches, not accepted language or core library APIs.
+
+The current `System` is defined in `core/system/system.rg`; it provides
+`.memory`, `.page_allocator`, and other process capabilities. The sketches
+below may need syntax and ownership updates before implementation.
 
 The idea is inspired by Zig's `Io` approach, but in Argi we call it `Runtime`
 because it is not only about input/output.
@@ -86,8 +86,7 @@ for i in Range(.start = 1, .end = 10) {
 wait_all_threads()
 ```
 
-`spawn_thread`, `wait`, and `wait_all_threads` are not implemented. In
-particular, the syntax and scope for waiting on a group of handles need design.
+The syntax and scope for waiting on a group of handles need design.
 
 ---
 
@@ -1121,6 +1120,6 @@ Shared mutable state:
 Does it make sense to require inputs to be deep copies, mutexes, or channels?
 How should mutability be managed?
 
->[!ERROR]
+>[!IDEA]
 > In Go, goroutines cannot return; that is an async function.
 > Perhaps the key is finding syntax that makes something similar easy to write.

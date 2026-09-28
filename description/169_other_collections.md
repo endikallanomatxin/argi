@@ -23,7 +23,8 @@ More info on collection types in `../library/collections/`
 
 ### SoA / AoS
 
-> [!TODO]
+> [!IDEA]
+> The shape of SoA and AoS collections remains exploratory.
 
 ---
 

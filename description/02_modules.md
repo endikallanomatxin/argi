@@ -17,13 +17,16 @@ modules are imported explicitly. Much of `more/` is still under construction.
 Names beginning with `_` are private to their module, except that bundled
 `core` modules may use each other's private helpers.
 
-**Planned module privacy:** a directory whose name starts with `_` may be
+A directory whose name starts with `_` may be
 imported only from its parent directory or a module below that parent. For
 example, `source/math/_detail` is visible to `source/math` and
 `source/math/linear`, but not to `source/app` or another tree. The rule applies
 to every `_` component in the resolved import path, regardless of whether the
-import uses `./`, `../`, or `.../`. This module-level rule is not implemented
-yet; the current `_` rule protects declarations only.
+import uses `./`, `../`, or `.../`.
+
+> [!IMPLEMENTATION]
+> Directory privacy is not enforced yet. The current `_` rule protects
+> declarations only.
 
 Unqualified lookup uses the current module and public `core`. Other modules
 use named imports; standalone `#import("...")` is unsupported. Paths resolve as
@@ -36,8 +39,10 @@ follows:
 | `.../` | Project root |
 | No prefix | Bundled `more/` library |
 
-Import paths must resolve at compile time. The current compiler accepts only
-literal paths; computed compile-time paths are not implemented yet.
+Import paths must resolve at compile time.
+
+> [!IMPLEMENTATION]
+> The compiler currently accepts only literal import paths.
 
 For example:
 
@@ -86,33 +91,38 @@ project/
     └── dist/<target>/
 ```
 
-`build/debug/` is the current package output. `_detail` illustrates the
-planned privacy rule; `dist/` remains a distribution idea. No special source
-subtree is required.
+`_detail` illustrates directory privacy. No special source subtree is required.
+
+> [!IDEA]
+> `dist/<target>/` could hold distribution artifacts.
 
 ## Package dependencies
 
-Planned commands:
+Package management commands:
 
 ```sh
 argi add <package>
 argi remove <package>
 ```
 
-Dependencies would use `argi.toml` plus a lockfile and a shared global package
-store, without per-project virtual environments. These commands and dependency
-resolution are not implemented yet.
+Dependencies use `argi.toml` plus a lockfile and a shared global package
+store, without per-project virtual environments.
+
+> [!IMPLEMENTATION]
+> `argi add`, `argi remove`, and dependency resolution are not implemented yet.
 
 ## C interoperability
 
-Planned named C header import:
+Named C header import:
 
 ```rg
 some_c_lib := #c_import("c_module.h")
 ```
 
-It would map C signatures and structs to Argi calls with named arguments.
+It maps C signatures and structs to Argi calls with named arguments.
 Some `more` modules may need native libraries (for example BLAS/LAPACK,
 OpenSSL, zlib, or FFmpeg). Builds should diagnose missing libraries; releases
-may bundle them per target. `#c_import` and its ABI and linking rules are not
-implemented yet.
+may bundle them per target.
+
+> [!IMPLEMENTATION]
+> `#c_import` and its ABI and linking rules are not implemented yet.

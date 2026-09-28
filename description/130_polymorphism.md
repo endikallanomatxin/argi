@@ -78,7 +78,7 @@ For an abstract to be Virtual-safe:
 
 - It cannot have Abstract input fields.
 
-> [!CHECK]
+> [!QUESTION]
 > This may be especially inconvenient for inputs such as allocators or integers
 > used as indices. Abstracts are useful in these cases, but this would require
 > making many things concrete instead of polymorphic.

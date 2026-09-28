@@ -35,7 +35,7 @@ calculate_stats (.l: List#(.t: Float)) -> (.mean: Float, .standard_deviation: Fl
 }
 ```
 
-> [!CHECK]
+> [!QUESTION]
 > When are output arguments initialized?
 > Do they use their `init`, or are they just the struct that represents them,
 > with no fields? Perhaps they wait for their first assignment before calling `init`.
@@ -71,7 +71,7 @@ my_function () -> () := {
 }
 ```
 
-> [!CHECK] Can you ommit things?
+> [!QUESTION] Can you ommit things?
 
 
 ## Pipe operator
@@ -98,7 +98,7 @@ my_var | my_func (&_, second_arg)
 
 This provides the convenience of objects.
 
-> [!FIX] If the function operating on an “object” comes from a module, the
+> [!QUESTION] If the function operating on an “object” comes from a module, the
 > module would need to be mentioned. This is a little tedious.
 
 
@@ -126,8 +126,6 @@ Whenever only the value is used and nothing is done with the pointer itself,
 the compiler will recommend this syntax. This ensures that when a pointer is
 passed to inner functions, `&datos` or `$&datos` is visible and the reference
 passing is clear.
-
-> [!TODO] Update the rest of the code to use this syntax.
 
 
 #### Side effects
@@ -164,7 +162,7 @@ query_user (.db_conn: $&DbConnection, .user_id: Int) -> (.user: ?User) := {
 }
 ```
 
-> [!NOTE] This may be a good syntax for naming arguments when needed.
+> [!IDEA] This may be a good syntax for naming arguments when needed.
 > If no names are provided, use `in` and `out` for concise lambda syntax.
 
 
@@ -193,12 +191,12 @@ contador$ () -> () := {
 contador$ () -- variable = 5
 ```
 
-> [!CHECK] Is this how a function with no input arguments should be called?
+> [!QUESTION] Is this how a function with no input arguments should be called?
 
 This makes it clear, with syntax similar to function arguments, whether a
 function has side effects.
 
-> [!TODO] Consider whether closures with side effects should be allowed.
+> [!QUESTION] Consider whether closures with side effects should be allowed.
 > Haskell does not allow them, for example. They may be an anti-pattern and
 > could be prohibited to keep the language cleaner; `$` would also mark the
 > effectful functions clearly.
@@ -387,10 +385,9 @@ flexibly.
 
 Ambiguous specificity is an error, and the compiler detects it.
 
-> [!NOTE]
-> Function signatures are part of the callable interface, so every input and
-> output field in a function declaration must spell out its type explicitly.
-> Defaults may provide fallback values, but they do not infer signature types.
+Function signatures are part of the callable interface, so every input and
+output field in a function declaration must spell out its type explicitly.
+Defaults may provide fallback values, but they do not infer signature types.
 
 In Go, methods cannot be defined for structs from other packages. That is
 frustrating.
@@ -417,7 +414,7 @@ to(.self: &Struct, .to: Type = String) -> (.string: String) := {
 > on whether the value satisfies the interface.
 
 
-> [!CHECK]
+> [!QUESTION]
 > Should we consider output types for the dispatch too?
 > It can be useful, but it can also make it harder to infer types.
 > Compile time could get exponential if not careful.
@@ -458,7 +455,7 @@ A convenient currying syntax would help.
 mux | HandleFunc($&_, "pattern", my_function(_a, _b, database, templates))
 ```
 
-> [!CHECK] Consider how currying syntax fits with the new function syntax.
+> [!QUESTION] Consider how currying syntax fits with the new function syntax.
 
 
 ### Silently ignoring return values

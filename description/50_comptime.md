@@ -41,7 +41,7 @@ Yes:
     Perhaps all functions executed at compile time should be able to return an
     error.
 
-    >[!TODO]
+    >[!QUESTION]
     >Find a way for libraries to use this to report compile-time errors or LSP
     >warnings when they are used incorrectly.
 
@@ -70,7 +70,7 @@ I do not like:
 - `#insert` is somewhat like macros; using strings may be too messy.
 
 
-> [!CHECK]
+> [!QUESTION]
 > I had ruled out using comptime for generics and interfaces, but it may be
 > worth reconsidering. The example shown
 > ThePrimeagen's discussion of `quak()` is interesting.
@@ -86,7 +86,7 @@ I do not like:
 https://www.scottredig.com/blog/bonkers_comptime/
 
 
-> [!CHECK]
+> [!QUESTION]
 > In an interview with the creators of Odin and Elixir by ThePrimeagen and TJ,
 > Ginger Bill says metaprogramming often reflects gaps in a language and can
 > make programs very difficult to debug.

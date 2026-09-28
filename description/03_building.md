@@ -1,6 +1,6 @@
 # Building
 
-> [!NOTE]
+> [!IDEA]
 > This is an early proposal for a procedural build layer. Current packages use
 > `argi.toml` and `[executables.*]` as described in `02_modules.md`.
 
@@ -57,7 +57,6 @@ Possible future `project.rgo`:
             .version   = ">2"
             .lock_hash = "wxyz1234abcd5678efgh9012ijkl3456mnop7890qrst"
         )
-        -- TODO: Consider whether to put the lock data in another file.
     )
 
     .commands = (

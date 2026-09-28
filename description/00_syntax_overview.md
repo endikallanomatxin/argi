@@ -94,7 +94,7 @@ There are two types of pointers:
 - Read-only pointers: `&T`
 - Read-write pointers: `$&T` ($ is for side effects)
 
-> [!TODO] Can a `$&` pointer be passed to a function expecting `&`?
+> [!QUESTION] Can a `$&` pointer be passed to a function expecting `&`?
 > Is an explicit cast required?
 
 
@@ -107,16 +107,14 @@ Every code block has its own scope.
 This is also used for loops and conditional, so locally declared variables are not accessible outside the block.
 This forces the good practice of declaring variables before loops and conditionals, instead of inside them.
 
-> [!CHECK]
+> [!QUESTION]
 > Consider preventing code blocks from capturing anything from outside, as in Jai.
 > Also consider convenient syntax for invoking a block like an anonymous
 > function. This is even more hygienic, but the syntax should remain simple.
 
-> [!NOTE]
-> In Go, writing `v1, v2 := ...` inside a block declares all variables, not
-> only the undeclared ones. A variable that already exists is shadowed.
-> Our language should avoid this: if a variable exists outside the block, it
-> should not be redeclared when several are declared together, only when one is.
+> [!QUESTION]
+> When a declaration introduces several names, should an existing outer name
+> be reused or shadowed?
 
 
 ## Functions
@@ -141,7 +139,7 @@ When calling functions:
 - you can omit the names of the fields when you specify all of them in the correct order.
 - output structs with a single field are automatically unpacked (to avoid unnecessary verbosity).
 
-> [!CHECK]
+> [!QUESTION]
 > Consider avoiding automatic unpacking and filling in defaults at the call
 > site to make the code forward-compatible.
 
@@ -165,7 +163,7 @@ quot = divmod(7, 3).quot
 quot, rem = divmod(7, 3)
 ```
 
-> [!NOTE] How do we distinguish a struct literal from a list literal?
+> [!QUESTION] How do we distinguish a struct literal from a list literal?
 > It is a collection literal that can be _interpreted_ as a list, struct,
 > map, or choice literal.
 
@@ -213,7 +211,7 @@ When you delcare a new instance:
 my_thing := MyType("something", 12, true)
 ```
 
-> [!TODO]
+> [!QUESTION]
 > Think about syntactic sugar to allow:
 > ```
 > my_list := (1, 2, 3, 4)
@@ -248,17 +246,17 @@ my_thing : MyType
 init ($&my_thing, "something", 12, true)
 ```
 
-> [!NOTE] init() is the only function allowed to receive uninitialized arguments.
->
-> The first parameter of `init` can be a pointer to memory allocated for that
-> type but not yet initialized.
-> 
-> Static checks inside `init`:
-> - Write-only access to `out`: fields cannot be read before they are written
->   (ideally, never read `out`).
-> - Definite initialization: every field must be written on every successful path.
-> - No escape or aliasing: the pointer cannot escape (do not store it globally,
->   capture it in closures, or pass it to threads).
+`init()` is the only function allowed to receive uninitialized arguments.
+
+The first parameter of `init` can be a pointer to memory allocated for that
+type but not yet initialized.
+
+Static checks inside `init`:
+
+- Write-only access to `out`: fields cannot be read before they are written.
+- Definite initialization: every field must be written on every successful path.
+- No escape or aliasing: the pointer cannot escape to globals, closures, or
+  threads.
 
 
 If wanted you can return an empty errable:
@@ -277,14 +275,12 @@ Passing a named value to an argument declared by value performs an implicit
 copy only when its type implements `ImplicitlyCopyable`. Other types require
 explicit `copy(&value)` or explicit ownership transfer with `~value`.
 
-> [!NOTE]
-> On error or early-return paths, ensure the value remains uninitialized
-> (`deinit` will not be called), or that partial initialization is cleaned up
-> before returning.
-> - `deinit` is called only on initialized objects.
-> - If `init` fails (returns an error), `deinit` is not called on that slot.
+On error or early-return paths, the value remains uninitialized (`deinit` is
+not called), or partial initialization is cleaned up before returning.
+`deinit` runs only on initialized objects; it is not called on a slot when
+`init` fails.
 
-> [!NOTE] To use the stack, `init` functions must be inlined.
+> [!QUESTION] Must `init` functions be inlined to construct stack values?
 > If the object should be on the stack, `alloca` cannot be called inside a
 > function.
 > For example, if `Array` were part of the standard library, it would need
@@ -302,11 +298,11 @@ explicit `copy(&value)` or explicit ownership transfer with `~value`.
 > It would be used like this:
 > `new = TargetType(source_value)`
 
-> [!FIX]
+> [!QUESTION]
 > Calls to `init` functions use the same name as the type, so the `init`
 > function cannot be referenced by name. It is unclear whether this is a problem.
 
-> [!CHECK]
+> [!QUESTION]
 > Should the variable produced by initialization be part of the declaration's
 > input or output?
 

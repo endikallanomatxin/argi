@@ -23,6 +23,10 @@ with different input-field names compile-time-parameters or return types.
 
 ## Cross-module dispatch (open design)
 
+> [!QUESTION]
+> Cross-module candidate visibility, external `implements`, and an orphan rule
+> remain undecided.
+
 The rules above describe how candidates are compared, but the candidate set
 across modules is not yet specified. Before supporting external extensions,
 decide:

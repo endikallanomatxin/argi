@@ -14,7 +14,7 @@ a : [3]Int32 = (1, 2, 3)
 arrays only; slices and views are library abstractions, not native array types.
 Collection access uses named operations rather than overload sets.
 
-> [!TODO] Find a way to define the length automatically.
+> [!QUESTION] Find a way to define the length automatically.
 > Perhaps `[?]T` could let the compiler calculate it.
 
 #### `ArrayView` and `ArrayViewRO`
@@ -103,8 +103,9 @@ Iterator#(.t: T)
 That means borrowed iteration still uses `next(...)`, but on iterators whose
 item type is `&T` or `$&T`.
 
-Transfer-style iteration and `for ~ item in arr` remain deferred beyond the
-0.1 cut.
+> [!QUESTION]
+> Define transfer-style iteration and the ownership of consumed iterators
+> before specifying `for ~ item in arr`.
 
 
 #### LengthedArray (capacidad fija en stack, len runtime)
@@ -161,7 +162,7 @@ For column views, image channels, and similar uses.
 
 #### ND Slices
 
-> [!TODO]
+> [!QUESTION]
 
 Idea:
 
@@ -170,7 +171,7 @@ l | slice (0, 10)  -- 1D slice
 l | slice (((0, 10), (0, 20)))  -- 2D slice
 ```
 
-> [!CHECK]
+> [!QUESTION]
 > The list abstract type could detect that nested list literals
 > satisfy this?
 

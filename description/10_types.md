@@ -57,9 +57,8 @@ not very extensible.
 	}
 	```
 
-> [!TODO] Decide how to do this with multiple dispatch.
-
-It is resolved through multiple dispatch.
+> [!QUESTION]
+> Which conversion form should participate in multiple dispatch?
 
 Types are not automatically casted for arithmetic operations. 
 
@@ -78,12 +77,12 @@ It is checked at compiletime.
 #type(some_variable) == Int32
 ```
 
-> [!TODO]
+> [!QUESTION]
 > If we want compile-time introspection on abstracts or contracts, define
 > dedicated syntax for it instead of reusing `implements`, which is currently
 > a declaration.
 
-> [!TODO]
+> [!QUESTION]
 > Subtyping of `List#(.t: User)` vs. `List#(.t: Person)` (variance).
 
 Inline declaration requires commas, but they can be ommited when using new lines.

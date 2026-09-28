@@ -151,7 +151,8 @@ cuda_spec : ParallelProcessingUnit = (
 
 The language can optimize execution based on this information.
 
-Example usage proposal inspired by Mojo:
+> [!IDEA]
+> One possible syntax for parallel execution, inspired by Mojo:
 
 ```
 kernel vector_add_kernel(

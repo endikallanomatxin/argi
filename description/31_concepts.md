@@ -49,12 +49,12 @@ m2 = copy(&m1)
     If they implement `copy()`, the copy must preserve the view semantics,
     without silently converting the view into an owner.
 
-> [!BUG] Some types can be both
+> [!QUESTION] Some types can be both
 > (linked list nodes, graph nodes, several types that reference others and own some data)
 > How should we handle that?
 
 
-> [!BUG]
+> [!QUESTION]
 > What happens if you pass an `ArrayView` and it is copied?
 > Its underlying data should not actually be copied.
 > But if you used `keep` to retain the data through the `ArrayView`, and then

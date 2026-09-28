@@ -146,6 +146,16 @@ faster.
   Use `description/*.md` for language design, not compiler-internal architecture
   notes.
 
+- Treat `description/` as the specification of the intended language, not a
+  snapshot of the current compiler. Write accepted language design as normal
+  documentation, even when it is not implemented yet.
+- Use `[!IMPLEMENTATION]` only to note gaps between that specification and the
+  current implementation. Use `[!QUESTION]` for unresolved design decisions
+  and `[!IDEA]` for exploratory possibilities that are not yet part of the
+  language design.
+- Keep implementation scheduling, milestones, and work tracking in `plan/`;
+  do not duplicate the language specification there.
+
 - Treat `plan/*.md` as active planning documents. If you notice they are
   outdated while doing relevant work, update them so they remain useful as
   development references.

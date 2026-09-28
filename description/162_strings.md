@@ -117,16 +117,16 @@ Nomenclature to keep consistent:
 - `graphemes`: user-perceived text units, potentially spanning multiple code
   points.
 
-Current implementation direction:
+The text model uses these conventions:
 
-- `String` is now an owning byte buffer over `Allocation`.
+- `String` is an owning byte buffer over `Allocation`.
 - `String` is also the single growable text buffer shape in `core`; there is
-  no separate `TextBuffer` type to keep in sync for 0.1.
+  no separate `TextBuffer` type.
 - buffered IO wrappers own only their internal byte buffers; they borrow the
   underlying stream handles.
 - `read_line()` returns an owning `String`, so the resulting text outlives the
   temporary buffering used while reading.
-- string literals now materialize as borrowed read-only `StringView`.
+- string literals materialize as borrowed read-only `StringView`.
 - raw `&Char` stays as the explicit C-string boundary, reached through helpers
   such as `as_c_string(...)` / `as_view(...)` instead of being the default
   language-level type of `"..."`.
@@ -134,24 +134,24 @@ Current implementation direction:
 - `deinit(.self = $&string)` releases the backing allocation.
 - `copy(.self = string)` allocates a second backing buffer and copies the
   bytes, so value semantics stay independent.
-- `String` itself is not directly indexable for now.
+- `String` itself is not directly indexable.
 - byte-level access is explicit:
   - `bytes_get(.string = &string, .index = i)`
   - `bytes_set(.string = $&string, .index = i, .value = b)`
-- future byte/code-point/grapheme slicing should happen through explicit view
+- byte/code-point/grapheme slicing uses explicit view
   constructors such as:
   - `view_bytes(.string = &string, .from = from, .to = to)`
   - `view_codepoints(.string = &string, .from = from, .to = to)`
   - `view_graphemes(.string = &string, .from = from, .to = to)`
-- future text-level indexing should happen on those views, not directly on
+- text-level indexing belongs on those views, not directly on
   `String`.
-- borrowed `StringViewRO/RW` types still make sense as the longer-term shape for
+- borrowed `StringViewRO/RW` types provide
   explicit windows into a string, but byte indexing should not live directly on
   `String`.
 
-This is intentionally narrower than the long-term text model. UTF-8-aware
-character indexing and higher-level string construction can be layered on top
-later, but the base owner/view split should already be real and usable.
+> [!IMPLEMENTATION]
+> UTF-8-aware indexing and the view constructors described above are not yet
+> available. The owner/view split already exists.
 
 
 > [!IDEA]

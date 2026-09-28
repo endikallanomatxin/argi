@@ -3,10 +3,8 @@
 The native collection type is the fixed array `[N]T`. There is no native slice
 type; other collections, including views, are library types.
 
-> [!NOTE] Why cannot arrays be defined in the core library? I've tried, but it
-> seems that implementing them always requires some kind of `[]Byte` buffer.
-> LLVM already has a `[N x %T]` type, that has some checks and information for
-> optimizations. It is best to use it directly.
+Native arrays have a fixed extent in the type. Library collections can build
+on this representation and provide views or dynamic storage separately.
 
 Available literals:
 
