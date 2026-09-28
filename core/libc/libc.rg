@@ -21,6 +21,10 @@ alloca ( .size : UIntNative ) -> ( .pointer: $&Any ) : ExternFunction
 malloc ( .size : UIntNative ) -> ( .address: UIntNative ) : ExternFunction
 aligned_alloc ( .alignment : UIntNative, .size : UIntNative ) -> ( .address: UIntNative ) : ExternFunction
 getpagesize ( ) -> ( .size : UIntNative ) : ExternFunction
+-- POSIX virtual-memory mapping used by the page-backed allocators.
+-- MAP_FAILED is the all-ones address.
+mmap ( .hint: UIntNative, .length: UIntNative, .protection: Int32, .flags: Int32, .file_descriptor: Int32, .offset: UIntNative ) -> ( .address: UIntNative ) : ExternFunction
+munmap ( .address: UIntNative, .length: UIntNative ) -> ( .status: Int32 ) : ExternFunction
 free ( .address: UIntNative ) -> () : ExternFunction
 memcpy ( .dst  : $&Any, .src : &Any, .n : UIntNative ) -> () : ExternFunction
 

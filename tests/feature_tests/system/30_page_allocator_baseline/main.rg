@@ -48,6 +48,20 @@ main() -> (.status_code: Int32) := {
 
     deinit(.self = $&first)
     deinit(.self = $&second)
+    high_alignment ::= allocator_storage.page_size * 4
+    over_aligned_result ::= allocate(.self = $&allocator_storage, .size = 5, .alignment = high_alignment)
+    match over_aligned_result {
+        ..error _ { status_code = 18
+            return }
+        ..ok ~ payload {
+            over_aligned ::= ~payload
+            if over_aligned.data.address % high_alignment != 0 {
+                status_code = 19
+                return
+            }
+            deinit(.self = $&over_aligned)
+        }
+    }
     status_code = 0
     }
     }
