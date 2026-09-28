@@ -52,7 +52,7 @@ fn initExecutable(allocator: std.mem.Allocator, io: std.Io, root_path: []const u
     const package_name = try packageNameFromPath(allocator, root_path, "package");
     defer allocator.free(package_name);
 
-    const entry_dir = try std.fs.path.join(allocator, &.{ root_path, "source", "entrypoints", package_name });
+    const entry_dir = try std.fs.path.join(allocator, &.{ root_path, "source", package_name });
     defer allocator.free(entry_dir);
     try std.Io.Dir.cwd().createDirPath(io, entry_dir);
 
@@ -68,7 +68,7 @@ fn initExecutable(allocator: std.mem.Allocator, io: std.Io, root_path: []const u
     defer allocator.free(manifest);
     try writeFileIfMissing(io, manifest_path, manifest);
 
-    const entry_main_path = try std.fs.path.join(allocator, &.{ root_path, "source", "entrypoints", package_name, "main.rg" });
+    const entry_main_path = try std.fs.path.join(allocator, &.{ root_path, "source", package_name, "main.rg" });
     defer allocator.free(entry_main_path);
     try writeFileIfMissing(io, entry_main_path, moduleMainParameterized);
 
@@ -90,6 +90,7 @@ fn writeFileIfMissing(io: std.Io, path: []const u8, contents: []const u8) !void 
 
 const moduleMainParameterized =
     \\main(.system: System) -> (.status_code: Int32 = 0) := {
+    \\    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
     \\}
     \\
 ;
@@ -138,7 +139,7 @@ fn executableManifestParameterized(allocator: std.mem.Allocator, package_name: [
         \\minimum_argi_version = "{s}"
         \\
         \\[executables.{s}]
-        \\path = "source/entrypoints/{s}"
+        \\path = "source/{s}"
         \\
         \\[run]
         \\default = "{s}"
@@ -254,7 +255,7 @@ test "init executable scaffolds basic layout" {
 
     try initAtPath(std.testing.allocator, std.testing.io, .executable, project_root);
 
-    const entry_main = try std.fs.path.join(std.testing.allocator, &.{ project_root, "source", "entrypoints", "sample_app", "main.rg" });
+    const entry_main = try std.fs.path.join(std.testing.allocator, &.{ project_root, "source", "sample_app", "main.rg" });
     defer std.testing.allocator.free(entry_main);
     const manifest = try std.fs.path.join(std.testing.allocator, &.{ project_root, "argi.toml" });
     defer std.testing.allocator.free(manifest);
@@ -273,9 +274,9 @@ test "init executable scaffolds basic layout" {
     try expectFileContains(std.testing.io, manifest, "version = \"0.0.0\"\n");
     try expectFileContains(std.testing.io, manifest, "minimum_argi_version = \"0.1.0\"\n");
     try expectFileContains(std.testing.io, manifest, "[executables.sample_app]\n");
-    try expectFileContains(std.testing.io, manifest, "path = \"source/entrypoints/sample_app\"\n");
+    try expectFileContains(std.testing.io, manifest, "path = \"source/sample_app\"\n");
     try expectFileContains(std.testing.io, manifest, "[run]\n");
     try expectFileContains(std.testing.io, manifest, "default = \"sample_app\"\n");
     try expectFileOmits(std.testing.io, manifest, "kind = ");
-    try expectFileContains(std.testing.io, entry_main, "main(.system: System) -> (.status_code: Int32 = 0) := {\n}\n");
+    try expectFileContains(std.testing.io, entry_main, "assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)\n");
 }

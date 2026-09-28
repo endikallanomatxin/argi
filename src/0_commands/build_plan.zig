@@ -208,7 +208,7 @@ fn printNoExecutablesError() void {
         \\Add one to argi.toml:
         \\
         \\  [executables.app]
-        \\  path = "source/entrypoints/app"
+        \\  path = "source/app"
         \\
         \\Or create a library package with:
         \\  argi init --lib <name>

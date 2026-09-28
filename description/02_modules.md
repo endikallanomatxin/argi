@@ -1,119 +1,45 @@
 # Modules and project layout
 
-At the repository level, the official library is split into:
+## Directory modules
 
-- `core/`: always available base library
-- `more/`: official extended library, imported explicitly
+Each directory is a module named after that directory. Its `.rg` files share
+one namespace. Imports can be transitive; cycles are rejected.
 
-User code still uses the same folder-based module model.
+## The official library: `core` and `more`
 
-Folders as modules, como Go y odin. El nombre del módulo es el nombre de la
-carpeta.
+The official library has two parts. `core/` is the small foundation available
+to every program; its public names form an implicit prelude. `more/` is the
+broader library for collections, codecs, mathematics, and other domains. Its
+modules are imported explicitly. Much of `more/` is still under construction.
 
-Every file in a directory can see each other, same namespace.
+## Imports and visibility
 
-The module system should stay deliberately boring. This is infrastructure, not
-one of the places where the language needs to be especially clever.
+Names beginning with `_` are private to their module, except that bundled
+`core` modules may use each other's private helpers.
 
-## Current status
+**Planned module privacy:** a directory whose name starts with `_` may be
+imported only from its parent directory or a module below that parent. For
+example, `source/math/_detail` is visible to `source/math` and
+`source/math/linear`, but not to `source/app` or another tree. The rule applies
+to every `_` component in the resolved import path, regardless of whether the
+import uses `./`, `../`, or `.../`. This module-level rule is not implemented
+yet; the current `_` rule protects declarations only.
 
-Today the compiler implements:
+Unqualified lookup uses the current module and public `core`. Other modules
+use named imports; standalone `#import("...")` is unsupported. Paths resolve as
+follows:
 
-- folder-level modules: all `.rg` files in the same directory share namespace
-- `core/` autoimported
-- `more/` imported explicitly
-- named imports only: `m := #import("...")`
-- import path kinds:
-  - `./dep` relative to the current module
-  - `../dep` relative to the parent module
-  - `.../dep` relative to the project root
-- `_private_name` hidden across module boundaries
-- bundled `core` modules may use each other's private helpers; user modules
-  cannot access them
-- transitive imports
-- import cycle detection
+| Prefix | Resolution |
+| --- | --- |
+| `./` | Current module |
+| `../` | Parent module |
+| `.../` | Project root |
+| No prefix | Bundled `more/` library |
 
-`#import("...")` as a standalone statement is intentionally not supported.
+Import paths must resolve at compile time. The current compiler accepts only
+literal paths; computed compile-time paths are not implemented yet.
 
-## Project layout
-
-There is two layout conventions:
-
-```
-simple_module/
-├── README.md
-├── module.rgstruct
-├── submodule/
-│   ├── file1.rg
-│   ├── file2.rg
-│   └── file3.rg
-└── submodule2/
-    ├── file1.rg
-    ├── file2.rg
-    └── file3.rg
-
-project/
-│
-├── README.md
-│
-├── project.rgstruct
-│
-├── entrypoints/              -- required for executable creation (optional otherwise)
-│   └── module_to_compile/
-│       ├── file1.rg
-│       ├── file2.rg
-│       └── file3.rg
-│
-├── public/                   -- required for libraries (optional otherwise)
-│   ├── module1/
-│   │   ├── file1.rg
-│   │   ├── file2.rg
-│   │   └── file3.rg
-│   └── module2/
-│       ├── file1.rg
-│       ├── file2.rg
-│       └── file3.rg
-│
-├── private/                  -- always optional
-│   ├── module1/
-│   │   ├── file1.rg
-│   │   ├── file2.rg
-│   │   └── file3.rg
-│   └── module2/
-│       ├── file1.rg
-│       ├── file2.rg
-│       └── file3.rg
-│
-└── results/
-    └── bin/                  -- When compiling for yourself.
-    │   └── module_that_becomes_executable
-    └── dist/                 -- When distributing the project.
-        ├── linux_x86_64_installer
-        ├── linux_arm64_installer
-        ├── macos_x86_64_installer
-        ├── macos_arm64_installer
-        ├── windows_x86_64_installer
-        └── windows_arm64_installer
-    └── .gitignore
-```
-
-No se si private/public o internal/external es mejor.
-
-Conviene priorizar una convención simple y estable frente a una demasiado
-configurable.
-
-
-## Importing modules
-
-`m := #import("module_path")`
-
-Bare names are resolved under `more/`.
-
-If the module starts with `./` then it is relative to the current module.
-If it starts with `../` then it is relative to the parent module.
-If it starts with `.../` then it is relative to the root of the project.
-
-Examples:
+For example:
 
 ```rg
 json := #import("codecs/serialization/json")
@@ -122,75 +48,71 @@ parent_dep := #import("../shared")
 root_dep := #import(".../app/shared")
 ```
 
-Imports should always be bound to a name.
+## Package layout
 
+Any directory module with a valid `main` can be built as an executable; its
+path has no special meaning. `main` may be declared in any `.rg` file in that
+directory. A package's `argi.toml` lists the modules it wants to build as
+named executable targets:
 
-## Importing stuff from modules
+```toml
+name = "example"
 
-Access is explicit through the module binding:
+[executables.app]
+path = "source/app"
 
-```rg
-math := #import("math/linear_algebra")
-result := math.solve(...)
+[run]
+default = "app"
 ```
 
-This keeps name origin visible and avoids implicit namespace pollution.
+Package executables default to `build/debug/<name>`; direct module builds use
+`build/output`. `main.rg` is only a convenient filename. `argi init app`
+scaffolds `source/app/main.rg`; `argi init --lib <name>` scaffolds a library
+without executable targets.
 
-> [!NOTE]
-> que sea una sintaxis acorde al código normal permite programar imports
-> en compile time. No se hasta qué punto puede perjudicar, respecto a algo más
-> simple como go)
+One possible layout using that rule is:
 
-
-## C import
-
-To import C code, you can use the `#c_import` directive:
-
-```rg
-some_c_lib = #c_import("c_module.h")
+```text
+project/
+├── argi.toml
+├── source/
+│   ├── app/main.rg
+│   └── math/
+│       ├── vector.rg
+│       ├── linear/main.rg
+│       └── _detail/helper.rg
+└── build/
+    ├── debug/app
+    └── dist/<target>/
 ```
 
-It automatically converts C types to argi types:
+`build/debug/` is the current package output. `_detail` illustrates the
+planned privacy rule; `dist/` remains a distribution idea. No special source
+subtree is required.
 
-- Function calls accept structs and return structs, with the names as arguments.
-- ..
+## Package dependencies
 
-A lot of the standard more library depends on external libraries as:
+Planned commands:
 
-- `blas`/`lapack` for linear algebra.
-- `openssl` for cryptography.
-- `zlib` for compression.
-- `ffmpeg` for codecs.
-
-If the library is not recognized when compiling a module using any of those, it
-will throw an error requiring to install the library and link it properly.
-
-También tiene que haber una opción para que al distribuir se incluyan las
-librerías que necesita cada arquitectura, eso estaría bien.
-
-
-## Packages
-
-```bash
+```sh
 argi add <package>
-```
-
-```bash
 argi remove <package>
 ```
 
-Se descargan todos en un entorno global. No se hacen entornos virtuales. Como NIX y como go.
+Dependencies would use `argi.toml` plus a lockfile and a shared global package
+store, without per-project virtual environments. These commands and dependency
+resolution are not implemented yet.
 
-En el root del proyecto se tiene que guardar lo que iria en go.mod y go.sum
+## C interoperability
 
-## Kickstarter
+Planned named C header import:
 
+```rg
+some_c_lib := #c_import("c_module.h")
 ```
-argi init app
-```
 
-o
-
-```
-argi init lib
-```
+It would map C signatures and structs to Argi calls with named arguments.
+Some `more` modules may need native libraries (for example BLAS/LAPACK,
+OpenSSL, zlib, or FFmpeg). Builds should diagnose missing libraries; releases
+may bundle them per target. `#c_import` and its ABI and linking rules are not
+implemented yet.

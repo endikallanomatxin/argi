@@ -163,10 +163,7 @@ access uses ordinary named functions. For example, `get` needs only the array
 and index; operations that allocate, such as `push`, also take an allocator:
 
 ```rg
-allocator_storage :: GeneralPurposeAllocator = GeneralPurposeAllocator(
-    .allocator = system.page_allocator,
-)
-assume allocator ::= $&allocator_storage
+assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
 push(.self = $&arr, .value = 42)
 value_result ::= get(.self = &arr, .index = 0).result
 ```
@@ -273,10 +270,7 @@ variable or evaluate an initializer. It can also prefix a normal variable
 declaration, which declares and enables the binding in one statement:
 
 ```argi
-allocator_storage :: GeneralPurposeAllocator = GeneralPurposeAllocator(
-    .allocator = system.page_allocator,
-)
-assume allocator ::= $&allocator_storage
+assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
 text ::= String(.capacity = 16)
 ```
 
@@ -285,6 +279,9 @@ followed by `assume allocator`. The initializer runs once, before the new
 binding becomes visible. The usual declaration rules apply: `:=` declares a
 constant, `::=` declares a mutable variable, and an explicit type is allowed.
 `assume allocator = expression` is not a declaration and is rejected.
+`$&` or `&` applied to a newly created value materializes a local temporary
+at that expression. It lives until the enclosing block ends; a reference to
+it cannot escape that block. This also works in an `assume` declaration.
 
 For each input, an explicit argument takes precedence over an assumed
 variable with the same name, which takes precedence over the input's default.

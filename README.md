@@ -67,7 +67,7 @@ Executable packages declare build targets with `[executables.*]`:
 
 ```toml
 [executables.hello]
-path = "source/entrypoints/hello"
+path = "source/hello"
 
 [run]
 default = "hello"

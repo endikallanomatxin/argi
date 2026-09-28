@@ -1,4 +1,12 @@
-# Runtime
+# Runtime (future design proposal)
+
+This document explores a possible async and concurrency runtime. The
+`Runtime`, `Task`, `Future`, thread capabilities, and synchronization APIs below
+are proposals, not current language or core library features. The current
+`System` is defined in `core/system/system.rg`; it provides `.memory`,
+`.page_allocator`, and other process capabilities, but no `.allocator`,
+`.threads`, or `.runtime` fields. Code examples below are sketches and may
+need syntax and ownership updates before implementation.
 
 The idea is inspired by Zig's `Io` approach, but in Argi we call it `Runtime`
 because it is not only about input/output.
@@ -50,11 +58,43 @@ The concrete runtime determines how tasks are executed:
 - `FiberRuntime`: uses light threads/fibers multiplexed over OS threads.
 - `TestRuntime`: deterministic runtime for tests, fake timers, fake IO, etc.
 
+OS thread sketches: spawn from an explicit capability and wait on the handle.
+The API, capture rules, and ownership of the handle are still open.
+
+```rg
+thread := system.proc_man | spawn_thread($&_, {
+    do_work()
+})
+thread | wait($&_)
+
+-- Pass a function and its arguments instead of a closure.
+thread := system.proc_man | spawn_thread($&_, my_function, (x, y, z))
+
+-- A worker that runs continuously.
+thread := system.proc_man | spawn_thread($&_, {
+    loop {
+        do_work()
+    }
+})
+
+-- Launch several workers; each closure can use its loop value.
+for i in Range(.start = 1, .end = 10) {
+    system.proc_man | spawn_thread($&_, {
+        work_on(.index = i)
+    })
+}
+wait_all_threads()
+```
+
+`spawn_thread`, `wait`, and `wait_all_threads` are not implemented. In
+particular, the syntax and scope for waiting on a group of handles need design.
+
 ---
 
 ## Runtime and System
 
-By default, `system.runtime` should be a `BlockingRuntime`.
+One proposal is for a future `system.runtime` to be a `BlockingRuntime` by
+default. The following `System` shape is hypothetical:
 
 ```rg
 System : Type = (
@@ -66,7 +106,7 @@ System : Type = (
     .threads   : $&ThreadCapability
     .runtime   : $&Runtime
 )
-````
+```
 
 The default runtime is intentionally boring:
 
@@ -103,10 +143,7 @@ For example:
 
 ```rg
 main(.system: System) -> !(.status_code: Int32 = 0) := {
-    allocator_storage :: GeneralPurposeAllocator = GeneralPurposeAllocator(
-        .allocator = system.page_allocator,
-    )
-    assume allocator ::= $&allocator_storage
+    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
 
     runtime := FiberRuntime(
         .allocator = allocator,
@@ -178,10 +215,7 @@ will find the local runtime first:
 
 ```rg
 main(.system: System) -> !(.status_code: Int32 = 0) := {
-    allocator_storage :: GeneralPurposeAllocator = GeneralPurposeAllocator(
-        .allocator = system.page_allocator,
-    )
-    assume allocator ::= $&allocator_storage
+    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
 
     runtime := FiberRuntime(
         .allocator = allocator,
@@ -1091,4 +1125,3 @@ La mutabilidad como se gestiona?
 >En go las goroutines no puedes return. Eso es una asyn func.
 >Igual la clave es encontrar una sintaxis que me permita hacer algo similar de
 >forma sencilla.
-

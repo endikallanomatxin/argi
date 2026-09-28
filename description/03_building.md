@@ -1,5 +1,9 @@
 # Building
 
+> [!NOTE]
+> This is an early proposal for a procedural build layer. Current packages use
+> `argi.toml` and `[executables.*]` as described in `02_modules.md`.
+
 Usamos LLVM.
 
 Copiar:
@@ -22,7 +26,7 @@ intentar encontrar un hibrido entre ambos.
 
 Hay que encontrar un balance entre ambos.
 
-project.rgo
+Possible future `project.rgo`:
 
 ```rg
 (
@@ -61,7 +65,7 @@ project.rgo
 
         -- Deben poder correr at compile time
 
-        "build" = default_executable_creation (.module = "./entrypoints/main")
+        "build" = default_executable_creation (.module = "source/app")
         -- o para librerías estáticamente linkadas.
         -- "build" = default_dynamically_linked_library_creation (.module = ".")
 
@@ -162,4 +166,3 @@ lib | install
 
 Estaría bien que se pudiera compilar para microcontroladores, sistemas embedidos... Rust puede.
 Que se pudiera compilar a JS o algo así para que permita hacer movidas de web?
-

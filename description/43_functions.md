@@ -228,10 +228,7 @@ Inside main, select the dependencies needed by ordinary calls:
 
 ```rg
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    allocator_storage :: GeneralPurposeAllocator = GeneralPurposeAllocator(
-        .allocator = system.page_allocator,
-    )
-    assume allocator ::= $&allocator_storage
+    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume stdout := system.terminal&.stdout_writer
     run()
 }

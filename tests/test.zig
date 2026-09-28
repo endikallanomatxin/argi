@@ -641,7 +641,7 @@ test "argi init creates executable package" {
     const text = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, manifest_path, std.testing.allocator, .limited(1024 * 1024));
     defer std.testing.allocator.free(text);
 
-    const source_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "hello", "source", "entrypoints", "hello", "main.rg" });
+    const source_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "hello", "source", "hello", "main.rg" });
     defer std.testing.allocator.free(source_path);
     try std.Io.Dir.cwd().access(std.testing.io, source_path, .{});
     const source_text = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, source_path, std.testing.allocator, .limited(1024 * 1024));
@@ -649,10 +649,15 @@ test "argi init creates executable package" {
 
     try expect(std.mem.indexOf(u8, text, "kind = ") == null);
     try expect(std.mem.indexOf(u8, text, "[executables.hello]\n") != null);
-    try expect(std.mem.indexOf(u8, text, "path = \"source/entrypoints/hello\"\n") != null);
+    try expect(std.mem.indexOf(u8, text, "path = \"source/hello\"\n") != null);
     try expect(std.mem.indexOf(u8, text, "[run]\n") != null);
     try expect(std.mem.indexOf(u8, text, "default = \"hello\"\n") != null);
-    try expectEqualStrings("main(.system: System) -> (.status_code: Int32 = 0) := {\n}\n", source_text);
+    try expectEqualStrings(
+        "main(.system: System) -> (.status_code: Int32 = 0) := {\n" ++
+            "    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)\n" ++
+            "}\n",
+        source_text,
+    );
 }
 
 test "argi init lib creates package without executables" {
@@ -733,7 +738,7 @@ test "argi init executable package can print from generated main" {
     const module_root = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "hello" });
     defer std.testing.allocator.free(module_root);
 
-    const source_path = try std.fs.path.join(std.testing.allocator, &.{ module_root, "source", "entrypoints", "hello", "main.rg" });
+    const source_path = try std.fs.path.join(std.testing.allocator, &.{ module_root, "source", "hello", "main.rg" });
     defer std.testing.allocator.free(source_path);
 
     try std.Io.Dir.cwd().writeFile(std.testing.io, .{

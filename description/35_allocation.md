@@ -54,10 +54,7 @@ makes no direct operating-system calls. A program selects its allocator, for
 example:
 
 ```rg
-allocator_storage ::= GeneralPurposeAllocator(
-    .allocator = system.page_allocator
-)
-assume allocator ::= $&allocator_storage
+assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
 ```
 
 The backing allocator is chosen by the program, subject to allocator-summary
