@@ -247,6 +247,18 @@ pub const Resolver = struct {
     ) !?global_sg.Node {
         const local_arguments = reference.generic_arguments orelse return null;
         const arguments = try self.generics.relocateModuleArguments(module_index, local_arguments);
+        return self.makeVirtualizeWithArguments(module_index, reference, input, arguments);
+    }
+
+    // Instantiated function bodies already carry global generic arguments;
+    // they must use the same virtual-handle establishment as source calls.
+    pub fn makeVirtualizeWithArguments(
+        self: *Resolver,
+        module_index: usize,
+        reference: module_entities.ExternalRef,
+        input: global_sg.GlobalNodeId,
+        arguments: primitives.Range(global_sg.GlobalGenericArgId),
+    ) !?global_sg.Node {
         var abstract_type: ?global_sg.GlobalTypeId = null;
         for (self.graph.generic_arguments.items[arguments.start..][0..arguments.len]) |argument| {
             if (!std.mem.eql(u8, self.graph.text(argument.name), "abstract")) continue;
@@ -1921,7 +1933,6 @@ test "abstract resolver keeps compile-time relation metadata outside GlobalSG" {
     try std.testing.expect(@sizeOf(Stats) <= 40);
     try std.testing.expect(@sizeOf(global_sg.GlobalDeclId) == 4);
 }
-
 
 test "abstract implementation caches rollback speculative keys" {
     const allocator = std.testing.allocator;

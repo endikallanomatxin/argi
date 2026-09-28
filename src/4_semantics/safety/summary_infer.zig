@@ -97,13 +97,18 @@ pub const Infer = struct {
         const implementations = self.graph.function_refs.items[registry.implementations.start..][0..registry.implementations.len];
         if (implementations.len == 0) return null;
 
-        var merged = self.engine.summaryFor(implementations[0]) orelse return null;
+        var receiver: ?u32 = null;
+        for (self.graph.virtual_calls.items) |call| if (call.safety_methods == registry_id) {
+            receiver = call.self_input_index;
+            break;
+        };
+        var merged = (try self.virtualImplementationSummary(implementations[0], receiver)) orelse return null;
         if (!virtualInputPostStatesRuntimeRepresentable(merged.input_post_states)) {
             try self.invalid_virtual_summaries.put(registry_id, {});
             return null;
         }
         for (implementations[1..]) |implementation| {
-            const next = self.engine.summaryFor(implementation) orelse return null;
+            const next = (try self.virtualImplementationSummary(implementation, receiver)) orelse return null;
             if (!virtualInputPostStatesRuntimeRepresentable(next.input_post_states)) {
                 try self.invalid_virtual_summaries.put(registry_id, {});
                 return null;
@@ -115,6 +120,58 @@ pub const Infer = struct {
         }
         try self.virtual_summaries.put(registry_id, merged);
         return merged;
+    }
+
+    fn virtualImplementationSummary(self: *Infer, implementation: graph_mod.GlobalFunctionId, receiver: ?u32) !?facts.SafetySummary {
+        var summary = self.engine.summaryFor(implementation) orelse return null;
+        var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        const function = self.graph.function(implementation);
+        for (summary.input_post_states) |state| {
+            var ty = self.graph.fields.items[function.input.start + state.target.input_index].ty;
+            var scalar_field = receiver != null and state.target.input_index == receiver.? and state.target.projections.len != 0;
+            for (state.target.projections) |projection| {
+                if (self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
+                switch (projection) {
+                    .field => |index| {
+                        const fields = types.fields(self.graph, ty) orelse {
+                            scalar_field = false;
+                            break;
+                        };
+                        if (index >= fields.len) {
+                            scalar_field = false;
+                            break;
+                        }
+                        ty = types.effectiveFieldType(self.graph.fields.items[fields.start + index]);
+                    },
+                    else => {
+                        scalar_field = false;
+                        break;
+                    },
+                }
+            }
+            // Scalar receiver fields are implementation details, not fields of
+            // the erased Virtual handle. They carry no published borrow state.
+            if (scalar_field and !self.typeContainsPointer(ty) and
+                state.initializedness == .initialized and state.opaque_ownership == .none and
+                !state.ends_previous_roots and !state.refreshes_storage_generation and
+                !state.requires_available_destination and !state.value.explicit_dependency and
+                state.value.fresh_owned_roots.len == 0 and state.value.fresh_dependencies.len == 0 and
+                state.value.fresh_storage_capabilities.len == 0) continue;
+            try states.append(state);
+        }
+        summary.input_post_states = try states.toOwnedSlice();
+        // Receiver layout disappears at dispatch. Its liveness requirement
+        // covers the full receiver contents, which the concrete checker
+        // validates before applying this erased summary. This also keeps
+        // recursive wrapper composition from growing private field paths.
+        var required = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (summary.required_live_inputs) |path| {
+            var erased = path;
+            if (receiver != null and path.input_index == receiver.?) erased.projections = &.{};
+            try appendInputPath(&required, erased);
+        }
+        summary.required_live_inputs = try required.toOwnedSlice();
+        return summary;
     }
 
     pub fn virtualSummaryInvalid(self: *const Infer, registry_id: graph_mod.GlobalVirtualRegistryId) bool {
@@ -772,7 +829,11 @@ pub const Infer = struct {
                 states,
                 exits,
             ),
-            .type_initializer => |initializer| try self.inferInputPostStatesExpression(function_id, initializer.args, states, exits),
+            .type_initializer => |initializer| {
+                try self.inferInputPostStatesExpression(function_id, initializer.args, states, exits);
+                const summary = self.engine.summaryFor(initializer.init_fn) orelse return;
+                try self.applyInputPostStatesFromArguments(function_id, summary, try self.initializerArguments(initializer.args), states, .{ .input_index = 0, .effect = .{} });
+            },
             else => {},
         }
     }
@@ -851,6 +912,17 @@ pub const Infer = struct {
         override: ?SymbolicInputOverride,
     ) !void {
         const arguments = self.structArguments(input) orelse return;
+        try self.applyInputPostStatesFromArguments(function_id, summary, arguments, states, override);
+    }
+
+    fn applyInputPostStatesFromArguments(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        summary: facts.SafetySummary,
+        arguments: []const graph_mod.ValueField,
+        states: *std.array_list.Managed(facts.PlacePostState),
+        override: ?SymbolicInputOverride,
+    ) !void {
         for (summary.input_post_states) |post_state| {
             if (post_state.target.input_index >= arguments.len) continue;
             const targets = try self.substituteRequiredInputPath(
@@ -1497,7 +1569,11 @@ pub const Infer = struct {
                 state,
                 exits,
             ),
-            .type_initializer => |initializer| try self.inferOpaqueEmptyExpression(function_id, initializer.args, effects, state, exits),
+            .type_initializer => |initializer| {
+                try self.inferOpaqueEmptyExpression(function_id, initializer.args, effects, state, exits);
+                const summary = self.engine.summaryFor(initializer.init_fn) orelse return;
+                try self.applyOpaqueEmptySummaryArguments(function_id, summary, try self.initializerArguments(initializer.args), effects, state, .{ .input_index = 0, .effect = .{} });
+            },
             else => {},
         }
     }
@@ -1562,6 +1638,18 @@ pub const Infer = struct {
         override: ?SymbolicInputOverride,
     ) !void {
         const arguments = self.structArguments(input) orelse return;
+        try self.applyOpaqueEmptySummaryArguments(function_id, summary, arguments, effects, state, override);
+    }
+
+    fn applyOpaqueEmptySummaryArguments(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        summary: facts.SafetySummary,
+        arguments: []const graph_mod.ValueField,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueEmptyState,
+        override: ?SymbolicInputOverride,
+    ) !void {
         if (self.summaryMayRepopulateOpaqueStorage(summary)) state.emptied.clearRetainingCapacity();
         for (summary.opaque_storage_effects) |effect| {
             if (effect.storage.input_index >= arguments.len) continue;
@@ -1969,7 +2057,15 @@ pub const Infer = struct {
                 try self.inferRequiredLiveInputsRange(function_id, statement.cleanup, required);
             },
             .code_block => |child| try self.inferRequiredLiveInputsBlock(function_id, child, required),
-            .type_initializer => |initializer| try self.inferRequiredLiveInputsNode(function_id, initializer.args, required),
+            .type_initializer => |initializer| {
+                try self.inferRequiredLiveInputsNode(function_id, initializer.args, required);
+                const summary = self.engine.summaryFor(initializer.init_fn) orelse return;
+                const arguments = try self.initializerArguments(initializer.args);
+                for (summary.required_live_inputs) |path| {
+                    const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, .{ .input_index = 0, .effect = .{} });
+                    for (mapped) |candidate| try appendInputPath(required, candidate);
+                }
+            },
             .auto_deinit_binding => |auto_id| try self.inferAutoDeinitRequiredLiveInputs(function_id, auto_id, required),
             else => {},
         }
@@ -2176,6 +2272,12 @@ pub const Infer = struct {
                 try self.inferExpression(function_id, cast.value)
             else
                 .{},
+            .type_initializer => |initializer| blk: {
+                const arguments = try self.initializerArguments(initializer.args);
+                const effect = try self.initializerResultEffect(initializer.init_fn);
+                const substituted = try self.substituteOutputWithOverride(function_id, effect, arguments, .{ .input_index = 0, .effect = .{} });
+                break :blk try self.rebaseFreshSources(substituted, node_id);
+            },
             .function_call => |call| try self.inferCall(function_id, node_id, call.callee, call.input),
             .virtualize => |virtualize_id| try self.inferExpression(
                 function_id,
@@ -2210,6 +2312,59 @@ pub const Infer = struct {
         if (summary.outputs.len != 1) return .{};
         const substituted = try self.substituteOutput(function_id, summary.outputs[0], arguments);
         return self.rebaseFreshSources(substituted, call_node);
+    }
+
+    fn initializerArguments(self: *Infer, input: graph_mod.GlobalNodeId) ![]const graph_mod.ValueField {
+        const explicit = self.structArguments(input) orelse return error.InvalidInitializerArguments;
+        const arguments = try self.allocator.alloc(graph_mod.ValueField, explicit.len + 1);
+        // The implicit destination has no caller-input identity. Substitution
+        // always overrides this placeholder with its symbolic value.
+        arguments[0] = .{ .name = .{ .start = 0, .len = 0 }, .value = input };
+        @memcpy(arguments[1..], explicit);
+        return arguments;
+    }
+
+    /// Constructors publish the value established by init's destination
+    /// post-state, rather than an ordinary function output. Parameter indices
+    /// remain those of init, including destination input zero.
+    pub fn initializerResultEffect(self: *Infer, init_fn: graph_mod.GlobalFunctionId) !facts.ValueEffect {
+        const summary = self.engine.summaryFor(init_fn) orelse return .{};
+        var result: facts.ValueEffect = .{};
+        for (summary.input_post_states) |state| {
+            if (state.target.input_index != 0 or state.initializedness != .initialized) continue;
+            result = try self.storeEffectProjection(result, state.target.projections, state.value);
+        }
+        return result;
+    }
+
+    fn storeEffectProjection(self: *Infer, previous: facts.ValueEffect, projections: []const facts.Projection, value: facts.ValueEffect) anyerror!facts.ValueEffect {
+        if (projections.len == 0) return value;
+        const index: u32 = switch (projections[0]) {
+            .field => |index| index,
+            .static_index => |index| std.math.cast(u32, index) orelse return self.mergeValueEffects(previous, value),
+            else => return self.mergeValueEffects(previous, value),
+        };
+        var fields = std.array_list.Managed(facts.OutputFieldEffect).init(self.allocator);
+        var found = false;
+        for (previous.fields) |field| {
+            var updated = field;
+            if (field.index == index) {
+                const child = try self.allocator.create(facts.ValueEffect);
+                child.* = try self.storeEffectProjection(field.value.*, projections[1..], value);
+                updated.value = child;
+                found = true;
+            }
+            try fields.append(updated);
+        }
+        if (!found) {
+            const child = try self.allocator.create(facts.ValueEffect);
+            child.* = try self.storeEffectProjection(.{}, projections[1..], value);
+            try fields.append(.{ .index = index, .value = child });
+        }
+        var result = previous;
+        for (fields.items) |field| result = try self.mergeValueEffects(result, field.value.*);
+        result.fields = try fields.toOwnedSlice();
+        return result;
     }
 
     fn inferVirtualCall(

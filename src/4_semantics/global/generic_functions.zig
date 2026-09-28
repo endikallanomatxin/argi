@@ -2679,6 +2679,13 @@ pub const Resolver = struct {
                 return (try self.resolver.makeAlignmentOf(input, self.resolver.sourceFor(self.module_index, source))) orelse error.AlignmentOfInputMustBeStruct;
             if (module_path == null and std.mem.eql(u8, name, "is"))
                 return self.resolveChoiceTest(input, source);
+            if (module_path == null and std.mem.eql(u8, name, "to_virtual")) {
+                if (self.resolver.nested_call_context) |abstracts| {
+                    const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = null, .name = name_range, .source = source };
+                    if (try abstracts.makeVirtualizeWithArguments(self.module_index, reference, input, arguments)) |node| return node;
+                }
+                return error.DeferredGenericFunction;
+            }
             const input_literal = switch (self.resolver.graph.nodes.items[@intFromEnum(input)].content) {
                 .struct_value_literal => |value| value,
                 else => null,

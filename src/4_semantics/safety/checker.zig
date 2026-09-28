@@ -232,11 +232,15 @@ pub const SafetyChecker = struct {
             switch (node.content) {
                 .binding_declaration => |binding| {
                     const record = self.graph.bindings.items[@intFromEnum(binding)];
+                    const storage = facts.Place{ .root = binding };
+                    try self.beginLexicalStorage(state, storage);
                     const value = if (record.initialization) |initialization| blk: {
                         try self.validateContextualIntegerLiteral(initialization, record.ty);
+                        const expression = self.graph.node(initialization);
+                        if (expression.content == .type_initializer)
+                            break :blk try self.evaluateTypeInitializer(function, expression.source, expression.content.type_initializer, record.ty, storage, state);
                         break :blk try self.evaluate(function, initialization, state);
                     } else facts.ValueFacts{};
-                    try self.beginLexicalStorage(state, .{ .root = binding });
                     try self.setPlace(state, .{ .root = binding }, if (record.initialization != null) .initialized else .deinitialized, value);
                 },
                 .assignment => |assignment| {
@@ -588,9 +592,87 @@ pub const SafetyChecker = struct {
                 try self.validateIntegerLiteral(node.source, node.ty, value);
                 break :blk .{};
             },
-            .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .type_initializer, .testing_expect_error, .reach_directive, .break_statement, .continue_statement, .abort_statement => .{},
+            .type_initializer => |initializer| try self.evaluateTypeInitializer(function, node.source, initializer, node.ty orelse return error.InvalidInitializerType, null, state),
+            .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .testing_expect_error, .reach_directive, .break_statement, .continue_statement, .abort_statement => .{},
             else => .{},
         };
+    }
+
+    fn evaluateTypeInitializer(
+        self: *SafetyChecker,
+        caller: graph_mod.GlobalFunctionId,
+        source: primitives.SourceRef,
+        initializer: anytype,
+        ty: graph_mod.GlobalTypeId,
+        destination: ?facts.Place,
+        state: *FunctionState,
+    ) anyerror!facts.ValueFacts {
+        const input = self.graph.node(initializer.args);
+        if (input.content != .struct_value_literal) return error.InvalidInitializerArguments;
+        const range = input.content.struct_value_literal.fields;
+        const fields = self.globalValueFieldIds(range);
+        const arguments = try self.allocator.alloc(facts.ValueFacts, fields.len + 1);
+        // The hidden destination has storage identity but no initialized
+        // contents. Explicit references to it acquire their generation via
+        // input_places; value reads must not inherit a fictitious old value.
+        arguments[0] = if (destination) |place| .{
+            .referenced_place = place,
+        } else .{};
+        for (fields, 0..) |field_id, index|
+            arguments[index + 1] = try self.evaluate(caller, self.graph.value_fields.items[@intFromEnum(field_id)].value, state);
+        const engine = self.active_summaries orelse return .{};
+        const summary = engine.summaryFor(initializer.init_fn) orelse return .{};
+        if (!try self.validateSummaryRequiredLive(source, summary, arguments, state)) return .{};
+        if (destination) |place| {
+            // The constructor's hidden destination is the final binding,
+            // matching codegen's construction into that binding's storage.
+            const argument_ids = try self.allocator.alloc(graph_mod.GlobalValueFieldId, fields.len + 1);
+            argument_ids[0] = if (fields.len != 0) fields[0] else @enumFromInt(0);
+            @memcpy(argument_ids[1..], fields);
+            try self.applySummaryEffects(source, summary, argument_ids, arguments, state);
+            return self.initializedValueAtPlace(state, place, ty);
+        }
+        const inference = self.active_summary_inference orelse return .{};
+        const effect = try inference.initializerResultEffect(initializer.init_fn);
+        const value = try self.instantiateOutput(effect, arguments, state);
+        // An expression temporary has no named destination Place, but init
+        // still consumes or modifies its explicit arguments. Snapshot the
+        // constructed value before committing those external post-states.
+        var external_summary = summary;
+        var post_states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        defer post_states.deinit();
+        for (summary.input_post_states) |post_state|
+            if (post_state.target.input_index != 0) try post_states.append(post_state);
+        var opaque_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
+        defer opaque_effects.deinit();
+        for (summary.opaque_storage_effects) |opaque_effect|
+            if (opaque_effect.storage.input_index != 0) try opaque_effects.append(opaque_effect);
+        var empties = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        defer empties.deinit();
+        for (summary.opaque_storage_empties) |empty|
+            if (empty.input_index != 0) try empties.append(empty);
+        external_summary.input_post_states = post_states.items;
+        external_summary.opaque_storage_effects = opaque_effects.items;
+        external_summary.opaque_storage_empties = empties.items;
+        const argument_ids = try self.allocator.alloc(graph_mod.GlobalValueFieldId, fields.len + 1);
+        argument_ids[0] = if (fields.len != 0) fields[0] else @enumFromInt(0);
+        @memcpy(argument_ids[1..], fields);
+        try self.applySummaryEffects(source, external_summary, argument_ids, arguments, state);
+        return value;
+    }
+
+    fn initializedValueAtPlace(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, ty: graph_mod.GlobalTypeId) anyerror!facts.ValueFacts {
+        var result = self.valueAtPlace(state, storage) orelse facts.ValueFacts{};
+        const range = types.fields(self.graph, ty) orelse return result;
+        const fields = try self.allocator.alloc(facts.FieldFacts, range.len);
+        for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
+            const child = try self.allocator.create(facts.ValueFacts);
+            child.* = try self.initializedValueAtPlace(state, try self.project(storage, .{ .field = @intCast(index) }), types.effectiveFieldType(field));
+            fields[index] = .{ .index = @intCast(index), .value = child };
+            result = try self.mergeValueFacts(result, child.*);
+        }
+        result.fields = fields;
+        return result;
     }
 
     fn evaluateCall(
@@ -1470,7 +1552,17 @@ pub const SafetyChecker = struct {
                 const first_capability = state.storage_capabilities.items.len;
                 const value = try self.allocator.create(facts.ValueFacts);
                 value.* = try self.instantiateOutputWithFresh(variant.value.*, arguments, state, fresh_roots, fresh_capabilities);
-                for (state.tracker.roots.items[first_root..]) |*root| root.state = .conditional;
+                for (state.tracker.roots.items[first_root..]) |*root| {
+                    // Input storage generations can be materialized lazily
+                    // while instantiating a choice payload. Their lifetime
+                    // already exists regardless of which variant is returned.
+                    var input_storage = false;
+                    for (state.storage_generations.items) |generation| if (generation.generation == root.id) {
+                        input_storage = true;
+                        break;
+                    };
+                    if (!input_storage) root.state = .conditional;
+                }
                 for (state.storage_capabilities.items[first_capability..]) |*capability| capability.* = .conditional;
                 variants[index] = .{ .index = variant.index, .value = value };
             }
@@ -1738,6 +1830,10 @@ pub const SafetyChecker = struct {
         return switch (self.graph.nodes.items[@intFromEnum(node_id)].content) {
             .binding_use => |binding| blk: {
                 const value = self.getPlace(state, .{ .root = binding }) orelse break :blk &.{};
+                // An owning aggregate lives in its binding's storage. Its
+                // references to heap storage do not place the binding there.
+                if (!isPointer(self.graph, self.graph.binding(binding).ty))
+                    break :blk value.value.opaque_provenance;
                 break :blk try self.currentOpaqueProvenancesForValue(state, value.value);
             },
             .move_value, .address_of => |child| self.opaqueProvenanceForAccess(child, state),
@@ -2025,6 +2121,10 @@ pub const SafetyChecker = struct {
         result: *std.array_list.Managed(facts.Place),
     ) !void {
         for (pointer.opaque_provenance) |provenance| try appendPlaceFact(result, provenance.storage);
+        // A pointer to a named owner accesses that owner's fields, not the
+        // heap slots it owns. Owned-root dependencies alone cannot identify
+        // the address as lying inside an opaque domain.
+        if (pointer.referenced_place != null) return;
         for (state.opaque_storages.items) |opaque_storage| {
             if (self.valueAtPlace(state, opaque_storage.storage)) |storage_value| {
                 for (pointer.dependencies) |dependency|
@@ -2446,6 +2546,15 @@ pub const SafetyChecker = struct {
                 );
             return null;
         };
+        // Private receiver projections are erased at a virtual boundary.
+        // Validate the receiver contents as well as the handle lifetime.
+        if (call.self_input_index < values.len) {
+            if (values[call.self_input_index].referenced_place) |place| if (self.valueAtPlace(state, place)) |stored| {
+                const before = self.diagnostics.list.items.len;
+                try self.requireLive(@enumFromInt(0), source, stored, state);
+                if (self.diagnostics.list.items.len != before) return facts.ValueFacts{};
+            };
+        }
         if (!try self.validateSummaryRequiredLive(source, summary, values, state)) return facts.ValueFacts{};
         try self.applySummaryEffects(source, summary, argument_nodes, values, state);
         return try self.instantiateSummaryOutputs(summary.outputs, values, state);
@@ -4724,4 +4833,29 @@ test "dead owned roots still cannot escape" {
         .owned_roots = &.{root},
     };
     try std.testing.expect(valueDependsOnDeadRoot(value, &state));
+}
+
+test "choice outputs keep lazily materialized input storage alive" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const storage = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(0)) };
+    const projections = [_]facts.Projection{.{ .field = 0 }};
+    const payload = facts.ValueEffect{
+        .input_places = &.{.{ .input_index = 0, .projections = &projections }},
+        .fresh_owned_roots = &.{99},
+    };
+    const output = try checker.instantiateOutput(
+        .{ .variants = &.{.{ .index = 0, .value = &payload }} },
+        &.{.{ .referenced_place = storage }},
+        &state,
+    );
+    try std.testing.expectEqual(@as(usize, 1), state.storage_generations.items.len);
+    try std.testing.expect(state.tracker.isAlive(state.storage_generations.items[0].generation));
+    const owned = output.variants[0].value.owned_roots[0];
+    try std.testing.expectEqual(.conditional, state.tracker.roots.items[@intFromEnum(owned)].state);
 }
