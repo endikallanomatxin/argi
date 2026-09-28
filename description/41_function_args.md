@@ -1,16 +1,12 @@
-It is important that:
-- there is always a clear owner of each value.
-- the compiler can track the lifetime of values.
+# Function arguments
 
-When passsing arguments to functions/structs:
+An input declared as `Type` acquires a value. `&Type` borrows it for reading;
+`$&Type` borrows it for reading and writing. The call site spells out the
+borrow or ownership transfer.
 
--  &value (READ in mojo). Reference but cannot mutate
-- $&value (MUT  in mojo). Reference and can mutate
--   value (OWN  in mojo). Owned, can mutate
-
-Passing a named value to a by-value argument performs an implicit copy only
-when its type implements `ImplicitlyCopyable`. Otherwise the caller must use
-`copy(&value)` to duplicate it or `~value` to transfer it. `&value` and
+Passing a named value to a by-value argument performs an implicit copy when
+its type permits one. Otherwise the caller must use `copy(&value)` to
+duplicate it or `~value` to move it. `&value` and
 `$&value` remain explicit at the call site when the signature expects a
 reference.
 
@@ -23,8 +19,7 @@ foo (.pv : $&Type)
 foo (.v  :   Type)
 ```
 
-Shorthand to enable the use of the argument as a value, not
-cosidering the reference semantics:
+Reference arguments can use a shorthand that dereferences them in the body:
 
 ```
 foo (.v:  &Type&)
@@ -49,88 +44,17 @@ In the first case the caller must pass a temporary owned `String`, use
 In the second case `File` is passed by mutable reference because files are not
 copyable.
 
-> It also makes sense to use this for struct access.
-
-
-### Default behaviour
-
-(This is an advantage of Mojo.)
-
-Having READ be the default is the most convenient and safest option.
-But our language requires `&`.
-
-If an argument is passed by value and is not modified inside the function, the
-LSP could automatically change it to `&`.
-
-
-### Default values for references
-
-(This is another advantage of Mojo.)
-
-Another point is that when passing by read in Mojo, it feels natural to give it a default value.
-
-For us, providing a default requires creating a value elsewhere and referencing it.
-
-Perhaps structs and functions with reference arguments could initialize what
-they need at the caller site.
-
-> In Mojo, mutable reference arguments cannot have default values.
-> I am not sure why; perhaps this is just to avoid the anti-pattern.
-
-
----
-
-Mojo enforces *argument exclusivity* for mutable references. This means that if
-a function receives a mutable reference to a value (such as an `mut` argument),
-it can't receive any other references to the same value—mutable or immutable.
-That is, a mutable reference can't have any other references that *alias* it.
-
-For example, consider the following code example:
-
-```mojo
-fn append_twice(mut s: String, other: String):
-   # Mojo knows 's' and 'other' cannot be the same string.
-   s += other
-   s += other
-
-fn invalid_access():
-  var my_string = "o"  # Create a run-time String value
-
-  # error: passing `my_string` mut is invalid since it is also passed
-  # read.
-  append_twice(my_string, my_string)
-  print(my_string)
-```
-
-This code is confusing because the user might expect the output to be `ooo`,
-but since the first addition mutates both `s` and `other`, the actual output
-would be `oooo`. Enforcing exclusivity of mutable references not only prevents
-coding errors, it also allows the Mojo compiler to optimize code in some cases.
-
-One way to avoid this issue when you do need both a mutable and an immutable
-reference (or need to pass the same value to two arguments) is to make a copy:
-
-```mojo
-fn valid_access():
-  var my_string = "o"           # Create a run-time String value
-  var other_string = my_string  # Create a copy of the String value
-  append_twice(my_string, other_string)
-  print(my_string)
-```
-
-Note that argument exclusivity isn't enforced for register-passable trivial
-types (like `Int` and `Bool`), because they are always passed by copy. When
-passing the same value into two `Int` arguments, the callee will receive two
-copies of the value.
-
+> [!IDEA]
+> Tooling could suggest changing an unused by-value argument to `&Type`.
+> Caller-side construction might also support defaults for reference inputs.
 
 ## Summary
 
 - `Type` means the callee acquires a value; named arguments copy implicitly
-  only when `ImplicitlyCopyable`, otherwise acquisition must be explicit
+  only when the type permits it, otherwise acquisition must be explicit
 - `&Type` means shared read access
 - `$&Type` means mutable read/write access, not exclusive or `noalias`
-- `~value` explicitly transfers a named value into a `Type` argument
+- `~value` explicitly moves a named value into a `Type` argument
 
 
 ## Reached Arguments
@@ -280,9 +204,9 @@ followed by `assume allocator`. The initializer runs once, before the new
 binding becomes visible. The usual declaration rules apply: `:=` declares a
 constant, `::=` declares a mutable variable, and an explicit type is allowed.
 `assume allocator = expression` is not a declaration and is rejected.
-`$&` or `&` applied to a newly created value materializes a local temporary
-at that expression. It lives until the enclosing block ends; a reference to
-it cannot escape that block. This also works in an `assume` declaration.
+`$&` or `&` applied to a newly created value materializes a temporary. In an
+`assume` declaration, that temporary is bound for the enclosing scope; a
+reference to it cannot escape that scope.
 
 For each input, an explicit argument takes precedence over an assumed
 variable with the same name, which takes precedence over the input's default.

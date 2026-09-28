@@ -17,7 +17,7 @@ square (i:Int) -> (o:Int) := {o = i^2}
 
 Functions may also be marked with `once` to express that the function is meant
 to be consumed at most once from the reachable call graph of the compiled
-entrypoint. See [`44_once.md`](./44_once.md).
+entrypoint. See [`42_once.md`](./42_once.md).
 
 - All parameters are passed in a single input struct (`in`).
 - All results are returned in a single output struct (`out`).

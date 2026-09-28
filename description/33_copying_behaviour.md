@@ -1,20 +1,27 @@
-## Copying and ownership
+# Copying and moving
 
 Argi keeps the operation selected at a call site independent of the value's
 type:
 
 ```rg
 x          -- normal value use
-&x         -- explicit read-only borrow
-$&x        -- explicit mutable borrow
-~x         -- explicit ownership transfer
+~x         -- explicitly move a value
 copy(&x)   -- explicit duplication
 ```
 
 A plain use of a named value never changes from copy to move according to its
-type. When a context must acquire a new owned value, `x` is accepted only if
-its type explicitly implements `ImplicitlyCopyable`; otherwise the programmer
-must choose `copy(&x)` or `~x`.
+type. When a context must acquire another value, `x` is accepted when its
+type implements `ImplicitlyCopyable`. Otherwise the programmer must choose
+`copy(&x)` or `~x`.
+
+[Rust](https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html) may
+move a non-`Copy` value when a named variable is passed by value. Argi does
+not choose a move from the value's type: a named source moves only with `~`.
+
+> [!IMPLEMENTATION]
+> The compiler also permits implicit copies of types it judges trivially
+> copyable when they have no explicit `copy` operation, even without an
+> `ImplicitlyCopyable` implementation.
 
 
 ## Value-consuming contexts
@@ -36,9 +43,8 @@ else:
     reject the plain use
 ```
 
-The rejection is not an implicit move. A temporary that already denotes a
-unique owned result may flow into its destination directly, without an
-artificial copy or explicit `~`.
+The rejection is not an implicit move. A fresh temporary result may flow
+directly into its destination, without an artificial copy or explicit `~`.
 
 
 ## Copy contracts
@@ -70,15 +76,19 @@ FalliblyCopyable   => never copied implicitly
 ```
 
 An infallible but expensive type can implement `InfalliblyCopyable` while
-requiring explicit `copy(&value)`. A fallible owning type such as `String` can
+requiring explicit `copy(&value)`. A fallible type such as `String` can
 implement `FalliblyCopyable#(.reasons: (..out_of_memory))`; its failure remains
 part of `copy`, not a differently named operation.
 
-The language has no general `shallow_copy()`. An owning copy must establish
-independent resources and ownership. Copying a reference or non-owning view may
-copy its validity dependencies, but must not duplicate ownership of the roots
-on which it depends.
+The language has no general `shallow_copy()`. Copying a value that has a
+resource cleanup responsibility must establish independent resources and a
+separate cleanup responsibility. Copying a reference or non-owning view
+preserves its borrowing limits without acquiring cleanup responsibility for
+its referent.
 
+A type may hold resources in some fields and borrow through others. Its
+`copy()` must duplicate the resources independently and keep borrowed fields
+subject to their original lifetimes.
 
 ## Implicit copies
 
@@ -100,8 +110,8 @@ to expose the error.
 
 ## Explicit copies
 
-Owning types such as `String`, `DynamicArray`, and maps normally require an
-explicit copy, which may fail while allocating independent storage:
+Values such as `String`, `DynamicArray`, and maps normally require an explicit
+copy, which may fail while allocating independent storage:
 
 ```rg
 copied_result ::= copy(.self = &original)
@@ -118,17 +128,18 @@ The original container remains unchanged.
 
 ## Explicit move
 
-Ownership transfer from a named value is always written with `~`:
+Moving a named value is always written with `~`:
 
 ```rg
 second := ~first
 consume(.resource = ~second)
 ```
 
-The destination receives the value's dependencies and owned roots. The source
-binding becomes moved and cannot be read, moved, assigned, or cleaned again.
-A move is semantic ownership transfer; it does not promise a particular
-physical copy and is not the same operation as relocation.
+The destination receives the value and its cleanup responsibilities without
+calling `deinit` at the source. The source binding becomes moved; reading,
+moving, reassigning, or cleaning it again is rejected. Unaffected fields of a
+partially moved aggregate still require cleanup.
+Moving does not redirect existing references to the source's storage.
 
 In particular, this is an error for a non-`ImplicitlyCopyable` type:
 
@@ -143,7 +154,7 @@ It does not silently become `second := ~first`.
 
 Some resources have no meaningful duplication operation, including files,
 sockets, mutexes, devices, and `Allocation`. They implement no copy abstract.
-They can be borrowed explicitly or transferred explicitly:
+They can be borrowed or moved explicitly:
 
 ```rg
 inspect(.file = &file)
@@ -156,17 +167,14 @@ the type is copyable it can suggest `copy(&value)` and `~value`; if it has no
 copy operation it should suggest borrowing or explicit transfer instead.
 
 
-## Places and indexed access
+## Indexed value access
 
 The access prefix applies to the whole Place:
 
 ```rg
 arr[i]       -- normal value use; implicit copy only when the item opts in
-&arr[i]      -- explicit read-only borrow
-$&arr[i]     -- explicit mutable borrow
 ~arr[i]      -- explicit take, when the collection supports it
 ```
 
-Postfix `&` remains dereference syntax, so `arr&[i]` means `(arr&)[i]` rather
-than a special indexing mode. Borrowed indexing and iteration remain visible
-at the call site; Argi does not infer a borrow from a plain value use.
+Borrowed indexing and iteration remain visible at the call site; Argi does not
+infer a borrow from a plain value use.
