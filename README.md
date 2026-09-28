@@ -17,7 +17,8 @@ It’s an early work-in-progress.
   general-purpose and arena storage; allocating functions take it as an
   argument.
 - 🎯 Explicitness without annoyance:
-  - ⚠️ Side-effects are always explicit.
+  - ⚠️ Application-visible side effects are designed to be explicit.
+    Compiler-generated error traces still call libc `malloc`/`free` directly.
   - 🔐 Capability-based design for resource management.
   - 🪶 `assume` for lexical implicit arguments and `reach` for propagating
     dependencies through intermediate calls.

@@ -89,10 +89,13 @@ is usable, never extend it.
 
 `trusted_opaque_move`, its storage-aware form
 `trusted_opaque_move_in`, `trusted_opaque_move_out`, and
-`trusted_opaque_drop` are explicit trusted primitives. Any library may
-invoke them: there is no global unsafe mode and bundled core has no extra
-privilege. The checker still enforces moves, known ownership roots, alias
-barriers, and dependency validity. The caller assumes only the runtime-slot
+`trusted_opaque_drop` are explicit trusted primitives. Libraries may call
+these public declarations from bundled `core`, but only those exact
+compiler-recognized declarations have trusted effects. A declaration with the
+same name in another module does not gain them. There is no global unsafe
+mode; bundled core also has private helpers for maintaining its invariants.
+The checker still enforces moves, known ownership roots, alias barriers, and
+dependency validity. The caller assumes only the runtime-slot
 invariant that the checker cannot represent: initializedness and exactly-once
 destruction in opaque storage. Moving a value out of a slot ends its opaque occupancy and
 creates a fresh precise ownership identity for the extracted value; it does
@@ -102,8 +105,8 @@ one live value that has not already been dropped. Calling it twice, or calling
 it after a value has been moved out by some future trusted operation, violates the
 primitive's manual trusted precondition. The checker deliberately does not add
 per-slot occupancy state to diagnose that contract dynamically.
-Canonical primitive identity is based on the bundled declaration; its trusted
-meaning is not granted merely by reusing the name in user code.
+Canonical primitive identity requires the bundled path, name, and full
+signature recognized by the compiler.
 
 The storage-aware move receives a structural `storage` Place in addition to
 the runtime slot. Dependencies present when the value crosses this boundary
