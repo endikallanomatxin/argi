@@ -38,9 +38,9 @@ Conversion uses the destination type as the callee. For example,
 integer carries no validity dependency on the referenced storage.
 
 Creating a reference from an address requires a named core operation that
-establishes its validity root, such as `establish_fresh_reference` or
-`establish_inherited_reference`. A type conversion alone cannot establish a
-live reference.
+connects it to a valid lifetime, such as `establish_inherited_reference`.
+Allocation establishment creates a fresh root for newly acquired storage.
+A type conversion alone cannot establish a live reference.
 
 > [!QUESTION]
 > Should an integer literal take a floating-point destination type in an

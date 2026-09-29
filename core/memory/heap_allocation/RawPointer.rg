@@ -17,12 +17,8 @@ erase_mutable_reference#(.t: Type)(.base: $&t) -> (.reference: &Any) := {
     reference = reinterpret_reference#(.from: t, .to: Any)(.base = readonly).reference
 }
 
-establish_fresh_reference#(.t: Type)(
-    .raw: RawPointer#(.t: t),
-) -> (.reference: $&t) := {
-    reference = __trusted_reference_from_address#(.to: $&t)(.address = raw.address)
-}
-
+-- The caller must ensure that raw addresses a live, aligned t whose lifetime
+-- is bounded by root. This operation borrows root; it does not create one.
 establish_inherited_reference#(.t: Type)(
     .raw: RawPointer#(.t: t),
     .root: &Any,

@@ -2707,7 +2707,7 @@ pub const Resolver = struct {
                 // The hook has no global declaration and cannot be selected by
                 // ordinary lookup. Only these concrete primitive bodies use it.
                 switch (self.parameterized.safety_primitive) {
-                    .establish_fresh_reference, .establish_inherited_reference,
+                    .establish_inherited_reference,
                     .establish_allocation_slot, .reference_offset,
                     .mutable_reference_offset, .reinterpret_reference,
                     .mutable_reinterpret_reference, .read_reference => {},

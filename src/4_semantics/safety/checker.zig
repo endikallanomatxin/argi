@@ -961,15 +961,9 @@ pub const SafetyChecker = struct {
                 try state.storage_capabilities.append(.available);
                 break :blk .{ .foreign_storage = true, .storage_capabilities = try self.oneCapability(id) };
             },
-            .fresh_reference => blk: {
-                try self.report(source, "fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries", .{});
-                break :blk .{};
-            },
-            .allocation, .inherited_reference, .inherited_storage => blk: {
-                const root = try state.tracker.establish(.fresh);
-                if (primitive == .establish_allocation)
-                    state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
-                if ((primitive == .establish_allocation or primitive == .establish_inherited_storage) and values.len != 0) {
+            .inherited_reference, .inherited_storage => blk: {
+                if (values.len < 2) break :blk .{};
+                if (primitive == .establish_inherited_storage) {
                     for (values[0].storage_capabilities) |capability| {
                         const raw = @intFromEnum(capability);
                         if (raw >= state.storage_capabilities.items.len or state.storage_capabilities.items[raw] != .available)
@@ -978,24 +972,38 @@ pub const SafetyChecker = struct {
                             state.storage_capabilities.items[raw] = .consumed;
                     }
                 }
-                var fields: []const facts.FieldFacts = &.{};
-                if (primitive == .establish_allocation) {
-                    const data = try self.allocator.create(facts.ValueFacts);
-                    data.* = .{ .dependencies = try self.oneDependency(root) };
-                    const allocation_fields = try self.allocator.alloc(facts.FieldFacts, 2);
-                    allocation_fields[0] = .{ .index = 0, .value = data };
-                    const anchor = try self.allocator.create(facts.ValueFacts);
-                    anchor.* = values[4].referenceCopy();
-                    allocation_fields[1] = .{ .index = 3, .value = anchor };
-                    fields = allocation_fields;
+                // The raw address identifies storage, while the root argument
+                // supplies its lifetime. It does not establish a new root.
+                break :blk .{
+                    .explicit_dependency = values[1].explicit_dependency,
+                    .dependencies = values[1].dependencies,
+                };
+            },
+            .allocation => blk: {
+                const root = try state.tracker.establish(.fresh);
+                state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
+                if (values.len != 0) {
+                    for (values[0].storage_capabilities) |capability| {
+                        const raw = @intFromEnum(capability);
+                        if (raw >= state.storage_capabilities.items.len or state.storage_capabilities.items[raw] != .available)
+                            try self.report(source, "physical storage capability has already been consumed", .{})
+                        else
+                            state.storage_capabilities.items[raw] = .consumed;
+                    }
                 }
+                const data = try self.allocator.create(facts.ValueFacts);
+                data.* = .{ .dependencies = try self.oneDependency(root) };
+                const fields = try self.allocator.alloc(facts.FieldFacts, 2);
+                fields[0] = .{ .index = 0, .value = data };
+                const anchor = try self.allocator.create(facts.ValueFacts);
+                anchor.* = values[4].referenceCopy();
+                fields[1] = .{ .index = 3, .value = anchor };
                 var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
                 try appendDependencyFact(&dependencies, .{ .root = root });
-                if (primitive == .establish_allocation)
-                    for (values[4].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
+                for (values[4].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
                 break :blk .{
                     .dependencies = try dependencies.toOwnedSlice(),
-                    .owned_roots = if (primitive == .establish_allocation) try self.oneRoot(root) else &.{},
+                    .owned_roots = try self.oneRoot(root),
                     .fields = fields,
                 };
             },
@@ -1706,6 +1714,10 @@ pub const SafetyChecker = struct {
             if (dependency.transfers_ownership and dependency.path.projections.len != 0)
                 try self.activateConditionalOwnedRoots(state, input);
             if (!dependency.transfers_ownership) input.owned_roots = &.{};
+            if (dependency.validity_only) input = .{
+                .explicit_dependency = input.explicit_dependency,
+                .dependencies = input.dependencies,
+            };
             result = try self.mergeValueFacts(result, input);
         }
         for (effect.input_place_values) |path| {

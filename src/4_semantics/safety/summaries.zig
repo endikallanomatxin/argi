@@ -148,7 +148,9 @@ fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
         a.foreign_storage != b.foreign_storage) return false;
 
     for (a.input_dependencies, b.input_dependencies) |left, right| {
-        if (left.transfers_ownership != right.transfers_ownership or !inputPathEql(left.path, right.path)) return false;
+        if (left.transfers_ownership != right.transfers_ownership or
+            left.validity_only != right.validity_only or
+            !inputPathEql(left.path, right.path)) return false;
     }
     for (a.input_places, b.input_places) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_generation_dependencies, b.input_generation_dependencies) |left, right| if (!inputPathEql(left, right)) return false;

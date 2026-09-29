@@ -3010,6 +3010,7 @@ pub const Infer = struct {
                 try self.withOwnershipTransfer(argument)
             else
                 try self.withoutOwnershipTransfer(argument);
+            if (dependency.validity_only) argument = try self.validityOnlyEffect(argument);
             result = try self.mergeValueEffects(result, argument);
         }
 
@@ -3209,6 +3210,28 @@ pub const Infer = struct {
         return result;
     }
 
+    /// Retain the input's lifetime without claiming its referent as the output's
+    /// referent. Raw-address establishment chooses the latter independently.
+    fn validityOnlyEffect(self: *Infer, effect: facts.ValueEffect) !facts.ValueEffect {
+        const dependencies = try self.allocator.dupe(facts.InputDependency, effect.input_dependencies);
+        for (dependencies) |*dependency| {
+            dependency.transfers_ownership = false;
+            dependency.validity_only = true;
+        }
+        var generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (effect.input_generation_dependencies) |path| try appendInputPath(&generations, path);
+        for (effect.input_places) |path| try appendInputPath(&generations, path);
+        return .{
+            .explicit_dependency = effect.explicit_dependency,
+            .input_dependencies = dependencies,
+            .input_generation_dependencies = try generations.toOwnedSlice(),
+            .input_owned_roots = effect.input_owned_roots,
+            .opaque_generation_dependencies = effect.opaque_generation_dependencies,
+            .opaque_storage_dependencies = effect.opaque_storage_dependencies,
+            .fresh_dependencies = effect.fresh_dependencies,
+        };
+    }
+
     fn choiceValueEffect(self: *Infer, variant_index: u32, payload: facts.ValueEffect) !facts.ValueEffect {
         const variants = try self.allocator.alloc(facts.OutputVariantEffect, 1);
         const value = try self.allocator.create(facts.ValueEffect);
@@ -3250,8 +3273,7 @@ pub const Infer = struct {
                 break :blk result;
             },
             .empty, .relocate, .opaque_move, .opaque_relocate, .opaque_drop, .opaque_mark_empty => .{},
-            .fresh_reference => .{ .fresh_dependencies = try self.oneFresh(source) },
-            .inherited_reference, .inherited_storage => self.withoutOwnershipTransfer(try self.inputValueEffect(1, &.{})),
+            .inherited_reference, .inherited_storage => self.validityOnlyEffect(try self.inputValueEffect(1, &.{})),
             .allocation => self.ownedAllocationEffect(source),
             .raw_storage => .{ .foreign_storage = true, .fresh_storage_capabilities = try self.oneFresh(source) },
             .opaque_move_out => .{
@@ -3458,6 +3480,7 @@ fn containsInputDependency(haystack: []const facts.InputDependency, needle: fact
     for (haystack) |candidate| {
         if (candidate.path.input_index != needle.path.input_index or
             candidate.transfers_ownership != needle.transfers_ownership or
+            candidate.validity_only != needle.validity_only or
             candidate.path.projections.len != needle.path.projections.len) continue;
         var equal = true;
         for (candidate.path.projections, needle.path.projections) |left, right| if (!std.meta.eql(left, right)) {
@@ -3545,7 +3568,8 @@ fn appendInputPath(list: *std.array_list.Managed(facts.InputPath), path: facts.I
 
 fn appendInputDependency(list: *std.array_list.Managed(facts.InputDependency), dependency: facts.InputDependency) !void {
     for (list.items) |existing| {
-        if (existing.transfers_ownership != dependency.transfers_ownership) continue;
+        if (existing.transfers_ownership != dependency.transfers_ownership or
+            existing.validity_only != dependency.validity_only) continue;
         var paths = std.array_list.Managed(facts.InputPath).init(list.allocator);
         defer paths.deinit();
         try paths.append(existing.path);

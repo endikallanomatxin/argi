@@ -3072,13 +3072,8 @@ test "feature_tests/ownership/39_stable_field_reference_survives_replacement" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/40_raw_pointer_establish_fresh" {
-    try buildExpectFailExact("tests/feature_tests/ownership/40_raw_pointer_establish_fresh",
-        \\tests/feature_tests/ownership/40_raw_pointer_establish_fresh/main.rg:5:56: error: fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
-        \\      reference ::= establish_fresh_reference#(.t: Int32)(.raw = raw)
-        \\                                                         ^
-        \\
-    );
+test "feature_tests/ownership/40X_raw_pointer_establish_fresh" {
+    try buildExpectFail("tests/feature_tests/ownership/40X_raw_pointer_establish_fresh", "no function named 'establish_fresh_reference' exists");
 }
 
 test "feature_tests/ownership/41_raw_pointer_establish_inherit" {
@@ -3152,12 +3147,7 @@ test "feature_tests/ownership/60_partial_field_move_cleanup" {
 }
 
 test "feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root" {
-    try buildExpectFailExact("tests/feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root",
-        \\tests/feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root/main.rg:5:50: error: fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
-        \\      safe ::= establish_fresh_reference#(.t: Char)(.raw = raw).reference
-        \\                                                   ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root", "no function named 'establish_fresh_reference' exists");
 }
 
 test "feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip" {
@@ -6296,4 +6286,25 @@ test "feature_tests/text/23_propagated_constructor_failure" {
     const test_path = "tests/feature_tests/text/23_propagated_constructor_failure";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/135X_inherited_reference_escapes_root" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/135X_inherited_reference_escapes_root",
+        "function output cannot depend on a local storage generation that ends before return",
+    );
+}
+
+test "feature_tests/ownership/136X_duplicate_aligned_storage_establishment" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/136X_duplicate_aligned_storage_establishment",
+        "physical storage capability has already been consumed",
+    );
+}
+
+test "feature_tests/ownership/137X_inherited_reference_wrapper_escapes_root" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/137X_inherited_reference_wrapper_escapes_root",
+        "function output cannot depend on a local storage generation that ends before return",
+    );
 }

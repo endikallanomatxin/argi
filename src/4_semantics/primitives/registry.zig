@@ -16,7 +16,6 @@ pub const Spec = struct {
 };
 
 pub const specs = [_]Spec{
-    .{ .primitive = .establish_fresh_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "establish_fresh_reference", .signatures = &.{"#(.t: Type)(.raw: RawPointer#(.t: t)) -> (.reference: $&t)"} },
     .{ .primitive = .establish_inherited_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "establish_inherited_reference", .signatures = &.{"#(.t: Type)(.raw: RawPointer#(.t: t), .root: &Any) -> (.reference: $&t)"} },
     .{ .primitive = .establish_inherited_storage, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "establish_inherited_storage", .signatures = &.{"(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8))"} },
     .{ .primitive = .reference_offset, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "reference_offset", .signatures = &.{"#(.t: Type)(.base: &t, .elements: UIntNative) -> (.reference: &t)"} },
@@ -39,6 +38,7 @@ pub const specs = [_]Spec{
     } },
     .{ .primitive = .trusted_opaque_mark_empty, .path = "core/memory/opaque_ownership.rg", .name = "trusted_opaque_mark_empty", .signatures = &.{"#(.t: Type)(.storage: $&t) -> ()"} },
     .{ .primitive = .raw_allocated_storage, .path = "core/libc/libc.rg", .name = "_malloc", .signatures = &.{"(.size: UIntNative) -> (.address: UIntNative)"}, .declaration = .extern_function },
+    .{ .primitive = .raw_allocated_storage, .path = "core/libc/libc.rg", .name = "_aligned_alloc", .signatures = &.{"(.alignment: UIntNative, .size: UIntNative) -> (.address: UIntNative)"}, .declaration = .extern_function },
 };
 
 comptime {
@@ -49,7 +49,13 @@ comptime {
         for (specs) |spec| if (spec.primitive == primitive) {
             count += 1;
         };
-        if (count != 1) @compileError("each safety primitive needs exactly one registry specification");
+        if (count == 0) @compileError("each safety primitive needs a registry specification");
+    }
+    for (specs, 0..) |spec, index| {
+        for (specs[index + 1 ..]) |other| {
+            if (std.mem.eql(u8, spec.path, other.path) and std.mem.eql(u8, spec.name, other.name))
+                @compileError("safety primitive declarations must have unique paths and names");
+        }
     }
 }
 
@@ -164,7 +170,6 @@ pub const Transfer = struct {
     pub const Value = enum {
         empty,
         raw_storage,
-        fresh_reference,
         inherited_reference,
         inherited_storage,
         allocation,
@@ -188,7 +193,6 @@ pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
     return switch (primitive) {
         .none => .{ .value = .empty },
         .raw_allocated_storage => .{ .value = .raw_storage },
-        .establish_fresh_reference => .{ .value = .fresh_reference },
         .establish_inherited_reference => .{ .value = .inherited_reference },
         .establish_inherited_storage => .{ .value = .inherited_storage },
         .establish_allocation => .{ .value = .allocation },

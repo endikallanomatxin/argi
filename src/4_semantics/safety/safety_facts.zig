@@ -30,6 +30,8 @@ pub const InputPath = struct {
 pub const InputDependency = struct {
     path: InputPath,
     transfers_ownership: bool = false,
+    /// Copy validity only; the produced value may refer to different storage.
+    validity_only: bool = false,
 };
 
 pub const OutputFieldEffect = struct {

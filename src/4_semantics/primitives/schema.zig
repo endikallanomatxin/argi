@@ -49,7 +49,6 @@ pub const DeclarationKind = enum {
 
 pub const SafetyPrimitive = enum {
     none,
-    establish_fresh_reference,
     establish_inherited_reference,
     establish_inherited_storage,
     establish_allocation,
