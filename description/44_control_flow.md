@@ -1,163 +1,96 @@
+# Control flow
+
 ## Conditionals
 
-#### If
+### If
 
-```
-if a == 2 {
-	...
-} else if a == 3 {
-	...
+`if` selects a branch from a `Bool` condition. An `else` branch is optional;
+`else if` tests another condition when the earlier ones are false.
+
+```rg
+if value == 2 {
+    handle_two()
+} else if value == 3 {
+    handle_three()
 } else {
-	...
+    handle_other()
 }
 ```
 
-#### Match
+### Match
 
-From Odin: each case has its own scope, with an implicit `break` by default.
-Use `fallthrough` or something similar when execution should continue.
-
-```
-match x (
-
-	a {
-		...
-	}
-
-	b {
-		...
-	}
-
-	...
-)
-```
-
-> [!IDEA]
-> Since we removed `()` to represent functions, we could use them to improve
-> the syntax if needed.
-
-I think Rust handles this very well.
-Gleam does too.
-
-> [!QUESTION]
->
-> In JAI, a switch looks something like this:
-> 
-> ```
-> if bar == {
->     case 1 {
-> 		...
-> 	}
->     case 2 {
-> 		...
-> 	}
->     case 3 {
-> 		...
-> 	}
-> }
-> ```
-> 
-> This is like multiplexing `==`. It seems like a very good idea, even more
-> powerful than `match`.
-> 
-> Think this through.
-
-Pattern bindings in `match` should follow the same general access mode model:
+`match` selects a case of a choice value. Each case has its own scope and
+finishes without falling through to the next case. A payload can be bound
+with the same access modes used elsewhere:
 
 ```rg
 match value {
-    ..some payload {
-    }
-
-    ..some & payload {
-    }
-
-    ..some $& payload {
-    }
-
-    ..some ~ payload {
-    }
-
-    ..some _ {
-    }
+    ..some payload { use(.value = payload) }
+    ..none { handle_empty() }
 }
 ```
 
-Unified rule:
+- `payload` binds by value.
+- `& payload` binds a read-only reference.
+- `$& payload` binds a mutable reference.
+- `~ payload` transfers the value.
+- `_` ignores the payload.
 
-- `name` binds by value.
-- `& name` binds a read-only reference.
-- `$& name` binds a mutable reference.
-- `~ name` binds by move.
-- `_` ignores the value.
-
+> [!IDEA]
+> A future conditional form could apply an operator to several cases, such
+> as testing one value against several `==` operands. Jai explores this with
+> a form like:
+>
+> ```rg
+> if value == {
+>     case 1 { handle_one() }
+>     case 2 { handle_two() }
+>     case 3 { handle_three() }
+> }
+> ```
+>
+> The syntax and its relation to `match` have not been chosen for Argi.
 
 ## Loops
 
-For
+### While
 
-```plaintext
-for element in list {
-    ...
-}
+`while` repeats its body while its condition is true. `break` exits the
+nearest loop; `continue` starts its next iteration.
 
-for element, index in list|enumerate {
-	...
-}
-
-for i in Range(.start = 1, .end = 10) {
-    ...
+```rg
+while remaining > 0 {
+    remaining = remaining - 1
 }
 ```
 
-While
+> [!IDEA]
+> A `loop { ... }` form could express a loop without a condition, ending
+> when its body executes `break`. The syntax has not been chosen.
 
-```plaintext
-while eps < e-5 {
-    ...
-}
-```
+### For
 
-Forever:
+`for` traverses an `Iterable`. The iterable creates an `Iterator`, whose
+`has_next` and `next` operations manage traversal state. The element access
+mode selects the corresponding iterable contract:
 
-```plaintext
-loop
-    ...
-```
+| Form | Required contract | Element type |
+| --- | --- | --- |
+| `for item in value` | `Iterable#(.t: T)` | `T` |
+| `for & item in value` | `ROPointerIterable#(.t: T)` | `&T` |
+| `for $& item in value` | `RWPointerIterable#(.t: T)` | `$&T` |
 
+> [!IDEA]
+> `for ~ item in value` could transfer each element out of a collection.
+> How it consumes the collection, including when iteration stops early,
+> remains open.
 
-### List comprehensions
+Each contract creates an `Iterator#(.t: element_type)` through
+`to_iterator`, `to_ro_pointer_iterator`, or `to_rw_pointer_iterator`,
+respectively. A `for` loop accepts an iterable, rather than an iterator
+directly.
 
-I do not like them, but they are convenient for small tasks and do not seem
-especially prone to misuse. It is fine to implement them.
-
-```
-(i*2 for i in Range(.start = 1, .end = 10))
-```
-
-Or perhaps the other way around:
-- It is immediately clear that this is a list comprehension.
-- It is cleaner across multiple lines.
-
-```
-evens = (for i in Range(.start = 1, .end = 10) {yield i*2})
-
-evens = (for i in Range(.start = 1, .end = 10); i*2)
-```
-
->[!QUESTION] Reconsider the syntax.
-
-### Iterators
-
-`Iterator` types manage how collections are traversed or processed. They are
-defined separately to keep them independent from the collection data itself.
-
-`for` must consume an `Iterable`, not an `Iterator` directly. The iterable
-exposes `to_iterator`, and the iterator holds the mutable traversal state.
-
-This can be expressed with `Abstract`:
-
-```
+```rg
 Iterable#(.t: Type) : Abstract = (
     to_iterator(.value: &Self) -> (.iterator: Iterator#(.t: t))
 )
@@ -176,149 +109,46 @@ Iterator#(.t: Type) : Abstract = (
 )
 ```
 
-The design keeps a single `Iterator` abstract. The iteration mode changes the
-`Iterable` abstract that the collection implements, not the iterator interface.
+```rg
+for item in Range(.start = 1, .end = 10) {
+    use(.value = item)
+}
 
-This gives the following model:
-
-- `Iterable#(.t: T)` for `for item in value`
-- `ROPointerIterable#(.t: T)` for `for & item in value`
-- `RWPointerIterable#(.t: T)` for `for $& item in value`
-
-Each constructs an `Iterator`, but with a different element type:
-
-- `Iterator#(.t: T)` for iteration by value
-- `Iterator#(.t: &T)` for borrowed read-only iteration
-- `Iterator#(.t: $&T)` for borrowed mutable iteration
-
-Useful conceptual note: Rust still has a single `for`, but the type of the
-expression passed to it determines the iteration mode.
-
-```
-for x in v      -- consumes the collection
-for x in &v     -- iterates by immutable reference
-for x in &mut v -- iterates by mutable reference
+for & item in values {
+    inspect(.value = item)
+}
 ```
 
-This comes from different iterator conversions for:
-
-- `Vec<T>`
-- `&Vec<T>`
-- `&mut Vec<T>`
-
-The useful idea for Argi is to keep the same principle: `for` consumes an
-`Iterable`, and the exact type of the value passed to it should determine
-whether iteration is by value, immutable reference, or mutable reference.
-
-Future direction within the same model:
+Iteration by value is conceptually equivalent to creating an iterator and
+repeatedly calling `has_next` and `next`:
 
 ```rg
-for item in arr {
-}
-
-for & item in arr {
-}
-
-for $& item in arr {
-}
-
-for ~ item in arr {
-}
-```
-
-This should make `for` behave like the iteration equivalent of `place`,
-`&place`, `$&place`, and `~place`.
-
-Transfer iteration has the form:
-
-```rg
-for ~ item in value {
-}
-```
-
-> [!QUESTION]
-> Define how transfer iteration consumes collections and iterators.
-
-> [!IMPLEMENTATION]
-> The compiler currently supports `for item`, `for & item`, and `for $& item`.
-> Transfer iteration is not supported yet.
-
-Functions such as `map()` and `filter()` could also have versions that consume
-iterators (for lazy evaluation) or lists.
-_(Consider how this could support vectorizing functions: use a vector version
-when the called function has one, otherwise process each element.)_
-
-
-To make your type iterable:
-
-```
-MyType : Type = struct (
-    .data: List#(.t: Int)
-)
-
-MyTypeIterator : Type = (
-    .data: &MyType
-    .index: UIntNative
-)
-
-MyType implements Iterable#(.t: Int)
-MyType implements ROPointerIterable#(.t: Int)
-MyTypeIterator implements Iterator#(.t: Int)
-MyTypeROIterator implements Iterator#(.t: &Int)
-
-to_iterator(.value: &MyType) -> (.iterator: MyTypeIterator) := {
-    iterator = (
-        .data = value,
-        .index = 0,
-    )
-}
-
-has_next(.self: &MyTypeIterator) -> (.ok: Bool) := {
-    ok = self&.index < length(.value = self&.data&.data)
-}
-
-next(.self: $&MyTypeIterator) -> (.value: Int) := {
-    current_index :: UIntNative = self&.index
-    value = self&.data&.data[current_index]
-    self& = (
-        .data = self&.data,
-        .index = current_index + 1,
-    )
-}
-
-to_ro_pointer_iterator(.value: &MyType) -> (.iterator: MyTypeROIterator) := {
-    iterator = (
-        .data = value,
-        .index = 0,
-    )
-}
-
-next(.self: $&MyTypeROIterator) -> (.value: &Int) := {
-    -- Returns a reference to the current element.
-}
-```
-
-
-```
-for element in my_collection {
-    print(element)
-}
-
--- This could be written as:
-
-it ::= to_iterator(.value = &my_collection)
+it ::= to_iterator(.value = &values)
 while has_next(.self = &it) {
-    element := next(.self = $&it)
-    print(element)
+    item ::= next(.self = $&it)
+    use(.value = item)
 }
 ```
 
-`for` must accept the appropriate `Iterable`:
+> [!IDEA]
+> List comprehensions could build a collection from an iteration. Possible
+> syntaxes include an expression followed by its generator, or a leading
+> `for` that makes the iteration visible first:
+>
+> ```rg
+> evens ::= (i * 2 for i in Range(.start = 1, .end = 10))
+> evens ::= (for i in Range(.start = 1, .end = 10) { yield i * 2 })
+> evens ::= (for i in Range(.start = 1, .end = 10); i * 2)
+> ```
+>
+> The syntax and eager or lazy behavior are undecided.
 
-- `for item in x` requires `Iterable`.
-- `for & item in x` requires `ROPointerIterable`.
-- `for $& item in x` requires `RWPointerIterable`.
+> [!IDEA]
+> An enumeration adapter could expose both an element and its index in a
+> `for` loop. Iterator adapters such as `map` and `filter` could compose
+> traversal without changing the `for` contract.
 
-Ideas:
-- Concatenate iterators with commas: `Range(.start = 1, .end = 5), Range(.start = 80, .end = 92)`.
-- In Julia, the dot after `sin` broadcasts the trigonometric function to each element of `x`.
+> [!IDEA]
+> A broadcasting operator could apply a function element by element to a
+> collection, as Julia's dotted calls do. Its syntax, result type, and
+> relationship to iterators remain open.
