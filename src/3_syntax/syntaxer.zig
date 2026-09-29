@@ -298,15 +298,26 @@ pub const Syntaxer = struct {
         return self.addNodeRange(self.scratch.items[scratch_top..]);
     }
 
+    fn comptime_arguments_are_named(self: *Syntaxer) bool {
+        const saved = self.index;
+        defer self.index = saved;
+        if (!self.tokenIs(.open_parenthesis)) return true;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+        return self.tokenIs(.dot) or self.tokenIs(.close_parenthesis);
+    }
+
     fn parseTypeList(self: *Syntaxer) SyntaxerError!syn.NodeRange {
-        // Parses: [Type, &Type, ( .a: Type=..., ... ) , ...]
-        if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
+        // Positional comptime type arguments use either legacy brackets or
+        // parentheses following '#'; named arguments keep their field form.
+        const parenthesized = self.tokenIs(.open_parenthesis);
+        if (!parenthesized and !self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
         self.advanceOne();
         self.skipNewLinesAndComments();
         const scratch_top = self.scratch.items.len;
         defer self.scratch.shrinkRetainingCapacity(scratch_top);
-        while (!self.tokenIs(.close_bracket)) {
-            const t = (try self.parseType()).?; // types are mandatory here
+        while (!self.tokenIs(if (parenthesized) .close_parenthesis else .close_bracket)) {
+            const t = (try self.parseType()) orelse return SyntaxerError.ExpectedIdentifier;
             try self.scratch.append(self.allocator, t);
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
@@ -314,7 +325,8 @@ pub const Syntaxer = struct {
                 self.skipNewLinesAndComments();
             } else break;
         }
-        if (!self.tokenIs(.close_bracket)) return SyntaxerError.ExpectedRightBracket;
+        if (!self.tokenIs(if (parenthesized) .close_parenthesis else .close_bracket))
+            return if (parenthesized) SyntaxerError.ExpectedRightParen else SyntaxerError.ExpectedRightBracket;
         self.advanceOne();
         return self.addNodeRange(self.scratch.items[scratch_top..]);
     }
@@ -1309,9 +1321,12 @@ pub const Syntaxer = struct {
                     // Explicit type arguments on call site (old syntax)
                     type_args = try self.parseTypeList();
                 } else if (self.tokenIs(.hash)) {
-                    // New syntax: #(.T: Int32)
                     self.advanceOne();
-                    type_args_struct = try self.parseStructTypeLiteral();
+                    if (self.comptime_arguments_are_named()) {
+                        type_args_struct = try self.parseStructTypeLiteral();
+                    } else {
+                        type_args = try self.parseTypeList();
+                    }
                 }
                 if (self.tokenIs(.open_parenthesis)) { // Call.
                     const struct_value_literal = try self.parseCollectionLiteral(true);
@@ -1653,9 +1668,13 @@ pub const Syntaxer = struct {
         var generic_params_struct: ?syn.NodeIndex = null;
         if (self.tokenIs(.hash)) {
             self.advanceOne();
-            const gen_struct = try self.parseGenericParamsStruct();
-            generic_params = try self.addNodeRange(self.file.structTypeLiteral(gen_struct).?.fields);
-            generic_params_struct = gen_struct;
+            if (self.comptime_arguments_are_named()) {
+                const gen_struct = try self.parseGenericParamsStruct();
+                generic_params = try self.addNodeRange(self.file.structTypeLiteral(gen_struct).?.fields);
+                generic_params_struct = gen_struct;
+            } else {
+                generic_params = try self.parseTypeList();
+            }
         } else if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
             generic_params = try self.parseGenericParamNames();
         }
@@ -1697,11 +1716,11 @@ pub const Syntaxer = struct {
                 }
                 // call: Name(...)
                 const input_node = try self.parseCollectionLiteral(true);
-                const empty = try self.addNodeRange(&.{});
+                const type_arguments = if (generic_params_struct == null) generic_params else try self.addNodeRange(&.{});
                 const extra = try self.addExtra(syn.CallExtra{
                     .module_qualifier = .none,
-                    .type_arguments_start = empty.start,
-                    .type_arguments_end = empty.end,
+                    .type_arguments_start = type_arguments.start,
+                    .type_arguments_end = type_arguments.end,
                     .type_arguments_struct = syn.OptionalNodeIndex.init(generic_params_struct),
                     .input = input_node,
                 });

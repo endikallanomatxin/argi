@@ -74,6 +74,16 @@ It may also occupy a positional argument, including one in a built-in call.
 Pipes may be chained. The right-hand call must contain a placeholder; the
 left-hand value is not silently inserted into an arbitrary argument.
 
+Call-site comptime type arguments can be positional, in declaration order:
+
+```rg
+value ::= identity#(Int32)(.value = 42)
+```
+
+Named comptime arguments remain available when a parameter needs to be
+identified explicitly. Positional type arguments use `#(Type, OtherType)`;
+named arguments use `#(.t: Type, .other: OtherType)`.
+
 ## Function variants
 
 Functions with the same name may have different input types. Dispatch uses

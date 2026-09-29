@@ -2082,6 +2082,11 @@ fn diagnoseUnresolvedCall(
                 .offset = source.offset + @as(u32, @intCast(name.len)),
             });
 
+            if (reference.module_path == null and reference.generic_arguments == null and std.mem.eql(u8, name, "to_virtual") and call.expected_type == null) {
+                try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "cannot infer the abstract parameter of 'to_virtual'; provide a Virtual result type or '#(AbstractName)'", .{});
+                return true;
+            }
+
             if (reference.module_path) |path| {
                 const target = qualified_module orelse continue;
                 const has_name = declarationNameExistsInModule(graph, target, name, &.{ .function, .test_function });

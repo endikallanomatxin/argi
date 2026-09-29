@@ -191,7 +191,7 @@ pub const Resolver = struct {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
         const input = globalizer.globalNode(o, value.input);
         if (std.mem.eql(u8, module.text(reference.name), "to_virtual")) {
-            const node = (try self.makeVirtualize(module_index, reference, input)) orelse return .deferred;
+            const node = (try self.makeVirtualize(module_index, reference, input, if (value.expected_type) |ty| globalizer.globalType(o, ty) else null)) orelse return .deferred;
             self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
             return .resolved;
         }
@@ -246,10 +246,13 @@ pub const Resolver = struct {
         module_index: usize,
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
+        expected: ?global_sg.GlobalTypeId,
     ) !?global_sg.Node {
-        const local_arguments = reference.generic_arguments orelse return null;
-        const arguments = try self.generics.relocateModuleArguments(module_index, local_arguments);
-        return self.makeVirtualizeWithArguments(module_index, reference, input, arguments);
+        const arguments = if (reference.generic_arguments) |local|
+            try self.generics.relocateModuleArguments(module_index, local)
+        else
+            primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 0 };
+        return self.makeVirtualizeWithArguments(module_index, reference, input, arguments, expected);
     }
 
     // Instantiated function bodies already carry global generic arguments;
@@ -260,15 +263,26 @@ pub const Resolver = struct {
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
+        expected: ?global_sg.GlobalTypeId,
     ) !?global_sg.Node {
         var abstract_type: ?global_sg.GlobalTypeId = null;
         for (self.graph.generic_arguments.items[arguments.start..][0..arguments.len]) |argument| {
-            if (!std.mem.eql(u8, self.graph.text(argument.name), "abstract")) continue;
+            if (!std.mem.eql(u8, self.graph.text(argument.name), "abstract") and
+                !(arguments.len == 1 and self.graph.text(argument.name).len == 0)) continue;
             abstract_type = switch (argument.value) {
                 .type => |ty| ty,
                 else => return null,
             };
         }
+        // Virtual conversion has an output-only comptime argument. Infer it
+        // from a contextual result type, never from names or implementation
+        // enumeration: a concrete type can implement several abstracts.
+        if (abstract_type == null) if (expected) |ty| {
+            abstract_type = switch (self.graph.types.items[@intFromEnum(ty)]) {
+                .virtual => |abstract| abstract,
+                else => null,
+            };
+        };
         const abstract_ty = abstract_type orelse return null;
         const abstract_decl = switch (self.graph.types.items[@intFromEnum(abstract_ty)]) {
             .declared => |declaration| declaration,
@@ -281,7 +295,8 @@ pub const Resolver = struct {
         };
         var value: ?global_sg.GlobalNodeId = null;
         for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
-            if (std.mem.eql(u8, self.graph.text(field.name), "value")) value = field.value;
+            if (std.mem.eql(u8, self.graph.text(field.name), "value") or
+                (literal.fields.len == 1 and self.graph.text(field.name).len == 0)) value = field.value;
         }
         const handle = value orelse return null;
         const handle_ty = self.graph.nodes.items[@intFromEnum(handle)].ty orelse return null;

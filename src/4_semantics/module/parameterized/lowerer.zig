@@ -927,6 +927,14 @@ pub const Context = struct {
             else
                 null;
             const ty: ?ir.ParameterizedTypeId = if (declaration.type_node) |value| try self.lowerType(value, false) else inferred_ty;
+            if (initialization) |value| if (ty) |expected| {
+                const storage = &self.graph.semantic.parameterized_storage.ir;
+                if (storage.nodes.items[@intFromEnum(value)] == .pending) {
+                    const pending_id = storage.nodes.items[@intFromEnum(value)].pending;
+                    if (storage.pending.items[@intFromEnum(pending_id)] == .resolve_expression)
+                        storage.pending.items[@intFromEnum(pending_id)].resolve_expression.expected_type = expected;
+                }
+            };
             const name = self.tree.tokenTextFromSource(self.source, declaration.name_token);
             const binding: ir.ParameterizedBindingId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len)));
             try self.graph.semantic.parameterized_storage.ir.bindings.append(self.allocator, .{
@@ -1086,6 +1094,8 @@ pub const Context = struct {
         var operands = std.array_list.Managed(ir.ParameterizedNodeId).init(self.allocator);
         defer operands.deinit();
         try self.collectBodyOperands(node, &operands);
+        // TODO: Parameter-dependent pipe bodies need placeholder substitution
+        // and contextual propagation through borrowed intermediate results.
         const kind = parameterizedKindForTag(self.tree.tag(node));
         const name = switch (self.tree.tag(node)) {
             .function_call => if (self.tree.functionCall(node)) |call| try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)) else null,

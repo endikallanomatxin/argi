@@ -225,15 +225,19 @@ an error is created. Later propagation and reporting use the reference in
 that error, even under a different `assume error_tracer`:
 
 ```rg
-tracer ::= FixedSizeErrorTracer(
+assume error_tracer ::= FixedSizeErrorTracer(
     .allocator = system.page_allocator,
     .size = 64 * 1024,
-)!
-virtual_tracer ::= to_virtual#(.abstract: ErrorTracer)(.value = $&tracer)
-assume error_tracer ::= $&virtual_tracer
+)! | to_virtual#(ErrorTracer)($&_) | $&_
 
 run()
 ```
+
+The positional comptime argument of `to_virtual#(ErrorTracer)` selects the
+abstract. Alternatively, a declared `$&Virtual#(.abstract: ErrorTracer)`
+capability type permits `to_virtual($&_)` through contextual inference. The
+concrete tracer and virtual wrapper temporaries remain alive for the enclosing
+`assume` scope. The capability is still a pointer to the virtual wrapper.
 
 `FixedSizeErrorTracer` allocates its fixed buffer during fallible `init`.
 Subsequent trace entries, including copies of `!!` context text, occupy that

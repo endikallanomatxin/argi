@@ -2406,7 +2406,7 @@ pub const Resolver = struct {
 
         fn resolveCall(self: *InstanceContext, value: anytype) !global_sg.Node {
             const input = try self.instantiateNode(value.input);
-            return self.makeNamedCall(value.name, null, .{ .start = 0, .len = 0 }, input, value.source);
+            return self.makeNamedCall(value.name, null, .{ .start = 0, .len = 0 }, input, value.source, null);
         }
 
         fn resolveExpression(self: *InstanceContext, value: ir.PendingExpression) anyerror!global_sg.Node {
@@ -2423,7 +2423,10 @@ pub const Resolver = struct {
                     const name = value.name orelse return error.GenericParameterizedCallWithoutName;
                     const args = try self.resolver.generics.instantiateParameterizedArguments(self.module_index, value.generic_arguments, self.substitutions, null);
                     const input = if (operands.items.len != 0) operands.items[0] else return error.GenericParameterizedCallWithoutInput;
-                    break :blk try self.makeNamedCall(name, value.module_path, args, input, value.source);
+                    break :blk try self.makeNamedCall(name, value.module_path, args, input, value.source, if (value.expected_type) |ty|
+                        try self.resolver.generics.instantiateParameterizedType(self.module_index, ty, self.substitutions, null)
+                    else
+                        null);
                 },
                 .binary => self.resolveBinary(operands.items, value.source, value.detail, value.assumed_arguments),
                 .comparison => self.resolveComparison(operands.items, value.source, value.detail),
@@ -2724,6 +2727,7 @@ pub const Resolver = struct {
             arguments: primitives.Range(global_sg.GlobalGenericArgId),
             input: global_sg.GlobalNodeId,
             source: primitives.SourceRef,
+            expected: ?global_sg.GlobalTypeId,
         ) !global_sg.Node {
             const module = &self.resolver.modules[self.module_index];
             const name = module.text(name_range);
@@ -2747,7 +2751,7 @@ pub const Resolver = struct {
             if (module_path == null and std.mem.eql(u8, name, "to_virtual")) {
                 if (self.resolver.nested_call_context) |abstracts| {
                     const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = null, .name = name_range, .source = source };
-                    if (try abstracts.makeVirtualizeWithArguments(self.module_index, reference, input, arguments)) |node| {
+                    if (try abstracts.makeVirtualizeWithArguments(self.module_index, reference, input, arguments, expected)) |node| {
                         return node;
                     }
                 }

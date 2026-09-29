@@ -6361,3 +6361,17 @@ test "feature_tests/types/69_error_tracer_truncation" {
         \\
     );
 }
+
+test "feature_tests/types/70_virtual_context_inference" {
+    const path = "tests/feature_tests/types/70_virtual_context_inference";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/types/71X_virtual_pipe_temporary_escape" {
+    try buildExpectFail("tests/feature_tests/types/71X_virtual_pipe_temporary_escape", "local storage generation");
+}
+
+test "feature_tests/types/72X_virtual_inference_missing_context" {
+    try buildExpectFail("tests/feature_tests/types/72X_virtual_inference_missing_context", "cannot infer the abstract parameter");
+}

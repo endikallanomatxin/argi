@@ -306,7 +306,7 @@ const Context = struct {
             .defer_statement => self.lowerDefer(node),
             .reach_directive => self.lowerReach(node),
             .index_assignment => self.lowerIndexAssignment(node, expected),
-            .address_of, .address_of_mut => self.lowerAddress(node),
+            .address_of, .address_of_mut => self.lowerAddress(node, expected),
             .dereference => self.lowerDereference(node, expected),
             .pointer_assignment => self.lowerPointerAssignment(node, expected),
             .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .generic_type_instantiation, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
@@ -416,7 +416,14 @@ const Context = struct {
 
     fn lowerPipe(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const op = self.tree.binaryOperation(node).?;
-        const lhs = try self.lowerNode(op.lhs, null);
+        // A terminal borrow supplies the pointee result type to the preceding
+        // pipe stage, allowing output-only comptime arguments to be inferred.
+        const lhs_expected = if ((self.tree.tag(op.rhs) == .address_of or self.tree.tag(op.rhs) == .address_of_mut) and
+            self.tree.tag(self.tree.addressOf(op.rhs).?.value) == .pipe_placeholder)
+            if (expected) |ty| try self.pointerChild(ty) else null
+        else
+            null;
+        const lhs = try self.lowerNode(op.lhs, lhs_expected);
         const previous = self.pipe_value;
         self.pipe_value = lhs;
         defer self.pipe_value = previous;
@@ -956,12 +963,24 @@ const Context = struct {
         return self.resolved(node, try self.builtin(.Void), .{ .reach_directive = reach_id });
     }
 
-    fn lowerAddress(self: *Context, node: syn.NodeIndex) !Lowered {
+    fn lowerAddress(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const address = self.tree.addressOf(node).?;
         const pipe_placeholder = self.tree.tag(address.value) == .pipe_placeholder;
-        const value = try self.lowerNode(address.value, null);
+        const child_expected = if (expected) |ty| try self.pointerChild(ty) else null;
+        const value = try self.lowerNode(address.value, child_expected);
         const mutability = graph_mod.pointerMutabilityFromSyntax(address.mutability);
-        if (!pipe_placeholder and !self.syntaxIsAddressable(address.value)) {
+        if (pipe_placeholder) if (value.ty) |ty| if (try self.pointerChild(ty)) |_| return value;
+        const value_addressable = if (pipe_placeholder) switch (self.graph.semantic.nodes.items[@intFromEnum(value.node)]) {
+            .resolved => |resolved_value| switch (resolved_value.content) {
+                .binding_use, .struct_field_access, .choice_payload_access, .dereference, .array_index => true,
+                else => false,
+            },
+            .pending => |operation| switch (self.graph.semantic.pending_operations.items[@intFromEnum(operation)]) {
+                .resolve_name_use, .resolve_field, .resolve_choice_payload, .resolve_index => true,
+                else => false,
+            },
+        } else self.syntaxIsAddressable(address.value);
+        if (!value_addressable) {
             if (self.temporary_declarations) |temporaries| {
                 // Reserve storage in the enclosing block, but initialize it
                 // at this expression so branches and short circuits stay lazy.
@@ -988,8 +1007,8 @@ const Context = struct {
                     .node = self.nextNodeId(),
                     .value = assignment.node,
                     .mutability = mutability,
-                    .collapse_existing_pointer = false,
-                } }, null);
+                    .collapse_existing_pointer = pipe_placeholder,
+                } }, expected);
             }
         }
         if (value.ty) |child_ty| {

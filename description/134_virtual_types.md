@@ -41,10 +41,33 @@ Virtual#(.abstract: Abstract) : Type = (
 ## Creation
 
 ```argi
-assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
-s : Rectangle = (1, 2)
-vs := s | to_virtual(_, Shape, allocator)
+s :: Rectangle = (1, 2)
+vs :: Virtual#(.abstract: Shape) = to_virtual($&s)
 ```
+
+The `.abstract` comptime argument can be inferred from an expected
+`Virtual#(.abstract: Shape)` result type. Both a named `.value` argument and
+a single positional reference are accepted:
+
+```rg
+vs :: Virtual#(.abstract: Shape) = to_virtual(.value = $&s)
+explicit ::= to_virtual#(Shape)($&s)
+```
+
+Without a contextual result type, `.abstract` must be supplied explicitly.
+The concrete object's implemented abstracts and the destination binding's
+name do not select a target abstract.
+
+Positional comptime type arguments omit the field name. A pipe can borrow
+the virtual result with `&_` or `$&_`:
+
+```rg
+assume shape ::= Rectangle(1, 2) | to_virtual#(Shape)($&_) | $&_
+```
+
+The constructed object and its virtual wrapper are borrowed temporaries,
+kept alive for the enclosing `assume` scope. This conversion does not move
+ownership into the capability; references cannot escape those temporaries.
 
 ## Uso
 
