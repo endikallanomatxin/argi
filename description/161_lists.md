@@ -10,6 +10,12 @@ Fixed-size arrays:
 a : [3]Int32 = (1, 2, 3)
 ```
 
+> [!IDEA]
+> A collection literal such as `(1, 2, 3)` could infer a library list type
+> from its elements or an expected type, instead of requiring an explicit
+> `List#(.t = Int32)(1, 2, 3)` constructor. Its distinction from struct and
+> native array literals needs a rule.
+
 `[N]T` is the native fixed array type. Native bracket types represent fixed
 arrays only; slices and views are library abstractions, not native array types.
 Collection access uses named operations rather than overload sets.

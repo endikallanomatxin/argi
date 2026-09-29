@@ -1,329 +1,175 @@
 # Syntax overview
 
-## Design priorities
-
-The core goals are:
-
-- explicit data flow
-- visible side effects
-- function composition over object-like syntax
-- static dispatch by default
-- little semantic magic
-
-When in doubt between a shorter syntax and a more predictable one, prefer the
-more predictable one.
-
 ## Comments
 
-```
--- One line comments
+`--` starts a comment that continues to the end of the line:
 
----
-Multiline comments for lengthier explanations
-**They allow for markdown syntax**.
----
-
---*
-Nestable comments?
-*--
-
---- Doc comments, like zig
+```rg
+-- A comment
+answer : Int32 = 42 -- A comment after a declaration
 ```
 
-Removing multiline comments might make it possible to tokenize everything in
-parallel.
+> [!IDEA]
+> Multiline comments could enclose longer notes, including Markdown. The
+> original proposals were `--- ... ---` and a nestable `--* ... *--` form.
+> Their delimiters and nesting rules remain open.
 
-## Variable and constant declaration
+> [!IDEA]
+> Documentation comments could use a distinct form such as `---` before a
+> declaration. This conflicts with one proposed multiline delimiter, so the
+> syntax and whether documentation comments carry Markdown need a decision.
 
-```
-PI          :  Float = 3.141592653  -- Declares a constant
-my_variable :: Int   = 42           -- Declares a variable
-```
+## Declarations
 
-The declaration syntax has two delimeters:
+`:` declares a constant and `::` declares a mutable variable. The type may
+be written or inferred from the initializer:
 
-- First, the type annotation delimeter. There are two options:
-	- `:` for constants
-	- `::` for variables
-	When type is omitted, it is inferred from the value.
-
-- Second, the value assignment delimeter. Always ` = `.
-
-
-On constant structs: When a struct is constant, you are not allowed to:
-- Reassign its name
-- Reassign its fields
-- Create mutable pointers to it
-That is enough, because any modification would require a mutable pointer to the
-struct.
-
-## Pointers
-
-To get a reference to a variable (as in C, Go, Rust, and others):
-
-```
-p = &x
+```rg
+answer : Int32 = 42
+count :: Int32 = 0
+next := answer + 1
+total ::= 0
 ```
 
-To dereference a pointer:
+> [!QUESTION]
+> Should identifiers accept Unicode letters? An editor could let users type
+> `\delta` followed by Tab to insert `δ`; that shortcut would be editor
+> behavior, not language syntax.
 
+`=` assigns a new value to an existing mutable place.
+
+> [!IDEA]
+> Support simultaneous assignment such as `x, y = y, x`. Define when the
+> right-hand sides are evaluated and how moves and cleanup work.
+
+## Types and values
+
+Named structs and choices declare types. Struct fields use `.name`, and
+choice options use `..name`:
+
+```rg
+Point : Type = (
+    .x: Int32
+    .y: Int32
+)
+
+point ::= Point(.x = 3, .y = 4)
 ```
-x = p&
+
+See [Types](10_types.md), [Structs](11_structs.md), and
+[Choice](12_choice.md).
+
+## References
+
+`&place` borrows a read-only reference; `$&place` borrows a mutable one.
+Postfix `&` dereferences a reference:
+
+```rg
+read(.point = &point)
+change(.point = $&point)
+point_ref : &Point = &point
+x := point_ref&.x
 ```
 
-Its type is:
+`&Point` is a read-only reference type; `$&Point` is its mutable counterpart.
+References cannot be null. An optional reference uses `?&Point`. Reference
+arithmetic is not allowed. Low-level address calculations use
+`UIntNative(.value = reference)`. A calculated address becomes a reference
+only through a core operation that establishes its validity root.
 
-```
-p: &Int
-```
+References are checked when used and do not keep their referent alive. See
+[References and borrowing](32_references.md) and [Nullability](51_nullability.md).
 
-- It cannot be null.
-(To allow null, use a nullable: `?&Int`. See below for more information.)
-
-- Pointer arithmetic is not allowed.
-To perform it, convert the pointer to a numeric type, do the arithmetic, then
-convert it back to a pointer. This is inconvenient enough to prevent accidental
-use and requires an explicit step that could fail.
-
-The canonical numeric type for this is `UIntNative`.
-
-
-### Read-only vs read-write pointers
-
-There are two types of pointers:
-- Read-only pointers: `&T`
-- Read-write pointers: `$&T` ($ is for side effects)
-
-> [!QUESTION] Can a `$&` pointer be passed to a function expecting `&`?
-> Is an explicit cast required?
-
+> [!QUESTION]
+> Can a `$&T` reference be passed to a function expecting `&T` directly,
+> or should the caller explicitly create a read-only reference?
 
 ## Code blocks
 
-Everything between `{ }` is considered a code block.
-
-Every code block has its own scope.
-
-This is also used for loops and conditional, so locally declared variables are not accessible outside the block.
-This forces the good practice of declaring variables before loops and conditionals, instead of inside them.
-
-> [!QUESTION]
-> Consider preventing code blocks from capturing anything from outside, as in Jai.
-> Also consider convenient syntax for invoking a block like an anonymous
-> function. This is even more hygienic, but the syntax should remain simple.
-
-> [!QUESTION]
-> When a declaration introduces several names, should an existing outer name
-> be reused or shadowed?
-
-
-## Functions
-
-Functions are declared similar to variables or constants.
-
-They just contain a couple of structs after the name (input and output), separated by an arrow:
-
-```
-add (.a: Int, .b: Int) -> (.c: Int) := {
-    c = a + b
-}
-
-divmod (.n:Int, .d:Int) -> (.quot:Int, .rem:Int) := {
-    quot = n / d
-    rem  = n % d
-}
-```
-
-When calling functions:
-
-- you can omit the names of the fields when you specify all of them in the correct order.
-- output structs with a single field are automatically unpacked (to avoid unnecessary verbosity).
-
-> [!QUESTION]
-> Consider avoiding automatic unpacking and filling in defaults at the call
-> site to make the code forward-compatible.
-
-
-```
-result = add(1, 2) + add(3, 4)
-```
-
-When a function has multiple fields in the output struct, you get the struct.
-
-```
--- Without unpacking:
-r = divmod(7, 3)
-
--- To extract only one field:
-quot, _ = divmod(7, 3)
--- or
-quot = divmod(7, 3).quot
-
--- To extract both:
-quot, rem = divmod(7, 3)
-```
-
-> [!QUESTION] How do we distinguish a struct literal from a list literal?
-> It is a collection literal that can be _interpreted_ as a list, struct,
-> map, or choice literal.
-
-
-Anonymous functions can be defined like here:
-
-```
-some_function_that_needs_another_function(
-	(.a: Int, .b: Int) -> (.c: Int) := { c = a + b },
-	"Some other argument"
-)
-```
-
-
-### Pipe operator
-
-The pipe operator calls the right hand side function, substituting the _ symbol
-with the full left hand side expression, if it is a function it contains the
-return struct without unpacking.
-
-```
-my_var | my_func (_, other_arg)         -- Single piped argument
-my_var | my_func (_.a, other_arg, _.b)  -- Multiple piped arguments
-result | is(_, ..error)                -- Positional arguments also work with builtins
-```
-
-Values can be passed by reference without creating intermediate variables.
-
-```
-my_var | my_func (&_, second_arg)
-```
-
-
-## Initialization of types
-
-All types have two methods:
-- `init` to create an instance of the type.
-- `deinit` to destroy the instance of the type.
-
-### Init
-
-When you delcare a new instance:
-
-```
-my_thing := MyType("something", 12, true)
-```
-
-> [!QUESTION]
-> Think about syntactic sugar to allow:
-> ```
-> my_list := (1, 2, 3, 4)
-> ```
-> which should be:
-> ```
-> my_list := List#(.t: Int32)(1, 2, 3, 4)
-> ```
-
-The init function must be declared like this:
-
-```
-init (.empty_struct_pointer: $&MyType, arg1: String, arg2: Int, arg3: Bool) -> (.result: MyType) := {
-    ...
-}
-```
-
-If init function is defined it is called. If it doesn't, it creates an empty struct, if possible.
-
-When init is used, the first argument is the mutable pointer to the declared but uninitialized struct.
-
-So:
-
-```
-my_thing := MyType("something", 12, true)
-```
-
-is really:
-
-```
-my_thing : MyType
-init ($&my_thing, "something", 12, true)
-```
-
-`init()` is the only function allowed to receive uninitialized arguments.
-
-The first parameter of `init` can be a pointer to memory allocated for that
-type but not yet initialized.
-
-Static checks inside `init`:
-
-- Write-only access to `out`: fields cannot be read before they are written.
-- Definite initialization: every field must be written on every successful path.
-- No escape or aliasing: the pointer cannot escape to globals, closures, or
-  threads.
-
-
-If wanted you can return an empty errable:
-
-```
-..init_failed
-init(out: $&MyType, ...) -> Errable#(.t: Void, .reasons: (..init_failed))
-```
-
-### Deinit
-
-On scope exit, `deinit` is automatically called for all types that are not in the result struct.
-That way, everything behaves as if it were a stack variable.
-
-Passing a named value to an argument declared by value performs an implicit
-copy only when its type implements `ImplicitlyCopyable`. Other types require
-explicit `copy(&value)` or explicit ownership transfer with `~value`.
-
-On error or early-return paths, the value remains uninitialized (`deinit` is
-not called), or partial initialization is cleaned up before returning.
-`deinit` runs only on initialized objects; it is not called on a slot when
-`init` fails.
-
-> [!QUESTION] Must `init` functions be inlined to construct stack values?
-> If the object should be on the stack, `alloca` cannot be called inside a
-> function.
-> For example, if `Array` were part of the standard library, it would need
-> this signature:
-> ```
-> init#(.t: Type, .n: UIntNative)(.a: &Array#(.t), .source: ListLiteral#(.t)) -> () #inline { ... }
-> ```
+Braces `{ ... }` enclose a block with its own lexical scope. Variables
+declared inside a block are not available after it ends. Function bodies,
+conditionals, and loops all use blocks.
 
 > [!IDEA]
-> Using `init` for casting could work well because it will likely be inlined
-> when possible.
-> This could be done by overloading the `init` function.
->
-> `init(out: $&TargetType, in: SourceType) -> ()`
-> It would be used like this:
-> `new = TargetType(source_value)`
+> Some blocks could restrict access to outer bindings, like a function's
+> explicit inputs. A callable block form would need its own capture and
+> invocation rules.
 
-> [!QUESTION]
-> Calls to `init` functions use the same name as the type, so the `init`
-> function cannot be referenced by name. It is unclear whether this is a problem.
+## Functions and calls
 
-> [!QUESTION]
-> Should the variable produced by initialization be part of the declaration's
-> input or output?
+Functions declare named input and output fields. The body assigns the output
+bindings; `return` exits without a separate result expression:
 
+```rg
+add(.left: Int32, .right: Int32) -> (.sum: Int32) := {
+    sum = left + right
+}
 
-## Generics
-
-- Monomorphized at compile time.
-
-- Do not have multiple dispatch.
-
-- Use structs for their arguments.
-
-```
-MyGenericType#(.t: Type) : Type = (
-	.data : List#(.t: t)
-)
+result ::= add(.left = 2, .right = 3)
 ```
 
-> [!IDEA] Structural indexing
-> Explore using `.` for structural access, including native array indexing:
-> `value.field`, `array.i` or even `array.3`.
->
-> DynamicArrays, Maps and other library collections can keep explicit
-> `get`/`set` abstractions and polymorphism through `Abstract`.
+Calls may use named or positional arguments. A single output field yields
+its value; multiple output fields yield a structure. The pipe operator uses
+`_` to mark where its left-hand value enters a call:
+
+```rg
+result ::= 2 | add(.left = _, .right = 3)
+```
+
+See [Functions](40_functions.md), [Function arguments](41_function_args.md),
+and [Multiple Dispatch](131_multiple_dispatch.md).
+
+## Construction and cleanup
+
+A type may define `init` to construct a value in a destination place and
+`deinit` to clean up a live value. Both operations are optional. `T(...)`
+uses a visible initializer when one is defined; a fallible initializer
+produces `Errable#(.t: T, .reasons: R)` through the constructor call.
+Local values that need cleanup are cleaned at scope exit.
+
+See [Initialization and deinitialization](30_initialization_and_deinitialization.md),
+[Copying and moving](33_copying_behaviour.md), and
+[Argi safety model](34_safety_model.md).
+
+## Compile-time parameters
+
+`#(...)` declares compile-time parameters, and a call supplies concrete
+arguments with the same notation:
+
+```rg
+Array#(.n = 4, .t = Int32)
+```
+
+See [Compile-time parameters](132_generics.md).
+
+## Modules
+
+`import("...")` binds another module to a name. An import path is resolved
+during compilation:
+
+```rg
+math := import("./math")
+math.solve()
+```
+
+See [Modules and project layout](02_modules.md).
+
+## Control flow
+
+`if` chooses a branch from a condition; `match` chooses a case of a choice
+value. `while` repeats while its condition holds, and `for` traverses an
+iterable:
+
+```rg
+if ready { status = 1 } else { status = 0 }
+
+match direction {
+    ..north { status = 1 }
+    ..south { status = 2 }
+}
+
+while remaining > 0 { remaining = remaining - 1 }
+for & item in values { sum = sum + item& }
+```
+
+Each braced body has its own lexical scope. See [Control flow](44_control_flow.md).

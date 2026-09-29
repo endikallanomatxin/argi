@@ -1,27 +1,21 @@
-Follow Zig's approach, which works very well.
+# Documentation comments
 
-Perhaps this could work as follows:
+`--` introduces a line comment. Documentation comments could be collected
+from source declarations and rendered by language tooling.
 
-```
-a = 1  -- This is an inline comment.
+> [!IDEA]
+> A distinct delimiter such as `---` could mark documentation comments:
+>
+> ```rg
+> --- Explain the declaration below.
+> Widget : Type = ()
+> ```
+>
+> Multiline documentation might use paired `---` delimiters. This overlaps
+> with a proposed multiline ordinary comment form in
+> [Syntax overview](00_syntax_overview.md); choose delimiters for both
+> together. Markdown inside documentation comments is also an option.
 
---
-This is a multiline comment.
---
-
-b = 2  --- This is an inline documentation comment.
-
----
-This is a multiline documentation comment.
----
-```
-
-And collect the `---` documentation comments when building documentation.
-
-```bash
-argi doc
-```
-
-```bash
-argi serve-doc
-```
+> [!IDEA]
+> `argi doc` could build documentation from these comments, and
+> `argi serve-doc` could preview it locally.

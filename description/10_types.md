@@ -1,122 +1,66 @@
 # Types
 
+Type names conventionally use `PascalCase`; value names use `snake_case`.
+Types are checked during compilation. A named type has its own identity:
+two independently declared types do not become interchangeable merely
+because their fields match. Unnamed structural types may be compared by
+their field structure. See [Structs](11_structs.md) and [Choice](12_choice.md).
 
-## Naming
+Types are values that can be passed as compile-time parameters. For example,
+`Array#(.n = 4, .t = Int32)` selects an array type using a length and an
+element type. See [Compile-time parameters](132_generics.md).
 
-Types are named using PascalCase, and variables are named using snake_case.
+## Type queries
 
+`type_of(.value = expression)` obtains the type of an expression. `size_of`
+and `alignment_of` query a type's size and alignment:
 
-## Type casting
+```rg
+element_type : Type = type_of(.value = point)
+bytes ::= size_of(.type = Point)
+alignment ::= alignment_of(.type = Point)
+```
 
-Types are casted using the cast function.
+Type queries do not execute an expression for its runtime effects. See
+[Compile-time computation](50_comptime.md) for open questions about
+compile-time introspection.
 
-- With multiple dispatch on the return type:
+## Conversion
 
-    ```
-    cast (t: MyType) -> (s: String) := {
-        ...
-    }
+Conversions are explicit. A call cannot select an overload solely from its
+desired output type: [multiple dispatch](131_multiple_dispatch.md) uses the
+function name and input types. Arithmetic does not silently convert values
+between unrelated types.
 
-    print( "My type:" + my_var|cast(_) )
-    ```
+Conversion uses the destination type as the callee. For example,
+`UIntNative(.value = reference)` observes a reference's numeric address.
+`UIntNative` is the pointer-sized integer type used for addresses. The
+integer carries no validity dependency on the referenced storage.
 
-
-- With multiple dispatch using `==`:
-
-    ```
-    cast (.t: MyType, .t: Type == String) -> (.s: String) := {
-        ...
-    }
-
-    print( "My type:" + my_var|cast(_, String) )
-    ```
-
-- With multiple dispatch without using `==`, all types that can be cast must
-occur inside the same function, for example in a `switch`. This is
-not very extensible.
-
-- With generics:
-
-	```
-	cast#(.t: Type) (.v: t) -> (s: String) := {
-		...
-	}
-
-	print( "My type:" + my_var|cast#(typeof(my_var))(_) )
-	```
-
-- Using the init function:
-
-	```
-	my_string := String(my_var)
-	```
-
-	```
-	init (s: $&String, v: MyType) -> () := {
-		...
-	}
-	```
+Creating a reference from an address requires a named core operation that
+establishes its validity root, such as `establish_fresh_reference` or
+`establish_inherited_reference`. A type conversion alone cannot establish a
+live reference.
 
 > [!QUESTION]
-> Which conversion form should participate in multiple dispatch?
-
-Types are not automatically casted for arithmetic operations. 
-
-Low-level casts that reinterpret addresses should use `UIntNative` as the
-canonical integer type for pointer-sized values.
-
-
-## Type checking
-
-Types are nominal, not structural.
-
-
-It is checked at compiletime.
-
-```
-#type(some_variable) == Int32
-```
+> Should an integer literal take a floating-point destination type in an
+> assignment such as `x = 1` when `x` is `Float32`? This would be contextual
+> literal typing, not an implicit conversion of an integer variable.
 
 > [!QUESTION]
-> If we want compile-time introspection on abstracts or contracts, define
-> dedicated syntax for it instead of reusing `implements`, which is currently
-> a declaration.
+> How should user-defined conversions distinguish construction from
+> representation conversion? Define how fallible conversions compose with
+> constructors and how their overloads are selected.
+
+## Type aliases
 
 > [!QUESTION]
-> Subtyping of `List#(.t: User)` vs. `List#(.t: Person)` (variance).
+> Should `Name : Type = ExistingType` create an alias with the same type
+> identity, or should distinct named wrappers be required? Define how an
+> alias participates in dispatch and whether it converts implicitly to its
+> underlying type. The spelling alone should not decide those rules.
 
-Inline declaration requires commas, but they can be ommited when using new lines.
-
-## Alias
-
-This uses the same syntax as type definitions.
-
-```
-Name : Type = String  -- Is this the abstract or the type?
-```
-
-Aliases are valid inputs to functions that take the underlying type.
-
-> Is this safe?
-> This could be useful for aliases:
-> Go introduced `~` (tilde) to indicate an underlying type. `T` can then be any
-> type whose underlying type is `int`, `float64`, and so on.
-> Perhaps it is better to be strict so this feature remains useful.
-> We have not yet decided whether automatic casting is a good idea.
-
-
-## Private vs. Public
-
-Everything is public by default to make it easier for beginners.
-
-To make variables private, just use:
-- `_name_surname` for variables in snake_case
-- `nameSurname` for variables in PascalCase
-
-
-
-## Notes
-
-- UTF8 names? to insert LaTeX symbols: `\delta` + Tab. (from julia)
-- If you write `x: float` and then `x = 1`, it understands that you mean `1.0`. (From Odin.)
-- `x, y = y, x` must be supported.
+> [!IDEA]
+> An explicit underlying-type constraint, similar to Go's `~T`, could
+> describe types with a common representation while preserving their distinct
+> identities. It would need a separate rule from ordinary type aliases.

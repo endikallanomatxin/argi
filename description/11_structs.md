@@ -33,6 +33,10 @@ Unnamed struct types use their field structure for type identity. Struct
 value literals provide fields by name; constructors may also accept
 positional arguments when their order is unambiguous.
 
+A constant struct binding cannot be reassigned, have its fields changed, or
+be borrowed through `$&`. Reading its fields and taking `&` references
+remain possible.
+
 ## Field visibility
 
 A field whose name begins with `_` is private to the module that declares
@@ -120,3 +124,9 @@ assume field offsets from declaration order. C interoperation also provides
 > operations of one field, for example `expose .buffer`, instead of writing
 > forwarding functions for every operation. This would need rules for name
 > conflicts and for which operations become visible.
+
+> [!IDEA]
+> Dot access could extend to structural indices, such as `array.3`, alongside
+> `value.field`. Dynamic collections could still use their explicit `get` and
+> `set` operations. The boundary between field access and indexing needs a
+> separate design.
