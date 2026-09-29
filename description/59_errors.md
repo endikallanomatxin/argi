@@ -1,11 +1,8 @@
 # Errors
 
-Accepted direction:
-- Propagation and ergonomics along the lines of Zig.
-- Accumulated human-readable context and traces during propagation, as in
-  `anyhow`.
-- An error is no longer identified by an arbitrary `Type`; it is identified by
-  a nominal `choice option`.
+Errors have nominal reasons, explicit propagation, and a trace of the places
+where they were propagated. The trace policy is supplied as a capability.
+Propagation is infallible; its memory and I/O costs depend on that policy.
 
 ## Choice options
 
@@ -44,7 +41,8 @@ The `choices` used for errors are closed and finite.
 
 ## Error values
 
-The trace remains part of the error itself.
+An error carries its reason and a small handle to its trace. Trace entries are
+held by the configured tracer, not embedded in each error value.
 
 ```rg
 Error#(.reasons: Choice) : Type = (
@@ -53,9 +51,9 @@ Error#(.reasons: Choice) : Type = (
 )
 ```
 
-Restricciones:
-- `.reason` must be a `choice` without payloads.
-- `.trace` uses the current trace-entry mechanism.
+`.reason` must be a `choice` without payloads. `ErrorTrace` identifies a
+sequence in an `ErrorTracer` and depends on that tracer's current storage
+generation. Creating an error starts that sequence at its origin.
 
 ## Error unions
 
@@ -194,7 +192,79 @@ The expression yields the `..ok` value. A named struct remains whole even
 when it has only one field. An anonymous one-field payload is unpacked to
 that field's value.
 
-`!!` also attaches textual context to the trace entry.
+`!! "context"` also attaches textual context to the trace entry. A tracer
+that retains the context copies it, so the entry does not borrow a temporary
+string. A tracer that emits the entry immediately can use the text during the
+call.
+
+## Error tracing
+
+`ErrorTracer` is an `Abstract` for the tracing policy:
+
+```rg
+ErrorTracer : Abstract = (
+    trace(...)   -- infallible: append a location and optional context
+    reset(...)   -- reuse storage and invalidate previous traces
+    report(...)  -- write a trace; may return an I/O error
+)
+```
+
+`!` calls `trace` with the propagation location. `!! "context"` calls it with
+the location and context. `trace` cannot return an error: propagation must
+still succeed when tracing cannot retain or emit an entry. A policy may
+allocate or write during `trace`, but must handle those failures internally.
+`report` resolves locations and writes the trace; it may return an I/O error.
+A tracer may be supplied through `reach error_tracer`, so intermediate
+functions need not list it manually:
+
+```rg
+assume error_tracer ::= $&FixedSizeErrorTracer(
+    .allocator = system.page_allocator,
+    .size = 64 * 1024,
+)!
+
+run()
+```
+
+`FixedSizeErrorTracer` allocates its fixed buffer during fallible `init`.
+Subsequent trace entries, including copies of `!!` context text, occupy that
+buffer without further allocation. Context that cannot fit is truncated.
+Roughly half preserves the origin and first contexts; the other half is a ring
+buffer retaining recent frames. If the trace exceeds the buffer, `report`
+shows the beginning, a truncation marker, and the end. The middle is discarded.
+
+Entries store compact `SourceLocationId` values. Executable metadata maps
+them to filenames, lines, and source text when `report` runs. `Error` therefore
+needs neither source strings nor an allocator.
+
+`reset` reuses the buffer and ends its current storage generation. Every
+earlier `ErrorTrace` becomes invalid; the safety checker treats its use after
+reset like a reference into a reset arena.
+
+`NoopErrorTracer` is another valid policy. It records no frames while keeping
+the same infallible propagation interface. Other policies can implement the
+same abstract interface.
+
+> [!IDEA]
+> An allocating tracer could retain complete traces, growing storage during
+> `trace`. If allocation fails, it would drop or truncate entries and keep
+> propagation infallible.
+>
+> A streaming tracer could format each entry into a small buffer and flush it
+> to a terminal as soon as context is added. This suits a REPL, where seeing
+> the trace as execution proceeds may matter more than retaining it for a
+> later `report`. Because `trace` is infallible, write failures during these
+> flushes must be ignored or recorded for a later fallible `report`.
+
+> [!QUESTION]
+> How should one fixed buffer serve several errors whose trace handles remain
+> live at the same time? Define when a trace can lose retained frames to
+> another trace, and how handles identify their entries after ring eviction.
+
+> [!IMPLEMENTATION]
+> The current compiler still allocates trace entries during propagation and
+> stores them in each error. `ErrorTracer`, fixed-size storage, compact source
+> location IDs, and generation-aware reset are not implemented yet.
 
 Current direction for reason inference:
 - The signature still spells out the complete declared set.
@@ -231,7 +301,7 @@ my_thing := fallible() handle value, error {
             value = 0
         }
         ..permission_denied {
-            report_trace(.trace = &error.trace)
+            report(.trace = &error.trace)!
             value = 1
         }
     }
