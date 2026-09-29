@@ -35,6 +35,7 @@ once init(.p: $&Terminal) -> () := {
 }
 
 deinit(.self: $&Terminal) -> () := {
+    assume error_tracer ::= $&noop_error_tracer
     close(.self = self&.stdin_file)
     close(.self = self&.stdout_file)
     close(.self = self&.stderr_file)

@@ -1140,6 +1140,7 @@ pub const Infer = struct {
                 const expect = self.graph.testing_expect_errors.items[@intFromEnum(expect_id)];
                 try self.inferInputPostStatesExpression(function_id, expect.expected_reason, states, exits);
                 try self.inferInputPostStatesExpression(function_id, expect.actual_result, states, exits);
+                if (expect.test_fail_input) |input| try self.inferConditionalInputPostStatesExpression(function_id, input, states, exits);
             },
             .error_propagation => |propagation_id| {
                 const propagation = self.graph.error_propagations.items[@intFromEnum(propagation_id)];
@@ -1888,6 +1889,7 @@ pub const Infer = struct {
                 const expect = self.graph.testing_expect_errors.items[@intFromEnum(expect_id)];
                 try self.inferOpaqueEmptyExpression(function_id, expect.expected_reason, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, expect.actual_result, effects, state, exits);
+                if (expect.test_fail_input) |input| try self.inferConditionalOpaqueEmptyExpression(function_id, input, effects, state, exits);
             },
             .error_propagation => |propagation_id| {
                 const propagation = self.graph.error_propagations.items[@intFromEnum(propagation_id)];
@@ -2373,6 +2375,7 @@ pub const Infer = struct {
                 const expect = self.graph.testing_expect_errors.items[@intFromEnum(expect_id)];
                 try self.inferRequiredLiveInputsNode(function_id, expect.expected_reason, required);
                 try self.inferRequiredLiveInputsNode(function_id, expect.actual_result, required);
+                if (expect.test_fail_input) |input| try self.inferRequiredLiveInputsNode(function_id, input, required);
             },
             .error_propagation => |propagation_id| {
                 const propagation = self.graph.error_propagations.items[@intFromEnum(propagation_id)];
@@ -2630,6 +2633,11 @@ pub const Infer = struct {
                 const effect = try self.constructorResultEffect(initializer.init_fn, node.ty orelse return error.InvalidInitializerType);
                 const substituted = try self.substituteOutputWithOverride(function_id, effect, arguments, .{ .input_index = 0, .effect = .{} });
                 break :blk try self.rebaseFreshSources(substituted, node_id);
+            },
+            .testing_expect_error => |id| blk: {
+                const expect = self.graph.testing_expect_errors.items[@intFromEnum(id)];
+                const input = expect.test_fail_input orelse break :blk .{};
+                break :blk try self.inferCall(function_id, node_id, expect.test_fail_function, input);
             },
             .function_call => |call| try self.inferCall(function_id, node_id, call.callee, call.input),
             .virtualize => |virtualize_id| try self.inferVirtualize(function_id, virtualize_id),

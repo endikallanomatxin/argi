@@ -85,8 +85,8 @@ child does not release a whole arena block.
 interoperation. Public `malloc`, `aligned_alloc`, and `free` wrappers also
 require `.ffi`.
 
-> [!IMPLEMENTATION]
-> Compiler-generated error traces still allocate through libc directly.
+Fixed-size error tracers allocate their buffers through an explicit allocator
+during initialization. Propagation adds bounded context without allocation.
 
 Using an allocator and implementing `deinit()` does not make a type implicitly
 copyable. Cleanup, copying, and borrowed views remain separate concerns.

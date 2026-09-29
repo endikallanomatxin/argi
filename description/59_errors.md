@@ -51,9 +51,12 @@ Error#(.reasons: Choice) : Type = (
 )
 ```
 
-`.reason` must be a `choice` without payloads. `ErrorTrace` identifies a
-sequence in an `ErrorTracer` and depends on that tracer's current storage
-generation. Creating an error starts that sequence at its origin.
+`.reason` must be a `choice` without payloads. `ErrorTrace` retains a reference
+to the original virtual `ErrorTracer`. The bundled policies use a shared log,
+so the reference itself is the complete handle.
+Creating an error records its origin through that tracer. The tracer must
+outlive errors referring to it; clearing its retained context does not end
+the lifetime of the error or change its reason.
 
 ## Error unions
 
@@ -203,68 +206,94 @@ call.
 
 ```rg
 ErrorTracer : Abstract = (
-    trace(...)   -- infallible: append a location and optional context
-    reset(...)   -- reuse storage and invalidate previous traces
+    add_context(.self: $&Self, .location: SourceLocationId, .context: StringView) -> ()
+    reset_context(...) -- infallible: clear retained context and reuse storage
     report(...)  -- write a trace; may return an I/O error
 )
 ```
 
-`!` calls `trace` with the propagation location. `!! "context"` calls it with
-the location and context. `trace` cannot return an error: propagation must
+`!` calls `add_context` with the propagation location and empty context.
+`!! "context"` calls it with
+the location and context. `add_context` cannot return an error: propagation must
 still succeed when tracing cannot retain or emit an entry. A policy may
-allocate or write during `trace`, but must handle those failures internally.
+allocate or write during `add_context`, but must handle those failures internally.
 `report` resolves locations and writes the trace; it may return an I/O error.
-A tracer may be supplied through `reach error_tracer`, so intermediate
-functions need not list it manually:
+The capability has type `$&Virtual#(.abstract: ErrorTracer)`. A tracer may
+be supplied through `reach error_tracer`, so intermediate
+functions need not list it manually. This capability selects the tracer when
+an error is created. Later propagation and reporting use the reference in
+that error, even under a different `assume error_tracer`:
 
 ```rg
-assume error_tracer ::= $&FixedSizeErrorTracer(
+tracer ::= FixedSizeErrorTracer(
     .allocator = system.page_allocator,
     .size = 64 * 1024,
 )!
+virtual_tracer ::= to_virtual#(.abstract: ErrorTracer)(.value = $&tracer)
+assume error_tracer ::= $&virtual_tracer
 
 run()
 ```
 
 `FixedSizeErrorTracer` allocates its fixed buffer during fallible `init`.
 Subsequent trace entries, including copies of `!!` context text, occupy that
-buffer without further allocation. Context that cannot fit is truncated.
-Roughly half preserves the origin and first contexts; the other half is a ring
-buffer retaining recent frames. If the trace exceeds the buffer, `report`
-shows the beginning, a truncation marker, and the end. The middle is discarded.
+buffer without further allocation. Each slot copies at most 128 context bytes;
+longer context is truncated. Buffer space smaller than a complete slot is
+unused. A buffer with no complete slots drops every entry.
+For a single trace, roughly half preserves the origin and first contexts;
+the other half is a ring buffer retaining recent frames. If the trace exceeds
+the buffer, `report` shows the beginning, a truncation marker, and the end.
+The middle is discarded. When several errors share the buffer, this
+implementation may also evict entries belonging to other errors.
+
+Storage isolation between errors is not required. A tracer may interleave
+entries from several errors and report shared context, using separators as
+appropriate. Retention, truncation, eviction, and loss indicators belong to
+each implementation's policy. No policy may interpret reused storage as an
+old entry or access storage that is no longer valid.
 
 Entries store compact `SourceLocationId` values. Executable metadata maps
 them to filenames, lines, and source text when `report` runs. `Error` therefore
 needs neither source strings nor an allocator.
 
-`reset` reuses the buffer and ends its current storage generation. Every
-earlier `ErrorTrace` becomes invalid; the safety checker treats its use after
-reset like a reference into a reset arena.
+`reset_context` clears the tracer's retained diagnostic context and permits
+storage reuse. Existing errors remain valid: their reasons and tracer
+references are unchanged, and they may still be propagated or reported.
+The tracer must recognize handles from before the reset without accessing
+stale entries. Later propagation can record new context for those errors;
+cleared context is not recovered. Any generations used to distinguish reused
+storage are internal to the tracer, not lifetimes of the error value.
 
 `NoopErrorTracer` is another valid policy. It records no frames while keeping
 the same infallible propagation interface. Other policies can implement the
 same abstract interface.
 
+Tracer initialization uses an already available tracer. At bootstrap, a
+`NoopErrorTracer` with program lifetime provides this capability without
+allocation. If a new tracer's initialization fails, its error retains the
+previous tracer; the partially initialized tracer is never published.
+
+`report` returns ordinary I/O errors, but errors created by the reporting
+operation use the program-lifetime `NoopErrorTracer`. Reporting must not
+automatically report its own failures or invoke the failing tracer again.
+The caller decides whether to propagate, inspect, or ignore a report failure.
+
 > [!IDEA]
 > An allocating tracer could retain complete traces, growing storage during
-> `trace`. If allocation fails, it would drop or truncate entries and keep
+> `add_context`. If allocation fails, it would drop or truncate entries and keep
 > propagation infallible.
 >
 > A streaming tracer could format each entry into a small buffer and flush it
 > to a terminal as soon as context is added. This suits a REPL, where seeing
 > the trace as execution proceeds may matter more than retaining it for a
-> later `report`. Because `trace` is infallible, write failures during these
+> later `report`. Because `add_context` is infallible, write failures during these
 > flushes must be ignored or recorded for a later fallible `report`.
 
-> [!QUESTION]
-> How should one fixed buffer serve several errors whose trace handles remain
-> live at the same time? Define when a trace can lose retained frames to
-> another trace, and how handles identify their entries after ring eviction.
-
-> [!IMPLEMENTATION]
-> The current compiler still allocates trace entries during propagation and
-> stores them in each error. `ErrorTracer`, fixed-size storage, compact source
-> location IDs, and generation-aware reset are not implemented yet.
+Fallible virtual methods receive the reached tracer capability alongside
+ordinary arguments, including implementations whose bodies always succeed.
+This keeps runtime dispatch consistent when an implementation creates an error.
+`source_location(.id)` resolves a recorded ID to immutable source metadata;
+IDs that were not produced by `error_location_id()` abort.
 
 Current direction for reason inference:
 - The signature still spells out the complete declared set.

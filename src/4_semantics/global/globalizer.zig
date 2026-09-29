@@ -439,6 +439,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
         .result_type = globalType(o, value.result_type),
         .result_ok_variant = globalVariant(o, value.result_ok_variant),
         .test_fail_function = globalFunction(o, value.test_fail_function),
+        .test_fail_input = if (value.test_fail_input) |input| globalNode(o, input) else null,
         .expected_reason_name = if (value.expected_reason_name) |name| try relocateString(module, name, o.string_base) else null,
         .diagnostic_line = value.diagnostic_line,
         .diagnostic_column = value.diagnostic_column,

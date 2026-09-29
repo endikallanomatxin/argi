@@ -193,6 +193,7 @@ pub fn testingExpectError(comptime Ids: type, value: primitives.TestingExpectErr
     try require(verify.idFits(value.result_type, bounds.types));
     try require(verify.idFits(value.result_ok_variant, bounds.variants));
     try require(verify.idFits(value.test_fail_function, bounds.functions));
+    if (value.test_fail_input) |input| try require(verify.idFits(input, bounds.nodes));
     if (value.expected_reason_name) |name| try require(verify.stringFits(name, bounds.strings));
     try require(verify.stringFits(value.diagnostic_source_line, bounds.strings));
 }

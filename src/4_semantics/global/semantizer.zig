@@ -307,6 +307,7 @@ pub fn semantizeWithOptions(
         .offsets = relocation.offsets.items,
         .profile_io = options.profile_io,
     };
+    defer core.deinitReachedCalls();
     if (try resolveQualifiedChoiceOptions(&core, options.diagnostics)) return error.Reported;
     var expressions = expression_mod.Resolver{
         .allocator = allocator,
@@ -1168,7 +1169,7 @@ fn completePropagatedReachCalls(
 ) !bool {
     // A callee can acquire reached inputs after its callers have resolved.
     // Rebuild those call inputs until their shape follows the final signature.
-    var changed = false;
+    var changed = try core.completeTrackedReachedCalls();
     for (modules, offsets) |*module, offset| {
         for (module.semantic.pending_operations.items) |operation| {
             const call = switch (operation) {
@@ -1176,19 +1177,29 @@ fn completePropagatedReachCalls(
                 else => continue,
             };
             const node = core.graph.nodes.items[@intFromEnum(globalizer.globalNode(offset, call.node))];
-            const resolved = switch (node.content) {
-                .function_call => |value| value,
+            const callee = switch (node.content) {
+                .function_call => |value| value.callee,
+                .type_initializer => |value| value.init_fn,
                 else => continue,
             };
-            const input = core.graph.nodes.items[@intFromEnum(resolved.input)];
+            const input_id = switch (node.content) {
+                .function_call => |value| value.input,
+                .type_initializer => |value| value.args,
+                else => unreachable,
+            };
+            const input = core.graph.nodes.items[@intFromEnum(input_id)];
             const literal = switch (input.content) {
                 .struct_value_literal => |value| value,
                 else => continue,
             };
-            const fields = core.graph.functions.items[@intFromEnum(resolved.callee)].input;
+            var fields = core.graph.function(callee).input;
+            if (node.content == .type_initializer) {
+                fields.start += 1;
+                fields.len -= 1;
+            }
             if (literal.fields.len == fields.len) continue;
             const context = reach_context.Context.fromModule(module, offset, call.visible_bindings, call.owner_function);
-            if (try core.completeCallInputFieldsWithReach(fields, resolved.input, context)) changed = true;
+            if (try core.completeCallInputFieldsWithReach(fields, input_id, context)) changed = true;
         }
     }
     return changed;

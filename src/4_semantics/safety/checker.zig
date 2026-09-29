@@ -699,8 +699,15 @@ pub const SafetyChecker = struct {
                 try self.validateIntegerLiteral(node.source, node.ty, value);
                 break :blk .{};
             },
+            .testing_expect_error => |id| blk: {
+                const expect = self.graph.testing_expect_errors.items[@intFromEnum(id)];
+                _ = try self.evaluate(function, expect.expected_reason, state);
+                _ = try self.evaluate(function, expect.actual_result, state);
+                const input = expect.test_fail_input orelse break :blk .{};
+                break :blk try self.evaluateCall(function, node_id, .{ .callee = expect.test_fail_function, .input = input }, state);
+            },
             .type_initializer => |initializer| try self.evaluateTypeInitializer(function, node.source, initializer, node.ty orelse return error.InvalidInitializerType, null, state),
-            .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .testing_expect_error, .reach_directive, .break_statement, .continue_statement, .abort_statement => .{},
+            .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .reach_directive, .break_statement, .continue_statement, .abort_statement => .{},
             else => .{},
         };
     }

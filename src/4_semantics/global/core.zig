@@ -32,6 +32,80 @@ pub const Resolver = struct {
     profile_io: ?std.Io = null,
     stats: Stats = .{},
 
+    // Instantiated bodies and cleanup calls have no module pending operation
+    // to revisit when a callee gains a transitive reached input. Retain their
+    // lexical context until the signatures reach the semantizing fixed point.
+    reached_calls: std.ArrayList(ReachedCall) = .empty,
+    const ReachedCall = struct {
+        callee: global_sg.GlobalFunctionId,
+        input: global_sg.GlobalNodeId,
+        skip_receiver: bool,
+        owner: ?global_sg.GlobalFunctionId,
+        visible: []global_sg.GlobalBindingId,
+    };
+
+    pub fn rollbackReachedCalls(self: *Resolver, count: usize) void {
+        for (self.reached_calls.items[count..]) |call| self.allocator.free(call.visible);
+        self.reached_calls.shrinkRetainingCapacity(count);
+    }
+
+    pub fn deinitReachedCalls(self: *Resolver) void {
+        self.rollbackReachedCalls(0);
+        self.reached_calls.deinit(self.allocator);
+    }
+
+    // Instantiation and cleanup can resolve calls before a callee acquires
+    // all reached inputs. Keep their lexical environment until signature
+    // completion, including calls absent from module pending operations.
+    pub fn trackReachedCall(self: *Resolver, callee: global_sg.GlobalFunctionId, input: global_sg.GlobalNodeId, context: reach_context.Context, skip_receiver: bool) !void {
+        for (self.reached_calls.items) |call| if (call.input == input and call.callee == callee) return;
+        const visible = try self.allocator.alloc(global_sg.GlobalBindingId, context.bindingCount());
+        errdefer self.allocator.free(visible);
+        for (visible, 0..) |*binding, index| binding.* = context.bindingAt(index);
+        try self.reached_calls.append(self.allocator, .{ .callee = callee, .input = input, .skip_receiver = skip_receiver, .owner = context.ownerFunction(), .visible = visible });
+    }
+
+    pub fn trackResolvedReachedCall(self: *Resolver, node: global_sg.Node, context: reach_context.Context) !void {
+        switch (node.content) {
+            .function_call => |call| try self.trackReachedCall(call.callee, call.input, context, false),
+            .type_initializer => |call| try self.trackReachedCall(call.init_fn, call.args, context, true),
+            else => {},
+        }
+    }
+
+    pub fn completeTrackedReachedCalls(self: *Resolver) !bool {
+        var changed = false;
+        for (self.reached_calls.items) |call| {
+            var fields = self.graph.function(call.callee).input;
+            if (call.skip_receiver) {
+                fields.start += 1;
+                fields.len -= 1;
+            }
+            const literal = self.graph.node(call.input).content.struct_value_literal;
+            if (literal.fields.len == fields.len) continue;
+            var context = reach_context.Context.fromGlobal(call.visible, call.owner);
+            context.global.assumed_fields = literal.assumed_fields;
+            if (try self.completeCallInputFieldsWithReach(fields, call.input, context)) changed = true;
+        }
+        return changed;
+    }
+
+    pub fn errorTracerField(self: *const Resolver) ?global_sg.Field {
+        for (self.graph.functions.items) |function| {
+            const owner = self.graph.moduleForDeclaration(function.declaration) orelse continue;
+            if (!self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) continue;
+            if (!std.mem.eql(u8, self.graph.text(self.graph.declaration(function.declaration).name), "create_error_trace")) continue;
+            for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field|
+                if (std.mem.eql(u8, self.graph.text(field.name), "error_tracer")) return field;
+        }
+        return null;
+    }
+
+    pub fn ensureErrorTracerInput(self: *Resolver, function: global_sg.GlobalFunctionId) !void {
+        const field = self.errorTracerField() orelse return;
+        _ = try self.propagateReachedDefaultWithCompatibility(function, field, field.default_value orelse return, null);
+    }
+
     pub fn resolveExternalTypes(self: *Resolver) !void {
         for (self.modules, 0..) |*module, module_index| {
             const o = self.offsets[module_index];
@@ -1128,7 +1202,7 @@ pub const Resolver = struct {
             return if (saw_deferred) .deferred else .unavailable;
         const owner = self.graph.functions.items[@intFromEnum(owner_id)];
         const owner_name = self.graph.text(self.graph.declarations.items[@intFromEnum(owner.declaration)].name);
-        if (std.mem.eql(u8, owner_name, "main"))
+        if (std.mem.eql(u8, owner_name, "main") and !std.mem.eql(u8, self.graph.text(expected_field.name), "error_tracer"))
             return if (saw_deferred) .deferred else .unavailable;
 
         for (self.graph.fields.items[owner.input.start..][0..owner.input.len]) |field| {
@@ -1281,6 +1355,7 @@ pub const Resolver = struct {
         self.graph.nodes.items[@intFromEnum(input_node)].ty = ty;
         self.graph.nodes.items[@intFromEnum(input_node)].content.struct_value_literal = .{
             .fields = .{ .start = start, .len = expected_fields.len },
+            .assumed_fields = literal.assumed_fields,
         };
         return true;
     }
@@ -1348,6 +1423,7 @@ pub const Resolver = struct {
         self.graph.nodes.items[@intFromEnum(input_node)].ty = ty;
         self.graph.nodes.items[@intFromEnum(input_node)].content.struct_value_literal = .{
             .fields = .{ .start = start, .len = expected_fields.len },
+            .assumed_fields = literal.assumed_fields,
         };
         published = true;
         return true;
@@ -1485,7 +1561,7 @@ pub const Resolver = struct {
         const resolved_owner = owner_id orelse return null;
         const owner = &self.graph.functions.items[@intFromEnum(resolved_owner)];
         const owner_name = self.graph.text(self.graph.declarations.items[@intFromEnum(owner.declaration)].name);
-        if (std.mem.eql(u8, owner_name, "main")) return null;
+        if (std.mem.eql(u8, owner_name, "main") and !std.mem.eql(u8, self.graph.text(reached_field.name), "error_tracer")) return null;
 
         for (0..owner.input.len) |offset| {
             const field = self.graph.fields.items[owner.input.start + @as(u32, @intCast(offset))];

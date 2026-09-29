@@ -10,6 +10,7 @@ const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
 const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
+const reach_context = @import("reach_context.zig");
 
 pub const Stats = struct {
     checks: u32 = 0,
@@ -200,6 +201,7 @@ pub const Resolver = struct {
             reference,
             input,
             .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset },
+            reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function),
         )) orelse return .deferred;
         self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
         return .resolved;
@@ -295,6 +297,7 @@ pub const Resolver = struct {
         for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
             const instance = try self.requirementInstance(abstract_decl, concrete, located, requirement, @intCast(method_index));
             const implementation = self.findConcreteMethod(self.modules[located.module_index].text(requirement.name), instance.input, instance.output) orelse return null;
+            if (self.fallibleOutput(instance.output)) try self.core.ensureErrorTracerInput(implementation);
             try methods.append(self.allocator, implementation);
         }
         const method_start: u32 = @intCast(self.graph.function_refs.items.len);
@@ -453,8 +456,9 @@ pub const Resolver = struct {
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
         source: primitives.SourceRef,
+        reach: reach_context.Context,
     ) anyerror!?global_sg.Node {
-        return self.makeVirtualCall(module_index, reference, input, source);
+        return self.makeVirtualCall(module_index, reference, input, source, reach);
     }
 
     pub fn abstractDeclarationForType(self: *const Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalDeclId {
@@ -817,12 +821,37 @@ pub const Resolver = struct {
         return self.implements(actual_pointer.child, abstract_decl);
     }
 
+    fn fallibleOutput(self: *const Resolver, output: global_sg.GlobalTypeId) bool {
+        const fields = global_types.fields(self.graph, output) orelse return false;
+        if (fields.len != 1) return false;
+        const result = self.graph.fields.items[fields.start].ty;
+        const error_variant = global_types.findVariant(self.graph, result, "error") orelse return false;
+        const payload = error_variant.variant.payload_type orelse return false;
+        return global_types.findField(self.graph, payload, "trace") != null;
+    }
+
+    // A fallible virtual slot needs a uniform capability input, including for
+    // implementations that return only success. This prevents a late reached
+    // dependency from changing the concrete function's ABI behind its vtable.
+    fn virtualInputType(self: *Resolver, input: global_sg.GlobalTypeId, output: global_sg.GlobalTypeId) !global_sg.GlobalTypeId {
+        if (!self.fallibleOutput(output) or global_types.findField(self.graph, input, "error_tracer") != null) return input;
+        const field = self.core.errorTracerField() orelse return input;
+        const fields = global_types.fields(self.graph, input) orelse return input;
+        const copied = try self.allocator.dupe(global_sg.Field, self.graph.fields.items[fields.start..][0..fields.len]);
+        defer self.allocator.free(copied);
+        const start: u32 = @intCast(self.graph.fields.items.len);
+        try self.graph.fields.appendSlice(self.allocator, copied);
+        try self.graph.fields.append(self.allocator, field);
+        return self.generics.internType(.{ .structural = .{ .fields = .{ .start = start, .len = fields.len + 1 } } });
+    }
+
     fn makeVirtualCall(
         self: *Resolver,
         module_index: usize,
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
         source: primitives.SourceRef,
+        reach: reach_context.Context,
     ) !?global_sg.Node {
         if (reference.module_path != null or reference.generic_arguments != null) return null;
         const module = &self.modules[module_index];
@@ -854,12 +883,15 @@ pub const Resolver = struct {
                     requirement,
                     @intCast(method_index),
                 )) orelse continue;
-                const input_ty = instance.input;
+                const input_ty = try self.virtualInputType(instance.input, instance.output);
                 const output_ty = instance.output;
                 const input_fields = global_types.fields(self.graph, input_ty) orelse continue;
                 const output_fields = global_types.fields(self.graph, output_ty) orelse continue;
-                if (self.core.scoreCallInput(input_fields, input) == null) continue;
-                if (!try self.core.completeCallInputFields(input_fields, input)) continue;
+                switch (try self.core.matchCallInputWithReach(input_fields, input, reach)) {
+                    .score => {},
+                    else => continue,
+                }
+                if (!try self.core.completeCallInputFieldsWithReach(input_fields, input, reach)) continue;
 
                 var self_index: ?u32 = null;
                 var permission: primitives.PointerMutability = .read_only;

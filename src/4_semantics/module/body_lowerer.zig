@@ -555,7 +555,31 @@ const Context = struct {
     fn lowerChoiceLiteral(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const literal = self.tree.choiceLiteral(node).?;
         const payload = if (literal.payload) |payload_node| (try self.lowerNode(payload_node, null)).node else null;
-        const name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, literal.name_token));
+        const option_text = self.tree.tokenTextFromSource(self.source, literal.name_token);
+        if (std.mem.eql(u8, option_text, "error")) if (payload) |payload_id| {
+            const payload_node = self.graph.semantic.nodes.items[@intFromEnum(payload_id)];
+            if (payload_node == .resolved and payload_node.resolved.content == .struct_value_literal) {
+                const fields = payload_node.resolved.content.struct_value_literal.fields;
+                var has_reason = false;
+                var has_trace = false;
+                for (self.graph.semantic.value_fields.items[fields.start..][0..fields.len]) |field| {
+                    has_reason = has_reason or std.mem.eql(u8, self.graph.text(field.name), "reason");
+                    has_trace = has_trace or std.mem.eql(u8, self.graph.text(field.name), "trace");
+                }
+                if (has_reason and !has_trace) {
+                    // Trace creation is an ordinary reached call, so its
+                    // receiver dependency participates in safety summaries.
+                    const location = try self.syntheticErrorCall(node, "error_location_id", null);
+                    const trace = try self.syntheticErrorCall(node, "create_error_trace", location);
+                    const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
+                    try self.graph.semantic.value_fields.ensureUnusedCapacity(self.allocator, fields.len + 1);
+                    self.graph.semantic.value_fields.appendSliceAssumeCapacity(self.graph.semantic.value_fields.items[fields.start..][0..fields.len]);
+                    try self.graph.semantic.value_fields.append(self.allocator, .{ .name = try self.writer.addString("trace"), .value = trace });
+                    self.graph.semantic.nodes.items[@intFromEnum(payload_id)].resolved.content.struct_value_literal.fields = .{ .start = start, .len = fields.len + 1 };
+                }
+            }
+        };
+        const name = try self.writer.addString(option_text);
         const option = try self.writer.addExternalRef(.{
             .kind = .choice_option,
             .module_path = null,
@@ -568,6 +592,22 @@ const Context = struct {
             .payload = payload,
             .expected_type = expected,
         } }, expected);
+    }
+
+    fn syntheticErrorCall(self: *Context, node: syn.NodeIndex, name: []const u8, location: ?entities.ModuleNodeId) !entities.ModuleNodeId {
+        const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
+        if (location) |value| try self.graph.semantic.value_fields.append(self.allocator, .{ .name = try self.writer.addString("location"), .value = value });
+        const input = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = if (location != null) 1 else 0 } } });
+        try self.captureAssumedFields(node, input.node);
+        const external = try self.writer.addExternalRef(.{ .kind = .function, .module_path = null, .name = try self.writer.addString(name), .source = self.sourceRef(node) });
+        const call = try self.pending(node, .{ .resolve_call = .{
+            .node = self.nextNodeId(),
+            .callee = external,
+            .input = input.node,
+            .visible_bindings = try self.captureVisibleBindings(),
+            .owner_function = self.current_function,
+        } }, null);
+        return call.node;
     }
 
     fn lowerField(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
@@ -625,6 +665,7 @@ const Context = struct {
             .errable_value = value.node,
             .source = self.sourceRef(node),
             .context = context.node,
+            .owner_function = self.current_function,
         } }, expected);
     }
 

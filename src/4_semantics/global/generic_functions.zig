@@ -6,6 +6,7 @@ const ir = @import("../module/parameterized/ir.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
 const reach_context_mod = @import("reach_context.zig");
+const errors_mod = @import("errors.zig");
 const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
@@ -50,7 +51,7 @@ pub const Resolver = struct {
     core: *core_mod.Resolver,
     generics: *generic_mod.Resolver,
     nested_call_context: ?*abstract_mod.Resolver = null,
-    nested_call_resolver: ?*const fn (*abstract_mod.Resolver, usize, module_entities.ExternalRef, global_sg.GlobalNodeId, primitives.SourceRef) anyerror!?global_sg.Node = null,
+    nested_call_resolver: ?*const fn (*abstract_mod.Resolver, usize, module_entities.ExternalRef, global_sg.GlobalNodeId, primitives.SourceRef, ReachInferenceContext) anyerror!?global_sg.Node = null,
     nested_constructor_context: ?*anyopaque = null,
     nested_constructor_resolver: ?*const fn (*anyopaque, usize, module_entities.ExternalRef, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, ReachInferenceContext, primitives.SourceRef) anyerror!?global_sg.Node = null,
     ownership_context: ?*anyopaque = null,
@@ -72,11 +73,12 @@ pub const Resolver = struct {
 
     pub const SideEffectCheckpoint = struct {
         ownership: ?[2]usize = null,
+        reached_calls: usize = 0,
         abstracts: ?abstract_mod.Resolver.CacheCheckpoint = null,
     };
 
     pub fn checkpointSideEffects(self: *const Resolver) SideEffectCheckpoint {
-        var saved: SideEffectCheckpoint = .{};
+        var saved: SideEffectCheckpoint = .{ .reached_calls = self.core.reached_calls.items.len };
         if (self.ownership_context) |context| {
             if (self.ownership_checkpoint) |checkpoint|
                 saved.ownership = checkpoint(context);
@@ -87,6 +89,7 @@ pub const Resolver = struct {
     }
 
     pub fn rollbackSideEffects(self: *Resolver, saved: SideEffectCheckpoint) void {
+        self.core.rollbackReachedCalls(saved.reached_calls);
         if (saved.abstracts) |checkpoint|
             if (self.nested_call_context) |abstracts|
                 abstracts.rollbackImplementationCaches(checkpoint);
@@ -2438,14 +2441,13 @@ pub const Resolver = struct {
                 .dereference => self.resolveDereference(operands.items, value.source),
                 .pointer_store => self.resolvePointerStore(operands.items, value.source),
                 .move_value => self.resolveMove(operands.items, value.source),
-                .error_propagation => self.resolveErrorPropagation(operands.items, value.source),
+                .error_propagation, .error_context => self.resolveErrorPropagation(operands.items, value.source),
                 .pipe => if (operands.items.len != 0) self.resolver.graph.nodes.items[@intFromEnum(operands.items[operands.items.len - 1])] else error.InvalidParameterizedPipe,
                 .struct_value,
                 .list_value,
                 .choice_literal,
                 .unwrap_or,
                 .unwrap_or_do,
-                .error_context,
                 .for_each,
                 .match_case,
                 .defer_value,
@@ -2457,7 +2459,7 @@ pub const Resolver = struct {
         }
 
         fn resolveErrorPropagation(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {
-            if (operands.len != 1) return error.InvalidParameterizedErrorPropagation;
+            if (operands.len != 1 and operands.len != 2) return error.InvalidParameterizedErrorPropagation;
             const errable = operands[0];
             const errable_ty = self.resolver.graph.node(errable).ty orelse return error.UntypedParameterizedErrorPropagation;
             const ok = global_types.findVariant(self.resolver.graph, errable_ty, "ok") orelse return error.InvalidParameterizedErrorPropagation;
@@ -2471,7 +2473,9 @@ pub const Resolver = struct {
             const propagated_ty = global_types.effectiveFieldType(self.resolver.graph.fields.items[function.output.start]);
             const propagated_error = global_types.findVariant(self.resolver.graph, propagated_ty, "error") orelse return error.InvalidParameterizedErrorPropagation;
             const propagated_error_payload = propagated_error.variant.payload_type orelse error_payload;
-            if (!global_types.equal(self.resolver.graph, error_payload, propagated_error_payload)) return error.IncompatibleParameterizedErrorPayload;
+            var errors: errors_mod.Resolver = .{ .allocator = self.resolver.allocator, .graph = self.resolver.graph, .modules = self.resolver.modules, .offsets = self.resolver.offsets, .core = self.resolver.core };
+            if (!errors.errorPayloadCanPropagate(error_payload, propagated_error_payload)) return error.IncompatibleParameterizedErrorPayload;
+            try errors.absorbErrorPayloadReasons(error_payload, propagated_error_payload);
             const ok_fields = global_types.fields(self.resolver.graph, ok_payload);
             const result_ty = if (ok_fields) |fields|
                 if (fields.len == 1) global_types.effectiveFieldType(self.resolver.graph.fields.items[fields.start]) else ok_payload
@@ -2479,6 +2483,28 @@ pub const Resolver = struct {
                 ok_payload;
             const id: global_sg.GlobalErrorPropagationId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.error_propagations.items.len)));
             const empty = try self.resolver.graph.addString(self.resolver.allocator, "");
+            if (operands.len == 2) {
+                const context_ty = self.resolver.graph.node(operands[1]).ty orelse return error.InvalidErrorContextType;
+                if (!errors.validContextType(context_ty)) return error.InvalidErrorContextType;
+                const context_id: global_sg.GlobalErrorContextId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.error_contexts.items.len)));
+                try self.resolver.graph.error_contexts.append(self.resolver.allocator, .{
+                    .errable_value = errable,
+                    .context = operands[1],
+                    .cleanup_nodes = .{ .start = @intCast(self.resolver.graph.node_refs.items.len), .len = 0 },
+                    .ok_variant = ok.id,
+                    .ok_value_field_index = if (ok_fields) |fields| if (fields.len == 1) 0 else null else null,
+                    .error_variant = err.id,
+                    .propagated_errable_type = propagated_ty,
+                    .propagated_error_variant = propagated_error.id,
+                    .ok_payload_type = ok_payload,
+                    .error_payload_type = error_payload,
+                    .propagated_error_payload_type = propagated_error_payload,
+                    .diagnostic_line = 0,
+                    .diagnostic_column = 0,
+                    .diagnostic_source_line = empty,
+                });
+                return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = result_ty, .content = .{ .error_context = context_id } };
+            }
             try self.resolver.graph.error_propagations.append(self.resolver.allocator, .{
                 .errable_value = errable,
                 .cleanup_nodes = .{ .start = @intCast(self.resolver.graph.node_refs.items.len), .len = 0 },
@@ -2707,10 +2733,7 @@ pub const Resolver = struct {
                 // The hook has no global declaration and cannot be selected by
                 // ordinary lookup. Only these concrete primitive bodies use it.
                 switch (self.parameterized.safety_primitive) {
-                    .establish_inherited_reference,
-                    .establish_allocation_slot, .reference_offset,
-                    .mutable_reference_offset, .reinterpret_reference,
-                    .mutable_reinterpret_reference, .read_reference => {},
+                    .establish_inherited_reference, .establish_allocation_slot, .reference_offset, .mutable_reference_offset, .reinterpret_reference, .mutable_reinterpret_reference, .read_reference => {},
                     else => return error.NoMatchingGenericFunction,
                 }
                 return (try self.resolver.makeTrustedReferenceFromAddress(arguments, input, self.resolver.sourceFor(self.module_index, source))) orelse error.ReferenceAddressInputMustBeStruct;
@@ -2724,7 +2747,9 @@ pub const Resolver = struct {
             if (module_path == null and std.mem.eql(u8, name, "to_virtual")) {
                 if (self.resolver.nested_call_context) |abstracts| {
                     const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = null, .name = name_range, .source = source };
-                    if (try abstracts.makeVirtualizeWithArguments(self.module_index, reference, input, arguments)) |node| return node;
+                    if (try abstracts.makeVirtualizeWithArguments(self.module_index, reference, input, arguments)) |node| {
+                        return node;
+                    }
                 }
                 return error.DeferredGenericFunction;
             }
@@ -2733,7 +2758,9 @@ pub const Resolver = struct {
                 else => null,
             };
             if (input_literal) |literal| if (literal.fields.len == 0) {
-                if (try self.resolveEmptyTypeInitializer(name, source)) |node| return node;
+                if (try self.resolveEmptyTypeInitializer(name, source)) |node| {
+                    return node;
+                }
             };
             const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = module_path, .name = name_range, .source = source };
             // Calls in an instantiated body can reach the instance's concrete
@@ -2763,7 +2790,10 @@ pub const Resolver = struct {
                                         input,
                                         nested_reach,
                                         self.resolver.sourceFor(self.module_index, source),
-                                    )) |node| return node;
+                                    )) |node| {
+                                        try self.resolver.core.trackResolvedReachedCall(node, nested_reach);
+                                        return node;
+                                    }
                                 }
                             }
                             return err;
@@ -2779,17 +2809,24 @@ pub const Resolver = struct {
                     break :ordinary_lookup self.resolver.resolveImplicitGenericFunction(self.module_index, module, reference, input, nested_reach) catch |err| {
                         if (self.resolver.nested_constructor_context) |context| {
                             if (self.resolver.nested_constructor_resolver) |resolve| {
-                                if (try resolve(context, self.module_index, reference, arguments, input, nested_reach, self.resolver.sourceFor(self.module_index, source))) |node|
+                                if (try resolve(context, self.module_index, reference, arguments, input, nested_reach, self.resolver.sourceFor(self.module_index, source))) |node| {
+                                    try self.resolver.core.trackResolvedReachedCall(node, nested_reach);
                                     return node;
+                                }
                             }
                         }
                         if (arguments.len == 0) {
-                            if (try self.resolveConstrainedStaticCall(reference, input, source)) |node| return node;
+                            if (try self.resolveConstrainedStaticCall(reference, input, source)) |node| {
+                                try self.resolver.core.trackResolvedReachedCall(node, nested_reach);
+                                return node;
+                            }
                         }
                         if (self.resolver.nested_call_context) |context| {
                             if (self.resolver.nested_call_resolver) |resolve| {
-                                if (try resolve(context, self.module_index, reference, input, self.resolver.sourceFor(self.module_index, source))) |node|
+                                if (try resolve(context, self.module_index, reference, input, self.resolver.sourceFor(self.module_index, source), nested_reach)) |node| {
+                                    try self.resolver.core.trackResolvedReachedCall(node, nested_reach);
                                     return node;
+                                }
                             }
                         }
                         if (module_path == null and std.mem.eql(u8, name, "deinit") and
@@ -2804,6 +2841,7 @@ pub const Resolver = struct {
                 input,
                 nested_reach,
             )) return error.IncompleteParameterizedCallInput;
+            try self.resolver.core.trackReachedCall(function, input, nested_reach, false);
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = try self.resolver.core.functionOutputType(function),

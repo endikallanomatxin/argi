@@ -96,6 +96,7 @@ pub const Resolver = struct {
                     .len = function.input.len - 1,
                 };
                 if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, reach)) return null;
+                try self.core.trackReachedCall(function_id, input, reach, true);
                 self.core.stats.calls += 1;
                 return .{
                     .source = source,
@@ -126,6 +127,7 @@ pub const Resolver = struct {
                     .len = function.input.len - 1,
                 };
                 if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, reach)) return null;
+                try self.core.trackReachedCall(selected, input, reach, true);
                 self.core.stats.calls += 1;
                 return .{
                     .source = source,

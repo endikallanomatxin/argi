@@ -1,6 +1,7 @@
 -- Resource ownership belongs to this checked scope. The host adapter only
 -- records process arguments and calls this function.
 __argi_entry() -> __ARGI_OUTPUT__ := {
+    assume error_tracer ::= $&noop_error_tracer
     memory_storage ::= Memory()
     page_allocator_storage ::= PageAllocator(.memory = $&memory_storage)
 

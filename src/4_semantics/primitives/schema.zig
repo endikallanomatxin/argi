@@ -345,6 +345,7 @@ pub fn TestingExpectError(comptime Ids: type) type {
         result_type: Ids.TypeId,
         result_ok_variant: Ids.VariantId,
         test_fail_function: Ids.FunctionId,
+        test_fail_input: ?Ids.NodeId = null,
         expected_reason_name: ?StringRange,
         diagnostic_line: u32,
         diagnostic_column: u32,

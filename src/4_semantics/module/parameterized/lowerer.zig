@@ -966,6 +966,33 @@ pub const Context = struct {
                 .dispatch_prefix_positional_count = literal.positional_prefix_count,
             } });
         }
+        if (self.tree.choiceLiteral(node)) |literal| {
+            const name = self.tree.tokenTextFromSource(self.source, literal.name_token);
+            const payload = if (literal.payload) |child| try self.lowerBodyNode(child) else null;
+            if (std.mem.eql(u8, name, "error")) if (payload) |payload_id| {
+                const storage = &self.graph.semantic.parameterized_storage.ir;
+                const payload_node = storage.nodes.items[@intFromEnum(payload_id)];
+                if (payload_node == .resolved and payload_node.resolved.content == .struct_value_literal) {
+                    const fields = payload_node.resolved.content.struct_value_literal.fields;
+                    var has_reason = false;
+                    var has_trace = false;
+                    for (storage.value_fields.items[fields.start..][0..fields.len]) |field| {
+                        has_reason = has_reason or std.mem.eql(u8, self.graph.text(field.name), "reason");
+                        has_trace = has_trace or std.mem.eql(u8, self.graph.text(field.name), "trace");
+                    }
+                    if (has_reason and !has_trace) {
+                        const location = try self.syntheticErrorCall(node, "error_location_id", null);
+                        const trace = try self.syntheticErrorCall(node, "create_error_trace", location);
+                        const start: u32 = @intCast(storage.value_fields.items.len);
+                        try storage.value_fields.ensureUnusedCapacity(self.allocator, fields.len + 1);
+                        storage.value_fields.appendSliceAssumeCapacity(storage.value_fields.items[fields.start..][0..fields.len]);
+                        try storage.value_fields.append(self.allocator, .{ .name = try self.writer.addString("trace"), .value = trace });
+                        storage.nodes.items[@intFromEnum(payload_id)].resolved.content.struct_value_literal.fields = .{ .start = start, .len = fields.len + 1 };
+                    }
+                }
+            };
+            return self.addPending(node, .choice_literal, if (payload) |id| &.{id} else &.{}, try self.writer.addString(name), null, .none);
+        }
         // Keep the few parameter-independent leaves compact and represent every
         // semantic composition uniformly as a syntax-free pending expression.
         if (self.tree.literal(node)) |literal| {
@@ -1076,6 +1103,15 @@ pub const Context = struct {
         const pending_id = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(result)].pending;
         self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.assumed_arguments = assumed;
         return result;
+    }
+
+    fn syntheticErrorCall(self: *Context, node: syn.NodeIndex, name: []const u8, location: ?ir.ParameterizedNodeId) !ir.ParameterizedNodeId {
+        const storage = &self.graph.semantic.parameterized_storage.ir;
+        const start: u32 = @intCast(storage.value_fields.items.len);
+        if (location) |value| try storage.value_fields.append(self.allocator, .{ .name = try self.writer.addString("location"), .value = value });
+        const input = try self.addResolvedNode(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = if (location != null) 1 else 0 } } });
+        try self.captureAssumedFields(node, input);
+        return self.addPending(node, .generic_call, &.{input}, try self.writer.addString(name), null, .none);
     }
 
     fn syntaxIsAddressable(self: *const Context, node: syn.NodeIndex) bool {

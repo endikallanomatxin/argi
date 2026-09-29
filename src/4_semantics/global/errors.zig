@@ -3,6 +3,7 @@ const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
+const reach_context = @import("reach_context.zig");
 const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const global_types = @import("types.zig");
@@ -289,7 +290,21 @@ pub const Resolver = struct {
         if (!global_types.equal(self.graph, expected_literal.choice_type, reason.field.ty)) return error.IncompatibleExpectedErrorReason;
 
         const fail_function = self.findTestingFailFunction(module_index) orelse return .deferred;
+        // The testing intrinsic calls the ordinary failure helper on its
+        // failure paths; its reached capability must follow the call site.
+        const fail_input: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        try self.graph.nodes.append(self.allocator, .{
+            .source = self.graph.node(input).source,
+            .ty = null,
+            .content = .{ .struct_value_literal = .{
+                .fields = .{ .start = @intCast(self.graph.value_fields.items.len), .len = 0 },
+                .assumed_fields = literal.assumed_fields,
+            } },
+        });
+        const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
+        try self.core.trackReachedCall(fail_function, fail_input, reach, false);
         const fail = self.graph.functions.items[@intFromEnum(fail_function)];
+        _ = try self.core.completeCallInputFieldsWithReach(fail.input, fail_input, reach);
         if (fail.output.len != 1) return error.InvalidTestingFailFunction;
         const result_ty = self.graph.fields.items[fail.output.start].ty;
         const result_ok = global_types.findVariant(self.graph, result_ty, "ok") orelse return error.InvalidTestingFailFunction;
@@ -304,6 +319,7 @@ pub const Resolver = struct {
             .result_type = result_ty,
             .result_ok_variant = result_ok.id,
             .test_fail_function = fail_function,
+            .test_fail_input = fail_input,
             .expected_reason_name = expectedLiteralVariantName(self.graph, expected_literal),
             .diagnostic_line = 0,
             .diagnostic_column = 0,
@@ -431,7 +447,7 @@ pub const Resolver = struct {
         return error.ErrorPropagationRequiresErrableReturn;
     }
 
-    fn errorPayloadCanPropagate(self: *const Resolver, source: global_sg.GlobalTypeId, target: global_sg.GlobalTypeId) bool {
+    pub fn errorPayloadCanPropagate(self: *const Resolver, source: global_sg.GlobalTypeId, target: global_sg.GlobalTypeId) bool {
         if (global_types.equal(self.graph, source, target)) return true;
         const source_reason = global_types.findField(self.graph, source, "reason") orelse return false;
         const target_reason = global_types.findField(self.graph, target, "reason") orelse return false;
@@ -456,7 +472,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn absorbErrorPayloadReasons(self: *Resolver, source: global_sg.GlobalTypeId, target: global_sg.GlobalTypeId) !void {
+    pub fn absorbErrorPayloadReasons(self: *Resolver, source: global_sg.GlobalTypeId, target: global_sg.GlobalTypeId) !void {
         const source_reason = global_types.findField(self.graph, source, "reason") orelse return;
         const target_reason = global_types.findField(self.graph, target, "reason") orelse return;
         const target_id = target_reason.field.ty;
@@ -486,7 +502,7 @@ pub const Resolver = struct {
         };
     }
 
-    fn validContextType(self: *const Resolver, ty: global_sg.GlobalTypeId) bool {
+    pub fn validContextType(self: *const Resolver, ty: global_sg.GlobalTypeId) bool {
         const semantic = self.graph.resolvedSemanticType(ty) orelse return false;
         return switch (semantic) {
             .pointer => |pointer| pointer.mutability == .read_only and global_types.isBuiltin(self.graph, pointer.child, .Char),

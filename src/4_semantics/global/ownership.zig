@@ -346,6 +346,7 @@ pub const Resolver = struct {
                 const expect = self.graph.testing_expect_errors.items[@intFromEnum(expect_id)];
                 try self.finalizeExpressionCleanup(expect.expected_reason, active, defers);
                 try self.finalizeExpressionCleanup(expect.actual_result, active, defers);
+                if (expect.test_fail_input) |input| try self.finalizeExpressionCleanup(input, active, defers);
             },
             else => {},
         }
@@ -657,6 +658,7 @@ pub const Resolver = struct {
             }
         }
         succeeded = selected != null;
+        if (selected) |call| try self.core.trackReachedCall(call.function, call.input, context, false);
         return selected;
     }
 

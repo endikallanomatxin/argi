@@ -145,6 +145,7 @@ const State = struct {
                 const value = self.graph.testing_expect_errors.items[@intFromEnum(id)];
                 try self.walkNode(value.expected_reason);
                 try self.walkNode(value.actual_result);
+                if (value.test_fail_input) |input| try self.walkNode(input);
                 try self.walkCall(node_id, value.test_fail_function);
             },
             .error_propagation => |id| {

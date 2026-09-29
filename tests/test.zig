@@ -2410,6 +2410,9 @@ test "feature_tests/types/24_error_trace_report" {
         \\  at tests/feature_tests/types/24_error_trace_report/main.rg:8:20
         \\        value := fail()!
         \\                       ^
+        \\  at tests/feature_tests/types/24_error_trace_report/main.rg:4:14
+        \\        result = ..error(.reason = ..test_error)
+        \\                 ^
         \\
     );
 }
@@ -2426,6 +2429,9 @@ test "feature_tests/types/46_report_error_helper" {
         \\  at tests/feature_tests/types/46_report_error_helper/main.rg:8:20
         \\        value := fail()!
         \\                       ^
+        \\  at tests/feature_tests/types/46_report_error_helper/main.rg:4:14
+        \\        result = ..error(.reason = ..test_error)
+        \\                 ^
         \\
     );
 }
@@ -6306,5 +6312,52 @@ test "feature_tests/ownership/137X_inherited_reference_wrapper_escapes_root" {
     try buildExpectFail(
         "tests/feature_tests/ownership/137X_inherited_reference_wrapper_escapes_root",
         "function output cannot depend on a local storage generation that ends before return",
+    );
+}
+
+test "feature_tests/types/65_error_tracer_capability" {
+    const path = "tests/feature_tests/types/65_error_tracer_capability";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/types/66_error_tracer_context_copy" {
+    const path = "tests/feature_tests/types/66_error_tracer_context_copy";
+    try expectSuccessfulBuild(path);
+    try runExpectStderr(path, 0,
+        \\error trace (most recent first):
+        \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:10:12: AB
+        \\        fail() !! view
+        \\               ^
+        \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:2:31
+        \\    fail() -> !Void := { result = ..error(.reason = ..copy_test_failure) }
+        \\                                  ^
+        \\
+    );
+}
+
+test "feature_tests/types/67X_error_tracer_escape" {
+    try buildExpectFail("tests/feature_tests/types/67X_error_tracer_escape", "local");
+}
+
+test "feature_tests/types/68_error_tracer_bounded_failures" {
+    const path = "tests/feature_tests/types/68_error_tracer_bounded_failures";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/types/69_error_tracer_truncation" {
+    const path = "tests/feature_tests/types/69_error_tracer_truncation";
+    try expectSuccessfulBuild(path);
+    try runExpectStderr(path, 0,
+        \\error trace (most recent first):
+        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:9:5: latest
+        \\        add_context(.context = "latest")
+        \\        ^
+        \\  <context truncated>
+        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:2:31
+        \\    fail() -> !Void := { result = ..error(.reason = ..truncated_test_failure) }
+        \\                                  ^
+        \\
     );
 }

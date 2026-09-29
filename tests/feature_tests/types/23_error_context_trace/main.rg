@@ -10,40 +10,37 @@ propagate() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
 }
 
 main() -> (.status_code: Int32) := {
-    zero :: UIntNative = 0
-    one :: UIntNative = 1
-    result := propagate()
-
-    if is(.value = result, .variant = ..error) {
-        err ::= &result..error
-        if length#(.t: ErrorTraceEntry)(.self = &err&.trace.entries).count != one {
-            status_code = 1
-            return
-        }
-
-        entry_result ::= get#(.t: ErrorTraceEntry)(.self = &err&.trace.entries, .index = zero).result
-        if is(.value = entry_result, .variant = ..error) {
-            status_code = 6
-            return
-        }
-        entry ::= entry_result..ok
-        if entry.line != 8 {
-            status_code = 2
-            return
-        }
-
-        if entry.column != 21 {
-            status_code = 3
-            return
-        }
-
-        if entry.context& != 'w' {
-            status_code = 4
-            return
-        }
-
-        status_code = 0
-    } else {
-        status_code = 5
+    tracer ::= ProbeTracer()
+    virtual_tracer ::= to_virtual#(.abstract: ErrorTracer)(.value = $&tracer)
+    assume error_tracer ::= $&virtual_tracer
+    failed ::= propagate()
+    if tracer.count != 2 { status_code = 1
+        return }
+    if tracer.line != 8 { status_code = 2
+        return }
+    if tracer.column != 21 { status_code = 3
+        return }
+    if tracer.context_matches == false { status_code = 4
+        return }
+    match failed {
+        ..ok _ { status_code = 5 }
+        ..error _ { status_code = 0 }
     }
 }
+
+ProbeTracer : Type = (
+    .count: UIntNative = 0
+    .line: UIntNative = 0
+    .column: UIntNative = 0
+    .context_matches: Bool = false
+)
+ProbeTracer implements ErrorTracer
+add_context(.self: $&ProbeTracer, .location: SourceLocationId, .context: StringView) -> () := {
+    source ::= source_location(.id = location).location
+    self&.count = self&.count + 1
+    self&.line = source.line
+    self&.column = source.column
+    self&.context_matches = equals(.left = context, .right = "while reading foo").ok
+}
+reset_context(.self: $&ProbeTracer) -> () := { self&.count = 0 }
+report(.self: $&ProbeTracer, .stderr: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := { result = ..ok Void() }

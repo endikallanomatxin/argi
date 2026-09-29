@@ -61,7 +61,9 @@ pub fn roots(
             !function.flags.is_test and std.mem.eql(u8, name, "main");
         // Open Errable signatures are completed from their bodies and can be
         // inspected while resolving an otherwise reachable caller.
-        if (entrypoint or function.flags.uses_inferred_error_reasons)
+        const trace_runtime = (if (graph.moduleForDeclaration(function.declaration)) |owner| graph.modules.items[@intFromEnum(owner)].is_bundled_core else false) and
+            (std.mem.eql(u8, name, "_add_error_context") or std.mem.eql(u8, name, "_add_error_context_text") or std.mem.eql(u8, name, "source_location"));
+        if (entrypoint or trace_runtime or function.flags.uses_inferred_error_reasons)
             _ = try result.include(@enumFromInt(@as(u32, @intCast(raw))));
     }
     return result;
@@ -221,6 +223,7 @@ const State = struct {
                 const value = self.graph.testing_expect_errors.items[@intFromEnum(id)];
                 try self.walkNode(value.expected_reason);
                 try self.walkNode(value.actual_result);
+                if (value.test_fail_input) |input| try self.walkNode(input);
                 try self.includeFunction(value.test_fail_function);
             },
             .error_propagation => |id| {

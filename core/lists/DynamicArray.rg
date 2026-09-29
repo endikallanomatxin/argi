@@ -80,25 +80,9 @@ deinit #(.t: Type) (
         trusted_opaque_drop(.slot = occupied, .allocator = allocator)
         i = i + 1
     }
-    -- Error traces use the all-zero representation as an empty array until
-    -- their first entry is appended. Regular initialization always gives an
-    -- array nonzero capacity, so capacity also records whether backing
-    -- allocation ownership exists.
+    -- Capacity records whether backing allocation ownership exists.
     trusted_opaque_mark_empty(.storage = $&self&._allocation)
     if self&._capacity != 0 {
-        deinit(.self = $&self&._allocation)
-    }
-}
-
--- Error trace entries use compiler runtime malloc/free and carry no language
--- allocator. Their zero alignment distinguishes this storage from a normal
--- DynamicArray allocation, whose alignment is always positive.
-free_error_trace_entries(.self: $&DynamicArray#(.t: ErrorTraceEntry)) -> () := {
-    if self&._capacity == 0 { return }
-    trusted_opaque_mark_empty(.storage = $&self&._allocation)
-    if self&._allocation.alignment == 0 {
-        _free(.address = self&._allocation.data.address)
-    } else {
         deinit(.self = $&self&._allocation)
     }
 }
