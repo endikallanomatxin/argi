@@ -91,3 +91,8 @@ once from the reachable call graph of the compiled entrypoint.
 > ```
 >
 > Captures, lifetime rules, and how such functions are typed remain open.
+
+> [!IDEA]
+> An explicit memoization wrapper could cache a function's result for equal
+> inputs. It would need rules for side effects, input equality, and the
+> ownership and validity of cached results.

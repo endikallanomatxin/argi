@@ -19,3 +19,8 @@ from source declarations and rendered by language tooling.
 > [!IDEA]
 > `argi doc` could build documentation from these comments, and
 > `argi serve-doc` could preview it locally.
+
+> [!IDEA]
+> Declarations could carry deprecation metadata for documentation and
+> tooling. Decide whether using a deprecated declaration emits a warning or
+> only marks it in generated documentation.

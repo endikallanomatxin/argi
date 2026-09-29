@@ -1,32 +1,22 @@
-### Parallel computing / GPU
+# Parallel computing (future design proposal)
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/9-DiGrnz8l8?si=xdX92FK0uv8cYoaa" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-<iframe width="560" height="315" src="https://www.youtube.com/embed/Cak8ASX7NOk?si=nvnwLH70aVcLUqSz" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+> [!IDEA]
+> This document explores a possible model for parallel execution on GPUs
+> and CPUs. The types, syntax, and code below are sketches, not accepted
+> language or library APIs.
 
-Look at CUDA, Mojo, Triton, Julia, and others.
+The main question is whether execution groups, memory domains, and supported
+operations can be described as data that a compiler uses to select and
+optimize parallel work. Such a model would need to account for memory
+hierarchies and tiling without tying Argi to one device API.
+For example, small matrix multiplication could use hardware operations and
+tiling chosen for the device's register, shared-memory, and cache levels.
 
-XLA is a compiler for linear algebra on GPUs.
+## Hardware description sketch
 
-Criticism of Mojo syntax: https://github.com/modular/max/issues/1255
-
-Handle shared memory hierarchy in GPUs (L0, L1, L2...)
-
-Tiling programming languges.
-[Entrevista Chris Latner](https://youtu.be/JRcXUuQYR90?si=hdGrkURBEJcuNw_S&t=3952)
-Small matrix multiplication can be hardware-accelerated. Use tiling to take advantage of this.
-
-```mojo
-@kernel
-def vector_add(A: list[float], B: list[float], C: list[float], N: int):
-    for i in parallel(0:N):  # Parallel loop
-        C[i] = A[i] + B[i]
-```
-
-For our language.
-
-We could define a specification for a graph as follows:
-
-Partial type definitions
+One possible description has processing groups, memory domains, and
+operations. The following is pseudocode; field types and construction syntax
+are deliberately incomplete.
 
 ```
 ParallelProcessingUnit : Type = (
@@ -103,7 +93,7 @@ shared_memory : ParallelMemory = (
 global_memory : ParallelMemory = (
     .name = "Global Memory",
     .shared_across = ..some(.value = &grid),
-    .size = 8 * 1024 * 1024 * 1024, // 8 GB globales
+    .size = 8 * 1024 * 1024 * 1024, // 8 GB global memory
     .latency = 400,
     .access_mode = "Read-Write",
 )
@@ -149,26 +139,29 @@ cuda_spec : ParallelProcessingUnit = (
 )
 ```
 
-The language can optimize execution based on this information.
+The compiler could use this information to choose implementations or tiling.
+
+## Execution syntax sketch
 
 > [!IDEA]
-> One possible syntax for parallel execution, inspired by Mojo:
+> One possible syntax for parallel execution, inspired by Mojo. This is
+> pseudocode; it does not define the `kernel` or `parallel` keywords.
 
-```
+```text
 kernel vector_add_kernel(
-		executor: ParallelProcessingUnit
-		vector_a: Vector<Float32>,
-		vector_b: Vector<Float32>
-	) -> (
-		result: Vector<Float32>  // If the variable is named above,
-	)
-    parallel for (i in executor.parallel_groups[0])
+    executor: ParallelProcessingUnit,
+    vector_a: Vector<Float32>,
+    vector_b: Vector<Float32>
+) -> (result: Vector<Float32>) {
+    parallel for (i in executor.parallel_groups[0]) {
         result[i] = vector_a[i] + vector_b[i]
+    }
+}
 
 config = ExecutionConfig(
     processing_unit = cuda_spec,
-    grid_dim = (4, 4),     // Grid dimensions
-    block_dim = (16, 16)   // Block dimensions
+    grid_dim = (4, 4),
+    block_dim = (16, 16)
 )
 
 executor = KernelExecutor(config)
@@ -177,7 +170,10 @@ output_matrix = executor|run(vector_add_kernel, input_matrix_a, input_matrix_b)
 
 It might be better to avoid requiring keywords such as `kernel` and `parallel`.
 
-Things used in cuda:
+## Device operations to account for
+
+CUDA exposes operations and indices such as these. They are examples of
+capabilities a device abstraction might need to represent:
 
 ```
 cudamalloc()
@@ -202,5 +198,15 @@ my_kernel<<<grid_size, block_size>>>(args) -- grid_size in blocks, block_size in
 ```
 
 The CPU could also be modeled this way to account for cache levels and thread
-interaction. It is unclear whether this is necessary or adds much; the main
-benefit is that the model is simple to implement.
+interaction. Whether the common model would justify its complexity remains
+open.
+
+## Research references
+
+- [Parallel computing talk](https://www.youtube.com/watch?v=9-DiGrnz8l8)
+  and [GPU programming talk](https://www.youtube.com/watch?v=Cak8ASX7NOk).
+- [Mojo syntax discussion](https://github.com/modular/max/issues/1255).
+- [Chris Lattner interview on parallel programming](https://youtu.be/JRcXUuQYR90?si=hdGrkURBEJcuNw_S&t=3952).
+
+CUDA, Mojo, Triton, Julia, and XLA are useful comparison points for execution
+and tiling models.

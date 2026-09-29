@@ -145,8 +145,8 @@ while has_next(.self = &it) {
 
 > [!IDEA]
 > An enumeration adapter could expose both an element and its index in a
-> `for` loop. Iterator adapters such as `map` and `filter` could compose
-> traversal without changing the `for` contract.
+> `for` loop. Iterator adapters such as `map`, `filter`, `zip`, and sliding
+> windows could compose traversal without changing the `for` contract.
 
 > [!IDEA]
 > A broadcasting operator could apply a function element by element to a

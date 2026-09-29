@@ -1,8 +1,6 @@
-## Lists
+# Lists
 
-### Owning constructs
-
-#### Native fixed array `[N]T`
+## Native fixed arrays
 
 Fixed-size arrays:
 
@@ -18,12 +16,26 @@ a : [3]Int32 = (1, 2, 3)
 
 `[N]T` is the native fixed array type. Native bracket types represent fixed
 arrays only; slices and views are library abstractions, not native array types.
-Collection access uses named operations rather than overload sets.
+Library collection access uses named operations rather than overload sets.
 
 > [!QUESTION] Find a way to define the length automatically.
 > Perhaps `[?]T` could let the compiler calculate it.
 
-#### `ArrayView` and `ArrayViewRO`
+Native fixed-array indexing follows the language-wide place model:
+
+```rg
+arr[i]      -- value access
+&arr[i]     -- borrowed read-only access
+$&arr[i]    -- borrowed mutable access
+arr[i] = x  -- assignment through the indexed place
+```
+
+## Array views
+
+Views are library abstractions. The language has no native slice type.
+`ArrayViewRO` and `ArrayView` provide non-owning views of proven
+contiguous storage. A safe constructor derives the extent from its source;
+pointer-and-length construction belongs to trusted code.
 
 The pointer and length fields are private. `array_view#(.t: T)(.data = $&element)`
 creates a one-element view; `array_view#(.n = N, .t: T)(.array = $&array)`
@@ -38,8 +50,31 @@ knows the backing region is live and large enough. User modules cannot call
 these helpers. View indexing checks the recorded length; it does not discover
 physical bounds from a raw pointer.
 
+The view remains non-owning regardless of how its backing region is stored.
 
-#### `Allocation`
+> [!IDEA]
+> Strided views could support indexing non-contiguous elements, such as a
+> matrix column or an image channel. Multidimensional views over nested arrays
+> could derive their extents and strides from the source and allow indexing by
+> dimension without copying. For example:
+>
+> ```rg
+> view ::= array | slice(_, 2, 5)
+> column ::= array | slice(_, 2, 5, .stride = 2)
+> plane ::= array | slice(_, ((0, 10), (0, 20)))
+> ```
+>
+> A multidimensional slice might take one range per dimension, and indexing
+> might take one index per dimension. Nested list literals could supply ranges.
+> Sentinel-terminated views could serve C strings and similar protocols.
+> Construction, bounds, and validity rules for these views remain open, as does
+> whether a view stores a pointer to its first element or a borrowed window
+> into its source. Retained views would need separate lifetime rules from
+> today's non-owning views.
+
+## Dynamic arrays
+
+### `Allocation`
 
 `Allocation` should be the low-level owning heap base used by dynamic list-like
 types.
@@ -49,9 +84,7 @@ It owns raw bytes, not typed list semantics by itself.
 List structures such as dynamic arrays should layer their own length, capacity,
 element type, and indexing rules on top of an `Allocation`.
 
-
-
-#### `DynamicArray#(.t: Type)`
+### `DynamicArray#(.t: Type)`
 
 It uses `Allocation` internally, together with metadata such as length,
 capacity, and element type.
@@ -72,15 +105,6 @@ associated error reasons from its abstract implementation and combines them
 with `..out_of_memory`. Each element is copied independently; a fallible copy
 rolls back the completed prefix before releasing the new backing allocation.
 
-Native fixed-array indexing follows the language-wide place model:
-
-```rg
-arr[i]      -- value access
-&arr[i]     -- borrowed read-only access
-$&arr[i]    -- borrowed mutable access
-arr[i] = x  -- assignment through the indexed place
-```
-
 `DynamicArray` access uses named core operations:
 
 - `get(index)` for value access
@@ -92,6 +116,23 @@ All four operations are fallible because an index may be outside the
 collection's logical length. Value access copies a named element implicitly
 only when its type implements `ImplicitlyCopyable`; other duplication uses
 `copy(...)`.
+
+## Other core list families
+
+The core collection library includes these families alongside `DynamicArray`:
+
+- `PackedArray`: elements packed at widths such as 10 or 12 bits.
+- Singly and doubly linked lists.
+- `Rope`: a sequence assembled from smaller segments.
+
+> [!IMPLEMENTATION]
+> These core list families are not implemented yet.
+
+> [!QUESTION]
+> Define their constructors, allocator requirements, and which list abstracts
+> each family implements.
+
+## Iteration
 
 Iteration follows the same access-mode split, but at the iterable layer rather
 than the iterator layer:
@@ -113,76 +154,7 @@ item type is `&T` or `$&T`.
 > Define transfer-style iteration and the ownership of consumed iterators
 > before specifying `for ~ item in arr`.
 
-
-#### LengthedArray (capacidad fija en stack, len runtime)
-
-`StaticVec#(.t, .n) = (.data:[n]t, .len:Int)`
-
-
-#### PackedArray (enteros de b bits)
-
-Empaqueta, p.ej. u10, u12.
-
-`PackedArray#(.bits:Int) = (...)`
-
-
-#### LinkedList
-
-#### Rope
-
-
-### Reference constructs
-
-#### Library views
-
-Views are library abstractions. The language has no native slice type.
-`ArrayViewRO` and `ArrayView` provide non-owning views of proven
-contiguous storage. A safe constructor derives the extent from its source;
-pointer-and-length construction belongs to trusted code.
-
-The view may still be modeled as a borrowed window into a collection, not
-necessarily as a raw pointer to the first element. The important point is the
-same either way: the view stays non-owning.
-
-That should stay true even if later there are explicit retained-view mechanisms
-such as `keep`.
-
-
-##### View indexing
-
-`my_array | slice(2, 5)`
-`my_array | slice(2, 5, .stride=2)`
-
-#### Sentinel slice
-
-`[null-terminated]T` or `SentinelSlice#(.t: Type, .sentinel: t)`
-
-Sentinel-terminated slice
-Useful for C strings and other protocols.
-
-#### Strided slices
-
-For column views, image channels, and similar uses.
-`StridedSlice#(.t) = (.ptr:$&t, .len:Int, .stride:Int)`
-
-
-#### ND Slices
-
-> [!QUESTION]
-
-Idea:
-
-```
-l | slice (0, 10)  -- 1D slice
-l | slice (((0, 10), (0, 20)))  -- 2D slice
-```
-
-> [!QUESTION]
-> The list abstract type could detect that nested list literals
-> satisfy this?
-
-
-### List Abstracts
+## List abstracts
 
 - `Indexable<T>` requires `length` and fallible `get_ro_ref`.
 - `IndexableMutable<T>` also requires fallible `get_rw_ref`.
