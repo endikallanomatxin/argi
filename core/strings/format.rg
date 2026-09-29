@@ -83,7 +83,6 @@ format_unsigned_decimal_into_u64(
     }
 
     reversed ::= string_with_capacity(.allocator = allocator, .capacity = 32)!
-    #defer deinit(.self = $&reversed, .allocator = allocator)
     current :: UInt64 = value
 
     while current > 0 {
@@ -113,7 +112,6 @@ format_unsigned_decimal_into_u32(
     }
 
     reversed ::= string_with_capacity(.allocator = allocator, .capacity = 16)!
-    #defer deinit(.self = $&reversed, .allocator = allocator)
     current :: UInt32 = value
 
     while current > 0 {
@@ -143,7 +141,6 @@ format_signed_decimal_into_i64(
     }
 
     reversed ::= string_with_capacity(.allocator = allocator, .capacity = 32)!
-    #defer deinit(.self = $&reversed, .allocator = allocator)
     current :: Int64 = value
 
     if current < 0 {
@@ -180,7 +177,6 @@ format_signed_decimal_into_i32(
     }
 
     reversed ::= string_with_capacity(.allocator = allocator, .capacity = 16)!
-    #defer deinit(.self = $&reversed, .allocator = allocator)
     current :: Int32 = value
 
     if current < 0 {
