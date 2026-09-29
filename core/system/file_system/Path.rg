@@ -62,14 +62,8 @@ init(
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     assume allocator
 
-    created ::= path_with_view(.view = view, .allocator = allocator)
-    match created {
-        ..ok ~ payload {
-            p& = ~payload
-            result = ..ok Void()
-        }
-        ..error _ { result = ..error(.reason = ..out_of_memory) }
-    }
+    p& = path_with_view(.view = view, .allocator = allocator)!
+    result = ..ok Void()
 }
 
 path_with_view(
@@ -78,25 +72,9 @@ path_with_view(
 ) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
     assume allocator
 
-    created ::= string_with_capacity(.allocator = allocator, .capacity = view.length)
-    match created {
-        ..ok ~ payload {
-            text ::= ~payload
-            pushed ::= push_view(.self = $&text, .view = view, .allocator = allocator)
-            match pushed {
-                ..ok _ {
-                    result = ..ok (.text = ~text)
-                    return
-                }
-                ..error _ {
-                    result = ..error(.reason = ..out_of_memory)
-                }
-            }
-        }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-        }
-    }
+    text ::= string_with_capacity(.allocator = allocator, .capacity = view.length)!
+    push_view(.self = $&text, .view = view, .allocator = allocator)!
+    result = ..ok (.text = ~text)
 }
 
 deinit(
@@ -114,11 +92,8 @@ copy(
 ) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
     assume allocator
 
-    copied ::= copy(.self = &self&.text, .allocator = allocator)
-    match copied {
-        ..ok ~ payload { result = ..ok (.text = ~payload) }
-        ..error _ { result = ..error(.reason = ..out_of_memory) }
-    }
+    text ::= copy(.self = &self&.text, .allocator = allocator)!
+    result = ..ok (.text = ~text)
 }
 
 as_view(

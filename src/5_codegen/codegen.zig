@@ -1287,6 +1287,8 @@ pub const CodeGenerator = struct {
         try self.callRuntimeFree(old_data);
         var grown_raw = c.LLVMGetUndef(try self.toLLVMType(data.field.ty));
         grown_raw = c.LLVMBuildInsertValue(self.builder, grown_raw, c.LLVMBuildPtrToInt(self.builder, new_data, native_uint, "trace.new.data.address"), data_address_field.index, "trace.new.data");
+        // ErrorTrace entries use runtime malloc/free. Their zero alignment is
+        // retained so core cleanup does not call an Allocation deallocator.
         var grown_allocation = allocation_value;
         grown_allocation = c.LLVMBuildInsertValue(self.builder, grown_allocation, grown_raw, data.index, "trace.allocation.data");
         grown_allocation = c.LLVMBuildInsertValue(self.builder, grown_allocation, new_size, size.index, "trace.allocation.size");

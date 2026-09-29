@@ -12,6 +12,10 @@ ErrorTrace : Type = (
     .entries: DynamicArray#(.t: ErrorTraceEntry)
 )
 
+deinit(.self: $&ErrorTrace) -> () := {
+    free_error_trace_entries(.self = $&self&.entries)
+}
+
 Error#(.reasons: Type) : Type = (
     .reason: reasons
     .trace: ErrorTrace

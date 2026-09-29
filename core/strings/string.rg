@@ -22,25 +22,15 @@ string_with_length(
     assume allocator
 
     allocation_size ::= length + 1
-    allocate_result ::= allocate(.self = allocator, .size = allocation_size)
-    match allocate_result {
-        ..ok ~ payload {
-            out :: String = (
-                .allocation = ~payload,
-                .length = length,
-            )
-            i :: UIntNative = 0
-            while i < length {
-                bytes_set(.string = $&out, .index = i, .value = 0)
-                i = i + 1
-            }
-            bytes_set(.string = $&out, .index = length, .value = 0)
-            result = ..ok ~out
-        }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-        }
+    allocation ::= allocate(.self = allocator, .size = allocation_size)!
+    out :: String = (.allocation = ~allocation, .length = length)
+    i :: UIntNative = 0
+    while i < length {
+        bytes_set(.string = $&out, .index = i, .value = 0)
+        i = i + 1
     }
+    bytes_set(.string = $&out, .index = length, .value = 0)
+    result = ..ok ~out
 }
 
 string_with_capacity(
@@ -57,20 +47,10 @@ string_with_capacity(
     }
 
     allocation_size ::= actual_capacity + 1
-    allocate_result ::= allocate(.self = allocator, .size = allocation_size)
-    match allocate_result {
-        ..ok ~ payload {
-            out :: String = (
-                .allocation = ~payload,
-                .length = 0,
-            )
-            bytes_set(.string = $&out, .index = 0, .value = 0)
-            result = ..ok ~out
-        }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-        }
-    }
+    allocation ::= allocate(.self = allocator, .size = allocation_size)!
+    out :: String = (.allocation = ~allocation, .length = 0)
+    bytes_set(.string = $&out, .index = 0, .value = 0)
+    result = ..ok ~out
 }
 
 init (
@@ -81,20 +61,15 @@ init (
     assume allocator
 
     allocation_size ::= length + 1
-    allocated ::= allocate(.self = allocator, .size = allocation_size)
-    match allocated {
-        ..ok ~ payload {
-            p& = (.allocation = ~payload, .length = length)
-            i :: UIntNative = 0
-            while i < length {
-                bytes_set(.string = p, .index = i, .value = 0)
-                i = i + 1
-            }
-            bytes_set(.string = p, .index = length, .value = 0)
-            result = ..ok Void()
-        }
-        ..error _ { result = ..error(.reason = ..out_of_memory) }
+    allocation ::= allocate(.self = allocator, .size = allocation_size)!
+    p& = (.allocation = ~allocation, .length = length)
+    i :: UIntNative = 0
+    while i < length {
+        bytes_set(.string = p, .index = i, .value = 0)
+        i = i + 1
     }
+    bytes_set(.string = p, .index = length, .value = 0)
+    result = ..ok Void()
 }
 
 init (
@@ -112,15 +87,10 @@ init (
     }
 
     allocation_size ::= actual_capacity + 1
-    allocated ::= allocate(.self = allocator, .size = allocation_size)
-    match allocated {
-        ..ok ~ payload {
-            p& = (.allocation = ~payload, .length = 0)
-            bytes_set(.string = p, .index = 0, .value = 0)
-            result = ..ok Void()
-        }
-        ..error _ { result = ..error(.reason = ..out_of_memory) }
-    }
+    allocation ::= allocate(.self = allocator, .size = allocation_size)!
+    p& = (.allocation = ~allocation, .length = 0)
+    bytes_set(.string = p, .index = 0, .value = 0)
+    result = ..ok Void()
 }
 
 deinit (
@@ -139,29 +109,21 @@ copy (
     assume allocator
 
     allocation_size ::= self&.length + 1
-    allocated ::= allocate(.self = allocator, .size = allocation_size)
-    match allocated {
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-            return
-        }
-        ..ok ~ payload {
-            out :: String = (.allocation = ~payload, .length = self&.length)
+    allocation ::= allocate(.self = allocator, .size = allocation_size)!
+    out :: String = (.allocation = ~allocation, .length = self&.length)
 
-            if allocation_size > 0 {
-            dst_view ::= _trusted_array_view#(.t: UInt8)(
-                .data = _trusted_allocation_byte_rw(.allocation = $&out.allocation, .offset = 0).reference,
-                .length = allocation_size,
-            )
-            src_view ::= _trusted_array_view_ro#(.t: UInt8)(
-                .data = _trusted_allocation_byte_ro(.allocation = &self&.allocation, .offset = 0).reference,
-                .length = allocation_size,
-            )
-            memcpy_bytes(.dst = dst_view, .src = src_view)
-        }
-            result = ..ok ~out
-        }
+    if allocation_size > 0 {
+        dst_view ::= _trusted_array_view#(.t: UInt8)(
+            .data = _trusted_allocation_byte_rw(.allocation = $&out.allocation, .offset = 0).reference,
+            .length = allocation_size,
+        )
+        src_view ::= _trusted_array_view_ro#(.t: UInt8)(
+            .data = _trusted_allocation_byte_ro(.allocation = &self&.allocation, .offset = 0).reference,
+            .length = allocation_size,
+        )
+        memcpy_bytes(.dst = dst_view, .src = src_view)
     }
+    result = ..ok ~out
 }
 
 string_byte_reference (

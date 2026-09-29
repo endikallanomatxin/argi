@@ -590,12 +590,18 @@ pub const Resolver = struct {
 };
 
 fn unwrapSingleField(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) ?global_sg.GlobalTypeId {
+    // Only the anonymous one-field result shape is transparent. A named
+    // one-field struct is still a distinct value when propagated from Errable.
+    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    if (semantic != .structural) return null;
     const fields = global_types.fields(graph, ty) orelse return null;
     if (fields.len != 1) return null;
     return graph.fields.items[fields.start].ty;
 }
 
 fn singleFieldIndex(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) ?u32 {
+    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    if (semantic != .structural) return null;
     const fields = global_types.fields(graph, ty) orelse return null;
     return if (fields.len == 1) 0 else null;
 }

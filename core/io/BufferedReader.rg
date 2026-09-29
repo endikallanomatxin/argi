@@ -30,22 +30,15 @@ init#(.base_type: Type: Reader)(
         actual_capacity = one
     }
 
-    allocated ::= allocate(.self = allocator, .size = actual_capacity)
-    match allocated {
-        ..ok ~ payload {
-            p& = (
-                .base = base,
-                .buffer = ~payload,
-                .capacity = actual_capacity,
-                .start = 0,
-                .end = 0,
-            )
-            result = ..ok Void()
-        }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-        }
-    }
+    buffer ::= allocate(.self = allocator, .size = actual_capacity)!
+    p& = (
+        .base = base,
+        .buffer = ~buffer,
+        .capacity = actual_capacity,
+        .start = 0,
+        .end = 0,
+    )
+    result = ..ok Void()
 }
 
 deinit#(.base_type: Type: Reader)(

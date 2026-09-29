@@ -186,9 +186,13 @@ ReadByte : Choice = (
 They are already used in common expression contexts:
 - bindings: `value := read_file()!`
 - call arguments: `use(.x = read_int()!)`
-- condiciones: `if ready()! { ... }`
-- asignaciones: `cached = load()!`
-- sentencias puras: `flush()!`
+- conditions: `if ready()! { ... }`
+- assignments: `cached = load()!`
+- standalone statements: `flush()!`
+
+The expression yields the `..ok` value. A named struct remains whole even
+when it has only one field. An anonymous one-field payload is unpacked to
+that field's value.
 
 `!!` also attaches textual context to the trace entry.
 
@@ -204,7 +208,7 @@ Current direction for reason inference:
 - The next step is to allow `.reasons` to be omitted in more places once this
   inference is robust enough across modules.
 
-## Exhaustividad
+## Exhaustiveness
 
 Exhaustiveness is checked against a closed `choice`, not a standalone option.
 

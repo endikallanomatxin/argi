@@ -6223,3 +6223,21 @@ test "feature_tests/types/267X_initializer_wrong_result" {
         "initializer must return () or one Errable<Void, R> result",
     );
 }
+
+test "feature_tests/text/22_format_propagation_cleanup" {
+    const test_path = "tests/feature_tests/text/22_format_propagation_cleanup";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/268_fallible_nested_constructor_propagation" {
+    const test_path = "tests/feature_tests/types/268_fallible_nested_constructor_propagation";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/text/23_propagated_constructor_failure" {
+    const test_path = "tests/feature_tests/text/23_propagated_constructor_failure";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}

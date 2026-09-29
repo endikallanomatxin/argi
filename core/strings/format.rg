@@ -82,54 +82,22 @@ format_unsigned_decimal_into_u64(
         return
     }
 
-    reversed_result ::= string_with_capacity(.allocator = allocator, .capacity = 32)
-    match reversed_result {
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-            return
-        }
-        ..ok ~ reversed_u64_payload {
-            reversed ::= ~reversed_u64_payload
-            current :: UInt64 = value
+    reversed ::= string_with_capacity(.allocator = allocator, .capacity = 32)!
+    #defer deinit(.self = $&reversed, .allocator = allocator)
+    current :: UInt64 = value
 
-            while current > 0 {
-                digit ::= current % 10
-                pushed ::= push_byte(.self = $&reversed, .byte = decimal_digit_byte(.digit = digit).byte, .allocator = allocator)
-                match pushed {
-                    ..ok _ {
-                    }
-                    ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
-                        result = ..error(.reason = ..out_of_memory)
-                        return
-                    }
-                }
-                current = current / 10
-            }
-
-            i :: UIntNative = reversed.length
-            while i > 0 {
-                i = i - 1
-                pushed ::= push_byte(
-                    .self = out,
-                    .byte = bytes_get(.string = &reversed, .index = i).byte,
-                    .allocator = allocator,
-                )
-                match pushed {
-                    ..ok _ {
-                    }
-                    ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
-                        result = ..error(.reason = ..out_of_memory)
-                        return
-                    }
-                }
-            }
-
-            deinit(.self = $&reversed, .allocator = allocator)
-            result = ..ok Void()
-        }
+    while current > 0 {
+        digit ::= current % 10
+        push_byte(.self = $&reversed, .byte = decimal_digit_byte(.digit = digit).byte, .allocator = allocator)!
+        current = current / 10
     }
+
+    i :: UIntNative = reversed.length
+    while i > 0 {
+        i = i - 1
+        push_byte(.self = out, .byte = bytes_get(.string = &reversed, .index = i).byte, .allocator = allocator)!
+    }
+    result = ..ok Void()
 }
 
 format_unsigned_decimal_into_u32(
@@ -144,54 +112,22 @@ format_unsigned_decimal_into_u32(
         return
     }
 
-    reversed_result ::= string_with_capacity(.allocator = allocator, .capacity = 16)
-    match reversed_result {
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-            return
-        }
-        ..ok ~ reversed_u32_payload {
-            reversed ::= ~reversed_u32_payload
-            current :: UInt32 = value
+    reversed ::= string_with_capacity(.allocator = allocator, .capacity = 16)!
+    #defer deinit(.self = $&reversed, .allocator = allocator)
+    current :: UInt32 = value
 
-            while current > 0 {
-                digit ::= current % 10
-                pushed ::= push_byte(.self = $&reversed, .byte = decimal_digit_byte_u32(.digit = digit).byte, .allocator = allocator)
-                match pushed {
-                    ..ok _ {
-                    }
-                    ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
-                        result = ..error(.reason = ..out_of_memory)
-                        return
-                    }
-                }
-                current = current / 10
-            }
-
-            i :: UIntNative = reversed.length
-            while i > 0 {
-                i = i - 1
-                pushed ::= push_byte(
-                    .self = out,
-                    .byte = bytes_get(.string = &reversed, .index = i).byte,
-                    .allocator = allocator,
-                )
-                match pushed {
-                    ..ok _ {
-                    }
-                    ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
-                        result = ..error(.reason = ..out_of_memory)
-                        return
-                    }
-                }
-            }
-
-            deinit(.self = $&reversed, .allocator = allocator)
-            result = ..ok Void()
-        }
+    while current > 0 {
+        digit ::= current % 10
+        push_byte(.self = $&reversed, .byte = decimal_digit_byte_u32(.digit = digit).byte, .allocator = allocator)!
+        current = current / 10
     }
+
+    i :: UIntNative = reversed.length
+    while i > 0 {
+        i = i - 1
+        push_byte(.self = out, .byte = bytes_get(.string = &reversed, .index = i).byte, .allocator = allocator)!
+    }
+    result = ..ok Void()
 }
 
 format_signed_decimal_into_i64(
@@ -206,75 +142,29 @@ format_signed_decimal_into_i64(
         return
     }
 
-    reversed_result ::= string_with_capacity(.allocator = allocator, .capacity = 32)
-    match reversed_result {
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-            return
-        }
-        ..ok ~ reversed_i64_payload {
-            reversed ::= ~reversed_i64_payload
-            current :: Int64 = value
+    reversed ::= string_with_capacity(.allocator = allocator, .capacity = 32)!
+    #defer deinit(.self = $&reversed, .allocator = allocator)
+    current :: Int64 = value
 
-            if current < 0 {
-                minus ::= push_byte(.self = out, .byte = 45, .allocator = allocator)
-                match minus {
-                    ..ok _ {
-                    }
-                    ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
-                        result = ..error(.reason = ..out_of_memory)
-                        return
-                    }
-                }
-            }
-
-            while current != 0 {
-                remainder ::= current % 10
-                if remainder < 0 {
-                    remainder = 0 - remainder
-                }
-
-                pushed ::= push_byte(
-                    .self = $&reversed,
-                    .byte = decimal_digit_byte(.digit = remainder).byte,
-                    .allocator = allocator,
-                )
-                match pushed {
-                    ..ok _ {
-                    }
-                    ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
-                        result = ..error(.reason = ..out_of_memory)
-                        return
-                    }
-                }
-                current = current / 10
-            }
-
-            i :: UIntNative = reversed.length
-            while i > 0 {
-                i = i - 1
-                pushed ::= push_byte(
-                    .self = out,
-                    .byte = bytes_get(.string = &reversed, .index = i).byte,
-                    .allocator = allocator,
-                )
-                match pushed {
-                    ..ok _ {
-                    }
-                    ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
-                        result = ..error(.reason = ..out_of_memory)
-                        return
-                    }
-                }
-            }
-
-            deinit(.self = $&reversed, .allocator = allocator)
-            result = ..ok Void()
-        }
+    if current < 0 {
+        push_byte(.self = out, .byte = 45, .allocator = allocator)!
     }
+
+    while current != 0 {
+        remainder ::= current % 10
+        if remainder < 0 {
+            remainder = 0 - remainder
+        }
+        push_byte(.self = $&reversed, .byte = decimal_digit_byte(.digit = remainder).byte, .allocator = allocator)!
+        current = current / 10
+    }
+
+    i :: UIntNative = reversed.length
+    while i > 0 {
+        i = i - 1
+        push_byte(.self = out, .byte = bytes_get(.string = &reversed, .index = i).byte, .allocator = allocator)!
+    }
+    result = ..ok Void()
 }
 
 format_signed_decimal_into_i32(
@@ -289,75 +179,29 @@ format_signed_decimal_into_i32(
         return
     }
 
-    reversed_result ::= string_with_capacity(.allocator = allocator, .capacity = 16)
-    match reversed_result {
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-            return
-        }
-        ..ok ~ reversed_i32_payload {
-            reversed ::= ~reversed_i32_payload
-            current :: Int32 = value
+    reversed ::= string_with_capacity(.allocator = allocator, .capacity = 16)!
+    #defer deinit(.self = $&reversed, .allocator = allocator)
+    current :: Int32 = value
 
-            if current < 0 {
-                minus ::= push_byte(.self = out, .byte = 45, .allocator = allocator)
-                match minus {
-                    ..ok _ {
-                    }
-                    ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
-                        result = ..error(.reason = ..out_of_memory)
-                        return
-                    }
-                }
-            }
-
-            while current != 0 {
-                remainder ::= current % 10
-                if remainder < 0 {
-                    remainder = 0 - remainder
-                }
-
-                pushed ::= push_byte(
-                    .self = $&reversed,
-                    .byte = decimal_digit_byte_i32(.digit = remainder).byte,
-                    .allocator = allocator,
-                )
-                match pushed {
-                    ..ok _ {
-                    }
-                    ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
-                        result = ..error(.reason = ..out_of_memory)
-                        return
-                    }
-                }
-                current = current / 10
-            }
-
-            i :: UIntNative = reversed.length
-            while i > 0 {
-                i = i - 1
-                pushed ::= push_byte(
-                    .self = out,
-                    .byte = bytes_get(.string = &reversed, .index = i).byte,
-                    .allocator = allocator,
-                )
-                match pushed {
-                    ..ok _ {
-                    }
-                    ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
-                        result = ..error(.reason = ..out_of_memory)
-                        return
-                    }
-                }
-            }
-
-            deinit(.self = $&reversed, .allocator = allocator)
-            result = ..ok Void()
-        }
+    if current < 0 {
+        push_byte(.self = out, .byte = 45, .allocator = allocator)!
     }
+
+    while current != 0 {
+        remainder ::= current % 10
+        if remainder < 0 {
+            remainder = 0 - remainder
+        }
+        push_byte(.self = $&reversed, .byte = decimal_digit_byte_i32(.digit = remainder).byte, .allocator = allocator)!
+        current = current / 10
+    }
+
+    i :: UIntNative = reversed.length
+    while i > 0 {
+        i = i - 1
+        push_byte(.self = out, .byte = bytes_get(.string = &reversed, .index = i).byte, .allocator = allocator)!
+    }
+    result = ..ok Void()
 }
 
 format_into(

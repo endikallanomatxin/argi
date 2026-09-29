@@ -90,6 +90,19 @@ deinit #(.t: Type) (
     }
 }
 
+-- Error trace entries use compiler runtime malloc/free and carry no language
+-- allocator. Their zero alignment distinguishes this storage from a normal
+-- DynamicArray allocation, whose alignment is always positive.
+free_error_trace_entries(.self: $&DynamicArray#(.t: ErrorTraceEntry)) -> () := {
+    if self&._capacity == 0 { return }
+    trusted_opaque_mark_empty(.storage = $&self&._allocation)
+    if self&._allocation.alignment == 0 {
+        _free(.address = self&._allocation.data.address)
+    } else {
+        deinit(.self = $&self&._allocation)
+    }
+}
+
 copy #(.t: Type: InfalliblyCopyable) (
     .self: &DynamicArray#(.t: t),
     .allocator: $&Allocator,
