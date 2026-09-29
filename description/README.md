@@ -13,7 +13,8 @@ For a first pass, read [Syntax overview](00_syntax_overview.md),
 ## Language topics
 
 - **Types and data:** [Types](10_types.md), [Structs](11_structs.md),
-  [Choice](12_choice.md), and [Nullability](51_nullability.md).
+  [Choice](12_choice.md), [Basic built-in types](15_basic_builtins.md), and
+  [Nullability](51_nullability.md).
 - **Memory and safety:**
   [Initialization and deinitialization](30_initialization_and_deinitialization.md),
   [Values and validity](31_values_and_validity.md),
@@ -24,7 +25,8 @@ For a first pass, read [Syntax overview](00_syntax_overview.md),
   [Function arguments](41_function_args.md), [Once](42_once.md),
   [Control flow](44_control_flow.md),
   [Compile-time computation](50_comptime.md), and [Errors](59_errors.md).
-- **Polymorphism:** [Multiple dispatch](131_multiple_dispatch.md),
+- **Polymorphism:** [Overview](130_polymorphism.md),
+  [Multiple dispatch](131_multiple_dispatch.md),
   [Compile-time parameters](132_generics.md),
   [Abstract types](133_abstract_types.md), and
   [Virtual types](134_virtual_types.md).
@@ -41,10 +43,3 @@ For a first pass, read [Syntax overview](00_syntax_overview.md),
 - [Runtime](81_runtime.md): an async and concurrency capability proposal.
 - [Parallel computing](82_parallel_computing.md): hardware descriptions and
   parallel execution sketches.
-
-## Older notes awaiting review
-
-[Basic builtins](15_basic_builtins.md),
-[Polymorphism overview](130_polymorphism.md), and [No OOP](60_no_oop.md)
-still contain earlier examples or alternatives that need alignment with the
-more specific notes above.

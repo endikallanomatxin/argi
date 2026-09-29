@@ -55,6 +55,9 @@ call site. `$&` permits mutation but does not imply exclusive access.
 
 ## Pipe expressions
 
+The pipe operator offers a call style similar to `object.method()` while
+calling an ordinary function.
+
 The pipe operator passes its left-hand value into a call on the right. `_`
 marks where that value is used. When the left-hand call has several output
 fields, `_` denotes the whole result structure; `_.field` selects one field:

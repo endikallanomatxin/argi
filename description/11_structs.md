@@ -84,6 +84,22 @@ Then `Point(...)` returns `Errable#(.t: Point, .reasons: R)`, and `..ok`
 contains the constructed point. The initializer must leave its destination
 complete on success and empty on error.
 
+## Structs and behavior
+
+Argi has no object-owned methods or implicit receiver. A struct holds state;
+ordinary functions operate on it through explicit inputs. For example:
+
+```rg
+move_x(.point: $&Point, .delta: Int32) -> () := {
+    point&.x = point&.x + delta
+}
+
+{
+    point :: Point = Point(20, 22)
+    point | move_x($&_, 3)
+}
+```
+
 ## Layout
 
 `size_of(.type = T)` and `alignment_of(.type = T)` return `UIntNative`
