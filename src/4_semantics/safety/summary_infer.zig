@@ -206,6 +206,10 @@ pub const Infer = struct {
             if (!dependency.transfers_ownership or dependency.path.projections.len != 0 or
                 dependency.path.input_index >= function.input.len) continue;
             const input = self.graph.fields.items[function.input.start + dependency.path.input_index];
+            // A syntactic move marks the input path as transferred even when
+            // its value cannot carry an owned root. Erase only that vacuous
+            // transfer before comparing concrete implementations of a
+            // Virtual method; the input's validity dependency remains.
             const cannot_own = switch (self.graph.semanticType(input.ty)) {
                 .builtin => |builtin| switch (builtin) {
                     .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Char, .Bool, .Void, .Type => true,
@@ -254,6 +258,11 @@ pub const Infer = struct {
 
         var fresh_map = std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource).init(self.allocator);
         defer fresh_map.deinit();
+        // Match identities throughout the output before merging any field:
+        // an optional root in an early field may be shared with a root that
+        // both implementations expose in a later field.
+        for (left.outputs, right.outputs) |left_output, right_output|
+            if (!try self.prealignVirtualFreshSources(left_output, right_output, &fresh_map)) return null;
         const outputs = try self.allocator.alloc(facts.ValueEffect, left.outputs.len);
         for (left.outputs, right.outputs, 0..) |left_output, right_output, index|
             outputs[index] = (try self.mergeVirtualValueEffect(left_output, right_output, &fresh_map)) orelse return null;
@@ -285,6 +294,32 @@ pub const Infer = struct {
             .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
             .opaque_storage_empties = try opaque_storage_empties.toOwnedSlice(),
         };
+    }
+
+    fn prealignVirtualFreshSources(
+        self: *Infer,
+        left: facts.ValueEffect,
+        right: facts.ValueEffect,
+        mapping: *std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource),
+    ) !bool {
+        if (left.fresh_dependencies.len != 0 and right.fresh_dependencies.len != 0 and
+            (left.fresh_dependencies.len != right.fresh_dependencies.len or
+                !try alignFreshSources(left.fresh_dependencies, right.fresh_dependencies, mapping))) return false;
+        if (left.fresh_owned_roots.len != 0 and right.fresh_owned_roots.len != 0 and
+            (left.fresh_owned_roots.len != right.fresh_owned_roots.len or
+                !try alignFreshSources(left.fresh_owned_roots, right.fresh_owned_roots, mapping))) return false;
+        if (left.fresh_storage_capabilities.len != 0 and right.fresh_storage_capabilities.len != 0 and
+            (left.fresh_storage_capabilities.len != right.fresh_storage_capabilities.len or
+                !try alignFreshSources(left.fresh_storage_capabilities, right.fresh_storage_capabilities, mapping))) return false;
+        for (left.fields) |left_field| for (right.fields) |right_field| {
+            if (left_field.index == right_field.index and
+                !try self.prealignVirtualFreshSources(left_field.value.*, right_field.value.*, mapping)) return false;
+        };
+        for (left.variants) |left_variant| for (right.variants) |right_variant| {
+            if (left_variant.index == right_variant.index and
+                !try self.prealignVirtualFreshSources(left_variant.value.*, right_variant.value.*, mapping)) return false;
+        };
+        return true;
     }
 
     fn mergeVirtualInputPostStates(
@@ -440,8 +475,8 @@ pub const Infer = struct {
             left.fresh_storage_capabilities.len != right.fresh_storage_capabilities.len or
             left.variants.len != right.variants.len) return null;
 
-        const fresh_dependencies = (try mergeVirtualFreshRoots(left.fresh_dependencies, right.fresh_dependencies, fresh_map)) orelse return null;
-        const fresh_owned_roots = (try mergeVirtualFreshRoots(left.fresh_owned_roots, right.fresh_owned_roots, fresh_map)) orelse return null;
+        const fresh_dependencies = (try mergeVirtualFreshRoots(self.allocator, left.fresh_dependencies, right.fresh_dependencies, fresh_map)) orelse return null;
+        const fresh_owned_roots = (try mergeVirtualFreshRoots(self.allocator, left.fresh_owned_roots, right.fresh_owned_roots, fresh_map)) orelse return null;
         if (!try alignFreshSources(left.fresh_storage_capabilities, right.fresh_storage_capabilities, fresh_map)) return null;
 
         var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator);
@@ -3400,12 +3435,26 @@ fn alignFreshSources(
 }
 
 fn mergeVirtualFreshRoots(
+    allocator: std.mem.Allocator,
     canonical: []const facts.FreshEffectSource,
     candidate: []const facts.FreshEffectSource,
     mapping: *std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource),
 ) !?[]const facts.FreshEffectSource {
-    if (canonical.len == 0) return candidate;
+    // A fresh temporal identity can conservatively represent either a
+    // separately released allocation or a child of a shared region. The
+    // latter still carries its region dependency through the other effects.
     if (candidate.len == 0) return canonical;
+    if (canonical.len == 0) {
+        const result = try allocator.dupe(facts.FreshEffectSource, candidate);
+        for (result) |*source| {
+            if (mapping.get(source.*)) |mapped| {
+                source.* = mapped;
+            } else {
+                try mapping.put(source.*, source.*);
+            }
+        }
+        return result;
+    }
     if (canonical.len != candidate.len or !try alignFreshSources(canonical, candidate, mapping)) return null;
     return canonical;
 }
@@ -3738,11 +3787,67 @@ test "virtual summaries align fresh roles and reject ownership mismatches" {
     try std.testing.expectEqual(left_source, compatible.?.outputs[0].fresh_dependencies[0]);
     try std.testing.expectEqual(left_source, compatible.?.outputs[0].fresh_owned_roots[0]);
 
+    const region_dependency = facts.InputDependency{ .path = .{ .input_index = 0 } };
+    const separately_released = facts.SafetySummary{
+        .outputs = &.{.{ .fresh_dependencies = &.{left_source}, .fresh_owned_roots = &.{left_source} }},
+    };
+    const region_child = facts.SafetySummary{
+        .outputs = &.{.{ .input_dependencies = &.{region_dependency} }},
+    };
+    const heap_first = (try infer.mergeVirtualSafetySummary(separately_released, region_child)).?;
+    const region_first = (try infer.mergeVirtualSafetySummary(region_child, separately_released)).?;
+    for ([_]facts.SafetySummary{ heap_first, region_first }) |merged| {
+        try std.testing.expectEqualSlices(facts.FreshEffectSource, &.{left_source}, merged.outputs[0].fresh_owned_roots);
+        try std.testing.expectEqual(@as(usize, 1), merged.outputs[0].input_dependencies.len);
+    }
+
     const transfer = facts.InputDependency{ .path = .{ .input_index = 0 }, .transfers_ownership = true };
     try std.testing.expect((try infer.mergeVirtualSafetySummary(
         .{ .outputs = &.{.{ .input_dependencies = &.{transfer} }} },
         .{ .outputs = &.{.{}} },
     )) == null);
+}
+
+test "virtual summary merge preserves fresh identity across output fields" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var infer = Infer.init(allocator, &graph, &engine);
+    defer infer.deinit();
+
+    const empty = facts.ValueEffect{};
+    const left_root = facts.ValueEffect{ .fresh_dependencies = &.{11}, .fresh_owned_roots = &.{11} };
+    const right_root = facts.ValueEffect{ .fresh_dependencies = &.{29}, .fresh_owned_roots = &.{29} };
+    const left = facts.SafetySummary{ .outputs = &.{.{ .fields = &.{
+        .{ .index = 0, .value = &empty },
+        .{ .index = 1, .value = &left_root },
+    } }} };
+    const right = facts.SafetySummary{ .outputs = &.{.{ .fields = &.{
+        .{ .index = 0, .value = &right_root },
+        .{ .index = 1, .value = &right_root },
+    } }} };
+    const merged_optional_first = (try infer.mergeVirtualSafetySummary(left, right)).?;
+    try std.testing.expectEqual(@as(facts.FreshEffectSource, 11), merged_optional_first.outputs[0].fields[0].value.fresh_owned_roots[0]);
+    try std.testing.expectEqual(@as(facts.FreshEffectSource, 11), merged_optional_first.outputs[0].fields[1].value.fresh_owned_roots[0]);
+
+    const aligned_first = facts.SafetySummary{ .outputs = &.{.{ .fields = &.{
+        .{ .index = 0, .value = &left_root },
+        .{ .index = 1, .value = &empty },
+    } }} };
+    const merged = (try infer.mergeVirtualSafetySummary(aligned_first, right)).?;
+    try std.testing.expectEqual(@as(facts.FreshEffectSource, 11), merged.outputs[0].fields[0].value.fresh_owned_roots[0]);
+    try std.testing.expectEqual(@as(facts.FreshEffectSource, 11), merged.outputs[0].fields[1].value.fresh_owned_roots[0]);
+
+    const second_left_root = facts.ValueEffect{ .fresh_dependencies = &.{17}, .fresh_owned_roots = &.{17} };
+    const incompatible_left = facts.SafetySummary{ .outputs = &.{.{ .fields = &.{
+        .{ .index = 0, .value = &left_root },
+        .{ .index = 1, .value = &second_left_root },
+    } }} };
+    try std.testing.expect((try infer.mergeVirtualSafetySummary(incompatible_left, right)) == null);
 }
 
 test "virtual summaries intersect opaque empty guarantees" {

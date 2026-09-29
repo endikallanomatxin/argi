@@ -4368,6 +4368,32 @@ test "feature_tests/polymorphism/31X_virtual_incompatible_deinit" {
     );
 }
 
+test "feature_tests/polymorphism/37_virtual_nested_receiver_borrow" {
+    const test_path = "tests/feature_tests/polymorphism/37_virtual_nested_receiver_borrow";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/polymorphism/38X_virtual_nested_receiver_ended" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/38X_virtual_nested_receiver_ended",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/polymorphism/39_virtual_scalar_move" {
+    const test_path = "tests/feature_tests/polymorphism/39_virtual_scalar_move";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/polymorphism/40X_virtual_nested_aggregate_borrow" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/40X_virtual_nested_aggregate_borrow",
+        "reference depends on a root that has ended",
+    );
+}
+
 test "feature_tests/ownership/219_virtual_post_state_allows_optional_self_mutation" {
     const test_path = "tests/feature_tests/ownership/219_virtual_post_state_allows_optional_self_mutation";
     try expectSuccessfulBuild(test_path);

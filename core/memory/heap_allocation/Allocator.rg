@@ -110,7 +110,8 @@ Allocation : Type = (
 
 -- Compiler-owned temporal boundary used after a physical allocator has
 -- returned backing storage. The Allocation value owns the new root; its data
--- field only depends on it.
+-- field only depends on it. This form supplies the static heap anchor inside
+-- the boundary, so no caller-local reference enters the allocation summary.
 establish_allocation(
     .storage: UIntNative,
     .size: UIntNative,
@@ -128,7 +129,8 @@ establish_allocation(
 
 -- A fresh allocation may also depend on its backing region. The new root
 -- distinguishes individual allocations; the inherited anchor ends with the
--- backing region even while this allocation remains otherwise live.
+-- backing region even while this allocation remains otherwise live. The
+-- dynamic anchor is an explicit input because its generation must be retained.
 establish_allocation_with_anchor(
     .storage: UIntNative,
     .size: UIntNative,
