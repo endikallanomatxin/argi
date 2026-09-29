@@ -47,7 +47,7 @@ file_stream_pointer(.self: &File) -> (.stream: &Any) := {
     raw ::= raw_pointer#(.t: Any)(.address = self&.stream_address)
     mutable_stream ::= establish_inherited_reference#(.t: Any)(
         .raw = raw,
-        .root = cast#(.to: &Any)(.value = self),
+        .root = erase_reference#(.t: File)(.base = self).reference,
     )
     stream = read_reference#(.t: Any)(.base = mutable_stream)
 }
@@ -60,7 +60,7 @@ open(
     mode_text ::= file_open_mode_c_string(.mode = mode)
     opened : &Any = fopen(.path = path, .mode = mode_text)
     p& = (
-        .stream_address = cast#(.to: UIntNative)(.value = opened),
+        .stream_address = UIntNative(.value = opened),
         .should_close = 1 == 1,
     )
     if p&.stream_address == 0 {
@@ -95,7 +95,7 @@ init_stdin(.p: $&File) -> () := {
     mode_text ::= file_open_mode_c_string(.mode = ..read)
     stream : &Any = fdopen(.fd = 0, .mode = mode_text)
     p& = (
-        .stream_address = cast#(.to: UIntNative)(.value = stream),
+        .stream_address = UIntNative(.value = stream),
         .should_close = 0 == 1,
     )
 }
@@ -104,7 +104,7 @@ init_stdout(.p: $&File) -> () := {
     mode_text ::= file_open_mode_c_string(.mode = ..write)
     stream : &Any = fdopen(.fd = 1, .mode = mode_text)
     p& = (
-        .stream_address = cast#(.to: UIntNative)(.value = stream),
+        .stream_address = UIntNative(.value = stream),
         .should_close = 0 == 1,
     )
 }
@@ -113,7 +113,7 @@ init_stderr(.p: $&File) -> () := {
     mode_text ::= file_open_mode_c_string(.mode = ..write)
     stream : &Any = fdopen(.fd = 2, .mode = mode_text)
     p& = (
-        .stream_address = cast#(.to: UIntNative)(.value = stream),
+        .stream_address = UIntNative(.value = stream),
         .should_close = 0 == 1,
     )
 }

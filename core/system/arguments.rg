@@ -48,13 +48,13 @@ argument_at(
     raw ::= raw_pointer#(.t: UIntNative)(.address = addr)
     ptr ::= establish_inherited_reference#(.t: UIntNative)(
         .raw = raw,
-        .root = cast#(.to: &Any)(.value = self),
+        .root = erase_reference#(.t: Arguments)(.base = self).reference,
     ).reference
     text_address ::= ptr&
     text_raw ::= raw_pointer#(.t: Char)(.address = text_address)
     inherited ::= establish_inherited_reference#(.t: Char)(
         .raw = text_raw,
-        .root = cast#(.to: &Any)(.value = self),
+        .root = erase_reference#(.t: Arguments)(.base = self).reference,
     ).reference
     text = read_reference#(.t: Char)(.base = inherited).reference
 }

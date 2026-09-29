@@ -7,7 +7,7 @@ CountingAllocator : Type = (
 
 allocate(.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
     storage ::= malloc(.size = size, .ffi = self&.ffi)
-    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = storage)
+    raw_addr :: UIntNative = UIntNative(.value = storage)
     self& = (
         .ffi = self&.ffi,
         .last_alloc_size = size,

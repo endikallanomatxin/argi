@@ -121,7 +121,7 @@ establish_allocation(
         .data = raw_pointer#(.t: UInt8)(.address = storage).raw,
         .size = size,
         .alignment = alignment,
-        .anchor = cast#(.to: &Any)(.value = &allocation_static_anchor),
+        .anchor = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference,
         .deallocator = deallocator,
     )
 }
@@ -152,5 +152,5 @@ establish_allocation_slot#(.t: Type)(
     .slot: RawPointer#(.t: t),
     .anchor: &Any,
 ) -> (.reference: $&t) := {
-    reference = cast#(.to: $&t)(.value = slot.address)
+    reference = __trusted_reference_from_address#(.to: $&t)(.address = slot.address)
 }

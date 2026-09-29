@@ -36,12 +36,12 @@ init(.p: $&GeneralPurposeAllocator, .allocator: $&Allocator) -> () := {
 -- reference. The backing block stays live until its last slot is released.
 _trusted_general_purpose_bucket(.address: UIntNative, .owner: $&GeneralPurposeAllocator) -> (.bucket: $&_GeneralPurposeBucket) := {
     raw ::= raw_pointer#(.t: _GeneralPurposeBucket)(.address = address).raw
-    bucket = establish_inherited_reference#(.t: _GeneralPurposeBucket)(.raw = raw, .root = cast#(.to: &Any)(.value = owner)).reference
+    bucket = establish_inherited_reference#(.t: _GeneralPurposeBucket)(.raw = raw, .root = erase_mutable_reference#(.t: GeneralPurposeAllocator)(.base = owner).reference).reference
 }
 
 _trusted_general_purpose_large(.address: UIntNative, .owner: $&GeneralPurposeAllocator) -> (.record: $&_GeneralPurposeLarge) := {
     raw ::= raw_pointer#(.t: _GeneralPurposeLarge)(.address = address).raw
-    record = establish_inherited_reference#(.t: _GeneralPurposeLarge)(.raw = raw, .root = cast#(.to: &Any)(.value = owner)).reference
+    record = establish_inherited_reference#(.t: _GeneralPurposeLarge)(.raw = raw, .root = erase_mutable_reference#(.t: GeneralPurposeAllocator)(.base = owner).reference).reference
 }
 
 -- The bitmap follows _GeneralPurposeBucket in the first backing chunk and is
@@ -55,7 +55,7 @@ _trusted_general_purpose_used_word(
     word_index ::= slot / bits_per_word
     address ::= bucket_address + size_of(.type = _GeneralPurposeBucket) + word_index * size_of(.type = UIntNative)
     raw ::= raw_pointer#(.t: UIntNative)(.address = address).raw
-    word = establish_inherited_reference#(.t: UIntNative)(.raw = raw, .root = cast#(.to: &Any)(.value = owner)).reference
+    word = establish_inherited_reference#(.t: UIntNative)(.raw = raw, .root = erase_mutable_reference#(.t: GeneralPurposeAllocator)(.base = owner).reference).reference
 }
 
 _general_purpose_slot_size(.size: UIntNative, .alignment: UIntNative) -> (.slot_size: UIntNative) := {

@@ -8,17 +8,26 @@ raw_pointer#(.t: Type)(.address: UIntNative) -> (.raw: RawPointer#(.t: t)) := {
     raw = (.address = address)
 }
 
+erase_reference#(.t: Type)(.base: &t) -> (.reference: &Any) := {
+    reference = reinterpret_reference#(.from: t, .to: Any)(.base = base).reference
+}
+
+erase_mutable_reference#(.t: Type)(.base: $&t) -> (.reference: &Any) := {
+    readonly ::= read_reference#(.t: t)(.base = base).reference
+    reference = reinterpret_reference#(.from: t, .to: Any)(.base = readonly).reference
+}
+
 establish_fresh_reference#(.t: Type)(
     .raw: RawPointer#(.t: t),
 ) -> (.reference: $&t) := {
-    reference = cast#(.to: $&t)(.value = raw.address)
+    reference = __trusted_reference_from_address#(.to: $&t)(.address = raw.address)
 }
 
 establish_inherited_reference#(.t: Type)(
     .raw: RawPointer#(.t: t),
     .root: &Any,
 ) -> (.reference: $&t) := {
-    reference = cast#(.to: $&t)(.value = raw.address)
+    reference = __trusted_reference_from_address#(.to: $&t)(.address = raw.address)
 }
 
 -- Incorporates newly acquired physical storage into an existing temporal
@@ -35,30 +44,30 @@ reference_offset#(.t: Type)(
     .base: &t,
     .elements: UIntNative,
 ) -> (.reference: &t) := {
-    address ::= cast#(.to: UIntNative)(.value = base) + elements * size_of(.type = t)
-    reference = cast#(.to: &t)(.value = address)
+    address ::= UIntNative(.value = base) + elements * size_of(.type = t)
+    reference = __trusted_reference_from_address#(.to: &t)(.address = address)
 }
 
 reinterpret_reference#(.from: Type, .to: Type)(
     .base: &from,
 ) -> (.reference: &to) := {
-    reference = cast#(.to: &to)(.value = cast#(.to: UIntNative)(.value = base))
+    reference = __trusted_reference_from_address#(.to: &to)(.address = UIntNative(.value = base))
 }
 
 read_reference#(.t: Type)(.base: $&t) -> (.reference: &t) := {
-    reference = cast#(.to: &t)(.value = cast#(.to: UIntNative)(.value = base))
+    reference = __trusted_reference_from_address#(.to: &t)(.address = UIntNative(.value = base))
 }
 
 mutable_reinterpret_reference#(.from: Type, .to: Type)(
     .base: $&from,
 ) -> (.reference: $&to) := {
-    reference = cast#(.to: $&to)(.value = cast#(.to: UIntNative)(.value = base))
+    reference = __trusted_reference_from_address#(.to: $&to)(.address = UIntNative(.value = base))
 }
 
 mutable_reference_offset#(.t: Type)(
     .base: $&t,
     .elements: UIntNative,
 ) -> (.reference: $&t) := {
-    address ::= cast#(.to: UIntNative)(.value = base) + elements * size_of(.type = t)
-    reference = cast#(.to: $&t)(.value = address)
+    address ::= UIntNative(.value = base) + elements * size_of(.type = t)
+    reference = __trusted_reference_from_address#(.to: $&t)(.address = address)
 }

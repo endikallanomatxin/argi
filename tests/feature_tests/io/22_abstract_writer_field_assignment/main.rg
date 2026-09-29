@@ -35,8 +35,8 @@ main() -> (.status_code: Int32) := {
 
     init(.p = $&holder, .writer = $&writer)
 
-    writer_address :: UIntNative = cast#(.to: UIntNative)(.value = $&writer)
-    stored_address :: UIntNative = cast#(.to: UIntNative)(.value = holder.writer)
+    writer_address :: UIntNative = UIntNative(.value = $&writer)
+    stored_address :: UIntNative = UIntNative(.value = holder.writer)
     if writer_address == stored_address {
         status_code = 0
     } else {

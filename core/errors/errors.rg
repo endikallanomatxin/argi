@@ -133,14 +133,14 @@ report_trace(
         write_byte(.self = stderr, .byte = 58)
         write_trace_uint(.value = entry.column, .stderr = stderr)
 
-        if cast#(.to: UIntNative)(.value = entry.context) != 0 {
+        if UIntNative(.value = entry.context) != 0 {
             write_trace_text(.text = ": ", .stderr = stderr)
             write_trace_text(.text = entry.context, .stderr = stderr)
         }
 
         write_byte(.self = stderr, .byte = 10)
 
-        if cast#(.to: UIntNative)(.value = entry.source_line) != 0 {
+        if UIntNative(.value = entry.source_line) != 0 {
             write_trace_text(.text = "    ", .stderr = stderr)
             write_trace_text(.text = entry.source_line, .stderr = stderr)
             write_byte(.self = stderr, .byte = 10)

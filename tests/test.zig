@@ -3131,9 +3131,9 @@ test "feature_tests/ownership/57X_return_reference_to_local" {
 
 test "feature_tests/ownership/58X_null_safe_reference" {
     try buildExpectFailExact("tests/feature_tests/ownership/58X_null_safe_reference",
-        \\tests/feature_tests/ownership/58X_null_safe_reference/main.rg:3:19: error: an integer address cannot establish a safe reference; use an explicit root establishment boundary
+        \\tests/feature_tests/ownership/58X_null_safe_reference/main.rg:3:23: error: no function named 'cast' exists
         \\      reference ::= cast#(.to: $&Int32)(.value = zero)
-        \\                    ^
+        \\                        ^
         \\
     );
 }
@@ -3162,18 +3162,18 @@ test "feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root" {
 
 test "feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip" {
     try buildExpectFailExact("tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip",
-        \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:4:20: error: an integer address cannot establish a safe reference; use an explicit root establishment boundary
+        \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:4:24: error: no function named 'cast' exists
         \\      fabricated ::= cast#(.to: &Char)(.value = address)
-        \\                     ^
+        \\                         ^
         \\
     );
 }
 
 test "feature_tests/ownership/63X_malloc_direct_safe_cast" {
     try buildExpectFailExact("tests/feature_tests/ownership/63X_malloc_direct_safe_cast",
-        \\tests/feature_tests/ownership/63X_malloc_direct_safe_cast/main.rg:4:20: error: an integer address cannot establish a safe reference; use an explicit root establishment boundary
+        \\tests/feature_tests/ownership/63X_malloc_direct_safe_cast/main.rg:4:24: error: no function named 'cast' exists
         \\      fabricated ::= cast#(.to: $&UInt8)(.value = address)
-        \\                     ^
+        \\                         ^
         \\
     );
 }
@@ -3248,7 +3248,7 @@ test "feature_tests/ownership/73_storage_capability_move" {
 test "feature_tests/ownership/74X_core_path_not_trusted" {
     try buildExpectFail(
         "tests/feature_tests/ownership/74X_core_path_not_trusted",
-        "an integer address cannot establish a safe reference",
+        "no function named 'cast' exists",
     );
 }
 
@@ -4221,9 +4221,9 @@ test "feature_tests/ownership/46_deinitialized_place_can_be_replaced" {
 
 test "feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance" {
     try buildExpectFailExact("tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance",
-        \\tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance/main.rg:4:19: error: an integer address cannot establish a safe reference; use an explicit root establishment boundary
+        \\tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance/main.rg:4:23: error: no function named 'cast' exists
         \\      reference ::= cast#(.to: $&Int32)(.value = address)
-        \\                    ^
+        \\                        ^
         \\
     );
 }
@@ -4607,14 +4607,14 @@ test "feature_tests/types/251X_choice_parent_overwrite_invalidates_tag" {
 test "feature_tests/types/252X_choice_payload_integer_address_rejected_on_use" {
     try buildExpectFail(
         "tests/feature_tests/types/252X_choice_payload_integer_address_rejected_on_use",
-        "an integer address cannot establish a safe reference",
+        "no function named 'cast' exists",
     );
 }
 
 test "feature_tests/types/253X_choice_payload_integer_address_rejected_across_call" {
     try buildExpectFail(
         "tests/feature_tests/types/253X_choice_payload_integer_address_rejected_across_call",
-        "an integer address cannot establish a safe reference",
+        "no function named 'cast' exists",
     );
 }
 
@@ -4854,7 +4854,7 @@ test "feature_tests/ownership/283_scalar_opaque_read_is_independent" {
 test "feature_tests/ownership/284X_integer_cannot_establish_any_reference" {
     try buildExpectFail(
         "tests/feature_tests/ownership/284X_integer_cannot_establish_any_reference",
-        "an integer address cannot establish a safe reference; use an explicit root establishment boundary",
+        "no function named 'cast' exists",
     );
 }
 

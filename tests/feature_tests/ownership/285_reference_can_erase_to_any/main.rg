@@ -1,7 +1,7 @@
 main(.system: System) -> (.status_code: Int32) := {
     value :: Int32 = 7
-    erased ::= cast#(.to: &Any)(.value = &value)
-    if cast#(.to: UIntNative)(.value = erased) != cast#(.to: UIntNative)(.value = &value) {
+    erased ::= reinterpret_reference#(.from: Int32, .to: Any)(.base = &value).reference
+    if UIntNative(.value = erased) != UIntNative(.value = &value) {
         status_code = 1
         return
     }

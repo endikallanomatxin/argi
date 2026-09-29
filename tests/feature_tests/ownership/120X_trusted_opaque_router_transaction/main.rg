@@ -48,7 +48,7 @@ main(.system: System) -> (.status_code: Int32) := {
                             second_raw ::= raw_pointer#(.t: Router)(.address = second_address)
                             second_slot ::= establish_inherited_reference#(.t: Router)(
                                 .raw = second_raw,
-                                .root = cast#(.to: &Any)(.value = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference),
+                                .root = erase_mutable_reference#(.t: UInt8)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference,
                             ).reference
 
                             store_pair(

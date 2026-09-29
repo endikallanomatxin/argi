@@ -467,9 +467,8 @@ pub const Resolver = struct {
         const local_args = reference.generic_arguments;
         const name = module.text(reference.name);
         const input = globalizer.globalNode(o, value.input);
-        if (local_args != null and reference.module_path == null and std.mem.eql(u8, name, "cast")) {
-            const args = try self.generics.relocateModuleArguments(module_index, local_args.?);
-            const node = (try self.makeExplicitCast(args, input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
+        if (local_args == null and reference.module_path == null and std.mem.eql(u8, name, "UIntNative")) {
+            const node = (try self.makeAddressConversion(input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
             self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
             self.stats.calls += 1;
             return .resolved;
@@ -1678,7 +1677,9 @@ pub const Resolver = struct {
         };
     }
 
-    fn makeExplicitCast(
+    /// Materialize a pointer representation inside a recognized bundled
+    /// primitive. The primitive's transfer rule supplies the validity facts.
+    fn makeTrustedReferenceFromAddress(
         self: *Resolver,
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
         input: global_sg.GlobalNodeId,
@@ -1689,7 +1690,7 @@ pub const Resolver = struct {
             if (!std.mem.eql(u8, self.graph.text(argument.name), "to")) continue;
             target_type = switch (argument.value) {
                 .type => |ty| ty,
-                .comptime_int => return error.CastTargetMustBeType,
+                .comptime_int => return error.ReferenceTargetMustBeType,
             };
             break;
         }
@@ -1699,19 +1700,47 @@ pub const Resolver = struct {
         };
         var cast_value: ?global_sg.GlobalNodeId = null;
         for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
-            if (std.mem.eql(u8, self.graph.text(field.name), "value")) {
+            if (std.mem.eql(u8, self.graph.text(field.name), "address")) {
                 cast_value = field.value;
                 break;
             }
         }
-        const ty = target_type orelse return error.CastTargetMissing;
+        const ty = target_type orelse return error.ReferenceTargetMissing;
+        if (self.graph.types.items[@intFromEnum(ty)] != .pointer) return error.ReferenceTargetMustBePointer;
         return .{
             .source = source,
             .ty = ty,
             .content = .{ .explicit_cast = .{
-                .value = cast_value orelse return error.CastValueMissing,
+                .value = cast_value orelse return error.ReferenceAddressMissing,
                 .target_type = ty,
             } },
+        };
+    }
+
+    /// A reference can be observed as an address without carrying its
+    /// validity dependency into the integer. The reverse operation needs a
+    /// trusted root-establishment primitive instead of a type conversion.
+    fn makeAddressConversion(
+        self: *Resolver,
+        input: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+    ) !?global_sg.Node {
+        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
+            .struct_value_literal => |value| value,
+            else => return null,
+        };
+        if (literal.fields.len != 1) return null;
+        const field = self.graph.value_fields.items[literal.fields.start];
+        if (!std.mem.eql(u8, self.graph.text(field.name), "value")) return null;
+        const value_type = self.graph.nodes.items[@intFromEnum(field.value)].ty orelse return null;
+        if (self.graph.isTypeUnresolved(value_type)) return null;
+        const target = try self.core.builtin(.UIntNative);
+        if (self.graph.types.items[@intFromEnum(value_type)] != .pointer and
+            !global_types.equal(self.graph, value_type, target)) return null;
+        return .{
+            .source = source,
+            .ty = target,
+            .content = .{ .explicit_cast = .{ .value = field.value, .target_type = target } },
         };
     }
 
@@ -2672,8 +2701,20 @@ pub const Resolver = struct {
         ) !global_sg.Node {
             const module = &self.resolver.modules[self.module_index];
             const name = module.text(name_range);
-            if (module_path == null and std.mem.eql(u8, name, "cast"))
-                return (try self.resolver.makeExplicitCast(arguments, input, self.resolver.sourceFor(self.module_index, source))) orelse error.CastInputMustBeStruct;
+            if (module_path == null and arguments.len == 0 and std.mem.eql(u8, name, "UIntNative"))
+                return (try self.resolver.makeAddressConversion(input, self.resolver.sourceFor(self.module_index, source))) orelse error.InvalidAddressConversion;
+            if (module_path == null and std.mem.eql(u8, name, "__trusted_reference_from_address")) {
+                // The hook has no global declaration and cannot be selected by
+                // ordinary lookup. Only these concrete primitive bodies use it.
+                switch (self.parameterized.safety_primitive) {
+                    .establish_fresh_reference, .establish_inherited_reference,
+                    .establish_allocation_slot, .reference_offset,
+                    .mutable_reference_offset, .reinterpret_reference,
+                    .mutable_reinterpret_reference, .read_reference => {},
+                    else => return error.NoMatchingGenericFunction,
+                }
+                return (try self.resolver.makeTrustedReferenceFromAddress(arguments, input, self.resolver.sourceFor(self.module_index, source))) orelse error.ReferenceAddressInputMustBeStruct;
+            }
             if (module_path == null and std.mem.eql(u8, name, "size_of"))
                 return (try self.resolver.makeSizeOf(input, self.resolver.sourceFor(self.module_index, source))) orelse error.SizeOfInputMustBeStruct;
             if (module_path == null and std.mem.eql(u8, name, "alignment_of"))
