@@ -1,117 +1,77 @@
-## Comptime
+# Compile-time computation
 
-(from zig and jai)
+Argi provides metaprogramming by executing Argi code at compile time, in the
+spirit of Zig's `comptime`. Compile-time values can shape types, specialize
+functions, and select code before the program runs.
 
-It enables:
-- Metaprogramming and macros written in the same language.
-	This is particularly useful for building efficient and flexible abstractions.
+## Established model
 
-Comptime is powerful, but it should remain secondary to the core language
-model. It should not become the default escape hatch for missing features in
-types, modules or dispatch.
+`#(...)` declares compile-time parameters. A call supplies concrete values
+with `name#(.parameter = value)`, and the compiler specializes the generic
+declaration for those values. Type parameters are one case; parameters may
+also hold other compile-time values, such as array lengths.
 
-Use `#` for this (inspired by Jai):
+```rg
+Array#(.n = 4, .t = Int32)
+```
 
-https://github.com/Ivo-Balbaert/The_Way_to_Jai/blob/main/book/26A_Metaprogramming.md
+`type_of(.value = expression)` obtains the type of an expression as a
+compile-time value. Type queries do not execute the expression for its
+runtime effects.
 
-Yes:
+Explicit compile-time execution uses `#run`. Conditional compilation uses
+`#if`: its condition is evaluated at compile time, and only the selected
+branch is compiled. This differs from running an ordinary `if` inside
+`#run`; the latter executes the conditional during compile-time evaluation.
 
-- `name#(.param = value)` to define generics that will be monomorphized at compile time.
+> [!IMPLEMENTATION]
+> `#run` and `#if` are part of the intended language design but are not yet
+> supported by the compiler.
 
-- `#run` to execute code at compile time.
-
-- `#import` to import code from other files, like a C include.
-
-- `#is_compile_time` to check whether code is executing at compile time.
-
-- `#typeof` to get the type of a variable or expression at compile time.
-
-    When applied to an abstract, it can be resolved because the abstract is
-    monomorphized.
-
-- `#if` for compile-time conditionals, as in C.
-    `#if` is tested at compile time. When its condition is true, that block of
-    code is compiled; otherwise, it is not.
-    This is not the same as `#run if (...) { ... }`, which executes at compile
-    time.
-
-- `#atcalls` to execute code at compile time on every function call. For
-    example, it can validate arguments and report compile-time errors.
-
-    Perhaps all functions executed at compile time should be able to return an
-    error.
-
-    >[!QUESTION]
-    >Find a way for libraries to use this to report compile-time errors or LSP
-    >warnings when they are used incorrectly.
-
->[!IDEA] Ergonomics for allocator, stdio, async...
-> #bringsystemallocator, #bringsystemstdo, #bringsystemasync
-> When the file is saved, the necessary declarations will be modified to bring
-> the required system resource.
-> It deletes itself at save time.
->
-> (This is closer to save time than compile time.) A different version of `#`
-> could run when saving or during LSP analysis, and support macros that rewrite
-> the file on save.
-
-> Be careful with mechanisms that rewrite code in ways that are hard to see.
-> They can make changes difficult to trace, even when convenient.
-
-
-Unclear:
-
-- `#maintain` to tell variables that received a value at compile time to keep it.
-
-- `#code`
-
-I do not like:
-
-- `#insert` is somewhat like macros; using strings may be too messy.
-
+## Open questions
 
 > [!QUESTION]
-> I had ruled out using comptime for generics and interfaces, but it may be
-> worth reconsidering. The example shown
-> ThePrimeagen's discussion of `quak()` is interesting.
-> https://youtu.be/Vxq6Qc-uAmE?si=-K0XTw2lAMFC10tM
-> I like that part, but I dislike requiring `anytype`: it is too opaque and
-> does not tell the user what data type is expected. It also does not provide
-> everything generics need.
->
-> The main difference is that function return types must use structural typing
-> instead of nominal typing to be considered equivalent.
-> That is awful.
-
-https://www.scottredig.com/blog/bonkers_comptime/
-
+> Should compiler-recognized operations such as `import(...)`, `type_of(...)`,
+> and `size_of(...)` share a `#` prefix? Define whether `#` marks compile-time
+> evaluation, special compiler syntax, or something else.
 
 > [!QUESTION]
-> In an interview with the creators of Odin and Elixir by ThePrimeagen and TJ,
-> Ginger Bill says metaprogramming often reflects gaps in a language and can
-> make programs very difficult to debug.
-> It may be useful to see how this works in Zig and Jai before
-> implementing it.
->
-> A good rule of thumb: first finish the core language, then add comptime where
-> it provides real value instead of merely filling gaps.
+> Which operations may `#run` perform, and how are access to files, system
+> resources, diagnostics, and reproducible builds controlled?
 
-> [!IDEA] Comptime and incremental execution
-> Explore a common execution model for comptime, REPL and compiled programs,
-> reusing compiled specializations while their code, inputs and dependencies
-> remain unchanged.
->
-> One possible architecture is to lower each function to a compact, typed,
-> serializable executable IR. A lightweight VM could execute that IR for
-> comptime and interactive work, while LLVM consumes the same semantics for JIT
-> and AOT native code. This would make REPL, comptime, JIT and normal compilation
-> share most of the pipeline rather than becoming separate execution models.
->
-> For REPL redefinition, decide whether existing callers use the new definition
-> and what happens to live values when a type changes. Recompilation alone does
-> not resolve how program state survives.
->
-> A persistent `CompilerSession` could cache generated function specializations
-> by something like `(FunctionId, concrete type arguments, comptime values)`,
-> generating code when first required or after invalidation by changes to its
-> code or dependencies.
+> [!QUESTION]
+> Should code be able to ask whether it is executing at compile time, for
+> example through `#is_compile_time`? If so, define how that affects the
+> behavior of a function used in both phases.
+
+> [!QUESTION]
+> How should compile-time code report errors and warnings through libraries
+> and editor tooling? Functions run at compile time may need to return errors
+> that become compiler diagnostics or LSP warnings.
+
+> [!QUESTION]
+> When generic code uses an abstract type, should `type_of` expose the
+> concrete type after specialization? Define what can be observed before and
+> after that specialization.
+
+## Exploratory ideas
+
+> [!IDEA]
+> `#atcalls` could run validation at compile time for every call to a
+> function. This needs rules for available argument values, diagnostics,
+> and interaction with generic specialization.
+
+> [!IDEA]
+> A save-time or editor-time macro could rewrite source to add boilerplate,
+> such as declarations that bring system resources into scope. Any such
+> mechanism should make its edits visible and reviewable.
+
+> [!IDEA]
+> `#maintain` could retain a value computed at compile time for later use.
+> Its exact meaning and need remain to be established.
+
+> [!IDEA]
+> `#code` could represent code as a structured compile-time value. A
+> corresponding `#insert` could splice such values, but inserting raw strings
+> would make expansion and diagnostics difficult to trace. Neither mechanism
+> has defined semantics yet.
