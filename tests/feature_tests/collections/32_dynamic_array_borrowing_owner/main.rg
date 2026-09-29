@@ -1,4 +1,4 @@
-unsafe_allocation := #import("../../_support/unsafe_allocation")
+unsafe_allocation := import("../../_support/unsafe_allocation")
 BorrowingOwner : Type = (
     .id: Int32
     .allocation: Allocation

@@ -1,4 +1,4 @@
-unsafe_allocation := #import("../../_support/unsafe_allocation")
+unsafe_allocation := import("../../_support/unsafe_allocation")
 Pair : Type = (
     .changing: String
     .stable: String

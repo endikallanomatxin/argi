@@ -92,6 +92,7 @@ pub const Content = union(enum(u8)) {
     keyword_once: struct {},
     keyword_assume: struct {},
     keyword_reach: struct {},
+    keyword_import: struct {},
     keyword_test: struct {},
     keyword_and: struct {},
     keyword_or: struct {},

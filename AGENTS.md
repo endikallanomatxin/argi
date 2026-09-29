@@ -91,7 +91,7 @@ feature first.
 - Current module rules in the compiler:
   - all `.rg` files in a folder share namespace
   - `argi build` compiles a folder module, not a single `.rg` file
-  - `#import(...)` must be assigned to a name
+  - `import("...")` must be assigned to a name
   - `./` is current module, `../` is parent, `.../` is project root
   - bare import names resolve under `more/`
 

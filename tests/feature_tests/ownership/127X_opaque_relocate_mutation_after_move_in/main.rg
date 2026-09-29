@@ -1,4 +1,4 @@
-unsafe_allocation := #import("../../_support/unsafe_allocation")
+unsafe_allocation := import("../../_support/unsafe_allocation")
 AddressSensitive : Type = (
     .value: UInt8
     .reference: Nullable#(.t: $&UInt8)

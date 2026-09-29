@@ -1,4 +1,4 @@
-unsafe_allocation := #import("../../_support/unsafe_allocation")
+unsafe_allocation := import("../../_support/unsafe_allocation")
 store_wrapper#(.t: Type)(.slot: $&t, .value: t) -> () := {
     trusted_opaque_move#(.t: t)(.destination = slot, .source = ~value)
 }

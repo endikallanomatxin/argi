@@ -1,4 +1,4 @@
-dep := #import("./dep")
+dep := import("./dep")
 
 Visible : Type = (
     dep.._hidden_reason

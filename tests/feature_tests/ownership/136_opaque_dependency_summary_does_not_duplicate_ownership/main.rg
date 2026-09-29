@@ -1,4 +1,4 @@
-unsafe_allocation := #import("../../_support/unsafe_allocation")
+unsafe_allocation := import("../../_support/unsafe_allocation")
 TrackedBorrowing : Type = (
     .id: Int32
     .reference: &UInt8

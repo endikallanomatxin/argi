@@ -883,6 +883,7 @@ fn fixedTokenText(content: token.Content) []const u8 {
         .keyword_once => "once",
         .keyword_assume => "assume",
         .keyword_reach => "reach",
+        .keyword_import => "import",
         .keyword_test => "test",
         .keyword_and => "and",
         .keyword_or => "or",

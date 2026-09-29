@@ -720,7 +720,7 @@ pub const Syntaxer = struct {
 
     fn tokenStartsChoicePayloadExpr(self: *Syntaxer) bool {
         return switch (self.currentContent()) {
-            .identifier, .literal, .double_dot, .open_parenthesis, .tilde, .hash, .ampersand, .dollar => true,
+            .identifier, .literal, .double_dot, .open_parenthesis, .tilde, .hash, .ampersand, .dollar, .keyword_import => true,
             .binary_operator => |op| op == .subtraction,
             else => false,
         };
@@ -1247,16 +1247,14 @@ pub const Syntaxer = struct {
             return self.parsePostfix(try self.parseReachDirective(keyword_token));
         }
 
-        if (self.tokenIs(.hash)) {
-            const hash_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            const hash_loc = self.tokenLocation();
+        if (self.tokenIs(.keyword_import)) {
+            const import_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
-            const ident = try self.parseIdentifier();
-            if (!std.mem.eql(u8, ident, "import")) {
-                try self.diags.add(hash_loc, .syntax, "unknown directive '#{s}' in expression position", .{ident});
-                return SyntaxerError.ExpectedDeclarationOrAssignment;
+            self.skipNewLinesAndComments();
+            if (!self.tokenIs(.open_parenthesis)) {
+                try self.diags.add(self.tokenLocation(), .syntax, "expected '(' after import", .{});
+                return SyntaxerError.ExpectedLeftParen;
             }
-            if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
             self.advanceOne();
             self.skipNewLinesAndComments();
             switch (self.currentContent()) {
@@ -1271,8 +1269,16 @@ pub const Syntaxer = struct {
             self.skipNewLinesAndComments();
             if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
             self.advanceOne();
-            const node = try self.addNode(.import_statement, hash_token, .{ .token = path_token });
+            const node = try self.addNode(.import_statement, import_token, .{ .token = path_token });
             return try self.parsePostfix(node);
+        }
+
+        if (self.tokenIs(.hash)) {
+            const hash_loc = self.tokenLocation();
+            self.advanceOne();
+            const ident = try self.parseIdentifier();
+            try self.diags.add(hash_loc, .syntax, "unknown directive '#{s}' in expression position", .{ident});
+            return SyntaxerError.ExpectedDeclarationOrAssignment;
         }
 
         const base: syn.NodeIndex = switch (content) {
@@ -1602,6 +1608,11 @@ pub const Syntaxer = struct {
             self.skipNewLinesAndComments();
         }
 
+        if (self.tokenIs(.keyword_import)) {
+            try self.diags.add(self.tokenLocation(), .syntax, "import must be assigned to a name", .{});
+            return SyntaxerError.ExpectedDeclarationOrAssignment;
+        }
+
         if (self.tokenIs(.hash)) {
             const hash_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             const hash_loc = self.tokenLocation();
@@ -1611,11 +1622,6 @@ pub const Syntaxer = struct {
                 const expr = try self.parseExpression();
                 return try self.addNode(.defer_statement, hash_token, .{ .node = expr });
             }
-            if (std.mem.eql(u8, ident, "import")) {
-                try self.diags.add(hash_loc, .syntax, "#import must be assigned to a name", .{});
-                return SyntaxerError.ExpectedDeclarationOrAssignment;
-            }
-
             try self.diags.add(hash_loc, .syntax, "unknown directive '#{s}'", .{ident});
             return SyntaxerError.ExpectedDeclarationOrAssignment;
         }

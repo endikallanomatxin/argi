@@ -1,4 +1,4 @@
-unsafe_allocation := #import("../../_support/unsafe_allocation")
+unsafe_allocation := import("../../_support/unsafe_allocation")
 Holder : Type = (.reference: $&UInt8)
 
 replace(.holder: $&Holder, .condition: Bool, .reference: $&UInt8) -> () := {

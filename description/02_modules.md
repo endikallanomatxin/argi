@@ -29,7 +29,7 @@ import uses `./`, `../`, or `.../`.
 > declarations only.
 
 Unqualified lookup uses the current module and public `core`. Other modules
-use named imports; standalone `#import("...")` is unsupported. Paths resolve as
+use named imports; standalone `import("...")` is unsupported. Paths resolve as
 follows:
 
 | Prefix | Resolution |
@@ -47,10 +47,10 @@ Import paths must resolve at compile time.
 For example:
 
 ```rg
-json := #import("codecs/serialization/json")
-sibling := #import("./sibling")
-parent_dep := #import("../shared")
-root_dep := #import(".../app/shared")
+json := import("codecs/serialization/json")
+sibling := import("./sibling")
+parent_dep := import("../shared")
+root_dep := import(".../app/shared")
 ```
 
 ## Package layout

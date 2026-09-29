@@ -1,4 +1,4 @@
-unsafe_allocation := #import("../../_support/unsafe_allocation")
+unsafe_allocation := import("../../_support/unsafe_allocation")
 Tracked : Type = (.id: Int32)
 
 first_drops :: Int32 = 0

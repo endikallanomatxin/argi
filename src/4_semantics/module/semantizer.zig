@@ -213,7 +213,7 @@ test "module semantizer completes syntax-independent local semantics" {
 test "linked lowering trigger ignores abstracts outside function inputs" {
     const allocator = std.testing.allocator;
     const source =
-        "dep := #import(\"../dep\")\n" ++
+        "dep := import(\"../dep\")\n" ++
         "consume(.value: Int32) -> (.result: dep.Abstract) := {}\n";
     const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};
     var diagnostics = diagnostic.Diagnostics.init(&allocator, &input_sources);
@@ -236,7 +236,7 @@ test "linked lowering trigger ignores abstracts outside function inputs" {
 test "linked lowering trigger detects imported abstract function inputs" {
     const allocator = std.testing.allocator;
     const source =
-        "dep := #import(\"../dep\")\n" ++
+        "dep := import(\"../dep\")\n" ++
         "consume(.value: dep.Abstract) -> () := {}\n";
     const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};
     var diagnostics = diagnostic.Diagnostics.init(&allocator, &input_sources);
@@ -259,7 +259,7 @@ test "linked lowering trigger detects imported abstract function inputs" {
 test "qualified external signature lowers without an abstract catalog" {
     const allocator = std.testing.allocator;
     const source =
-        "dep := #import(\"../dep\")\n" ++
+        "dep := import(\"../dep\")\n" ++
         "consume_imported(.value: dep.Abstract) -> (.result: Int32) := {\n" ++
         "    result = score(.value = value).result\n" ++
         "}\n";

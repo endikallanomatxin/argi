@@ -5210,8 +5210,8 @@ test "feature_tests/modules/11X_import_cycle" {
 
 test "feature_tests/modules/12X_import_requires_binding" {
     try buildExpectFailExact("tests/feature_tests/modules/12X_import_requires_binding",
-        \\tests/feature_tests/modules/12X_import_requires_binding/main.rg:1:1: error: #import must be assigned to a name
-        \\  #import("./dep")
+        \\tests/feature_tests/modules/12X_import_requires_binding/main.rg:1:1: error: import must be assigned to a name
+        \\  import("./dep")
         \\  ^
         \\
     );
@@ -5219,11 +5219,15 @@ test "feature_tests/modules/12X_import_requires_binding" {
 
 test "feature_tests/modules/13X_import_requires_binding_nested" {
     try buildExpectFailExact("tests/feature_tests/modules/13X_import_requires_binding_nested",
-        \\tests/feature_tests/modules/13X_import_requires_binding_nested/main.rg:3:9: error: #import must be assigned to a name
-        \\          #import("./dep")
+        \\tests/feature_tests/modules/13X_import_requires_binding_nested/main.rg:3:9: error: import must be assigned to a name
+        \\          import("./dep")
         \\          ^
         \\
     );
+}
+
+test "feature_tests/modules/30X_import_requires_parentheses" {
+    try buildExpectFail("tests/feature_tests/modules/30X_import_requires_parentheses", "expected '(' after import");
 }
 
 test "feature_tests/modules/14X_missing_function_name" {

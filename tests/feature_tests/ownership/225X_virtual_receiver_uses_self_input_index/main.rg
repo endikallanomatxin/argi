@@ -1,4 +1,4 @@
-unsafe_allocation := #import("../../_support/unsafe_allocation")
+unsafe_allocation := import("../../_support/unsafe_allocation")
 Rewriter : Abstract = (
     rewrite(.reference: $&UInt8, .target: $&Self) -> ()
 )

@@ -1,4 +1,4 @@
-unsafe_allocation := #import("../../_support/unsafe_allocation")
+unsafe_allocation := import("../../_support/unsafe_allocation")
 Owner : Type = (.allocation: Allocation)
 deinit(.self: $&Owner) -> () := { deinit(.self = $&self&.allocation) }
 

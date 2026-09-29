@@ -1,4 +1,4 @@
-unsafe_allocation := #import("../../_support/unsafe_allocation")
+unsafe_allocation := import("../../_support/unsafe_allocation")
 B : Type = (.value: UInt8, .to_a: $&UInt8)
 
 main(.system: System) -> (.status_code: Int32) := {

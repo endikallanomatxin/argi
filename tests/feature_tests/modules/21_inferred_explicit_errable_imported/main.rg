@@ -1,5 +1,5 @@
 main () -> (.status_code: Int32) := {
-    dep := #import("./dep")
+    dep := import("./dep")
     outcome := dep.load()
 
     match outcome {

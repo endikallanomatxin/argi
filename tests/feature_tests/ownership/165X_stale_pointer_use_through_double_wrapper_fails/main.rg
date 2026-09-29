@@ -1,4 +1,4 @@
-unsafe_allocation := #import("../../_support/unsafe_allocation")
+unsafe_allocation := import("../../_support/unsafe_allocation")
 inner(.p: $&UInt8) -> (.result: UInt8) := {
     result = p&
 }

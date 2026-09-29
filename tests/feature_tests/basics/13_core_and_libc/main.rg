@@ -1,4 +1,4 @@
-unsafe_allocation := #import("../../_support/unsafe_allocation")
+unsafe_allocation := import("../../_support/unsafe_allocation")
 main (.system: System) -> (.status_code: Int32) := {
     puts(.string="Hello world!")
 

@@ -1,4 +1,4 @@
-unsafe_allocation := #import("../../_support/unsafe_allocation")
+unsafe_allocation := import("../../_support/unsafe_allocation")
 Borrowing : Type = (.reference: $&UInt8)
 
 old_root :: UInt8 = 7

@@ -1,4 +1,4 @@
-unsafe_allocation := #import("../../_support/unsafe_allocation")
+unsafe_allocation := import("../../_support/unsafe_allocation")
 CountingAllocator : Type = (
     .ffi: $&ForeignFunctionInterface
     .deallocations: Int32)

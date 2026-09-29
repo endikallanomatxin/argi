@@ -1,4 +1,4 @@
-unsafe_allocation := #import("../../_support/unsafe_allocation")
+unsafe_allocation := import("../../_support/unsafe_allocation")
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     blocker_result ::= allocate(.self = $&allocator, .size = 8, .alignment = 8)

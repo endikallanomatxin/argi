@@ -1,5 +1,5 @@
-dep := #import("./dep")
-app := #import("./app")
+dep := import("./dep")
+app := import("./app")
 
 -- This contract has the same short name as dep.Abstract, but a different
 -- requirement. Its implementation must not affect app.consume_imported.
