@@ -3252,8 +3252,7 @@ pub const Infer = struct {
             .empty, .relocate, .opaque_move, .opaque_relocate, .opaque_drop, .opaque_mark_empty => .{},
             .fresh_reference => .{ .fresh_dependencies = try self.oneFresh(source) },
             .inherited_reference, .inherited_storage => self.withoutOwnershipTransfer(try self.inputValueEffect(1, &.{})),
-            .allocation => self.ownedAllocationEffect(source, false),
-            .allocation_with_anchor => self.ownedAllocationEffect(source, true),
+            .allocation => self.ownedAllocationEffect(source),
             .raw_storage => .{ .foreign_storage = true, .fresh_storage_capabilities = try self.oneFresh(source) },
             .opaque_move_out => .{
                 .opaque_storage_dependencies = try self.oneInputPath(0, &.{}),
@@ -3262,7 +3261,7 @@ pub const Infer = struct {
         };
     }
 
-    fn ownedAllocationEffect(self: *Infer, source: facts.FreshEffectSource, inherited_anchor: bool) !facts.ValueEffect {
+    fn ownedAllocationEffect(self: *Infer, source: facts.FreshEffectSource) !facts.ValueEffect {
         // Keep this structural effect in the same order as Allocation. Raw
         // data carries the fresh lifetime. A backing-region anchor is copied
         // from the input without transferring ownership from the allocator.
@@ -3276,12 +3275,8 @@ pub const Infer = struct {
         fields[0] = .{ .index = 0, .value = data };
         fields[1] = .{ .index = 1, .value = empty };
         fields[2] = .{ .index = 2, .value = empty };
-        const anchor_effect = if (inherited_anchor)
-            try self.withoutOwnershipTransfer(try self.inputValueEffect(4, &.{}))
-        else
-            facts.ValueEffect{};
         const anchor = try self.allocator.create(facts.ValueEffect);
-        anchor.* = anchor_effect;
+        anchor.* = try self.withoutOwnershipTransfer(try self.inputValueEffect(4, &.{}));
         fields[3] = .{ .index = 3, .value = anchor };
         fields[4] = .{ .index = 4, .value = deallocator_effect };
         return .{ .fresh_owned_roots = try self.oneFresh(source), .fields = fields };

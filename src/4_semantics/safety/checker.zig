@@ -965,9 +965,11 @@ pub const SafetyChecker = struct {
                 try self.report(source, "fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries", .{});
                 break :blk .{};
             },
-            .allocation, .allocation_with_anchor, .inherited_reference, .inherited_storage => blk: {
+            .allocation, .inherited_reference, .inherited_storage => blk: {
                 const root = try state.tracker.establish(.fresh);
-                if ((primitive == .establish_allocation or primitive == .establish_allocation_with_anchor or primitive == .establish_inherited_storage) and values.len != 0) {
+                if (primitive == .establish_allocation)
+                    state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
+                if ((primitive == .establish_allocation or primitive == .establish_inherited_storage) and values.len != 0) {
                     for (values[0].storage_capabilities) |capability| {
                         const raw = @intFromEnum(capability);
                         if (raw >= state.storage_capabilities.items.len or state.storage_capabilities.items[raw] != .available)
@@ -977,26 +979,23 @@ pub const SafetyChecker = struct {
                     }
                 }
                 var fields: []const facts.FieldFacts = &.{};
-                if (primitive == .establish_allocation or primitive == .establish_allocation_with_anchor) {
+                if (primitive == .establish_allocation) {
                     const data = try self.allocator.create(facts.ValueFacts);
                     data.* = .{ .dependencies = try self.oneDependency(root) };
-                    const field_count: usize = if (primitive == .establish_allocation_with_anchor) 2 else 1;
-                    const allocation_fields = try self.allocator.alloc(facts.FieldFacts, field_count);
+                    const allocation_fields = try self.allocator.alloc(facts.FieldFacts, 2);
                     allocation_fields[0] = .{ .index = 0, .value = data };
-                    if (primitive == .establish_allocation_with_anchor and values.len > 4) {
-                        const anchor = try self.allocator.create(facts.ValueFacts);
-                        anchor.* = values[4].referenceCopy();
-                        allocation_fields[1] = .{ .index = 3, .value = anchor };
-                    }
+                    const anchor = try self.allocator.create(facts.ValueFacts);
+                    anchor.* = values[4].referenceCopy();
+                    allocation_fields[1] = .{ .index = 3, .value = anchor };
                     fields = allocation_fields;
                 }
                 var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
                 try appendDependencyFact(&dependencies, .{ .root = root });
-                if (primitive == .establish_allocation_with_anchor and values.len > 4)
+                if (primitive == .establish_allocation)
                     for (values[4].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
                 break :blk .{
                     .dependencies = try dependencies.toOwnedSlice(),
-                    .owned_roots = if (primitive == .establish_allocation or primitive == .establish_allocation_with_anchor) try self.oneRoot(root) else &.{},
+                    .owned_roots = if (primitive == .establish_allocation) try self.oneRoot(root) else &.{},
                     .fields = fields,
                 };
             },
@@ -3273,6 +3272,7 @@ pub const SafetyChecker = struct {
         const outputs = self.graph.binding_refs.items[record.output_bindings.start..][0..record.output_bindings.len];
         for (state.storage_generations.items) |entry| {
             if (entry.generation != root) continue;
+            if (self.graph.isModuleBinding(entry.storage.root)) return false;
             for (inputs) |input| if (input == entry.storage.root) return false;
             // Function output bindings model caller-provided result storage.
             // A value materialized into that storage may carry its generation

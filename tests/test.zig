@@ -3655,7 +3655,7 @@ test "feature_tests/ownership/136_opaque_dependency_summary_does_not_duplicate_o
 test "feature_tests/ownership/137X_opaque_hidden_dependency_blocks_owner_consumption" {
     try buildExpectFail(
         "tests/feature_tests/ownership/137X_opaque_hidden_dependency_blocks_owner_consumption",
-        "opaque ownership storage requires no live external aliases to the consumed root",
+        "cannot end a root while opaque storage hides a dependency on it",
     );
 }
 
@@ -3668,7 +3668,7 @@ test "feature_tests/ownership/138_opaque_hidden_dependency_allows_unrelated_owne
 test "feature_tests/ownership/139X_opaque_hidden_dependency_blocks_owner_consumption_through_wrapper" {
     try buildExpectFail(
         "tests/feature_tests/ownership/139X_opaque_hidden_dependency_blocks_owner_consumption_through_wrapper",
-        "opaque ownership storage requires no live external aliases to the consumed root",
+        "cannot end a root while opaque storage hides a dependency on it",
     );
 }
 
@@ -6170,6 +6170,12 @@ test "feature_tests/system/49X_initializer_temporary_ends_backing" {
 
 test "feature_tests/system/49_general_purpose_allocator_on_arena" {
     const test_path = "tests/feature_tests/system/49_general_purpose_allocator_on_arena";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/296_module_binding_reference_escape" {
+    const test_path = "tests/feature_tests/ownership/296_module_binding_reference_escape";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }

@@ -209,7 +209,7 @@ allocate(
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok mapping {
             deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-            allocation ::= establish_allocation_with_anchor(.storage = mapping.address, .size = size, .alignment = alignment, .deallocator = deallocator, .anchor = mapping.anchor)
+            allocation ::= establish_allocation(.storage = mapping.address, .size = size, .alignment = alignment, .deallocator = deallocator, .anchor = mapping.anchor)
             result = ..ok ~allocation
         }
     }

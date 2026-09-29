@@ -109,34 +109,14 @@ Allocation : Type = (
 )
 
 -- Compiler-owned temporal boundary used after a physical allocator has
--- returned backing storage. The Allocation value owns the new root; its data
--- field only depends on it. This form supplies the static heap anchor inside
--- the boundary, so no caller-local reference enters the allocation summary.
+-- returned backing storage. Each allocation owns a fresh temporal root.
+-- Region-backed storage also retains the generation of its backing anchor.
 establish_allocation(
     .storage: UIntNative,
     .size: UIntNative,
     .alignment: UIntNative,
     .deallocator: Virtual#(.abstract: Deallocator),
-) -> (.allocation: Allocation) := {
-    allocation = (
-        .data = raw_pointer#(.t: UInt8)(.address = storage).raw,
-        .size = size,
-        .alignment = alignment,
-        .anchor = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference,
-        .deallocator = deallocator,
-    )
-}
-
--- A fresh allocation may also depend on its backing region. The new root
--- distinguishes individual allocations; the inherited anchor ends with the
--- backing region even while this allocation remains otherwise live. The
--- dynamic anchor is an explicit input because its generation must be retained.
-establish_allocation_with_anchor(
-    .storage: UIntNative,
-    .size: UIntNative,
-    .alignment: UIntNative,
-    .deallocator: Virtual#(.abstract: Deallocator),
-    .anchor: &Any,
+    .anchor: &Any = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference,
 ) -> (.allocation: Allocation) := {
     allocation = (
         .data = raw_pointer#(.t: UInt8)(.address = storage).raw,

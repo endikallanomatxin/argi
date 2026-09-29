@@ -464,6 +464,16 @@ pub const GlobalSemanticGraph = struct {
         return self.bindings.items[@intFromEnum(id)];
     }
 
+    /// Root bindings have module storage, which outlives function calls.
+    /// Codegen predeclares the same roots as LLVM globals.
+    pub fn isModuleBinding(self: *const GlobalSemanticGraph, id: GlobalBindingId) bool {
+        for (self.roots.items) |root| switch (self.node(root).content) {
+            .binding_declaration => |binding_id| if (binding_id == id) return true,
+            else => {},
+        };
+        return false;
+    }
+
     pub fn isBindingTypeUnresolved(self: *const GlobalSemanticGraph, id: GlobalBindingId) bool {
         const raw: usize = @intFromEnum(id);
         return raw < self.construction.binding_type_resolution.items.len and self.construction.binding_type_resolution.items[raw] == .unresolved;
