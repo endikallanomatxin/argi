@@ -126,9 +126,30 @@ establish_allocation(
     )
 }
 
+-- A fresh allocation may also depend on its backing region. The new root
+-- distinguishes individual allocations; the inherited anchor ends with the
+-- backing region even while this allocation remains otherwise live.
+establish_allocation_with_anchor(
+    .storage: UIntNative,
+    .size: UIntNative,
+    .alignment: UIntNative,
+    .deallocator: Virtual#(.abstract: Deallocator),
+    .anchor: &Any,
+) -> (.allocation: Allocation) := {
+    allocation = (
+        .data = raw_pointer#(.t: UInt8)(.address = storage).raw,
+        .size = size,
+        .alignment = alignment,
+        .anchor = anchor,
+        .deallocator = deallocator,
+    )
+}
+
 deinit(
     .self: $&Allocation,
 ) -> () := {
+    -- Cleanup may touch backing metadata; an ended region cannot be released.
+    live ::= self&.anchor&
     deallocate(.self = $&self&.deallocator, .data = self&.data, .size = self&.size, .alignment = self&.alignment)
 }
 

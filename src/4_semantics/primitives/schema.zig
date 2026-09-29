@@ -53,6 +53,7 @@ pub const SafetyPrimitive = enum {
     establish_inherited_reference,
     establish_inherited_storage,
     establish_allocation,
+    establish_allocation_with_anchor,
     establish_allocation_slot,
     raw_allocated_storage,
     reference_offset,

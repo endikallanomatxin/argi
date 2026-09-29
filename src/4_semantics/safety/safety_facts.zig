@@ -48,6 +48,9 @@ pub const ValueEffect = struct {
     explicit_dependency: bool = false,
     input_dependencies: []const InputDependency = &.{},
     input_places: []const InputPath = &.{},
+    /// Storage generations borrowed by a value, without making those places
+    /// the value's referenced storage.
+    input_generation_dependencies: []const InputPath = &.{},
     input_place_values: []const InputPath = &.{},
     /// Roots owned by the value at an input reference's place, borrowed as dependencies.
     input_owned_roots: []const InputPath = &.{},
@@ -62,6 +65,32 @@ pub const ValueEffect = struct {
     foreign_storage: bool = false,
     fresh_storage_capabilities: []const FreshEffectSource = &.{},
 };
+
+/// Concrete method results can borrow a field generation of their receiver.
+/// Capture those generations when the receiver is erased into a Virtual value.
+pub fn receiverBorrowedPlaces(
+    allocator: @import("std").mem.Allocator,
+    effect: ValueEffect,
+    receiver_index: u32,
+) ![]const InputPath {
+    const std = @import("std");
+    var result: std.array_list.Managed(InputPath) = .init(allocator);
+    try collectReceiverBorrowedPlaces(&result, effect, receiver_index);
+    return result.toOwnedSlice();
+}
+
+fn collectReceiverBorrowedPlaces(
+    result: *@import("std").array_list.Managed(InputPath),
+    effect: ValueEffect,
+    receiver_index: u32,
+) !void {
+    for (effect.input_places) |path| if (path.input_index == receiver_index and path.projections.len != 0)
+        try result.append(path);
+    for (effect.input_generation_dependencies) |path| if (path.input_index == receiver_index and path.projections.len != 0)
+        try result.append(path);
+    for (effect.fields) |field| try collectReceiverBorrowedPlaces(result, field.value.*, receiver_index);
+    for (effect.variants) |variant| try collectReceiverBorrowedPlaces(result, variant.value.*, receiver_index);
+}
 
 pub const OutputVariantEffect = struct {
     index: u32,

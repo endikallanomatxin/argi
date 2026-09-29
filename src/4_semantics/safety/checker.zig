@@ -594,6 +594,27 @@ pub const SafetyChecker = struct {
                     }
                 }
                 var value = (try self.evaluate(function, virtualize.value, state)).referenceCopy();
+                // A concrete method may return a reference into a receiver
+                // field. Capture that field's generation before its layout is
+                // erased by Virtual dispatch.
+                if (value.referenced_place) |receiver_place| if (self.active_summaries) |summaries| {
+                    var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+                    try dependencies.appendSlice(value.dependencies);
+                    for (self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len]) |method| {
+                        const inference = self.active_summary_inference orelse continue;
+                        const receiver_index = inference.concreteVirtualReceiverIndex(method, virtualize.concrete_type) orelse continue;
+                        const summary = summaries.summaryFor(method) orelse continue;
+                        for (summary.outputs) |output| {
+                            const borrowed = try facts.receiverBorrowedPlaces(self.allocator, output, receiver_index);
+                            for (borrowed) |path| {
+                                var storage = receiver_place;
+                                for (path.projections) |projection| storage = try self.project(storage, projection);
+                                try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, storage) });
+                            }
+                        }
+                    }
+                    value.dependencies = try dependencies.toOwnedSlice();
+                };
                 value.virtual_methods = self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len];
                 break :blk value;
             },
@@ -944,9 +965,9 @@ pub const SafetyChecker = struct {
                 try self.report(source, "fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries", .{});
                 break :blk .{};
             },
-            .allocation, .inherited_reference, .inherited_storage => blk: {
+            .allocation, .allocation_with_anchor, .inherited_reference, .inherited_storage => blk: {
                 const root = try state.tracker.establish(.fresh);
-                if ((primitive == .establish_allocation or primitive == .establish_inherited_storage) and values.len != 0) {
+                if ((primitive == .establish_allocation or primitive == .establish_allocation_with_anchor or primitive == .establish_inherited_storage) and values.len != 0) {
                     for (values[0].storage_capabilities) |capability| {
                         const raw = @intFromEnum(capability);
                         if (raw >= state.storage_capabilities.items.len or state.storage_capabilities.items[raw] != .available)
@@ -956,16 +977,26 @@ pub const SafetyChecker = struct {
                     }
                 }
                 var fields: []const facts.FieldFacts = &.{};
-                if (primitive == .establish_allocation) {
+                if (primitive == .establish_allocation or primitive == .establish_allocation_with_anchor) {
                     const data = try self.allocator.create(facts.ValueFacts);
                     data.* = .{ .dependencies = try self.oneDependency(root) };
-                    const data_field = try self.allocator.alloc(facts.FieldFacts, 1);
-                    data_field[0] = .{ .index = 0, .value = data };
-                    fields = data_field;
+                    const field_count: usize = if (primitive == .establish_allocation_with_anchor) 2 else 1;
+                    const allocation_fields = try self.allocator.alloc(facts.FieldFacts, field_count);
+                    allocation_fields[0] = .{ .index = 0, .value = data };
+                    if (primitive == .establish_allocation_with_anchor and values.len > 4) {
+                        const anchor = try self.allocator.create(facts.ValueFacts);
+                        anchor.* = values[4].referenceCopy();
+                        allocation_fields[1] = .{ .index = 3, .value = anchor };
+                    }
+                    fields = allocation_fields;
                 }
+                var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+                try appendDependencyFact(&dependencies, .{ .root = root });
+                if (primitive == .establish_allocation_with_anchor and values.len > 4)
+                    for (values[4].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
                 break :blk .{
-                    .dependencies = try self.oneDependency(root),
-                    .owned_roots = if (primitive == .establish_allocation) try self.oneRoot(root) else &.{},
+                    .dependencies = try dependencies.toOwnedSlice(),
+                    .owned_roots = if (primitive == .establish_allocation or primitive == .establish_allocation_with_anchor) try self.oneRoot(root) else &.{},
                     .fields = fields,
                 };
             },
@@ -1517,6 +1548,12 @@ pub const SafetyChecker = struct {
             for (input_path.projections) |projection| target = try self.project(target, projection);
             try appendRootFact(hidden, try self.storageGeneration(state, target));
         }
+        for (effect.input_generation_dependencies) |input_path| {
+            if (input_path.input_index >= arguments.len) continue;
+            var target = arguments[input_path.input_index].referenced_place orelse continue;
+            for (input_path.projections) |projection| target = try self.project(target, projection);
+            try appendRootFact(hidden, try self.storageGeneration(state, target));
+        }
         for (effect.input_dependencies) |dependency| {
             if (dependency.path.input_index >= arguments.len) continue;
             const input = try self.projectValueFacts(arguments[dependency.path.input_index], dependency.path.projections);
@@ -1647,6 +1684,12 @@ pub const SafetyChecker = struct {
                 referenced_place = target;
             }
         }
+        for (effect.input_generation_dependencies) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var target = arguments[path.input_index].referenced_place orelse continue;
+            for (path.projections) |projection| target = try self.project(target, projection);
+            try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
+        }
         for (effect.input_owned_roots) |path| {
             if (path.input_index >= arguments.len) continue;
             var place = arguments[path.input_index].referenced_place orelse continue;
@@ -1661,6 +1704,8 @@ pub const SafetyChecker = struct {
         for (effect.input_dependencies) |dependency| {
             if (dependency.path.input_index >= arguments.len) continue;
             var input = try self.projectValueFacts(arguments[dependency.path.input_index], dependency.path.projections);
+            if (dependency.transfers_ownership and dependency.path.projections.len != 0)
+                try self.activateConditionalOwnedRoots(state, input);
             if (!dependency.transfers_ownership) input.owned_roots = &.{};
             result = try self.mergeValueFacts(result, input);
         }

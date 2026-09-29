@@ -6142,6 +6142,26 @@ test "feature_tests/system/49X_initializer_temporary_ends_backing" {
     try buildExpectFail("tests/feature_tests/system/49X_initializer_temporary_ends_backing", "main.rg:28:24: error: reference depends on a root that has ended");
 }
 
+test "feature_tests/system/49_general_purpose_allocator_on_arena" {
+    const test_path = "tests/feature_tests/system/49_general_purpose_allocator_on_arena";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/system/49X_general_purpose_allocator_on_arena_reset_live" {
+    try buildExpectFail(
+        "tests/feature_tests/system/49X_general_purpose_allocator_on_arena_reset_live",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/system/49X_general_purpose_large_on_arena_reset_live" {
+    try buildExpectFail(
+        "tests/feature_tests/system/49X_general_purpose_large_on_arena_reset_live",
+        "reference depends on a root that has ended",
+    );
+}
+
 test "feature_tests/system/50X_initializer_summary_ends_backing" {
     try buildExpectFail("tests/feature_tests/system/50X_initializer_summary_ends_backing", "reference depends on a root that has ended");
 }

@@ -134,6 +134,7 @@ fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     if (a.explicit_dependency != b.explicit_dependency or
         a.input_dependencies.len != b.input_dependencies.len or
         a.input_places.len != b.input_places.len or
+        a.input_generation_dependencies.len != b.input_generation_dependencies.len or
         a.input_place_values.len != b.input_place_values.len or
         a.opaque_generation_dependencies.len != b.opaque_generation_dependencies.len or
         a.opaque_storage_dependencies.len != b.opaque_storage_dependencies.len or
@@ -150,6 +151,7 @@ fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
         if (left.transfers_ownership != right.transfers_ownership or !inputPathEql(left.path, right.path)) return false;
     }
     for (a.input_places, b.input_places) |left, right| if (!inputPathEql(left, right)) return false;
+    for (a.input_generation_dependencies, b.input_generation_dependencies) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_place_values, b.input_place_values) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.opaque_generation_dependencies, b.opaque_generation_dependencies) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.opaque_storage_dependencies, b.opaque_storage_dependencies) |left, right| if (!inputPathEql(left, right)) return false;

@@ -81,10 +81,6 @@ shared lifetime and releases backing storage; later allocations belong to a
 new generation, so references into the old one remain stale. Releasing one
 child does not release a whole arena block.
 
-> [!IMPLEMENTATION]
-> A `GeneralPurposeAllocator` backed by an `ArenaAllocator` is not yet accepted
-> by the allocator safety summaries.
-
 `CAllocator(.ffi = system.ffi)` supports explicit libc storage
 interoperation. Public `malloc`, `aligned_alloc`, and `free` wrappers also
 require `.ffi`.
