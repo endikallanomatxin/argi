@@ -2,8 +2,8 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    source ::= DynamicArray#(.t: UIntNative)(.capacity = 1)
-    destination ::= DynamicArray#(.t: UIntNative)(.capacity = 1)
+    source ::= unwrap_or_abort(.value = DynamicArray#(.t: UIntNative)(.capacity = 1))
+    destination ::= unwrap_or_abort(.value = DynamicArray#(.t: UIntNative)(.capacity = 1))
 
     push#(.t: UIntNative)(.self = $&source, .value = 7)
     value_result ::= get(.self = &source, .index = 0).result

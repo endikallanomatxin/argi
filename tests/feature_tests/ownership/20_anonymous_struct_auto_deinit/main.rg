@@ -43,7 +43,7 @@ main(.system: System) -> (.status_code: Int32) := {
             .text: String
             .ok: Bool
         ) = (
-            .text = String(.allocator = $&allocator_storage, .length = 3),
+            .text = unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .length = 3)),
             .ok = 1 == 1,
         )
         if value.ok {

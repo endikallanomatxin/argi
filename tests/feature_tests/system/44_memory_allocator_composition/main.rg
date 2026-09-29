@@ -31,7 +31,7 @@ main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= $&allocator_storage
     if tracker.allocations != 0 { status_code = 1
         return }
-    array ::= DynamicArray#(.t: UInt8)(.capacity = 16)
+    array ::= unwrap_or_abort(.value = DynamicArray#(.t: UInt8)(.capacity = 16))
     push#(.t: UInt8)(.self = $&array, .value = 65)
     deinit#(.t: UInt8)(.self = $&array)
     if tracker.allocations == 0 or tracker.allocations != tracker.deallocations { status_code = 2

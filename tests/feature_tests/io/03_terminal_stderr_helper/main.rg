@@ -29,7 +29,7 @@ main(.system: System) -> (.status_code: Int32) := {
         .flush_count = 0,
     )
     assume stderr ::= $&stderr_storage
-    text ::= String(.length = 1)
+    text ::= unwrap_or_abort(.value = String(.length = 1))
     bytes_set(.string = $&text, .index = 0, .value = 69)
     view ::= as_view(.self = &text)
 

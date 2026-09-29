@@ -24,7 +24,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         ..error _ { status_code = 1 }
         ..ok ~ payload {
             item ::= Tracked(.allocation = ~payload)
-            array ::= DynamicArray#(.t: Tracked)(.capacity = 1)
+            array ::= unwrap_or_abort(.value = DynamicArray#(.t: Tracked)(.capacity = 1))
             push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~item)
             take_last(.array = $&array)
             if drops != 1 or length#(.t: Tracked)(.self = &array).count != 0 {

@@ -44,7 +44,7 @@ main(.system: System) -> (.status_code: Int32) := {
 
     if 1 == 1 {
         value : Wrapper = (
-            .text = String(.allocator = $&allocator_storage, .length = 3),
+            .text = unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .length = 3)),
         )
         if value.text.length != 3 {
             status_code = 1

@@ -2,7 +2,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    buffer ::= String(.allocator = $&allocator_storage, .capacity = 1)
+    buffer ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .capacity = 1))
     i :: UIntNative = 0
     while i < 2 {
         pushed ::= push_byte(.self = $&buffer, .byte = 65, .allocator = $&allocator_storage)

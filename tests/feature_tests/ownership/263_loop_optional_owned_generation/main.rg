@@ -5,7 +5,7 @@ Holder : Type = (
 init(.p: $&Holder, .allocator: $&Allocator) -> () := {
     assume allocator
 
-    p&.buffer = String(.allocator = allocator, .capacity = 1)
+    p&.buffer = unwrap_or_abort(.value = String(.allocator = allocator, .capacity = 1))
 }
 
 deinit(.self: $&Holder, .allocator: $&Allocator) -> () := {

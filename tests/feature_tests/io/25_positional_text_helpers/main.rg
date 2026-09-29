@@ -59,7 +59,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     stderr_storage :: DummyOutput = DummyOutput()
     assume stderr ::= $&stderr_storage
 
-    text ::= String(.length = 1)
+    text ::= unwrap_or_abort(.value = String(.length = 1))
     bytes_set(.string = $&text, .index = 0, .value = 65)
     view ::= as_view(.self = &text)
 
@@ -93,7 +93,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .index = 0
     )
     assume stdin ::= $&stdin_storage
-    buffer ::= String(.allocator = $&allocator_storage, .capacity = 4)
+    buffer ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .capacity = 4))
     into_buffer ::= read_line_into_buffer($&buffer)
     if is(.value = into_buffer, .variant = ..ok) {
     } else {

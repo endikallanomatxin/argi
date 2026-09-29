@@ -31,7 +31,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                     match second_result {
                         ..error _ { status_code = 3 }
                         ..ok ~ second_payload {
-                            array ::= DynamicArray#(.t: BorrowingOwner)(.capacity = 1)
+                            array ::= unwrap_or_abort(.value = DynamicArray#(.t: BorrowingOwner)(.capacity = 1))
                             first ::= BorrowingOwner(.id = 1, .allocation = ~first_payload, .borrowed = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&external, .offset = 0).reference)
                             second ::= BorrowingOwner(.id = 2, .allocation = ~second_payload, .borrowed = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&external, .offset = 0).reference)
                             first_push ::= push#(.t: BorrowingOwner)(.self = $&array, .value = ~first)

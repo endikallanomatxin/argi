@@ -2,7 +2,7 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    dyn ::= DynamicArray#(.t: Int32)(.capacity = 2)
+    dyn ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))
     #defer deinit(.self = $&dyn, .allocator = $&allocator_storage)
     push(.self = $&dyn, .value = 7, .allocator = $&allocator_storage)
     push(.self = $&dyn, .value = 8, .allocator = $&allocator_storage)

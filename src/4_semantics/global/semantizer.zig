@@ -319,6 +319,7 @@ pub fn semantizeWithOptions(
         .modules = modules,
         .offsets = relocation.offsets.items,
         .core = &core,
+        .diagnostics = options.diagnostics,
     };
     var control = control_mod.Resolver{
         .allocator = allocator,

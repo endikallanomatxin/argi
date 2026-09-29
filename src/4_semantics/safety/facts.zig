@@ -23,6 +23,7 @@ pub const OutputVariantEffect = base.OutputVariantEffect;
 pub const PlacePostState = base.PlacePostState;
 pub const OpaqueOwnershipConsumption = base.OpaqueOwnershipConsumption;
 pub const SafetySummary = base.SafetySummary;
+pub const OutcomePostStates = base.OutcomePostStates;
 pub const OpaqueStorageEffect = base.OpaqueStorageEffect;
 
 pub const OpaqueProvenance = struct {
@@ -49,6 +50,7 @@ pub const ValueFacts = struct {
     /// this in transient safety facts lets exact dispatch survive bindings and
     /// ordinary value copies without reintroducing graph-object identity.
     virtual_methods: []const graph.GlobalFunctionId = &.{},
+    pending_initialization: ?*const PendingInitialization = null,
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
         return .{
@@ -60,6 +62,7 @@ pub const ValueFacts = struct {
             .referenced_place = self.referenced_place,
             .opaque_provenance = self.opaque_provenance,
             .virtual_methods = self.virtual_methods,
+            .pending_initialization = self.pending_initialization,
         };
     }
 
@@ -77,6 +80,13 @@ pub const ValueFacts = struct {
     }
 };
 
+pub const PendingInitialization = struct {
+    destination: Place,
+    success_effect: ValueEffect,
+    arguments: []const ValueFacts,
+    ok_variant: u32,
+};
+
 pub const FieldFacts = struct {
     index: u32,
     value: *const ValueFacts,
@@ -92,6 +102,7 @@ pub const PlaceFacts = struct {
     initializedness: value_state.Initializedness = .initialized,
     moved_at: ?primitives.SourceRef = null,
     value: ValueFacts = .{},
+    pending_initialization: ?*const PendingInitialization = null,
 };
 
 pub const Tracker = struct {

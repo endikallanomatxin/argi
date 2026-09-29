@@ -182,3 +182,10 @@ Errable #(.t: Type, .reasons: Type) : Type = (
     ..ok t
     ..error Error#(.reasons = reasons)
 )
+
+unwrap_or_abort#(.t: Type, .reasons: Type)(.value: Errable#(.t: t, .reasons: reasons)) -> (.result: t) := {
+    match value {
+        ..ok ~ payload { result = ~payload }
+        ..error _ { abort }
+    }
+}

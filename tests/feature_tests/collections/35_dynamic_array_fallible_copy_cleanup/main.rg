@@ -41,12 +41,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    source ::= DynamicArray#(.t: String)(.capacity = 3)
+    source ::= unwrap_or_abort(.value = DynamicArray#(.t: String)(.capacity = 3))
     #defer deinit#(.t: String)(.self = $&source)
 
-    first ::= String(.length = 1)
-    second ::= String(.length = 1)
-    third ::= String(.length = 1)
+    first ::= unwrap_or_abort(.value = String(.length = 1))
+    second ::= unwrap_or_abort(.value = String(.length = 1))
+    third ::= unwrap_or_abort(.value = String(.length = 1))
     push_assume_capacity#(.t: String)(.self = $&source, .value = ~first)
     push_assume_capacity#(.t: String)(.self = $&source, .value = ~second)
     push_assume_capacity#(.t: String)(.self = $&source, .value = ~third)

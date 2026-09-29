@@ -14,7 +14,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         ..error _ { status_code = 1 }
         ..ok ~ payload {
             value ::= Tracked(.allocation = ~payload)
-            array ::= DynamicArray#(.t: Tracked)(.capacity = 1)
+            array ::= unwrap_or_abort(.value = DynamicArray#(.t: Tracked)(.capacity = 1))
             push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~value)
             deinit(.self = $&value)
             deinit#(.t: Tracked)(.self = $&array)

@@ -111,12 +111,18 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
     if (a.outputs.len != b.outputs.len or
         a.required_live_inputs.len != b.required_live_inputs.len or
         a.input_post_states.len != b.input_post_states.len or
+        a.outcome_post_states.len != b.outcome_post_states.len or
         a.opaque_storage_effects.len != b.opaque_storage_effects.len or
         a.opaque_storage_empties.len != b.opaque_storage_empties.len) return false;
 
     for (a.outputs, b.outputs) |left, right| if (!valueEffectEql(left, right)) return false;
     for (a.required_live_inputs, b.required_live_inputs) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_post_states, b.input_post_states) |left, right| if (!postStateEql(left, right)) return false;
+    for (a.outcome_post_states, b.outcome_post_states) |left, right| {
+        if (left.variant_index != right.variant_index or left.input_post_states.len != right.input_post_states.len) return false;
+        for (left.input_post_states, right.input_post_states) |left_state, right_state|
+            if (!postStateEql(left_state, right_state)) return false;
+    }
     for (a.opaque_storage_effects, b.opaque_storage_effects) |left, right| {
         if (!inputPathEql(left.storage, right.storage) or !valueEffectEql(left.hidden_dependencies, right.hidden_dependencies)) return false;
     }

@@ -14,7 +14,7 @@ main(.system: System) -> (.status_code: Int32) := {
     values : Array#(.n = 3, .t: Int32) = (3, 4, 5)
     array_sum :: Int32 = sum_iterable(.items = &values).sum
 
-    dyn :: DynamicArray#(.t: Int32) = DynamicArray#(.t: Int32)(.capacity = 2)
+    dyn :: DynamicArray#(.t: Int32) = unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))
     dyn | push(.self = $&_, .value = 2)
     dyn | push(.self = $&_, .value = 6)
     dynamic_sum :: Int32 = sum_iterable(.items = &dyn).sum

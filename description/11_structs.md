@@ -75,6 +75,11 @@ types, not on a function's output type. An initializer must leave a complete
 value on success. When a visible `init` exists, callers construct through
 that operation rather than bypassing it with a field initializer.
 
+An initializer that can fail returns one `Errable#(.t: Void, .reasons: R)`.
+Then `Point(...)` returns `Errable#(.t: Point, .reasons: R)`, and `..ok`
+contains the constructed point. The initializer must leave its destination
+complete on success and empty on error.
+
 ## Layout
 
 `size_of(.type = T)` and `alignment_of(.type = T)` return `UIntNative`

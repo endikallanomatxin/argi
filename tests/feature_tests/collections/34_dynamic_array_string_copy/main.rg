@@ -2,9 +2,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    array ::= DynamicArray#(.t: String)(.capacity = 1)
+    array ::= unwrap_or_abort(.value = DynamicArray#(.t: String)(.capacity = 1))
     #defer deinit#(.t: String)(.self = $&array)
-    text ::= String(.length = 1)
+    text ::= unwrap_or_abort(.value = String(.length = 1))
     bytes_set(.string = $&text, .index = 0, .value = 65)
     pushed ::= push#(.t: String)(.self = $&array, .value = ~text)
     if is(.value = pushed, .variant = ..error) {

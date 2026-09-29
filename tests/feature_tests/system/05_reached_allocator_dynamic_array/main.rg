@@ -35,7 +35,7 @@ exercise(
 ) -> () := {
     assume allocator
 
-    arr ::= DynamicArray#(.t: Int32)(.capacity = 1)
+    arr ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 1))
     push(.self = $&arr, .value = 10)
     push(.self = $&arr, .value = 20)
 }

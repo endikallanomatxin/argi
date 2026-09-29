@@ -29,7 +29,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    array ::= DynamicArray#(.t: Tracked)(.capacity = 2)
+    array ::= unwrap_or_abort(.value = DynamicArray#(.t: Tracked)(.capacity = 2))
     first_result ::= make_tracked(.allocator = $&allocator_storage, .id = 1)
     match first_result {
         ..error _ { status_code = 1 }

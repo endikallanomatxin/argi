@@ -59,20 +59,17 @@ init(
     .p: $&Path,
     .view: StringView,
     .allocator: $&Allocator,
-) -> () := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     assume allocator
 
-    text :: String = String(.allocator = allocator, .capacity = view.length)
-    pushed ::= push_view(.self = $&text, .view = view)
-    match pushed {
-        ..ok _ {
+    created ::= path_with_view(.view = view, .allocator = allocator)
+    match created {
+        ..ok ~ payload {
+            p& = ~payload
+            result = ..ok Void()
         }
-        ..error _ {
-        }
+        ..error _ { result = ..error(.reason = ..out_of_memory) }
     }
-    p& = (
-        .text = ~text,
-    )
 }
 
 path_with_view(
@@ -83,8 +80,8 @@ path_with_view(
 
     created ::= string_with_capacity(.allocator = allocator, .capacity = view.length)
     match created {
-        ..ok payload {
-            text ::= payload
+        ..ok ~ payload {
+            text ::= ~payload
             pushed ::= push_view(.self = $&text, .view = view, .allocator = allocator)
             match pushed {
                 ..ok _ {

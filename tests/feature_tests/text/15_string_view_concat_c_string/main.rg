@@ -2,7 +2,7 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    left :: String = String(.allocator = $&allocator_storage, .length = 5)
+    left :: String = unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .length = 5))
     bytes_set(.string = $&left, .index = 0, .value = 104)
     bytes_set(.string = $&left, .index = 1, .value = 101)
     bytes_set(.string = $&left, .index = 2, .value = 108)

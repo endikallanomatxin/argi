@@ -6157,3 +6157,69 @@ test "feature_tests/system/53X_general_purpose_small_double_free" {
     try expectSuccessfulBuild(test_path);
     try runExpectFailure(test_path);
 }
+
+test "feature_tests/types/261_fallible_constructor" {
+    const test_path = "tests/feature_tests/types/261_fallible_constructor";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/265_direct_fallible_init" {
+    const test_path = "tests/feature_tests/types/265_direct_fallible_init";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/293_fallible_constructor_owns_success" {
+    const test_path = "tests/feature_tests/ownership/293_fallible_constructor_owns_success";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/text/20_fallible_string_constructor" {
+    const test_path = "tests/feature_tests/text/20_fallible_string_constructor";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/262X_fallible_init_success_without_value" {
+    try buildExpectFail(
+        "tests/feature_tests/types/262X_fallible_init_success_without_value",
+        "initializer returns ..ok without fully initializing its destination",
+    );
+}
+
+test "feature_tests/types/263X_fallible_init_error_with_value" {
+    try buildExpectFail(
+        "tests/feature_tests/types/263X_fallible_init_error_with_value",
+        "initializer returns ..error with a live value in its destination",
+    );
+}
+
+test "feature_tests/types/264X_fallible_init_requires_outcome" {
+    try buildExpectFail(
+        "tests/feature_tests/types/264X_fallible_init_requires_outcome",
+        "is maybe_initialized and cannot be used",
+    );
+}
+
+test "feature_tests/types/266X_direct_fallible_init_error_leaves_empty" {
+    try buildExpectFail(
+        "tests/feature_tests/types/266X_direct_fallible_init_error_leaves_empty",
+        "value was deinitialized",
+    );
+}
+
+test "feature_tests/ownership/294X_fallible_constructor_preserves_root" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/294X_fallible_constructor_preserves_root",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/types/267X_initializer_wrong_result" {
+    try buildExpectFail(
+        "tests/feature_tests/types/267X_initializer_wrong_result",
+        "initializer must return () or one Errable<Void, R> result",
+    );
+}

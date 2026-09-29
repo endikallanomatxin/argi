@@ -32,7 +32,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     deinit(.self = $&second)
                     if has_live_allocations(.self = &allocator_storage).has_live { status_code = 10
                         return }
-                    many ::= DynamicArray#(.t: Allocation)(.allocator = $&allocator_storage, .capacity = 520)
+                    many ::= unwrap_or_abort(.value = DynamicArray#(.t: Allocation)(.allocator = $&allocator_storage, .capacity = 520))
                     i :: UIntNative = 0
                     while i < 520 {
                         next_result ::= allocate(.self = $&allocator_storage, .size = 8, .alignment = 8)

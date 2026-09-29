@@ -2,10 +2,10 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    full :: Path = Path(
+    full :: Path = unwrap_or_abort(.value = Path(
         .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "/tmp/demo/file.txt"),
-    )
+    ))
 
     if is_absolute(.self = &full).ok {
     } else {
@@ -53,14 +53,14 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    base :: Path = Path(
+    base :: Path = unwrap_or_abort(.value = Path(
         .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "/tmp/demo"),
-    )
-    child :: Path = Path(
+    ))
+    child :: Path = unwrap_or_abort(.value = Path(
         .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "child.txt"),
-    )
+    ))
 
     joined_result ::= join(.left = &base, .right = &child, .allocator = $&allocator_storage)
     match joined_result {

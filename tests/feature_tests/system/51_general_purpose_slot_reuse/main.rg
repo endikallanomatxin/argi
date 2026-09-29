@@ -30,7 +30,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator ::= GeneralPurposeAllocator(.allocator = $&tracker)
     -- The receipt list uses a separate allocator so backing counts describe
     -- only the size class under test: one chunk holds 512 eight-byte slots.
-    receipts ::= DynamicArray#(.t: Allocation)(.allocator = system.page_allocator, .capacity = 512)
+    receipts ::= unwrap_or_abort(.value = DynamicArray#(.t: Allocation)(.allocator = system.page_allocator, .capacity = 512))
     i :: UIntNative = 0
     first_address :: UIntNative = 0
     middle_address :: UIntNative = 0

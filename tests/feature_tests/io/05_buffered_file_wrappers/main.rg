@@ -5,11 +5,11 @@ main(.system: System) -> (.status_code: Int32) := {
 
     input_file ::= File(.stream_address = 0, .should_close = 0 == 1)
     init_stdin(.p = $&input_file)
-    input_reader ::= BufferedReader#(.base_type: File)(.allocator = $&allocator_storage, .base = $&input_file, .capacity = 4)
+    input_reader ::= unwrap_or_abort(.value = BufferedReader#(.base_type: File)(.allocator = $&allocator_storage, .base = $&input_file, .capacity = 4))
 
     output_file ::= File(.stream_address = 0, .should_close = 0 == 1)
     init_stdout(.p = $&output_file)
-    output_writer ::= BufferedWriter#(.base_type: File)(.allocator = $&allocator_storage, .base = $&output_file, .capacity = 4)
+    output_writer ::= unwrap_or_abort(.value = BufferedWriter#(.base_type: File)(.allocator = $&allocator_storage, .base = $&output_file, .capacity = 4))
 
     if is_open(.self = &input_file).ok {
     } else {

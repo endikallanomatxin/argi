@@ -2,7 +2,7 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    text ::= String(.length = 0)
+    text ::= unwrap_or_abort(.value = String(.length = 0))
 
     if text.length != 0 {
         status_code = 1

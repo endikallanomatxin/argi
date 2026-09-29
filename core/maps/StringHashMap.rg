@@ -101,7 +101,7 @@ string_hash_map_prepare_buckets(
 ) -> () := {
     assume allocator
 
-    init#(.t: UIntNative)(.p = buckets, .allocator = allocator, .capacity = capacity)
+    buckets& = unwrap_or_abort(.value = DynamicArray#(.t: UIntNative)(.allocator = allocator, .capacity = capacity))
 
     i :: UIntNative = 0
     while i < capacity {
@@ -122,7 +122,7 @@ init#(.value: Type) (
         bucket_capacity = 1
     }
 
-    init#(.t: StringHashMapEntry#(.value: value))(.p = $&p&.entries, .allocator = allocator, .capacity = bucket_capacity)
+    p&.entries = unwrap_or_abort(.value = DynamicArray#(.t: StringHashMapEntry#(.value: value))(.allocator = allocator, .capacity = bucket_capacity))
     string_hash_map_prepare_buckets(.allocator = allocator, .buckets = $&p&.buckets, .capacity = bucket_capacity)
 }
 

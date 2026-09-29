@@ -63,7 +63,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= $&allocator_storage
 
     backing ::= FailSecondAllocator(.ffi = system.ffi)
-    array ::= DynamicArray#(.t: Tracked)(.allocator = $&backing, .capacity = 1)
+    array ::= unwrap_or_abort(.value = DynamicArray#(.t: Tracked)(.allocator = $&backing, .capacity = 1))
     first_result ::= make_tracked(.allocator = $&allocator_storage, .id = 1)
     match first_result {
         ..error _ { status_code = 1 }

@@ -38,7 +38,7 @@ main(.system: System) -> (.status_code: Int32) := {
     )
     assume allocator ::= $&allocator_storage
 
-    text ::= String(.length = 3)
+    text ::= unwrap_or_abort(.value = String(.length = 3))
     deinit(.self = $&text)
 
     status_code = allocator_storage.alloc_count * 10 + allocator_storage.dealloc_count

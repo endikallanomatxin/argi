@@ -12,6 +12,8 @@ const generic_functions_mod = @import("generic_functions.zig");
 const types = @import("types.zig");
 const abstract_mod = @import("abstracts.zig");
 const call_compatibility = @import("call_compatibility.zig");
+const initializer_contract = @import("initializer_contract.zig");
+const diagnostics_mod = @import("../../1_base/diagnostic.zig");
 
 /// Resolves call syntax whose callee is a declared type. A visible `init`
 /// whose first input is `$&ConstructedType` owns construction; only types with
@@ -21,6 +23,7 @@ pub const Resolver = struct {
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     core: *core_mod.Resolver,
+    diagnostics: ?*diagnostics_mod.Diagnostics = null,
     // GlobalSema wires these after creating the mutually recursive resolvers.
     // Constructor probes share their caches and services with normal calls.
     generics: ?*generic_mod.Resolver = null,
@@ -96,7 +99,7 @@ pub const Resolver = struct {
                 self.core.stats.calls += 1;
                 return .{
                     .source = source,
-                    .ty = ty,
+                    .ty = try self.constructedType(generics, ty, function_id, source),
                     .content = .{ .type_initializer = .{
                         .type_decl = declaration_id,
                         .init_fn = function_id,
@@ -126,7 +129,7 @@ pub const Resolver = struct {
                 self.core.stats.calls += 1;
                 return .{
                     .source = source,
-                    .ty = ty,
+                    .ty = try self.constructedType(generics, ty, selected, source),
                     .content = .{ .type_initializer = .{
                         .type_decl = declaration_id,
                         .init_fn = selected,
@@ -208,7 +211,7 @@ pub const Resolver = struct {
                 .len = function.input.len - 1,
             };
             if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function))) return .deferred;
-            self.writeInitializer(o, value, reference, declaration_id, ty, selected, input);
+            try self.writeInitializer(o, value, reference, declaration_id, ty, selected, input);
             return .resolved;
         }
 
@@ -267,7 +270,7 @@ pub const Resolver = struct {
                             .len = function.input.len - 1,
                         };
                         if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function))) return .deferred;
-                        self.writeInitializer(o, value, reference, declaration_id, expected, function_id, input);
+                        try self.writeInitializer(o, value, reference, declaration_id, expected, function_id, input);
                         committed = true;
                         return .resolved;
                     }
@@ -293,7 +296,7 @@ pub const Resolver = struct {
                 .len = function.input.len - 1,
             };
             if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function))) return .deferred;
-            self.writeInitializer(o, value, reference, declaration_id, ty, function_id, input);
+            try self.writeInitializer(o, value, reference, declaration_id, ty, function_id, input);
             committed = true;
             return .resolved;
         }
@@ -356,7 +359,7 @@ pub const Resolver = struct {
                 .len = function.input.len - 1,
             };
             if (!try self.core.completeCallInputFieldsWithReach(user_fields, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function))) return .deferred;
-            self.writeInitializer(o, value, reference, declaration_id, ty, function_id, input);
+            try self.writeInitializer(o, value, reference, declaration_id, ty, function_id, input);
             committed = true;
             return .resolved;
         }
@@ -376,14 +379,19 @@ pub const Resolver = struct {
         ty: global_sg.GlobalTypeId,
         function_id: global_sg.GlobalFunctionId,
         input: global_sg.GlobalNodeId,
-    ) void {
+    ) !void {
         const target = globalizer.globalNode(o, value.node);
+        const source = primitives.SourceRef{
+            .file_index = o.file_base + reference.source.file_index,
+            .offset = reference.source.offset,
+        };
+        const result_type = try self.constructedType(self.generics.?, ty, function_id, source);
         self.graph.nodes.items[@intFromEnum(target)] = .{
             .source = .{
                 .file_index = o.file_base + reference.source.file_index,
                 .offset = reference.source.offset,
             },
-            .ty = ty,
+            .ty = result_type,
             .content = .{ .type_initializer = .{
                 .type_decl = declaration_id,
                 .init_fn = function_id,
@@ -391,6 +399,43 @@ pub const Resolver = struct {
             } },
         };
         self.core.stats.calls += 1;
+    }
+
+    fn constructedType(
+        self: *Resolver,
+        generics: *generic_mod.Resolver,
+        ty: global_sg.GlobalTypeId,
+        function_id: global_sg.GlobalFunctionId,
+        source: primitives.SourceRef,
+    ) !global_sg.GlobalTypeId {
+        const result = initializer_contract.classify(self.graph, function_id);
+        if (result == .invalid) {
+            if (self.diagnostics) |diagnostics| {
+                var file_id: u32 = 0;
+                if (source.file_index < self.graph.files.items.len) {
+                    const file = self.graph.files.items[source.file_index];
+                    const name = self.graph.text(file.path);
+                    const dir = self.graph.text(self.graph.modules.items[@intFromEnum(file.module)].dir);
+                    for (diagnostics.source_files, 0..) |candidate, index| {
+                        if (std.mem.eql(u8, std.fs.path.basename(candidate.path), name) and
+                            std.mem.eql(u8, std.fs.path.dirname(candidate.path) orelse ".", dir))
+                        {
+                            file_id = @intCast(index);
+                            break;
+                        }
+                    }
+                }
+                try diagnostics.add(
+                    .{ .file = @enumFromInt(file_id), .offset = source.offset },
+                    .semantic,
+                    "initializer must return () or one Errable<Void, R> result",
+                    .{},
+                );
+                return error.Reported;
+            }
+            return error.InvalidInitializerResult;
+        }
+        return initializer_contract.constructedType(self.core.allocator, self.graph, generics, ty, result);
     }
 
     fn writeStructuralConstruction(

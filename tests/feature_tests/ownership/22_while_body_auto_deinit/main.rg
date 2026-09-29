@@ -40,7 +40,7 @@ main(.system: System) -> (.status_code: Int32) := {
 
     i :: Int32 = 0
     while i < 2 {
-        text ::= String(.allocator = $&allocator_storage, .length = 3)
+        text ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .length = 3))
         if text.length != 3 {
             status_code = 1
             return

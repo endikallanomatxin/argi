@@ -7,7 +7,7 @@ main(.system: System) -> (.status_code: Int32) := {
     third_offset :: UIntNative = 2
     insert_offset :: UIntNative = 1
 
-    arr :: DynamicArray#(.t: Int32) = DynamicArray#(.t: Int32)(.capacity = initial_capacity)
+    arr :: DynamicArray#(.t: Int32) = unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = initial_capacity))
     #defer deinit(.self = $&arr)
 
     push(.self = $&arr, .value = 10)

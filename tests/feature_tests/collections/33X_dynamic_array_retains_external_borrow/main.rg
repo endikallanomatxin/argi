@@ -14,7 +14,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             match owned_result {
                 ..error _ { status_code = 2 }
                 ..ok ~ owned_payload {
-                    array ::= DynamicArray#(.t: BorrowingOwner)(.capacity = 1)
+                    array ::= unwrap_or_abort(.value = DynamicArray#(.t: BorrowingOwner)(.capacity = 1))
                     value ::= BorrowingOwner(.allocation = ~owned_payload, .borrowed = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&external, .offset = 0).reference)
                     push_assume_capacity#(.t: BorrowingOwner)(.self = $&array, .value = ~value)
                     deinit(.self = $&external)
