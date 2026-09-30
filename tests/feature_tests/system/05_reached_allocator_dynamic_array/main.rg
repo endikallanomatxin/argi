@@ -50,5 +50,9 @@ main(.system: System) -> (.status_code: Int32) := {
 
     exercise()
 
+    if allocator_storage.alloc_count != 2 or allocator_storage.dealloc_count != 2 {
+        status_code = 99
+        return
+    }
     status_code = allocator_storage.alloc_count * 10 + allocator_storage.dealloc_count
 }

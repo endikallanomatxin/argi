@@ -1393,24 +1393,40 @@ pub const Syntaxer = struct {
         return lhs;
     }
 
+    // Arithmetic has two left-associative tiers. Keeping multiplication and
+    // division tighter than addition is essential for byte-offset expressions.
     fn parseBinaryExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
-        var lhs = try self.parsePipeExpr();
-
-        if (self.currentContent() == .binary_operator) {
+        var lhs = try self.parseMultiplicativeExpr();
+        while (self.currentContent() == .binary_operator) {
             const op = self.currentContent().binary_operator;
-            const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            self.advanceOne();
-            const rhs = try self.parseBinaryExpr();
             const tag: syn.Node.Tag = switch (op) {
                 .addition => .binary_add,
                 .subtraction => .binary_subtract,
+                else => break,
+            };
+            const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+            self.advanceOne();
+            const rhs = try self.parseMultiplicativeExpr();
+            lhs = try self.addNode(tag, op_token, .{ .node_and_node = .{ .first = lhs, .second = rhs } });
+        }
+        return lhs;
+    }
+
+    fn parseMultiplicativeExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        var lhs = try self.parsePipeExpr();
+        while (self.currentContent() == .binary_operator) {
+            const op = self.currentContent().binary_operator;
+            const tag: syn.Node.Tag = switch (op) {
                 .multiplication => .binary_multiply,
                 .division => .binary_divide,
                 .modulo => .binary_modulo,
+                else => break,
             };
+            const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+            self.advanceOne();
+            const rhs = try self.parsePipeExpr();
             lhs = try self.addNode(tag, op_token, .{ .node_and_node = .{ .first = lhs, .second = rhs } });
         }
-
         return lhs;
     }
 

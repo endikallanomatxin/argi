@@ -42,6 +42,23 @@ total ::= 0
 > Support simultaneous assignment such as `x, y = y, x`. Define when the
 > right-hand sides are evaluated and how moves and cleanup work.
 
+## Arithmetic
+
+Multiplication, division, and modulo (`*`, `/`, `%`) bind more tightly than
+addition and subtraction (`+`, `-`). Operators within either tier associate
+left to right. Thus `index * stride + header_size` adds the header after
+multiplying the index, and `total - used - reserved` subtracts both amounts.
+Arithmetic binds more tightly than comparisons.
+
+Parenthesized values use the struct/value syntax; a single parenthesized
+expression is not currently a scalar grouping construct. Use intermediate
+bindings when a calculation needs a different grouping.
+
+> [!QUESTION]
+> Define scalar grouping syntax without making single-field values ambiguous.
+> The relationship between richer pipe expressions and arithmetic also needs
+> to remain explicit as the pipe model grows.
+
 ## Types and values
 
 Named structs and choices declare types. Struct fields use `.name`, and

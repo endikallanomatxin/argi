@@ -2520,7 +2520,7 @@ test "feature_tests/system/04_reached_allocator_string" {
 test "feature_tests/system/05_reached_allocator_dynamic_array" {
     const test_path = "tests/feature_tests/system/05_reached_allocator_dynamic_array";
     try expectSuccessfulBuild(test_path);
-    try runExpect(test_path, 24);
+    try runExpect(test_path, 22);
 }
 
 test "feature_tests/types/15_default_type_initializer_argument" {
@@ -6384,6 +6384,12 @@ test "feature_tests/polymorphism/41_recursive_virtual_summaries" {
 
 test "feature_tests/types/73_error_tracer_shared_log" {
     const path = "tests/feature_tests/types/73_error_tracer_shared_log";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/basics/26_arithmetic_precedence" {
+    const path = "tests/feature_tests/basics/26_arithmetic_precedence";
     try expectSuccessfulBuild(path);
     try run(path);
 }
