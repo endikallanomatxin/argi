@@ -195,6 +195,9 @@ pub const PendingOperation = union(enum) {
     },
     resolve_binary: struct {
         node: ModuleNodeId,
+        // Unresolved global nodes can still be holes; retain the operator's
+        // source in the pending operation for diagnostics before resolution.
+        source: primitives.SourceRef,
         operator: primitives.BinaryOperator,
         left: ModuleNodeId,
         right: ModuleNodeId,
@@ -331,6 +334,7 @@ test "module semantic identities instantiate the shared schema" {
     try std.testing.expectEqual(@as(u32, 3), @intFromEnum(link.binding));
 
     const pending = PendingOperation{ .resolve_binary = .{
+        .source = .{ .file_index = 0, .offset = 0 },
         .node = @enumFromInt(2),
         .operator = .addition,
         .left = @enumFromInt(0),

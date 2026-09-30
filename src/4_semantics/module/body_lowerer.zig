@@ -1,4 +1,5 @@
 const std = @import("std");
+const diagnostics_mod = @import("../../1_base/diagnostic.zig");
 const literals = @import("../semantic_literals.zig");
 const tok = @import("../../2_tokens/token.zig");
 const syn = @import("../../3_syntax/syntax_tree.zig");
@@ -35,11 +36,13 @@ pub fn lowerMissingFunctions(
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !Stats {
     var context = Context{
         .allocator = allocator,
         .graph = graph,
         .files = files,
+        .diagnostics = diagnostics,
         .writer = writer_mod.Writer.init(allocator, graph),
         .bindings = std.array_list.Managed(NamedBinding).init(allocator),
         .refinements = std.array_list.Managed(RefinedValue).init(allocator),
@@ -60,11 +63,13 @@ pub fn lowerInitializerExpression(
     file_index: u32,
     node: syn.NodeIndex,
     expected: ?entities.ModuleTypeId,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !Lowered {
     var context = Context{
         .allocator = allocator,
         .graph = graph,
         .files = files,
+        .diagnostics = diagnostics,
         .writer = writer_mod.Writer.init(allocator, graph),
         .bindings = std.array_list.Managed(NamedBinding).init(allocator),
         .refinements = std.array_list.Managed(RefinedValue).init(allocator),
@@ -89,6 +94,7 @@ const Context = struct {
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
     writer: writer_mod.Writer,
     bindings: std.array_list.Managed(NamedBinding),
     refinements: std.array_list.Managed(RefinedValue),
@@ -269,7 +275,13 @@ const Context = struct {
             .struct_type_literal,
             .choice_type_literal,
             => {},
-            else => return error.UnsupportedInitializerExpression,
+            else => {
+                if (self.diagnostics) |bag| {
+                    try bag.add(self.tree.tokenLocation(self.tree.mainToken(node)), .semantic, "this expression is not supported in an initializer", .{});
+                    return error.Reported;
+                }
+                return error.UnsupportedInitializerExpression;
+            },
         };
         return switch (self.tree.tag(node)) {
             .literal => self.lowerLiteral(node),
@@ -745,6 +757,7 @@ const Context = struct {
         try self.captureAssumedFields(node, assumed.node);
         const visible_bindings = try self.captureVisibleBindings();
         return self.pending(node, .{ .resolve_binary = .{
+            .source = self.sourceRef(node),
             .node = self.nextNodeId(),
             .operator = operator,
             .left = lhs.node,

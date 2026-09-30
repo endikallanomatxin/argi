@@ -1,4 +1,5 @@
 const std = @import("std");
+const diagnostics_mod = @import("../../1_base/diagnostic.zig");
 const syn = @import("../../3_syntax/syntax_tree.zig");
 const graph_mod = @import("graph.zig");
 const body_lowerer = @import("body_lowerer.zig");
@@ -17,11 +18,13 @@ pub fn lower(
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !Stats {
     var ctx = Context{
         .allocator = allocator,
         .graph = graph,
         .files = files,
+        .diagnostics = diagnostics,
         .writer = writer_mod.Writer.init(allocator, graph),
     };
     var stats: Stats = .{};
@@ -38,6 +41,7 @@ const Context = struct {
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
     writer: writer_mod.Writer,
     file_index: u32 = 0,
     tree: *const syn.FileSyntaxTree = undefined,
@@ -229,6 +233,7 @@ const Context = struct {
                 self.file_index,
                 value_node,
                 expected,
+                self.diagnostics,
             );
             self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].initialization = value.node;
             if (unresolved) if (value.ty) |value_ty| {
@@ -289,6 +294,7 @@ const Context = struct {
                 self.file_index,
                 default_node,
                 field_ty,
+                self.diagnostics,
             );
             if (raw_field < semantic_field_base) {
                 try self.graph.semantic.field_semantics.append(self.allocator, .{

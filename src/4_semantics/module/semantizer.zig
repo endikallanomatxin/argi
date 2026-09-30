@@ -80,7 +80,7 @@ pub fn finishLinked(
     // work first; everything after canonicalization consumes one Module* ID
     // space and must not depend on the discovery-time construction prefixes.
     const module_aliases = try module_alias_lowerer.lower(allocator, graph, files);
-    const initializers = try initializer_lowerer.lower(allocator, graph, files);
+    const initializers = try initializer_lowerer.lower(allocator, graph, files, diagnostics);
     try lowerNominalLayouts(allocator, graph, files);
     try canonicalize_storage.run(allocator, graph);
 
@@ -90,7 +90,7 @@ pub fn finishLinked(
     const parameterized_stats = try parameterized_lowerer.lowerLinked(allocator, graph, files, abstract_types);
     // Templates claim abstract interfaces before ordinary body lowering, so
     // each contract body is materialized only after specialization.
-    const bodies = try body_lowerer.lowerMissingFunctions(allocator, graph, files);
+    const bodies = try body_lowerer.lowerMissingFunctions(allocator, graph, files, diagnostics);
     const generic_operators = try generic_operator_lowerer.lower(graph, files);
     const identity_stats = try function_identity_lowerer.lower(graph, files, diagnostics);
     const relation_stats = try abstract_relation_lowerer.lower(allocator, graph, files);

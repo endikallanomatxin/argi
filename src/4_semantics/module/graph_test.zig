@@ -20,7 +20,7 @@ test "deferred struct definitions retain fields with external generic types" {
     defer graph.deinit(allocator);
 
     try std.testing.expectEqual(@as(?module_graph.FieldRange, null), graph.declarations.items[0].struct_fields);
-    _ = try initializer_lowerer.lower(allocator, &graph, &inputs);
+    _ = try initializer_lowerer.lower(allocator, &graph, &inputs, null);
 
     const fields = graph.declarations.items[0].struct_fields.?;
     try std.testing.expectEqual(@as(u32, 1), fields.len);
@@ -39,7 +39,7 @@ test "deferred function interfaces retain external parameter types" {
     defer graph.deinit(allocator);
 
     try std.testing.expectEqual(@as(?module_graph.ModuleFunctionId, null), graph.declarations.items[0].function_id);
-    _ = try initializer_lowerer.lower(allocator, &graph, &inputs);
+    _ = try initializer_lowerer.lower(allocator, &graph, &inputs, null);
 
     const function = graph.functions.items[@intFromEnum(graph.declarations.items[0].function_id.?)];
     try std.testing.expectEqual(@as(u32, 1), function.input.len);

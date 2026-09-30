@@ -6505,3 +6505,21 @@ test "safety wrapper parity for recursion and virtual dispatch" {
     try expectSafetyWrapperParity("tests/feature_tests/ownership/220X_virtual_post_state_dependency_union", "reference depends on a root that has ended");
     try expectSafetyWrapperParity("tests/feature_tests/polymorphism/30X_virtual_dependency_union", "function output cannot depend on a local storage generation that ends before return");
 }
+
+test "feature_tests/basics/27X_mixed_width_arithmetic" {
+    try buildExpectFailExact("tests/feature_tests/basics/27X_mixed_width_arithmetic",
+        \\tests/feature_tests/basics/27X_mixed_width_arithmetic/main.rg:4:22: error: operator '+' is not defined for 'UIntNative' and 'UInt8'
+        \\      invalid ::= wide + narrow
+        \\                       ^
+        \\
+    );
+}
+
+test "feature_tests/basics/28X_unsupported_initializer_expression" {
+    try buildExpectFailExact("tests/feature_tests/basics/28X_unsupported_initializer_expression",
+        \\tests/feature_tests/basics/28X_unsupported_initializer_expression/main.rg:3:19: error: this expression is not supported in an initializer
+        \\  Wrong : Choice = (..first_reason, ..second_reason)
+        \\                    ^
+        \\
+    );
+}

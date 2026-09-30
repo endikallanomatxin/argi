@@ -691,7 +691,7 @@ pub fn semantizeWithOptions(
     };
     if (remaining != 0) {
         if (options.diagnostics) |diagnostics| {
-            if (try diagnoseUnresolvedPointerArithmetic(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+            if (try diagnoseUnresolvedArithmetic(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
             if (try diagnoseUnresolvedDereference(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
@@ -934,7 +934,8 @@ fn diagnoseUnresolvedDereference(
     return false;
 }
 
-fn diagnoseUnresolvedPointerArithmetic(
+fn diagnoseUnresolvedArithmetic(
+    allocator: std.mem.Allocator,
     graph: *const global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
     resolved: []const bool,
@@ -962,13 +963,35 @@ fn diagnoseUnresolvedPointerArithmetic(
             const right = globalizer.globalNode(offsets[module_index], binary.right);
             const left_ty = graph.node(left).ty orelse continue;
             const right_ty = graph.node(right).ty orelse continue;
-            if (graph.semanticType(left_ty) != .pointer and graph.semanticType(right_ty) != .pointer) continue;
-            try diagnostics.add(
-                diagnosticLocation(graph, diagnostics, graph.node(left).source),
-                .semantic,
-                "pointer arithmetic is not allowed; cast explicitly to an integer, perform the arithmetic, and cast back",
-                .{},
-            );
+            if (graph.isTypeUnresolved(left_ty) or graph.isTypeUnresolved(right_ty)) continue;
+            if (graph.semanticType(left_ty) == .pointer or graph.semanticType(right_ty) == .pointer) {
+                try diagnostics.add(
+                    diagnosticLocation(graph, diagnostics, graph.node(left).source),
+                    .semantic,
+                    "pointer arithmetic is not allowed; cast explicitly to an integer, perform the arithmetic, and cast back",
+                    .{},
+                );
+            } else {
+                var left_name = std.array_list.Managed(u8).init(allocator);
+                defer left_name.deinit();
+                var right_name = std.array_list.Managed(u8).init(allocator);
+                defer right_name.deinit();
+                try appendTypeName(&left_name, graph, left_ty);
+                try appendTypeName(&right_name, graph, right_ty);
+                const operator: []const u8 = switch (binary.operator) {
+                    .addition => "+",
+                    .subtraction => "-",
+                    .multiplication => "*",
+                    .division => "/",
+                    .modulo => "%",
+                };
+                try diagnostics.add(
+                    diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], binary.source)),
+                    .semantic,
+                    "operator '{s}' is not defined for '{s}' and '{s}'",
+                    .{ operator, left_name.items, right_name.items },
+                );
+            }
             return true;
         }
     }
