@@ -1,0 +1,47 @@
+Abstract matrix library exploration
+
+These are approximate design sketches, not implemented APIs or guaranteed
+compiler syntax. They test the usefulness of abstracts together with generics;
+see description/133_abstract_types.md for the language-level questions.
+
+A matrix contract could associate its element type and dimensions, independently
+of whether the concrete representation is dense, sparse, diagonal, or a view:
+
+    AbstractMatrix#(.t: Type, .rows: UIntNative, .cols: UIntNative) : Abstract = (
+        get(.self: &Self, .row: UIntNative, .col: UIntNative)
+            -> (.result: Errable#(.t: t, .reasons: (..out_of_bounds)))
+    )
+
+A mutable companion could require set with the same coordinates and bounds
+error. An associated unsigned indexing type and range/slice forms remain
+possible extensions; slices need a result-shape rule.
+
+For one concrete matrix family, shared comptime parameters express compatibility:
+
+    add:      Matrix<T, R, C> + Matrix<T, R, C> -> Matrix<T, R, C>
+    multiply: Matrix<T, R, K> * Matrix<T, K, C> -> Matrix<T, R, C>
+
+For example, 2x3 * 3x4 produces 2x4, while 2x3 * 5x4 must fail during
+semantizing. Runtime-sized matrices need runtime compatibility checks.
+
+The harder abstract-based case allows different concrete operand types.
+Schematic requirements for a generic multiplication are:
+
+    Left  implements AbstractMatrix<T, R, K>
+    Right implements AbstractMatrix<T, K, C>
+    Result implements AbstractMatrix<T, R, C>
+
+Infer Left and Right first, then obtain their associated parameters and check
+compatibility. Result must be selected by an explicit policy or callable
+implementation, not inferred by reverse-searching for an implementing type.
+This sketch does not establish that the current compiler expresses the full
+relationship, nor does it require general dependent types.
+
+Mixed-representation operations could fall back to converting operands to
+DenseMatrix, while specialized dispatch chooses more efficient results.
+Conversion cost, allocation, and failure must remain explicit. The old
+AnyOther/SomeOther names were placeholders for this relationship.
+A representation is not necessarily closed under addition or multiplication;
+result selection must account for this instead of always returning Self.
+
+See linear_algebra.md for other representation and storage ideas.
