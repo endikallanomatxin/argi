@@ -6613,6 +6613,52 @@ test "feature_tests/collections/57X_empty_view_data" {
     try runExpectFailure(path);
 }
 
+test "feature_tests/collections/58_spatial_borrowed_ranges" {
+    const path = "tests/feature_tests/collections/58_spatial_borrowed_ranges";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/59X_spatial_view_after_pop" {
+    try buildExpectFail("tests/feature_tests/collections/59X_spatial_view_after_pop", "root that has ended");
+}
+
+test "feature_tests/collections/60X_spatial_view_after_growth" {
+    try buildExpectFail("tests/feature_tests/collections/60X_spatial_view_after_growth", "root that has ended");
+}
+
+test "feature_tests/collections/61X_spatial_view_after_release" {
+    try buildExpectFail("tests/feature_tests/collections/61X_spatial_view_after_release", "root that has ended");
+}
+
+test "feature_tests/collections/62X_spatial_view_after_insert" {
+    try buildExpectFail("tests/feature_tests/collections/62X_spatial_view_after_insert", "root that has ended");
+}
+
+test "feature_tests/collections/63X_spatial_view_after_remove" {
+    try buildExpectFail("tests/feature_tests/collections/63X_spatial_view_after_remove", "root that has ended");
+}
+
+test "feature_tests/collections/64X_spatial_view_after_append" {
+    try buildExpectFail("tests/feature_tests/collections/64X_spatial_view_after_append", "root that has ended");
+}
+
+test "feature_tests/collections/65X_spatial_view_after_arena_reset" {
+    try buildExpectFail("tests/feature_tests/collections/65X_spatial_view_after_arena_reset", "root that has ended");
+}
+
+test "feature_tests/collections/66X_spatial_view_shape_private" {
+    try buildExpectFail("tests/feature_tests/collections/66X_spatial_view_shape_private", "field '_shape' is private to its module");
+}
+
+
+test "feature_tests/collections/67X_spatial_view_element_after_pop" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/67X_spatial_view_element_after_pop",
+        "root that has ended",
+    );
+}
+
 test "feature_tests/ownership/297_local_pointee_summary" {
     const test_path = "tests/feature_tests/ownership/297_local_pointee_summary";
     try expectSuccessfulBuild(test_path);
