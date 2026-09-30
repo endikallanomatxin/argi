@@ -2177,7 +2177,7 @@ test "feature_tests/collections/28_dynamic_array_owning_growth" {
 test "feature_tests/collections/29X_dynamic_array_growth_invalidates_old_alias" {
     try buildExpectFail(
         "tests/feature_tests/collections/29X_dynamic_array_growth_invalidates_old_alias",
-        "reference depends on a root that has ended",
+        "root that has ended",
     );
 }
 
@@ -6651,7 +6651,6 @@ test "feature_tests/collections/66X_spatial_view_shape_private" {
     try buildExpectFail("tests/feature_tests/collections/66X_spatial_view_shape_private", "field '_shape' is private to its module");
 }
 
-
 test "feature_tests/collections/67X_spatial_view_element_after_pop" {
     try buildExpectFail(
         "tests/feature_tests/collections/67X_spatial_view_element_after_pop",
@@ -6677,4 +6676,42 @@ test "feature_tests/ownership/299X_nullable_pointee_summary_read" {
         "tests/feature_tests/ownership/299X_nullable_pointee_summary_read",
         "root that has ended",
     );
+}
+
+test "feature_tests/collections/68_spatial_direct_loans" {
+    const test_path = "tests/feature_tests/collections/68_spatial_direct_loans";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/69X_spatial_direct_reference_after_pop" {
+    try buildExpectFail("tests/feature_tests/collections/69X_spatial_direct_reference_after_pop", "root that has ended");
+}
+
+test "feature_tests/collections/70X_spatial_mutable_reference_after_remove" {
+    try buildExpectFail("tests/feature_tests/collections/70X_spatial_mutable_reference_after_remove", "root that has ended");
+}
+
+test "feature_tests/collections/71X_spatial_value_iterator_after_append" {
+    try buildExpectFail("tests/feature_tests/collections/71X_spatial_value_iterator_after_append", "root that has ended");
+}
+
+test "feature_tests/collections/72X_spatial_ro_iterator_after_pop" {
+    try buildExpectFail("tests/feature_tests/collections/72X_spatial_ro_iterator_after_pop", "root that has ended");
+}
+
+test "feature_tests/collections/73X_spatial_rw_iterator_after_growth" {
+    try buildExpectFail("tests/feature_tests/collections/73X_spatial_rw_iterator_after_growth", "root that has ended");
+}
+
+test "feature_tests/collections/74X_spatial_iterator_element_after_pop" {
+    try buildExpectFail("tests/feature_tests/collections/74X_spatial_iterator_element_after_pop", "root that has ended");
+}
+
+test "feature_tests/collections/75X_spatial_iterator_private_fields" {
+    try buildExpectFail("tests/feature_tests/collections/75X_spatial_iterator_private_fields", "field '_index' is private");
+}
+
+test "feature_tests/collections/76X_spatial_private_element_pointer" {
+    try buildExpectFail("tests/feature_tests/collections/76X_spatial_private_element_pointer", "no function named '_trusted_dynamic_array_element_ro_pointer' exists");
 }

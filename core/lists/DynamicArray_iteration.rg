@@ -1,16 +1,18 @@
+-- Iterators retain the initialized extent and lifetime of a borrowed view.
+-- Cursor updates preserve that loan; collection shape changes invalidate it.
 DynamicArrayIterator#(.t: Type) : Type = (
-    .array : &DynamicArray#(.t: t)
-    .index : UIntNative
+    ._view : ArrayViewRO#(.t: t)
+    ._index : UIntNative
 )
 
 DynamicArrayROPointerIterator#(.t: Type) : Type = (
-    .array : &DynamicArray#(.t: t)
-    .index : UIntNative
+    ._view : ArrayViewRO#(.t: t)
+    ._index : UIntNative
 )
 
 DynamicArrayRWPointerIterator#(.t: Type) : Type = (
-    .array : $&DynamicArray#(.t: t)
-    .index : UIntNative
+    ._view : ArrayView#(.t: t)
+    ._index : UIntNative
 )
 
 DynamicArrayIterator#(.t: Type: ImplicitlyCopyable) implements Iterator#(.t: t)
@@ -24,8 +26,8 @@ to_iterator#(.t: Type: ImplicitlyCopyable) (
     .value: &DynamicArray#(.t: t)
 ) -> (.iterator: DynamicArrayIterator#(.t: t)) := {
     iterator = (
-        .array = value,
-        .index = 0,
+        ._view = array_view_ro#(.t: t)(.array = value).view,
+        ._index = 0,
     )
 }
 
@@ -33,8 +35,8 @@ to_ro_pointer_iterator#(.t: Type) (
     .value: &DynamicArray#(.t: t)
 ) -> (.iterator: DynamicArrayROPointerIterator#(.t: t)) := {
     iterator = (
-        .array = value,
-        .index = 0,
+        ._view = array_view_ro#(.t: t)(.array = value).view,
+        ._index = 0,
     )
 }
 
@@ -42,51 +44,54 @@ to_rw_pointer_iterator#(.t: Type) (
     .value: $&DynamicArray#(.t: t)
 ) -> (.iterator: DynamicArrayRWPointerIterator#(.t: t)) := {
     iterator = (
-        .array = value,
-        .index = 0,
+        ._view = array_view#(.t: t)(.array = value).view,
+        ._index = 0,
     )
 }
 
 has_next#(.t: Type: ImplicitlyCopyable) (
     .self: &DynamicArrayIterator#(.t: t)
 ) -> (.ok: Bool) := {
-    ok = self&.index < self&.array&._length
+    ok = self&._index < length#(.t: t)(.self = &self&._view).count
 }
 
 next#(.t: Type: ImplicitlyCopyable) (
     .self: $&DynamicArrayIterator#(.t: t)
 ) -> (.value: t) := {
     -- Value iteration is the array's conditional implicit-copy capability.
-    current_index :: UIntNative = self&.index
-    ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = self&.array, .offset = current_index).pointer
+    current_index :: UIntNative = self&._index
+    if current_index >= self&._view._length { abort }
+    ptr ::= reference_offset#(.t: t)(.base = data#(.t: t)(.self = &self&._view).pointer, .elements = current_index).reference
     value = ptr&
-    self&.index = current_index + 1
+    self&._index = current_index + 1
 }
 
 has_next#(.t: Type) (
     .self: &DynamicArrayROPointerIterator#(.t: t)
 ) -> (.ok: Bool) := {
-    ok = self&.index < self&.array&._length
+    ok = self&._index < length#(.t: t)(.self = &self&._view).count
 }
 
 next#(.t: Type) (
     .self: $&DynamicArrayROPointerIterator#(.t: t)
 ) -> (.value: &t) := {
-    current_index :: UIntNative = self&.index
-    value = dynamic_array_element_ro_pointer#(.t: t)(.array = self&.array, .offset = current_index).pointer
-    self&.index = current_index + 1
+    current_index :: UIntNative = self&._index
+    if current_index >= self&._view._length { abort }
+    value = reference_offset#(.t: t)(.base = data#(.t: t)(.self = &self&._view).pointer, .elements = current_index).reference
+    self&._index = current_index + 1
 }
 
 has_next#(.t: Type) (
     .self: &DynamicArrayRWPointerIterator#(.t: t)
 ) -> (.ok: Bool) := {
-    ok = self&.index < self&.array&._length
+    ok = self&._index < length#(.t: t)(.self = &self&._view).count
 }
 
 next#(.t: Type) (
     .self: $&DynamicArrayRWPointerIterator#(.t: t)
 ) -> (.value: $&t) := {
-    current_index :: UIntNative = self&.index
-    value = dynamic_array_element_rw_pointer#(.t: t)(.array = self&.array, .offset = current_index).pointer
-    self&.index = current_index + 1
+    current_index :: UIntNative = self&._index
+    if current_index >= self&._view._length { abort }
+    value = mutable_reference_offset#(.t: t)(.base = data#(.t: t)(.self = &self&._view).pointer, .elements = current_index).reference
+    self&._index = current_index + 1
 }
