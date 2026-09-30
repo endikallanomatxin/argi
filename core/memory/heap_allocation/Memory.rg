@@ -8,19 +8,6 @@ once init(.p: $&Memory) -> () := {
     if p&._page_size == 0 { p&._page_size = 4096 }
 }
 
-_memory_getpagesize() -> (.size: UIntNative) : ExternFunction
-_memory_mmap(.hint: UIntNative, .length: UIntNative, .protection: Int32, .flags: Int32, .file_descriptor: Int32, .offset: UIntNative) -> (.address: UIntNative) : ExternFunction
-_memory_munmap(.address: UIntNative, .length: UIntNative) -> (.status: Int32) : ExternFunction
-
-_memory_map_anonymous(.length: UIntNative) -> (.address: UIntNative) := {
-    -- MAP_PRIVATE | MAP_ANONYMOUS is 34 on Linux and 4098 on macOS.
-    -- The unsupported form fails with MAP_FAILED, then the other is tried.
-    address = _memory_mmap(.hint = 0, .length = length, .protection = 3, .flags = 34, .file_descriptor = -1, .offset = 0).address
-    if address + 1 == 0 {
-        address = _memory_mmap(.hint = 0, .length = length, .protection = 3, .flags = 4098, .file_descriptor = -1, .offset = 0).address
-    }
-}
-
 _memory_map_aligned(
     .size: UIntNative,
     .alignment: UIntNative,
