@@ -10,13 +10,14 @@ This repository contains a compiler for a new programming language written in Zi
     - The compiler is structured in four phases:
     tokenizing, syntaxing, semantizing and codegen.
 - `tests/`: Example `.rg` programs used as tests.
-    - Test cases live under `tests/<case_name>/main.rg`.
+    - Feature cases live under `tests/feature_tests/<category>/<case_name>/main.rg`.
+    - `tests/feature_tests/_support/` contains shared fixture modules; compiler unit tests are registered through `src/internal_tests.zig`.
     - Files in the same test case directory share namespace and are compiled together as one folder-level module.
     - Negative tests should include `X` in their numeric prefix, e.g. `131X_multiple_dispatch_ambiguous`.
 
 - `more/`: Official library modules that are not part of `core/`.
 
-- `description/`: Design documents and architecture notes.
+- `description/`: Language specification and open language-design questions.
 
 - `references/`: Local reference checkouts.
     - `references/go`
@@ -28,7 +29,7 @@ This repository contains a compiler for a new programming language written in Zi
 
 - Build compiler: `zig build`
 - Run compiler tests: `zig build test`
-- Compile a test program: `./zig-out/bin/argi build tests/00_minimal_main`
+- Compile a test program: `./zig-out/bin/argi build tests/feature_tests/basics/01_minimal_main`
 
 > It might be necessary to set the following environment variables to make zig work:
 > `ZIG_LOCAL_CACHE_DIR="$PWD/.zig-cache"`
@@ -56,8 +57,8 @@ This repository contains a compiler for a new programming language written in Zi
 - To add a new feature:
     1. Checkout the language description and `more/` to understand the
        feature.
-    2. Create a `.rg` test that demonstrates the feature in `tests/<case_name>/main.rg`.
-       Put positive executable cases under `tests/<case_name>/main.rg`.
+    2. Create a `.rg` test that demonstrates the feature in `tests/feature_tests/<category>/<case_name>/main.rg`.
+       Put positive executable cases under `tests/feature_tests/<category>/<case_name>/main.rg`.
     3. Draft a small implementation plan, evaluating whether the change affects
        tokenizing, syntaxing, semantizing or codegen.
     4. Implement the feature in `src/` until it compiles.
