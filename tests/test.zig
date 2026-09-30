@@ -6699,6 +6699,46 @@ test "feature_tests/types/104X_acquired_storage_implicit_copy" {
     try buildExpectFail("tests/feature_tests/types/104X_acquired_storage_implicit_copy", "type 'AcquiredStorage' cannot be copied implicitly");
 }
 
+test "feature_tests/types/105_checked_uninit_slots" {
+    const path = "tests/feature_tests/types/105_checked_uninit_slots";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/types/106X_checked_uninit_slot_extent" {
+    const path = "tests/feature_tests/types/106X_checked_uninit_slot_extent";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/107X_checked_uninit_slot_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/types/107X_checked_uninit_slot_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/types/108X_checked_uninit_slot_private" {
+    try buildExpectFail("tests/feature_tests/types/108X_checked_uninit_slot_private", "field '_raw' is private to its module");
+}
+
+test "feature_tests/types/109X_checked_uninit_slot_read" {
+    try buildExpectFail("tests/feature_tests/types/109X_checked_uninit_slot_read", "not dereferenceable");
+}
+
+test "feature_tests/types/110X_checked_uninit_slot_empty" {
+    const path = "tests/feature_tests/types/110X_checked_uninit_slot_empty";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/111X_checked_uninit_slot_overflow" {
+    const path = "tests/feature_tests/types/111X_checked_uninit_slot_overflow";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/112X_checked_uninit_slot_backing_reset" {
+    try buildExpectFail("tests/feature_tests/types/112X_checked_uninit_slot_backing_reset", "root that has ended");
+}
+
 test "feature_tests/collections/56_empty_array_views" {
     const path = "tests/feature_tests/collections/56_empty_array_views";
     try expectSuccessfulBuild(path);

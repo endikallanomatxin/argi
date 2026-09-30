@@ -107,6 +107,16 @@ occupied and `[length, capacity)` vacant. Its movement operations pass slot
 handles to trusted relocation; normal references are formed only after
 checking `index < length`. Empty slots cannot be exposed as `&T` or `$&T`.
 
+`allocation_slot<T>(allocation, index)` selects a complete, aligned slot inside
+both the declared extent and the allocation's private certified extent. It
+rejects arithmetic wrap and invalid bounds with a runtime trap. The result is
+`MaybeUninit<T>`, not `&T` or `$&T`: selection cannot read, write, or destroy a
+`T`. The handle's address is private, and its validity depends on the allocation
+and backing anchor. Copies and forwarding retain those dependencies. Ending
+the allocation or resetting its backing region invalidates the handle.
+`uninit_slot_address<T>(slot)` exposes an integer address without certifying
+initialized contents or granting a reference conversion.
+
 Selecting bytes establishes no initialized `T`. `trusted_establish_allocation_slot`
 checks the byte range and alignment but does not prove occupancy or a valid
 representation. Its caller must prove initializedness before reading through

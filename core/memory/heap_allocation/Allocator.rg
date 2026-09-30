@@ -184,14 +184,26 @@ trusted_establish_allocation_slot#(.t: Type)(
     .slot: RawPointer#(.t: t),
     .anchor: &Any,
 ) -> (.reference: $&t) := {
-    if slot.address < allocation&._storage_address { abort }
-    storage_offset ::= slot.address - allocation&._storage_address
-    if storage_offset > allocation&._storage_size { abort }
-    if size_of(.type = t) > allocation&._storage_size - storage_offset { abort }
-    if slot.address < allocation&.data.address { abort }
-    offset ::= slot.address - allocation&.data.address
-    if offset > allocation&.size { abort }
-    if size_of(.type = t) > allocation&.size - offset { abort }
-    if slot.address % alignment_of(.type = t) != 0 { abort }
+    _require_allocation_slot_range(.allocation = allocation, .address = slot.address, .size = size_of(.type = t), .alignment = alignment_of(.type = t))
     reference = __trusted_reference_from_address#(.to: $&t)(.address = slot.address)
+}
+
+-- Range validation grants bytes only. It never asserts initialized contents
+-- or publishes a reference, so checked slot selection can share these guards.
+_require_allocation_slot_range(
+    .allocation: &Allocation,
+    .address: UIntNative,
+    .size: UIntNative,
+    .alignment: UIntNative,
+) -> () := {
+    if address < allocation&._storage_address { abort }
+    storage_offset ::= address - allocation&._storage_address
+    if storage_offset > allocation&._storage_size { abort }
+    if size > allocation&._storage_size - storage_offset { abort }
+    if address < allocation&.data.address { abort }
+    offset ::= address - allocation&.data.address
+    if offset > allocation&.size { abort }
+    if size > allocation&.size - offset { abort }
+    if alignment == 0 { abort }
+    if address % alignment != 0 { abort }
 }
