@@ -6612,3 +6612,23 @@ test "feature_tests/collections/57X_empty_view_data" {
     try expectSuccessfulBuild(path);
     try runExpectFailure(path);
 }
+
+test "feature_tests/ownership/297_local_pointee_summary" {
+    const test_path = "tests/feature_tests/ownership/297_local_pointee_summary";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/298X_local_pointee_summary_after_deinit" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/298X_local_pointee_summary_after_deinit",
+        "root that has ended",
+    );
+}
+
+test "feature_tests/ownership/299X_nullable_pointee_summary_read" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/299X_nullable_pointee_summary_read",
+        "root that has ended",
+    );
+}
