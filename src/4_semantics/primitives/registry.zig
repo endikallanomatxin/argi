@@ -218,6 +218,18 @@ pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
     };
 }
 
+/// Allocation establishment publishes one fresh storage root and borrows its
+/// anchor and virtual deallocator. Both interpreters use this field mapping;
+/// raw byte ownership must not erase the deallocator's receiver lifetime.
+pub const AllocationTransfer = struct {
+    pub const field_count = 5;
+    pub const data_field = 0;
+    pub const borrowed_fields = [_]struct { field: u32, input: u32 }{
+        .{ .field = 3, .input = 4 }, // anchor
+        .{ .field = 4, .input = 3 }, // deallocator
+    };
+};
+
 /// A move with two arguments discovers its storage domain from the owner.
 /// The three-argument form names the storage domain explicitly.
 pub const OpaqueMoveOperands = struct {

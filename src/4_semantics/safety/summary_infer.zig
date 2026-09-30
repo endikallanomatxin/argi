@@ -3259,7 +3259,8 @@ pub const Infer = struct {
         return result;
     }
 
-    fn primitiveValueEffect(self: *Infer, primitive: primitives.SafetyPrimitive, source: facts.FreshEffectSource) !facts.ValueEffect {
+    /// Symbolic transfer for one primitive invocation, with call-site identity.
+    pub fn primitiveValueEffect(self: *Infer, primitive: primitives.SafetyPrimitive, source: facts.FreshEffectSource) !facts.ValueEffect {
         return switch (primitive_transfer.forPrimitive(primitive).value) {
             .reference_copy => self.withoutOwnershipTransfer(try self.inputValueEffect(0, &.{})),
             .allocation_slot => blk: {
@@ -3294,20 +3295,19 @@ pub const Infer = struct {
         // Keep this structural effect in the same order as Allocation. Raw
         // data carries the fresh lifetime. A backing-region anchor is copied
         // from the input without transferring ownership from the allocator.
-        const fields = try self.allocator.alloc(facts.OutputFieldEffect, 5);
-        const data = try self.allocator.create(facts.ValueEffect);
-        data.* = .{ .fresh_dependencies = try self.oneFresh(source) };
+        const shape = primitive_transfer.AllocationTransfer;
+        const fields = try self.allocator.alloc(facts.OutputFieldEffect, shape.field_count);
         const empty = try self.allocator.create(facts.ValueEffect);
         empty.* = .{};
-        const deallocator_effect = try self.allocator.create(facts.ValueEffect);
-        deallocator_effect.* = try self.withoutOwnershipTransfer(try self.inputValueEffect(3, &.{}));
-        fields[0] = .{ .index = 0, .value = data };
-        fields[1] = .{ .index = 1, .value = empty };
-        fields[2] = .{ .index = 2, .value = empty };
-        const anchor = try self.allocator.create(facts.ValueEffect);
-        anchor.* = try self.withoutOwnershipTransfer(try self.inputValueEffect(4, &.{}));
-        fields[3] = .{ .index = 3, .value = anchor };
-        fields[4] = .{ .index = 4, .value = deallocator_effect };
+        for (fields, 0..) |*field, index| field.* = .{ .index = @intCast(index), .value = empty };
+        const data = try self.allocator.create(facts.ValueEffect);
+        data.* = .{ .fresh_dependencies = try self.oneFresh(source) };
+        fields[shape.data_field].value = data;
+        for (shape.borrowed_fields) |borrowed| {
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = try self.withoutOwnershipTransfer(try self.inputValueEffect(borrowed.input, &.{}));
+            fields[borrowed.field].value = value;
+        }
         return .{ .fresh_owned_roots = try self.oneFresh(source), .fields = fields };
     }
 

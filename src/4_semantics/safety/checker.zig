@@ -1004,21 +1004,24 @@ pub const SafetyChecker = struct {
                             state.storage_capabilities.items[raw] = .consumed;
                     }
                 }
-                const data = try self.allocator.create(facts.ValueFacts);
-                data.* = .{ .dependencies = try self.oneDependency(root) };
-                const fields = try self.allocator.alloc(facts.FieldFacts, 2);
-                fields[0] = .{ .index = 0, .value = data };
-                const anchor = try self.allocator.create(facts.ValueFacts);
-                anchor.* = values[4].referenceCopy();
-                fields[1] = .{ .index = 3, .value = anchor };
-                var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
-                try appendDependencyFact(&dependencies, .{ .root = root });
-                for (values[4].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
-                break :blk .{
-                    .dependencies = try dependencies.toOwnedSlice(),
-                    .owned_roots = try self.oneRoot(root),
-                    .fields = fields,
-                };
+                const shape = primitive_transfer.AllocationTransfer;
+                const fields = try self.allocator.alloc(facts.FieldFacts, shape.field_count);
+                for (fields, 0..) |*field, index| {
+                    const value = try self.allocator.create(facts.ValueFacts);
+                    value.* = if (index == shape.data_field)
+                        .{ .dependencies = try self.oneDependency(root) }
+                    else
+                        .{};
+                    for (shape.borrowed_fields) |borrowed| if (index == borrowed.field) {
+                        value.* = values[borrowed.input];
+                        value.owned_roots = &.{};
+                    };
+                    field.* = .{ .index = @intCast(index), .value = value };
+                }
+                var result: facts.ValueFacts = .{ .owned_roots = try self.oneRoot(root) };
+                for (fields) |field| result = try self.mergeValueFacts(result, field.value.*);
+                result.fields = fields;
+                break :blk result;
             },
             .reference_copy => if (values.len != 0) values[0].referenceCopy() else .{},
             .allocation_slot => blk: {
@@ -5239,4 +5242,39 @@ test "choice outputs keep lazily materialized input storage alive" {
     try std.testing.expect(state.tracker.isAlive(state.storage_generations.items[0].generation));
     const owned = output.variants[0].value.owned_roots[0];
     try std.testing.expectEqual(.conditional, state.tracker.roots.items[@intFromEnum(owned)].state);
+}
+
+test "allocation primitive agrees with instantiated symbolic transfer" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var direct_state = SafetyChecker.FunctionState.init(allocator);
+    defer direct_state.deinit();
+    var summary_state = SafetyChecker.FunctionState.init(allocator);
+    defer summary_state.deinit();
+    const deallocator_root = try direct_state.tracker.establish(.fresh);
+    const anchor_root = try direct_state.tracker.establish(.fresh);
+    _ = try summary_state.tracker.establish(.fresh);
+    _ = try summary_state.tracker.establish(.fresh);
+    const arguments = [_]facts.ValueFacts{
+        .{},                                                                                                                         .{},                                               .{},
+        .{ .explicit_dependency = true, .dependencies = &.{.{ .root = deallocator_root }} }, .{ .dependencies = &.{.{ .root = anchor_root }} },
+    };
+    var engine = summary_engine.Engine.init(allocator);
+    defer engine.deinit();
+    var infer = summary_infer.Infer.init(allocator, &graph, &engine);
+    defer infer.deinit();
+    const effect = try infer.primitiveValueEffect(.establish_allocation, 1);
+    const symbolic = try checker.instantiateOutput(effect, &arguments, &summary_state);
+    const direct = try checker.evaluatePrimitive(@enumFromInt(0), .establish_allocation, &.{}, &arguments, &direct_state, .{ .file_index = 0, .offset = 0 });
+    try std.testing.expect(valueFactsEqual(direct, symbolic));
+    try std.testing.expectEqual(@as(usize, 1), direct.owned_roots.len);
+    try std.testing.expect(valueDependsOnRoot(direct, deallocator_root));
+    try std.testing.expect(valueDependsOnRoot(direct, anchor_root));
+    const deallocator = try checker.projectValueFacts(direct, &.{.{ .field = 4 }});
+    try std.testing.expect(valueDependsOnRoot(deallocator, deallocator_root));
 }
