@@ -653,6 +653,14 @@ pub fn semantizeWithOptions(
         return error.InvalidForEach;
     }
 
+    if (abstracts.virtual_signature_failure) |failure| {
+        if (options.diagnostics) |diagnostics| {
+            try diagnostics.add(diagnosticLocation(&relocation.graph, diagnostics, failure.source), .semantic, "cannot use '{s}' for virtual dispatch: {s}", .{ failure.method_name, failure.reason });
+            return error.Reported;
+        }
+        return error.InvalidVirtualSignature;
+    }
+
     if (abstracts.field_storage_conflict) |conflict| {
         if (options.diagnostics) |diagnostics| {
             var abstract_name = std.array_list.Managed(u8).init(allocator);

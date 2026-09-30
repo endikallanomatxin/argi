@@ -101,19 +101,43 @@ knowing that layout. Ordinary scalar values, references to known types, and
 explicit virtual handles can cross this boundary. A method-local generic
 requiring a new instantiation at runtime cannot occupy one fixed slot.
 
+Each method has exactly one receiver input whose type is directly `&Self` or
+`$&Self`. Its name and position are unrestricted. The receiver is borrowed;
+passing `Self` by value would require knowing the concrete representation.
+Two `Self` references in the same signature are not two interchangeable
+virtual receivers: their hidden concrete types might differ, and selecting
+one table cannot establish that the other argument matches its implementation.
+Runtime multiple dispatch is not part of this mechanism.
+
+`Self` cannot occur in another input or any output, including inside pointers,
+arrays, aggregates, choices, or generic type arguments. This applies even to
+a returned `&Self`: the concrete method returns an object pointer, whereas a
+virtual handle also needs a table. Return a known type or an explicit virtual
+handle instead. References to known receiver fields remain valid outputs;
+their lifetimes still depend on the receiver.
+
+An explicit `Virtual<A>` input or output has a known representation and does
+not request another erased `Self` receiver. It may carry a different concrete
+implementation without an implicit same-type relation. A method may dispatch
+through that handle separately.
+
+Associated type and value parameters must be fixed by the virtual contract's
+type before a table is constructed. They cannot vary implicitly with the
+runtime concrete implementation or require method specialization at a call
+site. A method-local generic does not define one fixed virtual slot. These
+restrictions apply to virtual use; ordinary static abstract contracts may
+continue to use concrete `Self` types and compile-time specialization.
+
 Fallible methods carry a uniform error-tracer capability input, including
 implementations that always succeed. Errors created by a selected method
 therefore follow the same capability rules as static calls.
 
-> [!QUESTION]
-> Define the complete admissibility rules for `Self` outside the receiver,
-> associated parameters, and multiple independently erased receivers. Runtime
-> multiple dispatch is not established by the single-receiver method table.
->
 > [!IMPLEMENTATION]
-> The compiler supports the borrowed receiver dispatch described here, but
-> does not yet provide a complete dedicated diagnostic for every inadmissible
-> erased signature.
+> The compiler validates receiver and `Self` restrictions at virtual conversion
+> and dispatch, including methods that are never called but occupy a table slot.
+> Virtual conversion of parameterized abstracts is not implemented, even when
+> their associated arguments are fixed; it reports a dedicated diagnostic.
+> Use a non-parameterized contract with concrete signature types for now.
 
 ## Safety across implementations
 

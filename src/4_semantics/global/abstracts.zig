@@ -58,6 +58,12 @@ pub const AbstractFieldStorageConflict = struct {
     source: primitives.SourceRef,
 };
 
+pub const VirtualSignatureFailure = struct {
+    source: primitives.SourceRef,
+    method_name: []const u8,
+    reason: []const u8,
+};
+
 pub const Resolver = struct {
     const ImplementationKey = struct {
         concrete: global_sg.GlobalTypeId,
@@ -89,6 +95,7 @@ pub const Resolver = struct {
     core: *core_mod.Resolver,
     generics: *generic_mod.Resolver,
     field_storage_conflict: ?AbstractFieldStorageConflict = null,
+    virtual_signature_failure: ?VirtualSignatureFailure = null,
     stats: Stats = .{},
     profile_implementation_scans: bool = false,
     profile_io: ?std.Io = null,
@@ -286,9 +293,15 @@ pub const Resolver = struct {
         const abstract_ty = abstract_type orelse return null;
         const abstract_decl = switch (self.graph.types.items[@intFromEnum(abstract_ty)]) {
             .declared => |declaration| declaration,
+            .generic => |generic| {
+                if (self.findAbstractDefinition(generic.base) != null)
+                    self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "parameterized abstract virtual conversion is not implemented; use a contract with fixed concrete signature types" };
+                return null;
+            },
             else => return null,
         };
         const located = self.findAbstractDefinition(abstract_decl) orelse return null;
+        if (!try self.validateVirtualContract(abstract_ty, located, self.sourceFor(module_index, reference.source))) return null;
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |value| value,
             else => return null,
@@ -888,6 +901,7 @@ pub const Resolver = struct {
             };
             const abstract_use = self.abstractUse(abstract_ty) orelse continue;
             const located = self.findAbstractDefinition(abstract_use.declaration) orelse continue;
+            if (!try self.validateVirtualContract(abstract_ty, located, source)) return null;
             const parameterized_forms_storage = &self.modules[located.module_index].semantic.parameterized_storage;
             for (parameterized_forms_storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
                 if (!std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), method_name)) continue;
@@ -992,6 +1006,83 @@ pub const Resolver = struct {
             }
         }
         return true;
+    }
+
+    // A vtable can replace exactly one borrowed concrete receiver pointer.
+    // Validate before concrete lookup so unsupported erasure never reaches
+    // codegen as a method whose concrete ABI differs from the slot ABI.
+    fn validateVirtualContract(self: *Resolver, abstract_ty: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, source: primitives.SourceRef) !bool {
+        const module = &self.modules[located.module_index];
+        const storage = &module.semantic.parameterized_storage;
+        for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, index| {
+            const name = module.text(requirement.name);
+            var reason: ?[]const u8 = null;
+            if (requirement.parameters.len != 0 or located.definition.parameters.len != 0) {
+                reason = "the virtual slot requires fixed signature types; parameterized virtual contracts are not implemented";
+            } else {
+                const instance = try self.requirementInstance(blk: {
+                    const base = self.offsets[located.module_index].declaration_base;
+                    break :blk @enumFromInt(base + @intFromEnum(located.definition.declaration));
+                }, abstract_ty, located, requirement, @intCast(index));
+                const inputs = global_types.fields(self.graph, instance.input) orelse return error.InvalidAbstractRequirementInput;
+                const outputs = global_types.fields(self.graph, instance.output) orelse return error.InvalidAbstractRequirementOutput;
+                var receivers: usize = 0;
+                for (self.graph.fields.items[inputs.start..][0..inputs.len]) |field| {
+                    const ty = self.graph.semanticType(field.ty);
+                    if (ty == .pointer and global_types.equal(self.graph, ty.pointer.child, abstract_ty)) {
+                        receivers += 1;
+                    } else if (try self.containsErasedSelf(field.ty, abstract_ty)) {
+                        reason = "Self is only allowed as a direct borrowed receiver (&Self or $&Self)";
+                    }
+                }
+                if (reason == null and receivers != 1)
+                    reason = "a virtual method requires exactly one borrowed Self receiver; runtime multiple dispatch is not supported";
+                for (self.graph.fields.items[outputs.start..][0..outputs.len]) |field| {
+                    if (try self.containsErasedSelf(field.ty, abstract_ty))
+                        reason = "Self cannot appear in a virtual method result; return a known type or an explicit virtual handle";
+                }
+            }
+            if (reason) |message| {
+                self.virtual_signature_failure = .{ .source = source, .method_name = name, .reason = message };
+                return false;
+            }
+        }
+        return true;
+    }
+
+    fn containsErasedSelf(self: *Resolver, ty: global_sg.GlobalTypeId, erased: global_sg.GlobalTypeId) !bool {
+        var visited = std.AutoHashMap(global_sg.GlobalTypeId, void).init(self.allocator);
+        defer visited.deinit();
+        return self.containsErasedSelfVisited(ty, erased, &visited);
+    }
+
+    fn containsErasedSelfVisited(self: *Resolver, ty: global_sg.GlobalTypeId, erased: global_sg.GlobalTypeId, visited: *std.AutoHashMap(global_sg.GlobalTypeId, void)) !bool {
+        if (global_types.equal(self.graph, ty, erased)) return true;
+        if (visited.contains(ty)) return false;
+        try visited.put(ty, {});
+        switch (self.graph.semanticType(ty)) {
+            .pointer => |pointer| return self.containsErasedSelfVisited(pointer.child, erased, visited),
+            .nullable, .inferred_errable => |child| return self.containsErasedSelfVisited(child, erased, visited),
+            .array => |array| return self.containsErasedSelfVisited(array.element, erased, visited),
+            .generic => |generic| {
+                for (self.graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| {
+                    if (argument.value == .type and try self.containsErasedSelfVisited(argument.value.type, erased, visited)) return true;
+                }
+            },
+            // An explicit virtual handle has a fixed representation regardless
+            // of the concrete implementation behind its own table.
+            .virtual => return false,
+            else => {},
+        }
+        if (global_types.fields(self.graph, ty)) |fields| {
+            for (self.graph.fields.items[fields.start..][0..fields.len]) |field|
+                if (try self.containsErasedSelfVisited(field.ty, erased, visited)) return true;
+        }
+        if (global_types.variants(self.graph, ty)) |variants| {
+            for (self.graph.variants.items[variants.start..][0..variants.len]) |variant|
+                if (variant.payload_type) |payload| if (try self.containsErasedSelfVisited(payload, erased, visited)) return true;
+        }
+        return false;
     }
 
     fn requirementInstanceForAbstractUse(

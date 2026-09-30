@@ -6986,3 +6986,37 @@ test "feature_tests/types/269_nested_generic_argument_ranges" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/polymorphism/42_virtual_nonleading_receiver" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/42_virtual_nonleading_receiver");
+    try runExpect("tests/feature_tests/polymorphism/42_virtual_nonleading_receiver", 0);
+}
+
+test "feature_tests/polymorphism/43X_virtual_multiple_self_receivers" {
+    try buildExpectFail("tests/feature_tests/polymorphism/43X_virtual_multiple_self_receivers", "exactly one borrowed Self receiver");
+}
+
+test "feature_tests/polymorphism/44X_virtual_self_result" {
+    try buildExpectFail("tests/feature_tests/polymorphism/44X_virtual_self_result", "Self cannot appear in a virtual method result");
+}
+
+test "feature_tests/polymorphism/45X_virtual_self_by_value" {
+    try buildExpectFail("tests/feature_tests/polymorphism/45X_virtual_self_by_value", "Self is only allowed as a direct borrowed receiver");
+}
+
+test "feature_tests/polymorphism/46X_virtual_nested_self_input" {
+    try buildExpectFail("tests/feature_tests/polymorphism/46X_virtual_nested_self_input", "Self is only allowed as a direct borrowed receiver");
+}
+
+test "feature_tests/polymorphism/47X_virtual_missing_receiver" {
+    try buildExpectFail("tests/feature_tests/polymorphism/47X_virtual_missing_receiver", "exactly one borrowed Self receiver");
+}
+
+test "feature_tests/polymorphism/48X_virtual_associated_parameters" {
+    try buildExpectFail("tests/feature_tests/polymorphism/48X_virtual_associated_parameters", "parameterized abstract virtual conversion is not implemented");
+}
+
+test "feature_tests/polymorphism/49_virtual_explicit_peer_handle" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/49_virtual_explicit_peer_handle");
+    try runExpect("tests/feature_tests/polymorphism/49_virtual_explicit_peer_handle", 0);
+}
