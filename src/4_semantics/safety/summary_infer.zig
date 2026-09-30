@@ -3751,6 +3751,10 @@ pub const Infer = struct {
                     try self.inferExpression(function_id, arguments[dependency.path.input_index].value)
             else
                 try self.inferExpression(function_id, arguments[dependency.path.input_index].value);
+            if (dependency.validity_only and dependency.path.projections.len != 0 and dependency.path.projections[0] != .dereference) {
+                if (try self.localPointeeEffect(function_id, arguments[dependency.path.input_index].value)) |pointee|
+                    argument = pointee;
+            }
             for (dependency.path.projections) |projection|
                 argument = try self.projectValueEffect(argument, projection);
             argument = if (dependency.transfers_ownership)
@@ -3812,7 +3816,10 @@ pub const Infer = struct {
         const dependencies = try self.allocator.alloc(facts.InputDependency, effect.input_dependencies.len);
         for (effect.input_dependencies, 0..) |dependency, index| {
             dependencies[index] = dependency;
-            dependencies[index].path.projections = try self.appendProjection(dependency.path.projections, projection);
+            // Validity dependencies belong to the source lifetime, even when
+            // selecting a field of the dependent value.
+            if (!dependency.validity_only)
+                dependencies[index].path.projections = try self.appendProjection(dependency.path.projections, projection);
         }
         result.input_dependencies = dependencies;
         result.input_storage_capabilities = try self.projectInputPaths(effect.input_storage_capabilities, projection);
@@ -3963,17 +3970,19 @@ pub const Infer = struct {
     /// Retain the input's lifetime without claiming its referent as the output's
     /// referent. Raw-address establishment chooses the latter independently.
     fn validityOnlyEffect(self: *Infer, effect: facts.ValueEffect) !facts.ValueEffect {
-        const dependencies = try self.allocator.dupe(facts.InputDependency, effect.input_dependencies);
-        for (dependencies) |*dependency| {
-            dependency.transfers_ownership = false;
-            dependency.validity_only = true;
+        var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator);
+        for (effect.input_dependencies) |dependency| {
+            try appendInputDependency(&dependencies, .{ .path = dependency.path, .validity_only = true });
         }
+        // A loaded anchor field contributes its stored reference lifetime,
+        // rather than only the generation of the field containing it.
+        for (effect.input_place_values) |path| try appendInputDependency(&dependencies, .{ .path = path, .validity_only = true });
         var generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_generation_dependencies) |path| try appendInputPath(&generations, path);
         for (effect.input_places) |path| try appendInputPath(&generations, path);
         return .{
             .explicit_dependency = effect.explicit_dependency,
-            .input_dependencies = dependencies,
+            .input_dependencies = try dependencies.toOwnedSlice(),
             .input_generation_dependencies = try generations.toOwnedSlice(),
             .input_owned_roots = effect.input_owned_roots,
             .opaque_generation_dependencies = effect.opaque_generation_dependencies,
@@ -4753,4 +4762,24 @@ test "virtual summaries intersect opaque empty guarantees" {
         .{},
     );
     try std.testing.expectEqual(@as(usize, 0), absent.?.opaque_storage_empties.len);
+}
+
+test "validity-only transfer retains loaded input anchor paths" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = Infer.init(allocator, undefined, &engine);
+    defer inference.deinit();
+    const projections = [_]facts.Projection{.{ .field = 3 }};
+    const path = facts.InputPath{ .input_index = 0, .projections = &projections };
+    const effect = try inference.validityOnlyEffect(.{ .input_place_values = &.{path} });
+    try std.testing.expectEqual(@as(usize, 1), effect.input_dependencies.len);
+    try std.testing.expect(effect.input_dependencies[0].validity_only);
+    try std.testing.expect(!effect.input_dependencies[0].transfers_ownership);
+    try std.testing.expectEqualDeep(path, effect.input_dependencies[0].path);
+    try std.testing.expectEqual(@as(usize, 0), effect.input_place_values.len);
+    const projected = try inference.projectValueEffect(effect, .{ .field = 7 });
+    try std.testing.expectEqualDeep(path, projected.input_dependencies[0].path);
 }

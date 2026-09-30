@@ -1121,7 +1121,10 @@ pub const SafetyChecker = struct {
         if (before == self.diagnostics.list.items.len) self.record_storage_consumption(value, minimum, maximum, state);
     }
 
-    fn summary_capability_value(self: *SafetyChecker, path: facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
+    // Summary paths selecting stored fields must load the caller's pointee.
+    // Both lifetime anchors and storage authorization use that same value;
+    // borrowing the field's storage alone loses its referent's lifetime.
+    fn load_summary_input_value(self: *SafetyChecker, path: facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
         if (path.input_index >= arguments.len) return .{};
         var value = arguments[path.input_index];
         var storage: ?facts.Place = null;
@@ -1450,11 +1453,11 @@ pub const SafetyChecker = struct {
     ) !void {
         const capability_diagnostics = self.diagnostics.list.items.len;
         for (summary.storage_capability_uses) |use| {
-            try self.require_available_storage_capabilities(source, try self.summary_capability_value(use.target, arguments, state), use.maximum, state);
+            try self.require_available_storage_capabilities(source, try self.load_summary_input_value(use.target, arguments, state), use.maximum, state);
         }
         for (summary.storage_capability_conflicts) |pair| {
-            const first = try self.summary_capability_value(pair.first, arguments, state);
-            const second = try self.summary_capability_value(pair.second, arguments, state);
+            const first = try self.load_summary_input_value(pair.first, arguments, state);
+            const second = try self.load_summary_input_value(pair.second, arguments, state);
             for (first.storage_capabilities) |capability| if (std.mem.indexOfScalar(facts.StorageCapabilityId, second.storage_capabilities, capability) != null) {
                 try self.report(source, "function may consume the same physical storage capability more than once", .{});
                 break;
@@ -1462,7 +1465,7 @@ pub const SafetyChecker = struct {
         }
         if (capability_diagnostics != self.diagnostics.list.items.len) return;
         for (summary.storage_capability_uses) |use| {
-            const value = try self.summary_capability_value(use.target, arguments, state);
+            const value = try self.load_summary_input_value(use.target, arguments, state);
             self.record_storage_consumption(value, use.minimum, use.maximum, state);
         }
 
@@ -1817,7 +1820,7 @@ pub const SafetyChecker = struct {
         result.owned_roots = try owned.toOwnedSlice();
 
         for (effect.input_storage_capabilities) |path| {
-            const input = (try self.summary_capability_value(path, arguments, state)).scalarOpaqueRead();
+            const input = (try self.load_summary_input_value(path, arguments, state)).scalarOpaqueRead();
             result = try self.mergeValueFacts(result, input);
         }
         var capabilities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator);
@@ -1861,7 +1864,10 @@ pub const SafetyChecker = struct {
 
         for (effect.input_dependencies) |dependency| {
             if (dependency.path.input_index >= arguments.len) continue;
-            var input = try self.projectValueFacts(arguments[dependency.path.input_index], dependency.path.projections);
+            var input = if (dependency.validity_only and dependency.path.projections.len != 0)
+                try self.load_summary_input_value(dependency.path, arguments, state)
+            else
+                try self.projectValueFacts(arguments[dependency.path.input_index], dependency.path.projections);
             if (dependency.transfers_ownership and dependency.path.projections.len != 0)
                 try self.activate_conditional_resources(state, input);
             if (!dependency.transfers_ownership) input.owned_roots = &.{};
@@ -5586,6 +5592,30 @@ test "native acquisition and page trimming agree with symbolic transfers" {
         try std.testing.expectEqual(state, direct.storage_capabilities.items[0]);
         try std.testing.expectEqual(state, symbolic.storage_capabilities.items[0]);
     }
+}
+
+test "stored anchor lifetime agrees between dependency primitives and summaries" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const root = try state.tracker.establish(.fresh);
+    const holder = facts.Place{ .root = @enumFromInt(0) };
+    const anchor = facts.ValueFacts{ .dependencies = &.{.{ .root = root }} };
+    try checker.setPlace(&state, holder, .initialized, .{ .fields = &.{.{ .index = 0, .value = &anchor }} });
+    const direct = try checker.dependencyPrimitive(&.{ .{}, anchor }, .depend_on);
+    const symbolic = try checker.instantiateOutput(.{
+        .explicit_dependency = true,
+        .input_dependencies = &.{.{ .path = .{ .input_index = 0, .projections = &.{.{ .field = 0 }} }, .validity_only = true }},
+    }, &.{.{ .referenced_place = holder }}, &state);
+    try std.testing.expectEqual(direct.explicit_dependency, symbolic.explicit_dependency);
+    try std.testing.expectEqualSlices(facts.ValidityDependency, direct.dependencies, symbolic.dependencies);
+    try std.testing.expectEqual(@as(?facts.Place, null), symbolic.referenced_place);
+    state.tracker.end(root);
+    try std.testing.expect(valueDependsOnDeadRoot(symbolic, &state));
 }
 
 test "activating choice payloads never revives consumed storage capabilities" {
