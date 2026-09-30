@@ -13,7 +13,7 @@ allocate(.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative =
         .dealloc_count = self&.dealloc_count,
     )
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation ::= establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
+    allocation ::= trusted_establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
     result = ..ok ~allocation
 }
 

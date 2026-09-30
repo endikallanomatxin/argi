@@ -37,8 +37,64 @@ Allocation : Type = (
     .alignment: UIntNative
     .anchor: &Any
     .deallocator: Virtual#(.abstract: Deallocator)
+    ._storage_address: UIntNative
+    ._storage_size: UIntNative
+    ._storage_alignment: UIntNative
+    ._release_size: UIntNative
 )
 ```
+
+The private storage fields retain the address, extent, and alignment certified
+by the allocator at establishment. Public receipt fields describe a requested
+range; changing them cannot enlarge the certified region. Slot establishment
+checks containment in both ranges and the target type's alignment. Cleanup
+uses the original storage fields, so editing public data, size, or alignment
+cannot change the storage arguments passed to release. The public deallocator
+can still be replaced by an allocator adapter; that adapter remains responsible
+for honoring the acquisition's release contract. These fields are private to
+bundled core, rather than a general proof that an arbitrary address
+was acquired. A granted prefix can be smaller than its acquisition; cleanup
+retains the acquisition's original extent and alignment.
+
+### Acquisition receipts
+
+`AcquiredStorage` certifies a successful physical acquisition, independently
+of any temporal owner or initialized `T`. Its address, size, and alignment are
+private to bundled core. `acquire_heap_storage(size, alignment, ffi)` and
+`acquire_page_storage(memory, size, alignment)` return `Errable<AcquiredStorage>`.
+Neither publishes a receipt on failure. A zero-size request is valid and grants
+no readable bytes, even when acquisition reserves heap or page padding.
+
+`establish_allocation(storage: AcquiredStorage, size, alignment, deallocator,
+anchor)` checks that the requested prefix fits the acquired extent and that
+its address satisfies the requested alignment. It consumes the acquisition's
+storage authorization and creates the temporal allocation root.
+`establish_inherited_storage(storage: AcquiredStorage, root)` consumes the same
+authorization when attaching acquired bytes to an existing temporal domain.
+The receipt is move-only. Establishment consumes it with `~storage`; forwarding
+transfers it by move. A moved receipt cannot be inspected or established again. Its `deinit` discards
+establishment authority, without releasing physical storage: this low-level
+receipt owns no cleanup policy. The caller must establish a temporal owner or
+arrange trusted physical cleanup. Read-only
+`acquired_storage_address`, `acquired_storage_size`, and
+`acquired_storage_alignment` borrow `&AcquiredStorage` and expose metadata without certifying
+another region.
+
+The caller of either establishment operation arranges physical cleanup with
+the matching deallocator or temporal domain. A receipt does not certify an
+arbitrary deallocator's behavior. Raw FFI release and low-level reference
+construction remain trusted operations. An integer inspected before consumption
+does not recreate the receipt or make released storage live again.
+
+`trusted_establish_allocation` is the explicit integer-address boundary for
+suballocators and integrations outside those acquisition factories. Its caller proves that
+the address and extent describe acquired, live storage and that the deallocator
+matches that acquisition. Its runtime guards reject invalid alignment and
+address-range wrap. Suballocators certify only the selected child range and
+retain a temporal anchor to the backing region. An ordinary caller must obtain
+an allocation through `Allocator`; supplying an integer to the trusted boundary
+does not discharge the acquisition obligation. The analogous integer-address
+operation for an existing domain is `trusted_establish_inherited_storage`.
 
 Higher-level values such as `String` and `DynamicArray<T>` keep their own
 occupancy and length invariants. `MaybeUninit<T>` identifies a typed slot
@@ -50,6 +106,70 @@ occupied slot through opaque move-out. `DynamicArray<T>` keeps `[0, length)`
 occupied and `[length, capacity)` vacant. Its movement operations pass slot
 handles to trusted relocation; normal references are formed only after
 checking `index < length`. Empty slots cannot be exposed as `&T` or `$&T`.
+
+`allocation_slot<T>(allocation, index)` selects a complete, aligned slot inside
+both the declared extent and the allocation's private certified extent. It
+rejects arithmetic wrap and invalid bounds with a runtime trap. The result is
+`MaybeUninit<T>`, not `&T` or `$&T`: selection cannot read, write, or destroy a
+`T`. The handle's address is private, and its validity depends on the allocation
+and backing anchor. Copies and forwarding retain those dependencies. Ending
+the allocation or resetting its backing region invalidates the handle.
+`uninit_slot_address<T>(slot)` exposes an integer address without certifying
+initialized contents or granting a reference conversion.
+
+### Slot authority and occupancy
+
+Slot selection is repeatable: selecting the same index twice or copying a
+`MaybeUninit<T>` produces handles to the same bytes. These handles carry range
+and lifetime validity, not exclusive ownership or permission to initialize.
+Consuming one handle does not revoke the others. Making the handle move-only
+would therefore not, by itself, establish exclusive slot authority.
+
+The storage owner controls occupancy through private state. Ordinary operations
+request a transition from that owner; they cannot assert occupancy by supplying
+a slot address or a boolean. The owner validates the selected range and the
+current occupancy before invoking a trusted storage transition:
+
+| Operation | Required state | Resulting state |
+| --- | --- | --- |
+| Initialize from a moved `T` | Vacant | Occupied by exactly one live `T` |
+| Borrow a `T` | Occupied | Occupied; the reference depends on the owner and backing storage |
+| Extract a `T` | Occupied | Vacant; ownership moves to the returned value |
+| Destroy a `T` | Occupied | Vacant; the value's cleanup runs exactly once |
+
+Replacement must account for the old value before publishing a new one.
+Relocation requires a live source and a distinct vacant destination, transfers
+the value once, and leaves the source vacant. A failed initialization must not
+publish an occupied slot unless it leaves a valid live value there. Cleanup
+visits occupied slots only.
+
+Occupation can be represented by a collection invariant rather than a flag for
+each element. `DynamicArray<T>` uses its initialized prefix: append publishes
+the new length after moving in a value; pop removes an element from the prefix
+and moves it out. Other owners may use different private representations.
+Their trusted implementation must keep occupancy and stored values consistent.
+
+References to contents must cease to be usable when extraction, destruction,
+replacement, or relocation ends the referenced value's storage generation.
+The owner may conservatively invalidate all element references for a structural
+mutation. Copied storage handles do not override that invalidation or authorize
+a second extraction. Range validity alone never proves that a live `T` remains.
+`DynamicArray<T>` conservatively invalidates element references, views, and
+iterators on successful `set`, as well as on structural mutations: replacing
+contents ends the old value's lifetime even if length and address stay equal.
+A new borrow after replacement refers to the new live value.
+
+> [!IMPLEMENTATION]
+> `DynamicArray<T>` implements owner-controlled transitions using private
+> length and trusted opaque operations. `allocation_slot<T>` only selects
+> storage; there is no general ordinary initialization or extraction API for
+> arbitrary allocation slots. Such an API must establish owner-controlled
+> occupancy and content-reference invalidation before exposing reads.
+
+Selecting bytes establishes no initialized `T`. `trusted_establish_allocation_slot`
+checks the byte range and alignment but does not prove occupancy or a valid
+representation. Its caller must prove initializedness before reading through
+the returned reference; it is not an ordinary initialized-slot constructor.
 
 Trusted slot operations establish typed references only when the storage is
 large enough, correctly aligned, and contains a valid `T`. Their validity

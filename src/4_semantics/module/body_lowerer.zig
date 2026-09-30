@@ -332,7 +332,7 @@ const Context = struct {
         const value = self.tree.tokenContent(literal.token).literal;
         return switch (value) {
             .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => blk: {
-                const parsed = try literals.integer(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
+                const parsed = try literals.integerWithDiagnostic(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative, self.diagnostics, self.tree.tokenLocation(literal.token));
                 break :blk try self.resolved(node, try self.builtin(.Int32), .{ .int_literal = parsed });
             },
             .regular_float_literal, .scientific_float_literal => blk: {

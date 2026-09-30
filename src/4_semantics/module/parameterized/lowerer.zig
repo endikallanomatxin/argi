@@ -44,7 +44,7 @@ pub fn lower(
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
 ) !Stats {
-    return lowerLinked(allocator, graph, files, &.{});
+    return lowerLinked(allocator, graph, files, &.{}, null);
 }
 
 pub fn lowerLinked(
@@ -52,6 +52,7 @@ pub fn lowerLinked(
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
     abstract_types: []const QualifiedAbstract,
+    diagnostics: ?*@import("../../../1_base/diagnostic.zig").Diagnostics,
 ) !Stats {
     var ctx = Context{
         .allocator = allocator,
@@ -62,6 +63,7 @@ pub fn lowerLinked(
         .abstract_parameters = std.array_list.Managed(AbstractParameterBinding).init(allocator),
         .bindings = std.array_list.Managed(BindingName).init(allocator),
         .abstract_types = abstract_types,
+        .diagnostics = diagnostics,
     };
     defer ctx.parameters.deinit();
     defer ctx.abstract_parameters.deinit();
@@ -178,6 +180,7 @@ fn linkedAbstractMatches(
 }
 
 pub const Context = struct {
+    diagnostics: ?*@import("../../../1_base/diagnostic.zig").Diagnostics = null,
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
@@ -1007,7 +1010,7 @@ pub const Context = struct {
             const token_content = self.tree.tokenContent(literal.token).literal;
             return switch (token_content) {
                 .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => blk: {
-                    const value = try literals.integer(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative);
+                    const value = try literals.integerWithDiagnostic(self.tree.tokenTextFromSource(self.source, literal.token), literal.negative, self.diagnostics, self.tree.tokenLocation(literal.token));
                     break :blk self.addResolvedNode(node, try self.parameterizedBuiltin(.Int32), .{ .int_literal = value });
                 },
                 .regular_float_literal, .scientific_float_literal => blk: {

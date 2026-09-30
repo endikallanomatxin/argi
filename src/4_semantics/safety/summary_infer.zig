@@ -168,6 +168,9 @@ pub const Infer = struct {
             else
                 erased;
         }
+        for (summary.storage_capability_uses) |use| {
+            if (receiver != null and use.target.input_index == receiver.? and use.target.projections.len != 0) return null;
+        }
         summary.outputs = outputs;
         for (summary.input_post_states) |state| {
             var ty = self.graph.fields.items[function.input.start + state.target.input_index].ty;
@@ -309,8 +312,26 @@ pub const Infer = struct {
         var required_live_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (left.required_live_inputs) |input| try appendInputPath(&required_live_inputs, input);
         for (right.required_live_inputs) |input| try appendInputPath(&required_live_inputs, input);
+        var left_capabilities = CapabilityFlow.init(self.allocator);
+        defer left_capabilities.deinit();
+        var right_capabilities = CapabilityFlow.init(self.allocator);
+        defer right_capabilities.deinit();
+        for (left.storage_capability_uses) |use| try self.add_capability_count(&left_capabilities, .{ .input = use.target }, use.minimum, use.maximum);
+        for (right.storage_capability_uses) |use| try self.add_capability_count(&right_capabilities, .{ .input = use.target }, use.minimum, use.maximum);
+        for (left.storage_capability_conflicts) |pair| try self.record_capability_conflict(&left_capabilities, .{ .input = pair.first }, .{ .input = pair.second });
+        for (right.storage_capability_conflicts) |pair| try self.record_capability_conflict(&right_capabilities, .{ .input = pair.first }, .{ .input = pair.second });
+        var joined_capabilities = CapabilityFlow.init(self.allocator);
+        defer joined_capabilities.deinit();
+        try self.join_capability_flows(&joined_capabilities, &left_capabilities, &right_capabilities);
+        var capability_uses = std.array_list.Managed(facts.StorageCapabilityUse).init(self.allocator);
+        for (joined_capabilities.counts.items) |count| try capability_uses.append(.{ .target = count.source.input, .minimum = count.minimum, .maximum = count.maximum });
+        var capability_conflicts = std.array_list.Managed(facts.StorageCapabilityConflict).init(self.allocator);
+        for (joined_capabilities.conflicts.items) |pair| try capability_conflicts.append(.{ .first = pair.first.input, .second = pair.second.input });
         return .{
             .outputs = outputs,
+            .storage_capability_uses = try capability_uses.toOwnedSlice(),
+            .storage_capability_conflicts = try capability_conflicts.toOwnedSlice(),
+
             .required_live_inputs = try required_live_inputs.toOwnedSlice(),
             .input_post_states = input_post_states,
             .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
@@ -445,6 +466,13 @@ pub const Infer = struct {
             } else try appendInputPath(&generations, path);
         }
         result.input_generation_dependencies = try generations.toOwnedSlice();
+        var storage_capabilities = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (effect.input_storage_capabilities) |path| {
+            var erased = path;
+            if (path.input_index == receiver_index) erased.projections = &.{};
+            try appendInputPath(&storage_capabilities, erased);
+        }
+        result.input_storage_capabilities = try storage_capabilities.toOwnedSlice();
         var receiver_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_place_values) |path| {
             if (path.input_index == receiver_index and path.projections.len != 0) {
@@ -559,8 +587,16 @@ pub const Infer = struct {
             value.* = (try self.mergeVirtualValueEffect(left_variant.value.*, right_variant.value.*, fresh_map)) orelse return null;
             variants[index] = .{ .index = left_variant.index, .value = value };
         }
+        const right_unavailable = try self.allocator.alloc(facts.FreshStorageCapabilityState, right.unavailable_fresh_storage.len);
+        for (right.unavailable_fresh_storage, 0..) |entry, index| {
+            right_unavailable[index] = entry;
+            right_unavailable[index].source = fresh_map.get(entry.source) orelse entry.source;
+            right_unavailable[index].maybe_consumed = true;
+        }
+        const unavailable = try self.merge_unavailable_fresh_storage(left.unavailable_fresh_storage, right_unavailable);
         return .{
             .input_dependencies = try dependencies.toOwnedSlice(),
+            .input_storage_capabilities = try self.union_input_paths(left.input_storage_capabilities, right.input_storage_capabilities),
             .input_places = try input_places.toOwnedSlice(),
             .input_generation_dependencies = try input_generations.toOwnedSlice(),
             .input_place_values = try input_place_values.toOwnedSlice(),
@@ -573,6 +609,7 @@ pub const Infer = struct {
             .fresh_dependencies = fresh_dependencies,
             .fresh_owned_roots = fresh_owned_roots,
             .fresh_storage_capabilities = left.fresh_storage_capabilities,
+            .unavailable_fresh_storage = unavailable,
             .integer_address = left.integer_address,
             .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
             .foreign_storage = left.foreign_storage,
@@ -590,6 +627,8 @@ pub const Infer = struct {
         if (function.safety_primitive != .none or function.body == null) return .{
             .outputs = outputs,
             .required_live_inputs = previous.required_live_inputs,
+            .storage_capability_uses = previous.storage_capability_uses,
+            .storage_capability_conflicts = previous.storage_capability_conflicts,
             .input_post_states = previous.input_post_states,
             .outcome_post_states = previous.outcome_post_states,
             .opaque_storage_effects = previous.opaque_storage_effects,
@@ -664,8 +703,42 @@ pub const Infer = struct {
             }
         }
 
+        // This finite domain tracks authorization separately from lifetime:
+        // counts saturate at two, so recursion can express repeated consumption
+        // without growing symbolic histories or introducing another scheduler.
+        var capability_flow = CapabilityFlow.init(self.allocator);
+        defer capability_flow.deinit();
+        var capability_exits: ?CapabilityFlow = null;
+        defer if (capability_exits) |*exit| exit.deinit();
+        try self.infer_capability_block(function_id, function.body.?, &capability_flow, &capability_exits);
+        if (capability_flow.reachable) try self.record_capability_exit(&capability_flow, &capability_exits);
+        const counts = if (capability_exits) |exit| exit.counts.items else capability_flow.counts.items;
+        var capability_uses = std.array_list.Managed(facts.StorageCapabilityUse).init(self.allocator);
+        for (counts) |count| if (count.source == .input) {
+            try capability_uses.append(.{ .target = count.source.input, .minimum = count.minimum, .maximum = count.maximum });
+        };
+        var capability_conflicts = std.array_list.Managed(facts.StorageCapabilityConflict).init(self.allocator);
+        const conflicts = if (capability_exits) |exit| exit.conflicts.items else capability_flow.conflicts.items;
+        for (conflicts) |pair| if (pair.first == .input and pair.second == .input) {
+            try capability_conflicts.append(.{ .first = pair.first.input, .second = pair.second.input });
+        };
+        const returned_bindings = if (capability_exits) |exit| exit.bindings else capability_flow.bindings;
+        const output_bindings = self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len];
+        const output_fields = self.graph.fields.items[function.output.start..][0..function.output.len];
+        for (outputs, output_bindings, 0..) |*output, binding, index| {
+            if (index >= output_fields.len) continue;
+            if (returned_bindings.get(binding)) |origin| output.* = try self.overlay_capability_outputs(output.*, origin, output_fields[index].ty);
+        }
+        for (outputs) |*output| output.* = try self.mark_unavailable_fresh_storage(output.*, counts);
+        for (post_states.items) |*post| post.value = try self.mark_unavailable_fresh_storage(post.value, counts);
+        for (outcome_post_states) |outcome| for (@constCast(outcome.input_post_states)) |*post| {
+            post.value = try self.mark_unavailable_fresh_storage(post.value, counts);
+        };
+
         return .{
             .outputs = outputs,
+            .storage_capability_uses = try capability_uses.toOwnedSlice(),
+            .storage_capability_conflicts = try capability_conflicts.toOwnedSlice(),
             .required_live_inputs = try required_live_inputs.toOwnedSlice(),
             .input_post_states = try post_states.toOwnedSlice(),
             .outcome_post_states = outcome_post_states,
@@ -733,6 +806,571 @@ pub const Infer = struct {
                 else => {},
             }
         }
+    }
+
+    const CapabilitySource = union(enum) { input: facts.InputPath, fresh: facts.FreshEffectSource };
+    const CapabilityConflict = struct { first: CapabilitySource, second: CapabilitySource };
+    const CapabilityCount = struct { source: CapabilitySource, minimum: u2, maximum: u2 };
+    const CapabilityFlow = struct {
+        conflicts: std.array_list.Managed(CapabilityConflict),
+        counts: std.array_list.Managed(CapabilityCount),
+        addresses: std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId),
+        calls: std.AutoHashMap(graph_mod.GlobalNodeId, void),
+        bindings: std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect),
+        reachable: bool = true,
+        breaks_loop: bool = false,
+
+        fn init(allocator: std.mem.Allocator) CapabilityFlow {
+            return .{ .conflicts = .init(allocator), .counts = .init(allocator), .bindings = .init(allocator), .calls = .init(allocator), .addresses = .init(allocator) };
+        }
+        fn deinit(self: *CapabilityFlow) void {
+            self.counts.deinit();
+            self.conflicts.deinit();
+            self.bindings.deinit();
+            self.calls.deinit();
+            self.addresses.deinit();
+        }
+        fn clone(self: *const CapabilityFlow, allocator: std.mem.Allocator) !CapabilityFlow {
+            var result = CapabilityFlow.init(allocator);
+            errdefer result.deinit();
+            try result.counts.appendSlice(self.counts.items);
+            try result.conflicts.appendSlice(self.conflicts.items);
+            result.bindings.deinit();
+            result.bindings = try self.bindings.clone();
+            result.calls.deinit();
+            result.calls = try self.calls.clone();
+            result.addresses.deinit();
+            result.addresses = try self.addresses.clone();
+            result.reachable = self.reachable;
+            result.breaks_loop = self.breaks_loop;
+            return result;
+        }
+    };
+
+    fn capability_source_equal(self: *Infer, left: CapabilitySource, right: CapabilitySource) bool {
+        if (std.meta.activeTag(left) != std.meta.activeTag(right)) return false;
+        return switch (left) {
+            .input => |path| self.inputPathEqual(path, right.input),
+            .fresh => |source| source == right.fresh,
+        };
+    }
+
+    fn add_capability_count(self: *Infer, flow: *CapabilityFlow, source: CapabilitySource, minimum: u2, maximum: u2) !void {
+        for (flow.counts.items) |*count| if (self.capability_source_equal(count.source, source)) {
+            count.minimum = @intCast(@min(@as(u3, count.minimum) + minimum, 2));
+            count.maximum = @intCast(@min(@as(u3, count.maximum) + maximum, 2));
+            return;
+        };
+        try flow.counts.append(.{ .source = source, .minimum = minimum, .maximum = maximum });
+    }
+
+    fn join_capability_flows(self: *Infer, output: *CapabilityFlow, left: *const CapabilityFlow, right: *const CapabilityFlow) !void {
+        var joined = CapabilityFlow.init(self.allocator);
+        errdefer joined.deinit();
+        for (left.counts.items) |count| {
+            var next = count;
+            var found = false;
+            for (right.counts.items) |other| if (self.capability_source_equal(count.source, other.source)) {
+                next.minimum = @min(count.minimum, other.minimum);
+                next.maximum = @max(count.maximum, other.maximum);
+                found = true;
+                break;
+            };
+            if (!found) next.minimum = 0;
+            try joined.counts.append(next);
+        }
+        for (right.counts.items) |count| {
+            var found = false;
+            for (left.counts.items) |other| if (self.capability_source_equal(count.source, other.source)) {
+                found = true;
+                break;
+            };
+            if (!found) {
+                var next = count;
+                next.minimum = 0;
+                try joined.counts.append(next);
+            }
+        }
+        try joined.conflicts.appendSlice(left.conflicts.items);
+        for (right.conflicts.items) |conflict| try self.record_capability_conflict(&joined, conflict.first, conflict.second);
+        var entries = left.bindings.iterator();
+        while (entries.next()) |entry| try joined.bindings.put(entry.key_ptr.*, entry.value_ptr.*);
+        entries = right.bindings.iterator();
+        while (entries.next()) |entry| {
+            const value = if (joined.bindings.get(entry.key_ptr.*)) |previous|
+                try self.mergeValueEffects(previous, entry.value_ptr.*)
+            else
+                entry.value_ptr.*;
+            try joined.bindings.put(entry.key_ptr.*, value);
+        }
+        var addresses = left.addresses.iterator();
+        while (addresses.next()) |entry| try joined.addresses.put(entry.key_ptr.*, entry.value_ptr.*);
+        addresses = right.addresses.iterator();
+        while (addresses.next()) |entry| {
+            var targets = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
+            try targets.appendSlice(joined.addresses.get(entry.key_ptr.*) orelse &.{});
+            for (entry.value_ptr.*) |target| if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, targets.items, target) == null) {
+                try targets.append(target);
+            };
+            try joined.addresses.put(entry.key_ptr.*, try targets.toOwnedSlice());
+        }
+        var calls = left.calls.keyIterator();
+        while (calls.next()) |call| try joined.calls.put(call.*, {});
+        calls = right.calls.keyIterator();
+        while (calls.next()) |call| try joined.calls.put(call.*, {});
+        joined.reachable = left.reachable or right.reachable;
+        joined.breaks_loop = left.breaks_loop and right.breaks_loop;
+        output.deinit();
+        output.* = joined;
+    }
+
+    fn join_capability_fallthrough(self: *Infer, output: *CapabilityFlow, left: *const CapabilityFlow, right: *const CapabilityFlow) !void {
+        if (left.reachable != right.reachable) {
+            const copied = try (if (left.reachable) left else right).clone(self.allocator);
+            output.deinit();
+            output.* = copied;
+        } else try self.join_capability_flows(output, left, right);
+    }
+
+    fn capability_address_targets(self: *Infer, node: graph_mod.GlobalNodeId, flow: *CapabilityFlow) ![]const graph_mod.GlobalNodeId {
+        return switch (self.graph.node(node).content) {
+            .address_of => |value| self.allocator.dupe(graph_mod.GlobalNodeId, &.{value}),
+            .binding_use => |binding| flow.addresses.get(binding) orelse &.{},
+            .move_value, .denied_implicit_copy => |value| self.capability_address_targets(value, flow),
+            else => &.{},
+        };
+    }
+
+    fn store_capability_field(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, index: u32, value: facts.ValueEffect, flow: *CapabilityFlow) anyerror!void {
+        var aggregate = try self.capability_value(function, target, flow);
+        var fields = std.array_list.Managed(facts.OutputFieldEffect).init(self.allocator);
+        for (aggregate.fields) |field| if (field.index != index) {
+            try fields.append(field);
+        };
+        const replacement = try self.allocator.create(facts.ValueEffect);
+        replacement.* = value;
+        try fields.append(.{ .index = index, .value = replacement });
+        aggregate.fields = try fields.toOwnedSlice();
+        try self.store_capability_target(function, target, aggregate, flow);
+    }
+
+    fn store_capability_target(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, value: facts.ValueEffect, flow: *CapabilityFlow) anyerror!void {
+        switch (self.graph.node(target).content) {
+            .binding_use => |binding| try flow.bindings.put(binding, value),
+            .struct_field_access => |field| try self.store_capability_field(function, field.value, field.field_index, value, flow),
+            .dereference => |read| {
+                const targets = try self.capability_address_targets(read.pointer, flow);
+                if (targets.len != 0) for (targets) |place| {
+                    try self.store_capability_target(function, place, value, flow);
+                } else try self.store_capability_target(function, read.pointer, value, flow);
+            },
+            else => {},
+        }
+    }
+
+    fn capability_value(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, flow: *CapabilityFlow) anyerror!facts.ValueEffect {
+        const saved = self.bindings;
+        self.bindings = flow.bindings;
+        defer {
+            flow.bindings = self.bindings;
+            self.bindings = saved;
+        }
+        // Scalar opaque reads intentionally drop lifetime envelopes. Capability
+        // origins are a separate domain and survive loading an address value.
+        const targets = try self.capability_address_targets(node, flow);
+        if (targets.len != 0 and self.graph.node(node).content == .binding_use) {
+            var current: facts.ValueEffect = .{};
+            for (targets) |target| current = try self.mergeValueEffects(current, try self.capability_value(function, target, flow));
+            return current;
+        }
+        return switch (self.graph.node(node).content) {
+            .binding_use => |binding| if (flow.bindings.get(binding)) |value| value else self.inferExpression(function, node),
+            .dereference => |read| blk: {
+                const local = try self.capability_address_targets(read.pointer, flow);
+                if (local.len != 0) {
+                    var current: facts.ValueEffect = .{};
+                    for (local) |target| current = try self.mergeValueEffects(current, try self.capability_value(function, target, flow));
+                    break :blk current;
+                }
+                const value = try self.capability_value(function, read.pointer, flow);
+                if (value.fields.len != 0 or value.variants.len != 0) break :blk value;
+                break :blk try self.projectValueEffect(value, .dereference);
+            },
+            .address_of, .move_value, .denied_implicit_copy => |value| self.capability_value(function, value, flow),
+            .struct_field_access => |field| self.projectValueEffect(try self.capability_value(function, field.value, flow), .{ .field = field.field_index }),
+            .choice_payload_access => |access| blk: {
+                const ty = self.graph.node(access.value).ty orelse break :blk .{};
+                const index = self.variantIndex(ty, access.variant) orelse break :blk .{};
+                break :blk try self.projectValueEffect(try self.capability_value(function, access.value, flow), .{ .variant = index });
+            },
+            .explicit_cast => |cast| self.capability_value(function, cast.value, flow),
+            else => self.inferExpression(function, node),
+        };
+    }
+
+    fn record_capability_conflict(self: *Infer, flow: *CapabilityFlow, first: CapabilitySource, second: CapabilitySource) !void {
+        if (self.capability_source_equal(first, second)) {
+            for (flow.counts.items) |*count| if (self.capability_source_equal(count.source, first)) {
+                count.maximum = 2;
+                return;
+            };
+        }
+        for (flow.conflicts.items) |pair| if ((self.capability_source_equal(pair.first, first) and self.capability_source_equal(pair.second, second)) or
+            (self.capability_source_equal(pair.first, second) and self.capability_source_equal(pair.second, first))) return;
+        try flow.conflicts.append(.{ .first = first, .second = second });
+    }
+
+    fn capability_sources(self: *Infer, effect: facts.ValueEffect) ![]const CapabilitySource {
+        var sources = std.array_list.Managed(CapabilitySource).init(self.allocator);
+        for (effect.input_dependencies) |dependency| if (!dependency.validity_only) {
+            try sources.append(.{ .input = dependency.path });
+        };
+        for (effect.input_storage_capabilities) |path| try sources.append(.{ .input = path });
+        for (effect.input_place_values) |path| try sources.append(.{ .input = path });
+        for (effect.fresh_storage_capabilities) |source| try sources.append(.{ .fresh = source });
+        var unique = std.array_list.Managed(CapabilitySource).init(self.allocator);
+        for (sources.items) |source| {
+            var found = false;
+            for (unique.items) |previous| if (self.capability_source_equal(source, previous)) {
+                found = true;
+                break;
+            };
+            if (!found) try unique.append(source);
+        }
+        return unique.toOwnedSlice();
+    }
+
+    fn apply_capability_flow(self: *Infer, flow: *CapabilityFlow, incoming: *const CapabilityFlow) !void {
+        // Preserve alternatives: two paths consumed on disjoint branches must
+        // remain a single use even when callers pass aliases for those paths.
+        for (incoming.counts.items) |count| for (flow.counts.items) |previous| {
+            if (previous.maximum != 0 and count.maximum != 0) try self.record_capability_conflict(flow, previous.source, count.source);
+        };
+        for (incoming.counts.items) |count| try self.add_capability_count(flow, count.source, count.minimum, count.maximum);
+        for (incoming.conflicts.items) |pair| try self.record_capability_conflict(flow, pair.first, pair.second);
+    }
+
+    fn consume_capability_effect(self: *Infer, flow: *CapabilityFlow, effect: facts.ValueEffect, minimum: u2, maximum: u2) !void {
+        const sources = try self.capability_sources(effect);
+        var incoming = CapabilityFlow.init(self.allocator);
+        defer incoming.deinit();
+        for (sources) |source| try self.add_capability_count(&incoming, source, if (sources.len > 1) 0 else minimum, maximum);
+        try self.apply_capability_flow(flow, &incoming);
+    }
+
+    fn infer_capability_block(self: *Infer, function: graph_mod.GlobalFunctionId, block: graph_mod.GlobalBlockId, flow: *CapabilityFlow, exits: *?CapabilityFlow) anyerror!void {
+        const record = self.graph.blocks.items[@intFromEnum(block)];
+        for (self.graph.node_refs.items[record.nodes.start..][0..record.nodes.len]) |node| {
+            if (!flow.reachable) break;
+            try self.infer_capability_node(function, node, flow, exits);
+        }
+        if (flow.reachable) if (record.ret_val) |value| try self.infer_capability_node(function, value, flow, exits);
+    }
+
+    fn record_capability_exit(self: *Infer, flow: *const CapabilityFlow, exits: *?CapabilityFlow) !void {
+        if (exits.*) |*previous| try self.join_capability_flows(previous, previous, flow) else exits.* = try flow.clone(self.allocator);
+    }
+
+    fn infer_capability_call(self: *Infer, function: graph_mod.GlobalFunctionId, callee: graph_mod.GlobalFunctionId, arguments: []const graph_mod.ValueField, flow: *CapabilityFlow) !void {
+        const primitive = self.graph.function(callee).safety_primitive;
+        if (primitive_transfer.forPrimitive(primitive).consumes_storage_input) |index| {
+            if (index < arguments.len) try self.consume_capability_effect(flow, try self.capability_value(function, arguments[index].value, flow), 1, 1);
+            return;
+        }
+        const summary = self.engine.summaryFor(callee) orelse return;
+        try self.substitute_capability_uses(function, summary, arguments, flow);
+    }
+
+    fn mapped_capability_value(self: *Infer, function: graph_mod.GlobalFunctionId, target: facts.InputPath, arguments: []const graph_mod.ValueField, flow: *CapabilityFlow) !facts.ValueEffect {
+        if (target.input_index >= arguments.len) return .{};
+        var value = try self.capability_value(function, arguments[target.input_index].value, flow);
+        for (target.projections) |projection| value = try self.projectValueEffect(value, projection);
+        return value;
+    }
+
+    fn substitute_capability_uses(self: *Infer, function: graph_mod.GlobalFunctionId, summary: facts.SafetySummary, arguments: []const graph_mod.ValueField, flow: *CapabilityFlow) !void {
+        var incoming = CapabilityFlow.init(self.allocator);
+        defer incoming.deinit();
+        for (summary.storage_capability_uses) |use| {
+            const sources = try self.capability_sources(try self.mapped_capability_value(function, use.target, arguments, flow));
+            for (sources) |source| {
+                var found = false;
+                for (incoming.counts.items) |*count| if (self.capability_source_equal(count.source, source)) {
+                    count.minimum = @max(count.minimum, if (sources.len > 1) @as(u2, 0) else use.minimum);
+                    count.maximum = @max(count.maximum, use.maximum);
+                    found = true;
+                    break;
+                };
+                if (!found) try self.add_capability_count(&incoming, source, if (sources.len > 1) 0 else use.minimum, use.maximum);
+            }
+        }
+        for (summary.storage_capability_conflicts) |pair| {
+            const first = try self.capability_sources(try self.mapped_capability_value(function, pair.first, arguments, flow));
+            const second = try self.capability_sources(try self.mapped_capability_value(function, pair.second, arguments, flow));
+            for (first) |left| for (second) |right| {
+                try self.record_capability_conflict(&incoming, left, right);
+            };
+        }
+        try self.apply_capability_flow(flow, &incoming);
+    }
+
+    fn infer_capability_node(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, flow: *CapabilityFlow, exits: *?CapabilityFlow) anyerror!void {
+        const content = self.graph.node(node).content;
+        if (content == .function_call or content == .virtual_call or content == .type_initializer) {
+            // Block result expressions can reference an already evaluated call
+            // node. Codegen caches that value; do not consume it a second time.
+            if (flow.calls.contains(node)) return;
+            try flow.calls.put(node, {});
+        }
+        switch (self.graph.node(node).content) {
+            .binding_declaration => |binding| {
+                const record = self.graph.binding(binding);
+                if (!record.deferred_initialization) if (record.initialization) |value| {
+                    try self.infer_capability_node(function, value, flow, exits);
+                    try flow.bindings.put(binding, try self.capability_value(function, value, flow));
+                    try flow.addresses.put(binding, try self.capability_address_targets(value, flow));
+                };
+            },
+            .assignment => |assignment| {
+                try self.infer_capability_node(function, assignment.value, flow, exits);
+                try flow.bindings.put(assignment.binding, try self.capability_value(function, assignment.value, flow));
+                try flow.addresses.put(assignment.binding, try self.capability_address_targets(assignment.value, flow));
+            },
+            .function_call => |call| {
+                try self.infer_capability_node(function, call.input, flow, exits);
+                if (self.structArguments(call.input)) |arguments| try self.infer_capability_call(function, call.callee, arguments, flow);
+            },
+            .virtual_call => |id| {
+                const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                try self.infer_capability_node(function, call.input, flow, exits);
+                const summary = try self.virtualSummary(call.safety_methods) orelse return;
+                if (self.structArguments(call.input)) |arguments| try self.substitute_capability_uses(function, summary, arguments, flow);
+            },
+            .type_initializer => |initializer| {
+                try self.infer_capability_node(function, initializer.args, flow, exits);
+                try self.infer_capability_call(function, initializer.init_fn, try self.initializerArguments(initializer.args), flow);
+            },
+            .if_statement => |branch| {
+                try self.infer_capability_node(function, branch.condition, flow, exits);
+                var left = try flow.clone(self.allocator);
+                defer left.deinit();
+                var right = try flow.clone(self.allocator);
+                defer right.deinit();
+                try self.infer_capability_block(function, branch.then_block, &left, exits);
+                if (branch.else_block) |block| try self.infer_capability_block(function, block, &right, exits);
+                try self.join_capability_fallthrough(flow, &left, &right);
+            },
+            .while_statement => |loop| {
+                var before_loop = try flow.clone(self.allocator);
+                defer before_loop.deinit();
+                try self.infer_capability_node(function, loop.condition, flow, exits);
+                var body = try flow.clone(self.allocator);
+                defer body.deinit();
+                try self.infer_capability_block(function, loop.body, &body, exits);
+                if (!body.breaks_loop) for (body.counts.items) |*count| {
+                    var before: u2 = 0;
+                    for (before_loop.counts.items) |prior| if (self.capability_source_equal(count.source, prior.source)) {
+                        before = prior.maximum;
+                        break;
+                    };
+                    if (count.maximum > before) count.maximum = 2;
+                };
+                try self.join_capability_flows(flow, flow, &body);
+            },
+            .for_statement => |loop| {
+                if (loop.init) |value| try self.infer_capability_node(function, value, flow, exits);
+                var before_loop = try flow.clone(self.allocator);
+                defer before_loop.deinit();
+                try self.infer_capability_node(function, loop.condition, flow, exits);
+                var body = try flow.clone(self.allocator);
+                defer body.deinit();
+                try self.infer_capability_block(function, loop.body, &body, exits);
+                if (body.reachable) if (loop.increment) |value| try self.infer_capability_node(function, value, &body, exits);
+                if (!body.breaks_loop) for (body.counts.items) |*count| {
+                    var before: u2 = 0;
+                    for (before_loop.counts.items) |prior| if (self.capability_source_equal(count.source, prior.source)) {
+                        before = prior.maximum;
+                        break;
+                    };
+                    if (count.maximum > before) count.maximum = 2;
+                };
+                try self.join_capability_flows(flow, flow, &body);
+            },
+            .choice_literal => |literal| {
+                if (literal.payload) |value| try self.infer_capability_node(function, value, flow, exits);
+            },
+            .switch_statement => |id| {
+                const statement = self.graph.switches.items[@intFromEnum(id)];
+                try self.infer_capability_node(function, statement.expression, flow, exits);
+                const choice = try self.capability_value(function, statement.expression, flow);
+                var joined: ?CapabilityFlow = null;
+                defer if (joined) |*value| value.deinit();
+                for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| {
+                    var branch = try flow.clone(self.allocator);
+                    defer branch.deinit();
+                    if (case.payload_binding) |binding| {
+                        if (self.graph.node(statement.expression).ty) |ty| if (self.variantIndex(ty, case.variant)) |index| {
+                            try branch.bindings.put(binding, try self.projectValueEffect(choice, .{ .variant = index }));
+                        };
+                    }
+                    try self.infer_capability_block(function, case.body, &branch, exits);
+                    if (joined) |*value| try self.join_capability_fallthrough(value, value, &branch) else joined = try branch.clone(self.allocator);
+                }
+                if (statement.default_block) |block| {
+                    var branch = try flow.clone(self.allocator);
+                    defer branch.deinit();
+                    try self.infer_capability_block(function, block, &branch, exits);
+                    if (joined) |*value| try self.join_capability_fallthrough(value, value, &branch) else joined = try branch.clone(self.allocator);
+                } else if (!statement.exhaustive) {
+                    if (joined) |*value| try self.join_capability_fallthrough(value, value, flow) else joined = try flow.clone(self.allocator);
+                }
+                if (joined) |*value| {
+                    const copied = try value.clone(self.allocator);
+                    flow.deinit();
+                    flow.* = copied;
+                }
+            },
+            .logical_operation => |op| {
+                try self.infer_capability_node(function, op.left, flow, exits);
+                var right = try flow.clone(self.allocator);
+                defer right.deinit();
+                try self.infer_capability_node(function, op.right, &right, exits);
+                try self.join_capability_flows(flow, flow, &right);
+            },
+            .nullable_unwrap_or => |id| {
+                const unwrap = self.graph.nullable_unwraps.items[@intFromEnum(id)];
+                try self.infer_capability_node(function, unwrap.nullable_value, flow, exits);
+                var fallback = try flow.clone(self.allocator);
+                defer fallback.deinit();
+                try self.infer_capability_node(function, unwrap.fallback_value, &fallback, exits);
+                try self.join_capability_flows(flow, flow, &fallback);
+            },
+            .pointer_assignment => |assignment| {
+                try self.infer_capability_node(function, assignment.pointer, flow, exits);
+                try self.infer_capability_node(function, assignment.value, flow, exits);
+                const value = try self.capability_value(function, assignment.value, flow);
+                const targets = try self.capability_address_targets(assignment.pointer, flow);
+                if (targets.len != 0) for (targets) |target| {
+                    try self.store_capability_target(function, target, value, flow);
+                } else try self.store_capability_target(function, assignment.pointer, value, flow);
+            },
+            .struct_field_store => |store| {
+                try self.infer_capability_node(function, store.struct_ptr, flow, exits);
+                try self.infer_capability_node(function, store.value, flow, exits);
+                const value = try self.capability_value(function, store.value, flow);
+                const targets = try self.capability_address_targets(store.struct_ptr, flow);
+                if (targets.len != 0) for (targets) |target| {
+                    try self.store_capability_field(function, target, store.field_index, value, flow);
+                } else try self.store_capability_field(function, store.struct_ptr, store.field_index, value, flow);
+            },
+            .array_store => |store| {
+                try self.infer_capability_node(function, store.array_ptr, flow, exits);
+                try self.infer_capability_node(function, store.index, flow, exits);
+                try self.infer_capability_node(function, store.value, flow, exits);
+            },
+            .array_index => |index| {
+                try self.infer_capability_node(function, index.array_ptr, flow, exits);
+                try self.infer_capability_node(function, index.index, flow, exits);
+            },
+            .error_propagation => |id| {
+                const propagation = self.graph.error_propagations.items[@intFromEnum(id)];
+                try self.infer_capability_node(function, propagation.errable_value, flow, exits);
+                var failed = try flow.clone(self.allocator);
+                defer failed.deinit();
+                for (self.graph.node_refs.items[propagation.cleanup_nodes.start..][0..propagation.cleanup_nodes.len]) |value| try self.infer_capability_node(function, value, &failed, exits);
+                try self.record_capability_exit(&failed, exits);
+            },
+            .error_context => |id| {
+                const context = self.graph.error_contexts.items[@intFromEnum(id)];
+                try self.infer_capability_node(function, context.errable_value, flow, exits);
+                try self.infer_capability_node(function, context.context, flow, exits);
+                for (self.graph.node_refs.items[context.cleanup_nodes.start..][0..context.cleanup_nodes.len]) |value| try self.infer_capability_node(function, value, flow, exits);
+            },
+            .auto_deinit_binding => |id| {
+                const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
+                if (cleanup.input) |input| {
+                    try self.infer_capability_node(function, input, flow, exits);
+                    if (cleanup.deinit_fn) |callee| if (self.structArguments(input)) |arguments| try self.infer_capability_call(function, callee, arguments, flow);
+                }
+            },
+            .return_statement => |ret| {
+                if (ret.expression) |value| try self.infer_capability_node(function, value, flow, exits);
+                for (self.graph.node_refs.items[ret.cleanup.start..][0..ret.cleanup.len]) |value| try self.infer_capability_node(function, value, flow, exits);
+                try self.record_capability_exit(flow, exits);
+                flow.reachable = false;
+                flow.breaks_loop = true;
+            },
+            .break_statement => {
+                flow.reachable = false;
+                flow.breaks_loop = true;
+            },
+            .continue_statement => flow.reachable = false,
+            .abort_statement => {
+                try self.record_capability_exit(flow, exits);
+                flow.reachable = false;
+                flow.breaks_loop = true;
+            },
+            .code_block => |block| try self.infer_capability_block(function, block, flow, exits),
+            .move_value, .denied_implicit_copy, .address_of => |value| try self.infer_capability_node(function, value, flow, exits),
+            .dereference => |read| try self.infer_capability_node(function, read.pointer, flow, exits),
+            .struct_field_access => |field| try self.infer_capability_node(function, field.value, flow, exits),
+            .choice_payload_access => |payload| try self.infer_capability_node(function, payload.value, flow, exits),
+            .explicit_cast => |cast| try self.infer_capability_node(function, cast.value, flow, exits),
+            .struct_value_literal => |literal| for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
+                try self.infer_capability_node(function, field.value, flow, exits);
+            },
+            .array_literal => |literal| for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |value| {
+                try self.infer_capability_node(function, value, flow, exits);
+            },
+            .list_literal => |literal| for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |value| {
+                try self.infer_capability_node(function, value, flow, exits);
+            },
+            .binary_operation => |op| {
+                try self.infer_capability_node(function, op.left, flow, exits);
+                try self.infer_capability_node(function, op.right, flow, exits);
+            },
+            .comparison => |op| {
+                try self.infer_capability_node(function, op.left, flow, exits);
+                try self.infer_capability_node(function, op.right, flow, exits);
+            },
+            else => {},
+        }
+    }
+
+    fn mark_unavailable_fresh_storage(self: *Infer, effect: facts.ValueEffect, counts: []const CapabilityCount) anyerror!facts.ValueEffect {
+        var result = effect;
+        var unavailable = std.array_list.Managed(facts.FreshStorageCapabilityState).init(self.allocator);
+        try unavailable.appendSlice(effect.unavailable_fresh_storage);
+        for (effect.fresh_storage_capabilities) |source| for (counts) |count| {
+            if (count.source != .fresh or count.source.fresh != source or count.maximum == 0) continue;
+            var found = false;
+            for (unavailable.items) |*entry| if (entry.source == source) {
+                entry.maybe_consumed = entry.maybe_consumed or count.minimum == 0;
+                found = true;
+                break;
+            };
+            if (!found) try unavailable.append(.{ .source = source, .maybe_consumed = count.minimum == 0 });
+        };
+        result.unavailable_fresh_storage = try unavailable.toOwnedSlice();
+        if (effect.fields.len != 0) {
+            const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
+            for (effect.fields, 0..) |field, index| {
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = try self.mark_unavailable_fresh_storage(field.value.*, counts);
+                fields[index] = .{ .index = field.index, .value = value };
+            }
+            result.fields = fields;
+        }
+        if (effect.variants.len != 0) {
+            const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
+            for (effect.variants, 0..) |variant, index| {
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = try self.mark_unavailable_fresh_storage(variant.value.*, counts);
+                variants[index] = .{ .index = variant.index, .value = value };
+            }
+            result.variants = variants;
+        }
+        return result;
     }
 
     const SymbolicInputOverride = struct {
@@ -2733,9 +3371,24 @@ pub const Infer = struct {
             return self.substituteOutput(function_id, effect, arguments);
         }
         const summary = self.engine.summaryFor(callee) orelse return .{};
-        if (summary.outputs.len != 1) return .{};
-        const substituted = try self.substituteOutput(function_id, summary.outputs[0], arguments);
-        return self.rebaseFreshSources(substituted, call_node);
+        return self.substitute_summary_outputs(function_id, summary.outputs, arguments, call_node);
+    }
+
+    fn substitute_summary_outputs(self: *Infer, function: graph_mod.GlobalFunctionId, outputs: []const facts.ValueEffect, arguments: []const graph_mod.ValueField, call_node: graph_mod.GlobalNodeId) !facts.ValueEffect {
+        if (outputs.len == 0) return .{};
+        if (outputs.len == 1) return self.rebaseFreshSources(try self.substituteOutput(function, outputs[0], arguments), call_node);
+        const fields = try self.allocator.alloc(facts.OutputFieldEffect, outputs.len);
+        var aggregate: facts.ValueEffect = .{};
+        for (outputs, 0..) |output, index| {
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = try self.substituteOutput(function, output, arguments);
+            fields[index] = .{ .index = @intCast(index), .value = value };
+            aggregate = try self.mergeValueEffects(aggregate, value.*);
+        }
+        aggregate.fields = fields;
+        aggregate.variants = &.{};
+        aggregate.known_choice_variant = null;
+        return self.rebaseFreshSources(aggregate, call_node);
     }
 
     fn initializerArguments(self: *Infer, input: graph_mod.GlobalNodeId) ![]const graph_mod.ValueField {
@@ -2860,10 +3513,8 @@ pub const Infer = struct {
     ) !facts.ValueEffect {
         const call = self.graph.virtual_calls.items[@intFromEnum(virtual_call_id)];
         const summary = try self.virtualSummary(call.safety_methods) orelse return .{};
-        if (summary.outputs.len != 1) return .{};
         const arguments = self.structArguments(call.input) orelse return .{};
-        const substituted = try self.substituteOutput(function_id, summary.outputs[0], arguments);
-        return self.rebaseFreshSources(substituted, call_node);
+        return self.substitute_summary_outputs(function_id, summary.outputs, arguments, call_node);
     }
 
     fn structArguments(self: *Infer, node_id: graph_mod.GlobalNodeId) ?[]const graph_mod.ValueField {
@@ -2923,7 +3574,7 @@ pub const Infer = struct {
         effect: facts.ValueEffect,
     ) !facts.ValueEffect {
         const ty = self.graph.node(node_id).ty orelse return .{};
-        if (!self.typeContainsPointer(ty)) return .{};
+        if (!self.typeContainsPointer(ty)) return self.scalar_storage_effect(effect);
         const input_paths = try self.inferInputPaths(function_id, pointer);
         var pointee = effect;
         if (input_paths.len != 0) {
@@ -2943,7 +3594,7 @@ pub const Infer = struct {
         effect: facts.ValueEffect,
     ) !facts.ValueEffect {
         const ty = self.graph.node(node_id).ty orelse return effect;
-        if (!self.typeContainsPointer(ty)) return .{};
+        if (!self.typeContainsPointer(ty)) return self.scalar_storage_effect(effect);
         return self.withOpaqueGenerationDependencies(try self.inferOpaqueReadInputPaths(function_id, node_id), effect);
     }
 
@@ -3009,11 +3660,24 @@ pub const Infer = struct {
             .fresh_dependencies = effect.fresh_dependencies,
             .fresh_owned_roots = effect.fresh_owned_roots,
             .fresh_storage_capabilities = effect.fresh_storage_capabilities,
+            .unavailable_fresh_storage = effect.unavailable_fresh_storage,
             .integer_address = effect.integer_address,
             .foreign_storage = effect.foreign_storage,
             .known_choice_variant = effect.known_choice_variant,
         };
 
+        for (effect.input_storage_capabilities) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var value = if (override) |symbolic|
+                if (symbolic.input_index == path.input_index) symbolic.effect else try self.inferExpression(function_id, arguments[path.input_index].value)
+            else
+                try self.inferExpression(function_id, arguments[path.input_index].value);
+            if ((try self.inferInputPaths(function_id, arguments[path.input_index].value)).len == 0) {
+                if (try self.localPointeeEffect(function_id, arguments[path.input_index].value)) |pointee| value = pointee;
+            }
+            for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
+            result = try self.mergeValueEffects(result, try self.scalar_storage_effect(value));
+        }
         var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_places) |path| {
             const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
@@ -3087,6 +3751,10 @@ pub const Infer = struct {
                     try self.inferExpression(function_id, arguments[dependency.path.input_index].value)
             else
                 try self.inferExpression(function_id, arguments[dependency.path.input_index].value);
+            if (dependency.validity_only and dependency.path.projections.len != 0 and dependency.path.projections[0] != .dereference) {
+                if (try self.localPointeeEffect(function_id, arguments[dependency.path.input_index].value)) |pointee|
+                    argument = pointee;
+            }
             for (dependency.path.projections) |projection|
                 argument = try self.projectValueEffect(argument, projection);
             argument = if (dependency.transfers_ownership)
@@ -3148,9 +3816,13 @@ pub const Infer = struct {
         const dependencies = try self.allocator.alloc(facts.InputDependency, effect.input_dependencies.len);
         for (effect.input_dependencies, 0..) |dependency, index| {
             dependencies[index] = dependency;
-            dependencies[index].path.projections = try self.appendProjection(dependency.path.projections, projection);
+            // Validity dependencies belong to the source lifetime, even when
+            // selecting a field of the dependent value.
+            if (!dependency.validity_only)
+                dependencies[index].path.projections = try self.appendProjection(dependency.path.projections, projection);
         }
         result.input_dependencies = dependencies;
+        result.input_storage_capabilities = try self.projectInputPaths(effect.input_storage_capabilities, projection);
         result.input_places = try self.projectInputPaths(effect.input_places, projection);
         // Borrowed generations describe the source value's lifetime, not
         // storage selected by a projection of that value.
@@ -3253,6 +3925,7 @@ pub const Infer = struct {
         return .{
             .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
             .input_dependencies = try dependencies.toOwnedSlice(),
+            .input_storage_capabilities = try self.union_input_paths(left.input_storage_capabilities, right.input_storage_capabilities),
             .input_places = try input_places.toOwnedSlice(),
             .input_generation_dependencies = try input_generations.toOwnedSlice(),
             .input_place_values = try input_place_values.toOwnedSlice(),
@@ -3274,6 +3947,7 @@ pub const Infer = struct {
             .integer_address = left.integer_address or right.integer_address,
             .foreign_storage = left.foreign_storage or right.foreign_storage,
             .fresh_storage_capabilities = try fresh_capabilities.toOwnedSlice(),
+            .unavailable_fresh_storage = try self.merge_unavailable_fresh_storage(left.unavailable_fresh_storage, right.unavailable_fresh_storage),
         };
     }
 
@@ -3296,17 +3970,19 @@ pub const Infer = struct {
     /// Retain the input's lifetime without claiming its referent as the output's
     /// referent. Raw-address establishment chooses the latter independently.
     fn validityOnlyEffect(self: *Infer, effect: facts.ValueEffect) !facts.ValueEffect {
-        const dependencies = try self.allocator.dupe(facts.InputDependency, effect.input_dependencies);
-        for (dependencies) |*dependency| {
-            dependency.transfers_ownership = false;
-            dependency.validity_only = true;
+        var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator);
+        for (effect.input_dependencies) |dependency| {
+            try appendInputDependency(&dependencies, .{ .path = dependency.path, .validity_only = true });
         }
+        // A loaded anchor field contributes its stored reference lifetime,
+        // rather than only the generation of the field containing it.
+        for (effect.input_place_values) |path| try appendInputDependency(&dependencies, .{ .path = path, .validity_only = true });
         var generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_generation_dependencies) |path| try appendInputPath(&generations, path);
         for (effect.input_places) |path| try appendInputPath(&generations, path);
         return .{
             .explicit_dependency = effect.explicit_dependency,
-            .input_dependencies = dependencies,
+            .input_dependencies = try dependencies.toOwnedSlice(),
             .input_generation_dependencies = try generations.toOwnedSlice(),
             .input_owned_roots = effect.input_owned_roots,
             .opaque_generation_dependencies = effect.opaque_generation_dependencies,
@@ -3350,9 +4026,8 @@ pub const Infer = struct {
                         try self.inputValueEffect(0, &.{})
                     else
                         try self.withoutOwnershipTransfer(try self.inputValueEffect(0, &.{})),
-                    try self.withoutOwnershipTransfer(try self.inputValueEffect(1, &.{})),
+                    try self.validityOnlyEffect(try self.inputValueEffect(1, &.{})),
                 );
-                result.input_places = try self.oneInputPath(0, &.{});
                 result.explicit_dependency = transfer == .depend_on;
                 break :blk result;
             },
@@ -3398,6 +4073,12 @@ pub const Infer = struct {
         result.fresh_dependencies = try self.rebaseFreshSlice(effect.fresh_dependencies, call_node);
         result.fresh_owned_roots = try self.rebaseFreshSlice(effect.fresh_owned_roots, call_node);
         result.fresh_storage_capabilities = try self.rebaseFreshSlice(effect.fresh_storage_capabilities, call_node);
+        const unavailable = try self.allocator.alloc(facts.FreshStorageCapabilityState, effect.unavailable_fresh_storage.len);
+        for (effect.unavailable_fresh_storage, 0..) |entry, index| {
+            unavailable[index] = entry;
+            unavailable[index].source = (try self.rebaseFreshSlice(&.{entry.source}, call_node))[0];
+        }
+        result.unavailable_fresh_storage = unavailable;
         if (effect.fields.len != 0) {
             const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
@@ -3417,6 +4098,85 @@ pub const Infer = struct {
             result.variants = variants;
         }
         return result;
+    }
+
+    fn union_input_paths(self: *Infer, left: []const facts.InputPath, right: []const facts.InputPath) ![]const facts.InputPath {
+        var paths = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (left) |path| try appendInputPath(&paths, path);
+        for (right) |path| try appendInputPath(&paths, path);
+        return paths.toOwnedSlice();
+    }
+
+    fn scalar_storage_effect(self: *Infer, effect: facts.ValueEffect) !facts.ValueEffect {
+        var paths = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (effect.input_storage_capabilities) |path| try appendInputPath(&paths, path);
+        for (effect.input_dependencies) |dependency| if (!dependency.validity_only) {
+            try appendInputPath(&paths, dependency.path);
+        };
+        for (effect.input_place_values) |path| try appendInputPath(&paths, path);
+        return .{
+            .input_storage_capabilities = try paths.toOwnedSlice(),
+            .fresh_storage_capabilities = effect.fresh_storage_capabilities,
+            .unavailable_fresh_storage = effect.unavailable_fresh_storage,
+            .integer_address = effect.integer_address,
+            .foreign_storage = effect.foreign_storage,
+        };
+    }
+
+    fn overlay_capability_outputs(self: *Infer, destination: facts.ValueEffect, origin: facts.ValueEffect, ty: graph_mod.GlobalTypeId) anyerror!facts.ValueEffect {
+        var result = destination;
+        if (self.graph.semanticType(ty) == .builtin) {
+            const storage = try self.scalar_storage_effect(origin);
+            result.input_storage_capabilities = storage.input_storage_capabilities;
+            result.fresh_storage_capabilities = storage.fresh_storage_capabilities;
+            result.unavailable_fresh_storage = storage.unavailable_fresh_storage;
+            const validity = try self.allocator.dupe(facts.InputDependency, result.input_dependencies);
+            for (validity) |*dependency| {
+                dependency.validity_only = true;
+                dependency.transfers_ownership = false;
+            }
+            result.input_dependencies = validity;
+            return result;
+        }
+        if (types.fields(self.graph, ty)) |range| {
+            const fields = try self.allocator.alloc(facts.OutputFieldEffect, range.len);
+            for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
+                const value = try self.allocator.create(facts.ValueEffect);
+                const projection = facts.Projection{ .field = @intCast(index) };
+                value.* = try self.overlay_capability_outputs(try self.projectValueEffect(destination, projection), try self.projectValueEffect(origin, projection), types.effectiveFieldType(field));
+                fields[index] = .{ .index = @intCast(index), .value = value };
+            }
+            result.fields = fields;
+        }
+        if (types.variants(self.graph, ty)) |range| if (destination.variants.len != 0) {
+            const variants = try self.allocator.alloc(facts.OutputVariantEffect, destination.variants.len);
+            for (destination.variants, 0..) |variant, index| {
+                const payload_ty = self.graph.variants.items[range.start + variant.index].payload_type orelse {
+                    variants[index] = variant;
+                    continue;
+                };
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = try self.overlay_capability_outputs(variant.value.*, try self.projectValueEffect(origin, .{ .variant = variant.index }), payload_ty);
+                variants[index] = .{ .index = variant.index, .value = value };
+            }
+            result.variants = variants;
+        };
+        return result;
+    }
+
+    fn merge_unavailable_fresh_storage(self: *Infer, left: []const facts.FreshStorageCapabilityState, right: []const facts.FreshStorageCapabilityState) ![]const facts.FreshStorageCapabilityState {
+        var result = std.array_list.Managed(facts.FreshStorageCapabilityState).init(self.allocator);
+        try result.appendSlice(left);
+        for (right) |entry| {
+            var found = false;
+            for (result.items) |*previous| if (previous.source == entry.source) {
+                previous.maybe_consumed = previous.maybe_consumed or entry.maybe_consumed;
+                found = true;
+                break;
+            };
+            if (!found) try result.append(entry);
+        }
+        return result.toOwnedSlice();
     }
 
     fn rebaseFreshSlice(self: *Infer, sources: []const facts.FreshEffectSource, call_node: graph_mod.GlobalNodeId) ![]const facts.FreshEffectSource {
@@ -4002,4 +4762,24 @@ test "virtual summaries intersect opaque empty guarantees" {
         .{},
     );
     try std.testing.expectEqual(@as(usize, 0), absent.?.opaque_storage_empties.len);
+}
+
+test "validity-only transfer retains loaded input anchor paths" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = Infer.init(allocator, undefined, &engine);
+    defer inference.deinit();
+    const projections = [_]facts.Projection{.{ .field = 3 }};
+    const path = facts.InputPath{ .input_index = 0, .projections = &projections };
+    const effect = try inference.validityOnlyEffect(.{ .input_place_values = &.{path} });
+    try std.testing.expectEqual(@as(usize, 1), effect.input_dependencies.len);
+    try std.testing.expect(effect.input_dependencies[0].validity_only);
+    try std.testing.expect(!effect.input_dependencies[0].transfers_ownership);
+    try std.testing.expectEqualDeep(path, effect.input_dependencies[0].path);
+    try std.testing.expectEqual(@as(usize, 0), effect.input_place_values.len);
+    const projected = try inference.projectValueEffect(effect, .{ .field = 7 });
+    try std.testing.expectEqualDeep(path, projected.input_dependencies[0].path);
 }

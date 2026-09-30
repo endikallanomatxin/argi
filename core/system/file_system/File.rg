@@ -45,7 +45,7 @@ file_open_mode_c_string(
 
 file_stream_pointer(.self: &File) -> (.stream: &Any) := {
     raw ::= raw_pointer#(.t: Any)(.address = self&.stream_address)
-    mutable_stream ::= establish_inherited_reference#(.t: Any)(
+    mutable_stream ::= trusted_establish_inherited_reference#(.t: Any)(
         .raw = raw,
         .root = erase_reference#(.t: File)(.base = self).reference,
     )

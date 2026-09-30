@@ -95,6 +95,10 @@ feature first.
   - `import("...")` must be assigned to a name
   - `./` is current module, `../` is parent, `.../` is project root
   - bare import names resolve under `more/`
+  - underscore-prefixed declarations and fields are module-private; bundled
+    core modules are trusted peers and can access one another's private state.
+    Private acquisition/allocation receipts therefore protect against external
+    modules, while their invariants remain obligations within bundled core.
 
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases

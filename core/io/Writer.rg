@@ -30,7 +30,7 @@ write(
     wrote_count :: UIntNative = 0
 
     while wrote_count < length#(.t: UInt8)(.self = &buffer).count {
-        ptr ::= reference_offset#(.t: UInt8)(.base = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(.self = &buffer).pointer).reference, .elements = wrote_count).reference
+        ptr ::= trusted_reference_offset#(.t: UInt8)(.base = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(.self = &buffer).pointer).reference, .elements = wrote_count).reference
         wrote ::= write_byte(.self = self, .byte = ptr&)
         match wrote {
             ..ok _ {

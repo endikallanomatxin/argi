@@ -1,5 +1,5 @@
 inherit(.raw: RawPointer#(.t: Int32), .root: &Any) -> (.reference: $&Int32) := {
-    reference = establish_inherited_reference#(.t: Int32)(.raw = raw, .root = root).reference
+    reference = trusted_establish_inherited_reference#(.t: Int32)(.raw = raw, .root = root).reference
 }
 
 escape() -> (.reference: $&Int32) := {

@@ -68,10 +68,13 @@ arbitrary pointer or edited allocation receipt into a proven range.
 A nonempty dynamic-array view depends on both its backing storage and the
 collection's shape generation. Successful append, pop, insert, remove, and
 capacity growth invalidate existing views, including their derived subranges
-and element references. This conservative contract applies even when an append
+and element references. The same rule applies to direct element loans from
+`get_ro_ref`, `get_rw_ref`, and the public element-pointer operations, and to
+elements borrowed through collection iterators. This conservative contract applies even when an append
 does not reallocate. Replacing an element value without changing the shape
 preserves the view. Owner cleanup and backing-arena reset invalidate its storage.
-A fresh view can be borrowed after a structural change. Empty views contain no
+A fresh view, element reference, or iterator can be borrowed after a structural
+change. Empty views contain no
 element reference and have no backing-storage dependency.
 
 The view remains non-owning regardless of how its backing region is stored.
@@ -172,7 +175,12 @@ Iterator#(.t: T)
 ```
 
 That means borrowed iteration still uses `next(...)`, but on iterators whose
-item type is `&T` or `$&T`.
+item type is `&T` or `$&T`. Dynamic-array iterators retain a private borrowed
+view and cursor. Structural changes invalidate their element access, including
+references previously returned by `next`; writing an element value preserves
+iteration. Exhausted `next` aborts before constructing an element reference.
+Length/cursor metadata alone does not read an element. User modules cannot
+forge the private iterator state or use internal transfer-only pointer helpers.
 
 > [!QUESTION]
 > Define transfer-style iteration and the ownership of consumed iterators

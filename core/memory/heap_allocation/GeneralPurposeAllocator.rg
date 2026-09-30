@@ -43,12 +43,12 @@ init(.p: $&GeneralPurposeAllocator, .allocator: $&Allocator) -> () := {
 -- reference. The backing block stays live until its last slot is released.
 _trusted_general_purpose_bucket(.address: UIntNative, .owner: $&GeneralPurposeAllocator) -> (.bucket: $&_GeneralPurposeBucket) := {
     raw ::= raw_pointer#(.t: _GeneralPurposeBucket)(.address = address).raw
-    bucket = establish_inherited_reference#(.t: _GeneralPurposeBucket)(.raw = raw, .root = erase_mutable_reference#(.t: GeneralPurposeAllocator)(.base = owner).reference).reference
+    bucket = trusted_establish_inherited_reference#(.t: _GeneralPurposeBucket)(.raw = raw, .root = erase_mutable_reference#(.t: GeneralPurposeAllocator)(.base = owner).reference).reference
 }
 
 _trusted_general_purpose_large(.address: UIntNative, .owner: $&GeneralPurposeAllocator) -> (.record: $&_GeneralPurposeLarge) := {
     raw ::= raw_pointer#(.t: _GeneralPurposeLarge)(.address = address).raw
-    record = establish_inherited_reference#(.t: _GeneralPurposeLarge)(.raw = raw, .root = erase_mutable_reference#(.t: GeneralPurposeAllocator)(.base = owner).reference).reference
+    record = trusted_establish_inherited_reference#(.t: _GeneralPurposeLarge)(.raw = raw, .root = erase_mutable_reference#(.t: GeneralPurposeAllocator)(.base = owner).reference).reference
 }
 
 -- The bitmap follows _GeneralPurposeBucket in the first backing chunk and is
@@ -62,7 +62,7 @@ _trusted_general_purpose_used_word(
     word_index ::= slot / bits_per_word
     address ::= bucket_address + size_of(.type = _GeneralPurposeBucket) + word_index * size_of(.type = UIntNative)
     raw ::= raw_pointer#(.t: UIntNative)(.address = address).raw
-    word = establish_inherited_reference#(.t: UIntNative)(.raw = raw, .root = erase_mutable_reference#(.t: GeneralPurposeAllocator)(.base = owner).reference).reference
+    word = trusted_establish_inherited_reference#(.t: UIntNative)(.raw = raw, .root = erase_mutable_reference#(.t: GeneralPurposeAllocator)(.base = owner).reference).reference
 }
 
 _general_purpose_slot_size(.size: UIntNative, .alignment: UIntNative) -> (.slot_size: UIntNative) := {
@@ -209,7 +209,7 @@ allocate(
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok mapping {
             deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-            allocation ::= establish_allocation(.storage = mapping.address, .size = size, .alignment = alignment, .deallocator = deallocator, .anchor = mapping.anchor)
+            allocation ::= trusted_establish_allocation(.storage = mapping.address, .size = size, .alignment = alignment, .deallocator = deallocator, .anchor = mapping.anchor)
             result = ..ok ~allocation
         }
     }

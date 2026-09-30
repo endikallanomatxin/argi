@@ -16,7 +16,7 @@ from_literal(
 as_c_string(
     .self: &String,
 ) -> (.text: &Char) := {
-    text = reinterpret_reference#(.from: UInt8, .to: Char)(.base = _trusted_allocation_byte_ro(.allocation = &self&.allocation, .offset = 0).reference).reference
+    text = trusted_reinterpret_reference#(.from: UInt8, .to: Char)(.base = _trusted_allocation_byte_ro(.allocation = &self&.allocation, .offset = 0).reference).reference
 }
 
 string_view_has_c_string_layout(
@@ -31,7 +31,7 @@ string_view_has_c_string_layout(
         i = i + 1
     }
 
-    terminator_ptr ::= reference_offset#(.t: UInt8)(.base = self&.data, .elements = self&.length)
+    terminator_ptr ::= trusted_reference_offset#(.t: UInt8)(.base = self&.data, .elements = self&.length)
     ok = terminator_ptr& == 0
 }
 
@@ -54,15 +54,15 @@ as_c_string(
 
             i :: UIntNative = 0
             while i < self.length {
-                ptr ::= mutable_reference_offset#(.t: UInt8)(.base = data, .elements = i).reference
+                ptr ::= trusted_mutable_reference_offset#(.t: UInt8)(.base = data, .elements = i).reference
                 ptr& = bytes_get(.view = &self, .index = i).byte
                 i = i + 1
             }
 
-            nul_ptr ::= mutable_reference_offset#(.t: UInt8)(.base = data, .elements = self.length).reference
+            nul_ptr ::= trusted_mutable_reference_offset#(.t: UInt8)(.base = data, .elements = self.length).reference
             nul_ptr& = 0
 
-            text ::= reinterpret_reference#(.from: UInt8, .to: Char)(.base = read_reference#(.t: UInt8)(.base = data).reference).reference
+            text ::= trusted_reinterpret_reference#(.from: UInt8, .to: Char)(.base = read_reference#(.t: UInt8)(.base = data).reference).reference
             result = ..ok (.text = text, .storage = ~allocation)
         }
     }
@@ -72,7 +72,7 @@ as_view(
     .self: &Char,
 ) -> (.view: StringView) := {
     view = (
-        .data = reinterpret_reference#(.from: Char, .to: UInt8)(.base = self).reference,
+        .data = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = self).reference,
         .length = strlen(.string = self).length,
     )
 }

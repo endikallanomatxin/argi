@@ -34,15 +34,15 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ slots_payload {
             slots ::= ~slots_payload
-            base ::= mutable_reinterpret_reference#(.from: UInt8, .to: Tracked)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
-            a ::= mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 0).reference
-            b ::= mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 1).reference
-            c ::= mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 2).reference
-            d ::= mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 3).reference
-            e ::= mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 4).reference
-            f ::= mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 5).reference
-            g ::= mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 6).reference
-            h ::= mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 7).reference
+            base ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Tracked)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
+            a ::= trusted_mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 0).reference
+            b ::= trusted_mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 1).reference
+            c ::= trusted_mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 2).reference
+            d ::= trusted_mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 3).reference
+            e ::= trusted_mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 4).reference
+            f ::= trusted_mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 5).reference
+            g ::= trusted_mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 6).reference
+            h ::= trusted_mutable_reference_offset#(.t: Tracked)(.base = base, .elements = 7).reference
 
             first_result ::= make_tracked(.allocator = system.page_allocator, .id = 1)
             match first_result {

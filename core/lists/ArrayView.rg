@@ -56,7 +56,7 @@ array_view_ro#(.n: UIntNative, .t: Type)(
         view = (._data = ..none, ._length = 0)
         return
     }
-    first ::= reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = array).reference
+    first ::= trusted_reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = array).reference
     view = (._data = ..some(.value = first), ._length = n)
 }
 
@@ -67,7 +67,7 @@ array_view#(.n: UIntNative, .t: Type)(
         view = (._data = ..none, ._length = 0)
         return
     }
-    first ::= mutable_reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = array).reference
+    first ::= trusted_mutable_reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = array).reference
     view = (._data = ..some(.value = first), ._length = n)
 }
 
@@ -103,7 +103,7 @@ get_ro_ref#(.t: Type)(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
-    result = ..ok reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = index).reference
+    result = ..ok trusted_reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = index).reference
 }
 
 get_ro_ref#(.t: Type)(
@@ -114,7 +114,7 @@ get_ro_ref#(.t: Type)(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
-    result = ..ok reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = index).reference
+    result = ..ok trusted_reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = index).reference
 }
 
 get_rw_ref#(.t: Type)(
@@ -125,7 +125,7 @@ get_rw_ref#(.t: Type)(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
-    result = ..ok mutable_reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = index).reference
+    result = ..ok trusted_mutable_reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = index).reference
 }
 
 get#(.t: Type: ImplicitlyCopyable)(
@@ -136,7 +136,7 @@ get#(.t: Type: ImplicitlyCopyable)(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
-    ptr ::= reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = index).reference
+    ptr ::= trusted_reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = index).reference
     result = ..ok ptr&
 }
 
@@ -149,7 +149,7 @@ set#(.t: Type: ImplicitlyCopyable)(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
-    ptr ::= mutable_reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = index)
+    ptr ::= trusted_mutable_reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = index)
     ptr& = value
     result = ..ok Void()
 }

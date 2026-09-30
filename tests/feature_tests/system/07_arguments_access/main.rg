@@ -20,7 +20,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    first_ptr ::= reinterpret_reference#(.from: Char, .to: UInt8)(.base = arg0_ptr).reference
+    first_ptr ::= trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = arg0_ptr).reference
     if bytes_get(.view = &arg0_view, .index = 0).byte != first_ptr& {
         status_code = 4
         return

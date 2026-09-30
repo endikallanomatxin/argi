@@ -1094,7 +1094,7 @@ fn diagnoseInvalidPointerOperations(
     return false;
 }
 
-fn constantArrayIndex(graph: *const global_sg.GlobalSemanticGraph, node_id: global_sg.GlobalNodeId, depth: u8) ?i64 {
+fn constantArrayIndex(graph: *const global_sg.GlobalSemanticGraph, node_id: global_sg.GlobalNodeId, depth: u8) ?i128 {
     if (depth == 0) return null;
     return switch (graph.node(node_id).content) {
         .int_literal => |value| value,

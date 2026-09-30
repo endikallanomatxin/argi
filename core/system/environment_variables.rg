@@ -15,7 +15,7 @@ environment_variables_get_c_string(
     }
 
     value = ..some(.value = (
-        .data = reinterpret_reference#(.from: Char, .to: UInt8)(.base = raw_ptr).reference,
+        .data = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = raw_ptr).reference,
         .length = strlen(.string = raw_ptr).length,
     ))
 }

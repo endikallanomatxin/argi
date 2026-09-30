@@ -43,10 +43,10 @@ main(.system: System) -> (.status_code: Int32) := {
                         ..error _ { status_code = 3 }
                         ..ok ~ slots_payload {
                             slots ::= ~slots_payload
-                            first_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
+                            first_slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
                             second_address ::= slots.data.address + size_of(.type = Allocation)
                             second_raw ::= raw_pointer#(.t: Router)(.address = second_address)
-                            second_slot ::= establish_inherited_reference#(.t: Router)(
+                            second_slot ::= trusted_establish_inherited_reference#(.t: Router)(
                                 .raw = second_raw,
                                 .root = erase_mutable_reference#(.t: UInt8)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference,
                             ).reference

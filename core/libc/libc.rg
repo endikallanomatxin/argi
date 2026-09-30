@@ -62,8 +62,8 @@ memcpy_bytes(
     if length#(.t: UInt8)(.self = &dst).count > length#(.t: UInt8)(.self = &src).count { abort }
     if length#(.t: UInt8)(.self = &dst).count == 0 { return }
     memcpy(
-        .dst = mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &dst).pointer).reference,
-        .src = reinterpret_reference#(.from: UInt8, .to: Any)(.base = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(.self = &src).pointer).reference).reference,
+        .dst = trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &dst).pointer).reference,
+        .src = trusted_reinterpret_reference#(.from: UInt8, .to: Any)(.base = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(.self = &src).pointer).reference).reference,
         .n = length#(.t: UInt8)(.self = &dst).count,
     )
 }
@@ -75,8 +75,8 @@ memcpy_bytes(
     if length#(.t: UInt8)(.self = &dst).count > length#(.t: UInt8)(.self = &src).count { abort }
     if length#(.t: UInt8)(.self = &dst).count == 0 { return }
     memcpy(
-        .dst = mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &dst).pointer).reference,
-        .src = reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &src).pointer).reference,
+        .dst = trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &dst).pointer).reference,
+        .src = trusted_reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &src).pointer).reference,
         .n = length#(.t: UInt8)(.self = &dst).count,
     )
 }

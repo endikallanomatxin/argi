@@ -84,7 +84,7 @@ deinit #(.t: Type) (
 
     i :: UIntNative = 0
     while i < self&._length {
-        occupied ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = i).pointer
+        occupied ::= _trusted_dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = i).pointer
         trusted_opaque_drop(.slot = occupied, .allocator = allocator)
         i = i + 1
     }
@@ -112,7 +112,7 @@ copy #(.t: Type: InfalliblyCopyable) (
 
     i :: UIntNative = 0
     while i < self&._length {
-        ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
+        ptr ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
         element ::= copy(.self = ptr)
         pushed ::= push#(.t: t)(.allocator = allocator, .self = $&out, .value = ~element)
         if is(.value = pushed, .variant = ..error) {
@@ -148,7 +148,7 @@ copy #(
 
     i :: UIntNative = 0
     while i < self&._length {
-        ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
+        ptr ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
         copied ::= copy(.self = ptr)
         match copied {
             ..ok ~ payload {
@@ -170,23 +170,23 @@ DynamicArray#(.t: Type: FalliblyCopyable#(.reasons: element_reasons)) implements
 )
 
 -- Only the occupied prefix may cross from a slot handle to a normal reference.
-dynamic_array_element_ro_pointer #(.t: Type) (
+_trusted_dynamic_array_element_ro_pointer #(.t: Type) (
     .array: &DynamicArray#(.t: t),
     .offset: UIntNative,
 ) -> (.pointer: &t) := {
     if offset >= array&._length { abort }
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
-    mutable ::= establish_allocation_slot#(.t: t)(.allocation = &array&._allocation, .slot = slot.raw, .anchor = array&._allocation.anchor).reference
+    mutable ::= trusted_establish_allocation_slot#(.t: t)(.allocation = &array&._allocation, .slot = slot._raw, .anchor = array&._allocation.anchor).reference
     pointer = read_reference#(.t: t)(.base = mutable).reference
 }
 
-dynamic_array_element_rw_pointer #(.t: Type) (
+_trusted_dynamic_array_element_rw_pointer #(.t: Type) (
     .array: $&DynamicArray#(.t: t),
     .offset: UIntNative,
 ) -> (.pointer: $&t) := {
     if offset >= array&._length { abort }
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
-    pointer = establish_allocation_slot#(.t: t)(.allocation = &array&._allocation, .slot = slot.raw, .anchor = array&._allocation.anchor).reference
+    pointer = trusted_establish_allocation_slot#(.t: t)(.allocation = &array&._allocation, .slot = slot._raw, .anchor = array&._allocation.anchor).reference
 }
 
 dynamic_array_grow #(.t: Type) (
@@ -439,7 +439,7 @@ get #(.t: Type: ImplicitlyCopyable) (
         result = ..error(.reason = ..out_of_bounds)
         return
     }
-    ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = index).pointer
+    ptr ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = index).pointer
     result = ..ok ptr&
 }
 
@@ -477,13 +477,15 @@ set #(.t: Type) (
         result = ..error(.reason = ..out_of_bounds)
         return
     }
-    ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = index).pointer
+    ptr ::= _trusted_dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = index).pointer
     trusted_opaque_drop(.slot = ptr, .allocator = allocator)
     trusted_opaque_move_in#(.t: t, .storage_type: Allocation)(
         .storage = $&self&._allocation,
         .destination = ptr,
         .source = ~value,
     )
+    -- Replacement ends the old content lifetime even when its address stays.
+    _invalidate_dynamic_array_shape#(.t: t)(.array = self)
     result = ..ok Void()
 }
 
@@ -494,21 +496,21 @@ _trusted_dynamic_array_get #(.t: Type: ImplicitlyCopyable) (
     .array: &DynamicArray#(.t: t),
     .index: UIntNative,
 ) -> (.value: t) := {
-    value = dynamic_array_element_ro_pointer#(.t: t)(.array = array, .offset = index).pointer&
+    value = _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = array, .offset = index).pointer&
 }
 
 _trusted_dynamic_array_get_ro_ref #(.t: Type) (
     .array: &DynamicArray#(.t: t),
     .index: UIntNative,
 ) -> (.reference: &t) := {
-    reference = dynamic_array_element_ro_pointer#(.t: t)(.array = array, .offset = index).pointer
+    reference = _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = array, .offset = index).pointer
 }
 
 _trusted_dynamic_array_get_rw_ref #(.t: Type) (
     .array: $&DynamicArray#(.t: t),
     .index: UIntNative,
 ) -> (.reference: $&t) := {
-    reference = dynamic_array_element_rw_pointer#(.t: t)(.array = array, .offset = index).pointer
+    reference = _trusted_dynamic_array_element_rw_pointer#(.t: t)(.array = array, .offset = index).pointer
 }
 
 _trusted_dynamic_array_set #(.t: Type) (
@@ -516,11 +518,12 @@ _trusted_dynamic_array_set #(.t: Type) (
     .index: UIntNative,
     .value: t,
 ) -> () := {
-    ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = array, .offset = index).pointer
+    ptr ::= _trusted_dynamic_array_element_rw_pointer#(.t: t)(.array = array, .offset = index).pointer
     trusted_opaque_drop(.slot = ptr)
     trusted_opaque_move_in#(.t: t, .storage_type: Allocation)(
         .storage = $&array&._allocation,
         .destination = ptr,
         .source = ~value,
     )
+    _invalidate_dynamic_array_shape#(.t: t)(.array = array)
 }

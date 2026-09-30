@@ -37,6 +37,10 @@ allocate(.self: $&PageAllocator, .size: UIntNative, .alignment: UIntNative) -> (
         ..ok ~ payload {
             allocation ::= ~payload
             allocation.size = size
+            -- Page padding is not part of the range granted to the caller.
+            -- Memory rounds this extent back to pages during physical cleanup.
+            allocation._storage_size = size
+            allocation._release_size = size
             result = ..ok ~allocation
         }
     }

@@ -664,7 +664,7 @@ pub const CodeGenerator = struct {
             .bool_literal => |value| .{ .value_ref = c.LLVMConstInt(c.LLVMInt1Type(), if (value) 1 else 0, 0), .type_ref = c.LLVMInt1Type(), .ty = node.ty },
             .int_literal => |value| blk: {
                 const type_ref = if (node.ty) |ty| try self.toLLVMType(ty) else c.LLVMInt32Type();
-                break :blk .{ .value_ref = c.LLVMConstInt(type_ref, @bitCast(value), if (value < 0) 1 else 0), .type_ref = type_ref, .ty = node.ty };
+                break :blk .{ .value_ref = c.LLVMConstInt(type_ref, @as(u64, @truncate(@as(u128, @bitCast(value)))), if (value < 0) 1 else 0), .type_ref = type_ref, .ty = node.ty };
             },
             .float_literal => |value| blk: {
                 const type_ref = if (node.ty) |ty| try self.toLLVMType(ty) else c.LLVMFloatType();
@@ -884,7 +884,7 @@ pub const CodeGenerator = struct {
             const right_node = self.graph.node(comparison.right);
             if (right_node.content != .int_literal or c.LLVMGetTypeKind(c.LLVMTypeOf(left_value)) != c.LLVMIntegerTypeKind)
                 return CodegenError.InvalidType;
-            right_value = c.LLVMConstInt(c.LLVMTypeOf(left_value), @bitCast(right_node.content.int_literal), 1);
+            right_value = c.LLVMConstInt(c.LLVMTypeOf(left_value), @as(u64, @truncate(@as(u128, @bitCast(right_node.content.int_literal)))), 1);
         }
         const float = if (left.ty) |ty| self.isFloat(ty) else false;
         const unsigned = if (left.ty) |ty| self.isUnsigned(ty) else false;

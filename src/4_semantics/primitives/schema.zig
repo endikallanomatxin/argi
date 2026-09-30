@@ -52,6 +52,8 @@ pub const SafetyPrimitive = enum {
     establish_inherited_reference,
     establish_inherited_storage,
     establish_allocation,
+    native_allocated_storage,
+    acquisition_subaddress,
     establish_allocation_slot,
     raw_allocated_storage,
     reference_offset,
@@ -414,7 +416,7 @@ pub fn Node(comptime Ids: type) type {
             virtualize: Ids.VirtualizeId,
             virtual_call: Ids.VirtualCallId,
             code_block: Ids.BlockId,
-            int_literal: i64,
+            int_literal: i128,
             float_literal: f64,
             char_literal: u8,
             string_literal: StringRange,
@@ -555,5 +557,5 @@ test "semantic primitives instantiate with isolated id namespaces" {
         .ty = null,
         .content = .{ .int_literal = 42 },
     };
-    try std.testing.expectEqual(@as(i64, 42), node.content.int_literal);
+    try std.testing.expectEqual(@as(i128, 42), node.content.int_literal);
 }

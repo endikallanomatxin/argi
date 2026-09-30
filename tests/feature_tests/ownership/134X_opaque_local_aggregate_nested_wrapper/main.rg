@@ -36,7 +36,7 @@ main(.system: System) -> (.status_code: Int32) := {
                 ..error _ { status_code = 2 }
                 ..ok ~ slots_payload {
                     slots ::= ~slots_payload
-                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
+                    slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
                     store_outer(.storage = $&slots, .slot = slot, .target = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference)
                     deinit(.self = $&target)
                     status_code = 0

@@ -181,11 +181,46 @@ that region; arithmetic must not wrap while computing offsets or addresses.
 Reinterpreting an address does not enlarge its permitted region or initialize
 the target representation.
 
+An ordinary `&T` certifies one live initialized object, not adjacent elements.
+Ordinary element selection uses an array or initialized view carrying a bound.
+Selecting a byte range or uninitialized slot does not publish a legible `T`.
+Unbounded offset, raw-address establishment, and representation reinterpretation
+are explicitly trusted operations. Their `trusted_*` names identify caller
+obligations; the naming convention does not add an unsafe-block mechanism or
+make the compiler prove those obligations.
+
 A storage capability authorizes establishment for the storage actually
 acquired. It is consumed when that storage enters a temporal domain; copying
 its address does not create a second authorization. Both native page mapping
 and C heap allocation are acquisition boundaries. Acquisition failure is not
 a region that may be established.
+
+Acquisition receipts carry that physical proof independently of editable
+allocation metadata. `AcquiredStorage` has private address, extent, and
+alignment fields; successful heap and native page acquisition create receipts.
+Normal allocation or inherited-storage establishment requires such a receipt.
+Allocation establishment checks its requested prefix and alignment before
+publishing the temporal root. Padding outside the requested acquisition range
+does not become readable storage. A receipt is move-only: establishment
+consumes it, forwarding moves it, and metadata inspection borrows it.
+
+Integer-address integration uses the explicitly trusted establishment
+operations. Their caller proves acquisition, containment, and the matching
+cleanup contract. Supplying a live temporal root or an integer does not
+discharge those obligations.
+
+Authorization follows address aliases across calls. A function that may consume
+a known capability requires it to be available on entry; conditional consumption
+makes it unavailable for a later establishment unless non-consumption is proved.
+Returning an address, copying it into several outputs, or publishing it through
+an input reference does not create a new authorization or revive a consumed one.
+Aliases of one acquisition share its state. Separate successful acquisitions
+create separate authorizations, including acquisitions performed by repeated
+calls to the same function.
+
+Uses on mutually exclusive branches are alternatives, even when the caller
+supplies aliases for their inputs. Loops and recursive forwarding must not allow
+one authorization to be consumed repeatedly.
 
 An `ArrayView<T>` length must describe initialized elements inside its
 physical region. Checking an index against length is necessary but cannot
@@ -203,26 +238,26 @@ arbitrary address physically valid.
 > [!IMPLEMENTATION]
 > Temporal roots and consumption of known storage capabilities are tracked,
 > but authoritative physical extents are not yet propagated through all
-> reference operations. Allocation establishment currently also accepts
-> addresses without a tracked capability, and native page mappings do not
-> produce one. Public low-level reference helpers therefore still rely on
+> reference operations. Normal establishment requires an acquisition receipt;
+> native page mappings and C heap acquisition carry tracked capabilities.
+> The explicitly trusted establishment operations accept integer addresses,
+> including suballocator-selected ranges without tracked capabilities.
+> Public low-level reference helpers therefore still rely on
 > trusted caller obligations for physical validity. Reference offsets reject
 > multiplication and address-addition wrap at runtime, but do not yet check
 > membership in an authoritative physical range. Allocation slots check the
-> target type's alignment and containment in the receipt's declared size;
-> those checks cannot validate a forged receipt. They do not provide a general
-> spatial-safety guarantee.
-
-> [!IMPLEMENTATION]
-> Storage-capability consumption is not yet preserved across all inferred
-> call summaries. A direct repeated consumption is rejected, but forwarding
-> the same address through a wrapper can lose that transition. The consumable
-> authorization rule above applies across calls as well as inside a function.
+> target type's alignment and containment in both the public receipt and the
+> private bounds certified by the allocator. Editing public fields cannot
+> enlarge that range. The trusted allocator still proves that establishment
+> describes acquired storage; these guards do not provide a general
+> spatial-safety guarantee for arbitrary raw-pointer operations.
 
 > [!QUESTION]
-> The representation of physical provenance and its propagation through external
-> calls remain open. Runtime allocation fields alone cannot be the authority
-> for physical bounds.
+> How should external integrations import certified ranges without using the
+> integer-address trusted boundary? The acquisition-receipt protocol provides
+> the bundled heap and page path. An external range needs a certified owner or
+> bounded region before ordinary element selection can use it; an ordinary
+> `&T` alone does not supply an adjacent range.
 
 ## Control flow and calls
 

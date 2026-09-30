@@ -48,29 +48,15 @@ init(.p: $&CAllocator, .ffi: $&ForeignFunctionInterface) -> () := {
 }
 
 allocate(.self: $&CAllocator, .size: UIntNative, .alignment: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
-    _require_allocation_alignment(.alignment = alignment)
-    physical_alignment ::= alignment
-    pointer_alignment ::= alignment_of(.type = UIntNative)
-    if physical_alignment < pointer_alignment { physical_alignment = pointer_alignment }
-    physical_size ::= size
-    if physical_size == 0 { physical_size = 1 }
-    remainder ::= physical_size % physical_alignment
-    if remainder != 0 {
-        padding ::= physical_alignment - remainder
-        physical_size = physical_size + padding
-        if physical_size < size {
-            result = ..error(.reason = ..out_of_memory)
-            return
+    acquired ::= acquire_heap_storage(.size = size, .alignment = alignment, .ffi = self&.ffi)
+    match acquired {
+        ..error _ { result = ..error(.reason = ..out_of_memory) }
+        ..ok ~ storage {
+            deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
+            allocation ::= establish_allocation(.storage = ~storage, .size = size, .alignment = alignment, .deallocator = deallocator)
+            result = ..ok ~allocation
         }
     }
-    address ::= aligned_alloc(.alignment = physical_alignment, .size = physical_size, .ffi = self&.ffi).address
-    if address == 0 {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation ::= establish_allocation(.storage = address, .size = size, .alignment = alignment, .deallocator = deallocator)
-    result = ..ok ~allocation
 }
 
 deallocate(.self: $&CAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
@@ -106,25 +92,62 @@ Allocation : Type = (
     -- The heap uses a static marker; arena children point at ArenaDomain.
     .anchor    : &Any
     .deallocator : Virtual#(.abstract: Deallocator)
+    -- Allocator-authenticated bounds. Public receipt fields can restrict a
+    -- request, but cannot enlarge this region or change the address, size,
+    -- or alignment passed to physical cleanup.
+    ._storage_address: UIntNative
+    ._storage_size: UIntNative
+    ._storage_alignment: UIntNative
+    -- A granted prefix may be smaller than the acquisition being released.
+    ._release_size: UIntNative
 )
 
 -- Compiler-owned temporal boundary used after a physical allocator has
 -- returned backing storage. Each allocation owns a fresh temporal root.
 -- Region-backed storage also retains the generation of its backing anchor.
-establish_allocation(
+-- The allocator certifies acquisition and containment; these scalar arguments
+-- are not themselves evidence that storage was acquired. Private bounds keep
+-- that assertion intact when the receipt crosses ordinary caller code.
+trusted_establish_allocation(
     .storage: UIntNative,
     .size: UIntNative,
     .alignment: UIntNative,
     .deallocator: Virtual#(.abstract: Deallocator),
     .anchor: &Any = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference,
 ) -> (.allocation: Allocation) := {
+    _require_allocation_alignment(.alignment = alignment)
+    if storage == 0 and size != 0 { abort }
+    if storage % alignment != 0 { abort }
+    if storage + size < storage { abort }
     allocation = (
         .data = raw_pointer#(.t: UInt8)(.address = storage).raw,
         .size = size,
         .alignment = alignment,
         .anchor = anchor,
         .deallocator = deallocator,
+        ._storage_address = storage,
+        ._storage_size = size,
+        ._storage_alignment = alignment,
+        ._release_size = size,
     )
+}
+
+-- Normal establishment requires an acquisition receipt. Its private bounds
+-- remain authoritative while forwarding moves the receipt. Establishment
+-- consumes that receipt through the ordinary move rules.
+establish_allocation(
+    .storage: AcquiredStorage,
+    .size: UIntNative,
+    .alignment: UIntNative,
+    .deallocator: Virtual#(.abstract: Deallocator),
+    .anchor: &Any = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference,
+) -> (.allocation: Allocation) := {
+    _require_allocation_alignment(.alignment = alignment)
+    if size > storage._size { abort }
+    if storage._address % alignment != 0 { abort }
+    allocation = trusted_establish_allocation(.storage = storage._address, .size = size, .alignment = alignment, .deallocator = deallocator, .anchor = anchor).allocation
+    allocation._release_size = storage._size
+    allocation._storage_alignment = storage._alignment
 }
 
 deinit(
@@ -132,7 +155,8 @@ deinit(
 ) -> () := {
     -- Cleanup may touch backing metadata; an ended region cannot be released.
     live ::= self&.anchor&
-    deallocate(.self = $&self&.deallocator, .data = self&.data, .size = self&.size, .alignment = self&.alignment)
+    data ::= raw_pointer#(.t: UInt8)(.address = self&._storage_address).raw
+    deallocate(.self = $&self&.deallocator, .data = data, .size = self&._release_size, .alignment = self&._storage_alignment)
 }
 
 -- Explicit trusted establishment into raw storage. Callers must prove bounds,
@@ -140,29 +164,46 @@ deinit(
 _trusted_allocation_byte_ro(.allocation: &Allocation, .offset: UIntNative) -> (.reference: &UInt8) := {
     address ::= _reference_offset_address(.address = allocation&.data.address, .elements = offset, .element_size = 1).result
     raw ::= raw_pointer#(.t: UInt8)(.address = address).raw
-    mutable ::= establish_allocation_slot#(.t: UInt8)(.allocation = allocation, .slot = raw, .anchor = allocation&.anchor).reference
+    mutable ::= trusted_establish_allocation_slot#(.t: UInt8)(.allocation = allocation, .slot = raw, .anchor = allocation&.anchor).reference
     reference = read_reference#(.t: UInt8)(.base = mutable).reference
 }
 
 _trusted_allocation_byte_rw(.allocation: $&Allocation, .offset: UIntNative) -> (.reference: $&UInt8) := {
     address ::= _reference_offset_address(.address = allocation&.data.address, .elements = offset, .element_size = 1).result
     raw ::= raw_pointer#(.t: UInt8)(.address = address).raw
-    reference = establish_allocation_slot#(.t: UInt8)(.allocation = allocation, .slot = raw, .anchor = allocation&.anchor).reference
+    reference = trusted_establish_allocation_slot#(.t: UInt8)(.allocation = allocation, .slot = raw, .anchor = allocation&.anchor).reference
 }
 
 -- Safety combines the allocation's owned-root dependency with its region
 -- anchor. The slot address itself is raw and makes no initialization claim.
--- Runtime guards check alignment and the declared byte extent. The caller
--- still proves that this editable receipt describes the acquired region.
-establish_allocation_slot#(.t: Type)(
+-- Runtime guards check alignment and both the declared and authenticated
+-- byte extents. The allocator proves the physical region at establishment;
+-- callers cannot expand it by editing the public receipt fields.
+trusted_establish_allocation_slot#(.t: Type)(
     .allocation: &Allocation,
     .slot: RawPointer#(.t: t),
     .anchor: &Any,
 ) -> (.reference: $&t) := {
-    if slot.address < allocation&.data.address { abort }
-    offset ::= slot.address - allocation&.data.address
-    if offset > allocation&.size { abort }
-    if size_of(.type = t) > allocation&.size - offset { abort }
-    if slot.address % alignment_of(.type = t) != 0 { abort }
+    _require_allocation_slot_range(.allocation = allocation, .address = slot.address, .size = size_of(.type = t), .alignment = alignment_of(.type = t))
     reference = __trusted_reference_from_address#(.to: $&t)(.address = slot.address)
+}
+
+-- Range validation grants bytes only. It never asserts initialized contents
+-- or publishes a reference, so checked slot selection can share these guards.
+_require_allocation_slot_range(
+    .allocation: &Allocation,
+    .address: UIntNative,
+    .size: UIntNative,
+    .alignment: UIntNative,
+) -> () := {
+    if address < allocation&._storage_address { abort }
+    storage_offset ::= address - allocation&._storage_address
+    if storage_offset > allocation&._storage_size { abort }
+    if size > allocation&._storage_size - storage_offset { abort }
+    if address < allocation&.data.address { abort }
+    offset ::= address - allocation&.data.address
+    if offset > allocation&.size { abort }
+    if size > allocation&.size - offset { abort }
+    if alignment == 0 { abort }
+    if address % alignment != 0 { abort }
 }

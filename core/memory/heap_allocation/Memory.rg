@@ -3,6 +3,12 @@ Memory : Type = (
     ._page_size: UIntNative
 )
 
+-- Trimming an aligned page mapping keeps the same acquisition authorization.
+-- The platform boundary proves this address is a subrange of base's mapping.
+_trusted_acquisition_subaddress(.base: UIntNative, .address: UIntNative) -> (.result: UIntNative) := {
+    result = address
+}
+
 once init(.p: $&Memory) -> () := {
     p&._page_size = _memory_getpagesize().size
     if p&._page_size == 0 { p&._page_size = 4096 }
@@ -12,7 +18,7 @@ _memory_map_aligned(
     .size: UIntNative,
     .alignment: UIntNative,
     .page_size: UIntNative,
-) -> (.result: Errable#(.t: UIntNative, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: AcquiredStorage, .reasons: (..out_of_memory))) := {
     _require_allocation_alignment(.alignment = alignment)
     if page_size == 0 {
         result = ..error(.reason = ..out_of_memory)
@@ -35,6 +41,7 @@ _memory_map_aligned(
         result = ..error(.reason = ..out_of_memory)
         return
     }
+    if mapped_address + request_size < mapped_address { abort }
     address :: UIntNative = mapped_address
     if alignment > page_size {
         remainder ::= mapped_address % alignment
@@ -50,7 +57,8 @@ _memory_map_aligned(
             if _memory_munmap(.address = used_end, .length = mapped_end - used_end).status != 0 { abort }
         }
     }
-    result = ..ok address
+    certified ::= _trusted_acquisition_subaddress(.base = mapped_address, .address = address).result
+    result = ..ok (._address = certified, ._size = mapped_size, ._alignment = alignment)
 }
 
 map_pages(.self: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
@@ -58,9 +66,9 @@ map_pages(.self: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (.resul
     mapped ::= _memory_map_aligned(.size = size, .alignment = alignment, .page_size = self&._page_size)
     match mapped {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
-        ..ok address {
+        ..ok ~ storage {
             deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-            allocation ::= establish_allocation(.storage = address, .size = physical_size, .alignment = alignment, .deallocator = deallocator)
+            allocation ::= establish_allocation(.storage = ~storage, .size = physical_size, .alignment = alignment, .deallocator = deallocator)
             result = ..ok ~allocation
         }
     }

@@ -13,7 +13,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ first_payload {
             slots ::= ~first_payload
-            stale_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Value)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
+            stale_slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Value)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&slots, .offset = 0).reference).reference
             value :: Value = (.number = 7)
             trusted_opaque_move_in#(.t: Value, .storage_type: Allocation)(
                 .storage = $&slots,

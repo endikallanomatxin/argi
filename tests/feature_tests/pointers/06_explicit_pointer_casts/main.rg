@@ -4,7 +4,7 @@ main () -> (.status_code: Int32) := {
 
     addr :: UIntNative = UIntNative(.value = ptr)
     raw ::= raw_pointer#(.t: Int32)(.address = addr)
-    ptr_roundtrip ::= establish_inherited_reference#(.t: Int32)(.raw = raw, .root = $&value)
+    ptr_roundtrip ::= trusted_establish_inherited_reference#(.t: Int32)(.raw = raw, .root = $&value)
 
     if ptr_roundtrip& != 42 {
         status_code = 1

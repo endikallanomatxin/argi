@@ -46,13 +46,13 @@ argument_at(
 ) -> (.text: &Char) := {
     addr ::= argument_pointer_address(.self = self, .index = index).address
     raw ::= raw_pointer#(.t: UIntNative)(.address = addr)
-    ptr ::= establish_inherited_reference#(.t: UIntNative)(
+    ptr ::= trusted_establish_inherited_reference#(.t: UIntNative)(
         .raw = raw,
         .root = erase_reference#(.t: Arguments)(.base = self).reference,
     ).reference
     text_address ::= ptr&
     text_raw ::= raw_pointer#(.t: Char)(.address = text_address)
-    inherited ::= establish_inherited_reference#(.t: Char)(
+    inherited ::= trusted_establish_inherited_reference#(.t: Char)(
         .raw = text_raw,
         .root = erase_reference#(.t: Arguments)(.base = self).reference,
     ).reference
@@ -65,7 +65,7 @@ argument_view_at(
 ) -> (.view: StringView) := {
     text ::= argument_at(.self = self, .index = index)
     view = (
-        .data = reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,
+        .data = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,
         .length = strlen(.string = text).length,
     )
 }
