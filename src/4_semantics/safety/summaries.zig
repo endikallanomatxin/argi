@@ -130,12 +130,13 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
     return true;
 }
 
-fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
+pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     if (a.explicit_dependency != b.explicit_dependency or
         a.input_dependencies.len != b.input_dependencies.len or
         a.input_places.len != b.input_places.len or
         a.input_generation_dependencies.len != b.input_generation_dependencies.len or
         a.input_place_values.len != b.input_place_values.len or
+        a.input_owned_roots.len != b.input_owned_roots.len or
         a.opaque_generation_dependencies.len != b.opaque_generation_dependencies.len or
         a.opaque_storage_dependencies.len != b.opaque_storage_dependencies.len or
         a.fields.len != b.fields.len or
@@ -155,6 +156,7 @@ fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     for (a.input_places, b.input_places) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_generation_dependencies, b.input_generation_dependencies) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_place_values, b.input_place_values) |left, right| if (!inputPathEql(left, right)) return false;
+    for (a.input_owned_roots, b.input_owned_roots) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.opaque_generation_dependencies, b.opaque_generation_dependencies) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.opaque_storage_dependencies, b.opaque_storage_dependencies) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.fields, b.fields) |left, right| {
@@ -229,4 +231,36 @@ test "recursive summary dependency reschedules itself until convergence" {
     try std.testing.expectEqual(function, engine.nextDirty().?);
     try std.testing.expect(!try engine.updateSummary(function, .{ .outputs = &outputs }));
     try std.testing.expect(engine.nextDirty() == null);
+}
+
+test "owned input root changes reschedule summary observers" {
+    var engine = Engine.init(std.testing.allocator);
+    defer engine.deinit();
+    const caller: graph.GlobalFunctionId = @enumFromInt(0);
+    const callee: graph.GlobalFunctionId = @enumFromInt(1);
+    const empty = [_]facts.ValueEffect{.{}};
+    _ = try engine.updateSummary(callee, .{ .outputs = &empty });
+    engine.beginInference(caller);
+    _ = engine.summaryFor(callee);
+    try engine.endInference();
+    const paths = [_]facts.InputPath{.{ .input_index = 0 }};
+    const outputs = [_]facts.ValueEffect{.{ .input_owned_roots = &paths }};
+    try std.testing.expect(try engine.updateSummary(callee, .{ .outputs = &outputs }));
+    try std.testing.expectEqual(caller, engine.nextDirty().?);
+    try std.testing.expect(engine.nextDirty() == null);
+    try std.testing.expect(!try engine.updateSummary(callee, .{ .outputs = &outputs }));
+    const projected = [_]facts.InputPath{.{ .input_index = 0, .projections = &.{.{ .field = 1 }} }};
+    const changed = [_]facts.ValueEffect{.{ .input_owned_roots = &projected }};
+    try std.testing.expect(try engine.updateSummary(callee, .{ .outputs = &changed }));
+    try std.testing.expectEqual(caller, engine.nextDirty().?);
+}
+
+test "nested effect equality preserves root paths and explicit dependencies" {
+    const root_effect: facts.ValueEffect = .{ .input_owned_roots = &.{.{ .input_index = 0 }} };
+    const empty: facts.ValueEffect = .{};
+    try std.testing.expect(!valueEffectEql(
+        .{ .fields = &.{.{ .index = 0, .value = &root_effect }} },
+        .{ .fields = &.{.{ .index = 0, .value = &empty }} },
+    ));
+    try std.testing.expect(!valueEffectEql(.{ .explicit_dependency = true }, .{}));
 }

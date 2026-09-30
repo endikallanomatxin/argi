@@ -355,7 +355,7 @@ pub const Infer = struct {
         if (!virtualInputPostStateRuntimeRepresentable(left) or
             !virtualInputPostStateRuntimeRepresentable(right)) return null;
 
-        const value = if (valueEffectEqual(left.value, right.value))
+        const value = if (summaries.valueEffectEql(left.value, right.value))
             left.value
         else blk: {
             if (outputEffectHasFreshRole(left.value) or outputEffectHasFreshRole(right.value) or
@@ -3512,42 +3512,6 @@ fn outputEffectTransfersOwnership(effect: facts.ValueEffect) bool {
     for (effect.fields) |field| if (outputEffectTransfersOwnership(field.value.*)) return true;
     for (effect.variants) |variant| if (outputEffectTransfersOwnership(variant.value.*)) return true;
     return false;
-}
-
-fn valueEffectEqual(left: facts.ValueEffect, right: facts.ValueEffect) bool {
-    if (left.known_choice_variant != right.known_choice_variant or
-        left.integer_address != right.integer_address or
-        left.foreign_storage != right.foreign_storage or
-        !std.mem.eql(facts.FreshEffectSource, left.fresh_dependencies, right.fresh_dependencies) or
-        !std.mem.eql(facts.FreshEffectSource, left.fresh_owned_roots, right.fresh_owned_roots) or
-        !std.mem.eql(facts.FreshEffectSource, left.fresh_storage_capabilities, right.fresh_storage_capabilities) or
-        left.input_dependencies.len != right.input_dependencies.len or
-        left.input_places.len != right.input_places.len or
-        left.input_generation_dependencies.len != right.input_generation_dependencies.len or
-        left.input_place_values.len != right.input_place_values.len or
-        left.input_owned_roots.len != right.input_owned_roots.len or
-        left.opaque_generation_dependencies.len != right.opaque_generation_dependencies.len or
-        left.opaque_storage_dependencies.len != right.opaque_storage_dependencies.len or
-        left.fields.len != right.fields.len or left.variants.len != right.variants.len) return false;
-    for (left.input_dependencies, right.input_dependencies) |a, b|
-        if (!containsInputDependency(&.{a}, b)) return false;
-    for (left.input_places, right.input_places) |a, b| if (!inputPathEqualFree(a, b)) return false;
-    for (left.input_generation_dependencies, right.input_generation_dependencies) |a, b| if (!inputPathEqualFree(a, b)) return false;
-    for (left.input_place_values, right.input_place_values) |a, b| if (!inputPathEqualFree(a, b)) return false;
-    for (left.input_owned_roots, right.input_owned_roots) |a, b| if (!inputPathEqualFree(a, b)) return false;
-    for (left.opaque_generation_dependencies, right.opaque_generation_dependencies) |a, b| if (!inputPathEqualFree(a, b)) return false;
-    for (left.opaque_storage_dependencies, right.opaque_storage_dependencies) |a, b| if (!inputPathEqualFree(a, b)) return false;
-    for (left.fields, right.fields) |a, b|
-        if (a.index != b.index or !valueEffectEqual(a.value.*, b.value.*)) return false;
-    for (left.variants, right.variants) |a, b|
-        if (a.index != b.index or !valueEffectEqual(a.value.*, b.value.*)) return false;
-    return true;
-}
-
-fn inputPathEqualFree(left: facts.InputPath, right: facts.InputPath) bool {
-    if (left.input_index != right.input_index or left.projections.len != right.projections.len) return false;
-    for (left.projections, right.projections) |a, b| if (!std.meta.eql(a, b)) return false;
-    return true;
 }
 
 fn pointerUseOperand(content: graph_mod.Node.Content) ?graph_mod.GlobalNodeId {
