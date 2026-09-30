@@ -253,7 +253,12 @@ implementation may also evict entries belonging to other errors.
 Storage isolation between errors is not required. A tracer may interleave
 entries from several errors and report shared context, using separators as
 appropriate. Retention, truncation, eviction, and loss indicators belong to
-each implementation's policy. No policy may interpret reused storage as an
+each implementation's policy. Reporting either of two errors referring to a
+shared-log tracer observes that tracer's retained context, not an isolated
+chain belonging to the selected error. Reset followed by propagation of an
+older error can therefore make that new context visible through both errors.
+Their nominal reasons and original tracer references remain independent of
+this diagnostic retention policy. No policy may interpret reused storage as an
 old entry or access storage that is no longer valid.
 
 Entries store compact `SourceLocationId` values. Executable metadata maps

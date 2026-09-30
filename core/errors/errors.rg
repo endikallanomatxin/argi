@@ -135,7 +135,8 @@ add_context(.self: $&FixedSizeErrorTracer, .location: SourceLocationId, .context
     }
     entry ::= _trusted_error_trace_slot(.self = self, .index = index).entry
     entry& = (.location = location, .context_length = count)
-    offset ::= index * _error_trace_stride().size + size_of(.type = ErrorTraceEntry)
+    slot_offset ::= index * _error_trace_stride().size
+    offset ::= slot_offset + size_of(.type = ErrorTraceEntry)
     i :: UIntNative = 0
     while i < count {
         byte ::= bytes_get(.view = &context, .index = i).byte
@@ -179,7 +180,8 @@ _error_report_entry(.self: $&FixedSizeErrorTracer, .index: UIntNative, .stderr: 
     write_trace_uint(.value = location.line, .stderr = stderr)!
     write_trace_text(.text = ":", .stderr = stderr)!
     write_trace_uint(.value = location.column, .stderr = stderr)!
-    offset ::= index * _error_trace_stride().size + size_of(.type = ErrorTraceEntry)
+    slot_offset ::= index * _error_trace_stride().size
+    offset ::= slot_offset + size_of(.type = ErrorTraceEntry)
     if entry&.context_length != 0 {
         write_trace_text(.text = ": ", .stderr = stderr)!
         i :: UIntNative = 0

@@ -6381,3 +6381,9 @@ test "feature_tests/polymorphism/41_recursive_virtual_summaries" {
     try expectSuccessfulBuild(path);
     try run(path);
 }
+
+test "feature_tests/types/73_error_tracer_shared_log" {
+    const path = "tests/feature_tests/types/73_error_tracer_shared_log";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
