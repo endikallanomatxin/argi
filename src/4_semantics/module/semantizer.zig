@@ -87,7 +87,7 @@ pub fn finishLinked(
     try lowerOperatorMetadata(allocator, graph, files);
     const global_roots = try global_roots_lowerer.lower(allocator, graph);
 
-    const parameterized_stats = try parameterized_lowerer.lowerLinked(allocator, graph, files, abstract_types);
+    const parameterized_stats = try parameterized_lowerer.lowerLinked(allocator, graph, files, abstract_types, diagnostics);
     // Templates claim abstract interfaces before ordinary body lowering, so
     // each contract body is materialized only after specialization.
     const bodies = try body_lowerer.lowerMissingFunctions(allocator, graph, files, diagnostics);

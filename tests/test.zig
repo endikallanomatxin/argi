@@ -6945,3 +6945,38 @@ test "feature_tests/collections/79_dynamic_array_occupancy_transitions" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "tests/feature_tests/basics/29_unsigned_literal_extrema" {
+    try expectSuccessfulBuild("tests/feature_tests/basics/29_unsigned_literal_extrema");
+    try runExpect("tests/feature_tests/basics/29_unsigned_literal_extrema", 0);
+}
+
+test "tests/feature_tests/basics/30X_unsigned_literal_magnitude_overflow" {
+    try buildExpectFailExact("tests/feature_tests/basics/30X_unsigned_literal_magnitude_overflow",
+        \\tests/feature_tests/basics/30X_unsigned_literal_magnitude_overflow/main.rg:2:22: error: integer literal magnitude exceeds the supported 64-bit range
+        \\      value : UInt64 = 18446744073709551616
+        \\                       ^
+        \\
+    );
+}
+
+test "tests/feature_tests/basics/31X_int64_positive_literal_overflow" {
+    try buildExpectFail("tests/feature_tests/basics/31X_int64_positive_literal_overflow", "does not fit in");
+}
+
+test "tests/feature_tests/basics/32X_int64_negative_literal_overflow" {
+    try buildExpectFail("tests/feature_tests/basics/32X_int64_negative_literal_overflow", "does not fit in");
+}
+
+test "tests/feature_tests/basics/33X_generic_integer_literal_magnitude_overflow" {
+    try buildExpectFailExact("tests/feature_tests/basics/33X_generic_integer_literal_magnitude_overflow",
+        \\tests/feature_tests/basics/33X_generic_integer_literal_magnitude_overflow/main.rg:1:52: error: integer literal magnitude exceeds the supported 64-bit range
+        \\  maximum#(.t: Type)() -> (.result: t) := { result = 18446744073709551616 }
+        \\                                                     ^
+        \\
+    );
+}
+
+test "tests/feature_tests/basics/34X_unsigned_negative_literal" {
+    try buildExpectFail("tests/feature_tests/basics/34X_unsigned_negative_literal", "does not fit in");
+}

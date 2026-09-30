@@ -4282,7 +4282,7 @@ pub const SafetyChecker = struct {
 
     fn staticIndex(self: *SafetyChecker, node: graph_mod.GlobalNodeId) ?usize {
         return switch (self.graph.nodes.items[@intFromEnum(node)].content) {
-            .int_literal => |value| if (value >= 0) @intCast(value) else null,
+            .int_literal => |value| std.math.cast(usize, value),
             else => null,
         };
     }
@@ -4323,7 +4323,7 @@ pub const SafetyChecker = struct {
         try self.diagnostics.add(loc, .semantic, fmt, args);
     }
 
-    fn validateIntegerLiteral(self: *SafetyChecker, source: primitives.SourceRef, maybe_ty: ?graph_mod.GlobalTypeId, value: i64) !void {
+    fn validateIntegerLiteral(self: *SafetyChecker, source: primitives.SourceRef, maybe_ty: ?graph_mod.GlobalTypeId, value: i128) !void {
         const ty = maybe_ty orelse return;
         const builtin = switch (self.graph.resolvedSemanticType(ty) orelse return) {
             .builtin => |kind| kind,
@@ -4333,11 +4333,12 @@ pub const SafetyChecker = struct {
             .Int8 => value >= std.math.minInt(i8) and value <= std.math.maxInt(i8),
             .Int16 => value >= std.math.minInt(i16) and value <= std.math.maxInt(i16),
             .Int32 => value >= std.math.minInt(i32) and value <= std.math.maxInt(i32),
-            .Int64 => true,
+            .Int64 => value >= std.math.minInt(i64) and value <= std.math.maxInt(i64),
             .UInt8 => value >= 0 and value <= std.math.maxInt(u8),
             .UInt16 => value >= 0 and value <= std.math.maxInt(u16),
             .UInt32 => value >= 0 and value <= std.math.maxInt(u32),
-            .UInt64, .UIntNative => value >= 0,
+            .UInt64 => value >= 0 and value <= std.math.maxInt(u64),
+            .UIntNative => value >= 0 and value <= std.math.maxInt(usize),
             else => return,
         };
         if (fits) return;
@@ -4345,10 +4346,12 @@ pub const SafetyChecker = struct {
             .Int8 => try self.report(source, "integer literal {d} does not fit in '{s}' (min {d}, max {d})", .{ value, @tagName(builtin), std.math.minInt(i8), std.math.maxInt(i8) }),
             .Int16 => try self.report(source, "integer literal {d} does not fit in '{s}' (min {d}, max {d})", .{ value, @tagName(builtin), std.math.minInt(i16), std.math.maxInt(i16) }),
             .Int32 => try self.report(source, "integer literal {d} does not fit in '{s}' (min {d}, max {d})", .{ value, @tagName(builtin), std.math.minInt(i32), std.math.maxInt(i32) }),
+            .Int64 => try self.report(source, "integer literal {d} does not fit in '{s}' (min {d}, max {d})", .{ value, @tagName(builtin), std.math.minInt(i64), std.math.maxInt(i64) }),
             .UInt8 => try self.report(source, "integer literal {d} does not fit in '{s}' (max {d})", .{ value, @tagName(builtin), std.math.maxInt(u8) }),
             .UInt16 => try self.report(source, "integer literal {d} does not fit in '{s}' (max {d})", .{ value, @tagName(builtin), std.math.maxInt(u16) }),
             .UInt32 => try self.report(source, "integer literal {d} does not fit in '{s}' (max {d})", .{ value, @tagName(builtin), std.math.maxInt(u32) }),
-            .UInt64, .UIntNative => try self.report(source, "integer literal {d} does not fit in '{s}' (minimum 0)", .{ value, @tagName(builtin) }),
+            .UInt64 => try self.report(source, "integer literal {d} does not fit in '{s}' (min 0, max {d})", .{ value, @tagName(builtin), std.math.maxInt(u64) }),
+            .UIntNative => try self.report(source, "integer literal {d} does not fit in '{s}' (min 0, max {d})", .{ value, @tagName(builtin), std.math.maxInt(usize) }),
             else => unreachable,
         }
     }

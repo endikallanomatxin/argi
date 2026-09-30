@@ -37,6 +37,12 @@ Integer literals accept decimal, binary (`0b`), octal (`0o`), and hexadecimal
 (`0x`) notation. Floating-point literals accept decimal and scientific
 notation.
 
+An integer literal must fit its contextual type. A positive literal may use
+the full unsigned range, including `18446744073709551615` for `UInt64` and
+64-bit `UIntNative`. The same magnitude does not fit `Int64`. The minimum
+`Int64` value is written `-9223372036854775808`; negative literals do not fit
+unsigned types. A literal with no contextual type must fit the default `Int32`.
+
 > [!IMPLEMENTATION]
 > Digit separators such as `1_000_000` are intended but are not accepted by
 > the current tokenizer.
