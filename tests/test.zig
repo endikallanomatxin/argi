@@ -6534,3 +6534,33 @@ test "safety statistics preserve composed allocator behavior" {
         try expect(std.mem.indexOf(u8, result.stderr, label) != null);
     try run(path);
 }
+
+test "feature_tests/types/74_reference_offset_checked_arithmetic" {
+    const path = "tests/feature_tests/types/74_reference_offset_checked_arithmetic";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/types/75X_reference_offset_multiplication_overflow" {
+    const path = "tests/feature_tests/types/75X_reference_offset_multiplication_overflow";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/76X_reference_offset_multiplication_overflow" {
+    const path = "tests/feature_tests/types/76X_reference_offset_multiplication_overflow";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/77X_reference_offset_addition_overflow" {
+    const path = "tests/feature_tests/types/77X_reference_offset_addition_overflow";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/78X_reference_offset_addition_overflow" {
+    const path = "tests/feature_tests/types/78X_reference_offset_addition_overflow";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}

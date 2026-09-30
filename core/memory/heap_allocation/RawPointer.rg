@@ -36,11 +36,24 @@ establish_inherited_storage(
     raw = raw_pointer#(.t: UInt8)(.address = address).raw
 }
 
+-- Prevent arithmetic wrap before establishing an offset reference. The caller
+-- still proves that the resulting element belongs to the same live region.
+_reference_offset_address(
+    .address: UIntNative,
+    .elements: UIntNative,
+    .element_size: UIntNative,
+) -> (.result: UIntNative) := {
+    offset ::= elements * element_size
+    if element_size != 0 and offset / element_size != elements { abort }
+    result = address + offset
+    if result < address { abort }
+}
+
 reference_offset#(.t: Type)(
     .base: &t,
     .elements: UIntNative,
 ) -> (.reference: &t) := {
-    address ::= UIntNative(.value = base) + elements * size_of(.type = t)
+    address ::= _reference_offset_address(.address = UIntNative(.value = base), .elements = elements, .element_size = size_of(.type = t)).result
     reference = __trusted_reference_from_address#(.to: &t)(.address = address)
 }
 
@@ -64,6 +77,6 @@ mutable_reference_offset#(.t: Type)(
     .base: $&t,
     .elements: UIntNative,
 ) -> (.reference: $&t) := {
-    address ::= UIntNative(.value = base) + elements * size_of(.type = t)
+    address ::= _reference_offset_address(.address = UIntNative(.value = base), .elements = elements, .element_size = size_of(.type = t)).result
     reference = __trusted_reference_from_address#(.to: $&t)(.address = address)
 }

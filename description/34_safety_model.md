@@ -206,7 +206,9 @@ arbitrary address physically valid.
 > reference operations. Allocation establishment currently also accepts
 > addresses without a tracked capability, and native page mappings do not
 > produce one. Public low-level reference helpers therefore still rely on
-> trusted caller obligations for physical validity. They do not provide a
+> trusted caller obligations for physical validity. Reference offsets reject
+> multiplication and address-addition wrap at runtime, but do not yet check
+> membership in an authoritative physical range. They do not provide a
 > general spatial-safety guarantee.
 
 > [!QUESTION]
