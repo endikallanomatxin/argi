@@ -220,9 +220,9 @@ arbitrary address physically valid.
 > authorization rule above applies across calls as well as inside a function.
 
 > [!QUESTION]
-> The representation of physical provenance, its propagation through external
-> calls, and the supported representation of empty views remain open. Runtime
-> allocation fields alone cannot be the authority for physical bounds.
+> The representation of physical provenance and its propagation through external
+> calls remain open. Runtime allocation fields alone cannot be the authority
+> for physical bounds.
 
 ## Control flow and calls
 

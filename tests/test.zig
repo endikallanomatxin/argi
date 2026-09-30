@@ -6600,3 +6600,15 @@ test "feature_tests/types/84X_allocation_slot_empty_storage" {
     try expectSuccessfulBuild(path);
     try runExpectFailure(path);
 }
+
+test "feature_tests/collections/56_empty_array_views" {
+    const path = "tests/feature_tests/collections/56_empty_array_views";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/57X_empty_view_data" {
+    const path = "tests/feature_tests/collections/57X_empty_view_data";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}

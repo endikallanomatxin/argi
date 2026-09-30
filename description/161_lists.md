@@ -40,9 +40,11 @@ pointer-and-length construction belongs to trusted code.
 The pointer and length fields are private. `array_view#(.t: T)(.data = $&element)`
 creates a one-element view; `array_view#(.n = N, .t: T)(.array = $&array)`
 derives the length from a fixed `[N]T`. The read-only constructors use
-`array_view_ro` and read-only references in the same way. The fixed-array
-constructor requires `N > 0` because the view stores a non-null element
-reference.
+`array_view_ro` and read-only references in the same way. Zero-length fixed
+arrays produce empty views without establishing an element reference. An
+empty view has length zero, rejects every index, and has no element pointer;
+`data` requires a nonempty view and aborts otherwise. Zero-length bulk-copy
+and stream operations do not require an element pointer.
 
 A pointer to one element does not establish the extent of a larger region.
 Private core helpers accept an explicit length only where the implementation
