@@ -2,6 +2,11 @@ const place = @import("place.zig");
 const value_state = @import("value_state.zig");
 
 pub const ValidityRootId = enum(u32) { _ };
+/// Acquisition authorization shared by known address aliases. Ordinary moves
+/// consume an AcquiredStorage binding, but an integer inspected before that
+/// move can remain in another binding or cross a summary boundary. Those
+/// aliases must observe the same establishment consumption independently of
+/// their own Place state and of the established region's temporal lifetime.
 pub const StorageCapabilityId = enum(u32) { _ };
 
 pub const ValidityRoot = struct {

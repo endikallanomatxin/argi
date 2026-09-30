@@ -7020,3 +7020,7 @@ test "feature_tests/polymorphism/49_virtual_explicit_peer_handle" {
     try expectSuccessfulBuild("tests/feature_tests/polymorphism/49_virtual_explicit_peer_handle");
     try runExpect("tests/feature_tests/polymorphism/49_virtual_explicit_peer_handle", 0);
 }
+
+test "feature_tests/types/270X_acquired_storage_inspected_alias_consumed" {
+    try buildExpectFail("tests/feature_tests/types/270X_acquired_storage_inspected_alias_consumed", "already been consumed");
+}
