@@ -5,7 +5,7 @@ CountingAllocator : Type = (
 allocate(.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
     storage ::= malloc(.size = 1, .ffi = self&.ffi)
     deallocator ::= to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation ::= establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
+    allocation ::= trusted_establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
     result = ..ok ~allocation
 }
 

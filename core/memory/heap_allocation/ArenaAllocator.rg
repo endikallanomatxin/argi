@@ -128,6 +128,7 @@ allocate(.self: $&ArenaAllocator, .size: UIntNative, .alignment: UIntNative) -> 
         ._storage_address = address,
         ._storage_size = size,
         ._storage_alignment = alignment,
+        ._release_size = size,
     )
     self&._current_block_offset = aligned_offset + required
     result = ..ok ~allocation

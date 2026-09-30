@@ -6633,6 +6633,68 @@ test "feature_tests/types/90X_allocation_establishment_wrap" {
     try runExpectFailure(path);
 }
 
+test "feature_tests/types/91_acquired_storage_establishment" {
+    const path = "tests/feature_tests/types/91_acquired_storage_establishment";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/types/92X_acquired_storage_integer_establishment" {
+    try buildExpectFail("tests/feature_tests/types/92X_acquired_storage_integer_establishment", "no overload");
+}
+
+test "feature_tests/types/93X_acquired_storage_private_extent" {
+    try buildExpectFail("tests/feature_tests/types/93X_acquired_storage_private_extent", "field '_size' is private to its module");
+}
+
+test "feature_tests/types/94X_acquired_storage_extent" {
+    const path = "tests/feature_tests/types/94X_acquired_storage_extent";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/95X_acquired_storage_duplicate_establishment" {
+    try buildExpectFail("tests/feature_tests/types/95X_acquired_storage_duplicate_establishment", "already been consumed");
+}
+
+test "feature_tests/types/96X_acquired_page_storage_duplicate" {
+    try buildExpectFail("tests/feature_tests/types/96X_acquired_page_storage_duplicate", "already been consumed");
+}
+
+test "feature_tests/types/97X_acquired_storage_forged_literal" {
+    try buildExpectFail("tests/feature_tests/types/97X_acquired_storage_forged_literal", "field '_address' is private to its module");
+}
+
+test "feature_tests/types/98X_acquired_storage_shared_authorization" {
+    try buildExpectFail("tests/feature_tests/types/98X_acquired_storage_shared_authorization", "already been consumed");
+}
+
+test "feature_tests/types/99X_acquired_storage_consumed_forwarding" {
+    try buildExpectFail("tests/feature_tests/types/99X_acquired_storage_consumed_forwarding", "already been consumed");
+}
+
+test "feature_tests/types/100X_acquired_page_storage_padding" {
+    const path = "tests/feature_tests/types/100X_acquired_page_storage_padding";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/101_acquired_storage_failure_and_empty" {
+    const path = "tests/feature_tests/types/101_acquired_storage_failure_and_empty";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/types/102X_acquired_storage_private_subaddress" {
+    try buildExpectFail("tests/feature_tests/types/102X_acquired_storage_private_subaddress", "no function named '_trusted_acquisition_subaddress' exists");
+}
+
+test "feature_tests/types/103_acquired_storage_prefix_cleanup" {
+    const path = "tests/feature_tests/types/103_acquired_storage_prefix_cleanup";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
 test "feature_tests/collections/56_empty_array_views" {
     const path = "tests/feature_tests/collections/56_empty_array_views";
     try expectSuccessfulBuild(path);

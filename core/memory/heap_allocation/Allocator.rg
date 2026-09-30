@@ -48,29 +48,15 @@ init(.p: $&CAllocator, .ffi: $&ForeignFunctionInterface) -> () := {
 }
 
 allocate(.self: $&CAllocator, .size: UIntNative, .alignment: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
-    _require_allocation_alignment(.alignment = alignment)
-    physical_alignment ::= alignment
-    pointer_alignment ::= alignment_of(.type = UIntNative)
-    if physical_alignment < pointer_alignment { physical_alignment = pointer_alignment }
-    physical_size ::= size
-    if physical_size == 0 { physical_size = 1 }
-    remainder ::= physical_size % physical_alignment
-    if remainder != 0 {
-        padding ::= physical_alignment - remainder
-        physical_size = physical_size + padding
-        if physical_size < size {
-            result = ..error(.reason = ..out_of_memory)
-            return
+    acquired ::= acquire_heap_storage(.size = size, .alignment = alignment, .ffi = self&.ffi)
+    match acquired {
+        ..error _ { result = ..error(.reason = ..out_of_memory) }
+        ..ok storage {
+            deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
+            allocation ::= establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
+            result = ..ok ~allocation
         }
     }
-    address ::= aligned_alloc(.alignment = physical_alignment, .size = physical_size, .ffi = self&.ffi).address
-    if address == 0 {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation ::= establish_allocation(.storage = address, .size = size, .alignment = alignment, .deallocator = deallocator)
-    result = ..ok ~allocation
 }
 
 deallocate(.self: $&CAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
@@ -112,6 +98,8 @@ Allocation : Type = (
     ._storage_address: UIntNative
     ._storage_size: UIntNative
     ._storage_alignment: UIntNative
+    -- A granted prefix may be smaller than the acquisition being released.
+    ._release_size: UIntNative
 )
 
 -- Compiler-owned temporal boundary used after a physical allocator has
@@ -120,7 +108,7 @@ Allocation : Type = (
 -- The allocator certifies acquisition and containment; these scalar arguments
 -- are not themselves evidence that storage was acquired. Private bounds keep
 -- that assertion intact when the receipt crosses ordinary caller code.
-establish_allocation(
+trusted_establish_allocation(
     .storage: UIntNative,
     .size: UIntNative,
     .alignment: UIntNative,
@@ -140,7 +128,26 @@ establish_allocation(
         ._storage_address = storage,
         ._storage_size = size,
         ._storage_alignment = alignment,
+        ._release_size = size,
     )
+}
+
+-- Normal establishment requires an acquisition receipt. Its private bounds
+-- survive copying and forwarding; the compiler consumes the address's shared
+-- authorization through the same transfer contract as trusted establishment.
+establish_allocation(
+    .storage: AcquiredStorage,
+    .size: UIntNative,
+    .alignment: UIntNative,
+    .deallocator: Virtual#(.abstract: Deallocator),
+    .anchor: &Any = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference,
+) -> (.allocation: Allocation) := {
+    _require_allocation_alignment(.alignment = alignment)
+    if size > storage._size { abort }
+    if storage._address % alignment != 0 { abort }
+    allocation = trusted_establish_allocation(.storage = storage._address, .size = size, .alignment = alignment, .deallocator = deallocator, .anchor = anchor).allocation
+    allocation._release_size = storage._size
+    allocation._storage_alignment = storage._alignment
 }
 
 deinit(
@@ -149,7 +156,7 @@ deinit(
     -- Cleanup may touch backing metadata; an ended region cannot be released.
     live ::= self&.anchor&
     data ::= raw_pointer#(.t: UInt8)(.address = self&._storage_address).raw
-    deallocate(.self = $&self&.deallocator, .data = data, .size = self&._storage_size, .alignment = self&._storage_alignment)
+    deallocate(.self = $&self&.deallocator, .data = data, .size = self&._release_size, .alignment = self&._storage_alignment)
 }
 
 -- Explicit trusted establishment into raw storage. Callers must prove bounds,

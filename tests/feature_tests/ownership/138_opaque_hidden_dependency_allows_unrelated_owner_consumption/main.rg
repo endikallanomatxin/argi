@@ -10,7 +10,7 @@ main(.system: System) -> (.status_code: Int32) := {
     deallocator ::= to_virtual#(.abstract: Deallocator)(.value = $&c_allocator)
 
     borrowing_slots_storage ::= malloc(.size = size_of(.type = Borrowing), .ffi = system.ffi)
-    borrowing_slots ::= establish_allocation(
+    borrowing_slots ::= trusted_establish_allocation(
         .storage = borrowing_slots_storage,
         .size = size_of(.type = Borrowing),
         .alignment = 1,
@@ -25,9 +25,9 @@ main(.system: System) -> (.status_code: Int32) := {
     )
 
     unrelated_storage ::= malloc(.size = 1, .ffi = system.ffi)
-    unrelated ::= establish_allocation(.storage = unrelated_storage, .size = 1, .alignment = 1, .deallocator = deallocator)
+    unrelated ::= trusted_establish_allocation(.storage = unrelated_storage, .size = 1, .alignment = 1, .deallocator = deallocator)
     owner_slots_storage ::= malloc(.size = size_of(.type = Allocation), .ffi = system.ffi)
-    owner_slots ::= establish_allocation(
+    owner_slots ::= trusted_establish_allocation(
         .storage = owner_slots_storage,
         .size = size_of(.type = Allocation),
         .alignment = 1,

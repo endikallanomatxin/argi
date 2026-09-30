@@ -11,6 +11,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         ._storage_address = 1,
         ._storage_size = 8,
         ._storage_alignment = 1,
+        ._release_size = 8,
     )
     deinit(.self = $&allocation)
 }

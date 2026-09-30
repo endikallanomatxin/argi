@@ -29,7 +29,7 @@ establish_inherited_reference#(.t: Type)(
 -- Incorporates newly acquired physical storage into an existing temporal
 -- domain. Unlike ordinary raw alias establishment, this consumes the unique
 -- StorageCapability carried by the physical address.
-establish_inherited_storage(
+trusted_establish_inherited_storage(
     .address: UIntNative,
     .root: &Any,
 ) -> (.raw: RawPointer#(.t: UInt8)) := {

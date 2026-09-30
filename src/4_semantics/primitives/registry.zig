@@ -17,14 +17,16 @@ pub const Spec = struct {
 
 pub const specs = [_]Spec{
     .{ .primitive = .establish_inherited_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "establish_inherited_reference", .signatures = &.{"#(.t: Type)(.raw: RawPointer#(.t: t), .root: &Any) -> (.reference: $&t)"} },
-    .{ .primitive = .establish_inherited_storage, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "establish_inherited_storage", .signatures = &.{"(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8))"} },
+    .{ .primitive = .establish_inherited_storage, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_establish_inherited_storage", .signatures = &.{"(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8))"} },
     .{ .primitive = .reference_offset, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "reference_offset", .signatures = &.{"#(.t: Type)(.base: &t, .elements: UIntNative) -> (.reference: &t)"} },
     .{ .primitive = .mutable_reference_offset, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "mutable_reference_offset", .signatures = &.{"#(.t: Type)(.base: $&t, .elements: UIntNative) -> (.reference: $&t)"} },
     .{ .primitive = .reinterpret_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "reinterpret_reference", .signatures = &.{"#(.from: Type, .to: Type)(.base: &from) -> (.reference: &to)"} },
     .{ .primitive = .mutable_reinterpret_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "mutable_reinterpret_reference", .signatures = &.{"#(.from: Type, .to: Type)(.base: $&from) -> (.reference: $&to)"} },
     .{ .primitive = .read_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "read_reference", .signatures = &.{"#(.t: Type)(.base: $&t) -> (.reference: &t)"} },
-    .{ .primitive = .establish_allocation, .path = "core/memory/heap_allocation/Allocator.rg", .name = "establish_allocation", .signatures = &.{"(.storage: UIntNative, .size: UIntNative, .alignment: UIntNative, .deallocator: Virtual#(.abstract: Deallocator), .anchor: &Any = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference) -> (.allocation: Allocation)"} },
+    .{ .primitive = .establish_allocation, .path = "core/memory/heap_allocation/Allocator.rg", .name = "trusted_establish_allocation", .signatures = &.{"(.storage: UIntNative, .size: UIntNative, .alignment: UIntNative, .deallocator: Virtual#(.abstract: Deallocator), .anchor: &Any = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference) -> (.allocation: Allocation)"} },
     .{ .primitive = .establish_allocation_slot, .path = "core/memory/heap_allocation/Allocator.rg", .name = "establish_allocation_slot", .signatures = &.{"#(.t: Type)(.allocation: &Allocation, .slot: RawPointer#(.t: t), .anchor: &Any) -> (.reference: $&t)"} },
+    .{ .primitive = .native_allocated_storage, .path = "core/platforms/posix/page_mapping.rg", .name = "_memory_map_anonymous", .signatures = &.{"(.length: UIntNative) -> (.address: UIntNative)"} },
+    .{ .primitive = .acquisition_subaddress, .path = "core/memory/heap_allocation/Memory.rg", .name = "_trusted_acquisition_subaddress", .signatures = &.{"(.base: UIntNative, .address: UIntNative) -> (.result: UIntNative)"} },
     .{ .primitive = .relocate, .path = "core/memory/relocation.rg", .name = "relocate", .signatures = &.{"#(.t: Type)(.source: $&t, .destination: $&t) -> ()"} },
     .{ .primitive = .restrict_reference, .path = "core/memory/validity_dependency.rg", .name = "restrict_reference", .signatures = &.{"#(.t: Type)(.input: t, .on: &Any) -> (.reference: t)"} },
     .{ .primitive = .depend_on, .path = "core/memory/validity_dependency.rg", .name = "depend_on", .signatures = &.{"#(.t: Type)(.value: t, .on: &Any) -> (.result: t)"} },
@@ -42,6 +44,7 @@ pub const specs = [_]Spec{
 };
 
 comptime {
+    @setEvalBranchQuota(5000);
     for (std.meta.fields(primitives.SafetyPrimitive)) |field| {
         const primitive: primitives.SafetyPrimitive = @enumFromInt(field.value);
         if (primitive == .none) continue;
@@ -194,6 +197,10 @@ pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
     return switch (primitive) {
         .none => .{ .value = .empty },
         .raw_allocated_storage => .{ .value = .raw_storage },
+        // Body-backed page acquisition retains the Argi UIntNative ABI;
+        // libc acquisition identity also selects its pointer-return ABI.
+        .native_allocated_storage => .{ .value = .raw_storage },
+        .acquisition_subaddress => .{ .value = .reference_copy },
         .establish_inherited_reference => .{ .value = .inherited_reference },
         .establish_inherited_storage => .{ .value = .inherited_storage, .consumes_storage_input = 0 },
         .establish_allocation => .{ .value = .allocation, .consumes_storage_input = 0 },
@@ -223,7 +230,7 @@ pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
 /// anchor and virtual deallocator. Both interpreters use this field mapping;
 /// raw byte ownership must not erase the deallocator's receiver lifetime.
 pub const AllocationTransfer = struct {
-    pub const field_count = 8;
+    pub const field_count = 9;
     pub const data_field = 0;
     pub const borrowed_fields = [_]struct { field: u32, input: u32 }{
         .{ .field = 3, .input = 4 }, // anchor

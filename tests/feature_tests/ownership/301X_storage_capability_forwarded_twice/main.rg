@@ -1,5 +1,5 @@
 consume(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8)) := {
-    raw = establish_inherited_storage(.address = address, .root = root).raw
+    raw = trusted_establish_inherited_storage(.address = address, .root = root).raw
 }
 main(.system: System) -> (.status_code: Int32 = 0) := {
     marker :: UInt8 = 0

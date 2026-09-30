@@ -1,5 +1,5 @@
 consume(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8)) := {
-    raw = establish_inherited_storage(.address = address, .root = root).raw
+    raw = trusted_establish_inherited_storage(.address = address, .root = root).raw
 }
 acquire_consumed(.ffi: $&ForeignFunctionInterface, .root: &Any) -> (.address: UIntNative) := {
     local ::= malloc(.size = 8, .ffi = ffi).address

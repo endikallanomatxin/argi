@@ -45,7 +45,7 @@ allocate(.self: $&FailSecondAllocator, .size: UIntNative, .alignment: UIntNative
     self&.allocations = self&.allocations + 1
     storage ::= malloc(.size = size, .ffi = self&.ffi)
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation ::= establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
+    allocation ::= trusted_establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
     result = ..ok ~allocation
 }
 

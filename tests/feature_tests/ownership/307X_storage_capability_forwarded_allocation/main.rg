@@ -1,5 +1,5 @@
 allocation(.address: UIntNative, .deallocator: Virtual#(.abstract: Deallocator)) -> (.allocation: Allocation) := {
-    allocation = establish_allocation(.storage = address, .size = 8, .alignment = 1, .deallocator = deallocator).allocation
+    allocation = trusted_establish_allocation(.storage = address, .size = 8, .alignment = 1, .deallocator = deallocator).allocation
 }
 main(.system: System) -> (.status_code: Int32 = 0) := {
     marker :: UInt8 = 0

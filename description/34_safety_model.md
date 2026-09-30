@@ -187,6 +187,20 @@ its address does not create a second authorization. Both native page mapping
 and C heap allocation are acquisition boundaries. Acquisition failure is not
 a region that may be established.
 
+Acquisition receipts carry that physical proof independently of editable
+allocation metadata. `AcquiredStorage` has private address, extent, and
+alignment fields; successful heap and native page acquisition create receipts.
+Normal allocation or inherited-storage establishment requires such a receipt.
+Allocation establishment checks its requested prefix and alignment before
+publishing the temporal root. Padding outside the requested acquisition range
+does not become readable storage. Copies of a receipt share the acquisition's
+consumable authorization.
+
+Integer-address integration uses the explicitly trusted establishment
+operations. Their caller proves acquisition, containment, and the matching
+cleanup contract. Supplying a live temporal root or an integer does not
+discharge those obligations.
+
 Authorization follows address aliases across calls. A function that may consume
 a known capability requires it to be available on entry; conditional consumption
 makes it unavailable for a later establishment unless non-consumption is proved.
@@ -216,9 +230,11 @@ arbitrary address physically valid.
 > [!IMPLEMENTATION]
 > Temporal roots and consumption of known storage capabilities are tracked,
 > but authoritative physical extents are not yet propagated through all
-> reference operations. Allocation establishment currently also accepts
-> addresses without a tracked capability, and native page mappings do not
-> produce one. Public low-level reference helpers therefore still rely on
+> reference operations. Normal establishment requires an acquisition receipt;
+> native page mappings and C heap acquisition carry tracked capabilities.
+> The explicitly trusted establishment operations accept integer addresses,
+> including suballocator-selected ranges without tracked capabilities.
+> Public low-level reference helpers therefore still rely on
 > trusted caller obligations for physical validity. Reference offsets reject
 > multiplication and address-addition wrap at runtime, but do not yet check
 > membership in an authoritative physical range. Allocation slots check the
@@ -229,9 +245,10 @@ arbitrary address physically valid.
 > spatial-safety guarantee for arbitrary raw-pointer operations.
 
 > [!QUESTION]
-> The representation of physical provenance and its propagation through external
-> calls remain open. Runtime allocation fields alone cannot be the authority
-> for physical bounds.
+> How should external integrations import certified ranges without using the
+> integer-address trusted boundary? The acquisition-receipt protocol provides
+> the bundled heap and page path; arbitrary external function results and
+> physical ranges of ordinary references still need a propagation contract.
 
 ## Control flow and calls
 

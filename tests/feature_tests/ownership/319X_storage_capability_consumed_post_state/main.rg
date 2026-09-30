@@ -1,4 +1,4 @@
-consume(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8)) := { raw = establish_inherited_storage(.address = address, .root = root).raw }
+consume(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8)) := { raw = trusted_establish_inherited_storage(.address = address, .root = root).raw }
 acquire_spent(.ffi: $&ForeignFunctionInterface, .destination: $&UIntNative, .root: &Any) -> () := {
     local ::= malloc(.size = 8, .ffi = ffi).address
     raw ::= consume(.address = local, .root = root).raw

@@ -5554,6 +5554,40 @@ test "storage capability consumption agrees between primitives and summaries" {
     try std.testing.expectEqual(@as(usize, 0), diags.list.items.len);
 }
 
+test "native acquisition and page trimming agree with symbolic transfers" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var engine = summary_engine.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = summary_infer.Infer.init(allocator, undefined, &engine);
+    defer inference.deinit();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var direct = SafetyChecker.FunctionState.init(allocator);
+    defer direct.deinit();
+    var symbolic = SafetyChecker.FunctionState.init(allocator);
+    defer symbolic.deinit();
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const acquired = try checker.evaluatePrimitive(@enumFromInt(0), .native_allocated_storage, &.{}, &.{}, &direct, source);
+    const acquired_effect = try inference.primitiveValueEffect(.native_allocated_storage, 1);
+    const inferred = try checker.instantiateOutput(acquired_effect, &.{}, &symbolic);
+    try std.testing.expectEqual(acquired.foreign_storage, inferred.foreign_storage);
+    try std.testing.expectEqualSlices(facts.StorageCapabilityId, acquired.storage_capabilities, inferred.storage_capabilities);
+    const trimmed_effect = try inference.primitiveValueEffect(.acquisition_subaddress, 2);
+    inline for (.{ SafetyChecker.StorageCapabilityState.available, SafetyChecker.StorageCapabilityState.consumed }) |state| {
+        direct.storage_capabilities.items[0] = state;
+        symbolic.storage_capabilities.items[0] = state;
+        const trimmed = try checker.evaluatePrimitive(@enumFromInt(0), .acquisition_subaddress, &.{}, &.{ acquired, .{} }, &direct, source);
+        const inferred_trimmed = try checker.instantiateOutput(trimmed_effect, &.{ inferred, .{} }, &symbolic);
+        try std.testing.expectEqualSlices(facts.StorageCapabilityId, acquired.storage_capabilities, trimmed.storage_capabilities);
+        try std.testing.expectEqualSlices(facts.StorageCapabilityId, trimmed.storage_capabilities, inferred_trimmed.storage_capabilities);
+        try std.testing.expectEqual(trimmed.foreign_storage, inferred_trimmed.foreign_storage);
+        try std.testing.expectEqual(state, direct.storage_capabilities.items[0]);
+        try std.testing.expectEqual(state, symbolic.storage_capabilities.items[0]);
+    }
+}
+
 test "activating choice payloads never revives consumed storage capabilities" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

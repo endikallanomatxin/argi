@@ -1,5 +1,5 @@
 consume(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8)) := {
-    raw = establish_inherited_storage(.address = address, .root = root).raw
+    raw = trusted_establish_inherited_storage(.address = address, .root = root).raw
 }
 maybe_consume(.address: UIntNative, .root: &Any, .take: Bool) -> () := {
     if take { raw ::= consume(.address = address, .root = root).raw }

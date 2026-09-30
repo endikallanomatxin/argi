@@ -1,4 +1,4 @@
-consume(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8)) := { raw = establish_inherited_storage(.address = address, .root = root).raw }
+consume(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8)) := { raw = trusted_establish_inherited_storage(.address = address, .root = root).raw }
 left(.address: UIntNative, .root: &Any, .depth: UIntNative) -> () := {
     if depth == 0 { raw ::= consume(.address = address, .root = root).raw } else { right(.address = address, .root = root, .depth = depth - 1) }
 }

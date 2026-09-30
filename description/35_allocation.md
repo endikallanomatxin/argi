@@ -40,6 +40,7 @@ Allocation : Type = (
     ._storage_address: UIntNative
     ._storage_size: UIntNative
     ._storage_alignment: UIntNative
+    ._release_size: UIntNative
 )
 ```
 
@@ -50,16 +51,47 @@ checks containment in both ranges and the target type's alignment. Cleanup
 uses the original storage fields, so editing public data, size, or alignment
 cannot change the storage arguments passed to release. The public deallocator
 can still be replaced by an allocator adapter; that adapter remains responsible
-for honoring the acquisition's release contract. These fields are private to the allocator
-module, rather than a general proof that an arbitrary address was acquired.
+for honoring the acquisition's release contract. These fields are private to
+bundled core, rather than a general proof that an arbitrary address
+was acquired. A granted prefix can be smaller than its acquisition; cleanup
+retains the acquisition's original extent and alignment.
 
-`establish_allocation` is a trusted allocator boundary. Its caller proves that
+### Acquisition receipts
+
+`AcquiredStorage` certifies a successful physical acquisition, independently
+of any temporal owner or initialized `T`. Its address, size, and alignment are
+private to bundled core. `acquire_heap_storage(size, alignment, ffi)` and
+`acquire_page_storage(memory, size, alignment)` return `Errable<AcquiredStorage>`.
+Neither publishes a receipt on failure. A zero-size request is valid and grants
+no readable bytes, even when acquisition reserves heap or page padding.
+
+`establish_allocation(storage: AcquiredStorage, size, alignment, deallocator,
+anchor)` checks that the requested prefix fits the acquired extent and that
+its address satisfies the requested alignment. It consumes the acquisition's
+shared storage authorization and creates the temporal allocation root.
+`establish_inherited_storage(storage: AcquiredStorage, root)` consumes the same
+authorization when attaching acquired bytes to an existing temporal domain.
+The receipt is copyable, but copies and forwarding wrappers alias one
+authorization; they cannot establish that acquisition twice. Read-only
+`acquired_storage_address`, `acquired_storage_size`, and
+`acquired_storage_alignment` expose acquisition metadata without certifying
+another region.
+
+The caller of either establishment operation arranges physical cleanup with
+the matching deallocator or temporal domain. A receipt does not certify an
+arbitrary deallocator's behavior. Raw FFI release and low-level reference
+construction remain trusted operations. Receipt inspection after consumption
+does not make the storage live again.
+
+`trusted_establish_allocation` is the explicit integer-address boundary for
+suballocators and integrations outside those acquisition factories. Its caller proves that
 the address and extent describe acquired, live storage and that the deallocator
 matches that acquisition. Its runtime guards reject invalid alignment and
 address-range wrap. Suballocators certify only the selected child range and
 retain a temporal anchor to the backing region. An ordinary caller must obtain
 an allocation through `Allocator`; supplying an integer to the trusted boundary
-does not discharge the acquisition obligation.
+does not discharge the acquisition obligation. The analogous integer-address
+operation for an existing domain is `trusted_establish_inherited_storage`.
 
 Higher-level values such as `String` and `DynamicArray<T>` keep their own
 occupancy and length invariants. `MaybeUninit<T>` identifies a typed slot
