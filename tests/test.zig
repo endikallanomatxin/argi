@@ -6931,3 +6931,17 @@ test "feature_tests/ownership/318X_storage_capability_loop_condition" {
 test "feature_tests/ownership/319X_storage_capability_consumed_post_state" {
     try buildExpectFail("tests/feature_tests/ownership/319X_storage_capability_consumed_post_state", "already been consumed");
 }
+
+test "feature_tests/collections/77X_spatial_reference_after_set" {
+    try buildExpectFail("tests/feature_tests/collections/77X_spatial_reference_after_set", "root that has ended");
+}
+
+test "feature_tests/collections/78X_spatial_forwarded_reference_after_set" {
+    try buildExpectFail("tests/feature_tests/collections/78X_spatial_forwarded_reference_after_set", "root that has ended");
+}
+
+test "feature_tests/collections/79_dynamic_array_occupancy_transitions" {
+    const path = "tests/feature_tests/collections/79_dynamic_array_occupancy_transitions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

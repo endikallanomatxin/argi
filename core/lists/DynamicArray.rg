@@ -484,6 +484,8 @@ set #(.t: Type) (
         .destination = ptr,
         .source = ~value,
     )
+    -- Replacement ends the old content lifetime even when its address stays.
+    _invalidate_dynamic_array_shape#(.t: t)(.array = self)
     result = ..ok Void()
 }
 
@@ -523,4 +525,5 @@ _trusted_dynamic_array_set #(.t: Type) (
         .destination = ptr,
         .source = ~value,
     )
+    _invalidate_dynamic_array_shape#(.t: t)(.array = array)
 }

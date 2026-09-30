@@ -154,6 +154,10 @@ replacement, or relocation ends the referenced value's storage generation.
 The owner may conservatively invalidate all element references for a structural
 mutation. Copied storage handles do not override that invalidation or authorize
 a second extraction. Range validity alone never proves that a live `T` remains.
+`DynamicArray<T>` conservatively invalidates element references, views, and
+iterators on successful `set`, as well as on structural mutations: replacing
+contents ends the old value's lifetime even if length and address stay equal.
+A new borrow after replacement refers to the new live value.
 
 > [!IMPLEMENTATION]
 > `DynamicArray<T>` implements owner-controlled transitions using private
