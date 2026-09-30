@@ -208,8 +208,10 @@ arbitrary address physically valid.
 > produce one. Public low-level reference helpers therefore still rely on
 > trusted caller obligations for physical validity. Reference offsets reject
 > multiplication and address-addition wrap at runtime, but do not yet check
-> membership in an authoritative physical range. They do not provide a
-> general spatial-safety guarantee.
+> membership in an authoritative physical range. Allocation slots check the
+> target type's alignment and containment in the receipt's declared size;
+> those checks cannot validate a forged receipt. They do not provide a general
+> spatial-safety guarantee.
 
 > [!QUESTION]
 > The representation of physical provenance, its propagation through external

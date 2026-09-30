@@ -17,6 +17,10 @@ size and alignment from `T`, checks multiplication overflow, and still returns
 raw `Allocation` storage. A zero-size allocation is valid. Allocation failure
 returns no storage, safe reference, or cleanup obligation.
 
+A zero-size allocation provides no accessible bytes. An allocator may reserve
+internal padding for it, but that padding does not authorize a nonzero-size
+slot. The allocation may still be released normally.
+
 ## Raw storage and typed slots
 
 `Allocation.data` is a non-dereferenceable `RawPointer<UInt8>`. An

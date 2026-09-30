@@ -6564,3 +6564,39 @@ test "feature_tests/types/78X_reference_offset_addition_overflow" {
     try expectSuccessfulBuild(path);
     try runExpectFailure(path);
 }
+
+test "feature_tests/types/79_allocation_slot_range_checks" {
+    const path = "tests/feature_tests/types/79_allocation_slot_range_checks";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/types/80X_allocation_slot_before_storage" {
+    const path = "tests/feature_tests/types/80X_allocation_slot_before_storage";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/81X_allocation_slot_at_storage_end" {
+    const path = "tests/feature_tests/types/81X_allocation_slot_at_storage_end";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/82X_allocation_slot_crosses_storage_end" {
+    const path = "tests/feature_tests/types/82X_allocation_slot_crosses_storage_end";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/83X_allocation_slot_misaligned" {
+    const path = "tests/feature_tests/types/83X_allocation_slot_misaligned";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/84X_allocation_slot_empty_storage" {
+    const path = "tests/feature_tests/types/84X_allocation_slot_empty_storage";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
