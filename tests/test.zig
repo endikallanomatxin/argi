@@ -7024,3 +7024,11 @@ test "feature_tests/polymorphism/49_virtual_explicit_peer_handle" {
 test "feature_tests/types/270X_acquired_storage_inspected_alias_consumed" {
     try buildExpectFail("tests/feature_tests/types/270X_acquired_storage_inspected_alias_consumed", "already been consumed");
 }
+
+test "feature_tests/polymorphism/50X_virtual_readonly_mutable_contract" {
+    try buildExpectFail("tests/feature_tests/polymorphism/50X_virtual_readonly_mutable_contract", "a mutable Self receiver requires a mutable concrete reference");
+}
+
+test "feature_tests/polymorphism/51X_virtual_readonly_generic_conversion" {
+    try buildExpectFail("tests/feature_tests/polymorphism/51X_virtual_readonly_generic_conversion", "a mutable Self receiver requires a mutable concrete reference");
+}

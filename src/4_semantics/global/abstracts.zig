@@ -301,7 +301,6 @@ pub const Resolver = struct {
             else => return null,
         };
         const located = self.findAbstractDefinition(abstract_decl) orelse return null;
-        if (!try self.validateVirtualContract(abstract_ty, located, self.sourceFor(module_index, reference.source))) return null;
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |value| value,
             else => return null,
@@ -313,10 +312,12 @@ pub const Resolver = struct {
         }
         const handle = value orelse return null;
         const handle_ty = self.graph.nodes.items[@intFromEnum(handle)].ty orelse return null;
-        const concrete = switch (self.graph.types.items[@intFromEnum(handle_ty)]) {
-            .pointer => |pointer| pointer.child,
+        const pointer = switch (self.graph.types.items[@intFromEnum(handle_ty)]) {
+            .pointer => |pointer| pointer,
             else => return null,
         };
+        const concrete = pointer.child;
+        if (!try self.validateVirtualContract(abstract_ty, located, self.sourceFor(module_index, reference.source), pointer.mutability)) return null;
         if (!try self.implements(concrete, abstract_decl)) return null;
 
         var methods: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
@@ -901,7 +902,7 @@ pub const Resolver = struct {
             };
             const abstract_use = self.abstractUse(abstract_ty) orelse continue;
             const located = self.findAbstractDefinition(abstract_use.declaration) orelse continue;
-            if (!try self.validateVirtualContract(abstract_ty, located, source)) return null;
+            if (!try self.validateVirtualContract(abstract_ty, located, source, null)) return null;
             const parameterized_forms_storage = &self.modules[located.module_index].semantic.parameterized_storage;
             for (parameterized_forms_storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
                 if (!std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), method_name)) continue;
@@ -1011,7 +1012,7 @@ pub const Resolver = struct {
     // A vtable can replace exactly one borrowed concrete receiver pointer.
     // Validate before concrete lookup so unsupported erasure never reaches
     // codegen as a method whose concrete ABI differs from the slot ABI.
-    fn validateVirtualContract(self: *Resolver, abstract_ty: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, source: primitives.SourceRef) !bool {
+    fn validateVirtualContract(self: *Resolver, abstract_ty: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, source: primitives.SourceRef, conversion_permission: ?primitives.PointerMutability) !bool {
         const module = &self.modules[located.module_index];
         const storage = &module.semantic.parameterized_storage;
         for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, index| {
@@ -1031,6 +1032,8 @@ pub const Resolver = struct {
                     const ty = self.graph.semanticType(field.ty);
                     if (ty == .pointer and global_types.equal(self.graph, ty.pointer.child, abstract_ty)) {
                         receivers += 1;
+                        if (conversion_permission == .read_only and ty.pointer.mutability == .read_write)
+                            reason = "a mutable Self receiver requires a mutable concrete reference ($&T) at conversion";
                     } else if (try self.containsErasedSelf(field.ty, abstract_ty)) {
                         reason = "Self is only allowed as a direct borrowed receiver (&Self or $&Self)";
                     }

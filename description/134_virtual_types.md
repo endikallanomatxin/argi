@@ -63,6 +63,12 @@ shape ::= to_virtual#(.abstract: Shape)(.value = $&box)
 compact ::= to_virtual#(Shape)($&box)
 ```
 
+A contract containing any `$&Self` receiver requires a mutable concrete
+reference at conversion. Creating a mutable wrapper around an `&T` does not
+grant permission to mutate that `T`. A contract whose receivers are all
+read-only accepts either `&T` or `$&T`; use a read-only contract when exposing
+a read-only capability.
+
 A named `.value` argument or a single positional reference is accepted.
 Positional comptime type arguments omit the argument name. The concrete
 object's implemented abstracts and the destination binding's name do not
