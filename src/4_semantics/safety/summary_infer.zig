@@ -3350,9 +3350,8 @@ pub const Infer = struct {
                         try self.inputValueEffect(0, &.{})
                     else
                         try self.withoutOwnershipTransfer(try self.inputValueEffect(0, &.{})),
-                    try self.withoutOwnershipTransfer(try self.inputValueEffect(1, &.{})),
+                    try self.validityOnlyEffect(try self.inputValueEffect(1, &.{})),
                 );
-                result.input_places = try self.oneInputPath(0, &.{});
                 result.explicit_dependency = transfer == .depend_on;
                 break :blk result;
             },

@@ -1737,6 +1737,7 @@ pub const SafetyChecker = struct {
         result.storage_capabilities = try capabilities.toOwnedSlice();
 
         var referenced_place: ?facts.Place = null;
+        var has_referent = false;
         for (effect.input_places) |path| {
             if (path.input_index >= arguments.len) continue;
             if (arguments[path.input_index].referenced_place) |base| {
@@ -1744,6 +1745,7 @@ pub const SafetyChecker = struct {
                 for (path.projections) |projection| target = try self.project(target, projection);
                 try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
                 referenced_place = target;
+                has_referent = true;
             }
         }
         for (effect.input_generation_dependencies) |path| {
@@ -1769,6 +1771,12 @@ pub const SafetyChecker = struct {
             if (dependency.transfers_ownership and dependency.path.projections.len != 0)
                 try self.activateConditionalOwnedRoots(state, input);
             if (!dependency.transfers_ownership) input.owned_roots = &.{};
+            if (!dependency.validity_only) if (input.referenced_place) |place| {
+                // A copied pointer retains its referent. Validity-only anchors
+                // contribute lifetime requirements without selecting storage.
+                referenced_place = if (!has_referent or (referenced_place != null and referenced_place.?.eql(place))) place else null;
+                has_referent = true;
+            };
             if (dependency.validity_only) input = .{
                 .explicit_dependency = input.explicit_dependency,
                 .dependencies = input.dependencies,
@@ -5361,4 +5369,37 @@ test "new borrows after joined reinitialization do not revive old generations" {
     joined.tracker.end(current);
     try std.testing.expectEqual(current, try checker.storageGeneration(&joined, storage));
     try std.testing.expect(!joined.tracker.isAlive(current));
+}
+
+test "dependency primitives preserve the value referent and borrow only anchor validity" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var engine = summary_engine.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = summary_infer.Infer.init(allocator, undefined, &engine);
+    defer inference.deinit();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const referent = facts.Place{ .root = @enumFromInt(0) };
+    const anchor_place = facts.Place{ .root = @enumFromInt(1) };
+    const value_root = try state.tracker.establish(.fresh);
+    const anchor_root = try state.tracker.establish(.fresh);
+    const arguments = [_]facts.ValueFacts{
+        .{ .referenced_place = referent, .dependencies = &.{.{ .root = value_root }} },
+        .{ .referenced_place = anchor_place, .dependencies = &.{.{ .root = anchor_root }}, .owned_roots = &.{anchor_root} },
+    };
+    inline for (.{ primitives.SafetyPrimitive.depend_on, primitives.SafetyPrimitive.restrict_reference }) |primitive| {
+        const direct = try checker.dependencyPrimitive(&arguments, primitive_transfer.forPrimitive(primitive).value);
+        const effect = try inference.primitiveValueEffect(primitive, 0);
+        const symbolic = try checker.instantiateOutput(effect, &arguments, &state);
+        try std.testing.expect(symbolic.referenced_place.?.eql(direct.referenced_place.?));
+        try std.testing.expectEqual(direct.explicit_dependency, symbolic.explicit_dependency);
+        try std.testing.expectEqual(direct.owned_roots.len, symbolic.owned_roots.len);
+        try std.testing.expectEqual(direct.dependencies.len, symbolic.dependencies.len);
+        try std.testing.expect(valueDependsOnRoot(symbolic, value_root));
+        try std.testing.expect(valueDependsOnRoot(symbolic, anchor_root));
+    }
 }
