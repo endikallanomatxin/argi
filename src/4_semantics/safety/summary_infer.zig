@@ -64,28 +64,21 @@ pub const Infer = struct {
                 try self.engine.summaries.put(id, .{ .outputs = outputs });
             try functions.append(id);
         }
-        var changed = true;
-        while (changed) {
-            changed = false;
+        // All dimensions read callee approximations through summaryFor. The
+        // engine records those reads and the read of our own prior outputs,
+        // so a change schedules every observer, including recursive callers.
+        try self.engine.seed(functions.items);
+        while (self.engine.nextDirty()) |function| {
             self.virtual_summaries.clearRetainingCapacity();
             self.invalid_virtual_summaries.clearRetainingCapacity();
-            try self.engine.seed(functions.items);
-
-            while (self.engine.nextDirty()) |function| {
-                self.virtual_summaries.clearRetainingCapacity();
-                self.invalid_virtual_summaries.clearRetainingCapacity();
-                self.evaluations += 1;
-                self.engine.beginInference(function);
-                const next = self.inferFunction(function) catch |err| {
-                    self.engine.current = null;
-                    return err;
-                };
-                try self.engine.endInference();
-                if (try self.engine.updateSummary(function, next)) {
-                    self.summary_changes += 1;
-                    changed = true;
-                }
-            }
+            self.evaluations += 1;
+            self.engine.beginInference(function);
+            const next = self.inferFunction(function) catch |err| {
+                self.engine.current = null;
+                return err;
+            };
+            try self.engine.endInference();
+            if (try self.engine.updateSummary(function, next)) self.summary_changes += 1;
         }
         // A virtual summary may have been cached while one of its concrete
         // implementations still held an earlier fixed-point approximation.
@@ -3691,6 +3684,49 @@ test "output summaries reach a fixed point through reverse call dependencies" {
     try std.testing.expectEqual(@as(u32, 0), identity.required_live_inputs[0].input_index);
     try std.testing.expectEqual(@as(usize, 1), wrapper.required_live_inputs.len);
     try std.testing.expectEqual(@as(u32, 0), wrapper.required_live_inputs[0].input_index);
+    try expectGlobalReseedingStable(&infer);
+
+    // Add a back edge while preserving identity's local source of effects.
+    // Reversing the function IDs then exercises both initial scheduling orders.
+    const back_input: graph_mod.GlobalNodeId = @enumFromInt(7);
+    const back_call: graph_mod.GlobalNodeId = @enumFromInt(8);
+    try graph.value_fields.append(allocator, .{ .name = empty_name, .value = n4 });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = 1, .len = 1 } } } });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = pointer_ty, .content = .{ .function_call = .{ .callee = @enumFromInt(0), .input = back_input } } });
+    try graph.node_refs.append(allocator, back_call);
+    graph.blocks.items[1].nodes.len = 3;
+    for (0..2) |order| {
+        if (order == 1) {
+            std.mem.swap(graph_mod.Function, &graph.functions.items[0], &graph.functions.items[1]);
+            graph.nodes.items[@intFromEnum(n2)].content.function_call.callee = @enumFromInt(0);
+            graph.nodes.items[@intFromEnum(back_call)].content.function_call.callee = @enumFromInt(1);
+        }
+        var recursive_engine = summaries.Engine.init(summary_allocator);
+        defer recursive_engine.deinit();
+        var recursive_infer = Infer.init(summary_allocator, &graph, &recursive_engine);
+        defer recursive_infer.deinit();
+        try recursive_infer.inferSafetySummariesFixedPoint();
+        for (0..2) |raw| {
+            const summary = recursive_engine.summaries.get(@enumFromInt(raw)).?;
+            try std.testing.expect(summaries.summaryEql(identity, summary));
+        }
+        try expectGlobalReseedingStable(&recursive_infer);
+    }
+}
+
+/// A complete global sweep must observe the same summaries after dependency
+/// convergence. This compares all dimensions through the engine's equality,
+/// independently of whether a missing dependency would schedule an observer.
+fn expectGlobalReseedingStable(infer: *Infer) !void {
+    for (infer.graph.functions.items, 0..) |_, raw| {
+        const function: graph_mod.GlobalFunctionId = @enumFromInt(raw);
+        infer.virtual_summaries.clearRetainingCapacity();
+        infer.invalid_virtual_summaries.clearRetainingCapacity();
+        infer.engine.beginInference(function);
+        const next = try infer.inferFunction(function);
+        try infer.engine.endInference();
+        try std.testing.expect(summaries.summaryEql(infer.engine.summaries.get(function).?, next));
+    }
 }
 
 test "input post-state joins retain caller-visible transitions" {

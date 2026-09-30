@@ -6375,3 +6375,9 @@ test "feature_tests/types/71X_virtual_pipe_temporary_escape" {
 test "feature_tests/types/72X_virtual_inference_missing_context" {
     try buildExpectFail("tests/feature_tests/types/72X_virtual_inference_missing_context", "cannot infer the abstract parameter");
 }
+
+test "feature_tests/polymorphism/41_recursive_virtual_summaries" {
+    const path = "tests/feature_tests/polymorphism/41_recursive_virtual_summaries";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
