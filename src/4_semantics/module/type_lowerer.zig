@@ -202,8 +202,10 @@ pub const Context = struct {
             const abstract_type = try self.lower(field.type_node orelse return error.InvalidVirtualArguments);
             return self.writer.addResolvedType(.{ .virtual = abstract_type });
         }
-        var first: ?entities.ModuleGenericArgId = null;
-        var count: u32 = 0;
+        // Nested generic types may append to the same argument pool. Buffer
+        // this level until their complete ranges have been published.
+        var arguments = std.array_list.Managed(entities.GenericArgument).init(self.writer.allocator);
+        defer arguments.deinit();
         for (arguments_literal.fields) |field_node| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericArgument;
             const name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token));
@@ -213,14 +215,11 @@ pub const Context = struct {
                 .{ .comptime_int = try self.evalComptimeInt(value_node) }
             else
                 return error.InvalidGenericArgument;
-            const id = try self.writer.addGenericArgument(.{ .name = name, .value = value });
-            if (first == null) first = id;
-            count += 1;
+            try arguments.append(.{ .name = name, .value = value });
         }
-        const range = entities.GenericArgRange{
-            .start = if (first) |id| @intFromEnum(id) else @intCast(views.genericArgumentCount(self.graph)),
-            .len = count,
-        };
+        const start: u32 = @intCast(views.genericArgumentCount(self.graph));
+        for (arguments.items) |argument| _ = try self.writer.addGenericArgument(argument);
+        const range = entities.GenericArgRange{ .start = start, .len = @intCast(arguments.items.len) };
 
         return switch (base) {
             .name => |name| self.lowerName(owner, name.name_token, name.qualifier_token, range),

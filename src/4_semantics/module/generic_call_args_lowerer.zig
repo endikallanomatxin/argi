@@ -24,8 +24,10 @@ pub fn lower(
             if (call.type_arguments.len == 0 and call.type_arguments_struct == null) continue;
             const source_offset = file.tree.location(node).offset;
             const external = findCallReference(graph, file_index, source_offset) orelse continue;
-            const start: u32 = @intCast(views.genericArgumentCount(graph));
-            var count: u32 = 0;
+            // Lower nested types first, then publish one contiguous argument
+            // range. Their own arguments share this pool but belong elsewhere.
+            var arguments = std.array_list.Managed(entities.GenericArgument).init(allocator);
+            defer arguments.deinit();
             if (call.type_arguments_struct) |struct_node| {
                 const literal = file.tree.structTypeLiteral(struct_node) orelse return error.InvalidGenericCallArguments;
                 for (literal.fields) |field_node| {
@@ -37,20 +39,20 @@ pub fn lower(
                         .{ .comptime_int = try evalInt(file.tree, file.source, value_node) }
                     else
                         return error.InvalidGenericCallArgument;
-                    _ = try writer.addGenericArgument(.{ .name = name, .value = value });
-                    count += 1;
+                    try arguments.append(.{ .name = name, .value = value });
                 }
             } else {
                 for (call.type_arguments) |type_node| {
-                    _ = try writer.addGenericArgument(.{
+                    try arguments.append(.{
                         .name = try writer.addString(""),
                         .value = .{ .type = try lowerType(graph, &writer, file, file_index, type_node) },
                     });
-                    count += 1;
                 }
             }
+            const start: u32 = @intCast(views.genericArgumentCount(graph));
+            for (arguments.items) |argument| _ = try writer.addGenericArgument(argument);
             const target_ref = &graph.semantic.external_refs.items[@intFromEnum(external)];
-            target_ref.generic_arguments = .{ .start = start, .len = count };
+            target_ref.generic_arguments = .{ .start = start, .len = @intCast(arguments.items.len) };
             stats.generic_calls += 1;
         }
     }

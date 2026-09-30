@@ -6980,3 +6980,9 @@ test "tests/feature_tests/basics/33X_generic_integer_literal_magnitude_overflow"
 test "tests/feature_tests/basics/34X_unsigned_negative_literal" {
     try buildExpectFail("tests/feature_tests/basics/34X_unsigned_negative_literal", "does not fit in");
 }
+
+test "feature_tests/types/269_nested_generic_argument_ranges" {
+    const path = "tests/feature_tests/types/269_nested_generic_argument_ranges";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
