@@ -15,6 +15,8 @@ const initializer_contract = @import("../global/initializer_contract.zig");
 /// recursive effects: this pass describes outputs in terms of function inputs
 /// and lets `summaries.Engine` iterate callers/SCCs to a fixed point.
 pub const Infer = struct {
+    evaluations: u64 = 0,
+    summary_changes: u64 = 0,
     allocator: std.mem.Allocator,
     graph: *const graph_mod.GlobalSemanticGraph,
     engine: *summaries.Engine,
@@ -72,13 +74,17 @@ pub const Infer = struct {
             while (self.engine.nextDirty()) |function| {
                 self.virtual_summaries.clearRetainingCapacity();
                 self.invalid_virtual_summaries.clearRetainingCapacity();
+                self.evaluations += 1;
                 self.engine.beginInference(function);
                 const next = self.inferFunction(function) catch |err| {
                     self.engine.current = null;
                     return err;
                 };
                 try self.engine.endInference();
-                if (try self.engine.updateSummary(function, next)) changed = true;
+                if (try self.engine.updateSummary(function, next)) {
+                    self.summary_changes += 1;
+                    changed = true;
+                }
             }
         }
         // A virtual summary may have been cached while one of its concrete

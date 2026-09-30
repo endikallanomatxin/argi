@@ -21,6 +21,8 @@ const primitives = @import("../primitives/schema.zig");
 /// validation; inference records dependencies between GlobalFunctionIds.
 pub const SafetyChecker = struct {
     pub const Stats = struct {
+        summary_evaluations: u64 = 0,
+        summary_changes: u64 = 0,
         functions: usize = 0,
         calls: usize = 0,
         state_clones: u64 = 0,
@@ -167,6 +169,10 @@ pub const SafetyChecker = struct {
         var inference = summary_infer.Infer.init(self.allocator, self.graph, &engine);
         defer inference.deinit();
         try inference.inferSafetySummariesFixedPoint();
+        if (self.collect_stats) {
+            self.stats.summary_evaluations = inference.evaluations;
+            self.stats.summary_changes = inference.summary_changes;
+        }
         try self.validateInitializerContracts(&engine);
         self.active_summaries = &engine;
         self.active_summary_inference = &inference;

@@ -250,6 +250,8 @@ fn printStats(
 
     const safety = pipeline.global_safety_stats;
     std.debug.print("Safety\n", .{});
+    std.debug.print("  summary evaluations:  {d}\n", .{safety.summary_evaluations});
+    std.debug.print("  summary changes:      {d}\n", .{safety.summary_changes});
     std.debug.print("  functions:            {d}\n", .{safety.functions});
     std.debug.print("  calls:                {d}\n", .{safety.calls});
     std.debug.print("  state clones:         {d}\n", .{safety.state_clones});
