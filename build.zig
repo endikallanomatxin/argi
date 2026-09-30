@@ -46,8 +46,7 @@ pub fn build(b: *std.Build) void {
     if (!std.mem.endsWith(u8, installed_core_path, "lib/argi/core")) {
         @panic("refusing to clean an unexpected core installation path");
     }
-    const remove_program = b.findProgram(&.{"rm"}, &.{ "/bin", "/usr/bin" }) catch @panic("rm is required to install core");
-    const clean_installed_core = b.addSystemCommand(&.{ remove_program, "-rf", installed_core_path });
+    const clean_installed_core = CleanInstalledCore.create(b, installed_core_path);
     const install_core = b.addInstallDirectory(.{
         .source_dir = b.path("core"),
         .install_dir = .prefix,
@@ -110,6 +109,33 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(internal_test_step);
     test_step.dependOn(program_test_step);
 }
+
+// Core installation must discard removed source files before copying the
+// current bundle. Use the build runner's I/O rather than a host shell utility.
+const CleanInstalledCore = struct {
+    step: std.Build.Step,
+    path: []const u8,
+
+    fn create(b: *std.Build, path: []const u8) *CleanInstalledCore {
+        const clean = b.allocator.create(CleanInstalledCore) catch @panic("OOM");
+        clean.* = .{
+            .step = std.Build.Step.init(.{
+                .id = .custom,
+                .name = "clean installed core",
+                .owner = b,
+                .makeFn = make,
+            }),
+            .path = b.dupe(path),
+        };
+        return clean;
+    }
+
+    fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) !void {
+        _ = options;
+        const clean: *CleanInstalledCore = @fieldParentPtr("step", step);
+        try std.Io.Dir.cwd().deleteTree(step.owner.graph.io, clean.path);
+    }
+};
 
 fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, []const u8 } {
     const env_include = b.graph.environ_map.get("LLVM_INCLUDE_DIR");
