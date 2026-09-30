@@ -17,8 +17,8 @@ const primitives = @import("../primitives/schema.zig");
 /// Calls execute transactionally against a cloned caller state. Because
 /// GlobalBindingId is unique program-wide, pointee Places survive the call and
 /// mutations are committed directly without reconstructing symbolic pointer
-/// identities. Recursive SCCs are recorded and will be upgraded to summaries
-/// if a cycle actually carries temporal effects.
+/// identities. Recursive calls apply summaries converged before concrete
+/// validation; inference records dependencies between GlobalFunctionIds.
 pub const SafetyChecker = struct {
     pub const Stats = struct {
         functions: usize = 0,
@@ -166,7 +166,7 @@ pub const SafetyChecker = struct {
         defer engine.deinit();
         var inference = summary_infer.Infer.init(self.allocator, self.graph, &engine);
         defer inference.deinit();
-        try inference.inferOutputFixedPoint();
+        try inference.inferSafetySummariesFixedPoint();
         try self.validateInitializerContracts(&engine);
         self.active_summaries = &engine;
         self.active_summary_inference = &inference;

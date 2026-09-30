@@ -46,11 +46,11 @@ pub const Infer = struct {
         self.invalid_virtual_summaries.deinit();
     }
 
-    /// Establish one empty approximation per function and iterate output effects
-    /// until all reverse dependencies are stable. The other SafetySummary
-    /// dimensions are deliberately preserved so required-live/post-state/opaque
-    /// inference can be layered on this same engine without changing its model.
-    pub fn inferOutputFixedPoint(self: *Infer) !void {
+    /// Infer every SafetySummary dimension until reverse dependencies are stable:
+    /// outputs, required-live inputs, input/outcome post-states, and opaque effects.
+    /// Reading a previous approximation records a dependency, including the
+    /// function's own approximation and implementations merged for virtual calls.
+    pub fn inferSafetySummariesFixedPoint(self: *Infer) !void {
         var functions = std.array_list.Managed(graph_mod.GlobalFunctionId).init(self.allocator);
         defer functions.deinit();
 
@@ -3671,7 +3671,7 @@ test "output summaries reach a fixed point through reverse call dependencies" {
     defer engine.deinit();
     var infer = Infer.init(summary_allocator, &graph, &engine);
     defer infer.deinit();
-    try infer.inferOutputFixedPoint();
+    try infer.inferSafetySummariesFixedPoint();
 
     const wrapper = engine.summaries.get(@enumFromInt(0)).?;
     const identity = engine.summaries.get(@enumFromInt(1)).?;
