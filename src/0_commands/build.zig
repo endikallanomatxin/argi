@@ -44,11 +44,16 @@ fn ensureParentDir(io: std.Io, path: []const u8) !void {
 }
 
 fn replaceFile(io: std.Io, src: []const u8, dst: []const u8) !void {
-    std.Io.Dir.deleteFileAbsolute(io, dst) catch |err| switch (err) {
-        error.FileNotFound => {},
+    // Preserve an existing artifact until publication succeeds. A rename
+    // replaces it atomically on one filesystem; copying across filesystems
+    // uses the I/O layer's atomic destination-side staging instead.
+    std.Io.Dir.renameAbsolute(src, dst, io) catch |err| switch (err) {
+        error.CrossDevice => {
+            try std.Io.Dir.copyFileAbsolute(src, dst, io, .{});
+            try std.Io.Dir.deleteFileAbsolute(io, src);
+        },
         else => return err,
     };
-    try std.Io.Dir.renameAbsolute(src, dst, io);
 }
 
 fn hasExecutableMain(graph: *const graph_mod.GlobalSemanticGraph) bool {

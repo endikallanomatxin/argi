@@ -1082,6 +1082,34 @@ test "argi build package rejects missing executable path" {
     try expect(std.mem.indexOf(u8, result.stderr, "source/entrypoints/cli") != null);
 }
 
+test "build publishes artifacts outside the staging filesystem" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const base = if (@import("builtin").os.tag == .linux) "/dev/shm" else "/tmp";
+    var parent = std.Io.Dir.openDirAbsolute(io, base, .{}) catch return error.SkipZigTest;
+    defer parent.close(io);
+    const name = try std.fmt.allocPrint(allocator, "argi-artifacts-{s}", .{tmp.sub_path});
+    defer allocator.free(name);
+    try parent.createDir(io, name, .default_dir);
+    defer parent.deleteTree(io, name) catch {};
+    const ir_path = try std.fs.path.join(allocator, &.{ base, name, "output.ll" });
+    defer allocator.free(ir_path);
+    const obj_path = try std.fs.path.join(allocator, &.{ base, name, "output.o" });
+    defer allocator.free(obj_path);
+    const test_path = "tests/feature_tests/basics/01_minimal_main";
+    for (0..2) |_| {
+        try expectArgiBuildSuccess(&.{ "build", test_path, "--emit-llvm", ir_path, "--emit-obj", obj_path });
+        const ir = try std.Io.Dir.cwd().readFileAlloc(io, ir_path, allocator, .limited(1024 * 1024));
+        defer allocator.free(ir);
+        try expect(std.mem.indexOf(u8, ir, "define i32 @main") != null);
+        const object = try std.Io.Dir.cwd().readFileAlloc(io, obj_path, allocator, .limited(1024 * 1024));
+        defer allocator.free(object);
+        try expect(object.len != 0);
+    }
+}
+
 test "build overwrites existing output binary" {
     const test_path = "tests/feature_tests/basics/01_minimal_main";
     try clean(test_path);
