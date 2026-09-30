@@ -1,4 +1,3 @@
-unsafe_allocation := import("../../_support/unsafe_allocation")
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
@@ -23,12 +22,7 @@ main(.system: System) -> (.status_code: Int32) := {
                 status_code = 3
                 return
             }
-            byte_pointer_24 ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&child, .offset = 0).reference
-            byte_pointer_24& = 7
-            if unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&child, .offset = 0).reference& != 7 {
-                status_code = 4
-                return
-            }
+            -- Internal padding does not authorize access beyond the request.
             deinit(.self = $&child)
             deinit(.self = $&arena)
             status_code = 0

@@ -165,6 +165,65 @@ root-ending responsibility   which value ends the root
 storage capability      who may establish that relationship
 ```
 
+## Physical validity of references
+
+A safe reference to `T` requires a live physical region that contains every
+byte of the referenced `T`, an address aligned for `T`, and initialized
+contents before a read. Lifetime, physical extent, and initializedness are
+separate proofs. Establishing a temporal root does not supply the other two.
+
+Physical provenance identifies the acquired region and the permitted subrange.
+It comes from an acquisition boundary or an existing valid object, rather
+than from an integer address or an editable length. In particular, changing
+`Allocation.data`, `.size`, or `.alignment` cannot enlarge the physical region
+that was acquired. Suballocation and reference offsets must remain inside
+that region; arithmetic must not wrap while computing offsets or addresses.
+Reinterpreting an address does not enlarge its permitted region or initialize
+the target representation.
+
+A storage capability authorizes establishment for the storage actually
+acquired. It is consumed when that storage enters a temporal domain; copying
+its address does not create a second authorization. Both native page mapping
+and C heap allocation are acquisition boundaries. Acquisition failure is not
+a region that may be established.
+
+An `ArrayView<T>` length must describe initialized elements inside its
+physical region. Checking an index against length is necessary but cannot
+validate a forged region. A zero-length region contains no readable element,
+and constructing a view must not require dereferencing a nonexistent first
+element. `MaybeUninit<T>` provides storage for `T`; occupancy must be proved
+separately before reading or destroying a `T`.
+
+At a trusted boundary, the caller must discharge the physical obligations
+that are not proved by the compiler or checked at runtime. That obligation
+includes alignment, extent, initialization for reads, and preservation of
+the backing region's validity. An unrelated live root cannot make an
+arbitrary address physically valid.
+
+> [!IMPLEMENTATION]
+> Temporal roots and consumption of known storage capabilities are tracked,
+> but authoritative physical extents are not yet propagated through all
+> reference operations. Allocation establishment currently also accepts
+> addresses without a tracked capability, and native page mappings do not
+> produce one. Public low-level reference helpers therefore still rely on
+> trusted caller obligations for physical validity. Reference offsets reject
+> multiplication and address-addition wrap at runtime, but do not yet check
+> membership in an authoritative physical range. Allocation slots check the
+> target type's alignment and containment in the receipt's declared size;
+> those checks cannot validate a forged receipt. They do not provide a general
+> spatial-safety guarantee.
+
+> [!IMPLEMENTATION]
+> Storage-capability consumption is not yet preserved across all inferred
+> call summaries. A direct repeated consumption is rejected, but forwarding
+> the same address through a wrapper can lose that transition. The consumable
+> authorization rule above applies across calls as well as inside a function.
+
+> [!QUESTION]
+> The representation of physical provenance and its propagation through external
+> calls remain open. Runtime allocation fields alone cannot be the authority
+> for physical bounds.
+
 ## Control flow and calls
 
 The checker tracks whether Places are initialized, maybe initialized, moved or

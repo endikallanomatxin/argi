@@ -1,17 +1,18 @@
 ArrayView#(.t: Type) : Type = (
     --
-    -- Non-owning view over a contiguous mutable region of elements.
+    -- Non-owning view over a contiguous initialized region of elements.
+    -- Empty views carry no element reference; data() requires a nonempty view.
     --
     -- The pointer and length must describe the same live region. Ordinary
     -- constructors derive the length from a referenced object; raw storage
     -- requires an explicit trusted boundary.
     --
-    ._data   : $&t
+    ._data   : ?$&t
     ._length : UIntNative
 )
 
 ArrayViewRO#(.t: Type) : Type = (
-    ._data   : &t
+    ._data   : ?&t
     ._length : UIntNative
 )
 
@@ -27,49 +28,69 @@ length#(.t: Type)(.self: &ArrayViewRO#(.t: t)) -> (.count: UIntNative) := {
 }
 
 data#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.pointer: $&t) := {
-    pointer = self&._data
+    match self&._data {
+        ..none { abort }
+        ..some payload { pointer = payload.value }
+    }
 }
 
 data#(.t: Type)(.self: &ArrayViewRO#(.t: t)) -> (.pointer: &t) := {
-    pointer = self&._data
+    match self&._data {
+        ..none { abort }
+        ..some payload { pointer = payload.value }
+    }
 }
 
 array_view_ro#(.t: Type)(.data: &t) -> (.array: ArrayViewRO#(.t: t)) := {
-    array = (._data = data, ._length = 1)
+    array = (._data = ..some(.value = data), ._length = 1)
 }
 
 array_view#(.t: Type)(.data: $&t) -> (.array: ArrayView#(.t: t)) := {
-    array = (._data = data, ._length = 1)
+    array = (._data = ..some(.value = data), ._length = 1)
 }
 
 array_view_ro#(.n: UIntNative, .t: Type)(
     .array: &Array#(.n = n, .t: t),
 ) -> (.view: ArrayViewRO#(.t: t)) := {
-    if n == 0 { abort }
+    if n == 0 {
+        view = (._data = ..none, ._length = 0)
+        return
+    }
     first ::= reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = array).reference
-    view = (._data = first, ._length = n)
+    view = (._data = ..some(.value = first), ._length = n)
 }
 
 array_view#(.n: UIntNative, .t: Type)(
     .array: $&Array#(.n = n, .t: t),
 ) -> (.view: ArrayView#(.t: t)) := {
-    if n == 0 { abort }
+    if n == 0 {
+        view = (._data = ..none, ._length = 0)
+        return
+    }
     first ::= mutable_reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = array).reference
-    view = (._data = first, ._length = n)
+    view = (._data = ..some(.value = first), ._length = n)
 }
 
 -- Core callers must prove the requested contiguous range belongs to the
 -- live backing storage and initialize an element before reading it.
 _trusted_array_view_ro#(.t: Type)(.data: &t, .length: UIntNative) -> (.array: ArrayViewRO#(.t: t)) := {
-    array = (._data = data, ._length = length)
+    if length == 0 {
+        array = (._data = ..none, ._length = 0)
+        return
+    }
+    array = (._data = ..some(.value = data), ._length = length)
 }
 
 _trusted_array_view#(.t: Type)(
     .data: $&t,
     .length: UIntNative,
 ) -> (.array: ArrayView#(.t: t)) := {
+    if length == 0 {
+        array = (._data = ..none, ._length = 0)
+        return
+    }
     array = (
-        ._data = data,
+        ._data = ..some(.value = data),
         ._length = length,
     )
 }
@@ -82,7 +103,7 @@ get_ro_ref#(.t: Type)(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
-    result = ..ok reference_offset#(.t: t)(.base = self&._data, .elements = index).reference
+    result = ..ok reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = index).reference
 }
 
 get_ro_ref#(.t: Type)(
@@ -93,7 +114,7 @@ get_ro_ref#(.t: Type)(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
-    result = ..ok reference_offset#(.t: t)(.base = self&._data, .elements = index).reference
+    result = ..ok reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = index).reference
 }
 
 get_rw_ref#(.t: Type)(
@@ -104,7 +125,7 @@ get_rw_ref#(.t: Type)(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
-    result = ..ok mutable_reference_offset#(.t: t)(.base = self&._data, .elements = index).reference
+    result = ..ok mutable_reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = index).reference
 }
 
 get#(.t: Type: ImplicitlyCopyable)(
@@ -115,7 +136,7 @@ get#(.t: Type: ImplicitlyCopyable)(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
-    ptr ::= reference_offset#(.t: t)(.base = self&._data, .elements = index).reference
+    ptr ::= reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = index).reference
     result = ..ok ptr&
 }
 
@@ -128,7 +149,7 @@ set#(.t: Type: ImplicitlyCopyable)(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
-    ptr ::= mutable_reference_offset#(.t: t)(.base = self&._data, .elements = index)
+    ptr ::= mutable_reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = index)
     ptr& = value
     result = ..ok Void()
 }

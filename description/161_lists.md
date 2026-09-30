@@ -40,15 +40,39 @@ pointer-and-length construction belongs to trusted code.
 The pointer and length fields are private. `array_view#(.t: T)(.data = $&element)`
 creates a one-element view; `array_view#(.n = N, .t: T)(.array = $&array)`
 derives the length from a fixed `[N]T`. The read-only constructors use
-`array_view_ro` and read-only references in the same way. The fixed-array
-constructor requires `N > 0` because the view stores a non-null element
-reference.
+`array_view_ro` and read-only references in the same way. Zero-length fixed
+arrays produce empty views without establishing an element reference. An
+empty view has length zero, rejects every index, and has no element pointer;
+`data` requires a nonempty view and aborts otherwise. Zero-length bulk-copy
+and stream operations do not require an element pointer.
 
 A pointer to one element does not establish the extent of a larger region.
 Private core helpers accept an explicit length only where the implementation
 knows the backing region is live and large enough. User modules cannot call
 these helpers. View indexing checks the recorded length; it does not discover
 physical bounds from a raw pointer.
+
+`slice(.self = &view, .start = start, .count = count)` derives a view of a
+subrange, preserving its access mode and backing lifetime. It rejects
+`start > length` or `count > length - start`, avoiding overflow in a sum of
+indices. An empty subrange at the end is valid and carries no element
+reference. A nested slice cannot enlarge its source's extent.
+
+`array_view#(.t: T)(.array = $&collection)` and its read-only counterpart
+borrow the initialized prefix of a `DynamicArray`. Spare capacity is excluded.
+The private allocation receipt is maintained by the collection using the
+allocator contract; the backing allocator must provide live storage of the
+requested extent and alignment. These constructors do not turn a caller's
+arbitrary pointer or edited allocation receipt into a proven range.
+
+A nonempty dynamic-array view depends on both its backing storage and the
+collection's shape generation. Successful append, pop, insert, remove, and
+capacity growth invalidate existing views, including their derived subranges
+and element references. This conservative contract applies even when an append
+does not reallocate. Replacing an element value without changing the shape
+preserves the view. Owner cleanup and backing-arena reset invalidate its storage.
+A fresh view can be borrowed after a structural change. Empty views contain no
+element reference and have no backing-storage dependency.
 
 The view remains non-owning regardless of how its backing region is stored.
 

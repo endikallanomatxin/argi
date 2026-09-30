@@ -6534,3 +6534,147 @@ test "safety statistics preserve composed allocator behavior" {
         try expect(std.mem.indexOf(u8, result.stderr, label) != null);
     try run(path);
 }
+
+test "feature_tests/types/74_reference_offset_checked_arithmetic" {
+    const path = "tests/feature_tests/types/74_reference_offset_checked_arithmetic";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/types/75X_reference_offset_multiplication_overflow" {
+    const path = "tests/feature_tests/types/75X_reference_offset_multiplication_overflow";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/76X_reference_offset_multiplication_overflow" {
+    const path = "tests/feature_tests/types/76X_reference_offset_multiplication_overflow";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/77X_reference_offset_addition_overflow" {
+    const path = "tests/feature_tests/types/77X_reference_offset_addition_overflow";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/78X_reference_offset_addition_overflow" {
+    const path = "tests/feature_tests/types/78X_reference_offset_addition_overflow";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/79_allocation_slot_range_checks" {
+    const path = "tests/feature_tests/types/79_allocation_slot_range_checks";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/types/80X_allocation_slot_before_storage" {
+    const path = "tests/feature_tests/types/80X_allocation_slot_before_storage";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/81X_allocation_slot_at_storage_end" {
+    const path = "tests/feature_tests/types/81X_allocation_slot_at_storage_end";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/82X_allocation_slot_crosses_storage_end" {
+    const path = "tests/feature_tests/types/82X_allocation_slot_crosses_storage_end";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/83X_allocation_slot_misaligned" {
+    const path = "tests/feature_tests/types/83X_allocation_slot_misaligned";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/84X_allocation_slot_empty_storage" {
+    const path = "tests/feature_tests/types/84X_allocation_slot_empty_storage";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/collections/56_empty_array_views" {
+    const path = "tests/feature_tests/collections/56_empty_array_views";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/57X_empty_view_data" {
+    const path = "tests/feature_tests/collections/57X_empty_view_data";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/collections/58_spatial_borrowed_ranges" {
+    const path = "tests/feature_tests/collections/58_spatial_borrowed_ranges";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/59X_spatial_view_after_pop" {
+    try buildExpectFail("tests/feature_tests/collections/59X_spatial_view_after_pop", "root that has ended");
+}
+
+test "feature_tests/collections/60X_spatial_view_after_growth" {
+    try buildExpectFail("tests/feature_tests/collections/60X_spatial_view_after_growth", "root that has ended");
+}
+
+test "feature_tests/collections/61X_spatial_view_after_release" {
+    try buildExpectFail("tests/feature_tests/collections/61X_spatial_view_after_release", "root that has ended");
+}
+
+test "feature_tests/collections/62X_spatial_view_after_insert" {
+    try buildExpectFail("tests/feature_tests/collections/62X_spatial_view_after_insert", "root that has ended");
+}
+
+test "feature_tests/collections/63X_spatial_view_after_remove" {
+    try buildExpectFail("tests/feature_tests/collections/63X_spatial_view_after_remove", "root that has ended");
+}
+
+test "feature_tests/collections/64X_spatial_view_after_append" {
+    try buildExpectFail("tests/feature_tests/collections/64X_spatial_view_after_append", "root that has ended");
+}
+
+test "feature_tests/collections/65X_spatial_view_after_arena_reset" {
+    try buildExpectFail("tests/feature_tests/collections/65X_spatial_view_after_arena_reset", "root that has ended");
+}
+
+test "feature_tests/collections/66X_spatial_view_shape_private" {
+    try buildExpectFail("tests/feature_tests/collections/66X_spatial_view_shape_private", "field '_shape' is private to its module");
+}
+
+
+test "feature_tests/collections/67X_spatial_view_element_after_pop" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/67X_spatial_view_element_after_pop",
+        "root that has ended",
+    );
+}
+
+test "feature_tests/ownership/297_local_pointee_summary" {
+    const test_path = "tests/feature_tests/ownership/297_local_pointee_summary";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/298X_local_pointee_summary_after_deinit" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/298X_local_pointee_summary_after_deinit",
+        "root that has ended",
+    );
+}
+
+test "feature_tests/ownership/299X_nullable_pointee_summary_read" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/299X_nullable_pointee_summary_read",
+        "root that has ended",
+    );
+}

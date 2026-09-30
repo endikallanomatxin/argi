@@ -1,3 +1,9 @@
+-- A shape generation gives borrowed views an invalidation
+-- boundary independent of allocation roots. Structural changes renew it;
+-- replacing an element's value without changing shape does not.
+_DynamicArrayShape : Type = (.marker: UInt8)
+deinit(.self: $&_DynamicArrayShape) -> () := {}
+
 DynamicArray #(.t: Type) : Type = (
     --
     -- Canonical contiguous owning dynamic list.
@@ -16,6 +22,7 @@ DynamicArray #(.t: Type) : Type = (
     -- is stored alongside the allocation.
     ._length     : UIntNative
     ._capacity   : UIntNative
+    ._shape      : _DynamicArrayShape
 )
 
 length #(.t: Type)(.self: &DynamicArray#(.t: t)) -> (.count: UIntNative) := {
@@ -59,6 +66,7 @@ init #(.t: Type) (
                 ._allocation = ~payload,
                 ._length = 0,
                 ._capacity = actual_capacity,
+                ._shape = (.marker = 0),
             )
             result = ..ok Void()
         }
@@ -252,10 +260,12 @@ dynamic_array_grow_growing #(.t: Type) (
 
             deinit(.self = $&array&._allocation)
 
+            _invalidate_dynamic_array_shape#(.t: t)(.array = array)
             array& = (
                 ._allocation = ~new_allocation,
                 ._length = array&._length,
                 ._capacity = new_capacity,
+                ._shape = (.marker = 0),
             )
             result = ..ok Void()
         }
@@ -301,6 +311,7 @@ push_assume_capacity #(.t: Type) (
     offset ::= self&._length
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = offset)
     _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~value)
+    _invalidate_dynamic_array_shape#(.t: t)(.array = self)
     self&._length = offset + 1
 }
 
@@ -315,6 +326,7 @@ pop #(.t: Type) (
     new_length ::= self&._length - one
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = new_length)
     moved_out ::= _trusted_uninit_take#(.t: t)(.allocation = $&self&._allocation, .slot = slot)
+    _invalidate_dynamic_array_shape#(.t: t)(.array = self)
     self&._length = new_length
     result = ..ok ~moved_out
 }
@@ -383,6 +395,7 @@ insert_growing #(.t: Type) (
 
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = i)
     _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~value)
+    _invalidate_dynamic_array_shape#(.t: t)(.array = self)
     self&._length = current_length + one
     result = ..ok Void()
 }
@@ -413,6 +426,7 @@ remove #(.t: Type) (
         cursor = cursor + one
     }
 
+    _invalidate_dynamic_array_shape#(.t: t)(.array = self)
     self&._length = new_length
     result = ..ok ~moved_out
 }

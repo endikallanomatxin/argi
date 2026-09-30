@@ -138,22 +138,31 @@ deinit(
 -- Explicit trusted establishment into raw storage. Callers must prove bounds,
 -- alignment, and initialization before reading; an Allocation alone cannot.
 _trusted_allocation_byte_ro(.allocation: &Allocation, .offset: UIntNative) -> (.reference: &UInt8) := {
-    raw ::= raw_pointer#(.t: UInt8)(.address = allocation&.data.address + offset).raw
+    address ::= _reference_offset_address(.address = allocation&.data.address, .elements = offset, .element_size = 1).result
+    raw ::= raw_pointer#(.t: UInt8)(.address = address).raw
     mutable ::= establish_allocation_slot#(.t: UInt8)(.allocation = allocation, .slot = raw, .anchor = allocation&.anchor).reference
     reference = read_reference#(.t: UInt8)(.base = mutable).reference
 }
 
 _trusted_allocation_byte_rw(.allocation: $&Allocation, .offset: UIntNative) -> (.reference: $&UInt8) := {
-    raw ::= raw_pointer#(.t: UInt8)(.address = allocation&.data.address + offset).raw
+    address ::= _reference_offset_address(.address = allocation&.data.address, .elements = offset, .element_size = 1).result
+    raw ::= raw_pointer#(.t: UInt8)(.address = address).raw
     reference = establish_allocation_slot#(.t: UInt8)(.allocation = allocation, .slot = raw, .anchor = allocation&.anchor).reference
 }
 
 -- Safety combines the allocation's owned-root dependency with its region
 -- anchor. The slot address itself is raw and makes no initialization claim.
+-- Runtime guards check alignment and the declared byte extent. The caller
+-- still proves that this editable receipt describes the acquired region.
 establish_allocation_slot#(.t: Type)(
     .allocation: &Allocation,
     .slot: RawPointer#(.t: t),
     .anchor: &Any,
 ) -> (.reference: $&t) := {
+    if slot.address < allocation&.data.address { abort }
+    offset ::= slot.address - allocation&.data.address
+    if offset > allocation&.size { abort }
+    if size_of(.type = t) > allocation&.size - offset { abort }
+    if slot.address % alignment_of(.type = t) != 0 { abort }
     reference = __trusted_reference_from_address#(.to: $&t)(.address = slot.address)
 }

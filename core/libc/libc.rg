@@ -27,6 +27,10 @@ fread_into(
     .buffer: ArrayView#(.t: UInt8),
     .stream: &Any,
 ) -> (.count: UIntNative) := {
+    if length#(.t: UInt8)(.self = &buffer).count == 0 {
+        count = 0
+        return
+    }
     count = fread(
         .buffer = data#(.t: UInt8)(.self = &buffer).pointer,
         .size = 1,
@@ -39,6 +43,10 @@ fwrite_from(
     .buffer: ArrayView#(.t: UInt8),
     .stream: &Any,
 ) -> (.count: UIntNative) := {
+    if length#(.t: UInt8)(.self = &buffer).count == 0 {
+        count = 0
+        return
+    }
     count = fwrite(
         .buffer = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(.self = &buffer).pointer).reference,
         .size = 1,
@@ -52,6 +60,7 @@ memcpy_bytes(
     .src: ArrayView#(.t: UInt8),
 ) -> () := {
     if length#(.t: UInt8)(.self = &dst).count > length#(.t: UInt8)(.self = &src).count { abort }
+    if length#(.t: UInt8)(.self = &dst).count == 0 { return }
     memcpy(
         .dst = mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &dst).pointer).reference,
         .src = reinterpret_reference#(.from: UInt8, .to: Any)(.base = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(.self = &src).pointer).reference).reference,
@@ -64,6 +73,7 @@ memcpy_bytes(
     .src: ArrayViewRO#(.t: UInt8),
 ) -> () := {
     if length#(.t: UInt8)(.self = &dst).count > length#(.t: UInt8)(.self = &src).count { abort }
+    if length#(.t: UInt8)(.self = &dst).count == 0 { return }
     memcpy(
         .dst = mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &dst).pointer).reference,
         .src = reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &src).pointer).reference,

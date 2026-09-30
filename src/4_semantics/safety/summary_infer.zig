@@ -32,6 +32,7 @@ pub const Infer = struct {
     engine: *summaries.Engine,
     bindings: std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect),
     place_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const facts.InputPath),
+    local_address_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId),
     virtual_summaries: std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary),
     invalid_virtual_summaries: std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, void),
 
@@ -46,6 +47,7 @@ pub const Infer = struct {
             .engine = engine,
             .bindings = std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect).init(allocator),
             .place_bindings = std.AutoHashMap(graph_mod.GlobalBindingId, []const facts.InputPath).init(allocator),
+            .local_address_bindings = std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId).init(allocator),
             .virtual_summaries = std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary).init(allocator),
             .invalid_virtual_summaries = std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, void).init(allocator),
         };
@@ -54,6 +56,7 @@ pub const Infer = struct {
     pub fn deinit(self: *Infer) void {
         self.bindings.deinit();
         self.place_bindings.deinit();
+        self.local_address_bindings.deinit();
         self.virtual_summaries.deinit();
         self.invalid_virtual_summaries.deinit();
     }
@@ -595,6 +598,7 @@ pub const Infer = struct {
 
         self.bindings.clearRetainingCapacity();
         self.place_bindings.clearRetainingCapacity();
+        self.local_address_bindings.clearRetainingCapacity();
         var start = profile.timestamp(self.profile_io);
         try self.inferBlock(function_id, function.body.?, outputs);
         profile.accumulate(self.profile_io, start, &self.output_ns);
@@ -682,6 +686,7 @@ pub const Infer = struct {
             switch (node.content) {
                 .binding_declaration => |binding| {
                     const initialization = self.graph.binding(binding).initialization orelse continue;
+                    try self.local_address_bindings.put(binding, try self.localAddressTargets(initialization));
                     try self.bindings.put(binding, try self.inferExpression(function_id, initialization));
                     try self.place_bindings.put(binding, try self.inferInputPaths(function_id, initialization));
                 },
@@ -693,6 +698,13 @@ pub const Infer = struct {
                         else
                             effect;
                     } else {
+                        const targets = try self.localAddressTargets(assignment.value);
+                        var joined = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
+                        try joined.appendSlice(self.local_address_bindings.get(assignment.binding) orelse &.{});
+                        for (targets) |target| {
+                            if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, joined.items, target) == null) try joined.append(target);
+                        }
+                        try self.local_address_bindings.put(assignment.binding, try joined.toOwnedSlice());
                         try self.bindings.put(assignment.binding, effect);
                         try self.place_bindings.put(assignment.binding, try self.inferInputPaths(function_id, assignment.value));
                     }
@@ -2518,6 +2530,31 @@ pub const Infer = struct {
         }
     }
 
+    // Keep local addresses separate from reference value effects: projections
+    // in a callee describe the pointee, rather than fields of the pointer.
+    // Resolve its value at the use site instead of freezing an initializer's
+    // dependencies. Assignment retains possible targets across control flow.
+    fn localAddressTargets(self: *Infer, node_id: graph_mod.GlobalNodeId) ![]const graph_mod.GlobalNodeId {
+        return switch (self.graph.node(node_id).content) {
+            .address_of => |value| blk: {
+                const targets = try self.allocator.alloc(graph_mod.GlobalNodeId, 1);
+                targets[0] = value;
+                break :blk targets;
+            },
+            .binding_use => |binding| self.local_address_bindings.get(binding) orelse &.{},
+            .move_value, .denied_implicit_copy => |value| self.localAddressTargets(value),
+            else => &.{},
+        };
+    }
+
+    fn localPointeeEffect(self: *Infer, function_id: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId) !?facts.ValueEffect {
+        const targets = try self.localAddressTargets(node_id);
+        if (targets.len == 0) return null;
+        var result: facts.ValueEffect = .{};
+        for (targets) |target| result = try self.mergeValueEffects(result, try self.inferExpression(function_id, target));
+        return result;
+    }
+
     fn substituteRequiredInputPath(
         self: *Infer,
         function_id: graph_mod.GlobalFunctionId,
@@ -3001,6 +3038,15 @@ pub const Infer = struct {
                 input_place_value_overrides = try self.mergeValueEffects(input_place_value_overrides, value);
                 continue;
             };
+            const argument = arguments[path.input_index].value;
+            if ((try self.inferInputPaths(function_id, argument)).len == 0) {
+                if (try self.localPointeeEffect(function_id, argument)) |pointee| {
+                    var value = pointee;
+                    for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
+                    input_place_value_overrides = try self.mergeValueEffects(input_place_value_overrides, value);
+                    continue;
+                }
+            }
             const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
             for (mapped) |candidate| try appendInputPath(&input_place_values, candidate);
         }
@@ -3398,6 +3444,10 @@ pub const Infer = struct {
         if (effect.input_places.len != 0) return effect.input_places;
         var paths = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_dependencies) |dependency| try appendInputPath(&paths, dependency.path);
+        // Loading a reference from a field/choice payload borrows the value
+        // at that input Place. Its dependencies must remain required when a
+        // caller consumes the reference inside a scalar-returning wrapper.
+        for (effect.input_place_values) |path| try appendInputPath(&paths, path);
         return paths.toOwnedSlice();
     }
 

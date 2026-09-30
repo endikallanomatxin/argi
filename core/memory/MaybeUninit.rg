@@ -11,8 +11,7 @@ _trusted_uninit_slot#(.t: Type)(
     .allocation: &Allocation,
     .index: UIntNative,
 ) -> (.slot: MaybeUninit#(.t: t)) := {
-    offset ::= index * size_of(.type = t)
-    address ::= allocation&.data.address + offset
+    address ::= _reference_offset_address(.address = allocation&.data.address, .elements = index, .element_size = size_of(.type = t)).result
     slot = (.raw = raw_pointer#(.t: t)(.address = address).raw)
 }
 
