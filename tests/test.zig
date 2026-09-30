@@ -6523,3 +6523,14 @@ test "feature_tests/basics/28X_unsupported_initializer_expression" {
         \\
     );
 }
+
+test "safety statistics preserve composed allocator behavior" {
+    const path = "tests/feature_tests/system/49_general_purpose_allocator_on_arena";
+    const result = try runArgiCommand(&.{ "build", path, "--stats" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+    for ([_][]const u8{ "summary inference:", "summary bytes requested:", "retained worklist bytes:", "virtual summary time:", "virtual receiver lookup:", "state copy time:" }) |label|
+        try expect(std.mem.indexOf(u8, result.stderr, label) != null);
+    try run(path);
+}

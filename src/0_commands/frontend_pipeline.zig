@@ -275,7 +275,7 @@ pub const FrontendPipeline = struct {
         self.safety_ctx = null;
         const graph = &self.global_graph.?;
         self.safety_ctx = global_safety_checker.SafetyChecker.init(self.allocator, self.diagnostics, graph);
-        if (self.options.collect_stats) self.safety_ctx.?.enableStats();
+        if (self.options.collect_stats) self.safety_ctx.?.enableStats(self.io);
         const safety_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         try self.safety_ctx.?.analyze();
         self.safety_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - safety_start);

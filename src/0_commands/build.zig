@@ -252,6 +252,17 @@ fn printStats(
     std.debug.print("Safety\n", .{});
     std.debug.print("  summary evaluations:  {d}\n", .{safety.summary_evaluations});
     std.debug.print("  summary changes:      {d}\n", .{safety.summary_changes});
+    std.debug.print("  summary inference:    {d:.3} ms\n", .{milliseconds(safety.summary_inference_ns)});
+    std.debug.print("    outputs:            {d:.3} ms\n", .{milliseconds(safety.output_inference_ns)});
+    std.debug.print("    required-live:      {d:.3} ms\n", .{milliseconds(safety.required_live_inference_ns)});
+    std.debug.print("    post-states:        {d:.3} ms\n", .{milliseconds(safety.post_state_inference_ns)});
+    std.debug.print("    outcomes:           {d:.3} ms\n", .{milliseconds(safety.outcome_inference_ns)});
+    std.debug.print("    opaque storage:     {d:.3} ms\n", .{milliseconds(safety.opaque_inference_ns)});
+    std.debug.print("  summary bytes requested: {d}\n", .{safety.summary_allocated_bytes});
+    std.debug.print("  retained worklist bytes: {d}\n", .{safety.summary_worklist_bytes});
+    std.debug.print("  virtual summary time: {d:.3} ms ({d} merges)\n", .{ milliseconds(safety.virtual_summary_ns), safety.virtual_summary_merges });
+    std.debug.print("  virtual receiver lookup: {d:.3} ms\n", .{milliseconds(safety.virtual_receiver_ns)});
+    std.debug.print("  state copy time:      {d:.3} ms\n", .{milliseconds(safety.state_copy_ns)});
     std.debug.print("  functions:            {d}\n", .{safety.functions});
     std.debug.print("  calls:                {d}\n", .{safety.calls});
     std.debug.print("  state clones:         {d}\n", .{safety.state_clones});

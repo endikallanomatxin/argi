@@ -1,4 +1,5 @@
 const std = @import("std");
+const profile = @import("../../1_base/profile.zig");
 const diagnostics = @import("../../1_base/diagnostic.zig");
 const tok = @import("../../2_tokens/token.zig");
 const graph_mod = @import("../global/graph.zig");
@@ -21,6 +22,19 @@ const primitives = @import("../primitives/schema.zig");
 /// validation; inference records dependencies between GlobalFunctionIds.
 pub const SafetyChecker = struct {
     pub const Stats = struct {
+        timing_io: ?std.Io = null,
+        summary_inference_ns: u64 = 0,
+        state_copy_ns: u64 = 0,
+        summary_allocated_bytes: u64 = 0,
+        summary_worklist_bytes: u64 = 0,
+        output_inference_ns: u64 = 0,
+        required_live_inference_ns: u64 = 0,
+        post_state_inference_ns: u64 = 0,
+        outcome_inference_ns: u64 = 0,
+        opaque_inference_ns: u64 = 0,
+        virtual_summary_ns: u64 = 0,
+        virtual_receiver_ns: u64 = 0,
+        virtual_summary_merges: u64 = 0,
         summary_evaluations: u64 = 0,
         summary_changes: u64 = 0,
         functions: usize = 0,
@@ -81,6 +95,9 @@ pub const SafetyChecker = struct {
         }
 
         fn clone(self: *const FunctionState, allocator: std.mem.Allocator, stats: ?*Stats) !FunctionState {
+            const io = if (stats) |s| s.timing_io else null;
+            const start = profile.timestamp(io);
+            defer if (stats) |s| profile.accumulate(io, start, &s.state_copy_ns);
             var out = FunctionState.init(allocator);
             errdefer out.deinit();
             try out.tracker.roots.appendSlice(self.tracker.roots.items);
@@ -136,6 +153,7 @@ pub const SafetyChecker = struct {
     active_summaries: ?*summary_engine.Engine = null,
     active_summary_inference: ?*summary_infer.Infer = null,
     collect_stats: bool = false,
+    profile_io: ?std.Io = null,
     stats: Stats = .{},
 
     pub fn init(
@@ -155,23 +173,35 @@ pub const SafetyChecker = struct {
         self.call_stack.deinit();
     }
 
-    pub fn enableStats(self: *SafetyChecker) void {
+    pub fn enableStats(self: *SafetyChecker, io: std.Io) void {
         self.collect_stats = true;
+        self.profile_io = io;
     }
 
     pub fn analyze(self: *SafetyChecker) !void {
-        self.stats = .{};
+        self.stats = .{ .timing_io = self.profile_io };
         const before = self.diagnostics.list.items.len;
         try self.validateNominalChoiceLayouts();
 
-        var engine = summary_engine.Engine.init(self.allocator);
+        var allocations = profile.AllocationCounter{ .child = self.allocator, .requested_bytes = &self.stats.summary_allocated_bytes };
+        const inference_allocator = if (self.collect_stats) allocations.allocator() else self.allocator;
+        var engine = summary_engine.Engine.init(inference_allocator);
         defer engine.deinit();
-        var inference = summary_infer.Infer.init(self.allocator, self.graph, &engine);
+        var inference = summary_infer.Infer.init(inference_allocator, self.graph, &engine);
         defer inference.deinit();
+        inference.profile_io = self.profile_io;
+        const inference_start = profile.timestamp(self.profile_io);
         try inference.inferSafetySummariesFixedPoint();
+        profile.accumulate(self.profile_io, inference_start, &self.stats.summary_inference_ns);
         if (self.collect_stats) {
             self.stats.summary_evaluations = inference.evaluations;
             self.stats.summary_changes = inference.summary_changes;
+            self.stats.summary_worklist_bytes = @intCast(engine.worklist.capacity * @sizeOf(graph_mod.GlobalFunctionId));
+            self.stats.output_inference_ns = inference.output_ns;
+            self.stats.required_live_inference_ns = inference.required_live_ns;
+            self.stats.post_state_inference_ns = inference.post_state_ns;
+            self.stats.outcome_inference_ns = inference.outcome_ns;
+            self.stats.opaque_inference_ns = inference.opaque_ns;
         }
         try self.validateInitializerContracts(&engine);
         self.active_summaries = &engine;
@@ -190,6 +220,11 @@ pub const SafetyChecker = struct {
             try self.validateBlock(id, function.body.?, &state, null);
             if (state.reachable) try self.rejectEscapingOutputBindings(id, &state);
             if (self.collect_stats) self.stats.functions += 1;
+        }
+        if (self.collect_stats) {
+            self.stats.virtual_summary_ns = inference.virtual_summary_ns;
+            self.stats.virtual_receiver_ns = inference.virtual_receiver_ns;
+            self.stats.virtual_summary_merges = inference.virtual_summary_merges;
         }
         if (self.diagnostics.list.items.len != before) return error.Reported;
     }
@@ -5261,7 +5296,7 @@ test "allocation primitive agrees with instantiated symbolic transfer" {
     _ = try summary_state.tracker.establish(.fresh);
     _ = try summary_state.tracker.establish(.fresh);
     const arguments = [_]facts.ValueFacts{
-        .{},                                                                                                                         .{},                                               .{},
+        .{},                                                                                 .{},                                               .{},
         .{ .explicit_dependency = true, .dependencies = &.{.{ .root = deallocator_root }} }, .{ .dependencies = &.{.{ .root = anchor_root }} },
     };
     var engine = summary_engine.Engine.init(allocator);

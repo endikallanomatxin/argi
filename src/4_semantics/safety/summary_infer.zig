@@ -1,4 +1,5 @@
 const std = @import("std");
+const profile = @import("../../1_base/profile.zig");
 const graph_mod = @import("../global/graph.zig");
 const types = @import("../global/types.zig");
 const primitives = @import("../primitives/schema.zig");
@@ -15,6 +16,15 @@ const initializer_contract = @import("../global/initializer_contract.zig");
 /// recursive effects: this pass describes outputs in terms of function inputs
 /// and lets `summaries.Engine` iterate callers/SCCs to a fixed point.
 pub const Infer = struct {
+    profile_io: ?std.Io = null,
+    output_ns: u64 = 0,
+    required_live_ns: u64 = 0,
+    post_state_ns: u64 = 0,
+    outcome_ns: u64 = 0,
+    opaque_ns: u64 = 0,
+    virtual_summary_ns: u64 = 0,
+    virtual_receiver_ns: u64 = 0,
+    virtual_summary_merges: u64 = 0,
     evaluations: u64 = 0,
     summary_changes: u64 = 0,
     allocator: std.mem.Allocator,
@@ -91,11 +101,14 @@ pub const Infer = struct {
         self: *Infer,
         registry_id: graph_mod.GlobalVirtualRegistryId,
     ) !?facts.SafetySummary {
+        const start = profile.timestamp(self.profile_io);
+        defer profile.accumulate(self.profile_io, start, &self.virtual_summary_ns);
         if (self.invalid_virtual_summaries.contains(registry_id)) return null;
         if (self.virtual_summaries.get(registry_id)) |summary| return summary;
         const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
         const implementations = self.graph.function_refs.items[registry.implementations.start..][0..registry.implementations.len];
         if (implementations.len == 0) return null;
+        self.virtual_summary_merges += 1;
 
         const receiver = self.virtualReceiverIndex(registry_id);
         var merged = (try self.virtualImplementationSummary(implementations[0], receiver)) orelse return null;
@@ -118,7 +131,9 @@ pub const Infer = struct {
         return merged;
     }
 
-    pub fn virtualReceiverIndex(self: *const Infer, registry_id: graph_mod.GlobalVirtualRegistryId) ?u32 {
+    pub fn virtualReceiverIndex(self: *Infer, registry_id: graph_mod.GlobalVirtualRegistryId) ?u32 {
+        const start = profile.timestamp(self.profile_io);
+        defer profile.accumulate(self.profile_io, start, &self.virtual_receiver_ns);
         for (self.graph.virtual_calls.items) |call|
             if (call.safety_methods == registry_id) return call.self_input_index;
         return null;
@@ -575,15 +590,20 @@ pub const Infer = struct {
 
         self.bindings.clearRetainingCapacity();
         self.place_bindings.clearRetainingCapacity();
+        var start = profile.timestamp(self.profile_io);
         try self.inferBlock(function_id, function.body.?, outputs);
+        profile.accumulate(self.profile_io, start, &self.output_ns);
 
         var required_live_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        start = profile.timestamp(self.profile_io);
         try self.inferRequiredLiveInputsBlock(function_id, function.body.?, &required_live_inputs);
+        profile.accumulate(self.profile_io, start, &self.required_live_ns);
 
         var post_flow = InputPostStateFlow.init(self.allocator);
         defer post_flow.deinit();
         var post_exits: ?std.array_list.Managed(facts.PlacePostState) = null;
         defer if (post_exits) |*exits| exits.deinit();
+        start = profile.timestamp(self.profile_io);
         try self.inferInputPostStates(function_id, function.body.?, &post_flow, &post_exits);
         if (post_flow.reachable) try self.recordInputPostStateExit(&post_exits, &post_flow.states);
 
@@ -593,11 +613,15 @@ pub const Infer = struct {
             std.array_list.Managed(facts.PlacePostState).init(self.allocator);
         defer post_states.deinit();
 
+        profile.accumulate(self.profile_io, start, &self.post_state_ns);
+        start = profile.timestamp(self.profile_io);
         const outcome_post_states = if (self.isFallibleInitializer(function_id))
             try self.inferInitializerOutcomePostStates(function_id, function.body.?)
         else
             &.{};
 
+        profile.accumulate(self.profile_io, start, &self.outcome_ns);
+        start = profile.timestamp(self.profile_io);
         var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
         defer opaque_storage_effects.deinit();
         const opaque_storage_empties = try self.inferOpaqueStorageEffects(
@@ -605,6 +629,7 @@ pub const Infer = struct {
             function.body.?,
             &opaque_storage_effects,
         );
+        profile.accumulate(self.profile_io, start, &self.opaque_ns);
 
         if (function.flags.is_deinit) {
             const input_fields = self.graph.fields.items[function.input.start..][0..function.input.len];
