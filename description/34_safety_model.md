@@ -193,8 +193,8 @@ alignment fields; successful heap and native page acquisition create receipts.
 Normal allocation or inherited-storage establishment requires such a receipt.
 Allocation establishment checks its requested prefix and alignment before
 publishing the temporal root. Padding outside the requested acquisition range
-does not become readable storage. Copies of a receipt share the acquisition's
-consumable authorization.
+does not become readable storage. A receipt is move-only: establishment
+consumes it, forwarding moves it, and metadata inspection borrows it.
 
 Integer-address integration uses the explicitly trusted establishment
 operations. Their caller proves acquisition, containment, and the matching

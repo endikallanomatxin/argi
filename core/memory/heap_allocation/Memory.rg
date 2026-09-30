@@ -66,9 +66,9 @@ map_pages(.self: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (.resul
     mapped ::= _memory_map_aligned(.size = size, .alignment = alignment, .page_size = self&._page_size)
     match mapped {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
-        ..ok storage {
+        ..ok ~ storage {
             deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-            allocation ::= establish_allocation(.storage = storage, .size = physical_size, .alignment = alignment, .deallocator = deallocator)
+            allocation ::= establish_allocation(.storage = ~storage, .size = physical_size, .alignment = alignment, .deallocator = deallocator)
             result = ..ok ~allocation
         }
     }

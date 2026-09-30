@@ -14,7 +14,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     tracker :: TrackingDeallocator = (.ffi = system.ffi, .released_size = 0, .released_alignment = 0)
     storage ::= unwrap_or_abort(.value = acquire_heap_storage(.size = 32, .alignment = 16, .ffi = system.ffi))
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = $&tracker)
-    allocation ::= establish_allocation(.storage = storage, .size = 8, .alignment = 8, .deallocator = deallocator).allocation
+    allocation ::= establish_allocation(.storage = ~storage, .size = 8, .alignment = 8, .deallocator = deallocator).allocation
     if allocation.size != 8 or allocation.alignment != 8 { status_code = 1 }
     allocation.size = 0
     allocation.alignment = 0

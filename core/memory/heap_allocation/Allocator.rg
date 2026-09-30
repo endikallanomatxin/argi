@@ -51,9 +51,9 @@ allocate(.self: $&CAllocator, .size: UIntNative, .alignment: UIntNative) -> (.re
     acquired ::= acquire_heap_storage(.size = size, .alignment = alignment, .ffi = self&.ffi)
     match acquired {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
-        ..ok storage {
+        ..ok ~ storage {
             deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-            allocation ::= establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
+            allocation ::= establish_allocation(.storage = ~storage, .size = size, .alignment = alignment, .deallocator = deallocator)
             result = ..ok ~allocation
         }
     }

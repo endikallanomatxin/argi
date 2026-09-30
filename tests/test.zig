@@ -6654,11 +6654,11 @@ test "feature_tests/types/94X_acquired_storage_extent" {
 }
 
 test "feature_tests/types/95X_acquired_storage_duplicate_establishment" {
-    try buildExpectFail("tests/feature_tests/types/95X_acquired_storage_duplicate_establishment", "already been consumed");
+    try buildExpectFail("tests/feature_tests/types/95X_acquired_storage_duplicate_establishment", "was moved and cannot be used again");
 }
 
 test "feature_tests/types/96X_acquired_page_storage_duplicate" {
-    try buildExpectFail("tests/feature_tests/types/96X_acquired_page_storage_duplicate", "already been consumed");
+    try buildExpectFail("tests/feature_tests/types/96X_acquired_page_storage_duplicate", "was moved and cannot be used again");
 }
 
 test "feature_tests/types/97X_acquired_storage_forged_literal" {
@@ -6666,11 +6666,11 @@ test "feature_tests/types/97X_acquired_storage_forged_literal" {
 }
 
 test "feature_tests/types/98X_acquired_storage_shared_authorization" {
-    try buildExpectFail("tests/feature_tests/types/98X_acquired_storage_shared_authorization", "already been consumed");
+    try buildExpectFail("tests/feature_tests/types/98X_acquired_storage_shared_authorization", "was moved and cannot be used again");
 }
 
 test "feature_tests/types/99X_acquired_storage_consumed_forwarding" {
-    try buildExpectFail("tests/feature_tests/types/99X_acquired_storage_consumed_forwarding", "already been consumed");
+    try buildExpectFail("tests/feature_tests/types/99X_acquired_storage_consumed_forwarding", "was moved and cannot be used again");
 }
 
 test "feature_tests/types/100X_acquired_page_storage_padding" {
@@ -6693,6 +6693,10 @@ test "feature_tests/types/103_acquired_storage_prefix_cleanup" {
     const path = "tests/feature_tests/types/103_acquired_storage_prefix_cleanup";
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
+}
+
+test "feature_tests/types/104X_acquired_storage_implicit_copy" {
+    try buildExpectFail("tests/feature_tests/types/104X_acquired_storage_implicit_copy", "type 'AcquiredStorage' cannot be copied implicitly");
 }
 
 test "feature_tests/collections/56_empty_array_views" {

@@ -68,20 +68,23 @@ no readable bytes, even when acquisition reserves heap or page padding.
 `establish_allocation(storage: AcquiredStorage, size, alignment, deallocator,
 anchor)` checks that the requested prefix fits the acquired extent and that
 its address satisfies the requested alignment. It consumes the acquisition's
-shared storage authorization and creates the temporal allocation root.
+storage authorization and creates the temporal allocation root.
 `establish_inherited_storage(storage: AcquiredStorage, root)` consumes the same
 authorization when attaching acquired bytes to an existing temporal domain.
-The receipt is copyable, but copies and forwarding wrappers alias one
-authorization; they cannot establish that acquisition twice. Read-only
+The receipt is move-only. Establishment consumes it with `~storage`; forwarding
+transfers it by move. A moved receipt cannot be inspected or established again. Its `deinit` discards
+establishment authority, without releasing physical storage: this low-level
+receipt owns no cleanup policy. The caller must establish a temporal owner or
+arrange trusted physical cleanup. Read-only
 `acquired_storage_address`, `acquired_storage_size`, and
-`acquired_storage_alignment` expose acquisition metadata without certifying
+`acquired_storage_alignment` borrow `&AcquiredStorage` and expose metadata without certifying
 another region.
 
 The caller of either establishment operation arranges physical cleanup with
 the matching deallocator or temporal domain. A receipt does not certify an
 arbitrary deallocator's behavior. Raw FFI release and low-level reference
-construction remain trusted operations. Receipt inspection after consumption
-does not make the storage live again.
+construction remain trusted operations. An integer inspected before consumption
+does not recreate the receipt or make released storage live again.
 
 `trusted_establish_allocation` is the explicit integer-address boundary for
 suballocators and integrations outside those acquisition factories. Its caller proves that

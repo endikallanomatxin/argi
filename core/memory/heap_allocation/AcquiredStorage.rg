@@ -1,13 +1,16 @@
 -- A successful acquisition certifies bytes, not initialized values or a
--- temporal owner. Copies alias one consumable authorization; they do not
--- authorize independent allocation establishment over the same storage.
+-- temporal owner. Moving the receipt transfers its authorization; establishment
+-- consumes it before references to the acquired bytes can escape.
 AcquiredStorage : Type = (
     ._address: UIntNative
     ._size: UIntNative
     ._alignment: UIntNative
 )
 
-AcquiredStorage implements ImplicitlyCopyable
+-- The receipt owns establishment authority, not physical cleanup. Dropping it
+-- requires explicit move semantics and does not release the acquired bytes;
+-- the low-level caller must establish an owner or arrange trusted cleanup.
+deinit(.self: $&AcquiredStorage) -> () := {}
 
 -- This attaches acquired bytes to an existing temporal domain. The caller
 -- arranges physical cleanup with that domain; no initialized T is created.
@@ -15,16 +18,16 @@ establish_inherited_storage(.storage: AcquiredStorage, .root: &Any) -> (.raw: Ra
     raw = trusted_establish_inherited_storage(.address = storage._address, .root = root).raw
 }
 
-acquired_storage_address(.storage: AcquiredStorage) -> (.address: UIntNative) := {
-    address = storage._address
+acquired_storage_address(.storage: &AcquiredStorage) -> (.address: UIntNative) := {
+    address = storage&._address
 }
 
-acquired_storage_size(.storage: AcquiredStorage) -> (.size: UIntNative) := {
-    size = storage._size
+acquired_storage_size(.storage: &AcquiredStorage) -> (.size: UIntNative) := {
+    size = storage&._size
 }
 
-acquired_storage_alignment(.storage: AcquiredStorage) -> (.alignment: UIntNative) := {
-    alignment = storage._alignment
+acquired_storage_alignment(.storage: &AcquiredStorage) -> (.alignment: UIntNative) := {
+    alignment = storage&._alignment
 }
 
 acquire_heap_storage(
@@ -64,10 +67,10 @@ acquire_page_storage(
     acquired ::= _memory_map_aligned(.size = size, .alignment = alignment, .page_size = memory&._page_size)
     match acquired {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
-        ..ok storage {
+        ..ok ~ storage {
             -- The caller receives the requested range, excluding page padding.
             storage._size = size
-            result = ..ok storage
+            result = ..ok ~storage
         }
     }
 }
