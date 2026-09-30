@@ -68,11 +68,16 @@ pub const Infer = struct {
 
         for (self.graph.functions.items, 0..) |function, raw| {
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            const outputs = try self.allocator.alloc(facts.ValueEffect, function.output_bindings.len);
-            @memset(outputs, .{});
-            if (!self.engine.summaries.contains(id))
+            if (!self.engine.summaries.contains(id)) {
+                const outputs = try self.allocator.alloc(facts.ValueEffect, function.output_bindings.len);
+                @memset(outputs, .{});
                 try self.engine.summaries.put(id, .{ .outputs = outputs });
-            try functions.append(id);
+            }
+            // These declarations retain their initial summary. Primitive
+            // transfers are instantiated at calls with call-site identities;
+            // extern declarations cannot infer effects from a missing body.
+            if (function.body != null and function.safety_primitive == .none)
+                try functions.append(id);
         }
         // All dimensions read callee approximations through summaryFor. The
         // engine records those reads and the read of our own prior outputs,
@@ -3652,6 +3657,22 @@ test "output summaries reach a fixed point through reverse call dependencies" {
     });
     try graph.function_operators.appendSlice(allocator, &.{ null, null });
 
+    // An unrelated extern population must not add inference work or prevent
+    // convergence of callers whose summaries do carry effects.
+    for (0..128) |_| {
+        const declaration: graph_mod.GlobalDeclId = @enumFromInt(@as(u32, @intCast(graph.declarations.items.len)));
+        try graph.declarations.append(allocator, .{ .kind = .function, .name = empty_name, .source = source });
+        try graph.functions.append(allocator, .{
+            .declaration = declaration,
+            .input = .{ .start = 0, .len = 0 },
+            .output = .{ .start = 0, .len = 0 },
+            .body = null,
+            .input_bindings = .{ .start = 0, .len = 0 },
+            .output_bindings = .{ .start = 0, .len = 0 },
+        });
+        try graph.function_operators.append(allocator, null);
+    }
+
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const summary_allocator = arena.allocator();
@@ -3660,6 +3681,7 @@ test "output summaries reach a fixed point through reverse call dependencies" {
     var infer = Infer.init(summary_allocator, &graph, &engine);
     defer infer.deinit();
     try infer.inferSafetySummariesFixedPoint();
+    try std.testing.expect(infer.evaluations < graph.functions.items.len);
 
     const wrapper = engine.summaries.get(@enumFromInt(0)).?;
     const identity = engine.summaries.get(@enumFromInt(1)).?;
