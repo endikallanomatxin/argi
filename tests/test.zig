@@ -6393,3 +6393,115 @@ test "feature_tests/basics/26_arithmetic_precedence" {
     try expectSuccessfulBuild(path);
     try run(path);
 }
+
+// Reuse the same scenario as an entry body and behind one extra call boundary.
+// Concrete checking visits both bodies, while the caller observes only the
+// inferred summary. This catches lost cleanup/dependency effects in wrappers.
+fn expectSafetyWrapperParity(case_path: []const u8, diagnostic: ?[]const u8) !void {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const source_path = try std.fs.path.join(allocator, &.{ case_path, "main.rg" });
+    defer allocator.free(source_path);
+    const source = try std.Io.Dir.cwd().readFileAlloc(io, source_path, allocator, .limited(1024 * 1024));
+    defer allocator.free(source);
+    const entry = std.mem.indexOf(u8, source, "main(") orelse return error.MissingParityEntry;
+    const renamed = try std.fmt.allocPrint(allocator, "{s}parity_body{s}", .{ source[0..entry], source[entry + 4 ..] });
+    defer allocator.free(renamed);
+    const relocated = try std.mem.replaceOwned(u8, allocator, renamed, "../../_support/unsafe_allocation", "./support");
+    defer allocator.free(relocated);
+    // Add summary boundaries around transfers whose effects are observed later
+    // in the same scenario; merely wrapping the entry would hide local effects.
+    const cleanup_calls = try std.mem.replaceOwned(u8, allocator, relocated, "deinit(.self =", "parity_deinit(.self =");
+    defer allocator.free(cleanup_calls);
+    const opaque_calls = try std.mem.replaceOwned(u8, allocator, cleanup_calls, "trusted_opaque_drop(.slot =", "parity_drop(.slot =");
+    defer allocator.free(opaque_calls);
+    const constructor_calls = try std.mem.replaceOwned(u8, allocator, opaque_calls, "Owned(.allocator =", "parity_owned(.allocator =");
+    defer allocator.free(constructor_calls);
+    const constructor_wrapper: []const u8 = if (std.mem.indexOf(u8, relocated, "Owned : Type") != null)
+        if (std.mem.indexOf(u8, relocated, ".fail: Bool") != null)
+            "parity_owned(.allocator: $&Allocator, .fail: Bool) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := { result = Owned(.allocator = allocator, .fail = fail) }\n"
+        else
+            "parity_owned(.allocator: $&Allocator) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := { result = Owned(.allocator = allocator) }\n"
+    else
+        "";
+    const arguments = if (std.mem.startsWith(u8, source[entry..], "main(.system: System")) ".system = system" else "";
+    const wrapped = try std.fmt.allocPrint(
+        allocator,
+        "{s}\nmain(.system: System) -> (.status_code: Int32) := {{\n    status_code = parity_body({s})\n}}\n",
+        .{ constructor_calls, arguments },
+    );
+    defer allocator.free(wrapped);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "module/support");
+    try tmp.dir.writeFile(io, .{ .sub_path = "module/main.rg", .data = wrapped });
+    const transfers = try std.fmt.allocPrint(
+        allocator,
+        "parity_deinit#(.t: Type)(.self: $&t) -> () := {{ deinit(.self = self) }}\n" ++
+            "parity_drop#(.t: Type)(.slot: $&t) -> () := {{ trusted_opaque_drop(.slot = slot) }}\n{s}",
+        .{constructor_wrapper},
+    );
+    defer allocator.free(transfers);
+    try tmp.dir.writeFile(io, .{ .sub_path = "module/transfers.rg", .data = transfers });
+    const support = try std.Io.Dir.cwd().readFileAlloc(io, "tests/feature_tests/_support/unsafe_allocation/helpers.rg", allocator, .limited(1024 * 1024));
+    defer allocator.free(support);
+    try tmp.dir.writeFile(io, .{ .sub_path = "module/support/helpers.rg", .data = support });
+    const tmp_root = try tmpDirRootPath(&tmp);
+    defer allocator.free(tmp_root);
+    const module_path = try std.fs.path.join(allocator, &.{ tmp_root, "module" });
+    defer allocator.free(module_path);
+    const original = try buildResult(case_path);
+    defer allocator.free(original.stdout);
+    defer allocator.free(original.stderr);
+    const caller = try buildResult(module_path);
+    defer allocator.free(caller.stdout);
+    defer allocator.free(caller.stderr);
+    if (!std.meta.eql(original.term, caller.term)) {
+        std.debug.print("safety parity mismatch for {s}:\n{s}\n{s}\n", .{ case_path, original.stderr, caller.stderr });
+    }
+    try expectEqual(original.term, caller.term);
+    if (diagnostic) |message| {
+        try expectEqual(std.process.Child.Term{ .exited = 1 }, original.term);
+        try expect(std.mem.indexOf(u8, original.stderr, message) != null);
+        if (std.mem.indexOf(u8, caller.stderr, message) == null)
+            std.debug.print("missing parity diagnostic for {s}:\n{s}\n", .{ case_path, caller.stderr });
+        try expect(std.mem.indexOf(u8, caller.stderr, message) != null);
+    } else {
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, original.term);
+        const original_exe = try outputPathFor(case_path);
+        defer allocator.free(original_exe);
+        const caller_exe = try outputPathFor(module_path);
+        defer allocator.free(caller_exe);
+        const direct = try runChild(&.{original_exe});
+        defer allocator.free(direct.stdout);
+        defer allocator.free(direct.stderr);
+        const indirect = try runChild(&.{caller_exe});
+        defer allocator.free(indirect.stdout);
+        defer allocator.free(indirect.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, direct.term);
+        try expectEqual(direct.term, indirect.term);
+        try expectEqualStrings(direct.stdout, indirect.stdout);
+        try expectEqualStrings(direct.stderr, indirect.stderr);
+    }
+}
+
+test "safety wrapper parity for move and cleanup" {
+    try expectSafetyWrapperParity("tests/feature_tests/ownership/13_move_operator", null);
+    try expectSafetyWrapperParity("tests/feature_tests/ownership/59X_branch_deinit_then_use", "maybe_initialized and cannot be used");
+}
+
+test "safety wrapper parity for opaque storage and generations" {
+    try expectSafetyWrapperParity("tests/feature_tests/ownership/136_opaque_dependency_summary_does_not_duplicate_ownership", null);
+    try expectSafetyWrapperParity("tests/feature_tests/ownership/162X_opaque_read_through_identity_wrapper_keeps_generation", "reference depends on a root that has ended");
+}
+
+test "safety wrapper parity for fallible initialization outcomes" {
+    try expectSafetyWrapperParity("tests/feature_tests/ownership/293_fallible_constructor_owns_success", null);
+    try expectSafetyWrapperParity("tests/feature_tests/ownership/294X_fallible_constructor_preserves_root", "reference depends on a root that has ended");
+}
+
+test "safety wrapper parity for recursion and virtual dispatch" {
+    try expectSafetyWrapperParity("tests/feature_tests/polymorphism/41_recursive_virtual_summaries", null);
+    try expectSafetyWrapperParity("tests/feature_tests/ownership/220X_virtual_post_state_dependency_union", "reference depends on a root that has ended");
+    try expectSafetyWrapperParity("tests/feature_tests/polymorphism/30X_virtual_dependency_union", "function output cannot depend on a local storage generation that ends before return");
+}
