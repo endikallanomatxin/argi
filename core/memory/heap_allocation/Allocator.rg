@@ -164,14 +164,14 @@ deinit(
 _trusted_allocation_byte_ro(.allocation: &Allocation, .offset: UIntNative) -> (.reference: &UInt8) := {
     address ::= _reference_offset_address(.address = allocation&.data.address, .elements = offset, .element_size = 1).result
     raw ::= raw_pointer#(.t: UInt8)(.address = address).raw
-    mutable ::= establish_allocation_slot#(.t: UInt8)(.allocation = allocation, .slot = raw, .anchor = allocation&.anchor).reference
+    mutable ::= trusted_establish_allocation_slot#(.t: UInt8)(.allocation = allocation, .slot = raw, .anchor = allocation&.anchor).reference
     reference = read_reference#(.t: UInt8)(.base = mutable).reference
 }
 
 _trusted_allocation_byte_rw(.allocation: $&Allocation, .offset: UIntNative) -> (.reference: $&UInt8) := {
     address ::= _reference_offset_address(.address = allocation&.data.address, .elements = offset, .element_size = 1).result
     raw ::= raw_pointer#(.t: UInt8)(.address = address).raw
-    reference = establish_allocation_slot#(.t: UInt8)(.allocation = allocation, .slot = raw, .anchor = allocation&.anchor).reference
+    reference = trusted_establish_allocation_slot#(.t: UInt8)(.allocation = allocation, .slot = raw, .anchor = allocation&.anchor).reference
 }
 
 -- Safety combines the allocation's owned-root dependency with its region
@@ -179,7 +179,7 @@ _trusted_allocation_byte_rw(.allocation: $&Allocation, .offset: UIntNative) -> (
 -- Runtime guards check alignment and both the declared and authenticated
 -- byte extents. The allocator proves the physical region at establishment;
 -- callers cannot expand it by editing the public receipt fields.
-establish_allocation_slot#(.t: Type)(
+trusted_establish_allocation_slot#(.t: Type)(
     .allocation: &Allocation,
     .slot: RawPointer#(.t: t),
     .anchor: &Any,

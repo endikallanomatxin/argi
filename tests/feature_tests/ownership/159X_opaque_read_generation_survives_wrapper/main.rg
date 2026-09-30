@@ -27,7 +27,7 @@ main(.system: System) -> (.status_code: Int32) := {
                 }
                 ..ok ~ backing_payload {
                     backing ::= ~backing_payload
-                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&backing, .offset = 0).reference).reference
+                    slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&backing, .offset = 0).reference).reference
                     value :: Borrowing = (.reference = $&external)
                     trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
                         .storage = $&domain,

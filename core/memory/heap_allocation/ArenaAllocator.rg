@@ -34,7 +34,7 @@ init(.p: $&ArenaAllocator, .allocator: $&Allocator, .block_size: UIntNative = 40
 
 _trusted_arena_block(.address: UIntNative, .owner: $&ArenaAllocator) -> (.block: $&_ArenaBlock) := {
     raw ::= raw_pointer#(.t: _ArenaBlock)(.address = address).raw
-    block = establish_inherited_reference#(.t: _ArenaBlock)(.raw = raw, .root = erase_mutable_reference#(.t: ArenaDomain)(.base = $&owner&.domain).reference).reference
+    block = trusted_establish_inherited_reference#(.t: _ArenaBlock)(.raw = raw, .root = erase_mutable_reference#(.t: ArenaDomain)(.base = $&owner&.domain).reference).reference
 }
 
 arena_free_blocks(.self: $&ArenaAllocator) -> () := {

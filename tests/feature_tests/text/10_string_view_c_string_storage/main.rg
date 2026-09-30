@@ -39,7 +39,7 @@ main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= $&allocator_storage
 
     literal ::= from_literal(.data = "abc")
-    data ::= reinterpret_reference#(.from: Char, .to: UInt8)(.base = literal).reference
+    data ::= trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = literal).reference
 
     if 1 == 1 {
         borrowed_view : StringView = (

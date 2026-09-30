@@ -236,7 +236,7 @@ ensure_capacity_growing(
                 memcpy_bytes(.dst = dst_view, .src = src_view)
             }
 
-            nul_ptr ::= mutable_reference_offset#(.t: UInt8)(.base = new_data, .elements = self&.length).reference
+            nul_ptr ::= trusted_mutable_reference_offset#(.t: UInt8)(.base = new_data, .elements = self&.length).reference
             nul_ptr& = 0
 
             deinit(.self = $&self&.allocation)
@@ -320,7 +320,7 @@ push_c_string(
     }
 
     source_view ::= _trusted_array_view_ro#(.t: UInt8)(
-        .data = reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,
+        .data = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,
         .length = append_length,
     )
     string_append_bytes(.self = self, .source = source_view)
@@ -359,8 +359,8 @@ c_string_length(
     length = 0
     c_length :: UIntNative = 0
     while 1 == 1 {
-        bytes ::= reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference
-        ptr ::= reference_offset#(.t: UInt8)(.base = bytes, .elements = c_length).reference
+        bytes ::= trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference
+        ptr ::= trusted_reference_offset#(.t: UInt8)(.base = bytes, .elements = c_length).reference
         if ptr& == 0 {
             break
         }
@@ -374,7 +374,7 @@ c_string_as_view(
     .text: &Char,
 ) -> (.view: StringView) := {
     view = (
-        .data = reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,
+        .data = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,
         .length = c_string_length(.text = text).length,
     )
 }

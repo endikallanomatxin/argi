@@ -176,7 +176,7 @@ _trusted_dynamic_array_element_ro_pointer #(.t: Type) (
 ) -> (.pointer: &t) := {
     if offset >= array&._length { abort }
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
-    mutable ::= establish_allocation_slot#(.t: t)(.allocation = &array&._allocation, .slot = slot.raw, .anchor = array&._allocation.anchor).reference
+    mutable ::= trusted_establish_allocation_slot#(.t: t)(.allocation = &array&._allocation, .slot = slot.raw, .anchor = array&._allocation.anchor).reference
     pointer = read_reference#(.t: t)(.base = mutable).reference
 }
 
@@ -186,7 +186,7 @@ _trusted_dynamic_array_element_rw_pointer #(.t: Type) (
 ) -> (.pointer: $&t) := {
     if offset >= array&._length { abort }
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
-    pointer = establish_allocation_slot#(.t: t)(.allocation = &array&._allocation, .slot = slot.raw, .anchor = array&._allocation.anchor).reference
+    pointer = trusted_establish_allocation_slot#(.t: t)(.allocation = &array&._allocation, .slot = slot.raw, .anchor = array&._allocation.anchor).reference
 }
 
 dynamic_array_grow #(.t: Type) (

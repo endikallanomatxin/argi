@@ -17,7 +17,7 @@ slice#(.t: Type)(
         result = ..ok (._data = ..none, ._length = 0)
         return
     }
-    first ::= mutable_reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = start).reference
+    first ::= trusted_mutable_reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = start).reference
     result = ..ok _trusted_array_view#(.t: t)(.data = first, .length = count).array
 }
 
@@ -38,6 +38,6 @@ slice#(.t: Type)(
         result = ..ok (._data = ..none, ._length = 0)
         return
     }
-    first ::= reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = start).reference
+    first ::= trusted_reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = start).reference
     result = ..ok _trusted_array_view_ro#(.t: t)(.data = first, .length = count).array
 }

@@ -112,7 +112,7 @@ _trusted_error_trace_slot(.self: $&FixedSizeErrorTracer, .index: UIntNative) -> 
         abort
     }
     raw ::= raw_pointer#(.t: ErrorTraceEntry)(.address = self&._storage.data.address + index * _error_trace_stride().size).raw
-    entry = establish_allocation_slot#(.t: ErrorTraceEntry)(.allocation = &self&._storage, .slot = raw, .anchor = self&._storage.anchor).reference
+    entry = trusted_establish_allocation_slot#(.t: ErrorTraceEntry)(.allocation = &self&._storage, .slot = raw, .anchor = self&._storage.anchor).reference
 }
 add_context(.self: $&FixedSizeErrorTracer, .location: SourceLocationId, .context: StringView) -> () := {
     if self&._capacity == 0 {

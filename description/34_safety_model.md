@@ -181,6 +181,14 @@ that region; arithmetic must not wrap while computing offsets or addresses.
 Reinterpreting an address does not enlarge its permitted region or initialize
 the target representation.
 
+An ordinary `&T` certifies one live initialized object, not adjacent elements.
+Ordinary element selection uses an array or initialized view carrying a bound.
+Selecting a byte range or uninitialized slot does not publish a legible `T`.
+Unbounded offset, raw-address establishment, and representation reinterpretation
+are explicitly trusted operations. Their `trusted_*` names identify caller
+obligations; the naming convention does not add an unsafe-block mechanism or
+make the compiler prove those obligations.
+
 A storage capability authorizes establishment for the storage actually
 acquired. It is consumed when that storage enters a temporal domain; copying
 its address does not create a second authorization. Both native page mapping

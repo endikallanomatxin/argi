@@ -61,7 +61,7 @@ next#(.t: Type: ImplicitlyCopyable) (
     -- Value iteration is the array's conditional implicit-copy capability.
     current_index :: UIntNative = self&._index
     if current_index >= self&._view._length { abort }
-    ptr ::= reference_offset#(.t: t)(.base = data#(.t: t)(.self = &self&._view).pointer, .elements = current_index).reference
+    ptr ::= trusted_reference_offset#(.t: t)(.base = data#(.t: t)(.self = &self&._view).pointer, .elements = current_index).reference
     value = ptr&
     self&._index = current_index + 1
 }
@@ -77,7 +77,7 @@ next#(.t: Type) (
 ) -> (.value: &t) := {
     current_index :: UIntNative = self&._index
     if current_index >= self&._view._length { abort }
-    value = reference_offset#(.t: t)(.base = data#(.t: t)(.self = &self&._view).pointer, .elements = current_index).reference
+    value = trusted_reference_offset#(.t: t)(.base = data#(.t: t)(.self = &self&._view).pointer, .elements = current_index).reference
     self&._index = current_index + 1
 }
 
@@ -92,6 +92,6 @@ next#(.t: Type) (
 ) -> (.value: $&t) := {
     current_index :: UIntNative = self&._index
     if current_index >= self&._view._length { abort }
-    value = mutable_reference_offset#(.t: t)(.base = data#(.t: t)(.self = &self&._view).pointer, .elements = current_index).reference
+    value = trusted_mutable_reference_offset#(.t: t)(.base = data#(.t: t)(.self = &self&._view).pointer, .elements = current_index).reference
     self&._index = current_index + 1
 }

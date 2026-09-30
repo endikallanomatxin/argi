@@ -16,7 +16,7 @@ main(.system: System) -> (.status_code: Int32) := {
         .alignment = 1,
         .deallocator = deallocator,
     )
-    borrowing_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&borrowing_slots, .offset = 0).reference).reference
+    borrowing_slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&borrowing_slots, .offset = 0).reference).reference
     hidden :: Borrowing = (.reference = &external)
     trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
         .storage = $&borrowing_slots,
@@ -33,7 +33,7 @@ main(.system: System) -> (.status_code: Int32) := {
         .alignment = 1,
         .deallocator = deallocator,
     )
-    owner_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&owner_slots, .offset = 0).reference).reference
+    owner_slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&owner_slots, .offset = 0).reference).reference
     trusted_opaque_move_in#(.t: Allocation, .storage_type: Allocation)(
         .storage = $&owner_slots,
         .destination = owner_slot,

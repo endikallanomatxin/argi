@@ -16,15 +16,15 @@ pub const Spec = struct {
 };
 
 pub const specs = [_]Spec{
-    .{ .primitive = .establish_inherited_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "establish_inherited_reference", .signatures = &.{"#(.t: Type)(.raw: RawPointer#(.t: t), .root: &Any) -> (.reference: $&t)"} },
+    .{ .primitive = .establish_inherited_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_establish_inherited_reference", .signatures = &.{"#(.t: Type)(.raw: RawPointer#(.t: t), .root: &Any) -> (.reference: $&t)"} },
     .{ .primitive = .establish_inherited_storage, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_establish_inherited_storage", .signatures = &.{"(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8))"} },
-    .{ .primitive = .reference_offset, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "reference_offset", .signatures = &.{"#(.t: Type)(.base: &t, .elements: UIntNative) -> (.reference: &t)"} },
-    .{ .primitive = .mutable_reference_offset, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "mutable_reference_offset", .signatures = &.{"#(.t: Type)(.base: $&t, .elements: UIntNative) -> (.reference: $&t)"} },
-    .{ .primitive = .reinterpret_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "reinterpret_reference", .signatures = &.{"#(.from: Type, .to: Type)(.base: &from) -> (.reference: &to)"} },
-    .{ .primitive = .mutable_reinterpret_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "mutable_reinterpret_reference", .signatures = &.{"#(.from: Type, .to: Type)(.base: $&from) -> (.reference: $&to)"} },
+    .{ .primitive = .reference_offset, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_reference_offset", .signatures = &.{"#(.t: Type)(.base: &t, .elements: UIntNative) -> (.reference: &t)"} },
+    .{ .primitive = .mutable_reference_offset, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_mutable_reference_offset", .signatures = &.{"#(.t: Type)(.base: $&t, .elements: UIntNative) -> (.reference: $&t)"} },
+    .{ .primitive = .reinterpret_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_reinterpret_reference", .signatures = &.{"#(.from: Type, .to: Type)(.base: &from) -> (.reference: &to)"} },
+    .{ .primitive = .mutable_reinterpret_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_mutable_reinterpret_reference", .signatures = &.{"#(.from: Type, .to: Type)(.base: $&from) -> (.reference: $&to)"} },
     .{ .primitive = .read_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "read_reference", .signatures = &.{"#(.t: Type)(.base: $&t) -> (.reference: &t)"} },
     .{ .primitive = .establish_allocation, .path = "core/memory/heap_allocation/Allocator.rg", .name = "trusted_establish_allocation", .signatures = &.{"(.storage: UIntNative, .size: UIntNative, .alignment: UIntNative, .deallocator: Virtual#(.abstract: Deallocator), .anchor: &Any = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference) -> (.allocation: Allocation)"} },
-    .{ .primitive = .establish_allocation_slot, .path = "core/memory/heap_allocation/Allocator.rg", .name = "establish_allocation_slot", .signatures = &.{"#(.t: Type)(.allocation: &Allocation, .slot: RawPointer#(.t: t), .anchor: &Any) -> (.reference: $&t)"} },
+    .{ .primitive = .establish_allocation_slot, .path = "core/memory/heap_allocation/Allocator.rg", .name = "trusted_establish_allocation_slot", .signatures = &.{"#(.t: Type)(.allocation: &Allocation, .slot: RawPointer#(.t: t), .anchor: &Any) -> (.reference: $&t)"} },
     .{ .primitive = .native_allocated_storage, .path = "core/platforms/posix/page_mapping.rg", .name = "_memory_map_anonymous", .signatures = &.{"(.length: UIntNative) -> (.address: UIntNative)"} },
     .{ .primitive = .acquisition_subaddress, .path = "core/memory/heap_allocation/Memory.rg", .name = "_trusted_acquisition_subaddress", .signatures = &.{"(.base: UIntNative, .address: UIntNative) -> (.result: UIntNative)"} },
     .{ .primitive = .relocate, .path = "core/memory/relocation.rg", .name = "relocate", .signatures = &.{"#(.t: Type)(.source: $&t, .destination: $&t) -> ()"} },

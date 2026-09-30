@@ -10,7 +10,7 @@ string_view_byte_address(
     .index: UIntNative,
 ) -> (.reference: &UInt8) := {
     if index >= self&.length { abort }
-    reference = reference_offset#(.t: UInt8)(.base = self&.data, .elements = index)
+    reference = trusted_reference_offset#(.t: UInt8)(.base = self&.data, .elements = index)
 }
 
 bytes_get(

@@ -3,6 +3,6 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     original_size ::= allocation.size
     allocation.size = original_size + 8
     raw ::= raw_pointer#(.t: UIntNative)(.address = allocation.data.address + original_size).raw
-    slot ::= establish_allocation_slot#(.t: UIntNative)(.allocation = &allocation, .slot = raw, .anchor = allocation.anchor).reference
+    slot ::= trusted_establish_allocation_slot#(.t: UIntNative)(.allocation = &allocation, .slot = raw, .anchor = allocation.anchor).reference
     deinit(.self = $&allocation)
 }

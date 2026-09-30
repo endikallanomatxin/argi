@@ -107,6 +107,11 @@ occupied and `[length, capacity)` vacant. Its movement operations pass slot
 handles to trusted relocation; normal references are formed only after
 checking `index < length`. Empty slots cannot be exposed as `&T` or `$&T`.
 
+Selecting bytes establishes no initialized `T`. `trusted_establish_allocation_slot`
+checks the byte range and alignment but does not prove occupancy or a valid
+representation. Its caller must prove initializedness before reading through
+the returned reference; it is not an ordinary initialized-slot constructor.
+
 Trusted slot operations establish typed references only when the storage is
 large enough, correctly aligned, and contains a valid `T`. Their validity
 remains tied to the allocation and its anchor. Releasing or resetting storage

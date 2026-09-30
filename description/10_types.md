@@ -38,7 +38,7 @@ Conversion uses the destination type as the callee. For example,
 integer carries no validity dependency on the referenced storage.
 
 Creating a reference from an address requires a named core operation that
-connects it to a valid lifetime, such as `establish_inherited_reference`.
+connects it to a valid lifetime, such as `trusted_establish_inherited_reference`.
 Allocation establishment creates a fresh root for newly acquired storage.
 A type conversion alone cannot establish a live reference.
 

@@ -23,7 +23,7 @@ _trusted_uninit_borrow_ro#(.t: Type)(
     .allocation: &Allocation,
     .slot: MaybeUninit#(.t: t),
 ) -> (.reference: &t) := {
-    mutable ::= establish_allocation_slot#(.t: t)(.allocation = allocation, .slot = slot.raw, .anchor = allocation&.anchor).reference
+    mutable ::= trusted_establish_allocation_slot#(.t: t)(.allocation = allocation, .slot = slot.raw, .anchor = allocation&.anchor).reference
     reference = read_reference#(.t: t)(.base = mutable).reference
 }
 
@@ -31,7 +31,7 @@ _trusted_uninit_borrow_rw#(.t: Type)(
     .allocation: $&Allocation,
     .slot: MaybeUninit#(.t: t),
 ) -> (.reference: $&t) := {
-    reference = establish_allocation_slot#(.t: t)(.allocation = allocation, .slot = slot.raw, .anchor = allocation&.anchor).reference
+    reference = trusted_establish_allocation_slot#(.t: t)(.allocation = allocation, .slot = slot.raw, .anchor = allocation&.anchor).reference
 }
 
 -- Initializes an empty slot and transfers ownership into the allocation's
@@ -41,7 +41,7 @@ _trusted_uninit_write#(.t: Type)(
     .slot: MaybeUninit#(.t: t),
     .value: t,
 ) -> () := {
-    destination ::= establish_allocation_slot#(.t: t)(.allocation = allocation, .slot = slot.raw, .anchor = allocation&.anchor).reference
+    destination ::= trusted_establish_allocation_slot#(.t: t)(.allocation = allocation, .slot = slot.raw, .anchor = allocation&.anchor).reference
     trusted_opaque_move_in#(.t: t, .storage_type: Allocation)(
         .storage = allocation,
         .destination = destination,
@@ -55,7 +55,7 @@ _trusted_uninit_take#(.t: Type)(
     .allocation: $&Allocation,
     .slot: MaybeUninit#(.t: t),
 ) -> (.value: t) := {
-    source ::= establish_allocation_slot#(.t: t)(.allocation = allocation, .slot = slot.raw, .anchor = allocation&.anchor).reference
+    source ::= trusted_establish_allocation_slot#(.t: t)(.allocation = allocation, .slot = slot.raw, .anchor = allocation&.anchor).reference
     value = trusted_opaque_move_out#(.t: t, .storage_type: Allocation)(
         .storage = allocation,
         .slot = source,
@@ -71,7 +71,7 @@ _trusted_uninit_relocate#(.t: Type)(
     .destination_allocation: &Allocation,
     .destination: MaybeUninit#(.t: t),
 ) -> () := {
-    source_ref ::= establish_allocation_slot#(.t: t)(.allocation = source_allocation, .slot = source.raw, .anchor = source_allocation&.anchor).reference
-    destination_ref ::= establish_allocation_slot#(.t: t)(.allocation = destination_allocation, .slot = destination.raw, .anchor = destination_allocation&.anchor).reference
+    source_ref ::= trusted_establish_allocation_slot#(.t: t)(.allocation = source_allocation, .slot = source.raw, .anchor = source_allocation&.anchor).reference
+    destination_ref ::= trusted_establish_allocation_slot#(.t: t)(.allocation = destination_allocation, .slot = destination.raw, .anchor = destination_allocation&.anchor).reference
     trusted_opaque_relocate(.source = source_ref, .destination = destination_ref)
 }
