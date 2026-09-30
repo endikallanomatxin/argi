@@ -222,9 +222,11 @@ arbitrary address physically valid.
 > trusted caller obligations for physical validity. Reference offsets reject
 > multiplication and address-addition wrap at runtime, but do not yet check
 > membership in an authoritative physical range. Allocation slots check the
-> target type's alignment and containment in the receipt's declared size;
-> those checks cannot validate a forged receipt. They do not provide a general
-> spatial-safety guarantee.
+> target type's alignment and containment in both the public receipt and the
+> private bounds certified by the allocator. Editing public fields cannot
+> enlarge that range. The trusted allocator still proves that establishment
+> describes acquired storage; these guards do not provide a general
+> spatial-safety guarantee for arbitrary raw-pointer operations.
 
 > [!QUESTION]
 > The representation of physical provenance and its propagation through external

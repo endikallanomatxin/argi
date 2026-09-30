@@ -6601,6 +6601,38 @@ test "feature_tests/types/84X_allocation_slot_empty_storage" {
     try runExpectFailure(path);
 }
 
+test "feature_tests/types/85X_allocation_inflated_receipt" {
+    const path = "tests/feature_tests/types/85X_allocation_inflated_receipt";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/86X_allocation_redirected_receipt" {
+    const path = "tests/feature_tests/types/86X_allocation_redirected_receipt";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/types/87X_allocation_private_bounds" {
+    try buildExpectFail("tests/feature_tests/types/87X_allocation_private_bounds", "field '_storage_size' is private to its module");
+}
+
+test "feature_tests/types/88_allocation_authenticated_cleanup" {
+    const path = "tests/feature_tests/types/88_allocation_authenticated_cleanup";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/types/89X_allocation_forged_bounds_literal" {
+    try buildExpectFail("tests/feature_tests/types/89X_allocation_forged_bounds_literal", "field '_storage_address' is private to its module");
+}
+
+test "feature_tests/types/90X_allocation_establishment_wrap" {
+    const path = "tests/feature_tests/types/90X_allocation_establishment_wrap";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
 test "feature_tests/collections/56_empty_array_views" {
     const path = "tests/feature_tests/collections/56_empty_array_views";
     try expectSuccessfulBuild(path);

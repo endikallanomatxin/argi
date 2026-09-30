@@ -106,11 +106,20 @@ Allocation : Type = (
     -- The heap uses a static marker; arena children point at ArenaDomain.
     .anchor    : &Any
     .deallocator : Virtual#(.abstract: Deallocator)
+    -- Allocator-authenticated bounds. Public receipt fields can restrict a
+    -- request, but cannot enlarge this region or change the address, size,
+    -- or alignment passed to physical cleanup.
+    ._storage_address: UIntNative
+    ._storage_size: UIntNative
+    ._storage_alignment: UIntNative
 )
 
 -- Compiler-owned temporal boundary used after a physical allocator has
 -- returned backing storage. Each allocation owns a fresh temporal root.
 -- Region-backed storage also retains the generation of its backing anchor.
+-- The allocator certifies acquisition and containment; these scalar arguments
+-- are not themselves evidence that storage was acquired. Private bounds keep
+-- that assertion intact when the receipt crosses ordinary caller code.
 establish_allocation(
     .storage: UIntNative,
     .size: UIntNative,
@@ -118,12 +127,19 @@ establish_allocation(
     .deallocator: Virtual#(.abstract: Deallocator),
     .anchor: &Any = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference,
 ) -> (.allocation: Allocation) := {
+    _require_allocation_alignment(.alignment = alignment)
+    if storage == 0 and size != 0 { abort }
+    if storage % alignment != 0 { abort }
+    if storage + size < storage { abort }
     allocation = (
         .data = raw_pointer#(.t: UInt8)(.address = storage).raw,
         .size = size,
         .alignment = alignment,
         .anchor = anchor,
         .deallocator = deallocator,
+        ._storage_address = storage,
+        ._storage_size = size,
+        ._storage_alignment = alignment,
     )
 }
 
@@ -132,7 +148,8 @@ deinit(
 ) -> () := {
     -- Cleanup may touch backing metadata; an ended region cannot be released.
     live ::= self&.anchor&
-    deallocate(.self = $&self&.deallocator, .data = self&.data, .size = self&.size, .alignment = self&.alignment)
+    data ::= raw_pointer#(.t: UInt8)(.address = self&._storage_address).raw
+    deallocate(.self = $&self&.deallocator, .data = data, .size = self&._storage_size, .alignment = self&._storage_alignment)
 }
 
 -- Explicit trusted establishment into raw storage. Callers must prove bounds,
@@ -152,13 +169,18 @@ _trusted_allocation_byte_rw(.allocation: $&Allocation, .offset: UIntNative) -> (
 
 -- Safety combines the allocation's owned-root dependency with its region
 -- anchor. The slot address itself is raw and makes no initialization claim.
--- Runtime guards check alignment and the declared byte extent. The caller
--- still proves that this editable receipt describes the acquired region.
+-- Runtime guards check alignment and both the declared and authenticated
+-- byte extents. The allocator proves the physical region at establishment;
+-- callers cannot expand it by editing the public receipt fields.
 establish_allocation_slot#(.t: Type)(
     .allocation: &Allocation,
     .slot: RawPointer#(.t: t),
     .anchor: &Any,
 ) -> (.reference: $&t) := {
+    if slot.address < allocation&._storage_address { abort }
+    storage_offset ::= slot.address - allocation&._storage_address
+    if storage_offset > allocation&._storage_size { abort }
+    if size_of(.type = t) > allocation&._storage_size - storage_offset { abort }
     if slot.address < allocation&.data.address { abort }
     offset ::= slot.address - allocation&.data.address
     if offset > allocation&.size { abort }

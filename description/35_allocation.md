@@ -37,8 +37,29 @@ Allocation : Type = (
     .alignment: UIntNative
     .anchor: &Any
     .deallocator: Virtual#(.abstract: Deallocator)
+    ._storage_address: UIntNative
+    ._storage_size: UIntNative
+    ._storage_alignment: UIntNative
 )
 ```
+
+The private storage fields retain the address, extent, and alignment certified
+by the allocator at establishment. Public receipt fields describe a requested
+range; changing them cannot enlarge the certified region. Slot establishment
+checks containment in both ranges and the target type's alignment. Cleanup
+uses the original storage fields, so editing public data, size, or alignment
+cannot change the storage arguments passed to release. The public deallocator
+can still be replaced by an allocator adapter; that adapter remains responsible
+for honoring the acquisition's release contract. These fields are private to the allocator
+module, rather than a general proof that an arbitrary address was acquired.
+
+`establish_allocation` is a trusted allocator boundary. Its caller proves that
+the address and extent describe acquired, live storage and that the deallocator
+matches that acquisition. Its runtime guards reject invalid alignment and
+address-range wrap. Suballocators certify only the selected child range and
+retain a temporal anchor to the backing region. An ordinary caller must obtain
+an allocation through `Allocator`; supplying an integer to the trusted boundary
+does not discharge the acquisition obligation.
 
 Higher-level values such as `String` and `DynamicArray<T>` keep their own
 occupancy and length invariants. `MaybeUninit<T>` identifies a typed slot

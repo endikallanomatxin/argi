@@ -125,6 +125,9 @@ allocate(.self: $&ArenaAllocator, .size: UIntNative, .alignment: UIntNative) -> 
         .alignment = alignment,
         .anchor = erase_mutable_reference#(.t: ArenaDomain)(.base = $&self&.domain).reference,
         .deallocator = deallocator,
+        ._storage_address = address,
+        ._storage_size = size,
+        ._storage_alignment = alignment,
     )
     self&._current_block_offset = aligned_offset + required
     result = ..ok ~allocation

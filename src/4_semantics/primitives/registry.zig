@@ -223,7 +223,7 @@ pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
 /// anchor and virtual deallocator. Both interpreters use this field mapping;
 /// raw byte ownership must not erase the deallocator's receiver lifetime.
 pub const AllocationTransfer = struct {
-    pub const field_count = 5;
+    pub const field_count = 8;
     pub const data_field = 0;
     pub const borrowed_fields = [_]struct { field: u32, input: u32 }{
         .{ .field = 3, .input = 4 }, // anchor
