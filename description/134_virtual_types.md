@@ -110,6 +110,9 @@ requiring a new instantiation at runtime cannot occupy one fixed slot.
 Each method has exactly one receiver input whose type is directly `&Self` or
 `$&Self`. Its name and position are unrestricted. The receiver is borrowed;
 passing `Self` by value would require knowing the concrete representation.
+Another input with a fixed known type may happen to match a selected concrete
+implementation's type; that does not make it the receiver. The receiver's
+identity follows its position in the abstract contract through erasure.
 Two `Self` references in the same signature are not two interchangeable
 virtual receivers: their hidden concrete types might differ, and selecting
 one table cannot establish that the other argument matches its implementation.

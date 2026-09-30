@@ -7032,3 +7032,13 @@ test "feature_tests/polymorphism/50X_virtual_readonly_mutable_contract" {
 test "feature_tests/polymorphism/51X_virtual_readonly_generic_conversion" {
     try buildExpectFail("tests/feature_tests/polymorphism/51X_virtual_readonly_generic_conversion", "a mutable Self receiver requires a mutable concrete reference");
 }
+
+test "feature_tests/polymorphism/52X_virtual_receiver_identity_same_type_argument" {
+    try buildExpectFail("tests/feature_tests/polymorphism/52X_virtual_receiver_identity_same_type_argument", "root that has ended");
+}
+
+test "feature_tests/polymorphism/53_virtual_receiver_identity_same_type_argument" {
+    const path = "tests/feature_tests/polymorphism/53_virtual_receiver_identity_same_type_argument";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

@@ -284,6 +284,9 @@ pub fn AutoDeinit(comptime Ids: type) type {
 pub fn VirtualMethodRegistry(comptime Ids: type) type {
     return struct {
         implementations: Range(Ids.FunctionId),
+        /// Receiver position comes from the erased abstract contract. A known
+        /// argument may have the same concrete type as Self after substitution.
+        receiver_input_index: u32,
     };
 }
 

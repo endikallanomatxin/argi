@@ -393,6 +393,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
     });
     for (storage.virtual_registries.items) |value| try result.virtual_registries.append(allocator, .{
         .implementations = relocatePoolRange(global_sg.GlobalFunctionId, o.function_ref_base, value.implementations),
+        .receiver_input_index = value.receiver_input_index,
     });
     for (storage.virtualizes.items) |value| try result.virtualizes.append(allocator, .{
         .value = globalNode(o, value.value),

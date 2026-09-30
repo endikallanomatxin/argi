@@ -648,9 +648,9 @@ pub const SafetyChecker = struct {
                 if (value.referenced_place) |receiver_place| if (self.active_summaries) |summaries| {
                     var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
                     try dependencies.appendSlice(value.dependencies);
-                    for (self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len]) |method| {
+                    for (self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len], 0..) |method, index| {
                         const inference = self.active_summary_inference orelse continue;
-                        const receiver_index = inference.concreteVirtualReceiverIndex(method, virtualize.concrete_type) orelse continue;
+                        const receiver_index = inference.virtualizeReceiverIndex(virtualize, index);
                         const summary = summaries.summaryFor(method) orelse continue;
                         for (summary.outputs) |output| {
                             const borrowed = try facts.receiverBorrowedPlaces(self.allocator, output, receiver_index);

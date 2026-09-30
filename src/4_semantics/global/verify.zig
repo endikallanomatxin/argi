@@ -39,9 +39,18 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.switches.items) |value| try payload.switchPayload(graph_mod.Ids, value, bounds);
     for (graph.auto_deinit_fields.items) |value| try payload.autoDeinitField(graph_mod.Ids, value, bounds);
     for (graph.auto_deinits.items) |value| try payload.autoDeinit(graph_mod.Ids, value, bounds);
-    for (graph.virtual_registries.items) |value| try payload.virtualRegistry(graph_mod.Ids, value, bounds);
+    for (graph.virtual_registries.items) |value| {
+        try payload.virtualRegistry(graph_mod.Ids, value, bounds);
+        for (graph.function_refs.items[value.implementations.start..][0..value.implementations.len]) |method| {
+            try require(verify.idFits(method, graph.functions.items.len));
+            try require(value.receiver_input_index < graph.function(method).input.len);
+        }
+    }
     for (graph.virtualizes.items) |value| try payload.virtualize(graph_mod.Ids, value, bounds);
-    for (graph.virtual_calls.items) |value| try payload.virtualCall(graph_mod.Ids, value, bounds);
+    for (graph.virtual_calls.items) |value| {
+        try payload.virtualCall(graph_mod.Ids, value, bounds);
+        try require(graph.virtual_registries.items[@intFromEnum(value.safety_methods)].receiver_input_index == value.self_input_index);
+    }
     for (graph.reach_segments.items) |range| try require(verify.stringFits(range, graph.strings.items));
     for (graph.reach_alternatives.items) |value| try payload.reachAlternative(graph_mod.Ids, value, bounds);
     for (graph.reaches.items) |value| try payload.reach(graph_mod.Ids, value, bounds);

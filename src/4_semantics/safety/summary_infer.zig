@@ -142,18 +142,12 @@ pub const Infer = struct {
     pub fn virtualReceiverIndex(self: *Infer, registry_id: graph_mod.GlobalVirtualRegistryId) ?u32 {
         const start = profile.timestamp(self.profile_io);
         defer profile.accumulate(self.profile_io, start, &self.virtual_receiver_ns);
-        for (self.graph.virtual_calls.items) |call|
-            if (call.safety_methods == registry_id) return call.self_input_index;
-        return null;
+        return self.graph.virtual_registries.items[@intFromEnum(registry_id)].receiver_input_index;
     }
 
-    pub fn concreteVirtualReceiverIndex(self: *const Infer, method: graph_mod.GlobalFunctionId, concrete_type: graph_mod.GlobalTypeId) ?u32 {
-        const function = self.graph.function(method);
-        for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
-            const ty = self.graph.semanticType(field.ty);
-            if (ty == .pointer and types.equal(self.graph, ty.pointer.child, concrete_type)) return @intCast(index);
-        }
-        return null;
+    pub fn virtualizeReceiverIndex(self: *const Infer, virtualize: graph_mod.Virtualize, method_index: usize) u32 {
+        const registry = self.graph.virtual_registry_refs.items[virtualize.safety_methods.start + method_index];
+        return self.graph.virtual_registries.items[@intFromEnum(registry)].receiver_input_index;
     }
 
     fn virtualImplementationSummary(self: *Infer, implementation: graph_mod.GlobalFunctionId, receiver: ?u32) !?facts.SafetySummary {
@@ -3488,8 +3482,8 @@ pub const Infer = struct {
         const receiver_paths = try self.inferInputPaths(function_id, virtualize.value);
         var generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
         try generations.appendSlice(result.input_generation_dependencies);
-        for (self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len]) |method| {
-            const receiver_index = self.concreteVirtualReceiverIndex(method, virtualize.concrete_type) orelse continue;
+        for (self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len], 0..) |method, index| {
+            const receiver_index = self.virtualizeReceiverIndex(virtualize, index);
             const summary = self.engine.summaryFor(method) orelse continue;
             for (summary.outputs) |output| {
                 const borrowed = try facts.receiverBorrowedPlaces(self.allocator, output, receiver_index);

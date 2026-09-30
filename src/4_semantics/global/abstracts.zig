@@ -322,12 +322,23 @@ pub const Resolver = struct {
 
         var methods: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
         defer methods.deinit(self.allocator);
+        var receiver_indices: std.ArrayList(u32) = .empty;
+        defer receiver_indices.deinit(self.allocator);
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
             const instance = try self.requirementInstance(abstract_decl, concrete, located, requirement, @intCast(method_index));
             const implementation = self.findConcreteMethod(self.modules[located.module_index].text(requirement.name), instance.input, instance.output) orelse return null;
             if (self.fallibleOutput(instance.output)) try self.core.ensureErrorTracerInput(implementation);
             try methods.append(self.allocator, implementation);
+            const erased = try self.requirementInstance(abstract_decl, abstract_ty, located, requirement, @intCast(method_index));
+            const fields = global_types.fields(self.graph, erased.input) orelse return error.InvalidAbstractRequirementInput;
+            for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
+                const ty = self.graph.semanticType(field.ty);
+                if (ty == .pointer and global_types.equal(self.graph, ty.pointer.child, abstract_ty)) {
+                    try receiver_indices.append(self.allocator, @intCast(index));
+                    break;
+                }
+            }
         }
         const method_start: u32 = @intCast(self.graph.function_refs.items.len);
         try self.graph.function_refs.appendSlice(self.allocator, methods.items);
@@ -336,6 +347,7 @@ pub const Resolver = struct {
             const registry: global_sg.GlobalVirtualRegistryId = @enumFromInt(@as(u32, @intCast(self.graph.virtual_registries.items.len)));
             try self.graph.virtual_registries.append(self.allocator, .{
                 .implementations = .{ .start = method_start + @as(u32, @intCast(index)), .len = 1 },
+                .receiver_input_index = receiver_indices.items[index],
             });
             try self.graph.virtual_registry_refs.append(self.allocator, registry);
         }
@@ -940,7 +952,7 @@ pub const Resolver = struct {
                 const completed = self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal;
                 const handle = self.graph.value_fields.items[completed.fields.start + index].value;
                 const registry: global_sg.GlobalVirtualRegistryId = @enumFromInt(@as(u32, @intCast(self.graph.virtual_registries.items.len)));
-                try self.graph.virtual_registries.append(self.allocator, .{ .implementations = .{ .start = @intCast(self.graph.function_refs.items.len), .len = 0 } });
+                try self.graph.virtual_registries.append(self.allocator, .{ .implementations = .{ .start = @intCast(self.graph.function_refs.items.len), .len = 0 }, .receiver_input_index = index });
                 const call_id: global_sg.GlobalVirtualCallId = @enumFromInt(@as(u32, @intCast(self.graph.virtual_calls.items.len)));
                 try self.graph.virtual_calls.append(self.allocator, .{
                     .handle = handle,
