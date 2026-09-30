@@ -117,6 +117,51 @@ the allocation or resetting its backing region invalidates the handle.
 `uninit_slot_address<T>(slot)` exposes an integer address without certifying
 initialized contents or granting a reference conversion.
 
+### Slot authority and occupancy
+
+Slot selection is repeatable: selecting the same index twice or copying a
+`MaybeUninit<T>` produces handles to the same bytes. These handles carry range
+and lifetime validity, not exclusive ownership or permission to initialize.
+Consuming one handle does not revoke the others. Making the handle move-only
+would therefore not, by itself, establish exclusive slot authority.
+
+The storage owner controls occupancy through private state. Ordinary operations
+request a transition from that owner; they cannot assert occupancy by supplying
+a slot address or a boolean. The owner validates the selected range and the
+current occupancy before invoking a trusted storage transition:
+
+| Operation | Required state | Resulting state |
+| --- | --- | --- |
+| Initialize from a moved `T` | Vacant | Occupied by exactly one live `T` |
+| Borrow a `T` | Occupied | Occupied; the reference depends on the owner and backing storage |
+| Extract a `T` | Occupied | Vacant; ownership moves to the returned value |
+| Destroy a `T` | Occupied | Vacant; the value's cleanup runs exactly once |
+
+Replacement must account for the old value before publishing a new one.
+Relocation requires a live source and a distinct vacant destination, transfers
+the value once, and leaves the source vacant. A failed initialization must not
+publish an occupied slot unless it leaves a valid live value there. Cleanup
+visits occupied slots only.
+
+Occupation can be represented by a collection invariant rather than a flag for
+each element. `DynamicArray<T>` uses its initialized prefix: append publishes
+the new length after moving in a value; pop removes an element from the prefix
+and moves it out. Other owners may use different private representations.
+Their trusted implementation must keep occupancy and stored values consistent.
+
+References to contents must cease to be usable when extraction, destruction,
+replacement, or relocation ends the referenced value's storage generation.
+The owner may conservatively invalidate all element references for a structural
+mutation. Copied storage handles do not override that invalidation or authorize
+a second extraction. Range validity alone never proves that a live `T` remains.
+
+> [!IMPLEMENTATION]
+> `DynamicArray<T>` implements owner-controlled transitions using private
+> length and trusted opaque operations. `allocation_slot<T>` only selects
+> storage; there is no general ordinary initialization or extraction API for
+> arbitrary allocation slots. Such an API must establish owner-controlled
+> occupancy and content-reference invalidation before exposing reads.
+
 Selecting bytes establishes no initialized `T`. `trusted_establish_allocation_slot`
 checks the byte range and alignment but does not prove occupancy or a valid
 representation. Its caller must prove initializedness before reading through

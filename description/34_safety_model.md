@@ -255,8 +255,9 @@ arbitrary address physically valid.
 > [!QUESTION]
 > How should external integrations import certified ranges without using the
 > integer-address trusted boundary? The acquisition-receipt protocol provides
-> the bundled heap and page path; arbitrary external function results and
-> physical ranges of ordinary references still need a propagation contract.
+> the bundled heap and page path. An external range needs a certified owner or
+> bounded region before ordinary element selection can use it; an ordinary
+> `&T` alone does not supply an adjacent range.
 
 ## Control flow and calls
 

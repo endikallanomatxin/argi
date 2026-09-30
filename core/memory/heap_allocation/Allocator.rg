@@ -133,8 +133,8 @@ trusted_establish_allocation(
 }
 
 -- Normal establishment requires an acquisition receipt. Its private bounds
--- survive copying and forwarding; the compiler consumes the address's shared
--- authorization through the same transfer contract as trusted establishment.
+-- remain authoritative while forwarding moves the receipt. Establishment
+-- consumes that receipt through the ordinary move rules.
 establish_allocation(
     .storage: AcquiredStorage,
     .size: UIntNative,
