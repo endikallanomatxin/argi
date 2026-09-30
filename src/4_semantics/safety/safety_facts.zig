@@ -49,6 +49,8 @@ pub const ValueEffect = struct {
     /// Preserves the use-site check for declared dependencies across calls.
     explicit_dependency: bool = false,
     input_dependencies: []const InputDependency = &.{},
+    /// Scalar/raw facts copied without borrowing the source lifetime.
+    input_storage_capabilities: []const InputPath = &.{},
     input_places: []const InputPath = &.{},
     /// Storage generations borrowed by a value, without making those places
     /// the value's referenced storage.
@@ -66,6 +68,7 @@ pub const ValueEffect = struct {
     integer_address: bool = false,
     foreign_storage: bool = false,
     fresh_storage_capabilities: []const FreshEffectSource = &.{},
+    unavailable_fresh_storage: []const FreshStorageCapabilityState = &.{},
 };
 
 /// Concrete method results can borrow a field generation of their receiver.
@@ -119,8 +122,28 @@ pub const OpaqueOwnershipConsumption = enum {
     ambiguous,
 };
 
+/// Capability use counts saturate at two: one consumption is valid, while
+/// two means some execution can consume an input capability repeatedly.
+pub const StorageCapabilityUse = struct {
+    target: InputPath,
+    minimum: u2 = 1,
+    maximum: u2 = 1,
+};
+
+pub const StorageCapabilityConflict = struct {
+    first: InputPath,
+    second: InputPath,
+};
+
+pub const FreshStorageCapabilityState = struct {
+    source: FreshEffectSource,
+    maybe_consumed: bool = false,
+};
+
 pub const SafetySummary = struct {
     outputs: []const ValueEffect = &.{},
+    storage_capability_uses: []const StorageCapabilityUse = &.{},
+    storage_capability_conflicts: []const StorageCapabilityConflict = &.{},
     required_live_inputs: []const InputPath = &.{},
     input_post_states: []const PlacePostState = &.{},
     /// Post-states retained separately for a choice-valued function result.

@@ -6715,3 +6715,81 @@ test "feature_tests/collections/75X_spatial_iterator_private_fields" {
 test "feature_tests/collections/76X_spatial_private_element_pointer" {
     try buildExpectFail("tests/feature_tests/collections/76X_spatial_private_element_pointer", "no function named '_trusted_dynamic_array_element_ro_pointer' exists");
 }
+
+test "feature_tests/ownership/301X_storage_capability_forwarded_twice" {
+    try buildExpectFail("tests/feature_tests/ownership/301X_storage_capability_forwarded_twice", "already been consumed");
+}
+
+test "feature_tests/ownership/302X_storage_capability_alias_inputs" {
+    try buildExpectFail("tests/feature_tests/ownership/302X_storage_capability_alias_inputs", "more than once");
+}
+
+test "feature_tests/ownership/303X_storage_capability_conditional_use" {
+    try buildExpectFail("tests/feature_tests/ownership/303X_storage_capability_conditional_use", "already been consumed");
+}
+
+test "feature_tests/ownership/304X_storage_capability_loop_reuse" {
+    try buildExpectFail("tests/feature_tests/ownership/304X_storage_capability_loop_reuse", "more than once");
+}
+
+test "feature_tests/ownership/305X_storage_capability_recursive_reuse" {
+    try buildExpectFail("tests/feature_tests/ownership/305X_storage_capability_recursive_reuse", "more than once");
+}
+
+test "feature_tests/ownership/306X_storage_capability_consumed_acquisition" {
+    try buildExpectFail("tests/feature_tests/ownership/306X_storage_capability_consumed_acquisition", "already been consumed");
+}
+
+test "feature_tests/ownership/307X_storage_capability_forwarded_allocation" {
+    try buildExpectFail("tests/feature_tests/ownership/307X_storage_capability_forwarded_allocation", "already been consumed");
+}
+
+test "feature_tests/ownership/309X_storage_capability_shared_outputs" {
+    try buildExpectFail("tests/feature_tests/ownership/309X_storage_capability_shared_outputs", "already been consumed");
+}
+
+test "feature_tests/ownership/310X_storage_capability_reference_input" {
+    try buildExpectFail("tests/feature_tests/ownership/310X_storage_capability_reference_input", "already been consumed");
+}
+
+test "feature_tests/ownership/311X_storage_capability_internal_alias" {
+    try buildExpectFail("tests/feature_tests/ownership/311X_storage_capability_internal_alias", "more than once");
+}
+
+test "feature_tests/ownership/308_storage_capability_forwarding" {
+    const test_path = "tests/feature_tests/ownership/308_storage_capability_forwarding";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/312X_storage_capability_nested_reference" {
+    try buildExpectFail("tests/feature_tests/ownership/312X_storage_capability_nested_reference", "already been consumed");
+}
+
+test "feature_tests/ownership/313X_storage_capability_post_state_alias" {
+    try buildExpectFail("tests/feature_tests/ownership/313X_storage_capability_post_state_alias", "already been consumed");
+}
+
+test "feature_tests/ownership/314X_storage_capability_consumed_choice" {
+    try buildExpectFail("tests/feature_tests/ownership/314X_storage_capability_consumed_choice", "already been consumed");
+}
+
+test "feature_tests/ownership/315X_storage_capability_local_pointer_write" {
+    try buildExpectFail("tests/feature_tests/ownership/315X_storage_capability_local_pointer_write", "already been consumed");
+}
+
+test "feature_tests/ownership/316X_storage_capability_mutual_forwarding" {
+    try buildExpectFail("tests/feature_tests/ownership/316X_storage_capability_mutual_forwarding", "already been consumed");
+}
+
+test "feature_tests/ownership/317X_storage_capability_forwarded_shared_outputs" {
+    try buildExpectFail("tests/feature_tests/ownership/317X_storage_capability_forwarded_shared_outputs", "already been consumed");
+}
+
+test "feature_tests/ownership/318X_storage_capability_loop_condition" {
+    try buildExpectFail("tests/feature_tests/ownership/318X_storage_capability_loop_condition", "more than once");
+}
+
+test "feature_tests/ownership/319X_storage_capability_consumed_post_state" {
+    try buildExpectFail("tests/feature_tests/ownership/319X_storage_capability_consumed_post_state", "already been consumed");
+}

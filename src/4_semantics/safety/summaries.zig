@@ -108,6 +108,12 @@ pub const Engine = struct {
 };
 
 pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
+    if (a.storage_capability_conflicts.len != b.storage_capability_conflicts.len) return false;
+    for (a.storage_capability_conflicts, b.storage_capability_conflicts) |left, right|
+        if (!inputPathEql(left.first, right.first) or !inputPathEql(left.second, right.second)) return false;
+    if (a.storage_capability_uses.len != b.storage_capability_uses.len) return false;
+    for (a.storage_capability_uses, b.storage_capability_uses) |left, right|
+        if (!inputPathEql(left.target, right.target) or left.minimum != right.minimum or left.maximum != right.maximum) return false;
     if (a.outputs.len != b.outputs.len or
         a.required_live_inputs.len != b.required_live_inputs.len or
         a.input_post_states.len != b.input_post_states.len or
@@ -167,7 +173,12 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     }
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_dependencies, b.fresh_dependencies)) return false;
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_owned_roots, b.fresh_owned_roots)) return false;
+    if (a.input_storage_capabilities.len != b.input_storage_capabilities.len) return false;
+    for (a.input_storage_capabilities, b.input_storage_capabilities) |left, right| if (!inputPathEql(left, right)) return false;
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_storage_capabilities, b.fresh_storage_capabilities)) return false;
+    if (a.unavailable_fresh_storage.len != b.unavailable_fresh_storage.len) return false;
+    for (a.unavailable_fresh_storage, b.unavailable_fresh_storage) |left, right|
+        if (left.source != right.source or left.maybe_consumed != right.maybe_consumed) return false;
     return true;
 }
 

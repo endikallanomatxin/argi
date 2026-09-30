@@ -161,9 +161,10 @@ test "primitive signature comparison preserves operand order and modes" {
 
 /// Primitive semantics shared by concrete checking and symbolic summary
 /// inference. Each pass interprets these operations in its own state model;
-/// adding a primitive requires deciding all three effects in one place.
+/// adding a primitive requires deciding its effects in one place.
 pub const Transfer = struct {
     value: Value,
+    consumes_storage_input: ?u32 = null,
     input: Input = .none,
     opaque_state: Opaque = .none,
 
@@ -194,8 +195,8 @@ pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
         .none => .{ .value = .empty },
         .raw_allocated_storage => .{ .value = .raw_storage },
         .establish_inherited_reference => .{ .value = .inherited_reference },
-        .establish_inherited_storage => .{ .value = .inherited_storage },
-        .establish_allocation => .{ .value = .allocation },
+        .establish_inherited_storage => .{ .value = .inherited_storage, .consumes_storage_input = 0 },
+        .establish_allocation => .{ .value = .allocation, .consumes_storage_input = 0 },
         .establish_allocation_slot => .{ .value = .allocation_slot },
         .reference_offset, .mutable_reference_offset, .reinterpret_reference, .mutable_reinterpret_reference, .read_reference => .{ .value = .reference_copy },
         .restrict_reference => .{ .value = .restrict_reference },

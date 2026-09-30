@@ -155,6 +155,9 @@ pub const SafetyChecker = struct {
     graph: *graph_mod.GlobalSemanticGraph,
     call_stack: std.array_list.Managed(graph_mod.GlobalFunctionId),
     active_summaries: ?*summary_engine.Engine = null,
+    // Outputs and input post-states of one call share acquisition identities.
+    // Nested calls install their own map so repeated acquisitions stay distinct.
+    active_fresh_capabilities: ?*std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId) = null,
     active_summary_inference: ?*summary_infer.Infer = null,
     collect_stats: bool = false,
     profile_io: ?std.Io = null,
@@ -506,7 +509,7 @@ pub const SafetyChecker = struct {
                     payload = variant.value.*;
                     break;
                 };
-                try self.activateConditionalOwnedRoots(&branch, payload);
+                try self.activate_conditional_resources(&branch, payload);
                 try self.beginLexicalStorage(&branch, .{ .root = binding });
                 try self.setPlace(&branch, .{ .root = binding }, .initialized, switch (case.payload_mode) {
                     .value, .move => payload,
@@ -781,6 +784,11 @@ pub const SafetyChecker = struct {
             arguments[index + 1] = try self.evaluate(caller, self.graph.value_fields.items[@intFromEnum(field_id)].value, state);
         const engine = self.active_summaries orelse return .{};
         const summary = engine.summaryFor(initializer.init_fn) orelse return .{};
+        var call_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
+        defer call_capabilities.deinit();
+        const previous_capabilities = self.active_fresh_capabilities;
+        self.active_fresh_capabilities = &call_capabilities;
+        defer self.active_fresh_capabilities = previous_capabilities;
         if (!try self.validateSummaryRequiredLive(source, summary, arguments, state)) return .{};
         if (destination) |place| {
             // The constructor's hidden destination is the final binding,
@@ -901,6 +909,11 @@ pub const SafetyChecker = struct {
     ) !?facts.ValueFacts {
         const engine = self.active_summaries orelse return null;
         const summary = engine.summaryFor(callee) orelse return null;
+        var call_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
+        defer call_capabilities.deinit();
+        const previous_capabilities = self.active_fresh_capabilities;
+        self.active_fresh_capabilities = &call_capabilities;
+        defer self.active_fresh_capabilities = previous_capabilities;
         if (!try self.validateSummaryRequiredLive(source, summary, values, state)) return facts.ValueFacts{};
         if (call_node) |node| self.recordFunctionCallAutoDeinit(node, summary, argument_nodes);
         const initializer_result = if (@intFromEnum(callee) < self.graph.functions.items.len)
@@ -1006,6 +1019,9 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         source: primitives.SourceRef,
     ) !facts.ValueFacts {
+        if (primitive_transfer.forPrimitive(primitive).consumes_storage_input) |index| {
+            if (index < values.len) try self.consume_storage_capabilities(source, values[index], 1, 1, state);
+        }
         return switch (primitive_transfer.forPrimitive(primitive).value) {
             .empty => .{},
             .raw_storage => blk: {
@@ -1015,15 +1031,6 @@ pub const SafetyChecker = struct {
             },
             .inherited_reference, .inherited_storage => blk: {
                 if (values.len < 2) break :blk .{};
-                if (primitive == .establish_inherited_storage) {
-                    for (values[0].storage_capabilities) |capability| {
-                        const raw = @intFromEnum(capability);
-                        if (raw >= state.storage_capabilities.items.len or state.storage_capabilities.items[raw] != .available)
-                            try self.report(source, "physical storage capability has already been consumed", .{})
-                        else
-                            state.storage_capabilities.items[raw] = .consumed;
-                    }
-                }
                 // The raw address identifies storage, while the root argument
                 // supplies its lifetime. It does not establish a new root.
                 break :blk .{
@@ -1034,15 +1041,6 @@ pub const SafetyChecker = struct {
             .allocation => blk: {
                 const root = try state.tracker.establish(.fresh);
                 state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
-                if (values.len != 0) {
-                    for (values[0].storage_capabilities) |capability| {
-                        const raw = @intFromEnum(capability);
-                        if (raw >= state.storage_capabilities.items.len or state.storage_capabilities.items[raw] != .available)
-                            try self.report(source, "physical storage capability has already been consumed", .{})
-                        else
-                            state.storage_capabilities.items[raw] = .consumed;
-                    }
-                }
                 const shape = primitive_transfer.AllocationTransfer;
                 const fields = try self.allocator.alloc(facts.FieldFacts, shape.field_count);
                 for (fields, 0..) |*field, index| {
@@ -1094,6 +1092,71 @@ pub const SafetyChecker = struct {
             // communicated explicitly by mark_empty and by summaries.
             .opaque_drop => .{},
         };
+    }
+
+    fn require_available_storage_capabilities(self: *SafetyChecker, source: primitives.SourceRef, value: facts.ValueFacts, maximum: u2, state: *FunctionState) !void {
+        for (value.storage_capabilities) |capability| {
+            const raw = @intFromEnum(capability);
+            if (raw >= state.storage_capabilities.items.len or state.storage_capabilities.items[raw] != .available) {
+                try self.report(source, "physical storage capability has already been consumed", .{});
+            } else if (maximum > 1) {
+                try self.report(source, "function may consume the same physical storage capability more than once", .{});
+            }
+        }
+    }
+
+    fn record_storage_consumption(self: *SafetyChecker, value: facts.ValueFacts, minimum: u2, maximum: u2, state: *FunctionState) void {
+        _ = self;
+        if (maximum == 0) return;
+        for (value.storage_capabilities) |capability| {
+            const entry = &state.storage_capabilities.items[@intFromEnum(capability)];
+            if (entry.* != .consumed) entry.* = if (minimum == 0) .maybe_consumed else .consumed;
+        }
+    }
+
+    fn consume_storage_capabilities(self: *SafetyChecker, source: primitives.SourceRef, value: facts.ValueFacts, minimum: u2, maximum: u2, state: *FunctionState) !void {
+        if (value.storage_capabilities.len == 0) return;
+        const before = self.diagnostics.list.items.len;
+        try self.require_available_storage_capabilities(source, value, maximum, state);
+        if (before == self.diagnostics.list.items.len) self.record_storage_consumption(value, minimum, maximum, state);
+    }
+
+    fn summary_capability_value(self: *SafetyChecker, path: facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
+        if (path.input_index >= arguments.len) return .{};
+        var value = arguments[path.input_index];
+        var storage: ?facts.Place = null;
+        if (path.projections.len == 0 or path.projections[0] != .dereference) {
+            // A Virtual value retains its concrete receiver Place. Loading
+            // through the wrapper must reach that receiver's scalar facts.
+            var visited = std.array_list.Managed(facts.Place).init(self.allocator);
+            defer visited.deinit();
+            while (value.referenced_place) |place| {
+                var seen = false;
+                for (visited.items) |previous| if (previous.eql(place)) {
+                    seen = true;
+                    break;
+                };
+                if (seen) break;
+                try visited.append(place);
+                storage = place;
+                value = self.valueAtPlace(state, place) orelse break;
+            }
+        }
+        for (path.projections) |projection| {
+            if (projection == .dereference) {
+                if (value.referenced_place) |place| {
+                    storage = place;
+                    value = self.valueAtPlace(state, place) orelse .{};
+                }
+            } else {
+                const fallback = try self.projectValueFacts(value, &.{projection});
+                if (storage) |place| {
+                    storage = try self.project(place, projection);
+                    value = self.valueAtPlace(state, storage.?) orelse fallback;
+                } else value = fallback;
+            }
+        }
+        return value;
     }
 
     fn dependencyPrimitive(
@@ -1385,6 +1448,24 @@ pub const SafetyChecker = struct {
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
     ) !void {
+        const capability_diagnostics = self.diagnostics.list.items.len;
+        for (summary.storage_capability_uses) |use| {
+            try self.require_available_storage_capabilities(source, try self.summary_capability_value(use.target, arguments, state), use.maximum, state);
+        }
+        for (summary.storage_capability_conflicts) |pair| {
+            const first = try self.summary_capability_value(pair.first, arguments, state);
+            const second = try self.summary_capability_value(pair.second, arguments, state);
+            for (first.storage_capabilities) |capability| if (std.mem.indexOfScalar(facts.StorageCapabilityId, second.storage_capabilities, capability) != null) {
+                try self.report(source, "function may consume the same physical storage capability more than once", .{});
+                break;
+            };
+        }
+        if (capability_diagnostics != self.diagnostics.list.items.len) return;
+        for (summary.storage_capability_uses) |use| {
+            const value = try self.summary_capability_value(use.target, arguments, state);
+            self.record_storage_consumption(value, use.minimum, use.maximum, state);
+        }
+
         try self.applySummaryOpaqueStorageEmpties(summary, argument_ids, arguments, state);
         try self.applySummaryInputPostStates(source, summary, argument_ids, arguments, state);
         try self.applySummaryOpaqueStorageEmpties(summary, argument_ids, arguments, state);
@@ -1417,7 +1498,7 @@ pub const SafetyChecker = struct {
                 arguments,
                 state,
                 &fresh_roots,
-                &fresh_capabilities,
+                self.active_fresh_capabilities orelse &fresh_capabilities,
             );
         }
 
@@ -1664,11 +1745,15 @@ pub const SafetyChecker = struct {
     ) !facts.ValueFacts {
         if (outputs.len == 0) return .{};
         if (outputs.len == 1) return self.instantiateOutput(outputs[0], arguments, state);
+        var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator);
+        defer fresh_roots.deinit();
+        var fresh_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
+        defer fresh_capabilities.deinit();
         const fields = try self.allocator.alloc(facts.FieldFacts, outputs.len);
         var aggregate: facts.ValueFacts = .{};
         for (outputs, 0..) |effect, index| {
             const value = try self.allocator.create(facts.ValueFacts);
-            value.* = try self.instantiateOutput(effect, arguments, state);
+            value.* = try self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, self.active_fresh_capabilities orelse &fresh_capabilities);
             fields[index] = .{ .index = @intCast(index), .value = value };
             aggregate = try self.mergeValueFacts(aggregate, value.*);
         }
@@ -1686,7 +1771,7 @@ pub const SafetyChecker = struct {
         defer fresh_roots.deinit();
         var fresh_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
         defer fresh_capabilities.deinit();
-        return self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, &fresh_capabilities);
+        return self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, self.active_fresh_capabilities orelse &fresh_capabilities);
     }
 
     fn instantiateOutputWithFresh(
@@ -1731,10 +1816,19 @@ pub const SafetyChecker = struct {
         }
         result.owned_roots = try owned.toOwnedSlice();
 
+        for (effect.input_storage_capabilities) |path| {
+            const input = (try self.summary_capability_value(path, arguments, state)).scalarOpaqueRead();
+            result = try self.mergeValueFacts(result, input);
+        }
         var capabilities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator);
+        for (result.storage_capabilities) |capability| try appendCapabilityFact(&capabilities, capability);
         for (effect.fresh_storage_capabilities) |fresh|
             try appendCapabilityFact(&capabilities, try self.instantiateFreshCapability(fresh, state, fresh_capabilities));
         result.storage_capabilities = try capabilities.toOwnedSlice();
+        for (effect.unavailable_fresh_storage) |entry| {
+            const capability = try self.instantiateFreshCapability(entry.source, state, fresh_capabilities);
+            state.storage_capabilities.items[@intFromEnum(capability)] = if (entry.maybe_consumed) .maybe_consumed else .consumed;
+        }
 
         var referenced_place: ?facts.Place = null;
         var has_referent = false;
@@ -1769,7 +1863,7 @@ pub const SafetyChecker = struct {
             if (dependency.path.input_index >= arguments.len) continue;
             var input = try self.projectValueFacts(arguments[dependency.path.input_index], dependency.path.projections);
             if (dependency.transfers_ownership and dependency.path.projections.len != 0)
-                try self.activateConditionalOwnedRoots(state, input);
+                try self.activate_conditional_resources(state, input);
             if (!dependency.transfers_ownership) input.owned_roots = &.{};
             if (!dependency.validity_only) if (input.referenced_place) |place| {
                 // A copied pointer retains its referent. Validity-only anchors
@@ -1839,12 +1933,14 @@ pub const SafetyChecker = struct {
                     };
                     if (!input_storage) root.state = .conditional;
                 }
-                for (state.storage_capabilities.items[first_capability..]) |*capability| capability.* = .conditional;
+                for (state.storage_capabilities.items[first_capability..]) |*capability| if (capability.* == .available) {
+                    capability.* = .conditional;
+                };
                 variants[index] = .{ .index = variant.index, .value = value };
             }
             result.variants = variants;
         }
-        result.integer_address = effect.integer_address;
+        result.integer_address = result.integer_address or effect.integer_address;
         result.foreign_storage = result.foreign_storage or effect.foreign_storage;
         result.known_choice_variant = effect.known_choice_variant;
         if (referenced_place) |target| result.referenced_place = target;
@@ -2818,7 +2914,7 @@ pub const SafetyChecker = struct {
             return .{};
         }
         for (choice.variants) |variant| if (variant.index == wanted) {
-            try self.activateConditionalOwnedRoots(state, variant.value.*);
+            try self.activate_conditional_resources(state, variant.value.*);
             return variant.value.*;
         };
         return .{};
@@ -2926,6 +3022,11 @@ pub const SafetyChecker = struct {
             };
         }
         if (!try self.validateSummaryRequiredLive(source, summary, values, state)) return facts.ValueFacts{};
+        var call_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
+        defer call_capabilities.deinit();
+        const previous_capabilities = self.active_fresh_capabilities;
+        self.active_fresh_capabilities = &call_capabilities;
+        defer self.active_fresh_capabilities = previous_capabilities;
         try self.applySummaryEffects(source, summary, argument_nodes, values, state);
         return try self.instantiateSummaryOutputs(summary.outputs, values, state);
     }
@@ -3988,7 +4089,7 @@ pub const SafetyChecker = struct {
                 try self.resolvePendingInitialization(state, pending, index);
             if (self.valueAtPlace(state, target)) |value|
                 for (value.variants) |payload| if (payload.index == index) {
-                    try self.activateConditionalOwnedRoots(state, payload.value.*);
+                    try self.activate_conditional_resources(state, payload.value.*);
                     break;
                 };
             self.clearRejectedVariant(state, target, index);
@@ -4017,7 +4118,7 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn activateConditionalOwnedRoots(self: *SafetyChecker, state: *FunctionState, value: facts.ValueFacts) !void {
+    fn activate_conditional_resources(self: *SafetyChecker, state: *FunctionState, value: facts.ValueFacts) !void {
         var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
         defer roots.deinit();
         try collectOwnedRoots(value, &roots);
@@ -4025,6 +4126,18 @@ pub const SafetyChecker = struct {
             const entry = &state.tracker.roots.items[@intFromEnum(root)];
             if (entry.state == .conditional) entry.state = .alive;
         }
+        try self.activate_conditional_capabilities(state, value);
+    }
+
+    fn activate_conditional_capabilities(self: *SafetyChecker, state: *FunctionState, value: facts.ValueFacts) !void {
+        for (value.storage_capabilities) |capability| {
+            const entry = &state.storage_capabilities.items[@intFromEnum(capability)];
+            if (entry.* == .conditional) entry.* = .available;
+        }
+        for (value.fields) |field| try self.activate_conditional_capabilities(state, field.value.*);
+        if (value.known_choice_variant) |active| for (value.variants) |variant| {
+            if (variant.index == active) try self.activate_conditional_capabilities(state, variant.value.*);
+        };
     }
 
     fn choiceTestFromCondition(self: *SafetyChecker, node_id: graph_mod.GlobalNodeId) ?primitives.ChoiceTagTest(graph_mod.Ids) {
@@ -5102,10 +5215,10 @@ test "payload transfer removes residual ownership without reviving ended roots" 
     try std.testing.expect(!valueContainsOwnedRoot(residual, root));
     try std.testing.expect(!valueDependsOnRoot(residual, root));
     try std.testing.expect(valueContainsOwnedRoot(payload, root));
-    try checker.activateConditionalOwnedRoots(&state, payload);
+    try checker.activate_conditional_resources(&state, payload);
     try std.testing.expect(state.tracker.isAlive(root));
     state.tracker.end(root);
-    try checker.activateConditionalOwnedRoots(&state, payload);
+    try checker.activate_conditional_resources(&state, payload);
     try std.testing.expect(!state.tracker.isAlive(root));
 }
 
@@ -5401,5 +5514,62 @@ test "dependency primitives preserve the value referent and borrow only anchor v
         try std.testing.expectEqual(direct.dependencies.len, symbolic.dependencies.len);
         try std.testing.expect(valueDependsOnRoot(symbolic, value_root));
         try std.testing.expect(valueDependsOnRoot(symbolic, anchor_root));
+    }
+}
+
+test "storage capability consumption agrees between primitives and summaries" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(allocator, &diags, undefined);
+    defer checker.deinit();
+    inline for (.{ primitives.SafetyPrimitive.establish_inherited_storage, primitives.SafetyPrimitive.establish_allocation }) |primitive| {
+        var direct = SafetyChecker.FunctionState.init(allocator);
+        defer direct.deinit();
+        try direct.storage_capabilities.append(.available);
+        const root = try direct.tracker.establish(.fresh);
+        var symbolic = try direct.clone(allocator, null);
+        defer symbolic.deinit();
+        const anchor = facts.ValueFacts{ .dependencies = &.{.{ .root = root }} };
+        const address = facts.ValueFacts{ .storage_capabilities = &.{@enumFromInt(0)} };
+        const arguments: []const facts.ValueFacts = if (primitive == .establish_inherited_storage)
+            &.{ address, anchor }
+        else
+            &.{ address, .{}, .{}, .{}, anchor };
+        _ = try checker.evaluatePrimitive(@enumFromInt(0), primitive, &.{}, arguments, &direct, .{ .file_index = 0, .offset = 0 });
+        const index = primitive_transfer.forPrimitive(primitive).consumes_storage_input.?;
+        try checker.applySummaryEffects(.{ .file_index = 0, .offset = 0 }, .{
+            .storage_capability_uses = &.{.{ .target = .{ .input_index = index } }},
+        }, &.{}, arguments, &symbolic);
+        try std.testing.expectEqualSlices(SafetyChecker.StorageCapabilityState, direct.storage_capabilities.items, symbolic.storage_capabilities.items);
+        try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.consumed, symbolic.storage_capabilities.items[0]);
+        symbolic.storage_capabilities.items[0] = .available;
+        try checker.applySummaryEffects(.{ .file_index = 0, .offset = 0 }, .{
+            .storage_capability_uses = &.{.{ .target = .{ .input_index = index }, .minimum = 0 }},
+        }, &.{}, arguments, &symbolic);
+        try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.maybe_consumed, symbolic.storage_capabilities.items[0]);
+    }
+    try std.testing.expectEqual(@as(usize, 0), diags.list.items.len);
+}
+
+test "activating choice payloads never revives consumed storage capabilities" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    inline for (.{ false, true }) |consumed| {
+        var state = SafetyChecker.FunctionState.init(allocator);
+        defer state.deinit();
+        const payload = facts.ValueEffect{
+            .fresh_storage_capabilities = &.{15},
+            .unavailable_fresh_storage = if (consumed) &.{.{ .source = 15 }} else &.{},
+        };
+        const choice = try checker.instantiateOutput(.{ .variants = &.{.{ .index = 0, .value = &payload }} }, &.{}, &state);
+        try checker.activate_conditional_resources(&state, choice.variants[0].value.*);
+        const expected: SafetyChecker.StorageCapabilityState = if (consumed) .consumed else .available;
+        try std.testing.expectEqual(expected, state.storage_capabilities.items[0]);
     }
 }

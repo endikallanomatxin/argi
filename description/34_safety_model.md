@@ -187,6 +187,19 @@ its address does not create a second authorization. Both native page mapping
 and C heap allocation are acquisition boundaries. Acquisition failure is not
 a region that may be established.
 
+Authorization follows address aliases across calls. A function that may consume
+a known capability requires it to be available on entry; conditional consumption
+makes it unavailable for a later establishment unless non-consumption is proved.
+Returning an address, copying it into several outputs, or publishing it through
+an input reference does not create a new authorization or revive a consumed one.
+Aliases of one acquisition share its state. Separate successful acquisitions
+create separate authorizations, including acquisitions performed by repeated
+calls to the same function.
+
+Uses on mutually exclusive branches are alternatives, even when the caller
+supplies aliases for their inputs. Loops and recursive forwarding must not allow
+one authorization to be consumed repeatedly.
+
 An `ArrayView<T>` length must describe initialized elements inside its
 physical region. Checking an index against length is necessary but cannot
 validate a forged region. A zero-length region contains no readable element,
@@ -212,12 +225,6 @@ arbitrary address physically valid.
 > target type's alignment and containment in the receipt's declared size;
 > those checks cannot validate a forged receipt. They do not provide a general
 > spatial-safety guarantee.
-
-> [!IMPLEMENTATION]
-> Storage-capability consumption is not yet preserved across all inferred
-> call summaries. A direct repeated consumption is rejected, but forwarding
-> the same address through a wrapper can lose that transition. The consumable
-> authorization rule above applies across calls as well as inside a function.
 
 > [!QUESTION]
 > The representation of physical provenance and its propagation through external
