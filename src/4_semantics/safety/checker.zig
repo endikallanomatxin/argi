@@ -47,7 +47,11 @@ pub const SafetyChecker = struct {
 
     const StorageCapabilityState = enum { available, conditional, maybe_consumed, consumed };
     const OwnershipEdge = struct { owner: facts.ValidityRootId, owned: facts.ValidityRootId };
-    const StorageGeneration = struct { storage: facts.Place, generation: facts.ValidityRootId };
+    const StorageGeneration = struct {
+        storage: facts.Place,
+        generation: facts.ValidityRootId,
+        needs_current_generation: bool = false,
+    };
     const OpaqueStorage = struct { storage: facts.Place, hidden_dependencies: []const facts.ValidityRootId };
     const ChoiceActive = struct { storage: facts.Place, variant_index: u32 };
     const ChoiceRejected = struct { storage: facts.Place, variant_index: u32 };
@@ -2146,6 +2150,7 @@ pub const SafetyChecker = struct {
             state.tracker.end(entry.generation);
             if (entry.storage.eql(storage)) {
                 state.storage_generations.items[index].generation = try state.tracker.establish(.fresh);
+                state.storage_generations.items[index].needs_current_generation = false;
                 replaced = true;
                 index += 1;
             } else {
@@ -3178,8 +3183,17 @@ pub const SafetyChecker = struct {
     }
 
     fn storageGeneration(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) !facts.ValidityRootId {
-        _ = self;
-        for (state.storage_generations.items) |entry| if (entry.storage.eql(storage)) return entry.generation;
+        for (state.storage_generations.items) |*entry| if (entry.storage.eql(storage)) {
+            // Both paths may leave an initialized Place with different
+            // incarnations. A new borrow observes the current storage, while
+            // historical aliases keep their original, conservatively joined
+            // roots. Materialize only on demand to avoid growing loop states.
+            if (entry.needs_current_generation and self.initializednessAtPlace(state, storage) == .initialized) {
+                entry.generation = try state.tracker.establish(.fresh);
+                entry.needs_current_generation = false;
+            }
+            return entry.generation;
+        };
         const root = try state.tracker.establish(.fresh);
         try state.storage_generations.append(.{ .storage = storage, .generation = root });
         return root;
@@ -3462,8 +3476,12 @@ pub const SafetyChecker = struct {
         try joined.storage_generations.appendSlice(left.storage_generations.items);
         for (right.storage_generations.items) |candidate| {
             var found = false;
-            for (joined.storage_generations.items) |existing| {
+            for (joined.storage_generations.items) |*existing| {
                 if (existing.storage.eql(candidate.storage)) {
+                    existing.needs_current_generation = existing.needs_current_generation or candidate.needs_current_generation or
+                        (existing.generation != candidate.generation and
+                            self.initializednessAtPlace(@constCast(left), candidate.storage) == .initialized and
+                            self.initializednessAtPlace(@constCast(right), candidate.storage) == .initialized);
                     found = true;
                     break;
                 }
@@ -4409,7 +4427,9 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
     }
     for (left.storage_generations.items) |entry| {
         var found = false;
-        for (right.storage_generations.items) |other| if (entry.storage.eql(other.storage) and entry.generation == other.generation) {
+        for (right.storage_generations.items) |other| if (entry.storage.eql(other.storage) and entry.generation == other.generation and
+            entry.needs_current_generation == other.needs_current_generation)
+        {
             found = true;
             break;
         };
@@ -5312,4 +5332,33 @@ test "allocation primitive agrees with instantiated symbolic transfer" {
     try std.testing.expect(valueDependsOnRoot(direct, anchor_root));
     const deallocator = try checker.projectValueFacts(direct, &.{.{ .field = 4 }});
     try std.testing.expect(valueDependsOnRoot(deallocator, deallocator_root));
+}
+
+test "new borrows after joined reinitialization do not revive old generations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var left = SafetyChecker.FunctionState.init(allocator);
+    defer left.deinit();
+    const storage = facts.Place{ .root = @enumFromInt(0) };
+    try checker.setPlace(&left, storage, .initialized, .{});
+    const historical = try checker.storageGeneration(&left, storage);
+    var right = try left.clone(allocator, null);
+    defer right.deinit();
+    try checker.refreshStorageGeneration(&right, storage);
+    var joined = SafetyChecker.FunctionState.init(allocator);
+    defer joined.deinit();
+    try checker.joinState(&joined, &left, &right);
+    try std.testing.expect(!joined.tracker.isAlive(historical));
+    const current = try checker.storageGeneration(&joined, storage);
+    try std.testing.expect(current != historical);
+    try std.testing.expect(joined.tracker.isAlive(current));
+    try std.testing.expect(!joined.tracker.isAlive(historical));
+    try std.testing.expectEqual(current, try checker.storageGeneration(&joined, storage));
+    try checker.setPlace(&joined, storage, .deinitialized, .{});
+    joined.tracker.end(current);
+    try std.testing.expectEqual(current, try checker.storageGeneration(&joined, storage));
+    try std.testing.expect(!joined.tracker.isAlive(current));
 }
