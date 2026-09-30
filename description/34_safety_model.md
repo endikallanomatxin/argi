@@ -213,6 +213,12 @@ arbitrary address physically valid.
 > those checks cannot validate a forged receipt. They do not provide a general
 > spatial-safety guarantee.
 
+> [!IMPLEMENTATION]
+> Storage-capability consumption is not yet preserved across all inferred
+> call summaries. A direct repeated consumption is rejected, but forwarding
+> the same address through a wrapper can lose that transition. The consumable
+> authorization rule above applies across calls as well as inside a function.
+
 > [!QUESTION]
 > The representation of physical provenance, its propagation through external
 > calls, and the supported representation of empty views remain open. Runtime
