@@ -219,3 +219,78 @@ when `T` is implicitly copyable. Views are non-owning and do not resize.
 The returned index does not borrow storage, but a subsequent structural change
 can make it stale. Search for owning elements needs a separate borrowed equality
 contract; these helpers do not copy ownership or introduce predicate callbacks.
+
+## Reversing collections
+
+`reverse(.self)` accepts a mutable `IndexableMutable<T>` with implicitly
+copyable elements. It reverses logical element order in place, using linear
+time, constant auxiliary space, and no allocation. Empty and singleton
+collections are unchanged. Native arrays participate through mutable views;
+a subrange view reverses only that range.
+
+The algorithm exchanges values through indexed mutable references. It neither
+resizes storage nor calls structural collection operations. Existing element
+references and views retain their storage lifetimes and still designate the
+same positions, whose values can change. The collection must keep its length
+and provide valid indexed references throughout the operation. Distinct
+logical positions must be independently replaceable: writing through an
+indexed reference replaces only that position, rather than changing other
+logical elements through overlapping storage.
+
+Owning elements need a separate exchange contract; copying their values to
+implement reversal would duplicate ownership.
+
+## Ordering policies
+
+`OrderPolicy<T>` provides `less(.self, .left, .right) -> Bool` for implicitly
+copyable elements. It defines a strict weak order: no value is less than
+itself, less-than is transitive, and equivalence is transitive. Two elements
+are equivalent when neither is less than the other; this need not coincide
+with their `==` operator or complete record equality.
+
+Algorithms borrow a policy instance explicitly as `.order`. Its answers must
+remain consistent throughout an operation, and it must not mutate the
+collection or the backing data used for comparison. Applications can supply
+descending orders and comparisons by selected record fields.
+
+Core supplies `Int32OrderPolicy`, `UIntNativeOrderPolicy`, and
+`StringViewOrderPolicy`. String views use lexicographic unsigned-byte order,
+including embedded NUL bytes; a shorter equal prefix precedes a longer one.
+Comparison reads borrowed bytes and does not acquire ownership. This order
+performs no locale, Unicode normalization, or case folding. Float ordering
+requires an explicit policy that accounts for NaNs; there is no implicit
+floating-point ordering policy.
+
+## Binary search
+
+`binary_search(.self, .value, .order)` reads an `Indexable<T>` of implicitly
+copyable elements that is already sorted by the supplied policy. It returns
+the first policy-equivalent element's index as `?UIntNative`, or `none`.
+Equivalence means that neither element is less than the other. Empty
+collections return `none` without accessing an element.
+
+Search uses logarithmically many indexed reads and comparisons, constant
+auxiliary space, and no allocation or mutation. The collection's indexed
+access cost determines total runtime. The sorted precondition is not checked
+by a linear scan; results are unspecified when it is violated. The returned
+index has no storage lifetime and can become stale after mutation.
+
+## Sorting collections
+
+`sort(.self, .order)` accepts a mutable `IndexableMutable<T>` of implicitly
+copyable elements. It orders values in place according to the explicit policy,
+using iterative heapsort. Worst-case indexed operations and comparisons are
+O(n log n), auxiliary space is constant, and the algorithm does not allocate
+or recurse. Indexed access and policy comparison costs determine total runtime.
+Empty and singleton collections require no element exchange.
+
+Sorting preserves every element and the collection's length. It is not stable:
+policy-equivalent elements can change relative order. The collection and policy
+must satisfy the same indexed-access and comparison contracts throughout the
+operation; the algorithm does not validate a policy's ordering laws.
+
+Like `reverse`, sorting exchanges copied values through mutable references and
+does not replace or resize backing storage. Existing references and views
+remain live and designate their original positions, whose values can change.
+A native array or a subrange participates through its mutable view. Read-only
+views cannot be sorted. Owning elements require a separate exchange contract.

@@ -7351,3 +7351,53 @@ test "feature_tests/collections/106_hash_set_growth_failure" {
 test "feature_tests/collections/107X_hash_set_key_after_cleanup" {
     try buildExpectFail("tests/feature_tests/collections/107X_hash_set_key_after_cleanup", "opaque storage hides a dependency");
 }
+
+test "feature_tests/collections/108_collection_reverse" {
+    const path = "tests/feature_tests/collections/108_collection_reverse";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/109X_collection_reverse_owning" {
+    try buildExpectFail("tests/feature_tests/collections/109X_collection_reverse_owning", "no function named 'reverse'");
+}
+
+test "feature_tests/collections/110_order_policies" {
+    const path = "tests/feature_tests/collections/110_order_policies";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/111_collection_binary_search" {
+    const path = "tests/feature_tests/collections/111_collection_binary_search";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/112_binary_search_large_index" {
+    const path = "tests/feature_tests/collections/112_binary_search_large_index";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/113_collection_sort" {
+    const path = "tests/feature_tests/collections/113_collection_sort";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/114_collection_sort_cases" {
+    const path = "tests/feature_tests/collections/114_collection_sort_cases";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/115_collection_sort_records" {
+    const path = "tests/feature_tests/collections/115_collection_sort_records";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/116X_collection_sort_readonly" {
+    try buildExpectFail("tests/feature_tests/collections/116X_collection_sort_readonly", "no function named 'sort'");
+}
