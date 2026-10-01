@@ -7121,3 +7121,14 @@ test "feature_tests/ownership/320X_unwrapped_allocation_after_cleanup" {
 test "feature_tests/text/28X_string_view_after_cleanup" {
     try buildExpectFail("tests/feature_tests/text/28X_string_view_after_cleanup", "root that has ended");
 }
+
+
+test "feature_tests/text/26_string_view_trim" {
+    const path = "tests/feature_tests/text/26_string_view_trim";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/text/27X_trimmed_view_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/27X_trimmed_view_after_cleanup", "root that has ended");
+}

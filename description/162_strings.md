@@ -110,6 +110,16 @@ Text equality follows the same rule: the byte-wise comparison primitive and
 or raw `&Char` values should convert them explicitly instead of relying on
 high-level adapter overloads.
 
+Borrowed byte utilities preserve the backing storage lifetime:
+
+- `find(.self, .pattern)` returns a nullable byte index; an empty pattern
+  matches at zero. `contains`, `starts_with`, and `ends_with` use the same
+  byte comparisons.
+- `trim`, `trim_start`, and `trim_end` remove ASCII whitespace only: space
+  and bytes 9 through 13. They return borrowed views, preserve interior bytes
+  and embedded NULs, and leave non-ASCII whitespace unchanged. Empty results
+  need no one-past reference.
+
 Nomenclature to keep consistent:
 
 - `bytes`: byte-level access over UTF-8 storage.
