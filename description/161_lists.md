@@ -193,10 +193,8 @@ forge the private iterator state or use internal transfer-only pointer helpers.
 - `IndexableValue<T>` adds fallible `get` for implicitly copyable elements.
 - `Resizable<T>` specifies fallible `push`, `pop`, `insert`, and `remove`.
 
-These named contracts are defined in `core/lists/List.rg`. `DynamicArray` and
-`ArrayView` expose corresponding operations, but `core` does not yet declare
-that they implement these abstracts. Native `[N]T` uses built-in `[]` and does
-not acquire an `Indexable` implementation through operator overloading.
+These named contracts are defined in `core/lists/List.rg`. Native `[N]T` uses
+built-in `[]`; pass an initialized array view to capability-based algorithms.
 
 ## Collection capabilities
 
@@ -210,3 +208,14 @@ copying them.
 resizing. `ArrayView<T>` supplies read-only and mutable indexed borrowing;
 `ArrayViewRO<T>` supplies read-only borrowing. All three supply value reads
 when `T` is implicitly copyable. Views are non-owning and do not resize.
+
+## Equality search
+
+`find(.self, .value)` and `contains(.self, .value)` accept a borrowed
+`Indexable<T>`. Elements must be implicitly copyable and provide compatible
+`==` comparison. Search allocates nothing and does not mutate the collection.
+`find` returns the first matching logical index as `?UIntNative`, or `none`;
+`contains` returns a `Bool`. Empty collections never access an element.
+The returned index does not borrow storage, but a subsequent structural change
+can make it stale. Search for owning elements needs a separate borrowed equality
+contract; these helpers do not copy ownership or introduce predicate callbacks.

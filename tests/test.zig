@@ -7223,3 +7223,13 @@ test "feature_tests/types/277_specialized_comparison_assumed_input" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/collections/84_collection_search" {
+    const path = "tests/feature_tests/collections/84_collection_search";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/85X_collection_search_missing_equality" {
+    try buildExpectFail("tests/feature_tests/collections/85X_collection_search_missing_equality", "no matching comparison operator '==' for 'Record' and 'Record'");
+}
