@@ -4,6 +4,23 @@ The library may offer maps, sets, graphs, queues, and iterator helpers in
 addition to the [list families](161_lists.md). Accepted contracts are described
 below; exploratory collections are marked as ideas.
 
+## Hash and equality policies
+
+`HashPolicy<K>` supplies `hash(.self, .key) -> UIntNative` and
+`eql(.self, .left, .right) -> Bool`. Equality must be an equivalence relation;
+equal keys must hash equally. Policy results must remain stable while keys are
+stored. Hash collisions are supported, but unstable equality or key mutation
+cannot be repaired by the container.
+
+Core supplies `UIntNativeHashPolicy`, `Int32HashPolicy`, and
+`StringViewHashPolicy`. Integer policies encode the integer value without raw
+memory access or native byte-order dependence. String hashing visits every byte
+and equality compares complete recorded byte extents, including embedded NULs.
+These are deterministic, non-keyed policies, not collision-attack defenses.
+Applications can implement the same small contract for their own key types.
+Borrowed string keys retain their backing lifetimes and must not be modified
+while stored. Hashing does not transfer or acquire ownership of that storage.
+
 ## Maps
 
 > [!IDEA]

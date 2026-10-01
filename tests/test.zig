@@ -7283,3 +7283,9 @@ test "feature_tests/collections/95_ring_buffer_allocation_counts" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/collections/96_hash_policies" {
+    const path = "tests/feature_tests/collections/96_hash_policies";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
