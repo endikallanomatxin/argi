@@ -26,7 +26,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             owner ::= ~value
             reference ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&owner.allocation, .offset = 0).reference
             deinit(.self = $&owner)
-            status_code = reference&
+            if reference& != 0 { status_code = 1 }
         }
     }
 }

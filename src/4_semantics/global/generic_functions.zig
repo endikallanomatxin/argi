@@ -908,7 +908,11 @@ pub const Resolver = struct {
                 const constraint_ok = try abstracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings);
 
                 if (!constraint_ok) {
-                    if (self.constraint_diagnostics != null) self.failed_constraint = .{
+                    // Direct abstract inputs are lowered to synthetic bounded
+                    // parameters. Their existing argument diagnostic names the
+                    // source input, so do not expose compiler parameter names.
+                    if (self.constraint_diagnostics != null and
+                        !std.mem.startsWith(u8, self.modules[module_index].text(parameter.name), "__abstract_")) self.failed_constraint = .{
                         .abstract_decl = try abstracts.constraintDeclaration(module_index, constraint_id),
                         .actual = concrete,
                         .parameter_name = self.modules[module_index].text(parameter.name),

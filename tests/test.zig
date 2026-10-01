@@ -4684,14 +4684,14 @@ test "feature_tests/types/255X_conflicting_abstract_associated_args" {
 test "feature_tests/types/256X_abstract_associated_arg_mismatch" {
     try buildExpectFail(
         "tests/feature_tests/types/256X_abstract_associated_arg_mismatch",
-        "no function named 'require_uint' exists",
+        "abstract constraint 'Capability' required by generic function parameter '.t' of 'require_uint'",
     );
 }
 
 test "feature_tests/types/257X_abstract_impl_template_checks_associated_args" {
     try buildExpectFail(
         "tests/feature_tests/types/257X_abstract_impl_template_checks_associated_args",
-        "no function named 'require_other' exists",
+        "abstract constraint 'Other' required by generic function parameter '.t' of 'require_other'",
     );
 }
 
@@ -4704,7 +4704,7 @@ test "feature_tests/types/258_abstract_associated_comptime_values" {
 test "feature_tests/types/259X_abstract_associated_comptime_mismatch" {
     try buildExpectFail(
         "tests/feature_tests/types/259X_abstract_associated_comptime_mismatch",
-        "no function named 'require_four_rows' exists",
+        "abstract constraint 'AbstractMatrix' required by generic function parameter '.t' of 'require_four_rows'",
     );
 }
 
