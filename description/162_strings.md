@@ -128,6 +128,15 @@ Borrowed byte utilities preserve the backing storage lifetime:
   not invalidate previous segments, which continue to borrow their source.
   Calling `next` after exhaustion aborts.
 
+`join(.parts, .separator, .allocator)` accepts an `ArrayViewRO<StringView>`
+and produces a new owning `String`. It inserts the separator only between
+parts, preserves empty parts and embedded NULs, and accepts an empty separator.
+An empty list produces an owning empty string. Parts and separator may overlap;
+the output remains valid after their backing storage ends. The operation checks
+the complete byte length, including space for the trailing NUL, before reserving
+memory. It makes one allocation and reports `size_overflow` or `out_of_memory`
+without publishing a partial string.
+
 Nomenclature to keep consistent:
 
 - `bytes`: byte-level access over UTF-8 storage.
