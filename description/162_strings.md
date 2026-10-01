@@ -167,3 +167,13 @@ The text model uses these conventions:
 > 	"""
 > ```
 > This could be done by connecting to the active LSP.
+
+## Byte search
+
+`find(.self: StringView, .pattern: StringView)` returns the first matching
+byte offset as `?UIntNative`, or `none` when the pattern does not occur.
+`contains`, `starts_with`, and `ends_with` return an `ok` boolean. These
+operations compare bytes, include embedded zero bytes, and allocate no storage.
+An empty pattern matches at offset zero and is both a prefix and a suffix,
+including for an empty input. A pattern longer than the input does not match.
+Offsets count bytes rather than Unicode code points or graphemes.

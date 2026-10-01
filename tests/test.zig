@@ -7084,3 +7084,9 @@ test "feature_tests/collections/81X_readonly_collection_mutation" {
 test "feature_tests/collections/82X_owning_collection_value_read" {
     try buildExpectFail("tests/feature_tests/collections/82X_owning_collection_value_read", "no overload");
 }
+
+test "feature_tests/text/24_string_view_search" {
+    const path = "tests/feature_tests/text/24_string_view_search";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
