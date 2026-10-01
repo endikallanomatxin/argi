@@ -1,3 +1,15 @@
+-- Reserve one byte for String's trailing NUL without assuming a native width.
+_string_max_result_length() -> (.length: UIntNative) := {
+    length = 0
+    bytes ::= size_of(.type = UIntNative)
+    index :: UIntNative = 0
+    while index < bytes {
+        length = length * 256 + 255
+        index = index + 1
+    }
+    length = length - 1
+}
+
 String : Type = (
     --
     -- Owning string storage.
@@ -21,6 +33,10 @@ string_with_length(
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     assume allocator
 
+    if length > _string_max_result_length().length {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     allocation_size ::= length + 1
     allocation ::= allocate(.self = allocator, .size = allocation_size)!
     out :: String = (.allocation = ~allocation, .length = length)
@@ -46,6 +62,10 @@ string_with_capacity(
         actual_capacity = one
     }
 
+    if actual_capacity > _string_max_result_length().length {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     allocation_size ::= actual_capacity + 1
     allocation ::= allocate(.self = allocator, .size = allocation_size)!
     out :: String = (.allocation = ~allocation, .length = 0)
@@ -60,6 +80,10 @@ init (
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     assume allocator
 
+    if length > _string_max_result_length().length {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     allocation_size ::= length + 1
     allocation ::= allocate(.self = allocator, .size = allocation_size)!
     p& = (.allocation = ~allocation, .length = length)
@@ -86,6 +110,10 @@ init (
         actual_capacity = one
     }
 
+    if actual_capacity > _string_max_result_length().length {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     allocation_size ::= actual_capacity + 1
     allocation ::= allocate(.self = allocator, .size = allocation_size)!
     p& = (.allocation = ~allocation, .length = 0)
@@ -108,6 +136,10 @@ copy (
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     assume allocator
 
+    if self&.length > _string_max_result_length().length {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     allocation_size ::= self&.length + 1
     allocation ::= allocate(.self = allocator, .size = allocation_size)!
     out :: String = (.allocation = ~allocation, .length = self&.length)
@@ -188,13 +220,20 @@ string_growth_capacity(
     .self: &String,
     .min_capacity: UIntNative,
 ) -> (.value: UIntNative) := {
+    limit ::= _string_max_result_length().length
+    if min_capacity > limit { abort }
     current_capacity ::= capacity(.self = self).value
     if current_capacity == 0 {
         value = min_capacity
         return
     }
 
-    value = current_capacity * 2
+    -- Saturate at the largest capacity with room for a trailing NUL.
+    if current_capacity > limit / 2 {
+        value = limit
+    } else {
+        value = current_capacity * 2
+    }
     if value < min_capacity {
         value = min_capacity
     }
@@ -217,6 +256,10 @@ ensure_capacity_growing(
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     assume allocator
 
+    if target_capacity > _string_max_result_length().length {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     current_capacity ::= capacity(.self = self).value
     if current_capacity >= target_capacity {
         result = ..ok Void()
@@ -256,6 +299,7 @@ string_append_byte(
     .self: $&String,
     .byte: UInt8,
 ) -> () := {
+    if has_space(.self = self).ok == false { abort }
     bytes_set(.string = self, .index = self&.length, .value = byte)
     self&.length = self&.length + 1
     bytes_set(.string = self, .index = self&.length, .value = 0)
@@ -265,7 +309,11 @@ string_append_bytes(
     .self: $&String,
     .source: ArrayViewRO#(.t: UInt8),
 ) -> () := {
-    if length#(.t: UInt8)(.self = &source).count > 0 {
+    current_capacity ::= capacity(.self = self).value
+    if self&.length > current_capacity { abort }
+    count ::= length#(.t: UInt8)(.self = &source).count
+    if count > current_capacity - self&.length { abort }
+    if count > 0 {
         dest_data ::= _trusted_allocation_byte_rw(.allocation = $&self&.allocation, .offset = self&.length).reference
         dest_view ::= _trusted_array_view#(.t: UInt8)(.data = dest_data, .length = length#(.t: UInt8)(.self = &source).count)
         memcpy_bytes(.dst = dest_view, .src = source)
@@ -282,6 +330,10 @@ push_byte(
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     assume allocator
 
+    if self&.length >= _string_max_result_length().length {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     if has_space(.self = self).ok {
     } else {
         next_capacity ::= string_growth_capacity(.self = self, .min_capacity = self&.length + 1).value
@@ -308,6 +360,15 @@ push_c_string(
     assume allocator
 
     append_length ::= c_string_length(.text = text).length
+    limit ::= _string_max_result_length().length
+    if self&.length > limit {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
+    if append_length > limit - self&.length {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     target_capacity ::= self&.length + append_length
     growth_result ::= ensure_capacity_growing(.self = self, .target_capacity = target_capacity, .allocator = allocator)
     match growth_result {
@@ -334,6 +395,15 @@ push_view(
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     assume allocator
 
+    limit ::= _string_max_result_length().length
+    if self&.length > limit {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
+    if view.length > limit - self&.length {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     target_capacity ::= self&.length + view.length
     growth_result ::= ensure_capacity_growing(.self = self, .target_capacity = target_capacity, .allocator = allocator)
     match growth_result {
@@ -386,6 +456,15 @@ concat_views(
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     assume allocator
 
+    limit ::= _string_max_result_length().length
+    if left&.length > limit {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
+    if right&.length > limit - left&.length {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     created ::= string_with_capacity(.allocator = allocator, .capacity = left&.length + right&.length)
     match created {
         ..error _ { result = ..error(.reason = ..out_of_memory) }

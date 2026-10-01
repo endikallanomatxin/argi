@@ -7112,3 +7112,90 @@ test "feature_tests/types/271_constructor_choice_context" {
 test "feature_tests/types/272X_constructor_choice_nominal_mismatch" {
     try buildExpectFail("tests/feature_tests/types/272X_constructor_choice_nominal_mismatch", "no function named 'FirstWrapper'");
 }
+
+
+test "feature_tests/ownership/320X_unwrapped_allocation_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/ownership/320X_unwrapped_allocation_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/text/28X_string_view_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/28X_string_view_after_cleanup", "root that has ended");
+}
+
+
+test "feature_tests/text/26_string_view_trim" {
+    const path = "tests/feature_tests/text/26_string_view_trim";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/text/27X_trimmed_view_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/27X_trimmed_view_after_cleanup", "root that has ended");
+}
+
+
+test "feature_tests/text/29_string_view_split" {
+    const path = "tests/feature_tests/text/29_string_view_split";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/text/30X_split_source_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/30X_split_source_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/text/31X_split_separator_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/31X_split_separator_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/text/32_string_join" {
+    const path = "tests/feature_tests/text/32_string_join";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/text/33_string_join_errors" {
+    const path = "tests/feature_tests/text/33_string_join_errors";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/text/34_string_join_allocation_counts" {
+    const path = "tests/feature_tests/text/34_string_join_allocation_counts";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+
+test "feature_tests/text/37X_joined_view_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/37X_joined_view_after_cleanup", "root that has ended");
+}
+
+
+test "feature_tests/text/35_string_replace" {
+    const path = "tests/feature_tests/text/35_string_replace";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/text/36_string_replace_errors" {
+    const path = "tests/feature_tests/text/36_string_replace_errors";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/text/38X_replaced_view_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/38X_replaced_view_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/text/39_string_replace_allocation_counts" {
+    const path = "tests/feature_tests/text/39_string_replace_allocation_counts";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/text/40_string_size_overflow" {
+    const path = "tests/feature_tests/text/40_string_size_overflow";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

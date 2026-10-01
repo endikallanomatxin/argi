@@ -110,6 +110,56 @@ Text equality follows the same rule: the byte-wise comparison primitive and
 or raw `&Char` values should convert them explicitly instead of relying on
 high-level adapter overloads.
 
+Borrowed byte utilities preserve the backing storage lifetime:
+
+- `find(.self, .pattern)` returns a nullable byte index; an empty pattern
+  matches at zero. `contains`, `starts_with`, and `ends_with` use the same
+  byte comparisons.
+- `trim`, `trim_start`, and `trim_end` remove ASCII whitespace only: space
+  and bytes 9 through 13. They return borrowed views, preserve interior bytes
+  and embedded NULs, and leave non-ASCII whitespace unchanged. Empty results
+  need no one-past reference.
+- `split(.self, .separator)` returns a fallible `StringSplitIterator` that
+  implements `Iterator<StringView>`. The iterator borrows both text and
+  separator; both backing stores must remain live while it is used. Matching
+  is byte-wise and non-overlapping. An empty separator is `empty_separator`;
+  an empty input produces one empty segment. Leading, consecutive, and
+  trailing separators preserve empty segments. Advancing the iterator does
+  not invalidate previous segments, which continue to borrow their source.
+  Calling `next` after exhaustion aborts.
+
+Owning string allocation always reserves a trailing NUL. Existing constructors,
+`copy`, capacity growth, push operations, and concatenation report
+`out_of_memory` when the requested byte extent cannot be represented, as well
+as when allocation fails. They reject invalid sums before allocating or
+modifying the destination. APIs with recorded source lengths also reject before
+reading source bytes; the C-string boundary scans for the terminator to obtain
+its length. Failed growth preserves the original
+string, including its length, capacity, bytes, and trailing NUL. Geometric growth
+saturates at the largest capacity that leaves room for the terminator.
+The infallible `string_append_byte` and `string_append_bytes` helpers require
+sufficient existing capacity and abort before writing if that precondition fails.
+
+`join(.parts, .separator, .allocator)` accepts an `ArrayViewRO<StringView>`
+and produces a new owning `String`. It inserts the separator only between
+parts, preserves empty parts and embedded NULs, and accepts an empty separator.
+An empty list produces an owning empty string. Parts and separator may overlap;
+the output remains valid after their backing storage ends. The operation checks
+the complete byte length, including space for the trailing NUL, before reserving
+memory. It makes one allocation and reports `size_overflow` or `out_of_memory`
+without publishing a partial string.
+
+`replace(.self, .pattern, .replacement, .allocator)` produces a new owning
+`String`, replacing every non-overlapping byte match from left to right.
+Replacement bytes are copied without being searched again. Empty replacement
+removes matches; no matches produces an independent copy. Empty input remains
+empty. An empty pattern reports `empty_pattern` before allocation. Input,
+pattern, and replacement may overlap, and the output does not borrow them.
+Like `join`, it checks the complete resulting length, reserves the trailing NUL,
+makes one allocation, and reports `size_overflow` or `out_of_memory` without
+publishing a partial string. These operations do not interpret Unicode or
+normalize text.
+
 Nomenclature to keep consistent:
 
 - `bytes`: byte-level access over UTF-8 storage.
