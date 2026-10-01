@@ -177,3 +177,23 @@ operations compare bytes, include embedded zero bytes, and allocate no storage.
 An empty pattern matches at offset zero and is both a prefix and a suffix,
 including for an empty input. A pattern longer than the input does not match.
 Offsets count bytes rather than Unicode code points or graphemes.
+
+## Integer parsing
+
+`parse_int8`, `parse_int16`, `parse_int32`, and `parse_int64`, and their
+`parse_uint8`/`16`/`32`/`64` counterparts, accept `.text: StringView` and
+`.base: UInt8 = 10`. Each returns an `Errable` containing the named target type.
+Parsing is allocation-free and accepts exactly the recorded byte extent.
+
+Bases range from 2 through 36. Digits are ASCII `0`–`9` and `a`–`z`, with
+uppercase letters accepted equally. An optional leading `+` is accepted for
+all targets; `-` is accepted only for signed targets, including signed zero.
+At least one digit is required. Whitespace, separators, embedded zero bytes,
+and radix prefixes such as `0x` are rejected; callers pass the base explicitly.
+
+Errors distinguish `invalid_base`, `invalid_input`, and `out_of_range`.
+The base is checked first; input bytes are then checked from left to right,
+returning the first encountered invalid digit or range failure. Every
+multiply/add or subtract is checked against the target range before execution.
+Signed minima and the full unsigned maximum are representable without first
+converting their magnitude to a signed intermediate.

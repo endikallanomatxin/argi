@@ -7097,6 +7097,12 @@ test "feature_tests/collections/83_string_hash_map_full_key" {
     try runExpect(path, 0);
 }
 
+test "feature_tests/text/25_integer_parsing" {
+    const path = "tests/feature_tests/text/25_integer_parsing";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
 test "feature_tests/types/271_constructor_choice_context" {
     const path = "tests/feature_tests/types/271_constructor_choice_context";
     try expectSuccessfulBuild(path);
