@@ -5638,8 +5638,8 @@ test "argi help lists supported 0.1 commands" {
     try expect(std.mem.indexOf(u8, result.stderr, "--sysroot <path>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--exec <name>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--filter <name>") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "init <name>") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "init --lib <name>") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "init [name]") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "init --lib [name]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "lsp") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "version") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "format") == null);
@@ -5691,13 +5691,63 @@ test "argi test without target exits with error" {
     try expectEqualStrings("Error: module directory required\n", result.stderr);
 }
 
-test "argi init without full arguments exits with error" {
-    const result = try runArgiCommand(&.{"init"});
+test "argi init without name initializes current directory" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const tmp_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(tmp_root);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+    try tmp.dir.createDir(std.testing.io, "current_app", .default_dir);
+    const module_root = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "current_app" });
+    defer std.testing.allocator.free(module_root);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "current_app/README.md", .data = "Keep this README.\n" });
+    const result = try runChildInCwd(&.{ installed_argi, "init" }, module_root);
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+    const manifest = try tmp.dir.readFileAlloc(std.testing.io, "current_app/argi.toml", std.testing.allocator, .limited(4096));
+    defer std.testing.allocator.free(manifest);
+    try expect(std.mem.indexOf(u8, manifest, "[executables.current_app]\n") != null);
+    try expect(std.mem.indexOf(u8, manifest, "path = \"source/current_app\"\n") != null);
+    try expect(std.mem.indexOf(u8, manifest, "default = \"current_app\"\n") != null);
+    const readme = try tmp.dir.readFileAlloc(std.testing.io, "current_app/README.md", std.testing.allocator, .limited(4096));
+    defer std.testing.allocator.free(readme);
+    try expectEqualStrings("Keep this README.\n", readme);
+    const built = try runChildInCwd(&.{ installed_argi, "run" }, module_root);
+    defer std.testing.allocator.free(built.stdout);
+    defer std.testing.allocator.free(built.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+    const repeated = try runChildInCwd(&.{ installed_argi, "init", "." }, module_root);
+    defer std.testing.allocator.free(repeated.stdout);
+    defer std.testing.allocator.free(repeated.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, repeated.term);
+    try tmp.dir.access(std.testing.io, "current_app/source/current_app/main.rg", .{});
+    tmp.dir.access(std.testing.io, "current_app/source/-/main.rg", .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    return error.UnexpectedFile;
+}
 
-    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
-    try expectEqualStrings("Error: init requires <name> or --lib <name>\n", result.stderr);
+test "argi init lib without name initializes current directory" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const tmp_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(tmp_root);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+    try tmp.dir.createDir(std.testing.io, "current_library", .default_dir);
+    const module_root = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "current_library" });
+    defer std.testing.allocator.free(module_root);
+    const result = try runChildInCwd(&.{ installed_argi, "init", "--lib" }, module_root);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+    const manifest = try tmp.dir.readFileAlloc(std.testing.io, "current_library/argi.toml", std.testing.allocator, .limited(4096));
+    defer std.testing.allocator.free(manifest);
+    try expect(std.mem.indexOf(u8, manifest, "name = \"current_library\"\n") != null);
+    try expect(std.mem.indexOf(u8, manifest, "[executables.") == null);
 }
 
 test "argi run rejects output override" {

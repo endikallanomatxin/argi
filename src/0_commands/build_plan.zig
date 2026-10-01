@@ -211,7 +211,7 @@ fn printNoExecutablesError() void {
         \\  path = "source/app"
         \\
         \\Or create a library package with:
-        \\  argi init --lib <name>
+        \\  argi init --lib [name]
         \\
     , .{});
 }

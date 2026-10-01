@@ -36,8 +36,8 @@ fn printHelp() void {
     std.debug.print("  check [path] [flags]                   Exhaustively validate every function body\n", .{});
     std.debug.print("  run [executable] [build flags]         Build and run the default or selected executable\n", .{});
     std.debug.print("  test <directory> [flags]               Build and run native Argi tests\n", .{});
-    std.debug.print("  init <name>                            Create an executable package\n", .{});
-    std.debug.print("  init --lib <name>                      Create a library package\n", .{});
+    std.debug.print("  init [name]                            Create an executable package\n", .{});
+    std.debug.print("  init --lib [name]                      Create a library package\n", .{});
     std.debug.print("  lsp                                    Start the language server\n", .{});
     std.debug.print("  version                                Show the Argi version\n", .{});
     std.debug.print("  help                                   Show this help\n", .{});
@@ -96,10 +96,6 @@ pub fn main(init: std.process.Init) !void {
             exitCommandError("Check error", err);
         };
     } else if (std.mem.eql(u8, command, "init")) {
-        if (args.len < 3) {
-            std.debug.print("Error: init requires <name> or --lib <name>\n", .{});
-            std.process.exit(1);
-        }
         init_cmd.run(io, args[2..]) catch |err| {
             exitCommandError("Init error", err);
         };

@@ -7,6 +7,10 @@ pub const InitKind = enum {
 };
 
 pub fn run(io: std.Io, args: []const []const u8) !void {
+    if (args.len == 0 or (args.len == 1 and std.mem.eql(u8, args[0], "--lib"))) {
+        try initAtPath(std.heap.page_allocator, io, if (args.len == 0) .executable else .library, ".");
+        return;
+    }
     if (args.len == 1) {
         try initAtPath(std.heap.page_allocator, io, .executable, args[0]);
         return;
@@ -19,9 +23,13 @@ pub fn run(io: std.Io, args: []const []const u8) !void {
 }
 
 pub fn initAtPath(allocator: std.mem.Allocator, io: std.Io, kind: InitKind, root_path: []const u8) !void {
+    const cwd = try std.process.currentPathAlloc(io, allocator);
+    defer allocator.free(cwd);
+    const resolved_root = try std.fs.path.resolve(allocator, &.{ cwd, root_path });
+    defer allocator.free(resolved_root);
     switch (kind) {
-        .library => try initLibrary(allocator, io, root_path),
-        .executable => try initExecutable(allocator, io, root_path),
+        .library => try initLibrary(allocator, io, resolved_root),
+        .executable => try initExecutable(allocator, io, resolved_root),
     }
 }
 

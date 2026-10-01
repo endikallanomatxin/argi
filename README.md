@@ -122,6 +122,11 @@ argi build
 argi run
 ```
 
+Without a name, `argi init` initializes the current directory and derives the
+package and default executable name from its directory name. `argi init --lib`
+likewise initializes a library in the current directory. Existing files are
+preserved.
+
 The generated entrypoint selects its allocator, error tracer, buffered output
 writer, and input reader explicitly:
 
