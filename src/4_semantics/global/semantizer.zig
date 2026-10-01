@@ -756,6 +756,9 @@ pub fn semantizeWithOptions(
     ))
         return if (options.diagnostics != null) error.Reported else error.InvalidImplicitCopy;
 
+    if (try diagnoseInvalidNumericAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
+        return if (options.diagnostics != null) error.Reported else error.InvalidNumericAssignment;
+
     if (try diagnoseInvalidComparisons(allocator, &core, reachable, options.diagnostics))
         return if (options.diagnostics != null) error.Reported else error.InvalidComparison;
 
@@ -1007,6 +1010,66 @@ fn diagnoseUnresolvedArithmetic(
         }
     }
     return false;
+}
+
+// Literal contextualization has already finished. Typed numeric values must
+// agree with their destination; changing their node type would conceal a
+// conversion that codegen has no corresponding instruction to perform.
+fn diagnoseInvalidNumericAssignments(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    reachable: ?*const reachability_mod.FunctionSet,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
+) !bool {
+    for (graph.nodes.items, 0..) |node, raw| {
+        const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
+        if (reachable) |set| if (!set.containsNode(id)) continue;
+        const value, const expected = switch (node.content) {
+            .binding_declaration => |binding| .{
+                graph.binding(binding).initialization orelse continue,
+                graph.binding(binding).ty,
+            },
+            .assignment => |assignment| .{ assignment.value, graph.binding(assignment.binding).ty },
+            .pointer_assignment => |assignment| blk: {
+                const pointer_ty = graph.node(assignment.pointer).ty orelse continue;
+                const pointer = switch (graph.semanticType(pointer_ty)) {
+                    .pointer => |pointer| pointer,
+                    else => continue,
+                };
+                break :blk .{ assignment.value, pointer.child };
+            },
+            else => continue,
+        };
+        const actual = graph.node(value).ty orelse continue;
+        if (!isNumericType(graph, actual) or !isNumericType(graph, expected)) continue;
+        if (global_types.equal(graph, actual, expected)) continue;
+        if (diagnostics) |sink| {
+            var actual_name = std.array_list.Managed(u8).init(allocator);
+            defer actual_name.deinit();
+            var expected_name = std.array_list.Managed(u8).init(allocator);
+            defer expected_name.deinit();
+            try appendTypeName(&actual_name, graph, actual);
+            try appendTypeName(&expected_name, graph, expected);
+            try sink.add(
+                diagnosticLocation(graph, sink, node.source),
+                .semantic,
+                "cannot assign numeric value of type '{s}' to destination of type '{s}'; implicit numeric conversion is not supported",
+                .{ actual_name.items, expected_name.items },
+            );
+        }
+        return true;
+    }
+    return false;
+}
+
+fn isNumericType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
+    return switch (graph.semanticType(ty)) {
+        .builtin => |builtin| switch (builtin) {
+            .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64 => true,
+            else => false,
+        },
+        else => false,
+    };
 }
 
 fn diagnoseInvalidComparisons(

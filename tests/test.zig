@@ -7113,7 +7113,6 @@ test "feature_tests/types/272X_constructor_choice_nominal_mismatch" {
     try buildExpectFail("tests/feature_tests/types/272X_constructor_choice_nominal_mismatch", "no function named 'FirstWrapper'");
 }
 
-
 test "feature_tests/ownership/320X_unwrapped_allocation_after_cleanup" {
     try buildExpectFail("tests/feature_tests/ownership/320X_unwrapped_allocation_after_cleanup", "root that has ended");
 }
@@ -7121,7 +7120,6 @@ test "feature_tests/ownership/320X_unwrapped_allocation_after_cleanup" {
 test "feature_tests/text/28X_string_view_after_cleanup" {
     try buildExpectFail("tests/feature_tests/text/28X_string_view_after_cleanup", "root that has ended");
 }
-
 
 test "feature_tests/text/26_string_view_trim" {
     const path = "tests/feature_tests/text/26_string_view_trim";
@@ -7132,7 +7130,6 @@ test "feature_tests/text/26_string_view_trim" {
 test "feature_tests/text/27X_trimmed_view_after_cleanup" {
     try buildExpectFail("tests/feature_tests/text/27X_trimmed_view_after_cleanup", "root that has ended");
 }
-
 
 test "feature_tests/text/29_string_view_split" {
     const path = "tests/feature_tests/text/29_string_view_split";
@@ -7166,11 +7163,9 @@ test "feature_tests/text/34_string_join_allocation_counts" {
     try runExpect(path, 0);
 }
 
-
 test "feature_tests/text/37X_joined_view_after_cleanup" {
     try buildExpectFail("tests/feature_tests/text/37X_joined_view_after_cleanup", "root that has ended");
 }
-
 
 test "feature_tests/text/35_string_replace" {
     const path = "tests/feature_tests/text/35_string_replace";
@@ -7400,4 +7395,30 @@ test "feature_tests/collections/115_collection_sort_records" {
 
 test "feature_tests/collections/116X_collection_sort_readonly" {
     try buildExpectFail("tests/feature_tests/collections/116X_collection_sort_readonly", "no function named 'sort'");
+}
+
+test "tests/feature_tests/basics/25X_numeric_binding_type" {
+    try buildExpectFail("tests/feature_tests/basics/25X_numeric_binding_type", "cannot assign numeric value of type");
+}
+
+test "tests/feature_tests/basics/26X_numeric_assignment_type" {
+    try buildExpectFail("tests/feature_tests/basics/26X_numeric_assignment_type", "cannot assign numeric value of type");
+}
+
+test "tests/feature_tests/basics/27X_numeric_pointer_assignment_type" {
+    try buildExpectFail("tests/feature_tests/basics/27X_numeric_pointer_assignment_type", "cannot assign numeric value of type");
+}
+
+test "tests/feature_tests/basics/28X_numeric_signedness_assignment" {
+    try buildExpectFail("tests/feature_tests/basics/28X_numeric_signedness_assignment", "cannot assign numeric value of type");
+}
+
+test "tests/feature_tests/basics/29X_numeric_float_assignment" {
+    try buildExpectFail("tests/feature_tests/basics/29X_numeric_float_assignment", "cannot assign numeric value of type");
+}
+
+test "tests/feature_tests/basics/30_numeric_contextual_assignment" {
+    const path = "tests/feature_tests/basics/30_numeric_contextual_assignment";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
 }
