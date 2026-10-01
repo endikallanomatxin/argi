@@ -12,25 +12,23 @@ It’s an early work-in-progress.
 ## Highlights
 
 - 🧩 Consistency and simplicity.
-- 🧮 Manual but very ergonomic memory management.
-- 🧰 Explicit allocator composition: programs choose a backing allocator for
-  general-purpose and arena storage; allocating functions take it as an
-  argument.
+- 🧮 Explicit memory allocation strategies through dependency injection.
+- 🛡️ Automatic deterministic cleanup and temporal memory safety, with
+  compile-time checks for value validity and reference lifetimes across moves,
+  cleanup, and storage reuse.
 - 🎯 Explicitness without annoyance:
   - ⚠️ Application-visible side effects are designed to be explicit.
-    Error propagation uses an explicit tracer capability; bounded core tracers
-    allocate during initialization rather than during propagation.
   - 🔐 Capability-based design for resource management.
   - 🪶 `assume` for lexical implicit arguments and `reach` for propagating
     dependencies through intermediate calls.
 - 🚫 No objects or inheritance.
 - 🔀 Polymorphism through:
   - 🎛️ Multiple dispatch
-  - ⚙️ Compile time parameters (rust's generics style)
-  - 📜 Abstract types that are monomorphisized at compile time (rust's traits
-  style)
+  - ⚙️ Compile-time parameters (Rust's generics style)
+  - 📜 Abstract types specialized at compile time (Rust's traits style)
   - 🎭 Virtual types for runtime dynamic dispatch.
-- ❓ Errable and Nullable types.
+- ❓ Errable and Nullable types, with nominal error reasons, reason-set
+  inference, and explicit propagation with optional trace context.
 - 📚 Two official module libraries: foundational `core` and domain-oriented
   `more`. Some modules remain design sketches; consult their implementations
   for supported APIs.
@@ -117,6 +115,18 @@ argi init hello
 cd hello
 argi build
 argi run
+```
+
+The generated entrypoint selects its allocator explicitly. You can also choose
+a tracer for error context:
+
+```rg
+main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume error_tracer ::= unwrap_or_abort(
+        .value = FixedSizeErrorTracer(.size = 4096),
+    ) | to_virtual#(ErrorTracer)($&_) | $&_
+}
 ```
 
 Create a library/importable package with no executables:
