@@ -7379,3 +7379,25 @@ test "feature_tests/collections/112_binary_search_large_index" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/collections/113_collection_sort" {
+    const path = "tests/feature_tests/collections/113_collection_sort";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/114_collection_sort_cases" {
+    const path = "tests/feature_tests/collections/114_collection_sort_cases";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/115_collection_sort_records" {
+    const path = "tests/feature_tests/collections/115_collection_sort_records";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/116X_collection_sort_readonly" {
+    try buildExpectFail("tests/feature_tests/collections/116X_collection_sort_readonly", "no function named 'sort'");
+}

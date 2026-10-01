@@ -5,6 +5,9 @@ Indexable#(.t: Type) : Abstract = (
     get_ro_ref(.self: &Self, .index: UIntNative) -> (.result: Errable#(.t: &t, .reasons: (..out_of_bounds)))
 )
 
+-- Logical elements are independently replaceable: writing an indexed
+-- reference changes that position without replacing other logical elements
+-- or resizing the collection.
 IndexableMutable#(.t: Type) : Abstract = (
     length(.self: &Self) -> (.count: UIntNative)
     get_ro_ref(.self: &Self, .index: UIntNative) -> (.result: Errable#(.t: &t, .reasons: (..out_of_bounds)))
