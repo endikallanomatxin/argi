@@ -128,8 +128,8 @@ writer, and input reader explicitly:
 ```rg
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
-    assume error_tracer ::= unwrap_or_abort(
-        .value = FixedSizeErrorTracer(.size = 4096),
+    assume error_tracer ::= FixedSizeErrorTracer(
+        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
     ) | to_virtual#(ErrorTracer)($&_) | $&_
     assume writer ::= $&BufferedWriter#(.base_type: File)(
         .base = $&system.terminal&.stdout,

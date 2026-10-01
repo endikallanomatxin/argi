@@ -17,23 +17,26 @@ in_generic#(.t: Type)(.value: $&t) -> () := {
 
 run(.system: System) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     assume error_tracer : $&Virtual#(.abstract: ErrorTracer) = FixedSizeErrorTracer(
-        .allocator = system.page_allocator,
-        .size = 65536,
-    )! | to_virtual($&_) | $&_
+        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
+    ) | to_virtual($&_) | $&_
     add_context(.context = "inferred virtual tracer")
     reset_context(.self = error_tracer)
     result = ..ok Void()
 }
-FailAllocator : Type = (.marker: UInt8 = 0)
-FailAllocator implements Allocator
-allocate(.self: $&FailAllocator, .size: UIntNative, .alignment: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+-- Fallible concrete construction must still compose with inferred virtual
+-- conversion, independently of the infallible fixed-buffer tracer.
+FailTracer : Type = (.marker: UInt8)
+FailTracer implements ErrorTracer
+init(.p: $&FailTracer) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     result = ..error(.reason = ..out_of_memory)
 }
-failed_init(.allocator: $&FailAllocator) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    assume error_tracer : $&Virtual#(.abstract: ErrorTracer) = FixedSizeErrorTracer(
-        .allocator = allocator,
-        .size = 65536,
-    )! | to_virtual($&_) | $&_
+add_context(.self: $&FailTracer, .location: SourceLocationId, .context: StringView) -> () := {}
+reset_context(.self: $&FailTracer) -> () := {}
+report(.self: $&FailTracer, .writer: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    result = ..ok Void()
+}
+failed_init() -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume error_tracer : $&Virtual#(.abstract: ErrorTracer) = FailTracer()! | to_virtual($&_) | $&_
     result = ..ok Void()
 }
 main(.system: System) -> (.status_code: Int32) := {
@@ -64,8 +67,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     if count != 62 { status_code = 4
         return }
-    allocator ::= FailAllocator()
-    failure ::= failed_init(.allocator = $&allocator)
+    failure ::= failed_init()
     match failure {
         ..ok _ { status_code = 5
             return }

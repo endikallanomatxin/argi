@@ -209,8 +209,8 @@ child does not release a whole arena block.
 interoperation. Public `malloc`, `aligned_alloc`, and `free` wrappers also
 require `.ffi`.
 
-Fixed-size error tracers allocate their buffers through an explicit allocator
-during initialization. Propagation adds bounded context without allocation.
+Fixed-size error tracers borrow a caller-supplied byte buffer. Construction
+and propagation do not allocate; callers choose local or allocated storage.
 
 Using an allocator and implementing `deinit()` does not make a type implicitly
 copyable. Cleanup, copying, and borrowed views remain separate concerns.

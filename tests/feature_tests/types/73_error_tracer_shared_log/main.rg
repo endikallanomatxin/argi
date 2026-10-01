@@ -31,7 +31,7 @@ report_value(.value: &Errable#(.t: Void, .reasons: Failures), .writer: $&Probe) 
     }
 }
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    tracer ::= unwrap_or_abort(.value = FixedSizeErrorTracer(.allocator = system.page_allocator, .size = 288))
+    tracer ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [288]UInt8)()))
     virtual ::= to_virtual#(ErrorTracer)($&tracer)
     assume error_tracer ::= $&virtual
     first ::= fail(.second = false)
@@ -54,7 +54,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     report_value(.value = &second, .writer = $&writer)
     if writer.count != 43 { status_code = 4
         return }
-    other ::= unwrap_or_abort(.value = FixedSizeErrorTracer(.allocator = system.page_allocator, .size = 288))
+    other ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [288]UInt8)()))
     other_virtual ::= to_virtual#(ErrorTracer)($&other)
     assume error_tracer ::= $&other_virtual
     propagated ::= forward(.value = ~first)

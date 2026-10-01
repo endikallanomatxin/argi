@@ -226,9 +226,8 @@ that error, even under a different `assume error_tracer`:
 
 ```rg
 assume error_tracer ::= FixedSizeErrorTracer(
-    .allocator = system.page_allocator,
-    .size = 64 * 1024,
-)! | to_virtual#(ErrorTracer)($&_) | $&_
+    .buffer = view($&zeroed#(.t: [4096]UInt8)()),
+) | to_virtual#(ErrorTracer)($&_) | $&_
 
 run()
 ```
@@ -239,9 +238,13 @@ capability type permits `to_virtual($&_)` through contextual inference. The
 concrete tracer and virtual wrapper temporaries remain alive for the enclosing
 `assume` scope. The capability is still a pointer to the virtual wrapper.
 
-`FixedSizeErrorTracer` allocates its fixed buffer during fallible `init`.
-Subsequent trace entries, including copies of `!!` context text, occupy that
-buffer without further allocation. Each slot copies at most 128 context bytes;
+`FixedSizeErrorTracer` borrows an initialized byte view supplied by its caller.
+Construction is infallible and does not allocate. Callers may supply a local
+array, a slice, or storage obtained from an allocator. The buffer must remain
+valid for the tracer's lifetime; cleanup does not free or invalidate it.
+Headers are copied as bytes, so the buffer requires no additional alignment.
+Trace entries, including copies of `!!` context text, occupy that buffer
+without allocation. Each slot copies at most 128 context bytes;
 longer context is truncated. Buffer space smaller than a complete slot is
 unused. A buffer with no complete slots drops every entry.
 For a single trace, roughly half preserves the origin and first contexts;

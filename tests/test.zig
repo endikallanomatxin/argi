@@ -655,8 +655,8 @@ test "argi init creates executable package" {
     try expectEqualStrings(
         "main(.system: System) -> (.status_code: Int32 = 0) := {\n" ++
             "    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)\n" ++
-            "    assume error_tracer ::= unwrap_or_abort(\n" ++
-            "        .value = FixedSizeErrorTracer(.size = 4096),\n" ++
+            "    assume error_tracer ::= FixedSizeErrorTracer(\n" ++
+            "        .buffer = view($&zeroed#(.t: [4096]UInt8)()),\n" ++
             "    ) | to_virtual#(ErrorTracer)($&_) | $&_\n" ++
             "    assume writer ::= $&BufferedWriter#(.base_type: File)(\n" ++
             "        .base = $&system.terminal&.stdout,\n" ++
@@ -7545,4 +7545,20 @@ test "feature_tests/io/31X_buffered_writer_expired_buffer" {
 
 test "feature_tests/io/32X_zeroed_reference" {
     try buildExpectFailWithoutParseNoise("tests/feature_tests/io/32X_zeroed_reference", "zeroed requires a numeric type or a fixed array of numeric types");
+}
+
+test "feature_tests/types/113_error_tracer_borrowed_buffer" {
+    const path = "tests/feature_tests/types/113_error_tracer_borrowed_buffer";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/types/114X_error_tracer_expired_buffer" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/114X_error_tracer_expired_buffer", "reference depends on a root that has ended");
+}
+
+test "feature_tests/types/115X_error_tracer_corrupt_header" {
+    const path = "tests/feature_tests/types/115X_error_tracer_corrupt_header";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
 }

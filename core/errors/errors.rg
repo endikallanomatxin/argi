@@ -78,7 +78,7 @@ ErrorTraceEntry implements ImplicitlyCopyable
 -- retains early frames; the second half replaces recent frames in a ring.
 -- All errors referring to this tracer share the same diagnostic log.
 FixedSizeErrorTracer : Type = (
-    ._storage: Allocation
+    ._buffer: ArrayView#(.t: UInt8)
     ._capacity: UIntNative
     ._length: UIntNative
     ._next: UIntNative
@@ -89,32 +89,54 @@ FixedSizeErrorTracer implements ErrorTracer
 _error_trace_stride() -> (.size: UIntNative) := {
     size = size_of(.type = ErrorTraceEntry) + 128
 }
-_error_trace_alignment() -> (.alignment: UIntNative) := {
-    alignment = alignment_of(.type = ErrorTraceEntry)
+-- The buffer is initialized caller-owned storage, not an allocation owned by
+-- the tracer. Trailing bytes that do not fit a complete slot are unused.
+init(.p: $&FixedSizeErrorTracer, .buffer: ArrayView#(.t: UInt8)) -> () := {
+    capacity ::= length(.self = &buffer).count / _error_trace_stride().size
+    p& = (
+        ._buffer = buffer,
+        ._capacity = capacity,
+        ._length = 0,
+        ._next = capacity / 2,
+        ._dropped = false,
+    )
 }
-init(.p: $&FixedSizeErrorTracer, .allocator: $&Allocator, .size: UIntNative = 65536) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    storage ::= allocate(.self = allocator, .size = size, .alignment = _error_trace_alignment().alignment)!
-    p&._storage = ~storage
-    p&._capacity = size / _error_trace_stride().size
-    p&._length = 0
-    p&._next = p&._capacity / 2
-    p&._dropped = false
-    result = ..ok Void()
-}
-deinit(.self: $&FixedSizeErrorTracer) -> () := { deinit(.self = $&self&._storage) }
+-- Ending the tracer invalidates its handles without releasing caller storage.
+deinit(.self: $&FixedSizeErrorTracer) -> () := {}
 reset_context(.self: $&FixedSizeErrorTracer) -> () := {
     self&._length = 0
     self&._next = self&._capacity / 2
     self&._dropped = false
 }
-_trusted_error_trace_slot(.self: $&FixedSizeErrorTracer, .index: UIntNative) -> (.entry: $&ErrorTraceEntry) := {
-    if index >= self&._capacity {
-        abort
-    }
-    raw ::= raw_pointer#(.t: ErrorTraceEntry)(.address = self&._storage.data.address + index * _error_trace_stride().size).raw
-    entry = trusted_establish_allocation_slot#(.t: ErrorTraceEntry)(.allocation = &self&._storage, .slot = raw, .anchor = self&._storage.anchor).reference
+_error_trace_header(.self: $&FixedSizeErrorTracer, .index: UIntNative) -> (.header: ArrayView#(.t: UInt8)) := {
+    assume error_tracer ::= $&noop_error_tracer
+    if index >= self&._capacity { abort }
+    header = unwrap_or_abort(.value = slice(
+        .self = &self&._buffer,
+        .start = index * _error_trace_stride().size,
+        .count = size_of(.type = ErrorTraceEntry),
+    ))
+}
+
+-- Slot headers are copied as bytes into or out of aligned local values.
+-- A byte buffer (including an offset slice) need not align ErrorTraceEntry.
+-- Only numeric fields are stored; no reference is reconstructed from bytes.
+_error_trace_store_entry(.self: $&FixedSizeErrorTracer, .index: UIntNative, .entry: ErrorTraceEntry) -> () := {
+    first ::= trusted_reinterpret_reference#(.from: ErrorTraceEntry, .to: UInt8)(.base = &entry).reference
+    bytes ::= _trusted_array_view_ro(.data = first, .length = size_of(.type = ErrorTraceEntry))
+    memcpy_bytes(.dst = _error_trace_header(.self = self, .index = index), .src = bytes)
+}
+_error_trace_load_entry(.self: $&FixedSizeErrorTracer, .index: UIntNative) -> (.entry: ErrorTraceEntry) := {
+    entry = (.location = (.value = 0), .context_length = 0)
+    first ::= trusted_mutable_reinterpret_reference#(.from: ErrorTraceEntry, .to: UInt8)(.base = $&entry).reference
+    bytes ::= _trusted_array_view(.data = first, .length = size_of(.type = ErrorTraceEntry))
+    memcpy_bytes(.dst = bytes, .src = _error_trace_header(.self = self, .index = index))
+    -- The caller still has access to the backing bytes. Never let corrupted
+    -- metadata turn one bounded slot into a read across adjacent slots.
+    if entry.context_length > 128 { abort }
 }
 add_context(.self: $&FixedSizeErrorTracer, .location: SourceLocationId, .context: StringView) -> () := {
+    assume error_tracer ::= $&noop_error_tracer
     if self&._capacity == 0 {
         self&._dropped = true
         return
@@ -133,14 +155,13 @@ add_context(.self: $&FixedSizeErrorTracer, .location: SourceLocationId, .context
         count = 128
         self&._dropped = true
     }
-    entry ::= _trusted_error_trace_slot(.self = self, .index = index).entry
-    entry& = (.location = location, .context_length = count)
+    _error_trace_store_entry(.self = self, .index = index, .entry = (.location = location, .context_length = count))
     slot_offset ::= index * _error_trace_stride().size
     offset ::= slot_offset + size_of(.type = ErrorTraceEntry)
     i :: UIntNative = 0
     while i < count {
         byte ::= bytes_get(.view = &context, .index = i).byte
-        destination ::= _trusted_allocation_byte_rw(.allocation = $&self&._storage, .offset = offset + i).reference
+        destination ::= unwrap_or_abort(.value = get_rw_ref(.self = $&self&._buffer, .index = offset + i))
         destination& = byte
         i = i + 1
     }
@@ -172,8 +193,8 @@ write_trace_uint(.value: UIntNative, .writer: $&Virtual#(.abstract: Writer)) -> 
 }
 _error_report_entry(.self: $&FixedSizeErrorTracer, .index: UIntNative, .writer: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     assume error_tracer ::= $&noop_error_tracer
-    entry ::= _trusted_error_trace_slot(.self = self, .index = index).entry
-    location ::= source_location(.id = entry&.location).location
+    entry ::= _error_trace_load_entry(.self = self, .index = index)
+    location ::= source_location(.id = entry.location).location
     write_trace_text(.text = "  at ", .writer = writer)!
     write_trace_text(.text = location.source_file, .writer = writer)!
     write_trace_text(.text = ":", .writer = writer)!
@@ -182,11 +203,11 @@ _error_report_entry(.self: $&FixedSizeErrorTracer, .index: UIntNative, .writer: 
     write_trace_uint(.value = location.column, .writer = writer)!
     slot_offset ::= index * _error_trace_stride().size
     offset ::= slot_offset + size_of(.type = ErrorTraceEntry)
-    if entry&.context_length != 0 {
+    if entry.context_length != 0 {
         write_trace_text(.text = ": ", .writer = writer)!
         i :: UIntNative = 0
-        while i < entry&.context_length {
-            byte ::= _trusted_allocation_byte_ro(.allocation = &self&._storage, .offset = offset + i).reference&
+        while i < entry.context_length {
+            byte ::= unwrap_or_abort(.value = get(.self = &self&._buffer, .index = offset + i))
             write_byte(.self = writer, .byte = byte)!
             i = i + 1
         }

@@ -1,7 +1,7 @@
 ..truncated_test_failure
 fail() -> !Void := { result = ..error(.reason = ..truncated_test_failure) }
 main(.system: System) -> (.status_code: Int32) := {
-    tracer ::= unwrap_or_abort(.value = FixedSizeErrorTracer(.allocator = system.page_allocator, .size = 288))
+    tracer ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [288]UInt8)()))
     virtual_tracer ::= to_virtual#(.abstract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
     failed ::= fail()

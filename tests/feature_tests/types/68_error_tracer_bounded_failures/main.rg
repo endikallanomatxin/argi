@@ -16,15 +16,16 @@ write_byte(.self: $&ProbeWriter, .byte: UInt8) -> (.result: Errable#(.t: Void, .
 flush(.self: $&ProbeWriter) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := { result = ..ok Void() }
 fail() -> !Void := { result = ..error(.reason = ..bounded_test_failure) }
 main(.system: System) -> (.status_code: Int32) := {
-    allocator :: CountAllocator = (.backing = system.page_allocator, .calls = 0, .fail = false)
-    tracer ::= unwrap_or_abort(.value = FixedSizeErrorTracer(.allocator = $&allocator, .size = 288))
+    counting_allocator :: CountAllocator = (.backing = system.page_allocator, .calls = 0, .fail = false)
+    assume allocator ::= $&counting_allocator
+    tracer ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [288]UInt8)()))
     virtual_tracer ::= to_virtual#(.abstract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
     failed ::= fail()
     i :: UIntNative = 0
     while i < 1000 { add_context(.context = "bounded context")
         i = i + 1 }
-    if allocator.calls != 1 { status_code = 1
+    if counting_allocator.calls != 0 { status_code = 1
         return }
     writer ::= ProbeWriter()
     match failed {
@@ -57,22 +58,15 @@ main(.system: System) -> (.status_code: Int32) := {
                         return }
                 }
             }
-            allocator.fail = true
-            initialization ::= FixedSizeErrorTracer(.allocator = $&allocator, .size = 288)
-            match initialization {
-                ..ok _ { status_code = 10
-                    return }
-                ..error & initialization_error {
-                    if initialization_error&.reason != ..out_of_memory { status_code = 11
-                        return }
-                    writer.count = 0
-                    reported ::= report_trace(.trace = &initialization_error&.trace, .writer = $&writer)
-                    if writer.count <= 43 { status_code = 12
-                        return }
-                }
-            }
-            if allocator.calls != 2 { status_code = 13
-                return }
+            -- Caller-supplied storage keeps construction infallible even when
+            -- the ambient allocator would reject every allocation.
+            counting_allocator.fail = true
+            unbuffered ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [0]UInt8)()))
+            virtual_unbuffered ::= to_virtual#(ErrorTracer)($&unbuffered)
+            writer.count = 0
+            virtual_writer ::= to_virtual#(Writer)($&writer)
+            unwrap_or_abort(.value = report(.self = $&virtual_unbuffered, .writer = $&virtual_writer))
+            if writer.count != 43 or counting_allocator.calls != 0 { status_code = 10 return }
             status_code = 0
         }
     }
