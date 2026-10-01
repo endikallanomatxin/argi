@@ -25,12 +25,22 @@ const TOKEN_INDEX = struct {
     pub const string: u32 = 8;
     pub const comment: u32 = 9;
     pub const operator: u32 = 10;
+    pub const parameter: u32 = 11;
+    pub const enum_member: u32 = 12;
 };
 
 const MOD_INDEX = struct {
     pub const declaration: u32 = 0;
     pub const readonly: u32 = 1;
 };
+
+// The protocol legend and emitted indices share one definition.
+pub const semantic_token_types = [_][]const u8{
+    "namespace",  "type",   "function", "method",  "variable", "property",
+    "keyword",    "number", "string",   "comment", "operator", "parameter",
+    "enumMember",
+};
+pub const semantic_token_modifiers = [_][]const u8{ "declaration", "readonly" };
 
 pub const Severity = enum(u8) { err = 1, warn = 2, info = 3, hint = 4 };
 pub const Position = struct { line: u32, character: u32 };
@@ -237,26 +247,47 @@ pub const LanguageService = struct {
         _ = pipeline.parseFiles(&one_file) catch {};
         const tokens = pipeline.tokensForPath(doc.path) orelse token.View{};
 
+        var classes: std.AutoHashMap(u32, TokenClass) = .init(work);
+        for (pipeline.syntax_files.items) |*tree| try classifySyntax(work, tree, doc.text, &classes);
+
+        // Resolved identities refine syntax roles; syntax remains usable while
+        // an unfinished edit prevents global semantizing from producing a graph.
+        var analysis = try self.collectAnalysis(&work, doc);
+        defer if (analysis) |*value| value.deinit(work);
+        if (analysis) |*value| try classifyOccurrences(work, value, doc.path, &classes);
+
         var output = std.array_list.Managed(u32).init(self.allocator);
+        errdefer output.deinit();
         var previous_line: u32 = 0;
         var previous_character: u32 = 0;
         for (0..tokens.len) |index| {
             const item = tokens.get(index);
-            const classification = classifyToken(item.content) orelse continue;
+            const classification = classes.get(item.location.offset) orelse classifyToken(item.content) orelse continue;
             const length = tokenLength(item.content, doc.text, item.location.offset);
             if (length == 0) continue;
-            const position = diagnostics.source_db.lineColumn(item.location.file, item.location.offset);
-            const line = position.line - 1;
-            const character = position.column - 1;
-            const delta_line = line - previous_line;
-            const delta_character = if (delta_line == 0) character - previous_character else character;
-            try output.append(delta_line);
-            try output.append(delta_character);
-            try output.append(length);
-            try output.append(classification.type_index);
-            try output.append(classification.modifiers);
-            previous_line = line;
-            previous_character = character;
+            // Emit single-line spans even for multiline strings/comments. This
+            // works with clients that do not advertise multiline token support.
+            var offset: usize = item.location.offset;
+            const end = @min(doc.text.len, offset + length);
+            while (offset < end) {
+                const newline = std.mem.indexOfScalarPos(u8, doc.text, offset, '\n') orelse end;
+                const line_end = @min(end, newline);
+                const span_end = if (line_end > offset and doc.text[line_end - 1] == '\r') line_end - 1 else line_end;
+                if (span_end > offset) {
+                    const position = diagnostics.source_db.lineColumn(item.location.file, @intCast(offset));
+                    const line = position.line - 1;
+                    const character = position.column - 1;
+                    const delta_line = line - previous_line;
+                    try output.appendSlice(&.{
+                        delta_line,                  if (delta_line == 0) character - previous_character else character,
+                        @intCast(span_end - offset), classification.type_index,
+                        classification.modifiers,
+                    });
+                    previous_line = line;
+                    previous_character = character;
+                }
+                offset = line_end + 1;
+            }
         }
         return output;
     }
@@ -701,6 +732,124 @@ fn writeVariants(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGrap
 
 const TokenClass = struct { type_index: u32, modifiers: u32 = 0 };
 
+fn markSyntax(tree: *const st.FileSyntaxTree, classes: *std.AutoHashMap(u32, TokenClass), index: st.TokenIndex, kind: u32, modifiers: u32) !void {
+    try classes.put(tree.tokenLocation(index).offset, .{ .type_index = kind, .modifiers = modifiers });
+}
+
+fn classifySyntax(allocator: std.mem.Allocator, tree: *const st.FileSyntaxTree, source: []const u8, classes: *std.AutoHashMap(u32, TokenClass)) !void {
+    var type_names: std.StringHashMap(void) = .init(allocator);
+    const declaration = @as(u32, 1) << MOD_INDEX.declaration;
+    for (0..tree.nodes.len) |raw| {
+        const node: st.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
+        if (tree.syntaxType(node)) |ty| switch (ty) {
+            .name => |name| {
+                try markSyntax(tree, classes, name.name_token, TOKEN_INDEX.type_, 0);
+                if (name.qualifier_token) |qualifier| try markSyntax(tree, classes, qualifier, TOKEN_INDEX.namespace, 0);
+            },
+            else => {},
+        };
+        if (tree.functionDeclaration(node)) |function| try markSyntax(tree, classes, function.name_token, TOKEN_INDEX.function, declaration);
+        if (tree.typeDeclaration(node)) |ty| {
+            try markSyntax(tree, classes, ty.name_token, TOKEN_INDEX.type_, declaration);
+            try type_names.put(tree.tokenTextFromSource(source, ty.name_token), {});
+        }
+        if (tree.abstractDeclaration(node)) |ty| try markSyntax(tree, classes, ty.name_token, TOKEN_INDEX.type_, declaration);
+        if (tree.symbolDeclaration(node)) |binding| {
+            const readonly = if (binding.mutability == .constant) @as(u32, 1) << MOD_INDEX.readonly else 0;
+            try markSyntax(tree, classes, binding.name_token, TOKEN_INDEX.variable, declaration | readonly);
+        }
+        if (tree.structTypeField(node)) |field| try markSyntax(tree, classes, field.name_token, TOKEN_INDEX.property, declaration);
+        if (tree.valueField(node)) |field| if (field.name_token) |name| try markSyntax(tree, classes, name, TOKEN_INDEX.property, 0);
+        if (tree.structFieldAccess(node)) |field| try markSyntax(tree, classes, field.field_token, TOKEN_INDEX.property, 0);
+        if (tree.choiceLiteral(node)) |variant| try markSyntax(tree, classes, variant.name_token, TOKEN_INDEX.enum_member, 0);
+        if (tree.choiceTypeVariant(node)) |variant| try markSyntax(tree, classes, variant.name_token, TOKEN_INDEX.enum_member, declaration);
+        if (tree.functionCall(node)) |call| {
+            try markSyntax(tree, classes, call.callee_token, TOKEN_INDEX.function, 0);
+            if (call.module_qualifier) |qualifier| try markSyntax(tree, classes, qualifier, TOKEN_INDEX.namespace, 0);
+        }
+    }
+    // Function fields share syntax nodes with record fields, but their role
+    // in a signature is a parameter (including named result slots).
+    for (0..tree.nodes.len) |raw| {
+        const node: st.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
+        if (tree.functionCall(node)) |call| {
+            if (call.module_qualifier == null and type_names.contains(tree.tokenTextFromSource(source, call.callee_token)))
+                try markSyntax(tree, classes, call.callee_token, TOKEN_INDEX.type_, 0);
+        }
+        const function = tree.functionDeclaration(node) orelse continue;
+        for ([_]st.NodeIndex{ function.input, function.output }) |signature| {
+            const fields = tree.structTypeLiteral(signature) orelse continue;
+            for (fields.fields) |field_node| {
+                const field = tree.structTypeField(field_node) orelse continue;
+                try markSyntax(tree, classes, field.name_token, TOKEN_INDEX.parameter, declaration);
+            }
+        }
+    }
+}
+
+fn classifyOccurrences(allocator: std.mem.Allocator, analysis: *const Analysis, path: []const u8, classes: *std.AutoHashMap(u32, TokenClass)) !void {
+    const graph = &analysis.graph;
+    var parameters: std.AutoHashMap(graph_mod.GlobalBindingId, void) = .init(allocator);
+    var parameter_fields: std.AutoHashMap(graph_mod.GlobalFieldId, void) = .init(allocator);
+    for (graph.functions.items) |function| {
+        for ([_]graph_mod.FieldRange{ function.input, function.output }) |range|
+            for (0..range.len) |index| try parameter_fields.put(@enumFromInt(range.start + @as(u32, @intCast(index))), {});
+    }
+    // Instantiated functions may also contain synthetic input bindings. Match
+    // user parameters by their signature source rather than a binding range.
+    const SourceKey = struct { file: u32, offset: u32 };
+    var parameter_sources: std.AutoHashMap(SourceKey, graph_mod.GlobalFieldId) = .init(allocator);
+    var fields = parameter_fields.keyIterator();
+    while (fields.next()) |field_id| {
+        const field = graph.fields.items[@intFromEnum(field_id.*)];
+        try parameter_sources.put(.{ .file = field.source.file_index, .offset = field.source.offset }, field_id.*);
+    }
+    for (graph.bindings.items, 0..) |binding, raw| {
+        const field_id = parameter_sources.get(.{ .file = binding.source.file_index, .offset = binding.source.offset }) orelse continue;
+        const field = graph.fields.items[@intFromEnum(field_id)];
+        if (std.mem.eql(u8, graph.text(field.name), graph.text(binding.name)))
+            try parameters.put(@enumFromInt(@as(u32, @intCast(raw))), {});
+    }
+    for (analysis.index.occurrences.items) |occurrence| {
+        const file = editor_index.sourceFileId(graph, &analysis.source_db, occurrence.source) orelse continue;
+        if (!std.mem.eql(u8, analysis.source_db.path(file), path)) continue;
+        // Lowered temporaries and implicit calls can inherit an expression's
+        // source offset. Only classify occurrences whose spelling is actually
+        // present there; otherwise they could recolor unrelated user names.
+        const source = analysis.source_db.get(file).source;
+        const name = editor_index.Index.targetName(graph, occurrence.target);
+        const offset: usize = occurrence.source.offset;
+        if (offset + name.len > source.len or !std.mem.eql(u8, source[offset .. offset + name.len], name)) continue;
+        if (offset + name.len < source.len and (std.ascii.isAlphanumeric(source[offset + name.len]) or source[offset + name.len] == '_')) continue;
+        var classification: TokenClass = .{ .type_index = TOKEN_INDEX.variable };
+        switch (occurrence.target) {
+            .function => classification.type_index = TOKEN_INDEX.function,
+            .binding => |id| {
+                if (parameters.contains(id)) classification.type_index = TOKEN_INDEX.parameter;
+                if (graph.bindings.items[@intFromEnum(id)].mutability == .constant)
+                    classification.modifiers |= @as(u32, 1) << MOD_INDEX.readonly;
+            },
+            .declaration => |id| classification.type_index = switch (graph.declarations.items[@intFromEnum(id)].kind) {
+                .type, .abstract_type => TOKEN_INDEX.type_,
+                .import_alias => TOKEN_INDEX.namespace,
+                .function, .test_function => TOKEN_INDEX.function,
+                .choice_option => TOKEN_INDEX.enum_member,
+                .binding => TOKEN_INDEX.variable,
+            },
+            .field => |id| classification.type_index = if (parameter_fields.contains(id)) TOKEN_INDEX.parameter else TOKEN_INDEX.property,
+            .variant => classification.type_index = TOKEN_INDEX.enum_member,
+        }
+        // Syntax distinguishes a named argument label from a parameter use.
+        if (classes.get(occurrence.source.offset)) |existing| {
+            if (existing.type_index == TOKEN_INDEX.property and !occurrence.declaration)
+                classification.type_index = TOKEN_INDEX.property;
+            classification.modifiers |= existing.modifiers;
+        }
+        if (occurrence.declaration) classification.modifiers |= @as(u32, 1) << MOD_INDEX.declaration;
+        try classes.put(occurrence.source.offset, classification);
+    }
+}
+
 fn classifyToken(content: token.Content) ?TokenClass {
     return switch (content) {
         .comment => .{ .type_index = TOKEN_INDEX.comment },
@@ -710,7 +859,7 @@ fn classifyToken(content: token.Content) ?TokenClass {
             .bool_literal => .{ .type_index = TOKEN_INDEX.keyword },
             else => .{ .type_index = TOKEN_INDEX.number },
         },
-        .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once, .keyword_assume, .keyword_reach, .keyword_test, .keyword_and, .keyword_or => .{ .type_index = TOKEN_INDEX.keyword },
+        .keyword_abort, .keyword_import, .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once, .keyword_assume, .keyword_reach, .keyword_test, .keyword_and, .keyword_or => .{ .type_index = TOKEN_INDEX.keyword },
         .binary_operator, .comparison_operator, .equal, .arrow, .pipe, .tilde, .bang, .double_bang, .question_mark, .ampersand, .dollar, .colon, .double_colon => .{ .type_index = TOKEN_INDEX.operator },
         else => null,
     };
@@ -725,6 +874,8 @@ fn tokenLength(content: token.Content, source: []const u8, offset: u32) u32 {
             .string_literal => scanQuoted(source, offset, '"'),
             .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal, .regular_float_literal, .scientific_float_literal => |range| range.len,
         },
+        .keyword_abort => 5,
+        .keyword_import => 6,
         .keyword_return => 6,
         .keyword_if => 2,
         .keyword_else => 4,
@@ -814,4 +965,111 @@ test "indexed LSP service public positions stay zero based" {
     const range = Range{ .start = .{ .line = 0, .character = 1 }, .end = .{ .line = 0, .character = 4 } };
     try std.testing.expect(positionInRange(.{ .line = 0, .character = 2 }, range));
     try std.testing.expect(!positionInRange(.{ .line = 1, .character = 0 }, range));
+}
+
+fn expectSemanticToken(data: []const u32, source: []const u8, needle: []const u8, kind: u32, modifiers: ?u32) !void {
+    const offset = std.mem.indexOf(u8, source, needle) orelse return error.TestExpectedEqual;
+    var line: u32 = 0;
+    var character: u32 = 0;
+    var line_start: usize = 0;
+    for (source[0..offset], 0..) |byte, index| {
+        if (byte == '\n') {
+            line += 1;
+            line_start = index + 1;
+        }
+    }
+    const expected_character: u32 = @intCast(offset - line_start);
+    var actual_line: u32 = 0;
+    var index: usize = 0;
+    while (index < data.len) : (index += 5) {
+        actual_line += data[index];
+        character = if (data[index] == 0) character + data[index + 1] else data[index + 1];
+        if (actual_line == line and character == expected_character) {
+            try std.testing.expectEqual(kind, data[index + 3]);
+            if (modifiers) |expected| try std.testing.expectEqual(expected, data[index + 4]);
+            return;
+        }
+    }
+    return error.TestExpectedEqual;
+}
+
+test "LSP semantic tokens distinguish resolved names without synthetic recoloring" {
+    const code =
+        \\Point : Type = (.x: Int32)
+        \\identity(.value: Int32) -> (.result: Int32) := { result = value }
+        \\main(.system: System) -> (.status_code: Int32 = 0) := {
+        \\    assume stdout := system.terminal&.stdout_writer
+        \\    point ::= Point(.x = 2)
+        \\    amount := identity(.value = point.x)
+        \\    print("Hello world")
+        \\    -- comment
+        \\}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    try service.documents.append(try Document.init(std.testing.allocator, "file:///colors.rg", path, 1, code));
+    var data = try service.semanticTokensFull("file:///colors.rg");
+    defer data.deinit();
+    try expectSemanticToken(data.items, code, "Point :", TOKEN_INDEX.type_, 1);
+    try expectSemanticToken(data.items, code, "identity(.value:", TOKEN_INDEX.function, 1);
+    try expectSemanticToken(data.items, code, "value: Int32", TOKEN_INDEX.parameter, 3);
+    try expectSemanticToken(data.items, code, "value }", TOKEN_INDEX.parameter, 2);
+    try expectSemanticToken(data.items, code, "result =", TOKEN_INDEX.parameter, 0);
+    try expectSemanticToken(data.items, code, "System)", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "system.terminal", TOKEN_INDEX.parameter, 2);
+    try expectSemanticToken(data.items, code, "terminal&", TOKEN_INDEX.property, 0);
+    try expectSemanticToken(data.items, code, "point ::=", TOKEN_INDEX.variable, 1);
+    try expectSemanticToken(data.items, code, "Point(.x", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "amount :=", TOKEN_INDEX.variable, 3);
+    try expectSemanticToken(data.items, code, "identity(.value =", TOKEN_INDEX.function, 0);
+    try expectSemanticToken(data.items, code, "value = point", TOKEN_INDEX.property, 0);
+    try expectSemanticToken(data.items, code, "point.x", TOKEN_INDEX.variable, 0);
+    try expectSemanticToken(data.items, code, "print(", TOKEN_INDEX.function, 0);
+    try expectSemanticToken(data.items, code, "\"Hello world\"", TOKEN_INDEX.string, 0);
+    try expectSemanticToken(data.items, code, "-- comment", TOKEN_INDEX.comment, 0);
+}
+
+test "LSP semantic tokens retain syntax roles with unresolved calls and multiline text" {
+    const code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    text := "héllo
+        \\world"
+        \\    missing(.value = text)
+        \\    abort
+        \\}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    try service.documents.append(try Document.init(std.testing.allocator, "file:///unfinished.rg", path, 1, code));
+    var data = try service.semanticTokensFull("file:///unfinished.rg");
+    defer data.deinit();
+    try expectSemanticToken(data.items, code, "main()", TOKEN_INDEX.function, 1);
+    try expectSemanticToken(data.items, code, "Int32", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "missing(", TOKEN_INDEX.function, 0);
+    try expectSemanticToken(data.items, code, "value =", TOKEN_INDEX.property, 0);
+    try expectSemanticToken(data.items, code, "abort", TOKEN_INDEX.keyword, 0);
+    try expectSemanticToken(data.items, code, "\"héllo", TOKEN_INDEX.string, 0);
+    try expectSemanticToken(data.items, code, "world\"", TOKEN_INDEX.string, 0);
+    var line: usize = 0;
+    var character: usize = 0;
+    var index: usize = 0;
+    var lines = std.mem.splitScalar(u8, code, '\n');
+    var spans: std.array_list.Managed([]const u8) = .init(std.testing.allocator);
+    defer spans.deinit();
+    while (lines.next()) |text| try spans.append(text);
+    while (index < data.items.len) : (index += 5) {
+        line += data.items[index];
+        character = if (data.items[index] == 0) character + data.items[index + 1] else data.items[index + 1];
+        try std.testing.expect(character + data.items[index + 2] <= spans.items[line].len);
+    }
 }

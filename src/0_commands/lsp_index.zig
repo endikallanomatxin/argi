@@ -85,6 +85,14 @@ pub const Index = struct {
                     .target = .{ .function = call.callee },
                 });
             },
+            .assignment => |assignment| {
+                const binding = graph.bindings.items[@intFromEnum(assignment.binding)];
+                try result.add(allocator, .{
+                    .source = node.source,
+                    .len = @intCast(graph.text(binding.name).len),
+                    .target = .{ .binding = assignment.binding },
+                });
+            },
             .binding_use => |binding_id| {
                 const binding = graph.bindings.items[@intFromEnum(binding_id)];
                 try result.add(allocator, .{

@@ -343,23 +343,11 @@ const LanguageServer = struct {
         try stream.beginObject();
         try stream.objectField("tokenTypes");
         try stream.beginArray();
-        // Use the ones that will be produced in the MVP:
-        try stream.write("namespace");
-        try stream.write("type");
-        try stream.write("function");
-        try stream.write("method");
-        try stream.write("variable");
-        try stream.write("property");
-        try stream.write("keyword");
-        try stream.write("number");
-        try stream.write("string");
-        try stream.write("comment");
-        try stream.write("operator");
+        for (service.semantic_token_types) |name| try stream.write(name);
         try stream.endArray();
         try stream.objectField("tokenModifiers");
         try stream.beginArray();
-        try stream.write("declaration"); // Optional, already supported.
-        try stream.write("readonly"); // Optional.
+        for (service.semantic_token_modifiers) |name| try stream.write(name);
         try stream.endArray();
         try stream.endObject();
 
@@ -1110,6 +1098,15 @@ test "initialize response advertises hover definition references and rename" {
     const semantic_tokens = capabilities.get("semanticTokensProvider").?.object;
     try std.testing.expect(semantic_tokens.get("full").?.bool);
     try std.testing.expect(!semantic_tokens.get("range").?.bool);
+    const legend = semantic_tokens.get("legend").?.object;
+    const token_types = legend.get("tokenTypes").?.array.items;
+    try std.testing.expectEqual(service.semantic_token_types.len, token_types.len);
+    for (service.semantic_token_types, token_types) |expected, actual|
+        try std.testing.expectEqualStrings(expected, actual.string);
+    const modifiers = legend.get("tokenModifiers").?.array.items;
+    try std.testing.expectEqual(service.semantic_token_modifiers.len, modifiers.len);
+    for (service.semantic_token_modifiers, modifiers) |expected, actual|
+        try std.testing.expectEqualStrings(expected, actual.string);
 
     const rename_provider = capabilities.get("renameProvider").?.object;
     try std.testing.expect(rename_provider.get("prepareProvider").?.bool);
