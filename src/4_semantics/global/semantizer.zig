@@ -1042,7 +1042,13 @@ fn diagnoseInvalidNumericAssignments(
         };
         // Literal range failures have a more precise Safety diagnostic. Their
         // default type is not evidence of an implicit variable conversion.
-        if (graph.node(value).content == .int_literal or graph.node(value).content == .float_literal) continue;
+        if (graph.node(value).content == .int_literal and switch (graph.semanticType(expected)) {
+            .builtin => |builtin| switch (builtin) {
+                .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64 => true,
+                else => false,
+            },
+            else => false,
+        }) continue;
         const actual = graph.node(value).ty orelse continue;
         if (!isNumericType(graph, actual) or !isNumericType(graph, expected)) continue;
         if (global_types.equal(graph, actual, expected)) continue;

@@ -7450,3 +7450,11 @@ test "feature_tests/polymorphism/64_generic_constraint_fallback" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "tests/feature_tests/basics/35X_float_literal_integer_destination" {
+    try buildExpectFail("tests/feature_tests/basics/35X_float_literal_integer_destination", "cannot assign numeric value of type");
+}
+
+test "tests/feature_tests/basics/36X_integer_literal_float_destination" {
+    try buildExpectFail("tests/feature_tests/basics/36X_integer_literal_float_destination", "cannot assign numeric value of type");
+}
