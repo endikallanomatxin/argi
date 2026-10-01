@@ -1,15 +1,3 @@
--- Reserve one byte for String's trailing NUL without assuming a native width.
-_string_max_result_length() -> (.length: UIntNative) := {
-    length = 0
-    bytes ::= size_of(.type = UIntNative)
-    index :: UIntNative = 0
-    while index < bytes {
-        length = length * 256 + 255
-        index = index + 1
-    }
-    length = length - 1
-}
-
 _string_copy_view_into(.output: $&String, .offset: UIntNative, .source: StringView) -> () := {
     index :: UIntNative = 0
     while index < source.length {

@@ -7193,3 +7193,9 @@ test "feature_tests/text/39_string_replace_allocation_counts" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/text/40_string_size_overflow" {
+    const path = "tests/feature_tests/text/40_string_size_overflow";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

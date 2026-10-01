@@ -128,6 +128,18 @@ Borrowed byte utilities preserve the backing storage lifetime:
   not invalidate previous segments, which continue to borrow their source.
   Calling `next` after exhaustion aborts.
 
+Owning string allocation always reserves a trailing NUL. Existing constructors,
+`copy`, capacity growth, push operations, and concatenation report
+`out_of_memory` when the requested byte extent cannot be represented, as well
+as when allocation fails. They reject invalid sums before allocating or
+modifying the destination. APIs with recorded source lengths also reject before
+reading source bytes; the C-string boundary scans for the terminator to obtain
+its length. Failed growth preserves the original
+string, including its length, capacity, bytes, and trailing NUL. Geometric growth
+saturates at the largest capacity that leaves room for the terminator.
+The infallible `string_append_byte` and `string_append_bytes` helpers require
+sufficient existing capacity and abort before writing if that precondition fails.
+
 `join(.parts, .separator, .allocator)` accepts an `ArrayViewRO<StringView>`
 and produces a new owning `String`. It inserts the separator only between
 parts, preserves empty parts and embedded NULs, and accepts an empty separator.
