@@ -7070,3 +7070,17 @@ test "feature_tests/polymorphism/53_virtual_receiver_identity_same_type_argument
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/collections/80_collection_contracts" {
+    const path = "tests/feature_tests/collections/80_collection_contracts";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/81X_readonly_collection_mutation" {
+    try buildExpectFail("tests/feature_tests/collections/81X_readonly_collection_mutation", "does not implement");
+}
+
+test "feature_tests/collections/82X_owning_collection_value_read" {
+    try buildExpectFail("tests/feature_tests/collections/82X_owning_collection_value_read", "no overload");
+}

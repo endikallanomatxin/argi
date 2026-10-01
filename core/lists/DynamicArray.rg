@@ -527,3 +527,8 @@ _trusted_dynamic_array_set #(.t: Type) (
     )
     _invalidate_dynamic_array_shape#(.t: t)(.array = array)
 }
+
+DynamicArray#(.t: Type) implements Indexable#(.t: t)
+DynamicArray#(.t: Type) implements IndexableMutable#(.t: t)
+DynamicArray#(.t: Type: ImplicitlyCopyable) implements IndexableValue#(.t: t)
+DynamicArray#(.t: Type) implements Resizable#(.t: t)

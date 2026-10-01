@@ -71,8 +71,8 @@ capacity growth invalidate existing views, including their derived subranges
 and element references. The same rule applies to direct element loans from
 `get_ro_ref`, `get_rw_ref`, and the public element-pointer operations, and to
 elements borrowed through collection iterators. This conservative contract applies even when an append
-does not reallocate. Replacing an element value without changing the shape
-preserves the view. Owner cleanup and backing-arena reset invalidate its storage.
+does not reallocate. Replacing an element through `DynamicArray.set` also invalidates existing
+content loans, views, and iterators, even though the length does not change. Owner cleanup and backing-arena reset invalidate its storage.
 A fresh view, element reference, or iterator can be borrowed after a structural
 change. Empty views contain no
 element reference and have no backing-storage dependency.
@@ -197,3 +197,16 @@ These named contracts are defined in `core/lists/List.rg`. `DynamicArray` and
 `ArrayView` expose corresponding operations, but `core` does not yet declare
 that they implement these abstracts. Native `[N]T` uses built-in `[]` and does
 not acquire an `Indexable` implementation through operator overloading.
+
+## Collection capabilities
+
+Collection algorithms can accept the named capabilities `Indexable<T>`,
+`IndexableMutable<T>`, `IndexableValue<T>`, and `Resizable<T>`. Public indexed
+operations return an `Errable` with `out_of_bounds`; value reads require
+implicitly copyable elements. Borrowed reads support owning elements without
+copying them.
+
+`DynamicArray<T>` supplies read-only and mutable indexed borrowing and
+resizing. `ArrayView<T>` supplies read-only and mutable indexed borrowing;
+`ArrayViewRO<T>` supplies read-only borrowing. All three supply value reads
+when `T` is implicitly copyable. Views are non-owning and do not resize.

@@ -153,3 +153,19 @@ set#(.t: Type: ImplicitlyCopyable)(
     ptr& = value
     result = ..ok Void()
 }
+
+ArrayView#(.t: Type) implements Indexable#(.t: t)
+ArrayViewRO#(.t: Type) implements Indexable#(.t: t)
+ArrayView#(.t: Type) implements IndexableMutable#(.t: t)
+ArrayView#(.t: Type: ImplicitlyCopyable) implements IndexableValue#(.t: t)
+ArrayViewRO#(.t: Type: ImplicitlyCopyable) implements IndexableValue#(.t: t)
+
+get#(.t: Type: ImplicitlyCopyable)(
+    .self: &ArrayViewRO#(.t: t),
+    .index: UIntNative,
+) -> (.result: Errable#(.t: t, .reasons: (..out_of_bounds))) := {
+    match get_ro_ref#(.t: t)(.self = self, .index = index).result {
+        ..error _ { result = ..error(.reason = ..out_of_bounds) }
+        ..ok pointer { result = ..ok pointer& }
+    }
+}
