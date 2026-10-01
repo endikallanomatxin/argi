@@ -18,7 +18,9 @@ The implemented foundations include:
 A directory's presence does not imply that its module is complete. Consult
 its `.rg` implementation and registered feature tests for the supported
 operations. Language contracts belong in `description/`; planned library
-extensions and implementation milestones belong in [the library checklist](../plan/0.2.md#core-and-more-libraries).
+extensions and implementation milestones belong in the
+[0.3 library checklist](../plan/0.3.md#core-library) and
+[0.4 candidates](../plan/0.4.md#core-library).
 Exploratory possibilities that are not scheduled remain in
 [the library ideas inventory](library_ideas.txt), alongside existing module
 sketches.

@@ -1,5 +1,8 @@
 # Compile-time execution and interactive tooling
 
+Scheduling: [0.4](0.4.md). This note describes the investigation,
+not an additional release requirement.
+
 Explore whether compile-time execution, a REPL, JIT, and ahead-of-time builds
 can share one execution model. This is an implementation direction, not a
 language requirement.

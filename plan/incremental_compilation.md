@@ -1,5 +1,8 @@
 # Incremental compilation
 
+Scheduling: [0.3](0.3.md). This note describes the investigation,
+not an additional release requirement.
+
 ## Current boundary
 
 Tokenizing and syntaxing produce one `FileSyntaxTree` per source file. All direct
