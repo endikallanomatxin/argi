@@ -1454,10 +1454,10 @@ pub const SafetyChecker = struct {
             var owners = arguments[path.input_index];
             var value = try self.projectValueFacts(owners, path.projections);
             if (path.projections.len != 0) if (arguments[path.input_index].referenced_place) |base| {
-                if (self.valueAtPlace(state, base)) |stored| owners = stored;
+                if (self.valueAtPlace(state, base)) |stored| owners = try self.reconstructPlaceValue(state, base, stored);
                 var target = base;
                 for (path.projections) |projection| target = try self.project(target, projection);
-                if (self.valueAtPlace(state, target)) |stored| value = stored;
+                if (self.valueAtPlace(state, target)) |stored| value = try self.reconstructPlaceValue(state, target, stored);
             };
             // Summary paths select nested payloads, but ownership can live on
             // the containing choice. Keep that envelope when checking roots
@@ -2206,6 +2206,7 @@ pub const SafetyChecker = struct {
     /// fields, including changes made through nested places.
     fn reconstructPlaceValue(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, original: facts.ValueFacts) !facts.ValueFacts {
         var result = original;
+        var projections_changed = false;
         for (state.places.items, 0..) |entry, entry_index| {
             if (!storage.isPrefixOf(entry.storage) or entry.storage.projections.len <= storage.projections.len) continue;
             const projection = entry.storage.projections[storage.projections.len];
@@ -2219,6 +2220,7 @@ pub const SafetyChecker = struct {
                 }
             }
             if (already_seen) continue;
+            projections_changed = true;
             const child_storage = facts.Place{
                 .root = storage.root,
                 .projections = entry.storage.projections[0 .. storage.projections.len + 1],
@@ -2268,6 +2270,33 @@ pub const SafetyChecker = struct {
                 .dereference => {},
             }
         }
+        if (!projections_changed) return original;
+
+        // Flattened aggregate roots must follow the authoritative projections.
+        // Preserve intrinsic ownership and explicit dependencies independently
+        // of fields, while removing roots carried only by replaced children.
+        const old_children = facts.ValueFacts{ .fields = original.fields, .variants = original.variants };
+        const new_children = facts.ValueFacts{ .fields = result.fields, .variants = result.variants };
+        var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer owned.deinit();
+        for (result.owned_roots) |root| {
+            if (!valueContainsOwnedRoot(old_children, root)) try appendRootFact(&owned, root);
+        }
+        const intrinsic_owned = try self.allocator.dupe(facts.ValidityRootId, owned.items);
+        try collectOwnedRoots(new_children, &owned);
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+        defer dependencies.deinit();
+        for (result.dependencies) |dependency| {
+            if (result.explicit_dependency or containsRoot(intrinsic_owned, dependency.root) or
+                !valueDependsOnRoot(old_children, dependency.root))
+                try appendDependencyFact(&dependencies, dependency);
+        }
+        var child_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer child_dependencies.deinit();
+        try collectDependencyRoots(new_children, &child_dependencies);
+        for (child_dependencies.items) |root| try appendDependencyFact(&dependencies, .{ .root = root });
+        result.owned_roots = try owned.toOwnedSlice();
+        result.dependencies = try dependencies.toOwnedSlice();
         return result;
     }
 
@@ -5726,4 +5755,68 @@ test "field materialization removes ownership derived from replaced fields" {
     try std.testing.expectEqual(@as(usize, 1), transferred.owned_roots.len);
     try std.testing.expect(transferred.owned_roots[0] != old_root);
     try std.testing.expectEqual(transferred.owned_roots[0], transferred.fields[0].value.owned_roots[0]);
+}
+
+test "projected writes refresh aggregate roots and preserve explicit dependencies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const old_root = try state.tracker.establish(.fresh);
+    const new_root = try state.tracker.establish(.fresh);
+    const intrinsic_root = try state.tracker.establish(.fresh);
+    const old_leaf = facts.ValueFacts{
+        .dependencies = &.{.{ .root = old_root }},
+        .owned_roots = &.{old_root},
+    };
+    const old_child = facts.ValueFacts{
+        .dependencies = &.{.{ .root = old_root }},
+        .owned_roots = &.{old_root},
+        .fields = &.{.{ .index = 0, .value = &old_leaf }},
+    };
+    const parent = facts.ValueFacts{
+        .dependencies = &.{ .{ .root = old_root }, .{ .root = intrinsic_root } },
+        .owned_roots = &.{ old_root, intrinsic_root },
+        .fields = &.{.{ .index = 0, .value = &old_child }},
+    };
+    const storage = facts.Place{ .root = @enumFromInt(0) };
+    const nested = try checker.project(try checker.project(storage, .{ .field = 0 }), .{ .field = 0 });
+    try checker.setPlace(&state, nested, .initialized, .{
+        .dependencies = &.{.{ .root = new_root }},
+        .owned_roots = &.{new_root},
+    });
+    state.tracker.end(old_root);
+    const refreshed = try checker.reconstructPlaceValue(&state, storage, parent);
+    try std.testing.expect(!valueDependsOnRoot(refreshed, old_root));
+    try std.testing.expect(!valueContainsOwnedRoot(refreshed, old_root));
+    try std.testing.expect(valueDependsOnRoot(refreshed, new_root));
+    try std.testing.expect(valueContainsOwnedRoot(refreshed, new_root));
+    try std.testing.expect(valueContainsOwnedRoot(refreshed, intrinsic_root));
+    try std.testing.expect(!valueDependsOnDeadRoot(refreshed, &state));
+    var explicit = parent;
+    explicit.explicit_dependency = true;
+    const preserved = try checker.reconstructPlaceValue(&state, storage, explicit);
+    try std.testing.expect(valueDependsOnDeadRoot(preserved, &state));
+}
+
+test "dynamic projected writes retain newly merged roots" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const root = try state.tracker.establish(.fresh);
+    const storage = facts.Place{ .root = @enumFromInt(0) };
+    try checker.setPlace(&state, try checker.project(storage, .dynamic_index), .initialized, .{
+        .dependencies = &.{.{ .root = root }},
+        .owned_roots = &.{root},
+    });
+    const refreshed = try checker.reconstructPlaceValue(&state, storage, .{});
+    try std.testing.expect(valueDependsOnRoot(refreshed, root));
+    try std.testing.expect(valueContainsOwnedRoot(refreshed, root));
 }

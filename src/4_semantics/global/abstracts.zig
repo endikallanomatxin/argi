@@ -458,26 +458,55 @@ pub const Resolver = struct {
     pub fn resolveStaticRequirementCall(
         self: *Resolver,
         module_index: usize,
-        abstract_ref: ir.DeclarationRef,
+        constraint: parameterized_storage.AbstractConstraint,
+        substitutions: *generic_mod.Resolver.Bindings,
         concrete: global_sg.GlobalTypeId,
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
         source: primitives.SourceRef,
     ) !?global_sg.Node {
         if (reference.module_path != null or reference.generic_arguments != null) return null;
-        const abstract_decl = try self.resolveDeclarationRef(module_index, abstract_ref, .abstract_type);
+        const abstract_decl = try self.resolveDeclarationRef(module_index, constraint.abstract_ref, .abstract_type);
         if (!try self.implements(concrete, abstract_decl)) return null;
         const located = self.findAbstractDefinition(abstract_decl) orelse return null;
-        // Parameterized abstract requirements need their own abstract argument
-        // substitution. The current hidden local-abstract lowering only needs
-        // non-parameterized contracts such as Allocator.
-        if (located.definition.parameters.len != 0) return null;
+        // Instantiate associated arguments in the caller's specialization, then
+        // use them to specialize the contract signature before concrete lookup.
+        // Implementations can live outside the generic definition's module.
+        const target_module = &self.modules[located.module_index];
+        const target_storage = &target_module.semantic.parameterized_storage;
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, target_storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+        const caller_module = &self.modules[module_index];
+        const caller_ir = &caller_module.semantic.parameterized_storage.ir;
+        for (caller_ir.generic_arguments.items[constraint.arguments.start..][0..constraint.arguments.len], 0..) |argument, position| {
+            const name = caller_module.text(argument.name);
+            var target_raw: ?u32 = null;
+            for (0..located.definition.parameters.len) |offset| {
+                const raw = located.definition.parameters.start + @as(u32, @intCast(offset));
+                if ((name.len == 0 and offset == position) or
+                    std.mem.eql(u8, name, target_module.text(target_storage.comptime_parameters.items[raw].name)))
+                {
+                    target_raw = raw;
+                    break;
+                }
+            }
+            const raw = target_raw orelse return null;
+            switch (argument.value) {
+                .type => |pattern| bindings.types[raw] = try self.generics.instantiateParameterizedType(module_index, pattern, substitutions, concrete),
+                .comptime_int => |pattern| bindings.ints[raw] = try self.generics.evalInt(module_index, pattern, substitutions),
+            }
+        }
 
         const method_name = self.modules[module_index].text(reference.name);
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
             if (!std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), method_name)) continue;
-            const instance = try self.requirementInstance(abstract_decl, concrete, located, requirement, @intCast(method_index));
+            const instance = RequirementInstance{
+                .declaration = abstract_decl,
+                .method_index = @intCast(method_index),
+                .input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings, concrete),
+                .output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings, concrete),
+            };
             const implementation = self.findConcreteMethod(method_name, instance.input, instance.output) orelse continue;
             const input_fields = global_types.fields(self.graph, instance.input) orelse continue;
             if (self.core.scoreCallInput(input_fields, input) == null) continue;

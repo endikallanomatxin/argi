@@ -7283,3 +7283,71 @@ test "feature_tests/collections/95_ring_buffer_allocation_counts" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/collections/96_hash_policies" {
+    const path = "tests/feature_tests/collections/96_hash_policies";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/97_hash_map" {
+    const path = "tests/feature_tests/collections/97_hash_map";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/98_hash_map_collisions" {
+    const path = "tests/feature_tests/collections/98_hash_map_collisions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/99_hash_map_growth_failure" {
+    const path = "tests/feature_tests/collections/99_hash_map_growth_failure";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/100_hash_map_string_keys" {
+    const path = "tests/feature_tests/collections/100_hash_map_string_keys";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/101X_hash_map_borrow_after_put" {
+    try buildExpectFail("tests/feature_tests/collections/101X_hash_map_borrow_after_put", "root that has ended");
+}
+
+test "feature_tests/collections/102X_hash_map_borrow_after_remove" {
+    try buildExpectFail("tests/feature_tests/collections/102X_hash_map_borrow_after_remove", "root that has ended");
+}
+
+test "feature_tests/collections/103X_hash_map_borrow_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/collections/103X_hash_map_borrow_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/types/278_parameterized_contract_static_calls" {
+    const path = "tests/feature_tests/types/278_parameterized_contract_static_calls";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/104X_hash_map_key_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/collections/104X_hash_map_key_after_cleanup", "opaque storage hides a dependency");
+}
+
+test "feature_tests/collections/105_hash_set" {
+    const path = "tests/feature_tests/collections/105_hash_set";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/106_hash_set_growth_failure" {
+    const path = "tests/feature_tests/collections/106_hash_set_growth_failure";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/107X_hash_set_key_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/collections/107X_hash_set_key_after_cleanup", "opaque storage hides a dependency");
+}
