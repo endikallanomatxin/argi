@@ -7367,3 +7367,15 @@ test "feature_tests/collections/110_order_policies" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/collections/111_collection_binary_search" {
+    const path = "tests/feature_tests/collections/111_collection_binary_search";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/112_binary_search_large_index" {
+    const path = "tests/feature_tests/collections/112_binary_search_large_index";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

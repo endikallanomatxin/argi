@@ -257,3 +257,17 @@ Comparison reads borrowed bytes and does not acquire ownership. This order
 performs no locale, Unicode normalization, or case folding. Float ordering
 requires an explicit policy that accounts for NaNs; there is no implicit
 floating-point ordering policy.
+
+## Binary search
+
+`binary_search(.self, .value, .order)` reads an `Indexable<T>` of implicitly
+copyable elements that is already sorted by the supplied policy. It returns
+the first policy-equivalent element's index as `?UIntNative`, or `none`.
+Equivalence means that neither element is less than the other. Empty
+collections return `none` without accessing an element.
+
+Search uses logarithmically many indexed reads and comparisons, constant
+auxiliary space, and no allocation or mutation. The collection's indexed
+access cost determines total runtime. The sorted precondition is not checked
+by a linear scan; results are unspecified when it is violated. The returned
+index has no storage lifetime and can become stale after mutation.
