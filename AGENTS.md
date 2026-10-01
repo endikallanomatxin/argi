@@ -165,8 +165,8 @@ faster.
   outdated while doing relevant work, update them so they remain useful as
   development references.
 - When a feature or tooling milestone is clearly finished, update the relevant
-  checklist in the corresponding release plan (`plan/0.2.md`, `plan/0.3.md`,
-  or `plan/0.4.md`) in the same change if practical. If you choose not to update
+  checklist in the corresponding active release plan in the same change if
+  practical. If you choose not to update
   it immediately, leave an explicit TODO in code or docs explaining
   the mismatch so the plan does not silently drift.
 
