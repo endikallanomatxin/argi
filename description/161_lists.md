@@ -236,3 +236,24 @@ and provide valid indexed references throughout the operation.
 
 Owning elements need a separate exchange contract; copying their values to
 implement reversal would duplicate ownership.
+
+## Ordering policies
+
+`OrderPolicy<T>` provides `less(.self, .left, .right) -> Bool` for implicitly
+copyable elements. It defines a strict weak order: no value is less than
+itself, less-than is transitive, and equivalence is transitive. Two elements
+are equivalent when neither is less than the other; this need not coincide
+with their `==` operator or complete record equality.
+
+Algorithms borrow a policy instance explicitly as `.order`. Its answers must
+remain consistent throughout an operation, and it must not mutate the
+collection or the backing data used for comparison. Applications can supply
+descending orders and comparisons by selected record fields.
+
+Core supplies `Int32OrderPolicy`, `UIntNativeOrderPolicy`, and
+`StringViewOrderPolicy`. String views use lexicographic unsigned-byte order,
+including embedded NUL bytes; a shorter equal prefix precedes a longer one.
+Comparison reads borrowed bytes and does not acquire ownership. This order
+performs no locale, Unicode normalization, or case folding. Float ordering
+requires an explicit policy that accounts for NaNs; there is no implicit
+floating-point ordering policy.

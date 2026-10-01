@@ -7361,3 +7361,9 @@ test "feature_tests/collections/108_collection_reverse" {
 test "feature_tests/collections/109X_collection_reverse_owning" {
     try buildExpectFail("tests/feature_tests/collections/109X_collection_reverse_owning", "no function named 'reverse'");
 }
+
+test "feature_tests/collections/110_order_policies" {
+    const path = "tests/feature_tests/collections/110_order_policies";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
