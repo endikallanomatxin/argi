@@ -87,6 +87,9 @@ pub const Infer = struct {
         // so a change schedules every observer, including recursive callers.
         try self.engine.seed(functions.items);
         while (self.engine.nextDirty()) |function| {
+            // Successful and unrepresentable virtual merges both depend on
+            // concrete summary approximations. Recompute them for each worklist
+            // evaluation so changes cannot leave either kind of cache stale.
             self.virtual_summaries.clearRetainingCapacity();
             self.invalid_virtual_summaries.clearRetainingCapacity();
             self.evaluations += 1;
