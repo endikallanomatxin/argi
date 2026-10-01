@@ -334,7 +334,21 @@ pub const LanguageService = struct {
         defer analysis.deinit(work);
 
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
-        const target = analysis.index.declarationOccurrence(occurrence.target) orelse return null;
+        // Specialized functions retain their source declaration but have a distinct
+        // function ID. Navigation follows that declaration, not the instance ID.
+        const target = analysis.index.declarationOccurrence(occurrence.target) orelse switch (occurrence.target) {
+            .function => |id| blk: {
+                const function = analysis.graph.functions.items[@intFromEnum(id)];
+                const declaration = analysis.graph.declarations.items[@intFromEnum(function.declaration)];
+                break :blk editor_index.Occurrence{
+                    .source = declaration.source,
+                    .len = @intCast(analysis.graph.text(declaration.name).len),
+                    .target = occurrence.target,
+                    .declaration = true,
+                };
+            },
+            else => return null,
+        };
         return try self.definitionForOccurrence(&analysis, target);
     }
 
@@ -639,6 +653,7 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
         .function => |id| {
             const function = graph.functions.items[@intFromEnum(id)];
             const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
+            if (function.flags.is_once) try writer.writeAll("once ");
             try writer.print("{s}(", .{graph.text(declaration.name)});
             try writeFieldRange(writer, graph, function.input);
             try writer.writeAll(") -> (");
@@ -647,15 +662,35 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
         },
         .binding => |id| {
             const binding = graph.bindings.items[@intFromEnum(id)];
-            try writer.print("{s}: ", .{graph.text(binding.name)});
+            try writer.print("{s} {s} ", .{ graph.text(binding.name), if (binding.mutability == .variable) "::" else ":" });
             try writeType(writer, graph, binding.ty);
         },
         .declaration => |id| {
             const declaration = graph.declarations.items[@intFromEnum(id)];
-            try writer.print("{s} {s}", .{ @tagName(declaration.kind), graph.text(declaration.name) });
-            if (declaration.type_id) |ty| {
-                try writer.writeAll(" = ");
-                try writeType(writer, graph, ty);
+            const name = graph.text(declaration.name);
+            switch (declaration.kind) {
+                .type, .abstract_type => {
+                    try writer.print("{s} : {s}", .{ name, if (declaration.kind == .type) "Type" else "Abstract" });
+                    if (declaration.type_id) |ty| {
+                        const self_reference = switch (graph.types.items[@intFromEnum(ty)]) {
+                            .declared => |target_decl| target_decl == id,
+                            else => false,
+                        };
+                        if (!self_reference) {
+                            try writer.writeAll(" = ");
+                            try writeType(writer, graph, ty);
+                        }
+                    }
+                },
+                .binding => {
+                    try writer.writeAll(name);
+                    if (declaration.type_id) |ty| {
+                        try writer.writeAll(" : ");
+                        try writeType(writer, graph, ty);
+                    }
+                },
+                .choice_option => try writer.print("..{s}", .{name}),
+                .import_alias, .function, .test_function => try writer.writeAll(name),
             }
         },
         .field => |id| {
@@ -667,12 +702,14 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
             const variant = graph.variants.items[@intFromEnum(id)];
             try writer.print("..{s}", .{graph.text(variant.name)});
             if (variant.payload_type) |payload| {
-                try writer.writeAll(": ");
+                try writer.writeAll(" ");
                 try writeType(writer, graph, payload);
             }
         },
     }
     try writer.writeAll("\n```");
+    if (target == .declaration and graph.declarations.items[@intFromEnum(target.declaration)].kind == .import_alias)
+        try writer.writeAll("\n\nImported module.");
     return try output.toOwnedSlice();
 }
 
@@ -689,7 +726,7 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
         .builtin => |value| try writer.writeAll(@tagName(value)),
         .declared => |decl| try writer.writeAll(graph.text(graph.declarations.items[@intFromEnum(decl)].name)),
         .pointer => |pointer| {
-            try writer.writeAll(if (pointer.mutability == .read_write) "&mut " else "&");
+            try writer.writeAll(if (pointer.mutability == .read_write) "$&" else "&");
             try writeType(writer, graph, pointer.child);
         },
         .array => |array| {
@@ -705,7 +742,7 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
             try writeType(writer, graph, child);
         },
         .inferred_choice => |choice| {
-            try writer.print("choice#{d}", .{choice.identity});
+            try writeVariants(writer, graph, choice.variants);
         },
         .structural => |shape| {
             try writer.writeAll("(");
@@ -718,7 +755,7 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
             try writer.writeAll("#(");
             for (graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len], 0..) |argument, index| {
                 if (index != 0) try writer.writeAll(", ");
-                try writer.print(".{s}: ", .{graph.text(argument.name)});
+                try writer.print(".{s} {s} ", .{ graph.text(argument.name), if (argument.value == .comptime_int) "=" else ":" });
                 switch (argument.value) {
                     .type => |value| try writeType(writer, graph, value),
                     .comptime_int => |value| try writer.print("{d}", .{value}),
@@ -740,7 +777,7 @@ fn writeVariants(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGrap
         if (index != 0) try writer.writeAll(", ");
         try writer.print("..{s}", .{graph.text(variant.name)});
         if (variant.payload_type) |payload| {
-            try writer.writeAll(": ");
+            try writer.writeAll(" ");
             try writeType(writer, graph, payload);
         }
     }
@@ -830,14 +867,7 @@ fn classifyOccurrences(allocator: std.mem.Allocator, analysis: *const Analysis, 
     for (analysis.index.occurrences.items) |occurrence| {
         const file = editor_index.sourceFileId(graph, &analysis.source_db, occurrence.source) orelse continue;
         if (!std.mem.eql(u8, analysis.source_db.path(file), path)) continue;
-        // Lowered temporaries and implicit calls can inherit an expression's
-        // source offset. Only classify occurrences whose spelling is actually
-        // present there; otherwise they could recolor unrelated user names.
-        const source = analysis.source_db.get(file).source;
-        const name = editor_index.Index.targetName(graph, occurrence.target);
-        const offset: usize = occurrence.source.offset;
-        if (offset + name.len > source.len or !std.mem.eql(u8, source[offset .. offset + name.len], name)) continue;
-        if (offset + name.len < source.len and (std.ascii.isAlphanumeric(source[offset + name.len]) or source[offset + name.len] == '_')) continue;
+        if (!editor_index.occurrence_matches_source(graph, &analysis.source_db, occurrence)) continue;
         var classification: TokenClass = .{ .type_index = TOKEN_INDEX.variable };
         switch (occurrence.target) {
             .function => classification.type_index = TOKEN_INDEX.function,
@@ -1049,6 +1079,55 @@ test "LSP semantic tokens distinguish resolved names without synthetic recolorin
     try expectSemanticToken(data.items, code, "print(", TOKEN_INDEX.function, 0);
     try expectSemanticToken(data.items, code, "\"Hello world\"", TOKEN_INDEX.string, 0);
     try expectSemanticToken(data.items, code, "-- comment", TOKEN_INDEX.comment, 0);
+}
+
+test "LSP navigation and hovers use written symbols and source declarations" {
+    const code =
+        \\Point : Type = (.x: Int32)
+        \\identity(.value: Int32) -> (.result: Int32) := { result = value }
+        \\main(.system: System) -> (.status_code: Int32 = 0) := {
+        \\    assume stdout := system.terminal&.stdout_writer
+        \\    point ::= Point(.x = 2)
+        \\    amount := identity(.value = point.x)
+        \\    print("Hello world")
+        \\}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///navigation.rg";
+    try service.documents.append(try Document.init(std.testing.allocator, uri, path, 1, code));
+
+    const nominal = (try service.hover(uri, .{ .line = 0, .character = 0 })).?;
+    defer std.testing.allocator.free(nominal.contents);
+    try std.testing.expectEqualStrings("```argi\nPoint : Type\n```", nominal.contents);
+    const call = (try service.hover(uri, .{ .line = 5, .character = 14 })).?;
+    defer std.testing.allocator.free(call.contents);
+    try std.testing.expect(std.mem.startsWith(u8, call.contents, "```argi\nidentity("));
+    try std.testing.expectEqual(@as(u32, 14), call.range.start.character);
+    const field = (try service.hover(uri, .{ .line = 3, .character = 28 })).?;
+    defer std.testing.allocator.free(field.contents);
+    try std.testing.expectEqualStrings("```argi\n.terminal: $&Terminal\n```", field.contents);
+    try std.testing.expectEqual(@as(u32, 28), field.range.start.character);
+
+    const identity = (try service.definition(uri, .{ .line = 5, .character = 14 })).?;
+    defer identity.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(path, identity.path);
+    try std.testing.expectEqual(@as(u32, 1), identity.range.start.line);
+    try std.testing.expectEqual(@as(u32, 0), identity.range.start.character);
+    const specialized = (try service.definition(uri, .{ .line = 6, .character = 4 })).?;
+    defer specialized.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.endsWith(u8, specialized.path, "/system/terminal.rg"));
+    try std.testing.expectEqual(@as(u32, 0), specialized.range.start.character);
+    try std.testing.expectEqual(@as(u32, 5), specialized.range.end.character);
+    const terminal = (try service.definition(uri, .{ .line = 3, .character = 28 })).?;
+    defer terminal.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.endsWith(u8, terminal.path, "/system/system.rg"));
+    try std.testing.expectEqual(@as(u32, 8), terminal.range.end.character - terminal.range.start.character);
 }
 
 test "LSP semantic tokens retain syntax roles with unresolved calls and multiline text" {

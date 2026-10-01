@@ -184,6 +184,7 @@ pub const Index = struct {
         for (self.occurrences.items) |occurrence| {
             const occurrence_file = sourceFileId(graph, db, occurrence.source) orelse continue;
             if (occurrence_file != requested) continue;
+            if (!occurrence_matches_source(graph, db, occurrence)) continue;
             if (offset < occurrence.source.offset or offset >= occurrence.source.offset + occurrence.len) continue;
             if (best == null or occurrence.len < best.?.len or (occurrence.declaration and !best.?.declaration)) best = occurrence;
         }
@@ -229,6 +230,20 @@ pub const Index = struct {
         };
     }
 };
+
+/// Lowered temporaries and implicit operations may inherit another expression's
+/// position. Editor actions must use the name actually written at that position.
+pub fn occurrence_matches_source(graph: *const graph_mod.GlobalSemanticGraph, db: *const source_db.SourceDb, occurrence: Occurrence) bool {
+    const file = sourceFileId(graph, db, occurrence.source) orelse return false;
+    const source = db.get(file).source;
+    const name = Index.targetName(graph, occurrence.target);
+    const offset: usize = occurrence.source.offset;
+    if (name.len == 0 or offset + name.len > source.len) return false;
+    if (!std.mem.eql(u8, source[offset .. offset + name.len], name)) return false;
+    if (offset > 0 and (std.ascii.isAlphanumeric(source[offset - 1]) or source[offset - 1] == '_')) return false;
+    return offset + name.len == source.len or
+        (!std.ascii.isAlphanumeric(source[offset + name.len]) and source[offset + name.len] != '_');
+}
 
 /// Returns the compact file spelling stored in GlobalSG. Use `sourceFileId`
 /// when a full source path is required; GlobalSG intentionally stores module

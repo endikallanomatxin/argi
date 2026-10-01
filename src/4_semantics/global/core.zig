@@ -740,7 +740,7 @@ pub const Resolver = struct {
             const any = try self.builtin(.Any);
             const pointer = try self.pointerType(any, .read_only);
             self.graph.nodes.items[@intFromEnum(target)] = .{
-                .source = self.graph.nodes.items[@intFromEnum(source)].source,
+                .source = .{ .file_index = o.file_base + value.source.file_index, .offset = value.source.offset },
                 .ty = pointer,
                 .content = .{ .struct_field_access = .{
                     .value = source,
@@ -753,7 +753,7 @@ pub const Resolver = struct {
         }
         const hit = types.findField(self.graph, source_ty, field_name) orelse return false;
         self.graph.nodes.items[@intFromEnum(target)] = .{
-            .source = self.graph.nodes.items[@intFromEnum(source)].source,
+            .source = .{ .file_index = o.file_base + value.source.file_index, .offset = value.source.offset },
             .ty = hit.field.ty,
             .content = .{ .struct_field_access = .{
                 .value = source,
