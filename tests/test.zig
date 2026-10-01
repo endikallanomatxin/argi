@@ -7335,3 +7335,19 @@ test "feature_tests/types/278_parameterized_contract_static_calls" {
 test "feature_tests/collections/104X_hash_map_key_after_cleanup" {
     try buildExpectFail("tests/feature_tests/collections/104X_hash_map_key_after_cleanup", "opaque storage hides a dependency");
 }
+
+test "feature_tests/collections/105_hash_set" {
+    const path = "tests/feature_tests/collections/105_hash_set";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/106_hash_set_growth_failure" {
+    const path = "tests/feature_tests/collections/106_hash_set_growth_failure";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/107X_hash_set_key_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/collections/107X_hash_set_key_after_cleanup", "opaque storage hides a dependency");
+}

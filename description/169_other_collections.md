@@ -51,8 +51,18 @@ Owning keys and values require a separate ownership contract before support.
 
 ## Sets
 
-> [!IDEA]
-> Add a set collection; its representation and operations remain open.
+`HashSet<K, P>` uses the same key policy and storage implementation as
+`HashMap`. Keys are implicitly copyable; borrowed keys keep their backing
+lifetimes and must remain unchanged while stored. Construction accepts
+`.policy`, `.allocator`, and optional `.capacity` with the map's slot-count
+meaning and allocation errors.
+
+`insert(.self, .key, .allocator)` returns an errable Boolean: true for a new key,
+false when an equivalent key is already present. Duplicate insertion retains
+the existing key, leaves length unchanged, and does not allocate. Failed growth
+preserves membership. `contains`, `remove`, `length`, `capacity`, and `deinit`
+have the corresponding map contracts. The set does not expose stored-key
+references or acquire ownership of borrowed backing storage.
 
 ## Graphs
 
