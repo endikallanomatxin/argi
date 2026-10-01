@@ -1475,6 +1475,21 @@ pub const Resolver = struct {
         return true;
     }
 
+    pub fn constraintDeclaration(
+        self: *Resolver,
+        module_index: usize,
+        constraint_id: parameterized_storage.AbstractConstraintId,
+    ) !global_sg.GlobalDeclId {
+        const storage = &self.modules[module_index].semantic.parameterized_storage;
+        const constraint = storage.abstract_constraints.items[@intFromEnum(constraint_id)];
+        const key = ConstraintKey{ .module_index = @intCast(module_index), .constraint = constraint_id };
+        return self.constraint_declarations.get(key) orelse blk: {
+            const resolved = try self.resolveDeclarationRef(module_index, constraint.abstract_ref, .abstract_type);
+            try self.constraint_declarations.put(self.allocator, key, resolved);
+            break :blk resolved;
+        };
+    }
+
     pub fn inferConstraintBindings(
         self: *Resolver,
         module_index: usize,
@@ -1485,12 +1500,7 @@ pub const Resolver = struct {
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage;
         const constraint = storage.abstract_constraints.items[@intFromEnum(constraint_id)];
-        const key = ConstraintKey{ .module_index = @intCast(module_index), .constraint = constraint_id };
-        const abstract_decl = self.constraint_declarations.get(key) orelse blk: {
-            const resolved = try self.resolveDeclarationRef(module_index, constraint.abstract_ref, .abstract_type);
-            try self.constraint_declarations.put(self.allocator, key, resolved);
-            break :blk resolved;
-        };
+        const abstract_decl = try self.constraintDeclaration(module_index, constraint_id);
         if (!try self.implementsDepth(concrete, abstract_decl, 0)) return false;
         if (constraint.arguments.len == 0) return true;
 

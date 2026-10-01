@@ -44,6 +44,13 @@ pub const SelectionProfile = struct {
 
 const ReachInferenceContext = reach_context_mod.Context;
 
+pub const ConstraintFailure = struct {
+    function: global_sg.GlobalDeclId,
+    abstract_decl: global_sg.GlobalDeclId,
+    actual: global_sg.GlobalTypeId,
+    parameter_name: []const u8,
+};
+
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -59,6 +66,12 @@ pub const Resolver = struct {
     register_defer: ?*const fn (*anyopaque, global_sg.GlobalNodeId, global_sg.GlobalNodeId) anyerror!void = null,
     ownership_checkpoint: ?*const fn (*anyopaque) [2]usize = null,
     rollback_ownership: ?*const fn (*anyopaque, [2]usize) void = null,
+    constraint_diagnostics: ?*std.ArrayList(ConstraintFailure) = null,
+    failed_constraint: ?struct {
+        abstract_decl: global_sg.GlobalDeclId,
+        actual: global_sg.GlobalTypeId,
+        parameter_name: []const u8,
+    } = null,
     stats: Stats = .{},
     profile_io: ?std.Io = null,
     selection_profile: SelectionProfile = .{},
@@ -579,7 +592,10 @@ pub const Resolver = struct {
             phase_start = self.profileTimestamp();
             const constraints_ok = try self.inferAndValidateConstraints(candidate_index, parameterized.parameters, &bindings);
             self.addProfileTime(phase_start, &self.selection_profile.explicit_constraints_ns);
-            if (!constraints_ok) continue;
+            if (!constraints_ok) {
+                try self.recordConstraintFailure(candidate_index, declaration, parameterized.input, &bindings, input);
+                continue;
+            }
             phase_start = self.profileTimestamp();
             if (self.profile_io != null)
                 self.selection_profile.explicit_candidates_reaching_argument_materialization += 1;
@@ -868,6 +884,7 @@ pub const Resolver = struct {
         parameters: primitives.Range(ir.ComptimeParameterId),
         bindings: *generic_mod.Resolver.Bindings,
     ) !bool {
+        self.failed_constraint = null;
         const abstracts = self.nested_call_context orelse return true;
         const storage = &self.modules[module_index].semantic.parameterized_storage;
 
@@ -890,7 +907,14 @@ pub const Resolver = struct {
                 const concrete = bindings.types[raw] orelse continue;
                 const constraint_ok = try abstracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings);
 
-                if (!constraint_ok) return false;
+                if (!constraint_ok) {
+                    if (self.constraint_diagnostics != null) self.failed_constraint = .{
+                        .abstract_decl = try abstracts.constraintDeclaration(module_index, constraint_id),
+                        .actual = concrete,
+                        .parameter_name = self.modules[module_index].text(parameter.name),
+                    };
+                    return false;
+                }
             }
 
             var after: usize = 0;
@@ -1096,7 +1120,10 @@ pub const Resolver = struct {
                 self.profile_constraints_ns += elapsed;
                 self.selection_profile.implicit_constraints_ns += elapsed;
             }
-            if (!constraints_ok) continue;
+            if (!constraints_ok) {
+                try self.recordConstraintFailure(candidate_index, declaration, parameterized.input, &bindings, input);
+                continue;
+            }
             var arguments_complete = true;
             for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
                 const parameter = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw];
@@ -1210,6 +1237,83 @@ pub const Resolver = struct {
         // A different concrete nominal base cannot be supplied by reach or
         // pointer compatibility. Abstract receivers keep the full matcher.
         return self.graph.declarations.items[@intFromEnum(expected_base)].kind == .type and actual_base != expected_base;
+    }
+
+    fn recordConstraintFailure(
+        self: *Resolver,
+        module_index: usize,
+        declaration: global_sg.GlobalDeclId,
+        pattern: ir.ParameterizedTypeId,
+        bindings: *generic_mod.Resolver.Bindings,
+        input: global_sg.GlobalNodeId,
+    ) !void {
+        const failures = self.constraint_diagnostics orelse return;
+        const failure = self.failed_constraint orelse return;
+        // A bound can fail on a candidate whose other arguments do not fit.
+        // Only explain constraints for otherwise compatible signatures, using
+        // the same matcher as overload selection rather than a second rule set.
+        switch (self.matchParameterizedInput(module_index, pattern, bindings, input)) {
+            .score => {},
+            else => return,
+        }
+        try failures.append(self.allocator, .{
+            .function = declaration,
+            .abstract_decl = failure.abstract_decl,
+            .actual = failure.actual,
+            .parameter_name = failure.parameter_name,
+        });
+    }
+
+    /// Diagnostic probes use normal selection and roll back its graph and
+    /// ownership effects. Rejected bounds must not escape a speculative probe
+    /// or become an error when another overload actually accepts the call.
+    pub fn collectGenericConstraintFailures(
+        self: *Resolver,
+        current_module: usize,
+        module: *const module_sg.ModuleSemanticGraph,
+        reference: module_entities.ExternalRef,
+        input: global_sg.GlobalNodeId,
+        reach: ReachInferenceContext,
+        failures: *std.ArrayList(ConstraintFailure),
+        actual_name: *std.array_list.Managed(u8),
+        append_type_name: *const fn (*std.array_list.Managed(u8), *const global_sg.GlobalSemanticGraph, global_sg.GlobalTypeId) anyerror!void,
+    ) !void {
+        const checkpoint = self.graph.checkpoint();
+        const side_effect_checkpoint = self.checkpointSideEffects();
+        const saved_stats = self.stats;
+        const saved_generic_stats = self.generics.stats;
+        const saved_core_stats = self.core.stats;
+        const saved_diagnostics = self.constraint_diagnostics;
+        const saved_failure = self.failed_constraint;
+        defer {
+            self.graph.rollback(checkpoint);
+            self.rollbackSideEffects(side_effect_checkpoint);
+            self.stats = saved_stats;
+            self.generics.stats = saved_generic_stats;
+            self.core.stats = saved_core_stats;
+            self.constraint_diagnostics = saved_diagnostics;
+            self.failed_constraint = saved_failure;
+        }
+        failures.clearRetainingCapacity();
+        self.constraint_diagnostics = failures;
+        const selected = selection: {
+            if (reference.generic_arguments) |arguments| {
+                const relocated = try self.generics.relocateModuleArguments(current_module, arguments);
+                _ = self.resolveExplicitGenericFunction(current_module, module, reference, relocated, input, reach) catch break :selection false;
+            } else {
+                _ = self.resolveImplicitGenericFunction(current_module, module, reference, input, reach) catch break :selection false;
+            }
+            break :selection true;
+        };
+        if (selected) {
+            // A successful selection is not a constraint error even if other
+            // candidates failed their bounds.
+            failures.clearRetainingCapacity();
+        } else if (failures.items.len != 0) {
+            // Associated-parameter inference may create temporary types. Render
+            // their name before rollback rather than expose their IDs afterward.
+            try append_type_name(actual_name, self.graph, failures.items[0].actual);
+        }
     }
 
     /// Re-run implicit generic selection transactionally for diagnostics and

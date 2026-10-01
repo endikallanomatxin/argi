@@ -2324,6 +2324,36 @@ fn diagnoseUnresolvedCall(
             }
             if (!input_complete) continue;
 
+            var constraint_failures: std.ArrayList(generic_functions_mod.ConstraintFailure) = .empty;
+            defer constraint_failures.deinit(allocator);
+            var constraint_actual_name = std.array_list.Managed(u8).init(allocator);
+            defer constraint_actual_name.deinit();
+            try generic_functions.collectGenericConstraintFailures(
+                module_index,
+                module,
+                reference,
+                input_id,
+                reach_context.Context.fromModule(module, offsets[module_index], call.visible_bindings, call.owner_function),
+                &constraint_failures,
+                &constraint_actual_name,
+                appendTypeName,
+            );
+            if (constraint_failures.items.len != 0) {
+                const failure = constraint_failures.items[0];
+                try diagnostics.add(
+                    diagnosticLocation(graph, diagnostics, source),
+                    .semantic,
+                    "type '{s}' does not satisfy abstract constraint '{s}' required by generic function parameter '.{s}' of '{s}'",
+                    .{
+                        constraint_actual_name.items,
+                        graph.text(graph.declaration(failure.abstract_decl).name),
+                        failure.parameter_name,
+                        graph.text(graph.declaration(failure.function).name),
+                    },
+                );
+                return true;
+            }
+
             var candidates: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
             defer candidates.deinit(allocator);
             for (graph.functions.items, 0..) |function, raw| {

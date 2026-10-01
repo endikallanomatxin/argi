@@ -7354,7 +7354,7 @@ test "feature_tests/collections/108_collection_reverse" {
 }
 
 test "feature_tests/collections/109X_collection_reverse_owning" {
-    try buildExpectFail("tests/feature_tests/collections/109X_collection_reverse_owning", "no function named 'reverse'");
+    try buildExpectFail("tests/feature_tests/collections/109X_collection_reverse_owning", "abstract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'reverse'");
 }
 
 test "feature_tests/collections/110_order_policies" {
@@ -7419,6 +7419,34 @@ test "tests/feature_tests/basics/29X_numeric_float_assignment" {
 
 test "tests/feature_tests/basics/30_numeric_contextual_assignment" {
     const path = "tests/feature_tests/basics/30_numeric_contextual_assignment";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "tests/feature_tests/polymorphism/59X_generic_constraint_implicit" {
+    try buildExpectFail("tests/feature_tests/polymorphism/59X_generic_constraint_implicit", "abstract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'");
+}
+
+test "tests/feature_tests/polymorphism/60X_generic_constraint_explicit" {
+    try buildExpectFail("tests/feature_tests/polymorphism/60X_generic_constraint_explicit", "abstract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'");
+}
+
+test "tests/feature_tests/polymorphism/61_generic_constraint_alternate" {
+    const path = "tests/feature_tests/polymorphism/61_generic_constraint_alternate";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape" {
+    try buildExpectFail("tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape", "no function named 'accept'");
+}
+
+test "tests/feature_tests/polymorphism/63X_generic_constraint_qualified" {
+    try buildExpectFail("tests/feature_tests/polymorphism/63X_generic_constraint_qualified", "abstract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'");
+}
+
+test "feature_tests/polymorphism/64_generic_constraint_fallback" {
+    const path = "tests/feature_tests/polymorphism/64_generic_constraint_fallback";
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
