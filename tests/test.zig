@@ -7351,3 +7351,13 @@ test "feature_tests/collections/106_hash_set_growth_failure" {
 test "feature_tests/collections/107X_hash_set_key_after_cleanup" {
     try buildExpectFail("tests/feature_tests/collections/107X_hash_set_key_after_cleanup", "opaque storage hides a dependency");
 }
+
+test "feature_tests/collections/108_collection_reverse" {
+    const path = "tests/feature_tests/collections/108_collection_reverse";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/109X_collection_reverse_owning" {
+    try buildExpectFail("tests/feature_tests/collections/109X_collection_reverse_owning", "no function named 'reverse'");
+}

@@ -219,3 +219,20 @@ when `T` is implicitly copyable. Views are non-owning and do not resize.
 The returned index does not borrow storage, but a subsequent structural change
 can make it stale. Search for owning elements needs a separate borrowed equality
 contract; these helpers do not copy ownership or introduce predicate callbacks.
+
+## Reversing collections
+
+`reverse(.self)` accepts a mutable `IndexableMutable<T>` with implicitly
+copyable elements. It reverses logical element order in place, using linear
+time, constant auxiliary space, and no allocation. Empty and singleton
+collections are unchanged. Native arrays participate through mutable views;
+a subrange view reverses only that range.
+
+The algorithm exchanges values through indexed mutable references. It neither
+resizes storage nor calls structural collection operations. Existing element
+references and views retain their storage lifetimes and still designate the
+same positions, whose values can change. The collection must keep its length
+and provide valid indexed references throughout the operation.
+
+Owning elements need a separate exchange contract; copying their values to
+implement reversal would duplicate ownership.
