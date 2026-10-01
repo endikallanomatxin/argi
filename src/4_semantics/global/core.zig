@@ -951,6 +951,30 @@ pub const Resolver = struct {
         return false;
     }
 
+    /// A structural constructor has one declared field contract, unlike an
+    /// overload probe. Supply that contract to still-pending choice literals
+    /// before matching; otherwise unrelated choices with the same variant and
+    /// payload can make global choice inference ambiguous.
+    pub fn contextualizeConstructorChoices(
+        self: *Resolver,
+        module_index: usize,
+        o: globalizer.Offsets,
+        expected_fields: global_sg.FieldRange,
+        input: global_sg.GlobalNodeId,
+    ) void {
+        const literal = switch (self.graph.node(input).content) {
+            .struct_value_literal => |literal| literal,
+            else => return,
+        };
+        if (!self.callInputNamesMatch(expected_fields, literal)) return;
+        for (self.graph.fields.items[expected_fields.start..][0..expected_fields.len], 0..) |field, index| {
+            if (self.graph.isTypeUnresolved(field.ty)) continue;
+            const supplied = self.callArgument(literal, index, field.name) orelse continue;
+            if (self.graph.node(supplied).ty != null) continue;
+            _ = self.contextualizeChoiceOperand(module_index, o, supplied, field.ty);
+        }
+    }
+
     fn contextualizeChoiceOperand(self: *Resolver, module_index: usize, o: globalizer.Offsets, node_id: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) bool {
         const module = &self.modules[module_index];
         for (module.semantic.pending_operations.items) |pending| switch (pending) {
@@ -958,6 +982,8 @@ pub const Resolver = struct {
                 if (globalizer.globalNode(o, choice.node) != node_id) continue;
                 if (choice.expected_type != null) return false;
                 if (types.variants(self.graph, expected) == null) return false;
+                const reference = module.semantic.external_refs.items[@intFromEnum(choice.option)];
+                if (types.findVariant(self.graph, expected, module.text(reference.name)) == null) return false;
                 self.graph.nodes.items[@intFromEnum(node_id)].ty = expected;
                 return true;
             },

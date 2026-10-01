@@ -223,7 +223,7 @@ pub const Resolver = struct {
         // their `init` merely because overload resolution failed.
         if (initializer.has_visible_initializer) return .deferred;
 
-        return self.writeStructuralConstruction(o, value, reference, ty, input);
+        return self.writeStructuralConstruction(module_index, o, value, reference, ty, input);
     }
 
     fn resolveImplicitGenericCall(
@@ -367,7 +367,7 @@ pub const Resolver = struct {
         }
         if (initializer.has_visible_initializer) return .deferred;
 
-        const result = try self.writeStructuralConstruction(o, value, reference, ty, input);
+        const result = try self.writeStructuralConstruction(module_index, o, value, reference, ty, input);
         committed = result == .resolved;
         return result;
     }
@@ -442,6 +442,7 @@ pub const Resolver = struct {
 
     fn writeStructuralConstruction(
         self: *Resolver,
+        module_index: usize,
         o: globalizer.Offsets,
         value: anytype,
         reference: module_entities.ExternalRef,
@@ -449,6 +450,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
     ) !resolution.Result {
         const fields = types.fields(self.graph, ty) orelse return .deferred;
+        self.core.contextualizeConstructorChoices(module_index, o, fields, input);
         switch (self.core.matchCallInput(fields, input)) {
             .score => {},
             .no_match, .deferred => return .deferred,

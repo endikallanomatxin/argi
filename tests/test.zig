@@ -7096,3 +7096,13 @@ test "feature_tests/collections/83_string_hash_map_full_key" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/types/271_constructor_choice_context" {
+    const path = "tests/feature_tests/types/271_constructor_choice_context";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/types/272X_constructor_choice_nominal_mismatch" {
+    try buildExpectFail("tests/feature_tests/types/272X_constructor_choice_nominal_mismatch", "no function named 'FirstWrapper'");
+}
