@@ -18,7 +18,8 @@ It’s an early work-in-progress.
   argument.
 - 🎯 Explicitness without annoyance:
   - ⚠️ Application-visible side effects are designed to be explicit.
-    Compiler-generated error traces still call libc `malloc`/`free` directly.
+    Error propagation uses an explicit tracer capability; bounded core tracers
+    allocate during initialization rather than during propagation.
   - 🔐 Capability-based design for resource management.
   - 🪶 `assume` for lexical implicit arguments and `reach` for propagating
     dependencies through intermediate calls.
@@ -30,10 +31,11 @@ It’s an early work-in-progress.
   style)
   - 🎭 Virtual types for runtime dynamic dispatch.
 - ❓ Errable and Nullable types.
-- 📚 Batteries included. Two official module libraries: Minimalist `core` and
-maximalist `more`.
-- 🛠️ Tooling for building, testing, scaffolding, LSP, and a planned formatter
-  (not in 0.1 yet).
+- 📚 Two official module libraries: foundational `core` and domain-oriented
+  `more`. Some modules remain design sketches; consult their implementations
+  for supported APIs.
+- 🛠️ Tooling for building, exhaustive checking, testing, scaffolding, and LSP.
+  Source formatting remains planned.
 
 
 ## Repository structure
@@ -85,6 +87,19 @@ Run the default executable with:
 argi run
 ```
 
+### Checking
+
+Validate every function body in a module, including functions that a normal
+executable build would leave unreachable:
+
+```bash
+argi check <root_dir>
+```
+
+Use `--release` with `build` or `run` for optimized machine code. `build` also
+supports `--output <path>`, `--emit-llvm <path>`, `--emit-obj <path>`, and
+`--just-emit-obj <path>`. See `argi help` for the complete CLI.
+
 ### LSP
 
 Start the language server:
@@ -119,8 +134,9 @@ Argi 0.1 is primarily tested on Linux and macOS.
 
 Windows is not an official 0.1 target yet.
 
-Building the compiler requires Zig 0.16.x and LLVM development files. The build
-script looks for `llvm-config`, or you can set:
+Building the compiler requires Zig 0.16.x and LLVM 21 development files. When
+several LLVM versions are installed, use `llvm-config-21` to set the paths.
+The build script looks for `llvm-config`, or you can set:
 
 - `LLVM_INCLUDE_DIR`
 - `LLVM_LIB_DIR`
@@ -227,6 +243,16 @@ Compiler regression tests for Argi itself still run through Zig:
 zig build test --summary all
 ```
 
+
+## Safety scope
+
+The compiler checks temporal validity and ownership effects. Core allocations,
+initialized array views, and collection access provide checked bounded-storage
+paths. Trusted low-level operations still require their callers to prove
+physical storage obligations; arbitrary raw-pointer operations do not acquire
+a general spatial-safety guarantee. Mutable references do not imply exclusive
+access or concurrency safety. See [the safety model](description/34_safety_model.md)
+and [allocation contracts](description/35_allocation.md).
 
 ## Release status
 
