@@ -228,6 +228,8 @@ pub const CodeGenerator = struct {
             }
             symbol = .{ .ref = ref, .type_ref = signature.fn_type, .return_type = signature.return_type, .is_extern = true, .uses_sret = signature.uses_sret };
         } else {
+            // TODO: pass large aggregate outputs through caller-owned storage
+            // instead of direct LLVM returns; see the codegen task in plan/0.3.md.
             const input_ty = try self.fieldsLLVMType(function.input);
             const output_ty = try self.fieldsLLVMType(function.output);
             var parameters = [_]llvm.c.LLVMTypeRef{input_ty};
