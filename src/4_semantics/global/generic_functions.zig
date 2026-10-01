@@ -492,6 +492,12 @@ pub const Resolver = struct {
             self.stats.calls += 1;
             return .resolved;
         }
+        if (reference.module_path == null and std.mem.eql(u8, name, "_zeroed")) {
+            const node = (try self.core.makeZeroed(input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
+            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            self.stats.calls += 1;
+            return .resolved;
+        }
         if (reference.module_path == null and std.mem.eql(u8, name, "size_of")) {
             const node = (try self.makeSizeOf(input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
             self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
@@ -2854,6 +2860,8 @@ pub const Resolver = struct {
                 }
                 return (try self.resolver.makeTrustedReferenceFromAddress(arguments, input, self.resolver.sourceFor(self.module_index, source))) orelse error.ReferenceAddressInputMustBeStruct;
             }
+            if (module_path == null and std.mem.eql(u8, name, "_zeroed"))
+                return (try self.resolver.core.makeZeroed(input, self.resolver.sourceFor(self.module_index, source))) orelse error.DeferredGenericFunction;
             if (module_path == null and std.mem.eql(u8, name, "size_of"))
                 return (try self.resolver.makeSizeOf(input, self.resolver.sourceFor(self.module_index, source))) orelse error.SizeOfInputMustBeStruct;
             if (module_path == null and std.mem.eql(u8, name, "alignment_of"))

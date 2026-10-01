@@ -639,6 +639,12 @@ pub const Resolver = struct {
                 }
             }
         }
+        if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "_zeroed")) {
+            const node = (try self.makeZeroed(input, self.sourceFor(reference.source, o))) orelse return .deferred;
+            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+            self.stats.calls += 1;
+            return .resolved;
+        }
         if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "size_of")) {
             const node = (try self.makeSizeOf(input, self.sourceFor(reference.source, o))) orelse return .deferred;
             self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
@@ -692,6 +698,40 @@ pub const Resolver = struct {
         };
         self.stats.calls += 1;
         return .resolved;
+    }
+
+    /// Zero construction is limited to numeric values and arrays thereof;
+    /// zero bytes cannot establish references or arbitrary resource invariants.
+    pub fn makeZeroed(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef) !?global_sg.Node {
+        const ty = self.typeArgument(input) orelse return null;
+        if (self.graph.isTypeUnresolved(ty)) return null;
+        return try self.zeroValue(ty, source);
+    }
+
+    fn zeroValue(self: *Resolver, ty: global_sg.GlobalTypeId, source: primitives.SourceRef) anyerror!global_sg.Node {
+        if (types.arrayElement(self.graph, ty)) |element| {
+            const count: u32 = std.math.cast(u32, types.arrayLength(self.graph, ty).?) orelse return error.TypeSizeOverflow;
+            const value = try self.zeroValue(element, source);
+            const id: global_sg.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
+            try self.graph.nodes.append(self.allocator, value);
+            const start: u32 = @intCast(self.graph.node_refs.items.len);
+            try self.graph.node_refs.appendNTimes(self.allocator, id, count);
+            return .{ .source = source, .ty = ty, .content = .{ .array_literal = .{
+                .elements = .{ .start = start, .len = count },
+                .element_type = element,
+                .length = count,
+            } } };
+        }
+        const semantic = self.graph.resolvedSemanticType(ty) orelse return error.InvalidZeroedType;
+        const content: @TypeOf(@as(global_sg.Node, undefined).content) = switch (semantic) {
+            .builtin => |kind| switch (kind) {
+                .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative => .{ .int_literal = 0 },
+                .Float16, .Float32, .Float64 => .{ .float_literal = 0 },
+                else => return error.InvalidZeroedType,
+            },
+            else => return error.InvalidZeroedType,
+        };
+        return .{ .source = source, .ty = ty, .content = content };
     }
 
     fn makeSizeOf(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef) !?global_sg.Node {

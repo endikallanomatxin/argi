@@ -655,8 +655,9 @@ test "argi init creates executable package" {
     try expectEqualStrings(
         "main(.system: System) -> (.status_code: Int32 = 0) := {\n" ++
             "    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)\n" ++
-            "    assume writer ::= $&unwrap_or_abort(\n" ++
-            "        .value = BufferedWriter#(.base_type: File)(.base = $&system.terminal&.stdout),\n" ++
+            "    assume writer ::= $&BufferedWriter#(.base_type: File)(\n" ++
+            "        .base = $&system.terminal&.stdout,\n" ++
+            "        .buffer = array_view(.array = $&zeroed#(.t: [4096]UInt8)()),\n" ++
             "    )\n" ++
             "}\n",
         source_text,
@@ -7526,4 +7527,18 @@ test "feature_tests/io/29X_buffered_writer_invalid_length" {
     const test_path = "tests/feature_tests/io/29X_buffered_writer_invalid_length";
     try expectSuccessfulBuild(test_path);
     try runExpectFailure(test_path);
+}
+
+test "feature_tests/io/30_zeroed_arrays" {
+    const test_path = "tests/feature_tests/io/30_zeroed_arrays";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/io/31X_buffered_writer_expired_buffer" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/io/31X_buffered_writer_expired_buffer", "reference depends on a root that has ended");
+}
+
+test "feature_tests/io/32X_zeroed_reference" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/io/32X_zeroed_reference", "zeroed requires a numeric type or a fixed array of numeric types");
 }

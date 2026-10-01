@@ -68,17 +68,23 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 }
 ```
 
-For buffered output, borrow the terminal's file and select the buffer's
-allocator explicitly. `BufferedWriter` defaults to a 4096-byte buffer; callers
-may override `.capacity`. `print` flushes before returning, and callers using
-`write_byte` directly should call `flush` to handle errors. Cleanup attempts a
-best-effort flush and releases the buffer without deinitializing the base file.
+For buffered output, borrow the terminal's file and supply a view over an
+initialized byte buffer. Construction is infallible and does not allocate;
+the caller selects local storage, allocated storage, or a reusable buffer.
+`zeroed` constructs numbers and fixed arrays of numbers initialized to zero.
+It does not construct references or arbitrary resource-bearing types.
+
+`print` flushes before returning. Callers using `write_byte` directly should
+call `flush` to handle errors. Cleanup attempts a best-effort flush and leaves
+both the buffer and base writer alive. An empty buffer forwards writes directly
+to the base writer. Both borrowed resources must outlive the wrapper; temporaries
+referenced in the `assume` expression remain alive for its enclosing scope.
 
 ```rg
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume writer ::= $&unwrap_or_abort(
-        .value = BufferedWriter#(.base_type: File)(.base = $&system.terminal&.stdout),
+    assume writer ::= $&BufferedWriter#(.base_type: File)(
+        .base = $&system.terminal&.stdout,
+        .buffer = array_view(.array = $&zeroed#(.t: [4096]UInt8)()),
     )
     print("Hello world\n")
 }

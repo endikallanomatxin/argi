@@ -2396,6 +2396,10 @@ fn diagnoseUnresolvedCall(
                         return true;
                     }
 
+                    if (reference.module_path == null and std.mem.eql(u8, name, "zeroed")) {
+                        try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "zeroed requires a numeric type or a fixed array of numeric types; references and resource-bearing types cannot be zero-initialized", .{});
+                        return true;
+                    }
                     try diagnostics.add(
                         if (reference.module_path != null) location else diagnosticLocation(graph, diagnostics, source),
                         .semantic,

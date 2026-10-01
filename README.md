@@ -128,8 +128,9 @@ explicitly. You can also choose a tracer for error context:
 ```rg
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume writer ::= $&unwrap_or_abort(
-        .value = BufferedWriter#(.base_type: File)(.base = $&system.terminal&.stdout),
+    assume writer ::= $&BufferedWriter#(.base_type: File)(
+        .base = $&system.terminal&.stdout,
+        .buffer = array_view(.array = $&zeroed#(.t: [4096]UInt8)()),
     )
     assume error_tracer ::= unwrap_or_abort(
         .value = FixedSizeErrorTracer(.size = 4096),

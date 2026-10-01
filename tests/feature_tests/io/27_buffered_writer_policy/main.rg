@@ -31,9 +31,9 @@ flush(.self: $&RecordingWriter) -> (.result: Errable#(.t: Void, .reasons: (..str
 RecordingWriter implements Writer
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
     base ::= RecordingWriter()
-    buffered ::= unwrap_or_abort(.value = BufferedWriter#(.base_type: RecordingWriter)(.base = $&base, .capacity = 4))
+    bytes ::= zeroed#(.t: [4]UInt8)()
+    buffered ::= BufferedWriter#(.base_type: RecordingWriter)(.base = $&base, .buffer = array_view(.array = $&bytes))
     assume writer ::= $&buffered
     unwrap_or_abort(.value = write_byte(.self = writer, .byte = 65))
     unwrap_or_abort(.value = write_byte(.self = writer, .byte = 66))
@@ -61,5 +61,15 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     deinit(.self = $&buffered)
     -- The wrapper borrows its base and leaves it usable after cleanup.
     unwrap_or_abort(.value = write_byte(.self = $&base, .byte = 71))
-    if base.received != 6 or base.last_byte != 71 { status_code = 10 }
+    if base.received != 6 or base.last_byte != 71 { status_code = 10 return }
+    -- Cleanup leaves caller-owned storage usable as well as the base writer.
+    if bytes[0] != 70 { status_code = 11 return }
+    bytes[0] = 0
+    unbuffered ::= BufferedWriter#(.base_type: RecordingWriter)(
+        .base = $&base,
+        .buffer = array_view(.array = $&zeroed#(.t: [0]UInt8)()),
+    )
+    unwrap_or_abort(.value = write_byte(.self = $&unbuffered, .byte = 72))
+    if base.received != 7 or base.last_byte != 72 or unbuffered.length != 0 { status_code = 12 }
+
 }

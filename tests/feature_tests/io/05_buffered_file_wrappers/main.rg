@@ -9,7 +9,7 @@ main(.system: System) -> (.status_code: Int32) := {
 
     output_file ::= File(.stream_address = 0, .should_close = 0 == 1)
     init_stdout(.p = $&output_file)
-    output_writer ::= unwrap_or_abort(.value = BufferedWriter#(.base_type: File)(.allocator = $&allocator_storage, .base = $&output_file, .capacity = 4))
+    output_writer ::= BufferedWriter#(.base_type: File)(.base = $&output_file, .buffer = array_view(.array = $&zeroed#(.t: [4]UInt8)()))
 
     if is_open(.self = &input_file).ok {
     } else {
@@ -29,6 +29,6 @@ main(.system: System) -> (.status_code: Int32) := {
 
     flush(.self = $&output_writer)
     deinit(.self = $&input_reader, .allocator = $&allocator_storage)
-    deinit(.self = $&output_writer, .allocator = $&allocator_storage)
+    deinit(.self = $&output_writer)
     status_code = 0
 }

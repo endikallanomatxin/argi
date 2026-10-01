@@ -788,10 +788,24 @@ pub const CodeGenerator = struct {
     fn arrayLiteral(self: *CodeGenerator, literal: anytype) !TypedValue {
         const element_ref = try self.toLLVMType(literal.element_type);
         const type_ref = c.LLVMArrayType(element_ref, literal.length);
-        var aggregate = c.LLVMGetUndef(type_ref);
+        const values = try self.allocator.alloc(c.LLVMValueRef, literal.elements.len);
+        defer self.allocator.free(values);
+        var all_constant = true;
         for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len], 0..) |node, index| {
             const value = (try self.visitNode(node)) orelse return CodegenError.ValueNotFound;
-            aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value.value_ref, @intCast(index), "array.elem");
+            values[index] = value.value_ref;
+            all_constant = all_constant and c.LLVMIsConstant(value.value_ref) != 0;
+        }
+        // Build constants together: repeated constant insertions retain a
+        // full intermediate aggregate per element, using quadratic storage.
+        if (all_constant) return .{
+            .value_ref = c.LLVMConstArray2(element_ref, values.ptr, values.len),
+            .type_ref = type_ref,
+            .ty = null,
+        };
+        var aggregate = c.LLVMGetUndef(type_ref);
+        for (values, 0..) |value, index| {
+            aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value, @intCast(index), "array.elem");
         }
         return .{ .value_ref = aggregate, .type_ref = type_ref, .ty = null };
     }
