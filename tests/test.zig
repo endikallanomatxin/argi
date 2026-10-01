@@ -7233,3 +7233,53 @@ test "feature_tests/collections/84_collection_search" {
 test "feature_tests/collections/85X_collection_search_missing_equality" {
     try buildExpectFail("tests/feature_tests/collections/85X_collection_search_missing_equality", "no matching comparison operator '==' for 'Record' and 'Record'");
 }
+
+test "feature_tests/collections/86_ring_buffer" {
+    const path = "tests/feature_tests/collections/86_ring_buffer";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/87_ring_buffer_ownership" {
+    const path = "tests/feature_tests/collections/87_ring_buffer_ownership";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/88_ring_buffer_errors" {
+    const path = "tests/feature_tests/collections/88_ring_buffer_errors";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/89X_ring_buffer_borrow_after_pop" {
+    try buildExpectFail("tests/feature_tests/collections/89X_ring_buffer_borrow_after_pop", "root that has ended");
+}
+
+test "feature_tests/collections/90X_ring_buffer_forwarded_borrow_after_push" {
+    try buildExpectFail("tests/feature_tests/collections/90X_ring_buffer_forwarded_borrow_after_push", "root that has ended");
+}
+
+test "feature_tests/collections/91X_ring_buffer_borrow_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/collections/91X_ring_buffer_borrow_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/collections/92X_ring_buffer_push_moves_source" {
+    try buildExpectFail("tests/feature_tests/collections/92X_ring_buffer_push_moves_source", "moved and cannot be used");
+}
+
+test "feature_tests/collections/93X_ring_buffer_private_occupancy" {
+    try buildExpectFail("tests/feature_tests/collections/93X_ring_buffer_private_occupancy", "field '_head' is private");
+}
+
+test "feature_tests/collections/94_ring_buffer_zero_sized" {
+    const path = "tests/feature_tests/collections/94_ring_buffer_zero_sized";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/collections/95_ring_buffer_allocation_counts" {
+    const path = "tests/feature_tests/collections/95_ring_buffer_allocation_counts";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

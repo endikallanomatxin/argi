@@ -1,8 +1,8 @@
 # Other collections
 
 The library may offer maps, sets, graphs, queues, and iterator helpers in
-addition to the [list families](161_lists.md). The following shapes and APIs
-are exploratory.
+addition to the [list families](161_lists.md). Accepted contracts are described
+below; exploratory collections are marked as ideas.
 
 ## Maps
 
@@ -22,20 +22,35 @@ are exploratory.
 
 ## Queues
 
+`RingBuffer<T>` is an owning FIFO queue with a fixed positive capacity. Its
+constructor accepts `.capacity` and an explicit `.allocator`, reserves storage
+once, and initializes no elements. Zero capacity reports `invalid_capacity`;
+unrepresentable allocation sizes and allocation failures report `out_of_memory`.
+Zero-sized elements remain distinct logical occupied slots.
+
+- `push(.self, .value, .allocator)` moves a value into the next vacant slot.
+  A full buffer reports `full`, retains its queued contents, and destroys the
+  consumed argument using the supplied allocator where its cleanup needs one.
+  It does not silently overwrite the oldest element or grow the buffer.
+- `pop(.self)` moves the oldest value out, or reports `empty`. An extracted
+  owning value is independent of the buffer storage and can outlive it.
+- `length` and `capacity` report logical occupancy and fixed capacity.
+- `get_ro_ref(.self, .index)` borrows an occupied element in FIFO order,
+  or reports `out_of_bounds`. The buffer implements `Indexable<T>` and
+  supports equality search when its elements satisfy that algorithm's contract.
+- `deinit(.self, .allocator)` destroys the remaining occupied elements once
+  and releases the backing allocation. Vacant slots are never read or dropped.
+
+Push and pop do not allocate queue storage. Element cleanup may have its own
+capability requirements. Structural operations may invalidate existing element
+borrows; obtain a new borrow after mutation. Cleanup also invalidates borrows.
+Returned indices carry no storage lifetime and can become stale after popping.
+The allocation receipt, head, occupancy, and invalidation marker are private.
+
 > [!IDEA]
-> `RingBuffer#(.t)` could be a circular buffer with fixed or dynamic capacity
-> for queues, audio, and telemetry. A possible representation has storage,
-> capacity, and head and tail positions.
->
-> A growable `Deque#(.t)` could add double-ended insertion and removal, with
-> a front position, length, capacity, and allocator. These are sketches of the
-> data each type might need, not fixed layouts or APIs.
->
-> ```rg
-> RingBuffer#(.t) = (.ptr: &t, .cap: Int, .head: Int, .tail: Int)
-> Deque#(.t) = (.ptr: &t, .len: Int, .cap: Int, .front: Int,
->               .alloc: &Allocator)
-> ```
+> A growable `Deque<T>` could add double-ended insertion and removal. Its
+> front position, length, capacity, growth failures, and owning-element
+> relocation need a concrete use case before fixing the API.
 
 ## SoA and AoS
 
