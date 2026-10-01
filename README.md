@@ -122,12 +122,15 @@ argi build
 argi run
 ```
 
-The generated entrypoint selects its allocator explicitly. You can also choose
-a tracer for error context:
+The generated entrypoint selects its allocator and buffered output writer
+explicitly. You can also choose a tracer for error context:
 
 ```rg
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume writer ::= $&unwrap_or_abort(
+        .value = BufferedWriter#(.base_type: File)(.base = $&system.terminal&.stdout),
+    )
     assume error_tracer ::= unwrap_or_abort(
         .value = FixedSizeErrorTracer(.size = 4096),
     ) | to_virtual#(ErrorTracer)($&_) | $&_

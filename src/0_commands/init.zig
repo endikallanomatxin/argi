@@ -91,6 +91,9 @@ fn writeFileIfMissing(io: std.Io, path: []const u8, contents: []const u8) !void 
 const moduleMainParameterized =
     \\main(.system: System) -> (.status_code: Int32 = 0) := {
     \\    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
+    \\    assume writer ::= $&unwrap_or_abort(
+    \\        .value = BufferedWriter#(.base_type: File)(.base = $&system.terminal&.stdout),
+    \\    )
     \\}
     \\
 ;
@@ -279,4 +282,6 @@ test "init executable scaffolds basic layout" {
     try expectFileContains(std.testing.io, manifest, "default = \"sample_app\"\n");
     try expectFileOmits(std.testing.io, manifest, "kind = ");
     try expectFileContains(std.testing.io, entry_main, "assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)\n");
+    try expectFileContains(std.testing.io, entry_main, "assume writer ::= $&unwrap_or_abort(");
+    try expectFileContains(std.testing.io, entry_main, "BufferedWriter#(.base_type: File)(.base = $&system.terminal&.stdout)");
 }

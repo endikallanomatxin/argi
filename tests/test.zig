@@ -655,6 +655,9 @@ test "argi init creates executable package" {
     try expectEqualStrings(
         "main(.system: System) -> (.status_code: Int32 = 0) := {\n" ++
             "    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)\n" ++
+            "    assume writer ::= $&unwrap_or_abort(\n" ++
+            "        .value = BufferedWriter#(.base_type: File)(.base = $&system.terminal&.stdout),\n" ++
+            "    )\n" ++
             "}\n",
         source_text,
     );
@@ -741,17 +744,12 @@ test "argi init executable package can print from generated main" {
     const source_path = try std.fs.path.join(std.testing.allocator, &.{ module_root, "source", "hello", "main.rg" });
     defer std.testing.allocator.free(source_path);
 
-    try std.Io.Dir.cwd().writeFile(std.testing.io, .{
-        .sub_path = source_path,
-        .data =
-        \\main(.system: System) -> (.status_code: Int32 = 0) := {
-        \\    writer ::= $&system.terminal&.stdout
-        \\    assume writer
-        \\    print("Hello, World!\n")
-        \\}
-        \\
-        ,
-    });
+    const generated = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, source_path, std.testing.allocator, .limited(1024 * 1024));
+    defer std.testing.allocator.free(generated);
+    const closing_brace = std.mem.lastIndexOfScalar(u8, generated, '}') orelse return error.TestUnexpectedResult;
+    const runnable = try std.fmt.allocPrint(std.testing.allocator, "{s}    print(\"Hello, World!\\n\")\n{s}", .{ generated[0..closing_brace], generated[closing_brace..] });
+    defer std.testing.allocator.free(runnable);
+    try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = source_path, .data = runnable });
 
     const build_result = try runChildInCwd(&.{ installed_argi, "build" }, module_root);
     defer std.testing.allocator.free(build_result.stdout);
@@ -7510,4 +7508,22 @@ test "argi run inherits stdin stdout and stderr" {
     try expectEqualStrings("stdout marker\n", stdout);
     try expect(std.mem.indexOf(u8, stderr, "stderr marker\n") != null);
     try expect(std.mem.indexOf(u8, stderr, "stdout marker") == null);
+}
+
+test "feature_tests/io/27_buffered_writer_policy" {
+    const test_path = "tests/feature_tests/io/27_buffered_writer_policy";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/io/28_buffered_terminal_output" {
+    const test_path = "tests/feature_tests/io/28_buffered_terminal_output";
+    try expectSuccessfulBuild(test_path);
+    try runExpectStdout(test_path, 0, "Buffered output\nOK");
+}
+
+test "feature_tests/io/29X_buffered_writer_invalid_length" {
+    const test_path = "tests/feature_tests/io/29X_buffered_writer_invalid_length";
+    try expectSuccessfulBuild(test_path);
+    try runExpectFailure(test_path);
 }
