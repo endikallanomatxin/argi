@@ -7458,3 +7458,56 @@ test "tests/feature_tests/basics/35X_float_literal_integer_destination" {
 test "tests/feature_tests/basics/36X_integer_literal_float_destination" {
     try buildExpectFail("tests/feature_tests/basics/36X_integer_literal_float_destination", "cannot assign numeric value of type");
 }
+
+test "argi run inherits stdin stdout and stderr" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "main.rg",
+        .data =
+        \\main(.system: System) -> (.status_code: Int32 = 7) := {
+        \\    input ::= unwrap_or_abort(.value = read_byte(.self = system.terminal&.stdin_reader))
+        \\    match input {
+        \\        ..ok byte {
+        \\            if byte != 65 { status_code = 8 return }
+        \\        }
+        \\        ..end { status_code = 9 return }
+        \\    }
+        \\    print(.value = "stdout marker\n", .stdout = system.terminal&.stdout_writer)
+        \\    print_error(.value = "stderr marker\n", .stderr = system.terminal&.stderr_writer)
+        \\}
+        ,
+    });
+    const module_dir = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(module_dir);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+    var child = try std.process.spawn(std.testing.io, .{
+        .argv = &.{ installed_argi, "run", module_dir },
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(std.testing.io);
+    try child.stdin.?.writeStreamingAll(std.testing.io, "A");
+    child.stdin.?.close(std.testing.io);
+    child.stdin = null;
+    var buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var reader: std.Io.File.MultiReader = undefined;
+    reader.init(std.testing.allocator, std.testing.io, buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer reader.deinit();
+    while (true) {
+        reader.fill(1, .none) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return err,
+        };
+    }
+    const stdout = try reader.toOwnedSlice(0);
+    defer std.testing.allocator.free(stdout);
+    const stderr = try reader.toOwnedSlice(1);
+    defer std.testing.allocator.free(stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 7 }, try child.wait(std.testing.io));
+    try expectEqualStrings("stdout marker\n", stdout);
+    try expect(std.mem.indexOf(u8, stderr, "stderr marker\n") != null);
+    try expect(std.mem.indexOf(u8, stderr, "stdout marker") == null);
+}

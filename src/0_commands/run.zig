@@ -49,11 +49,18 @@ pub fn run(
 
     try build.compileTarget(parsed.target_path, flags, .{}, io, environ_map);
 
-    const result = try std.process.run(allocator, io, .{
+    // Run is an interactive command: retain the caller's terminal or pipes
+    // instead of capturing output and replacing stdin with an empty stream.
+    var child = try std.process.spawn(io, .{
         .argv = &.{plan.output_path},
+        .environ_map = environ_map,
+        .stdin = .inherit,
+        .stdout = .inherit,
+        .stderr = .inherit,
     });
+    defer child.kill(io);
 
-    return switch (result.term) {
+    return switch (try child.wait(io)) {
         .exited => |code| @intCast(code),
         else => error.UnexpectedProcessTermination,
     };
