@@ -71,6 +71,16 @@ array_view#(.n: UIntNative, .t: Type)(
     view = (._data = ..some(.value = first), ._length = n)
 }
 
+-- Reference mutability selects a writable or read-only view. Both forms
+-- derive the extent from the array and retain its validity dependencies.
+view#(.n: UIntNative, .t: Type)(.array: $&Array#(.n = n, .t: t)) -> (.result: ArrayView#(.t: t)) := {
+    result = array_view(.array = array)
+}
+
+view#(.n: UIntNative, .t: Type)(.array: &Array#(.n = n, .t: t)) -> (.result: ArrayViewRO#(.t: t)) := {
+    result = array_view_ro(.array = array)
+}
+
 -- Core callers must prove the requested contiguous range belongs to the
 -- live backing storage and initialize an element before reading it.
 _trusted_array_view_ro#(.t: Type)(.data: &t, .length: UIntNative) -> (.array: ArrayViewRO#(.t: t)) := {

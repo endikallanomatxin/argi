@@ -39,7 +39,7 @@ may be passed explicitly or supplied through lexical `assume` or a declared
 
 ```rg
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
 }
 ```
 
@@ -73,6 +73,8 @@ initialized byte buffer. Construction is infallible and does not allocate;
 the caller selects local storage, allocated storage, or a reusable buffer.
 `zeroed` constructs numbers and fixed arrays of numbers initialized to zero.
 It does not construct references or arbitrary resource-bearing types.
+`view($&array)` creates a writable view; `view(&array)` creates a read-only
+view. Both retain the backing array's validity dependencies.
 
 `print` flushes before returning. Callers using `write_byte` directly should
 call `flush` to handle errors. Cleanup attempts a best-effort flush and leaves
@@ -84,7 +86,7 @@ referenced in the `assume` expression remain alive for its enclosing scope.
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume writer ::= $&BufferedWriter#(.base_type: File)(
         .base = $&system.terminal&.stdout,
-        .buffer = array_view(.array = $&zeroed#(.t: [4096]UInt8)()),
+        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
     )
     print("Hello world\n")
 }

@@ -654,13 +654,13 @@ test "argi init creates executable package" {
     try expect(std.mem.indexOf(u8, text, "default = \"hello\"\n") != null);
     try expectEqualStrings(
         "main(.system: System) -> (.status_code: Int32 = 0) := {\n" ++
-            "    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)\n" ++
+            "    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)\n" ++
             "    assume error_tracer ::= unwrap_or_abort(\n" ++
             "        .value = FixedSizeErrorTracer(.size = 4096),\n" ++
             "    ) | to_virtual#(ErrorTracer)($&_) | $&_\n" ++
             "    assume writer ::= $&BufferedWriter#(.base_type: File)(\n" ++
             "        .base = $&system.terminal&.stdout,\n" ++
-            "        .buffer = array_view(.array = $&zeroed#(.t: [4096]UInt8)()),\n" ++
+            "        .buffer = view($&zeroed#(.t: [4096]UInt8)()),\n" ++
             "    )\n" ++
             "    assume reader ::= $&system.terminal&.stdin\n" ++
             "}\n",
