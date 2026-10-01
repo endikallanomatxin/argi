@@ -7090,3 +7090,9 @@ test "feature_tests/text/24_string_view_search" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/collections/83_string_hash_map_full_key" {
+    const path = "tests/feature_tests/collections/83_string_hash_map_full_key";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

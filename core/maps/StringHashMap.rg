@@ -43,41 +43,39 @@ string_hash_map_key_view(
     view = key_view
 }
 
+-- Builds a native integer from byte bits without pointer casts or depending
+-- on implicit integer widening. The loop has exactly eight iterations.
+_string_hash_byte_value(.byte: UInt8) -> (.value: UIntNative) := {
+    remaining :: UInt8 = byte
+    byte_bit :: UInt8 = 128
+    native_bit :: UIntNative = 128
+    value = 0
+    while native_bit > 0 {
+        if remaining >= byte_bit {
+            remaining = remaining - byte_bit
+            value = value + native_bit
+        }
+        byte_bit = byte_bit / 2
+        native_bit = native_bit / 2
+    }
+}
+
 string_hash_map_hash(
     .key: &StringView,
 ) -> (.hash: UIntNative) := {
-    --
-    -- Small content hash for the baseline map.
-    --
-    -- It mixes length plus the first and last byte. This keeps equal keys in
-    -- the same bucket without leaning on integer widening paths that are still
-    -- rougher than the rest of `core`.
-    --
-    hash_mul :: UIntNative = 131
-    hash_seed :: UIntNative = 7
-    hash = key&.length * hash_mul + hash_seed
-
-    if key&.length == 0 {
-        return
-    }
-
-    first_remaining :: UInt8 = bytes_get(.view = key, .index = 0).byte
-    one :: UIntNative = 1
-    tail_mul :: UIntNative = 3
-    while first_remaining > 0 {
-        hash = hash + one
-        first_remaining = first_remaining - 1
-    }
-
-    if key&.length == 1 {
-        return
-    }
-
-    last_index ::= key&.length - 1
-    last_remaining :: UInt8 = bytes_get(.view = key, .index = last_index).byte
-    while last_remaining > 0 {
-        hash = hash * tail_mul + one
-        last_remaining = last_remaining - 1
+    -- An order-sensitive polynomial includes every byte. Modulo reduction
+    -- bounds each multiply/add below 2^32, including on 32-bit native words:
+    -- (16777213 - 1) * 251 + 255 < 2^32. This is not a keyed/adversarial hash.
+    modulus :: UIntNative = 16777213
+    multiplier :: UIntNative = 251
+    hash = 7
+    index :: UIntNative = 0
+    while index < key&.length {
+        byte ::= bytes_get(.view = key, .index = index).byte
+        digit ::= _string_hash_byte_value(.byte = byte).value
+        hash = hash * multiplier + digit
+        hash = hash % modulus
+        index = index + 1
     }
 }
 
