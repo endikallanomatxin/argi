@@ -7289,3 +7289,9 @@ test "feature_tests/collections/96_hash_policies" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/types/278_parameterized_contract_static_calls" {
+    const path = "tests/feature_tests/types/278_parameterized_contract_static_calls";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

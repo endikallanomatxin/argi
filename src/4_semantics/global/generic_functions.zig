@@ -2711,7 +2711,8 @@ pub const Resolver = struct {
                 const constraint = storage.abstract_constraints.items[@intFromEnum(constraint_id)];
                 if (try abstracts.resolveStaticRequirementCall(
                     self.module_index,
-                    constraint.abstract_ref,
+                    constraint,
+                    self.substitutions,
                     concrete,
                     reference,
                     input,
