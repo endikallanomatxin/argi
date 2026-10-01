@@ -137,6 +137,17 @@ the complete byte length, including space for the trailing NUL, before reserving
 memory. It makes one allocation and reports `size_overflow` or `out_of_memory`
 without publishing a partial string.
 
+`replace(.self, .pattern, .replacement, .allocator)` produces a new owning
+`String`, replacing every non-overlapping byte match from left to right.
+Replacement bytes are copied without being searched again. Empty replacement
+removes matches; no matches produces an independent copy. Empty input remains
+empty. An empty pattern reports `empty_pattern` before allocation. Input,
+pattern, and replacement may overlap, and the output does not borrow them.
+Like `join`, it checks the complete resulting length, reserves the trailing NUL,
+makes one allocation, and reports `size_overflow` or `out_of_memory` without
+publishing a partial string. These operations do not interpret Unicode or
+normalize text.
+
 Nomenclature to keep consistent:
 
 - `bytes`: byte-level access over UTF-8 storage.
