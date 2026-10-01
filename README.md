@@ -130,9 +130,9 @@ argi init --lib math_utils
 
 ### Platform support
 
-Argi 0.1 is primarily tested on Linux and macOS.
+Native CI covers Linux and macOS.
 
-Windows is not an official 0.1 target yet.
+Windows is not an official target yet.
 
 Building the compiler requires Zig 0.16.x and LLVM 21 development files. When
 several LLVM versions are installed, use `llvm-config-21` to set the paths.
@@ -256,9 +256,11 @@ and [allocation contracts](description/35_allocation.md).
 
 ## Release status
 
-Argi is currently in the `0.1.x` experimental release series.
+The `develop` branch prepares the `0.2.0` experimental release.
+Published releases remain on `main` and their annotated version tags.
 
 The language, compiler API, standard library layout, runtime model and tooling
 are not stable yet. Breaking changes are expected.
 
-See [releases/0.1.0.md](releases/0.1.0.md) for the current release notes.
+See [releases/0.2.0.md](releases/0.2.0.md) for the prepared release notes and
+[releases/0.1.0.md](releases/0.1.0.md) for the preceding release.

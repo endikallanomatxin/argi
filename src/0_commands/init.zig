@@ -238,7 +238,7 @@ test "init library scaffolds minimal files" {
     try expectFileExists(std.testing.io, gitignore);
     try expectFileMissing(std.testing.io, main_path);
     try expectFileContains(std.testing.io, manifest, "version = \"0.0.0\"\n");
-    try expectFileContains(std.testing.io, manifest, "minimum_argi_version = \"0.1.0\"\n");
+    try expectFileContains(std.testing.io, manifest, "minimum_argi_version = \"0.2.0\"\n");
     try expectFileOmits(std.testing.io, manifest, "kind = ");
     try expectFileOmits(std.testing.io, manifest, "[executables.");
     try expectFileOmits(std.testing.io, manifest, "[run]");
@@ -272,7 +272,7 @@ test "init executable scaffolds basic layout" {
     try expectFileMissing(std.testing.io, public_dir);
     try expectFileMissing(std.testing.io, private_dir);
     try expectFileContains(std.testing.io, manifest, "version = \"0.0.0\"\n");
-    try expectFileContains(std.testing.io, manifest, "minimum_argi_version = \"0.1.0\"\n");
+    try expectFileContains(std.testing.io, manifest, "minimum_argi_version = \"0.2.0\"\n");
     try expectFileContains(std.testing.io, manifest, "[executables.sample_app]\n");
     try expectFileContains(std.testing.io, manifest, "path = \"source/sample_app\"\n");
     try expectFileContains(std.testing.io, manifest, "[run]\n");
