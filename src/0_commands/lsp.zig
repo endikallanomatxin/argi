@@ -133,6 +133,11 @@ const LanguageServer = struct {
                     log.err("inlay hints failed: {s}", .{@errorName(err)});
                     self.respondInternalErrorOrLog(&writer, id, "inlay hints failed");
                 };
+            } else if (std.mem.eql(u8, method, "textDocument/completion")) {
+                if (id_value) |id| self.handle_completion(&writer, id, params_value) catch |err| {
+                    log.err("completion failed: {s}", .{@errorName(err)});
+                    self.respondInternalErrorOrLog(&writer, id, "completion failed");
+                };
             } else if (std.mem.eql(u8, method, "textDocument/hover")) {
                 if (id_value) |id| self.handleHover(&writer, id, params_value) catch |err| {
                     log.err("hover failed: {s}", .{@errorName(err)});
@@ -359,6 +364,13 @@ const LanguageServer = struct {
         try stream.endObject();
         try stream.objectField("inlayHintProvider");
         try stream.write(true);
+        try stream.objectField("completionProvider");
+        try stream.beginObject();
+        try stream.objectField("triggerCharacters");
+        try stream.write([_][]const u8{"."});
+        try stream.objectField("resolveProvider");
+        try stream.write(false);
+        try stream.endObject();
         try stream.objectField("hoverProvider");
         try stream.write(true);
         try stream.objectField("definitionProvider");
@@ -591,6 +603,65 @@ const LanguageServer = struct {
             try stream.endObject();
             try self.sendMessage(writer, payload.writer.buffered());
         }
+    }
+
+    fn handle_completion(self: *LanguageServer, writer: anytype, id_value: json.Value, params_value: ?json.Value) !void {
+        const params = params_value orelse return self.respondNullResult(writer, id_value);
+        if (params != .object) return self.respondNullResult(writer, id_value);
+        const document = getField(&params.object, "textDocument") orelse return self.respondNullResult(writer, id_value);
+        if (document != .object) return self.respondNullResult(writer, id_value);
+        const uri = getField(&document.object, "uri") orelse return self.respondNullResult(writer, id_value);
+        const position_value = getField(&params.object, "position") orelse return self.respondNullResult(writer, id_value);
+        const position = parsePosition(position_value) orelse return self.respondNullResult(writer, id_value);
+        if (uri != .string) return self.respondNullResult(writer, id_value);
+        const svc = if (self.service) |*value| value else return self.respondNullResult(writer, id_value);
+        var result = svc.completions(uri.string, position) catch |err| switch (err) {
+            error.InvalidPosition, error.DocumentNotOpen => return self.respondNullResult(writer, id_value),
+            else => return err,
+        };
+        defer result.deinit();
+        var payload = std.Io.Writer.Allocating.init(self.allocator);
+        defer payload.deinit();
+        var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
+        try stream.beginObject();
+        try stream.objectField("jsonrpc");
+        try stream.write("2.0");
+        try stream.objectField("id");
+        try stream.write(id_value);
+        try stream.objectField("result");
+        try stream.beginObject();
+        try stream.objectField("isIncomplete");
+        try stream.write(false);
+        try stream.objectField("items");
+        try stream.beginArray();
+        const text = svc.document_text(uri.string) orelse return error.DocumentNotFound;
+        const line_start = std.mem.lastIndexOfScalar(u8, text[0..result.start], '\n');
+        const base = if (line_start) |index| index + 1 else 0;
+        const range = service.Range{
+            .start = .{ .line = position.line, .character = @intCast(result.start - base) },
+            .end = .{ .line = position.line, .character = @intCast(result.end - base) },
+        };
+        for (result.items) |item| {
+            try stream.beginObject();
+            try stream.objectField("label");
+            try stream.write(item.label);
+            try stream.objectField("kind");
+            try stream.write(@intFromEnum(item.kind));
+            try stream.objectField("detail");
+            try stream.write(item.detail);
+            try stream.objectField("textEdit");
+            try stream.beginObject();
+            try stream.objectField("range");
+            try writeRange(&stream, range);
+            try stream.objectField("newText");
+            try stream.write(item.insert_text);
+            try stream.endObject();
+            try stream.endObject();
+        }
+        try stream.endArray();
+        try stream.endObject();
+        try stream.endObject();
+        try self.sendMessage(writer, payload.writer.buffered());
     }
 
     fn handleHover(
@@ -1055,6 +1126,10 @@ test "initialize response is framed and flushed" {
     const capabilities = response.value.object.get("result").?.object.get("capabilities").?.object;
     try std.testing.expect(capabilities.get("hoverProvider").?.bool);
     try std.testing.expect(capabilities.get("inlayHintProvider").?.bool);
+    const completion_provider = capabilities.get("completionProvider").?.object;
+    try std.testing.expect(!completion_provider.get("resolveProvider").?.bool);
+    try std.testing.expectEqualStrings(".", completion_provider.get("triggerCharacters").?.array.items[0].string);
+
     try std.testing.expect(capabilities.get("definitionProvider").?.bool);
 }
 
@@ -1506,4 +1581,47 @@ fn parsePosition(value: json.Value) ?service.Position {
         .line = @intCast(line_value.integer),
         .character = @intCast(char_value.integer),
     };
+}
+
+test "LSP completion response uses standard kinds and a full identifier text edit" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const code = "main(.system: System) -> (.status_code: Int32 = 0) := {\n    print(.value = \"hello\", .stdout = system.terminal&.stdout_writer)\n}\n";
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try test_support.tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{path});
+    defer std.testing.allocator.free(uri);
+    var server = LanguageServer.init(std.testing.allocator, std.testing.io);
+    defer server.deinit();
+    server.service = service.LanguageService.init(std.testing.allocator, std.testing.io);
+    var diagnostics = try server.service.?.openDocument(uri, path, 1, code);
+    defer diagnostics.deinit();
+    const request = try std.fmt.allocPrint(std.testing.allocator,
+        \\{{"textDocument":{{"uri":"{s}"}},"position":{{"line":1,"character":7}}}}
+    , .{uri});
+    defer std.testing.allocator.free(request);
+    var params = try json.parseFromSlice(json.Value, std.testing.allocator, request, .{});
+    defer params.deinit();
+    var out: CapturedResponseWriter = undefined;
+    out.init(std.testing.allocator);
+    defer out.deinit();
+    try server.handle_completion(&out.writer, .{ .integer = 2 }, params.value);
+    var response = try json.parseFromSlice(json.Value, std.testing.allocator, try payloadFromLspMessage(out.writer.buffered()), .{});
+    defer response.deinit();
+    const result = response.value.object.get("result").?.object;
+    try std.testing.expect(!result.get("isIncomplete").?.bool);
+    var found = false;
+    for (result.get("items").?.array.items) |item| {
+        const object = item.object;
+        if (!std.mem.eql(u8, object.get("label").?.string, "print")) continue;
+        found = true;
+        try std.testing.expectEqual(@as(i64, 3), object.get("kind").?.integer);
+        const edit = object.get("textEdit").?.object;
+        try std.testing.expectEqualStrings("print", edit.get("newText").?.string);
+        const range = edit.get("range").?.object;
+        try std.testing.expectEqual(@as(i64, 4), range.get("start").?.object.get("character").?.integer);
+        try std.testing.expectEqual(@as(i64, 9), range.get("end").?.object.get("character").?.integer);
+    }
+    try std.testing.expect(found);
 }

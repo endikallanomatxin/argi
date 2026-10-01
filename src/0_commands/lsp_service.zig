@@ -8,6 +8,7 @@ const st = @import("../3_syntax/syntax_tree.zig");
 const graph_mod = @import("../4_semantics/global/graph.zig");
 const global_types = @import("../4_semantics/global/types.zig");
 const editor_index = @import("lsp_index.zig");
+const completion = @import("lsp_completion.zig");
 const primitives = @import("../4_semantics/primitives/schema.zig");
 const frontend = @import("frontend_pipeline.zig");
 
@@ -231,6 +232,22 @@ pub const LanguageService = struct {
         const index = self.findDocument(uri) orelse return;
         self.documents.items[index].deinit(self.allocator);
         _ = self.documents.swapRemove(index);
+    }
+
+    pub fn document_text(self: *LanguageService, uri: []const u8) ?[]const u8 {
+        const index = self.findDocument(uri) orelse return null;
+        return self.documents.items[index].text;
+    }
+
+    pub fn completions(self: *LanguageService, uri: []const u8, position: Position) !completion.Result {
+        const doc = try self.getDoc(uri);
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        var work = arena.allocator();
+        const offset = completion_offset(doc.text, position) orelse return error.InvalidPosition;
+        const fallback = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
+        const files = self.collectFiles(&work, doc) catch fallback[0..];
+        return completion.complete(self.allocator, self.io, files, doc.path, offset);
     }
 
     pub fn semanticTokensFull(self: *LanguageService, uri: []const u8) !std.array_list.Managed(u32) {
@@ -1072,4 +1089,32 @@ test "LSP semantic tokens retain syntax roles with unresolved calls and multilin
         character = if (data.items[index] == 0) character + data.items[index + 1] else data.items[index + 1];
         try std.testing.expect(character + data.items[index + 2] <= spans.items[line].len);
     }
+}
+
+fn completion_offset(text: []const u8, position: Position) ?usize {
+    var line: u32 = 0;
+    var start: usize = 0;
+    for (text, 0..) |byte, index| {
+        if (line == position.line) break;
+        if (byte == '\n') {
+            line += 1;
+            start = index + 1;
+        }
+    }
+    if (line != position.line) return null;
+    const end = std.mem.indexOfScalarPos(u8, text, start, '\n') orelse text.len;
+    const line_end = if (end > start and text[end - 1] == '\r') end - 1 else end;
+    if (position.character > line_end - start) return null;
+    const offset = start + position.character;
+    if (offset < text.len and text[offset] & 0xc0 == 0x80) return null;
+    return offset;
+}
+
+test "LSP completion positions validate UTF-8 bytes and CRLF boundaries" {
+    const code = "-- é\r\nmain()\r\n";
+    try std.testing.expectEqual(@as(?usize, 7), completion_offset(code, .{ .line = 1, .character = 0 }));
+    try std.testing.expectEqual(@as(?usize, 13), completion_offset(code, .{ .line = 1, .character = 6 }));
+    try std.testing.expect(completion_offset(code, .{ .line = 1, .character = 7 }) == null);
+    try std.testing.expect(completion_offset(code, .{ .line = 0, .character = 4 }) == null);
+    try std.testing.expect(completion_offset(code, .{ .line = 4, .character = 0 }) == null);
 }

@@ -106,6 +106,11 @@ Start the language server:
 argi lsp
 ```
 
+The server provides diagnostics, semantic highlighting, navigation, and basic
+completion for visible names, function signatures, named arguments, and imported
+module members. Field completion supports annotated types and direct constructor
+initializers, including reference field chains.
+
 ### Scaffolding
 
 Create an executable package:
