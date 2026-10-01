@@ -88,11 +88,12 @@ pub const Resolver = struct {
     pub const SideEffectCheckpoint = struct {
         ownership: ?[2]usize = null,
         reached_calls: usize = 0,
+        reached_signatures: usize = 0,
         abstracts: ?abstract_mod.Resolver.CacheCheckpoint = null,
     };
 
     pub fn checkpointSideEffects(self: *const Resolver) SideEffectCheckpoint {
-        var saved: SideEffectCheckpoint = .{ .reached_calls = self.core.reached_calls.items.len };
+        var saved: SideEffectCheckpoint = .{ .reached_calls = self.core.reached_calls.items.len, .reached_signatures = self.core.reached_signature_changes.items.len };
         if (self.ownership_context) |context| {
             if (self.ownership_checkpoint) |checkpoint|
                 saved.ownership = checkpoint(context);
@@ -104,6 +105,7 @@ pub const Resolver = struct {
 
     pub fn rollbackSideEffects(self: *Resolver, saved: SideEffectCheckpoint) void {
         self.core.rollbackReachedCalls(saved.reached_calls);
+        self.core.rollback_reached_signatures(saved.reached_signatures);
         if (saved.abstracts) |checkpoint|
             if (self.nested_call_context) |abstracts|
                 abstracts.rollbackImplementationCaches(checkpoint);

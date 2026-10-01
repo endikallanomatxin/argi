@@ -36,6 +36,9 @@ pub const Resolver = struct {
     // to revisit when a callee gains a transitive reached input. Retain their
     // lexical context until the signatures reach the semantizing fixed point.
     reached_calls: std.ArrayList(ReachedCall) = .empty,
+    // Reached defaults extend existing function interfaces in place. Graph
+    // checkpoints truncate appended pools but cannot undo these interface edits.
+    reached_signature_changes: std.ArrayList(ReachedSignatureChange) = .empty,
     const ReachedCall = struct {
         callee: global_sg.GlobalFunctionId,
         input: global_sg.GlobalNodeId,
@@ -43,6 +46,26 @@ pub const Resolver = struct {
         owner: ?global_sg.GlobalFunctionId,
         visible: []global_sg.GlobalBindingId,
     };
+
+    const ReachedSignatureChange = struct {
+        owner: global_sg.GlobalFunctionId,
+        input: global_sg.FieldRange,
+        bindings: global_sg.BindingRange,
+    };
+
+    pub fn rollback_reached_signatures(self: *Resolver, count: usize) void {
+        var index = self.reached_signature_changes.items.len;
+        while (index > count) {
+            index -= 1;
+            const change = self.reached_signature_changes.items[index];
+            // A graph rollback may already have discarded a new owner.
+            if (@intFromEnum(change.owner) >= self.graph.functions.items.len) continue;
+            const owner = &self.graph.functions.items[@intFromEnum(change.owner)];
+            owner.input = change.input;
+            owner.input_bindings = change.bindings;
+        }
+        self.reached_signature_changes.shrinkRetainingCapacity(count);
+    }
 
     pub fn rollbackReachedCalls(self: *Resolver, count: usize) void {
         for (self.reached_calls.items[count..]) |call| self.allocator.free(call.visible);
@@ -52,6 +75,7 @@ pub const Resolver = struct {
     pub fn deinitReachedCalls(self: *Resolver) void {
         self.rollbackReachedCalls(0);
         self.reached_calls.deinit(self.allocator);
+        self.reached_signature_changes.deinit(self.allocator);
     }
 
     // Instantiation and cleanup can resolve calls before a callee acquires
@@ -1629,6 +1653,11 @@ pub const Resolver = struct {
         const binding_start: u32 = @intCast(self.graph.binding_refs.items.len);
         try self.graph.binding_refs.appendSlice(self.allocator, copied_bindings);
         try self.graph.binding_refs.append(self.allocator, binding_id);
+        try self.reached_signature_changes.append(self.allocator, .{
+            .owner = resolved_owner,
+            .input = old_input,
+            .bindings = old_bindings,
+        });
         owner.input = .{ .start = field_start, .len = old_input.len + 1 };
         owner.input_bindings = .{ .start = binding_start, .len = old_bindings.len + 1 };
 
@@ -2082,7 +2111,7 @@ test "address type materializes after its child resolves" {
 test "global core resolver is graph-only" {
     try std.testing.expect(!@hasField(Resolver, "abstract_context"));
     try std.testing.expect(!@hasField(Resolver, "abstract_compatible"));
-    try std.testing.expect(@sizeOf(Resolver) <= 160);
+    try std.testing.expect(@sizeOf(Resolver) <= 184);
 }
 
 test "qualified lookup follows linked module alias" {
@@ -2135,4 +2164,31 @@ test "global declaration lookup preserves module visibility" {
     var private_reference = reference;
     private_reference.name = .{ .start = 6, .len = 7 };
     try std.testing.expectError(error.UnknownGlobalDeclaration, resolver.resolveDeclaration(0, private_reference, &.{.function}));
+}
+
+test "reached signature rollback restores interfaces before discarded pools are reused" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const name = try graph.addString(allocator, "caller");
+    try graph.declarations.append(allocator, .{ .kind = .function, .name = name, .source = .{ .file_index = 0, .offset = 0 } });
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+    try graph.nodes.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = @enumFromInt(0), .content = .{ .int_literal = 7 } });
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer resolver.deinitReachedCalls();
+    const saved = graph.checkpoint();
+    for ([_][]const u8{ "writer", "error_tracer" }) |field_name| {
+        _ = (try resolver.propagateReachedDefaultWithCompatibility(@enumFromInt(0), .{
+            .name = try graph.addString(allocator, field_name),
+            .ty = @enumFromInt(0),
+            .source = .{ .file_index = 0, .offset = 0 },
+        }, @enumFromInt(0), null)).?;
+    }
+    try std.testing.expectEqual(@as(u32, 2), graph.functions.items[0].input_bindings.len);
+    graph.rollback(saved);
+    resolver.rollback_reached_signatures(0);
+    try std.testing.expectEqual(@as(u32, 0), graph.functions.items[0].input.len);
+    try std.testing.expectEqual(@as(u32, 0), graph.functions.items[0].input_bindings.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.binding_refs.items.len);
 }
