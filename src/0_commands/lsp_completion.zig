@@ -1,9 +1,7 @@
+const syntax = @import("lsp_syntax.zig");
 const std = @import("std");
 const sf = @import("../1_base/source_files.zig");
-const diag = @import("../1_base/diagnostic.zig");
 const token = @import("../2_tokens/token.zig");
-const tokenizer = @import("../2_tokens/tokenizer.zig");
-const syntaxer = @import("../3_syntax/syntaxer.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
 const primitives = @import("../4_semantics/primitives/schema.zig");
 
@@ -20,14 +18,7 @@ pub const Result = struct {
     }
 };
 
-const File = struct {
-    source: sf.SourceFile,
-    tree: st.FileSyntaxTree,
-    tokens: token.View,
-    scope_end: []usize,
-    scope_start: []usize,
-    paren_depth: []usize,
-};
+const File = syntax.File;
 const TypeRef = struct { file: *const File, node: st.NodeIndex };
 
 // Completion deliberately uses syntax artifacts rather than requiring a
@@ -37,42 +28,12 @@ pub fn complete(allocator: std.mem.Allocator, io: std.Io, sources: []const sf.So
     var arena = std.heap.ArenaAllocator.init(allocator);
     errdefer arena.deinit();
     const work = arena.allocator();
-    var work_copy = work;
-    var diagnostics = diag.Diagnostics.init(&work_copy, sources);
-    defer diagnostics.deinit();
-    const files = try work.alloc(File, sources.len);
+    const files = try syntax.load_files(work, sources);
     var current: ?*File = null;
-    for (sources, files, 0..) |source, *file, index| {
-        var lexer = tokenizer.Tokenizer.init(work, &diagnostics, source.code, diagnostics.source_db.fileId(index));
-        _ = lexer.tokenize() catch {};
-        var tree = st.FileSyntaxTree.initOwnedTokens(lexer.location.file, lexer.takeTokens());
-        var parser = syntaxer.Syntaxer.initFile(work, tree, source.code, &diagnostics);
-        tree = parser.parse() catch parser.file;
-        file.* = .{
-            .source = source,
-            .tree = tree,
-            .tokens = token.View.init(tree.tokens),
-            .scope_start = try work.alloc(usize, tree.tokens.len),
-            .scope_end = try work.alloc(usize, tree.tokens.len),
-            .paren_depth = try work.alloc(usize, tree.tokens.len),
-        };
-        try compute_scopes(work, file);
-        if (file.tree.roots.len == 0) {
-            var roots: std.ArrayList(st.NodeIndex) = .empty;
-            for (0..file.tree.nodes.len) |raw| {
-                const node: st.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
-                switch (file.tree.tag(node)) {
-                    .function_declaration, .function_declaration_once, .type_declaration, .abstract_declaration, .symbol_declaration_constant, .symbol_declaration_variable, .c_enum_declaration, .c_union_declaration, .choice_option_declaration => {
-                        if (file.scope_start[@intFromEnum(file.tree.mainToken(node))] == 0)
-                            try roots.append(work, node);
-                    },
-                    else => {},
-                }
-            }
-            file.tree.roots = roots.items;
-        }
-        if (std.mem.eql(u8, source.path, path)) current = file;
-    }
+    for (files) |*file| if (std.mem.eql(u8, file.source.path, path)) {
+        current = file;
+        break;
+    };
     const file = current orelse return error.FileNotFound;
     if (offset > file.source.code.len) return error.InvalidPosition;
     var start = offset;
@@ -175,25 +136,6 @@ fn previous_token(file: *const File, offset: usize) ?usize {
         found = index;
     }
     return found;
-}
-
-fn compute_scopes(allocator: std.mem.Allocator, file: *File) !void {
-    var stack: std.ArrayList(usize) = .empty;
-    var parens: usize = 0;
-    for (file.tokens.contents, file.tokens.locations, 0..) |content, location, index| {
-        file.paren_depth[index] = parens;
-        if (content == .open_parenthesis) parens += 1;
-        if (content == .close_parenthesis and parens > 0) parens -= 1;
-        file.scope_start[index] = if (stack.items.len > 0) stack.items[stack.items.len - 1] + 1 else 0;
-        file.scope_end[index] = file.source.code.len + 1;
-        if (content == .open_brace) try stack.append(allocator, index);
-        if (content == .close_brace and stack.items.len > 0) {
-            const open = stack.pop().?;
-            for (open + 1..index) |inner| {
-                if (file.scope_start[inner] == open + 1) file.scope_end[inner] = location.offset;
-            }
-        }
-    }
 }
 
 fn in_scope(file: *const File, index: usize, offset: usize) bool {

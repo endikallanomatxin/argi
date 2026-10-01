@@ -9,6 +9,7 @@ const graph_mod = @import("../4_semantics/global/graph.zig");
 const global_types = @import("../4_semantics/global/types.zig");
 const editor_index = @import("lsp_index.zig");
 const completion = @import("lsp_completion.zig");
+const editor_syntax = @import("lsp_syntax.zig");
 const primitives = @import("../4_semantics/primitives/schema.zig");
 const frontend = @import("frontend_pipeline.zig");
 
@@ -330,7 +331,7 @@ pub const LanguageService = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         var work = arena.allocator();
-        var analysis = (try self.collectAnalysis(&work, doc)) orelse return null;
+        var analysis = (try self.collectAnalysis(&work, doc)) orelse return try self.syntax_definition(work, doc, position);
         defer analysis.deinit(work);
 
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
@@ -350,6 +351,28 @@ pub const LanguageService = struct {
             else => return null,
         };
         return try self.definitionForOccurrence(&analysis, target);
+    }
+
+    fn syntax_definition(self: *LanguageService, work: std.mem.Allocator, doc: *Document, position: Position) !?Definition {
+        const offset = completion_offset(doc.text, position) orelse return null;
+        var allocator = work;
+        const files = self.collectFiles(&allocator, doc) catch return null;
+        const target = (try editor_syntax.find_declaration(work, self.io, files, doc.path, offset)) orelse return null;
+        for (files) |file| {
+            if (!std.mem.eql(u8, file.path, target.path)) continue;
+            var line: u32 = 0;
+            var start: usize = 0;
+            for (file.code[0..target.offset], 0..) |byte, index| if (byte == '\n') {
+                line += 1;
+                start = index + 1;
+            };
+            const character: u32 = @intCast(target.offset - start);
+            return .{ .path = try self.ownedPath(target.path), .range = .{
+                .start = .{ .line = line, .character = character },
+                .end = .{ .line = line, .character = character + target.len },
+            } };
+        }
+        return null;
     }
 
     pub fn references(self: *LanguageService, uri: []const u8, position: Position, include_declaration: bool) !LocationsResult {
@@ -1196,4 +1219,38 @@ test "LSP completion positions validate UTF-8 bytes and CRLF boundaries" {
     try std.testing.expect(completion_offset(code, .{ .line = 1, .character = 7 }) == null);
     try std.testing.expect(completion_offset(code, .{ .line = 0, .character = 4 }) == null);
     try std.testing.expect(completion_offset(code, .{ .line = 4, .character = 0 }) == null);
+}
+
+test "LSP definitions remain available with unresolved matrix initializers" {
+    const code =
+        \\MatrixView : Type = (.data_p: &[2][2]Int32)
+        \\main(.system: System) -> (.status_code: Int32 = 0) := {
+        \\    assume stdout := system.terminal&.stdout_writer
+        \\    data : [2][2]Int32 = ((1,2), (3,4))
+        \\    mv : MatrixView = (.data_p = &data)
+        \\    print("Hello world")
+        \\}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///matrix.rg";
+    try service.documents.append(try Document.init(std.testing.allocator, uri, path, 1, code));
+    const system = (try service.definition(uri, .{ .line = 1, .character = 14 })).?;
+    defer system.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.endsWith(u8, system.path, "/system/system.rg"));
+    const print = (try service.definition(uri, .{ .line = 5, .character = 4 })).?;
+    defer print.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.endsWith(u8, print.path, "/system/terminal.rg"));
+    const matrix = (try service.definition(uri, .{ .line = 4, .character = 9 })).?;
+    defer matrix.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(path, matrix.path);
+    try std.testing.expectEqual(@as(u32, 0), matrix.range.start.line);
+    const data = (try service.definition(uri, .{ .line = 4, .character = 34 })).?;
+    defer data.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u32, 3), data.range.start.line);
 }
