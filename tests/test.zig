@@ -3125,9 +3125,9 @@ test "feature_tests/ownership/42X_reference_use_after_root_end" {
 
 test "feature_tests/ownership/53X_pointer_inputs_may_alias" {
     try buildExpectFailExact("tests/feature_tests/ownership/53X_pointer_inputs_may_alias",
-        \\tests/feature_tests/ownership/53X_pointer_inputs_may_alias/main.rg:6:23: error: reference depends on a root that has ended
+        \\tests/feature_tests/ownership/53X_pointer_inputs_may_alias/main.rg:6:25: error: reference depends on a root that has ended
         \\      value = read_alias&.size
-        \\                        ^
+        \\                          ^
         \\
     );
 }
@@ -3138,9 +3138,9 @@ test "feature_tests/ownership/54_deinit_through_alias_reinitialize" {
 
 test "feature_tests/ownership/55X_deinit_through_alias_read" {
     try buildExpectFailExact("tests/feature_tests/ownership/55X_deinit_through_alias_read",
-        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:12:8: error: reference depends on a root that has ended
+        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:12:11: error: reference depends on a root that has ended
         \\      if b&.size == 1 {
-        \\         ^
+        \\            ^
         \\
     );
 }
@@ -3169,9 +3169,9 @@ test "feature_tests/ownership/58X_null_safe_reference" {
 
 test "feature_tests/ownership/59X_branch_deinit_then_use" {
     try buildExpectFailExact("tests/feature_tests/ownership/59X_branch_deinit_then_use",
-        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:13:8: error: place rooted at 'allocation' is maybe_initialized and cannot be used
+        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:13:19: error: place rooted at 'allocation' is maybe_initialized and cannot be used
         \\      if allocation.size == 1 {
-        \\         ^
+        \\                    ^
         \\
     );
 }
@@ -4137,9 +4137,9 @@ test "feature_tests/ownership/206_auto_deinit_release_propagates_through_wrapper
 
 test "feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper" {
     try buildExpectFailExact("tests/feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper",
-        \\tests/feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper/main.rg:31:34: error: reference depends on a root that has ended
+        \\tests/feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper/main.rg:31:41: error: reference depends on a root that has ended
         \\                      observed ::= holder.reference&
-        \\                                   ^
+        \\                                          ^
         \\
     );
 }
@@ -4232,9 +4232,9 @@ test "feature_tests/ownership/44_cross_root_cycle_survivor_remains_usable" {
 
 test "feature_tests/ownership/45X_cross_root_cycle_stale_edge" {
     try buildExpectFailExact("tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge",
-        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:15:8: error: reference depends on a root that has ended
+        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:15:10: error: reference depends on a root that has ended
         \\      if b.to_a& == 0 {
-        \\         ^
+        \\           ^
         \\
     );
 }
@@ -4260,27 +4260,27 @@ test "feature_tests/ownership/48_structural_field_move" {
 
 test "feature_tests/ownership/49X_structural_field_use_after_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/49X_structural_field_use_after_move",
-        \\tests/feature_tests/ownership/49X_structural_field_use_after_move/main.rg:13:19: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/49X_structural_field_use_after_move/main.rg:12:32)
+        \\tests/feature_tests/ownership/49X_structural_field_use_after_move/main.rg:13:24: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/49X_structural_field_use_after_move/main.rg:12:32)
         \\      status_code = pair.left + pair.right - moved
-        \\                    ^
+        \\                         ^
         \\
     );
 }
 
 test "feature_tests/ownership/50X_branch_may_move_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/50X_branch_may_move_value",
-        \\tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:9:19: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:7:26)
+        \\tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:9:24: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:7:26)
         \\      status_code = pair.left
-        \\                    ^
+        \\                         ^
         \\
     );
 }
 
 test "feature_tests/ownership/51X_loop_may_move_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/51X_loop_may_move_value",
-        \\tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:7:27: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:7:26)
+        \\tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:7:32: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:7:26)
         \\          consume(.value = ~pair.left)
-        \\                            ^
+        \\                                 ^
         \\
     );
 }
