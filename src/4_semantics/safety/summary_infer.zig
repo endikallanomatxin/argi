@@ -3340,6 +3340,14 @@ pub const Infer = struct {
             .function_call => |call| try self.inferCall(function_id, node_id, call.callee, call.input),
             .virtualize => |virtualize_id| try self.inferVirtualize(function_id, virtualize_id),
             .virtual_call => |virtual_call_id| try self.inferVirtualCall(function_id, node_id, virtual_call_id),
+            .error_propagation => |id| blk: {
+                const propagation = self.graph.error_propagations.items[@intFromEnum(id)];
+                break :blk try self.error_success_effect(function_id, propagation.errable_value, propagation.ok_variant, propagation.ok_value_field_index);
+            },
+            .error_context => |id| blk: {
+                const context = self.graph.error_contexts.items[@intFromEnum(id)];
+                break :blk try self.error_success_effect(function_id, context.errable_value, context.ok_variant, context.ok_value_field_index);
+            },
             .nullable_unwrap_or => |unwrap_id| blk: {
                 const unwrap = self.graph.nullable_unwraps.items[@intFromEnum(unwrap_id)];
                 break :blk try self.mergeValueEffects(
@@ -3349,6 +3357,22 @@ pub const Infer = struct {
             },
             else => .{},
         };
+    }
+
+    // Match codegen's success projection. Only the selected payload reaches
+    // the continuation; its ownership moves with it across summary boundaries.
+    fn error_success_effect(
+        self: *Infer,
+        function: graph_mod.GlobalFunctionId,
+        errable: graph_mod.GlobalNodeId,
+        ok_variant: graph_mod.GlobalVariantId,
+        value_field: ?u32,
+    ) !facts.ValueEffect {
+        const ty = self.graph.node(errable).ty orelse return .{};
+        const index = self.variantIndex(ty, ok_variant) orelse return .{};
+        var success = try self.projectValueEffect(try self.inferExpression(function, errable), .{ .variant = index });
+        if (value_field) |field| success = try self.projectValueEffect(success, .{ .field = field });
+        return self.withOwnershipTransfer(success);
     }
 
     fn inferCall(

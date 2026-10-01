@@ -7112,3 +7112,12 @@ test "feature_tests/types/271_constructor_choice_context" {
 test "feature_tests/types/272X_constructor_choice_nominal_mismatch" {
     try buildExpectFail("tests/feature_tests/types/272X_constructor_choice_nominal_mismatch", "no function named 'FirstWrapper'");
 }
+
+
+test "feature_tests/ownership/320X_unwrapped_allocation_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/ownership/320X_unwrapped_allocation_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/text/28X_string_view_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/28X_string_view_after_cleanup", "root that has ended");
+}

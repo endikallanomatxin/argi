@@ -682,7 +682,7 @@ pub const SafetyChecker = struct {
                 defer error_state.deinit();
                 for (self.graph.node_refs.items[prop.cleanup_nodes.start..][0..prop.cleanup_nodes.len]) |cleanup|
                     _ = try self.evaluate(function, cleanup, &error_state);
-                break :blk value;
+                break :blk try self.error_success_facts(prop.errable_value, prop.ok_variant, prop.ok_value_field_index, value, state);
             },
             .error_context => |ctx_id| blk: {
                 const ctx = self.graph.error_contexts.items[@intFromEnum(ctx_id)];
@@ -692,7 +692,7 @@ pub const SafetyChecker = struct {
                 _ = try self.evaluate(function, ctx.context, &error_state);
                 for (self.graph.node_refs.items[ctx.cleanup_nodes.start..][0..ctx.cleanup_nodes.len]) |cleanup|
                     _ = try self.evaluate(function, cleanup, &error_state);
-                break :blk value;
+                break :blk try self.error_success_facts(ctx.errable_value, ctx.ok_variant, ctx.ok_value_field_index, value, state);
             },
             .auto_deinit_binding => |auto_id| blk: {
                 try self.applyAutoDeinit(function, auto_id, state);
@@ -758,6 +758,25 @@ pub const SafetyChecker = struct {
             .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .reach_directive, .break_statement, .continue_statement, .abort_statement => .{},
             else => .{},
         };
+    }
+
+    // Propagation continues only on success. Its runtime value is the selected
+    // payload, with any wrapper field selected by semantizing, not the Errable.
+    fn error_success_facts(
+        self: *SafetyChecker,
+        errable: graph_mod.GlobalNodeId,
+        ok_variant: graph_mod.GlobalVariantId,
+        value_field: ?u32,
+        value: facts.ValueFacts,
+        state: *FunctionState,
+    ) !facts.ValueFacts {
+        const ty = self.graph.node(errable).ty orelse return .{};
+        const index = variantIndex(self.graph, ty, ok_variant) orelse return .{};
+        if (value.pending_initialization) |pending| try self.resolvePendingInitialization(state, pending, index);
+        var success = try self.projectValueFacts(value, &.{.{ .variant = index }});
+        if (value_field) |field| success = try self.projectValueFacts(success, &.{.{ .field = field }});
+        try self.activate_conditional_resources(state, success);
+        return success;
     }
 
     fn evaluateTypeInitializer(
@@ -1432,13 +1451,19 @@ pub const SafetyChecker = struct {
         const before = self.diagnostics.list.items.len;
         for (summary.required_live_inputs) |path| {
             if (path.input_index >= arguments.len) continue;
-            var value = try self.projectValueFacts(arguments[path.input_index], path.projections);
+            var owners = arguments[path.input_index];
+            var value = try self.projectValueFacts(owners, path.projections);
             if (path.projections.len != 0) if (arguments[path.input_index].referenced_place) |base| {
+                if (self.valueAtPlace(state, base)) |stored| owners = stored;
                 var target = base;
                 for (path.projections) |projection| target = try self.project(target, projection);
                 if (self.valueAtPlace(state, target)) |stored| value = stored;
             };
-            try self.requireLive(@enumFromInt(0), source, value, state);
+            // Summary paths select nested payloads, but ownership can live on
+            // the containing choice. Keep that envelope when checking roots
+            // that exist only on the selected success branch.
+            if (valueDependsOnDeadRootWithOwners(value, owners, state))
+                try self.report(source, "reference depends on a root that has ended", .{});
         }
         return self.diagnostics.list.items.len == before;
     }
@@ -1895,6 +1920,20 @@ pub const SafetyChecker = struct {
         }
 
         if (effect.fields.len != 0) {
+            var intrinsic_owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            defer intrinsic_owned.deinit();
+            try intrinsic_owned.appendSlice(direct_owned_roots);
+            // Whole-value transfers can carry intrinsic ownership, such as an
+            // Allocation's root, independently of its address/metadata fields.
+            // Keep those roots while replacing field-derived ownership below.
+            for (result.owned_roots) |root| {
+                var field_owned = false;
+                for (result.fields) |field| if (valueContainsOwnedRoot(field.value.*, root)) {
+                    field_owned = true;
+                    break;
+                };
+                if (!field_owned) try appendRootFact(&intrinsic_owned, root);
+            }
             const variants = result.variants;
             const fields = try self.allocator.alloc(facts.FieldFacts, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
@@ -1905,12 +1944,11 @@ pub const SafetyChecker = struct {
             }
             result.fields = fields;
             result.variants = variants;
-            // A complete field effect supersedes ownership copied from the
-            // prior aggregate. Keep roots established directly by this effect
-            // and roots still present in its materialized fields; otherwise a
-            // replaced owned field leaves a dead root on the parent value.
+            // A complete field effect supersedes ownership derived from the
+            // prior fields. Intrinsic roots follow the whole-value transfer;
+            // roots owned only by replaced fields must leave the parent.
             var current_owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-            for (direct_owned_roots) |root| try appendRootFact(&current_owned, root);
+            for (intrinsic_owned.items) |root| try appendRootFact(&current_owned, root);
             for (fields) |field| for (field.value.owned_roots) |root| try appendRootFact(&current_owned, root);
             const old_owned = result.owned_roots;
             result.owned_roots = try current_owned.toOwnedSlice();
@@ -5639,4 +5677,53 @@ test "activating choice payloads never revives consumed storage capabilities" {
         const expected: SafetyChecker.StorageCapabilityState = if (consumed) .consumed else .available;
         try std.testing.expectEqual(expected, state.storage_capabilities.items[0]);
     }
+}
+
+test "field materialization preserves intrinsic ownership moved from an input" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const root = try state.tracker.establish(.fresh);
+    const address = facts.ValueFacts{ .dependencies = &.{.{ .root = root }} };
+    const allocation = facts.ValueFacts{
+        .owned_roots = &.{root},
+        .fields = &.{.{ .index = 0, .value = &address }},
+    };
+    const address_effect = facts.ValueEffect{
+        .input_dependencies = &.{.{ .path = .{ .input_index = 0, .projections = &.{.{ .field = 0 }} } }},
+    };
+    const transferred = try checker.instantiateOutput(.{
+        .input_dependencies = &.{.{ .path = .{ .input_index = 0 }, .transfers_ownership = true }},
+        .fields = &.{.{ .index = 0, .value = &address_effect }},
+    }, &.{allocation}, &state);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{root}, transferred.owned_roots);
+    try std.testing.expectEqual(root, transferred.fields[0].value.dependencies[0].root);
+}
+
+test "field materialization removes ownership derived from replaced fields" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const old_root = try state.tracker.establish(.fresh);
+    const old_child = facts.ValueFacts{ .owned_roots = &.{old_root} };
+    const parent = facts.ValueFacts{
+        .owned_roots = &.{old_root},
+        .fields = &.{.{ .index = 0, .value = &old_child }},
+    };
+    const replacement = facts.ValueEffect{ .fresh_owned_roots = &.{91} };
+    const transferred = try checker.instantiateOutput(.{
+        .input_dependencies = &.{.{ .path = .{ .input_index = 0 }, .transfers_ownership = true }},
+        .fields = &.{.{ .index = 0, .value = &replacement }},
+    }, &.{parent}, &state);
+    try std.testing.expectEqual(@as(usize, 1), transferred.owned_roots.len);
+    try std.testing.expect(transferred.owned_roots[0] != old_root);
+    try std.testing.expectEqual(transferred.owned_roots[0], transferred.fields[0].value.owned_roots[0]);
 }
