@@ -33,8 +33,8 @@ main(.system: System) -> (.status_code: Int32) := {
     stdin_storage :: DummyInput = (
         .index = 0
     )
-    assume stdin ::= $&stdin_storage
-    result ::= read_line(.allocator = $&allocator_storage, .stdin = $&stdin_storage)
+    assume reader ::= $&stdin_storage
+    result ::= read_line(.allocator = $&allocator_storage, .reader = $&stdin_storage)
 
     if is(.value = result, .variant = ..ok) {
     } else {

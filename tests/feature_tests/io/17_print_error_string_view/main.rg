@@ -1,5 +1,5 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume stderr ::= system.terminal&.stderr_file
+    assume writer ::= $&system.terminal&.stderr
 
     literal ::= from_literal(.data = "error view")
     text ::= as_view(.self = literal)

@@ -1586,7 +1586,7 @@ fn parsePosition(value: json.Value) ?service.Position {
 test "LSP completion response uses standard kinds and a full identifier text edit" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const code = "main(.system: System) -> (.status_code: Int32 = 0) := {\n    print(.value = \"hello\", .stdout = system.terminal&.stdout_writer)\n}\n";
+    const code = "main(.system: System) -> (.status_code: Int32 = 0) := {\n    print(.value = \"hello\", .stdout = $&system.terminal&.stdout)\n}\n";
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
     const path = try test_support.tmpFilePath(&tmp, "main.rg");
     defer std.testing.allocator.free(path);

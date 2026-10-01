@@ -26,7 +26,7 @@ report_value(.value: &Errable#(.t: Void, .reasons: Failures), .writer: $&Probe) 
     match value& {
         ..ok _ { abort }
         ..error & error {
-            unwrap_or_abort(.value = report_trace(.trace = &error&.trace, .stderr = writer))
+            unwrap_or_abort(.value = report_trace(.trace = &error&.trace, .writer = writer))
         }
     }
 }
@@ -75,6 +75,6 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     } }
     writer.count = 0
     writer_virtual ::= to_virtual#(Writer)($&writer)
-    unwrap_or_abort(.value = report(.self = $&other_virtual, .stderr = $&writer_virtual))
+    unwrap_or_abort(.value = report(.self = $&other_virtual, .writer = $&writer_virtual))
     if writer.count != 43 { status_code = 11 }
 }

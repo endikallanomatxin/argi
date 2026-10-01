@@ -1,7 +1,7 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
-    assume stdout ::= system.terminal&.stdout_writer
+    assume writer ::= $&system.terminal&.stdout
 
     argc ::= system.args | length(&_)
     if argc >= 2 {

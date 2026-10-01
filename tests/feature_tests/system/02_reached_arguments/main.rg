@@ -1,7 +1,7 @@
 read_value(
-    .stdout: Int32 = reach stdout, terminal.stdout, system.terminal.stdout,
+    .writer: Int32 = reach writer, terminal.writer, system.terminal.writer,
 ) -> (.value: Int32) := {
-    value = stdout
+    value = writer
 }
 
 forward() -> (.value: Int32) := {
@@ -11,15 +11,15 @@ forward() -> (.value: Int32) := {
 main() -> (.status_code: Int32) := {
     system : (
         .terminal: (
-            .stdout: Int32
+            .writer: Int32
         )
     ) = (
         .terminal = (
-            .stdout = 7
+            .writer = 7
         )
     )
 
-    stdout :: Int32 = 9
+    writer :: Int32 = 9
 
     status_code = forward()
 }

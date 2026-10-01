@@ -28,7 +28,7 @@ DummyInput implements Reader
 
 main() -> (.status_code: Int32) := {
     stdin_storage :: DummyInput = DummyInput()
-    assume stdin ::= $&stdin_storage
+    assume reader ::= $&stdin_storage
     first_result ::= read_byte(.self = $&stdin_storage)
     second_result ::= read_byte(.self = $&stdin_storage)
     third_result ::= read_byte(.self = $&stdin_storage)

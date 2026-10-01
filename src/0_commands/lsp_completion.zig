@@ -481,7 +481,7 @@ test "LSP completion replaces whole identifier and deduplicates overloads" {
 test "LSP completion offers known fields and respects private boundaries" {
     const dependencies = [_]sf.SourceFile{.{ .path = "/bundle/core/system.rg", .origin = .bundled_core, .code =
         \\System : Type = (.terminal: $&Terminal, ._private: Int32)
-        \\Terminal : Type = (.stdout_writer: Int32)
+        \\Terminal : Type = (.stdout: Int32)
     }};
     var result = try test_completion("main(.system: System) -> () := { system.te| }", &dependencies);
     defer result.deinit();
@@ -489,7 +489,7 @@ test "LSP completion offers known fields and respects private boundaries" {
     try std.testing.expectEqual(Kind.field, item_named(result, "terminal").?.kind);
     var chained = try test_completion("main(.system: System) -> () := { system.terminal&.| }", &dependencies);
     defer chained.deinit();
-    try std.testing.expect(item_named(chained, "stdout_writer") != null);
+    try std.testing.expect(item_named(chained, "stdout") != null);
     var local = try test_completion("Point : Type = (.x: Int32, ._private: Int32)\nmain() -> () := { point := Point(.x = 1, ._private = 2)\npoint.| }", &.{});
     defer local.deinit();
     try std.testing.expect(item_named(local, "x") != null);
@@ -504,7 +504,7 @@ test "LSP completion offers known fields and respects private boundaries" {
 
 test "LSP completion offers unused named arguments and avoids duplicate equals" {
     const dependencies = [_]sf.SourceFile{.{ .path = "/bundle/core/print.rg", .origin = .bundled_core, .code =
-        \\print(.value: Int32, .stdout: Int32) -> () := {}
+        \\print(.value: Int32, .writer: Int32) -> () := {}
     }};
     var result = try test_completion("main() -> () := { print(.|", &dependencies);
     defer result.deinit();
@@ -512,7 +512,7 @@ test "LSP completion offers unused named arguments and avoids duplicate equals" 
     var supplied = try test_completion("main() -> () := { print(.value = 1, .|", &dependencies);
     defer supplied.deinit();
     try std.testing.expect(item_named(supplied, "value") == null);
-    try std.testing.expect(item_named(supplied, "stdout") != null);
+    try std.testing.expect(item_named(supplied, "writer") != null);
     var existing = try test_completion("main() -> () := { print(.va|lue = 1)", &dependencies);
     defer existing.deinit();
     try std.testing.expectEqualStrings("value", item_named(existing, "value").?.insert_text);

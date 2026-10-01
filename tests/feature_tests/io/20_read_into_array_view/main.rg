@@ -26,7 +26,7 @@ main() -> (.status_code: Int32) := {
     bytes : Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
     buffer ::= array_view(.array = $&bytes)
     stdin_storage :: DummyInput = DummyInput()
-    assume stdin ::= $&stdin_storage
+    assume reader ::= $&stdin_storage
     read_result ::= read(.self = $&stdin_storage, .buffer = buffer)
 
     if is(.value = read_result, .variant = ..ok) {

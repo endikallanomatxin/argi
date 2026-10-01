@@ -34,11 +34,11 @@ ProbeTracer : Type = (
 )
 ProbeTracer implements ErrorTracer
 add_context(.self: $&ProbeTracer, .location: SourceLocationId, .context: StringView) -> () := {
-    source ::= source_location(.id = location).location
+    reader ::= source_location(.id = location).location
     self&.count = self&.count + 1
-    self&.line = source.line
-    self&.column = source.column
+    self&.line = reader.line
+    self&.column = reader.column
     self&.context_matches = equals(.left = context, .right = "while stepping").ok
 }
 reset_context(.self: $&ProbeTracer) -> () := { self&.count = 0 }
-report(.self: $&ProbeTracer, .stderr: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := { result = ..ok Void() }
+report(.self: $&ProbeTracer, .writer: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := { result = ..ok Void() }

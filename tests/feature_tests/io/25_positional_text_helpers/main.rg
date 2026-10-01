@@ -55,9 +55,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= $&allocator_storage
 
     stdout_storage :: DummyOutput = DummyOutput()
-    assume stdout ::= $&stdout_storage
+    assume writer ::= $&stdout_storage
     stderr_storage :: DummyOutput = DummyOutput()
-    assume stderr ::= $&stderr_storage
 
     text ::= unwrap_or_abort(.value = String(.length = 1))
     bytes_set(.string = $&text, .index = 0, .value = 65)
@@ -65,8 +64,11 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
     print(view)
     flush()
-    print_error(view)
-    flush_error()
+    {
+        assume writer ::= $&stderr_storage
+        print_error(view)
+        flush_error()
+    }
 
     if stdout_storage.write_count != 1 {
         status_code = 1
@@ -92,7 +94,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
         .index = 0
     )
-    assume stdin ::= $&stdin_storage
+    assume reader ::= $&stdin_storage
     buffer ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .capacity = 4))
     into_buffer ::= read_line_into_buffer($&buffer)
     if is(.value = into_buffer, .variant = ..ok) {

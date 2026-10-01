@@ -745,8 +745,8 @@ test "argi init executable package can print from generated main" {
         .sub_path = source_path,
         .data =
         \\main(.system: System) -> (.status_code: Int32 = 0) := {
-        \\    stdout ::= system.terminal&.stdout_writer
-        \\    assume stdout
+        \\    writer ::= $&system.terminal&.stdout
+        \\    assume writer
         \\    print("Hello, World!\n")
         \\}
         \\
@@ -2508,7 +2508,7 @@ test "feature_tests/system/02_reached_arguments" {
 
 test "feature_tests/system/03X_reached_argument_missing" {
     try buildExpectFailExact("tests/feature_tests/system/03X_reached_argument_missing",
-        \\tests/feature_tests/system/03X_reached_argument_missing/main.rg:12:26: error: cannot resolve reached argument '.stdout' with alternatives [stdout, terminal.stdout, system.terminal.stdout] expected as 'Int32'
+        \\tests/feature_tests/system/03X_reached_argument_missing/main.rg:12:26: error: cannot resolve reached argument '.writer' with alternatives [writer, terminal.writer, system.terminal.writer] expected as 'Int32'
         \\      status_code = forward()
         \\                           ^
         \\
@@ -2635,8 +2635,8 @@ test "feature_tests/io/23X_abstract_writer_field_conflicting_assignment" {
     );
 }
 
-test "feature_tests/io/24_terminal_stream_aliases" {
-    const test_path = "tests/feature_tests/io/24_terminal_stream_aliases";
+test "feature_tests/io/24_terminal_files" {
+    const test_path = "tests/feature_tests/io/24_terminal_files";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
@@ -2650,7 +2650,7 @@ test "feature_tests/io/25_positional_text_helpers" {
 test "feature_tests/io/26X_print_without_system" {
     try buildExpectFailExact("tests/feature_tests/io/26X_print_without_system",
         \\tests/feature_tests/io/26X_print_without_system/main.rg:2:10: error: no overload of 'print' accepts arguments (.: StringView). Available signatures:
-        \\  - print (.value: StringView, .stdout: $&Writer) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
+        \\  - print (.value: StringView, .writer: $&Writer) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
         \\      print("Hello, World!\n")
         \\           ^
         \\
@@ -7466,15 +7466,15 @@ test "argi run inherits stdin stdout and stderr" {
         .sub_path = "main.rg",
         .data =
         \\main(.system: System) -> (.status_code: Int32 = 7) := {
-        \\    input ::= unwrap_or_abort(.value = read_byte(.self = system.terminal&.stdin_reader))
+        \\    input ::= unwrap_or_abort(.value = read_byte(.self = $&system.terminal&.stdin))
         \\    match input {
         \\        ..ok byte {
         \\            if byte != 65 { status_code = 8 return }
         \\        }
         \\        ..end { status_code = 9 return }
         \\    }
-        \\    print(.value = "stdout marker\n", .stdout = system.terminal&.stdout_writer)
-        \\    print_error(.value = "stderr marker\n", .stderr = system.terminal&.stderr_writer)
+        \\    print(.value = "stdout marker\n", .writer = $&system.terminal&.stdout)
+        \\    print_error(.value = "stderr marker\n", .writer = $&system.terminal&.stderr)
         \\}
         ,
     });

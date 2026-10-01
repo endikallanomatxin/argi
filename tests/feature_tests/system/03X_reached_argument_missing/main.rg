@@ -1,7 +1,7 @@
 read_value(
-    .stdout: Int32 = reach stdout, terminal.stdout, system.terminal.stdout,
+    .writer: Int32 = reach writer, terminal.writer, system.terminal.writer,
 ) -> (.value: Int32) := {
-    value = stdout
+    value = writer
 }
 
 forward() -> (.value: Int32) := {

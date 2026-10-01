@@ -1068,7 +1068,7 @@ test "LSP semantic tokens distinguish resolved names without synthetic recolorin
         \\Point : Type = (.x: Int32)
         \\identity(.value: Int32) -> (.result: Int32) := { result = value }
         \\main(.system: System) -> (.status_code: Int32 = 0) := {
-        \\    assume stdout := system.terminal&.stdout_writer
+        \\    assume writer := $&system.terminal&.stdout
         \\    point ::= Point(.x = 2)
         \\    amount := identity(.value = point.x)
         \\    print("Hello world")
@@ -1109,7 +1109,7 @@ test "LSP navigation and hovers use written symbols and source declarations" {
         \\Point : Type = (.x: Int32)
         \\identity(.value: Int32) -> (.result: Int32) := { result = value }
         \\main(.system: System) -> (.status_code: Int32 = 0) := {
-        \\    assume stdout := system.terminal&.stdout_writer
+        \\    assume writer := $&system.terminal&.stdout
         \\    point ::= Point(.x = 2)
         \\    amount := identity(.value = point.x)
         \\    print("Hello world")
@@ -1132,10 +1132,10 @@ test "LSP navigation and hovers use written symbols and source declarations" {
     defer std.testing.allocator.free(call.contents);
     try std.testing.expect(std.mem.startsWith(u8, call.contents, "```argi\nidentity("));
     try std.testing.expectEqual(@as(u32, 14), call.range.start.character);
-    const field = (try service.hover(uri, .{ .line = 3, .character = 28 })).?;
+    const field = (try service.hover(uri, .{ .line = 3, .character = 30 })).?;
     defer std.testing.allocator.free(field.contents);
     try std.testing.expectEqualStrings("```argi\n.terminal: $&Terminal\n```", field.contents);
-    try std.testing.expectEqual(@as(u32, 28), field.range.start.character);
+    try std.testing.expectEqual(@as(u32, 30), field.range.start.character);
 
     const identity = (try service.definition(uri, .{ .line = 5, .character = 14 })).?;
     defer identity.deinit(std.testing.allocator);
@@ -1147,7 +1147,7 @@ test "LSP navigation and hovers use written symbols and source declarations" {
     try std.testing.expect(std.mem.endsWith(u8, specialized.path, "/system/terminal.rg"));
     try std.testing.expectEqual(@as(u32, 0), specialized.range.start.character);
     try std.testing.expectEqual(@as(u32, 5), specialized.range.end.character);
-    const terminal = (try service.definition(uri, .{ .line = 3, .character = 28 })).?;
+    const terminal = (try service.definition(uri, .{ .line = 3, .character = 30 })).?;
     defer terminal.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.endsWith(u8, terminal.path, "/system/system.rg"));
     try std.testing.expectEqual(@as(u32, 8), terminal.range.end.character - terminal.range.start.character);
@@ -1225,7 +1225,7 @@ test "LSP definitions remain available with unresolved matrix initializers" {
     const code =
         \\MatrixView : Type = (.data_p: &[2][2]Int32)
         \\main(.system: System) -> (.status_code: Int32 = 0) := {
-        \\    assume stdout := system.terminal&.stdout_writer
+        \\    assume writer := $&system.terminal&.stdout
         \\    data : [2][2]Int32 = ((1,2), (3,4))
         \\    mv : MatrixView = (.data_p = &data)
         \\    print("Hello world")

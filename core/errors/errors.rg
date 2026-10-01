@@ -1,5 +1,5 @@
 -- Source IDs index immutable executable metadata; retaining a frame does not
--- retain source strings or references to a context expression.
+-- retain reader strings or references to a context expression.
 SourceLocationId : Type = (.value: UInt32)
 SourceLocationId implements ImplicitlyCopyable
 SourceLocation : Type = (
@@ -21,7 +21,7 @@ source_location(.id: SourceLocationId) -> (.location: SourceLocation) := {
 ErrorTracer : Abstract = (
     add_context(.self: $&Self, .location: SourceLocationId, .context: StringView) -> ()
     reset_context(.self: $&Self) -> ()
-    report(.self: $&Self, .stderr: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
+    report(.self: $&Self, .writer: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
 )
 
 -- The virtual wrapper and its receiver both have program lifetime.
@@ -32,7 +32,7 @@ noop_error_tracer :: Virtual#(.abstract: ErrorTracer) = to_virtual#(.abstract: E
 
 add_context(.self: $&NoopErrorTracer, .location: SourceLocationId, .context: StringView) -> () := {}
 reset_context(.self: $&NoopErrorTracer) -> () := {}
-report(.self: $&NoopErrorTracer, .stderr: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+report(.self: $&NoopErrorTracer, .writer: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     result = ..ok Void()
 }
 
@@ -146,17 +146,17 @@ add_context(.self: $&FixedSizeErrorTracer, .location: SourceLocationId, .context
     }
 }
 
-write_trace_text(.text: &Char, .stderr: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+write_trace_text(.text: &Char, .writer: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     assume error_tracer ::= $&noop_error_tracer
     view ::= c_string_as_view(.text = text).view
     i :: UIntNative = 0
     while i < view.length {
-        write_byte(.self = stderr, .byte = bytes_get(.view = &view, .index = i).byte)!
+        write_byte(.self = writer, .byte = bytes_get(.view = &view, .index = i).byte)!
         i = i + 1
     }
     result = ..ok Void()
 }
-write_trace_uint(.value: UIntNative, .stderr: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+write_trace_uint(.value: UIntNative, .writer: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     assume error_tracer ::= $&noop_error_tracer
     divisor :: UIntNative = 1
     while divisor <= value / 10 { divisor = divisor * 10 }
@@ -165,48 +165,48 @@ write_trace_uint(.value: UIntNative, .stderr: $&Virtual#(.abstract: Writer)) -> 
     while divisor > 0 {
         digit ::= remaining / divisor
         remaining = remaining % divisor
-        write_byte(.self = stderr, .byte = bytes_get(.view = &digits, .index = digit).byte)!
+        write_byte(.self = writer, .byte = bytes_get(.view = &digits, .index = digit).byte)!
         divisor = divisor / 10
     }
     result = ..ok Void()
 }
-_error_report_entry(.self: $&FixedSizeErrorTracer, .index: UIntNative, .stderr: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+_error_report_entry(.self: $&FixedSizeErrorTracer, .index: UIntNative, .writer: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     assume error_tracer ::= $&noop_error_tracer
     entry ::= _trusted_error_trace_slot(.self = self, .index = index).entry
     location ::= source_location(.id = entry&.location).location
-    write_trace_text(.text = "  at ", .stderr = stderr)!
-    write_trace_text(.text = location.source_file, .stderr = stderr)!
-    write_trace_text(.text = ":", .stderr = stderr)!
-    write_trace_uint(.value = location.line, .stderr = stderr)!
-    write_trace_text(.text = ":", .stderr = stderr)!
-    write_trace_uint(.value = location.column, .stderr = stderr)!
+    write_trace_text(.text = "  at ", .writer = writer)!
+    write_trace_text(.text = location.source_file, .writer = writer)!
+    write_trace_text(.text = ":", .writer = writer)!
+    write_trace_uint(.value = location.line, .writer = writer)!
+    write_trace_text(.text = ":", .writer = writer)!
+    write_trace_uint(.value = location.column, .writer = writer)!
     slot_offset ::= index * _error_trace_stride().size
     offset ::= slot_offset + size_of(.type = ErrorTraceEntry)
     if entry&.context_length != 0 {
-        write_trace_text(.text = ": ", .stderr = stderr)!
+        write_trace_text(.text = ": ", .writer = writer)!
         i :: UIntNative = 0
         while i < entry&.context_length {
             byte ::= _trusted_allocation_byte_ro(.allocation = &self&._storage, .offset = offset + i).reference&
-            write_byte(.self = stderr, .byte = byte)!
+            write_byte(.self = writer, .byte = byte)!
             i = i + 1
         }
     }
-    write_trace_text(.text = "\n    ", .stderr = stderr)!
-    write_trace_text(.text = location.source_line, .stderr = stderr)!
-    write_trace_text(.text = "\n    ", .stderr = stderr)!
+    write_trace_text(.text = "\n    ", .writer = writer)!
+    write_trace_text(.text = location.source_line, .writer = writer)!
+    write_trace_text(.text = "\n    ", .writer = writer)!
     column :: UIntNative = 1
     while column < location.column {
-        write_byte(.self = stderr, .byte = 32)!
+        write_byte(.self = writer, .byte = 32)!
         column = column + 1
     }
-    write_trace_text(.text = "^\n", .stderr = stderr)!
+    write_trace_text(.text = "^\n", .writer = writer)!
     result = ..ok Void()
 }
-report(.self: $&FixedSizeErrorTracer, .stderr: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+report(.self: $&FixedSizeErrorTracer, .writer: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     assume error_tracer ::= $&noop_error_tracer
-    write_trace_text(.text = "error trace (most recent first):\n", .stderr = stderr)!
+    write_trace_text(.text = "error trace (most recent first):\n", .writer = writer)!
     if self&._length == 0 {
-        write_trace_text(.text = "  <empty>\n", .stderr = stderr)!
+        write_trace_text(.text = "  <empty>\n", .writer = writer)!
     }
     first ::= self&._capacity / 2
     recent ::= self&._length
@@ -216,40 +216,40 @@ report(.self: $&FixedSizeErrorTracer, .stderr: $&Virtual#(.abstract: Writer)) ->
         while i > 0 {
             if cursor == first { cursor = self&._capacity }
             cursor = cursor - 1
-            _error_report_entry(.self = self, .index = cursor, .stderr = stderr)!
+            _error_report_entry(.self = self, .index = cursor, .writer = writer)!
             i = i - 1
         }
-        write_trace_text(.text = "  <context truncated>\n", .stderr = stderr)!
+        write_trace_text(.text = "  <context truncated>\n", .writer = writer)!
         recent = first
     }
     while recent > 0 {
         recent = recent - 1
-        _error_report_entry(.self = self, .index = recent, .stderr = stderr)!
+        _error_report_entry(.self = self, .index = recent, .writer = writer)!
     }
     if self&._dropped and self&._length < self&._capacity {
-        write_trace_text(.text = "  <context truncated>\n", .stderr = stderr)!
+        write_trace_text(.text = "  <context truncated>\n", .writer = writer)!
     }
-    flush(.self = stderr)!
+    flush(.self = writer)!
     result = ..ok Void()
 }
-report_trace(.trace: &ErrorTrace, .stderr: $&Writer) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+report_trace(.trace: &ErrorTrace, .writer: $&Writer) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     assume error_tracer ::= $&noop_error_tracer
-    writer ::= to_virtual#(.abstract: Writer)(.value = stderr)
-    report(.self = trace&.tracer, .stderr = $&writer)!
+    virtual_writer ::= to_virtual#(.abstract: Writer)(.value = writer)
+    report(.self = trace&.tracer, .writer = $&virtual_writer)!
     result = ..ok Void()
 }
-report_error#(.reasons: Type)(.err: &Error#(.reasons: reasons), .stderr: $&Writer) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+report_error#(.reasons: Type)(.err: &Error#(.reasons: reasons), .writer: $&Writer) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     assume error_tracer ::= $&noop_error_tracer
-    report_trace(.trace = &err&.trace, .stderr = stderr)!
+    report_trace(.trace = &err&.trace, .writer = writer)!
     result = ..ok Void()
 }
-report_error#(.reasons: Type)(.message: &Char, .err: &Error#(.reasons: reasons), .stderr: $&Writer) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+report_error#(.reasons: Type)(.message: &Char, .err: &Error#(.reasons: reasons), .writer: $&Writer) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     assume error_tracer ::= $&noop_error_tracer
-    writer ::= to_virtual#(.abstract: Writer)(.value = stderr)
-    write_trace_text(.text = "error: ", .stderr = $&writer)!
-    write_trace_text(.text = message, .stderr = $&writer)!
-    write_trace_text(.text = "\n", .stderr = $&writer)!
-    report_trace(.trace = &err&.trace, .stderr = stderr)!
+    virtual_writer ::= to_virtual#(.abstract: Writer)(.value = writer)
+    write_trace_text(.text = "error: ", .writer = $&virtual_writer)!
+    write_trace_text(.text = message, .writer = $&virtual_writer)!
+    write_trace_text(.text = "\n", .writer = $&virtual_writer)!
+    report_trace(.trace = &err&.trace, .writer = writer)!
     result = ..ok Void()
 }
 

@@ -17,11 +17,11 @@ write_byte(.self: $&DummyOutput, .byte: UInt8) -> (.result: Errable#(.t: Void, .
 DummyOutput implements Writer
 
 flush_stdout(
-    .stdout: $&Writer,
+    .writer: $&Writer,
 ) -> (.value: Int32) := {
-    assume stdout
+    assume writer
 
-    flush(.self = stdout)
+    flush(.self = writer)
     value = 0
 }
 
@@ -29,8 +29,8 @@ main() -> (.status_code: Int32) := {
     stdout_storage :: DummyOutput = (
         .flush_count = 0
     )
-    assume stdout ::= $&stdout_storage
+    assume writer ::= $&stdout_storage
 
-    flush_stdout(.stdout = $&stdout_storage)
+    flush_stdout(.writer = $&stdout_storage)
     status_code = stdout_storage.flush_count
 }

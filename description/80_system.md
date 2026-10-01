@@ -45,3 +45,29 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
 The allocator created here belongs to `main`'s scope. Its reference may serve
 calls in that scope, but cannot escape after the allocator is cleaned up.
+
+## Stream capabilities
+
+`System.terminal` groups the process streams as `stdin`, `stdout`, and
+`stderr`, each a `File` value. Terminal initializes and cleans up these files
+in the checked program entry scope; it does not select a buffering policy or
+allocate buffers.
+
+I/O helpers name their dependencies `reader` for reading and `writer` for
+writing. These names describe the operation rather than a process-specific
+stream. A writer may be a file, buffered writer, or another implementation of
+`Writer`. Error-reporting helpers also take a writer; route them explicitly to
+`system.terminal&.stderr` or select that writer in a nested lexical scope.
+
+```rg
+main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume reader ::= $&system.terminal&.stdin
+    assume writer ::= $&system.terminal&.stdout
+    print("Hello world\n")
+    print_error(.value = "A diagnostic\n", .writer = $&system.terminal&.stderr)
+}
+```
+
+Streams may be redirected to files or pipes. A stream implementing `Reader`
+or `Writer` does not by itself promise terminal-specific operations such as
+querying screen dimensions.

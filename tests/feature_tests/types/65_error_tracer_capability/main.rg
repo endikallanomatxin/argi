@@ -7,7 +7,7 @@ add_context(.self: $&CountingTracer, .location: SourceLocationId, .context: Stri
     self&.count = self&.count + 1
 }
 reset_context(.self: $&CountingTracer) -> () := { self&.count = 0 }
-report(.self: $&CountingTracer, .stderr: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+report(.self: $&CountingTracer, .writer: $&Virtual#(.abstract: Writer)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     result = ..ok Void()
 }
 
