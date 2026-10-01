@@ -1,7 +1,7 @@
 expect_segment(.iterator: $&Iterator#(.t: StringView), .expected: StringView) -> () := {
     if has_next(.self = iterator).ok == false { abort }
     segment ::= next(.self = iterator).value
-    if equals(.left = segment, .right = expected).ok == false { abort }
+    if segment != expected { abort }
 }
 first_segment(.text: StringView) -> (.view: StringView) := {
     iterator ::= unwrap_or_abort(.value = split(.self = text, .separator = ","))

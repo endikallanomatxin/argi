@@ -7199,3 +7199,27 @@ test "feature_tests/text/40_string_size_overflow" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/types/273_specialized_comparison_operators" {
+    const path = "tests/feature_tests/types/273_specialized_comparison_operators";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/types/274X_specialized_comparison_missing" {
+    try buildExpectFail("tests/feature_tests/types/274X_specialized_comparison_missing", "no matching comparison operator '==' for 'Record' and 'Record'");
+}
+
+test "feature_tests/types/275X_specialized_ordering_missing" {
+    try buildExpectFail("tests/feature_tests/types/275X_specialized_ordering_missing", "no matching comparison operator '<' for 'StringView' and 'StringView'");
+}
+
+test "feature_tests/types/276X_specialized_numeric_comparison_mismatch" {
+    try buildExpectFail("tests/feature_tests/types/276X_specialized_numeric_comparison_mismatch", "no matching comparison operator '==' for 'UInt64' and 'Int64'");
+}
+
+test "feature_tests/types/277_specialized_comparison_assumed_input" {
+    const path = "tests/feature_tests/types/277_specialized_comparison_assumed_input";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

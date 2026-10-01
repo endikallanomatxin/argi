@@ -756,6 +756,9 @@ pub fn semantizeWithOptions(
     ))
         return if (options.diagnostics != null) error.Reported else error.InvalidImplicitCopy;
 
+    if (try diagnoseInvalidComparisons(allocator, &core, reachable, options.diagnostics))
+        return if (options.diagnostics != null) error.Reported else error.InvalidComparison;
+
     if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, reachable, options.diagnostics))
         return if (options.diagnostics != null) error.Reported else error.InvalidPointerOperation;
 
@@ -1002,6 +1005,59 @@ fn diagnoseUnresolvedArithmetic(
             }
             return true;
         }
+    }
+    return false;
+}
+
+fn diagnoseInvalidComparisons(
+    allocator: std.mem.Allocator,
+    core: *core_mod.Resolver,
+    reachable: ?*const reachability_mod.FunctionSet,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
+) !bool {
+    const graph = core.graph;
+    for (graph.nodes.items, 0..) |node, raw| {
+        const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
+        if (reachable) |set| if (!set.containsNode(id)) continue;
+        const comparison = switch (node.content) {
+            .comparison => |value| value,
+            else => continue,
+        };
+        const left = graph.node(comparison.left);
+        const right = graph.node(comparison.right);
+        const left_ty = left.ty orelse continue;
+        const right_ty = right.ty orelse continue;
+        if (core.isDirectComparison(comparison.operator, left_ty, right_ty)) continue;
+        const equality = comparison.operator == .equal or comparison.operator == .not_equal;
+        // Choice tests are explicit tag comparisons, including nodes created
+        // by is()/nullable tests. References already have scalar equality.
+        if (equality and global_types.variants(graph, left_ty) != null and
+            (global_types.variants(graph, right_ty) != null or right.content == .int_literal)) continue;
+        if (equality and graph.semanticType(left_ty) == .pointer and
+            graph.semanticType(right_ty) == .pointer and global_types.equal(graph, left_ty, right_ty)) continue;
+        if (diagnostics) |sink| {
+            var left_name = std.array_list.Managed(u8).init(allocator);
+            defer left_name.deinit();
+            var right_name = std.array_list.Managed(u8).init(allocator);
+            defer right_name.deinit();
+            try appendTypeName(&left_name, graph, left_ty);
+            try appendTypeName(&right_name, graph, right_ty);
+            const operator = switch (comparison.operator) {
+                .equal => "==",
+                .not_equal => "!=",
+                .less_than => "<",
+                .greater_than => ">",
+                .less_than_or_equal => "<=",
+                .greater_than_or_equal => ">=",
+            };
+            try sink.add(
+                diagnosticLocation(graph, sink, node.source),
+                .semantic,
+                "no matching comparison operator '{s}' for '{s}' and '{s}'",
+                .{ operator, left_name.items, right_name.items },
+            );
+        }
+        return true;
     }
     return false;
 }

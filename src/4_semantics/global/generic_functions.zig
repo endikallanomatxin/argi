@@ -14,6 +14,7 @@ const abstract_mod = @import("abstracts.zig");
 const call_compatibility = @import("call_compatibility.zig");
 const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
+const callable = @import("../primitives/callable.zig");
 
 pub const Stats = struct {
     instances: u32 = 0,
@@ -2429,7 +2430,7 @@ pub const Resolver = struct {
                         null);
                 },
                 .binary => self.resolveBinary(operands.items, value.source, value.detail, value.assumed_arguments),
-                .comparison => self.resolveComparison(operands.items, value.source, value.detail),
+                .comparison => self.resolveComparison(operands.items, value.source, value.detail, value.assumed_arguments),
                 .logical => self.resolveLogical(operands.items, value.source, value.detail),
                 .index => self.resolveIndex(operands.items, value.source, false),
                 .index_store => self.resolveIndex(operands.items, value.source, true),
@@ -2918,13 +2919,43 @@ pub const Resolver = struct {
             };
         }
 
-        fn resolveComparison(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail) !global_sg.Node {
+        fn resolveComparison(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail, assumed: ?ir.ParameterizedNodeId) !global_sg.Node {
             if (operands.len != 2) return error.InvalidParameterizedComparison;
             const operator: primitives.ComparisonOperator = switch (detail) {
                 .comparison => |value| value,
                 else => return error.InvalidParameterizedComparison,
             };
+            var left_ty = self.resolver.graph.node(operands[0]).ty orelse return error.UntypedParameterizedComparison;
+            var right_ty = self.resolver.graph.node(operands[1]).ty orelse return error.UntypedParameterizedComparison;
+            self.resolver.core.coerceIntegerPair(operands[0], &left_ty, operands[1], &right_ty);
             const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });
+            if (!self.resolver.core.isDirectComparison(operator, left_ty, right_ty)) resolve_operator: {
+                const callable_operator: callable.OperatorKind = switch (operator) {
+                    .equal => .equal,
+                    .not_equal => .not_equal,
+                    else => break :resolve_operator,
+                };
+                const reach = try self.operatorContext(assumed);
+                defer self.resolver.allocator.free(reach.global.visible_bindings);
+                if (try self.resolver.resolveNestedAddressedOperatorCall(self.module_index, callable_operator, operands, reach, self.resolver.sourceFor(self.module_index, source))) |call| {
+                    try self.resolver.core.trackResolvedReachedCall(call, reach);
+                    return call;
+                }
+                const function = self.resolver.core.resolveOperator(self.module_index, callable_operator, operands, &.{ left_ty, right_ty }) catch |err| switch (err) {
+                    error.NoMatchingGlobalFunction => break :resolve_operator,
+                    else => return err,
+                };
+                const input = try self.resolver.core.makeCallInput(function, operands);
+                try self.resolver.core.trackReachedCall(function, input, reach, false);
+                return .{
+                    .source = self.resolver.sourceFor(self.module_index, source),
+                    .ty = bool_ty,
+                    .content = .{ .function_call = .{ .callee = function, .input = input } },
+                };
+            }
+            // Tag tests retain comparison nodes. Unsupported aggregate nodes
+            // remain typed for the final semantizing diagnostic, so speculative
+            // overload instantiation never emits errors for discarded candidates.
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = bool_ty,

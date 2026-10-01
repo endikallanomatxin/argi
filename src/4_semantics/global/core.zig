@@ -873,8 +873,7 @@ pub const Resolver = struct {
         self.coerceIntegerPair(left, &left_ty, right, &right_ty);
         const bool_ty = try self.builtin(.Bool);
         const target = globalizer.globalNode(o, value.node);
-        const directly_comparable = self.isBuiltinComparable(left_ty, right_ty) or
-            ((value.operator == .equal or value.operator == .not_equal) and self.isCEnumPair(left_ty, right_ty));
+        const directly_comparable = self.isDirectComparison(value.operator, left_ty, right_ty);
         if (directly_comparable) {
             self.graph.nodes.items[@intFromEnum(target)] = .{
                 .source = self.graph.nodes.items[@intFromEnum(left)].source,
@@ -1693,7 +1692,7 @@ pub const Resolver = struct {
         };
     }
 
-    fn coerceIntegerPair(
+    pub fn coerceIntegerPair(
         self: *Resolver,
         left: global_sg.GlobalNodeId,
         left_ty: *global_sg.GlobalTypeId,
@@ -1878,6 +1877,18 @@ pub const Resolver = struct {
             else => false,
         };
         return fits;
+    }
+
+    // Ordinary and specialized bodies use the same scalar comparison rules.
+    // Aggregate equality belongs to operator resolution, not LLVM's icmp.
+    pub fn isDirectComparison(
+        self: *Resolver,
+        operator: primitives.ComparisonOperator,
+        left: global_sg.GlobalTypeId,
+        right: global_sg.GlobalTypeId,
+    ) bool {
+        return self.isBuiltinComparable(left, right) or
+            ((operator == .equal or operator == .not_equal) and self.isCEnumPair(left, right));
     }
 
     fn isBuiltinComparable(self: *Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {

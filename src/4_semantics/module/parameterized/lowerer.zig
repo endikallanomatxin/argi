@@ -1107,7 +1107,9 @@ pub const Context = struct {
             .choice_literal, .choice_some_literal => if (self.tree.choiceLiteral(node)) |literal| try self.writer.addString(self.tree.tokenTextFromSource(self.source, literal.name_token)) else null,
             else => null,
         };
-        const assumed = if (kind == .binary) blk: {
+        // Specialization can select an overload with reached inputs even when
+        // the operand types are not known yet. Retain lexical assume values.
+        const assumed = if (kind == .binary or kind == .comparison) blk: {
             const input = try self.addResolvedNode(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
             try self.captureAssumedFields(node, input);
             break :blk input;
