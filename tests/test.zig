@@ -7132,3 +7132,18 @@ test "feature_tests/text/26_string_view_trim" {
 test "feature_tests/text/27X_trimmed_view_after_cleanup" {
     try buildExpectFail("tests/feature_tests/text/27X_trimmed_view_after_cleanup", "root that has ended");
 }
+
+
+test "feature_tests/text/29_string_view_split" {
+    const path = "tests/feature_tests/text/29_string_view_split";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/text/30X_split_source_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/30X_split_source_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/text/31X_split_separator_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/31X_split_separator_after_cleanup", "root that has ended");
+}
