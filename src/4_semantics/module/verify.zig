@@ -153,6 +153,7 @@ fn verifyOverlays(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try require(verify.rangeFits(value.input_bindings, graph.semantic.binding_refs.items.len));
         try require(verify.rangeFits(value.output_bindings, graph.semantic.binding_refs.items.len));
         try require(verify.optionalIdFits(value.inferred_error_reasons, views.typeCount(graph)));
+        if (value.foreign_symbol) |name| try require(verify.stringFits(name, graph.strings.items));
     }
     for (graph.semantic.field_semantics.items, 0..) |value, index| {
         try require(verify.idFits(value.field, views.fieldCount(graph)));

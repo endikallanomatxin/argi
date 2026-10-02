@@ -313,6 +313,7 @@ fn appendFunctions(allocator: std.mem.Allocator, result: *global_sg.GlobalSemant
             .input_bindings = relocatePoolRange(global_sg.GlobalBindingId, o.binding_ref_base, value.input_bindings),
             .output_bindings = relocatePoolRange(global_sg.GlobalBindingId, o.binding_ref_base, value.output_bindings),
             .inferred_error_reasons = if (value.inferred_error_reasons) |id| globalType(o, id) else null,
+            .foreign_symbol = if (value.foreign_symbol) |name| try relocateString(module, name, o.string_base) else null,
             .safety_primitive = value.safety_primitive,
             .flags = value.flags,
         });

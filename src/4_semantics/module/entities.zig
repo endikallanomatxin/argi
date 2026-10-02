@@ -127,6 +127,7 @@ pub const FunctionSemantic = struct {
     input_bindings: BindingRange = .{ .start = 0, .len = 0 },
     output_bindings: BindingRange = .{ .start = 0, .len = 0 },
     inferred_error_reasons: ?ModuleTypeId = null,
+    foreign_symbol: ?primitives.StringRange = null,
     safety_primitive: primitives.SafetyPrimitive = .none,
     flags: primitives.FunctionFlags = .{},
 };

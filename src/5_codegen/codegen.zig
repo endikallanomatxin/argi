@@ -220,7 +220,12 @@ pub const CodeGenerator = struct {
             // resolving the platform's public C symbols at link time.
             const external_name = self.externSymbolName(function, name);
             const name_z = try self.dupZ(external_name);
-            const ref = c.LLVMAddFunction(self.module, name_z.ptr, signature.fn_type);
+            const existing = c.LLVMGetNamedFunction(self.module, name_z.ptr);
+            if (existing != null and c.LLVMGlobalGetValueType(existing) != signature.fn_type) {
+                try self.report(declaration.source, "C symbol '{s}' is declared with incompatible signatures", .{external_name});
+                return CodegenError.Reported;
+            }
+            const ref = if (existing != null) existing else c.LLVMAddFunction(self.module, name_z.ptr, signature.fn_type);
             if (signature.uses_sret) {
                 const kind = c.LLVMGetEnumAttributeKindForName("sret", 4);
                 const attr = c.LLVMCreateEnumAttribute(c.LLVMGetGlobalContext(), kind, 0);
@@ -256,6 +261,7 @@ pub const CodeGenerator = struct {
     const ExternSignature = struct { fn_type: llvm.c.LLVMTypeRef, return_type: llvm.c.LLVMTypeRef, uses_sret: bool };
 
     fn externSymbolName(self: *CodeGenerator, function: graph_mod.Function, name: []const u8) []const u8 {
+        if (function.foreign_symbol) |symbol| return self.graph.text(symbol);
         const source = self.graph.declaration(function.declaration).source;
         if (source.file_index >= self.graph.files.items.len) return name;
         const file = self.graph.files.items[source.file_index];

@@ -13,7 +13,7 @@ existing external calls do not establish support for every signature shape.
 
 - [ ] Add cross-language ABI tests, target C scalars, explicit C record layouts,
   and raw-pointer lowering; expand the checked ABI subset alongside tests.
-- [ ] Implement `CFunction` symbol options, imports/exports, and the checked
+- [ ] Implement C-ABI bodies/exports and the checked
   `ffi` dependency outside the emitted C signature.
 - [ ] Choose a small native-library consumer and validate its wrappers, including
   aggregate arguments/results where supported.

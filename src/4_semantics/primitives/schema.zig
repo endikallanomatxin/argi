@@ -192,6 +192,7 @@ pub fn Function(comptime Ids: type) type {
         input_bindings: Range(Ids.BindingId) = .{ .start = 0, .len = 0 },
         output_bindings: Range(Ids.BindingId) = .{ .start = 0, .len = 0 },
         inferred_error_reasons: ?Ids.TypeId = null,
+        foreign_symbol: ?StringRange = null,
         safety_primitive: SafetyPrimitive = .none,
         flags: FunctionFlags = .{},
     };

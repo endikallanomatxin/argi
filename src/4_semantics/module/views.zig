@@ -160,6 +160,7 @@ pub fn functionView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.Mo
         .input_bindings = if (semantic) |value| value.input_bindings else .{ .start = 0, .len = 0 },
         .output_bindings = if (semantic) |value| value.output_bindings else .{ .start = 0, .len = 0 },
         .inferred_error_reasons = if (semantic) |value| value.inferred_error_reasons else null,
+        .foreign_symbol = if (semantic) |value| value.foreign_symbol else null,
         .safety_primitive = if (semantic) |value| value.safety_primitive else .none,
         .flags = if (semantic) |value| value.flags else .{},
     };

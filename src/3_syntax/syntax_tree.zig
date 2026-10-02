@@ -187,6 +187,7 @@ pub const FunctionExtra = struct {
     input: NodeIndex,
     output: NodeIndex,
     body: OptionalNodeIndex,
+    c_options: OptionalNodeIndex = .none,
 };
 pub const IfExtra = struct { then_block: NodeIndex, else_block: OptionalNodeIndex };
 pub const FieldExtra = struct { type_node: OptionalNodeIndex, default_value: OptionalNodeIndex };
@@ -223,6 +224,7 @@ pub const FunctionDeclaration = struct {
     output: NodeIndex,
     body: ?NodeIndex,
     is_once: bool,
+    c_options: ?NodeIndex = null,
 };
 pub const TestDeclaration = struct { function: FunctionDeclaration };
 pub const FunctionName = union(enum) {
@@ -475,6 +477,7 @@ pub const FileSyntaxTree = struct {
             .output = extra.output,
             .body = extra.body.unwrap(),
             .is_once = node_tag == .function_declaration_once,
+            .c_options = extra.c_options.unwrap(),
         };
     }
 

@@ -150,6 +150,7 @@ const Context = struct {
             try self.graph.semantic.function_semantics.append(self.allocator, .{
                 .function = function_id,
                 .body = body,
+                .foreign_symbol = if (declaration.c_options) |options| try self.lowerForeignSymbol(options) else null,
                 .input_bindings = input_range,
                 .output_bindings = output_range,
                 .flags = .{
@@ -165,6 +166,39 @@ const Context = struct {
         }
         self.writer.pending_owner_function = null;
         return stats;
+    }
+
+    // Options become owned module-local metadata. Cached canonical graphs and
+    // global relocation must not recover foreign names from borrowed syntax.
+    fn lowerForeignSymbol(self: *Context, options: syn.NodeIndex) !?primitives.StringRange {
+        const fields = self.tree.structValueLiteral(options).?.fields;
+        var symbol: ?primitives.StringRange = null;
+        for (fields) |field| {
+            if (self.tree.tag(field) != .struct_value_field)
+                return self.foreignOptionError(field, "CFunction options must be named");
+            const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(field));
+            if (!std.mem.eql(u8, name, "symbol"))
+                return self.foreignOptionError(field, "unsupported CFunction option; only '.symbol' is implemented");
+            if (symbol != null) return self.foreignOptionError(field, "duplicate CFunction '.symbol' option");
+            const value = self.tree.data(field).node;
+            const literal = self.tree.literal(value) orelse
+                return self.foreignOptionError(value, "CFunction '.symbol' requires a string literal");
+            const content = self.tree.tokenContent(literal.token);
+            if (content != .literal or content.literal != .string_literal)
+                return self.foreignOptionError(value, "CFunction '.symbol' requires a string literal");
+            const raw = self.tree.tokenTextFromSource(self.source, literal.token);
+            const decoded = try tok.decodeStringLiteral(self.allocator, raw);
+            defer if (std.mem.indexOfScalar(u8, raw, '\\') != null) self.allocator.free(decoded);
+            if (decoded.len == 0 or std.mem.indexOfScalar(u8, decoded, 0) != null)
+                return self.foreignOptionError(value, "CFunction '.symbol' must be nonempty and contain no NUL bytes");
+            symbol = try self.writer.addString(decoded);
+        }
+        return symbol;
+    }
+
+    fn foreignOptionError(self: *Context, node: syn.NodeIndex, message: []const u8) error{ OutOfMemory, Reported } {
+        if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(self.tree.mainToken(node)), .semantic, "{s}", .{message});
+        return error.Reported;
     }
 
     fn interfaceUsesInferredErrable(self: *const Context, fields: graph_mod.FieldRange) !bool {

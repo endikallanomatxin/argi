@@ -7809,3 +7809,21 @@ test "C interop rejects unsupported signatures during exhaustive checking" {
         }
     }
 }
+
+test "C interop symbol aliases reuse one external symbol across cached builds" {
+    const path = "tests/feature_tests/c_interop/05_symbol_alias";
+    for (0..2) |_| {
+        try expectArgiBuildSuccess(&.{ "build", path });
+        const output = try outputPathFor(path);
+        defer std.testing.allocator.free(output);
+        const result = try runChild(&.{output});
+        defer std.testing.allocator.free(result.stdout);
+        defer std.testing.allocator.free(result.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+    }
+}
+
+test "C interop diagnoses invalid symbol options and conflicting declarations" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/06X_invalid_symbol_options", "CFunction '.symbol' requires a string literal", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/07X_conflicting_symbols", "C symbol 'abs' is declared with incompatible signatures", "failed without a diagnostic");
+}

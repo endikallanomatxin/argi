@@ -1524,6 +1524,14 @@ pub const Syntaxer = struct {
                 const ident_name = self.tokenText(ident_range);
                 if (std.mem.eql(u8, ident_name, "ExternFunction") or std.mem.eql(u8, ident_name, "CFunction")) {
                     self.advanceOne();
+                    const options = if (self.tokenIs(.open_parenthesis))
+                        syn.OptionalNodeIndex.init(try self.parseCollectionLiteral(true))
+                    else
+                        syn.OptionalNodeIndex.none;
+                    if (options != .none and (generic_params.start != generic_params.end or generic_params_struct != null)) {
+                        try self.diags.add(self.tokenLocation(), .syntax, "CFunction options require a concrete non-generic declaration", .{});
+                        return SyntaxerError.ExpectedStructField;
+                    }
                     const extra = try self.addExtra(syn.FunctionExtra{
                         .name_token = name.token,
                         .generic_params_start = generic_params.start,
@@ -1532,6 +1540,7 @@ pub const Syntaxer = struct {
                         .input = input,
                         .output = output,
                         .body = .none,
+                        .c_options = options,
                     });
                     return try self.addNode(if (is_once) .function_declaration_once else .function_declaration, name.token, .{ .extra = extra });
                 }
