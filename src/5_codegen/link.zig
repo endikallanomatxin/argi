@@ -97,14 +97,35 @@ fn chooseLinkerCommand(cc_env: ?[]const u8) []const u8 {
     return "cc";
 }
 
+/// Keep native inputs typed and ordered: archive resolution can depend on the
+/// order of files and libraries. Paths and names are separate process arguments,
+/// never shell command fragments. Target/toolchain selection can reuse this list.
+pub const NativeInput = union(enum) {
+    library: []const u8,
+    search_path: []const u8,
+    file: []const u8,
+};
+
 fn buildLinkArgv(
+    allocator: std.mem.Allocator,
     linker: []const u8,
     obj_path: []const u8,
     output_path: []const u8,
-) [5][]const u8 {
-    // For 0.1 we link against the platform C runtime explicitly.
-    // This keeps the current backend simple and will be revisited later.
-    return .{ linker, obj_path, "-o", output_path, "-lc" };
+    inputs: []const NativeInput,
+) ![]const []const u8 {
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.appendSlice(allocator, &.{ linker, obj_path, "-o", output_path });
+    for (inputs) |input| switch (input) {
+        .library => |name| {
+            try argv.appendSlice(allocator, &.{ "-l", name });
+        },
+        .search_path => |path| {
+            try argv.appendSlice(allocator, &.{ "-L", path });
+        },
+        .file => |path| try argv.append(allocator, path),
+    };
+    try argv.append(allocator, "-lc");
+    return argv.toOwnedSlice(allocator);
 }
 
 fn printLinkCommand(argv: []const []const u8) void {
@@ -161,6 +182,7 @@ pub fn linkWithLibc(
     io: std.Io,
     environ_map: ?*const std.process.Environ.Map,
     optimization_mode: OptimizationMode,
+    inputs: []const NativeInput,
 ) !void {
     var obj_path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}.o", .{output_path});
@@ -169,8 +191,8 @@ pub fn linkWithLibc(
     const cc_env = if (environ_map) |env_map| env_map.get("CC") else null;
     const linker = chooseLinkerCommand(cc_env);
 
-    const argv_array = buildLinkArgv(linker, obj_path, output_path);
-    const argv = argv_array[0..];
+    const argv = try buildLinkArgv(allocator.*, linker, obj_path, output_path, inputs);
+    defer allocator.free(argv);
 
     const result = std.process.run(allocator.*, io, .{
         .argv = argv,
@@ -201,7 +223,8 @@ test "chooseLinkerCommand prefers CC when provided" {
 }
 
 test "buildLinkArgv keeps linker object output and libc order" {
-    const argv = buildLinkArgv("clang", "/tmp/input.o", "/tmp/output");
+    const argv = try buildLinkArgv(std.testing.allocator, "clang", "/tmp/input.o", "/tmp/output", &.{});
+    defer std.testing.allocator.free(argv);
     try std.testing.expectEqualStrings("clang", argv[0]);
     try std.testing.expectEqualStrings("/tmp/input.o", argv[1]);
     try std.testing.expectEqualStrings("-o", argv[2]);

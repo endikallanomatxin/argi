@@ -17,8 +17,8 @@ existing external calls do not establish support for every signature shape.
   `ffi` dependency outside the emitted C signature.
 - [ ] Choose a small native-library consumer and validate its wrappers, including
   aggregate arguments/results where supported.
-- [ ] Make library names, search paths, and static/shared linking explicit and
-  reusable by the target/toolchain work.
+- [ ] Add manifest native-link configuration and explicit named-library mode
+  selection, building on the typed CLI library/search-path/file inputs.
 - [ ] Keep foreign-call capabilities, resource cleanup, pointer bounds, and
   allocation/free pairing explicit in wrappers; headers do not prove safety.
 - [ ] Settle incomplete types, callback syntax, and foreign storage effects,

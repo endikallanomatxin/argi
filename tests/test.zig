@@ -7747,3 +7747,47 @@ test "feature_tests/basics/45X_empty_array_inference" {
 test "feature_tests/basics/46X_nested_empty_array_inference" {
     try buildExpectFailWithoutNoise("tests/feature_tests/basics/46X_nested_empty_array_inference", "cannot infer the array type of 'values' from this literal; add an explicit array type annotation", "UnsupportedGlobalSemantic");
 }
+
+test "C interop links native archives by file and library name" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, "tests/feature_tests/c_interop/01_native_library" });
+    defer allocator.free(fixture);
+    const source = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(source);
+    const compiled = try runChildInCwd(&.{ "cc", "-c", source, "-o", "native.o" }, root);
+    defer allocator.free(compiled.stdout);
+    defer allocator.free(compiled.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, compiled.term);
+    const archived = try runChildInCwd(&.{ "ar", "rcs", "libargi_fixture.a", "native.o" }, root);
+    defer allocator.free(archived.stdout);
+    defer allocator.free(archived.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, archived.term);
+    for (0..2) |mode| {
+        const args: []const []const u8 = if (mode == 0)
+            &.{ argi, "build", fixture, "--output", "app", "--link-file", "libargi_fixture.a" }
+        else
+            &.{ argi, "build", fixture, "--output", "app", "--library-path", ".", "--link-library", "argi_fixture" };
+        const built = try runChildInCwd(args, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChildInCwd(&.{"./app"}, root);
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+    }
+    const missing = try runChildInCwd(&.{ argi, "build", fixture, "--output", "missing", "--link-library", "argi_missing_library_fixture" }, root);
+    defer allocator.free(missing.stdout);
+    defer allocator.free(missing.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, missing.term);
+    try expect(std.mem.indexOf(u8, missing.stderr, "argi_missing_library_fixture") != null);
+}

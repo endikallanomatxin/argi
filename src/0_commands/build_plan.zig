@@ -7,6 +7,7 @@ pub const BuildFlags = struct {
     show_semantic_graph: bool = false,
     stats: bool = false,
     use_cache: bool = true,
+    native_inputs: []const link.NativeInput = &.{},
     output_path: ?[]const u8 = null,
     llvm_ir_path: ?[]const u8 = null,
     object_path: ?[]const u8 = null,
@@ -44,7 +45,9 @@ const ModuleManifest = struct {
     }
 };
 
-pub fn parseBuildArgs(args: []const []const u8) !ParsedBuildArgs {
+pub fn parseBuildArgs(allocator: std.mem.Allocator, args: []const []const u8) !ParsedBuildArgs {
+    var inputs: std.ArrayList(link.NativeInput) = .empty;
+    errdefer inputs.deinit(allocator);
     var parsed: ParsedBuildArgs = .{};
     var saw_target = false;
     var idx: usize = 0;
@@ -60,6 +63,21 @@ pub fn parseBuildArgs(args: []const []const u8) !ParsedBuildArgs {
             parsed.flags.stats = true;
         } else if (std.mem.eql(u8, arg, "--no-cache")) {
             parsed.flags.use_cache = false;
+        } else if (std.mem.eql(u8, arg, "--link-library") or
+            std.mem.eql(u8, arg, "--library-path") or
+            std.mem.eql(u8, arg, "--link-file"))
+        {
+            idx += 1;
+            if (idx >= args.len) return error.MissingFlagValue;
+            const value = args[idx];
+            if (value.len == 0 or value[0] == '-') return error.InvalidNativeLinkInput;
+            const input: link.NativeInput = if (std.mem.eql(u8, arg, "--link-library"))
+                .{ .library = value }
+            else if (std.mem.eql(u8, arg, "--library-path"))
+                .{ .search_path = value }
+            else
+                .{ .file = value };
+            try inputs.append(allocator, input);
         } else if (std.mem.eql(u8, arg, "--release")) {
             parsed.flags.optimization_mode = .release;
         } else if (std.mem.eql(u8, arg, "--output")) {
@@ -96,6 +114,7 @@ pub fn parseBuildArgs(args: []const []const u8) !ParsedBuildArgs {
     }
     if (parsed.flags.object_path != null and parsed.flags.just_object_path != null)
         return error.ConflictingObjectEmissionModes;
+    parsed.flags.native_inputs = try inputs.toOwnedSlice(allocator);
     return parsed;
 }
 
@@ -369,8 +388,23 @@ pub fn resolveRunPlan(allocator: std.mem.Allocator, io: std.Io, requested_execut
 }
 
 test "build planning parses output and sysroot flags without compiler dependencies" {
-    const parsed = try parseBuildArgs(&.{ "--output", "bin/app", "--sysroot", "/opt/argi", "--release" });
+    const parsed = try parseBuildArgs(std.testing.allocator, &.{ "--output", "bin/app", "--sysroot", "/opt/argi", "--release" });
+    defer std.testing.allocator.free(parsed.flags.native_inputs);
     try std.testing.expectEqualStrings("bin/app", parsed.flags.output_path.?);
     try std.testing.expectEqualStrings("/opt/argi", parsed.flags.sysroot_path.?);
     try std.testing.expectEqual(link.OptimizationMode.release, parsed.flags.optimization_mode);
+}
+
+test "build planning validates and preserves native link input order" {
+    const allocator = std.testing.allocator;
+    const parsed = try parseBuildArgs(allocator, &.{ "--library-path", "native libs", "--link-file", "libfirst.a", "--link-library", "second", "--link-file", "last.o" });
+    defer allocator.free(parsed.flags.native_inputs);
+    const inputs = parsed.flags.native_inputs;
+    try std.testing.expectEqual(@as(usize, 4), inputs.len);
+    try std.testing.expectEqualStrings("native libs", inputs[0].search_path);
+    try std.testing.expectEqualStrings("libfirst.a", inputs[1].file);
+    try std.testing.expectEqualStrings("second", inputs[2].library);
+    try std.testing.expectEqualStrings("last.o", inputs[3].file);
+    try std.testing.expectError(error.MissingFlagValue, parseBuildArgs(allocator, &.{"--link-library"}));
+    try std.testing.expectError(error.InvalidNativeLinkInput, parseBuildArgs(allocator, &.{ "--link-file", "-Wl,bad" }));
 }

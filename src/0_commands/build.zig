@@ -425,7 +425,7 @@ fn compileResolvedPlan(
     if (object_only)
         try link.emitObjectFile(module, triple, temp_obj, flags.optimization_mode)
     else
-        try link.linkWithLibc(module, triple, temp_stem, &allocator, io, environ_map, flags.optimization_mode);
+        try link.linkWithLibc(module, triple, temp_stem, &allocator, io, environ_map, flags.optimization_mode, flags.native_inputs);
     const link_ns = elapsedSince(io, link_start);
 
     if (temp_ir) |src| try replaceFile(io, src, final_ir.?);
@@ -441,15 +441,17 @@ fn compileResolvedPlan(
 }
 
 pub fn compile(io: std.Io, environ_map: ?*const std.process.Environ.Map, args: []const []const u8) !void {
-    const parsed = try planning.parseBuildArgs(args);
+    var arguments = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arguments.deinit();
+    const parsed = try planning.parseBuildArgs(arguments.allocator(), args);
     try compileTarget(parsed.target_path, parsed.flags, .{}, io, environ_map);
 }
 
 pub fn check(io: std.Io, environ_map: ?*const std.process.Environ.Map, args: []const []const u8) !void {
-    const parsed = try planning.parseBuildArgs(args);
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+    const parsed = try planning.parseBuildArgs(allocator, args);
     const core_dir = try sf.resolveToolCoreDir(&allocator, io, .{
         .explicit_sysroot = parsed.flags.sysroot_path,
         .environ_map = environ_map,

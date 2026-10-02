@@ -37,7 +37,7 @@ pub fn run(
     else
         null;
     const build_args = if (selected_executable != null) args[1..] else args;
-    const parsed = try build_plan.parseBuildArgs(build_args);
+    const parsed = try build_plan.parseBuildArgs(allocator, build_args);
 
     const plan = if (in_package)
         try build_plan.resolveRunPlan(allocator, io, selected_executable)
