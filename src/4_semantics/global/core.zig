@@ -9,6 +9,7 @@ const module_linker = @import("module_linker.zig");
 const resolution = @import("resolution.zig");
 const types = @import("types.zig");
 const callable = @import("../primitives/callable.zig");
+const c_abi = @import("c_abi.zig");
 const primitives = @import("../primitives/schema.zig");
 
 pub const Stats = struct {
@@ -144,13 +145,7 @@ pub const Resolver = struct {
                 if (reference.kind != .type) continue;
                 if (reference.module_path == null and reference.generic_arguments == null) {
                     const name = module.text(reference.name);
-                    var resolved_builtin: ?primitives.BuiltinType = null;
-                    inline for (@typeInfo(primitives.BuiltinType).@"enum".fields) |field| {
-                        if (std.mem.eql(u8, name, field.name)) {
-                            resolved_builtin = @enumFromInt(field.value);
-                            break;
-                        }
-                    }
+                    const resolved_builtin = primitives.builtinTypeNamed(name);
                     if (resolved_builtin) |builtin_type| {
                         try self.graph.resolveType(globalizer.globalType(o, local_id), .{ .builtin = builtin_type });
                         self.stats.external_types += 1;
@@ -450,7 +445,7 @@ pub const Resolver = struct {
         var saw_deferred = false;
         for (try self.graph.functionsNamed(self.allocator, name)) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
-            if (function.flags.is_abstract_dispatch) continue;
+            if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
             const score = switch (try self.matchCallInputWithReach(function.input, input_node, context)) {
                 .no_match => continue,
@@ -487,7 +482,7 @@ pub const Resolver = struct {
         var saw_deferred = false;
         for (try self.graph.functionsNamed(self.allocator, name)) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
-            if (function.flags.is_abstract_dispatch) continue;
+            if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
             const score = switch (self.matchCallInput(function.input, input_node)) {
                 .no_match => continue,
@@ -639,6 +634,31 @@ pub const Resolver = struct {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
         if (reference.generic_arguments != null) return .not_applicable;
         const input = globalizer.globalNode(o, value.input);
+        if (value.callee_value) |local| {
+            const pointer = globalizer.globalNode(o, local);
+            const ty = self.graph.node(pointer).ty orelse return .deferred;
+            if (self.graph.isTypeUnresolved(ty)) return .deferred;
+            if (!c_abi.isFunctionPointer(self.graph, ty)) return .invalid;
+            const declaration = switch (self.graph.resolvedSemanticType(ty).?) {
+                .declared => |id| self.graph.declaration(id),
+                else => unreachable,
+            };
+            const signature = declaration.function_id orelse return .deferred;
+            switch (self.matchCallInput(self.graph.function(signature).input, input)) {
+                .deferred => return .deferred,
+                .no_match => return .invalid,
+                .score => {},
+            }
+            const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
+            if (!try self.completeCallInputWithReach(signature, input, reach)) return .deferred;
+            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = .{
+                .source = self.sourceFor(reference.source, o),
+                .ty = try self.functionOutputType(signature),
+                .content = .{ .function_call = .{ .callee = signature, .callee_value = pointer, .input = input } },
+            };
+            self.stats.calls += 1;
+            return .resolved;
+        }
         if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "length")) {
             const literal = switch (self.graph.node(input).content) {
                 .struct_value_literal => |item| item,
@@ -732,7 +752,7 @@ pub const Resolver = struct {
         return .resolved;
     }
 
-    /// Zero construction is limited to numeric values and arrays thereof;
+    /// Zero construction supports numeric zeros, null callbacks, and arrays;
     /// zero bytes cannot establish references or arbitrary resource invariants.
     pub fn makeZeroed(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef) !?global_sg.Node {
         const ty = self.typeArgument(input) orelse return null;
@@ -754,6 +774,9 @@ pub const Resolver = struct {
                 .length = count,
             } } };
         }
+        // A callback zero is a null C function pointer, never a data reference.
+        if (c_abi.isFunctionPointer(self.graph, ty))
+            return .{ .source = source, .ty = ty, .content = .{ .int_literal = 0 } };
         const semantic = self.graph.resolvedSemanticType(ty) orelse return error.InvalidZeroedType;
         const content: @TypeOf(@as(global_sg.Node, undefined).content) = switch (semantic) {
             .builtin => |kind| switch (kind) {
@@ -1700,6 +1723,9 @@ pub const Resolver = struct {
             return node;
         }
 
+        // A host entry cannot acquire capabilities by extending its C ABI.
+        if (owner.flags.is_c_abi) return null;
+
         const old_input = owner.input;
         const old_bindings = owner.input_bindings;
         const copied_fields = try self.allocator.dupe(global_sg.Field, self.graph.fields.items[old_input.start..][0..old_input.len]);
@@ -1820,8 +1846,16 @@ pub const Resolver = struct {
         return true;
     }
 
+    pub fn floatLiteralFits(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+        if (self.graph.node(node).content != .float_literal) return false;
+        return switch (self.graph.semanticType(target)) {
+            .builtin => |value| value == .Float16 or value == .Float32 or value == .Float64,
+            else => false,
+        };
+    }
+
     pub fn contextualLiteralFits(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
-        if (self.integerLiteralFits(node, target)) return true;
+        if (self.integerLiteralFits(node, target) or self.floatLiteralFits(node, target)) return true;
         switch (self.graph.nodes.items[@intFromEnum(node)].content) {
             .string_literal => return switch (self.graph.types.items[@intFromEnum(target)]) {
                 .pointer => |pointer| pointer.mutability == .read_only and types.isBuiltin(self.graph, pointer.child, .Char),
@@ -1989,7 +2023,9 @@ pub const Resolver = struct {
         right: global_sg.GlobalTypeId,
     ) bool {
         return self.isBuiltinComparable(left, right) or
-            ((operator == .equal or operator == .not_equal) and self.isCEnumPair(left, right));
+            ((operator == .equal or operator == .not_equal) and
+                (self.isCEnumPair(left, right) or
+                    (types.equal(self.graph, left, right) and c_abi.isFunctionPointer(self.graph, left))));
     }
 
     fn isBuiltinComparable(self: *Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {

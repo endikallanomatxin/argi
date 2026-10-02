@@ -73,10 +73,13 @@ pub const Node = struct {
         type_declaration,
         c_enum_declaration,
         c_union_declaration,
+        c_struct_declaration,
+        c_incomplete_declaration,
         abstract_declaration,
         abstract_implements,
         abstract_defaultsto,
         abstract_function_requirement,
+        c_function_pointer_declaration,
         function_declaration,
         function_declaration_once,
         test_declaration,
@@ -187,6 +190,8 @@ pub const FunctionExtra = struct {
     input: NodeIndex,
     output: NodeIndex,
     body: OptionalNodeIndex,
+    c_options: OptionalNodeIndex = .none,
+    c_abi: u32 = 0,
 };
 pub const IfExtra = struct { then_block: NodeIndex, else_block: OptionalNodeIndex };
 pub const FieldExtra = struct { type_node: OptionalNodeIndex, default_value: OptionalNodeIndex };
@@ -223,6 +228,9 @@ pub const FunctionDeclaration = struct {
     output: NodeIndex,
     body: ?NodeIndex,
     is_once: bool,
+    c_function_pointer: bool = false,
+    c_options: ?NodeIndex = null,
+    c_abi: bool = false,
 };
 pub const TestDeclaration = struct { function: FunctionDeclaration };
 pub const FunctionName = union(enum) {
@@ -249,7 +257,11 @@ pub const ChoiceTypeVariant = struct {
     module_qualifier: ?TokenIndex,
     payload_type: ?NodeIndex,
     is_default: bool,
+    value: ?i32,
 };
+/// C enum tags are representation values, independent of choice ordinals.
+/// The extra-data words preserve negative tags without converting them to IDs.
+pub const ChoiceVariantExtra = struct { qualifier: OptionalTokenIndex, payload: OptionalNodeIndex, value_bits: u32, has_value: u32 };
 pub const StructValueLiteral = struct { fields: []const NodeIndex, positional_prefix_count: u32 };
 pub const CodeBlock = struct { statements: []const NodeIndex };
 pub const ListLiteral = struct { elements: []const NodeIndex };
@@ -465,7 +477,7 @@ pub const FileSyntaxTree = struct {
 
     pub fn functionDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?FunctionDeclaration {
         const node_tag = tree.tag(node);
-        if (node_tag != .function_declaration and node_tag != .function_declaration_once) return null;
+        if (node_tag != .function_declaration and node_tag != .function_declaration_once and node_tag != .c_function_pointer_declaration) return null;
         const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
         return .{
             .name_token = extra.name_token,
@@ -475,6 +487,9 @@ pub const FileSyntaxTree = struct {
             .output = extra.output,
             .body = extra.body.unwrap(),
             .is_once = node_tag == .function_declaration_once,
+            .c_options = extra.c_options.unwrap(),
+            .c_abi = extra.c_abi != 0,
+            .c_function_pointer = node_tag == .c_function_pointer_declaration,
         };
     }
 
@@ -547,11 +562,12 @@ pub const FileSyntaxTree = struct {
     pub fn choiceTypeVariant(tree: *const FileSyntaxTree, node: NodeIndex) ?ChoiceTypeVariant {
         const node_tag = tree.tag(node);
         if (node_tag != .choice_type_variant and node_tag != .choice_type_variant_default) return null;
-        const payload = tree.data(node).optional_token_and_optional_node;
+        const payload = tree.extraData(ChoiceVariantExtra, tree.data(node).extra);
         return .{
             .name_token = tree.mainToken(node),
-            .module_qualifier = payload.token.unwrap(),
-            .payload_type = payload.node.unwrap(),
+            .module_qualifier = payload.qualifier.unwrap(),
+            .payload_type = payload.payload.unwrap(),
+            .value = if (payload.has_value != 0) @bitCast(payload.value_bits) else null,
             .is_default = node_tag == .choice_type_variant_default,
         };
     }
@@ -632,7 +648,7 @@ pub const FileSyntaxTree = struct {
     }
 
     pub fn typeDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?TypeDeclaration {
-        if (tree.tag(node) != .type_declaration) return null;
+        if (tree.tag(node) != .type_declaration and tree.tag(node) != .c_struct_declaration and tree.tag(node) != .c_incomplete_declaration) return null;
         const payload = tree.genericValuePayload(node);
         return .{ .name_token = payload.name_token, .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .value = payload.value };
     }

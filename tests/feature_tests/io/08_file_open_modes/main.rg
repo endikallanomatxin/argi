@@ -1,4 +1,5 @@
-main() -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
+    assume ffi := system.ffi
     path ::= from_literal(.data = "/dev/null")
 
     read_file ::= File(.stream_address = 0, .should_close = 0 == 1)

@@ -212,6 +212,10 @@ pub const Context = struct {
                     self.abstract_parameters.clearRetainingCapacity();
                     const params = try self.lowerParameters(payload.params, payload.params_struct);
                     const body = try self.lowerType(payload.value, false);
+                    if (self.tree.tag(declaration_node) == .c_struct_declaration)
+                        self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(body)].resolved.structural.layout = .c_struct
+                    else if (self.tree.tag(declaration_node) == .c_union_declaration)
+                        self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(body)].resolved.structural.layout = .c_union;
                     try self.graph.semantic.parameterized_storage.parameterized_types.append(self.allocator, .{
                         .declaration = decl_id,
                         .parameters = params,
@@ -304,7 +308,7 @@ pub const Context = struct {
 
     fn genericTypePayload(self: *Context, node: syn.NodeIndex) ?GenericTypePayload {
         return switch (self.tree.tag(node)) {
-            .type_declaration => blk: {
+            .type_declaration, .c_struct_declaration => blk: {
                 const value = self.tree.typeDeclaration(node).?;
                 break :blk .{ .params = value.generic_params, .params_struct = value.generic_params_struct, .value = value.value };
             },
@@ -704,7 +708,7 @@ pub const Context = struct {
                 .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, variant.name_token)),
                 .payload_type = if (variant.payload_type) |payload| try self.lowerType(payload, allow_self) else null,
                 .source = self.sourceRef(variant_node),
-                .value = @intCast(index),
+                .value = variant.value orelse @intCast(index),
             } });
         }
         const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.variants.items.len);
@@ -1381,9 +1385,7 @@ pub fn isTypeParameter(tree: *const syn.FileSyntaxTree, source: []const u8, fiel
 }
 
 fn builtinFromName(name: []const u8) ?primitives.BuiltinType {
-    inline for (@typeInfo(primitives.BuiltinType).@"enum".fields) |field|
-        if (std.mem.eql(u8, name, field.name)) return @enumFromInt(field.value);
-    return null;
+    return primitives.builtinTypeNamed(name);
 }
 
 fn parameterizedDetailForTag(tag: syn.Node.Tag) ir.PendingExpressionDetail {

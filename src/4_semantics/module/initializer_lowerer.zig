@@ -64,7 +64,7 @@ const Context = struct {
             self.selectFile(declaration.module_file_index);
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
             const type_declaration = switch (self.tree.tag(declaration_node)) {
-                .type_declaration => self.tree.typeDeclaration(declaration_node).?,
+                .type_declaration, .c_struct_declaration => self.tree.typeDeclaration(declaration_node).?,
                 .c_union_declaration => blk: {
                     const value = self.tree.cUnionDeclaration(declaration_node).?;
                     break :blk syn.TypeDeclaration{
@@ -133,7 +133,7 @@ const Context = struct {
                     .payload_type = if (variant.payload_type) |payload| try self.lowerType(payload) else null,
                     .option_decl = option_decl,
                     .source = self.sourceRef(variant_node),
-                    .value = @intCast(index),
+                    .value = variant.value orelse @intCast(index),
                 });
             }
             self.graph.declarations.items[raw].choice_variants = .{ .start = start, .len = @intCast(literal.variants.len) };
@@ -142,9 +142,10 @@ const Context = struct {
 
     fn lowerDeferredFunctionInterfaces(self: *Context) !void {
         for (self.graph.declarations.items, 0..) |declaration, raw| {
-            if ((declaration.kind != .function and declaration.kind != .test_function) or declaration.function_id != null) continue;
+            if (declaration.function_id != null) continue;
             self.selectFile(declaration.module_file_index);
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
+            if (declaration.kind != .function and declaration.kind != .test_function and self.tree.tag(declaration_node) != .c_function_pointer_declaration) continue;
             const function = if (declaration.kind == .test_function)
                 self.tree.testDeclaration(declaration_node).?.function
             else

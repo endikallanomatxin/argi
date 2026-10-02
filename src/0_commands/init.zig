@@ -98,6 +98,7 @@ fn writeFileIfMissing(io: std.Io, path: []const u8, contents: []const u8) !void 
 
 const moduleMainParameterized =
     \\main(.system: System) -> (.status_code: Int32 = 0) := {
+    \\    assume ffi ::= system.ffi
     \\    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     \\    assume error_tracer ::= FixedSizeErrorTracer(
     \\        .buffer = view($&zeroed#(.t: [4096]UInt8)()),

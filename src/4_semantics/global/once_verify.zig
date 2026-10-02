@@ -81,6 +81,7 @@ const State = struct {
     fn walkNode(self: *State, node_id: graph_mod.GlobalNodeId) anyerror!void {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
+            .function_address => {},
             .declaration,
             .binding_use,
             .reach_directive,
@@ -106,6 +107,7 @@ const State = struct {
                 if (auto.deinit_fn) |callee| try self.walkCall(node_id, callee);
             },
             .function_call => |call| {
+                if (call.callee_value) |value| try self.walkNode(value);
                 try self.walkNode(call.input);
                 if (call.consumes_auto_deinit) |value| try self.walkNode(value);
                 if (call.initializes_auto_deinit) |value| try self.walkNode(value);

@@ -98,6 +98,7 @@ pub fn function(comptime Ids: type, value: primitives.Function(Ids), bounds: Bou
     try require(verify.rangeFits(value.input_bindings, bounds.binding_refs));
     try require(verify.rangeFits(value.output_bindings, bounds.binding_refs));
     try require(verify.optionalIdFits(value.inferred_error_reasons, bounds.types));
+    if (value.foreign_symbol) |name| try require(verify.stringFits(name, bounds.strings));
 }
 
 pub fn binding(comptime Ids: type, value: primitives.Binding(Ids), bounds: Bounds) !void {
@@ -238,8 +239,10 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
             try require(verify.idFits(item.value, bounds.nodes));
         },
         .auto_deinit_binding => |id| try require(verify.idFits(id, bounds.auto_deinits)),
+        .function_address => |id| try require(verify.idFits(id, bounds.functions)),
         .function_call => |item| {
             try require(verify.idFits(item.callee, bounds.functions));
+            try require(verify.optionalIdFits(item.callee_value, bounds.nodes));
             try require(verify.idFits(item.input, bounds.nodes));
             try require(verify.optionalIdFits(item.consumes_auto_deinit, bounds.nodes));
             try require(verify.optionalIdFits(item.initializes_auto_deinit, bounds.nodes));

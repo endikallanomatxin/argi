@@ -313,6 +313,7 @@ fn appendFunctions(allocator: std.mem.Allocator, result: *global_sg.GlobalSemant
             .input_bindings = relocatePoolRange(global_sg.GlobalBindingId, o.binding_ref_base, value.input_bindings),
             .output_bindings = relocatePoolRange(global_sg.GlobalBindingId, o.binding_ref_base, value.output_bindings),
             .inferred_error_reasons = if (value.inferred_error_reasons) |id| globalType(o, id) else null,
+            .foreign_symbol = if (value.foreign_symbol) |name| try relocateString(module, name, o.string_base) else null,
             .safety_primitive = value.safety_primitive,
             .flags = value.flags,
         });
@@ -502,8 +503,10 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .denied_implicit_copy => |id| .{ .denied_implicit_copy = globalNode(o, id) },
             .assignment => |value| .{ .assignment = .{ .binding = globalBinding(o, value.binding), .value = globalNode(o, value.value) } },
             .auto_deinit_binding => |id| .{ .auto_deinit_binding = globalAutoDeinit(o, id) },
+            .function_address => |id| .{ .function_address = globalFunction(o, id) },
             .function_call => |value| .{ .function_call = .{
                 .callee = globalFunction(o, value.callee),
+                .callee_value = if (value.callee_value) |id| globalNode(o, id) else null,
                 .input = globalNode(o, value.input),
                 .consumes_auto_deinit = if (value.consumes_auto_deinit) |id| globalNode(o, id) else null,
                 .initializes_auto_deinit = if (value.initializes_auto_deinit) |id| globalNode(o, id) else null,

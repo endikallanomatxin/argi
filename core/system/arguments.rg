@@ -2,6 +2,7 @@ argi_runtime_argc() -> (.count: UIntNative) : ExternFunction
 argi_runtime_argv() -> (.address: UIntNative) : ExternFunction
 
 Arguments : Type = (
+    ._ffi: $&ForeignFunctionInterface
     .count   : UIntNative
     .address : UIntNative
 )
@@ -14,8 +15,9 @@ ArgumentsIterator : Type = (
 ArgumentsIterator implements Iterator#(.t: StringView)
 Arguments implements Iterable#(.t: StringView)
 
-once init(.p: $&Arguments) -> () := {
+once init(.p: $&Arguments, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
     p& = (
+        ._ffi = ffi,
         .count = argi_runtime_argc().count,
         .address = argi_runtime_argv().address,
     )
@@ -63,6 +65,7 @@ argument_view_at(
     .self: &Arguments,
     .index: UIntNative,
 ) -> (.view: StringView) := {
+    assume ffi := self&._ffi
     text ::= argument_at(.self = self, .index = index)
     view = (
         .data = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,

@@ -25,6 +25,13 @@ Type queries do not execute an expression for its runtime effects. See
 [Compile-time computation](50_comptime.md) for open questions about
 compile-time introspection.
 
+## Literal typing
+
+Floating-point literals take the width of an explicit destination or function
+parameter, including fields and array elements. Without that context they
+default to `Float32`. This does not permit implicit conversions between typed
+floating-point values.
+
 ## Conversion
 
 Conversions are explicit. A call cannot select an overload solely from its

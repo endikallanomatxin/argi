@@ -125,11 +125,18 @@ const Context = struct {
             self.source = file.source;
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, source_decl) orelse continue;
             const declaration = switch (source_decl.kind) {
-                .function => self.tree.functionDeclaration(declaration_node) orelse continue,
+                .function, .type => self.tree.functionDeclaration(declaration_node) orelse continue,
                 .test_function => (self.tree.testDeclaration(declaration_node) orelse continue).function,
                 else => continue,
             };
             if (declaration.generic_params.len != 0 or declaration.generic_params_struct != null) continue;
+            if (declaration.c_abi and declaration.body == null) {
+                for (0..interface.input.len) |offset| {
+                    const field = try views.fieldView(self.graph, @enumFromInt(interface.input.start + @as(u32, @intCast(offset))));
+                    if (std.mem.eql(u8, self.graph.text(field.name), "ffi"))
+                        return self.foreignOptionError(declaration_node, "CFunction imports reserve '.ffi' for the checked capability; rename the C parameter");
+                }
+            }
 
             self.bindings.clearRetainingCapacity();
             self.refinements.clearRetainingCapacity();
@@ -147,16 +154,23 @@ const Context = struct {
             const output_range = try self.writer.appendBindingRefs(outputs.items);
             self.writer.pending_owner_function = function_id;
             const body = if (declaration.body) |body_node| try self.lowerBlock(body_node) else null;
+            const foreign = if (declaration.c_options) |options| try self.lowerForeignOptions(options) else ForeignOptions{};
+            if (foreign.exported and declaration.body == null)
+                return self.foreignOptionError(declaration.c_options.?, "an exported CFunction requires a body");
             try self.graph.semantic.function_semantics.append(self.allocator, .{
                 .function = function_id,
                 .body = body,
+                .foreign_symbol = foreign.symbol,
                 .input_bindings = input_range,
                 .output_bindings = output_range,
                 .flags = .{
-                    .is_entry = self.files[self.file_index].is_entry,
+                    .is_entry = self.files[self.file_index].is_entry and !declaration.c_function_pointer,
                     .is_once = declaration.is_once,
                     .is_test = source_decl.kind == .test_function,
                     .has_declared_body = declaration.body != null,
+                    .is_c_abi = declaration.c_abi,
+                    .is_c_function_pointer = declaration.c_function_pointer,
+                    .is_c_export = foreign.exported,
                     .uses_inferred_error_reasons = try self.interfaceUsesInferredErrable(interface.output),
                 },
             });
@@ -165,6 +179,53 @@ const Context = struct {
         }
         self.writer.pending_owner_function = null;
         return stats;
+    }
+
+    // Options become owned module-local metadata. Cached canonical graphs and
+    // global relocation must not recover foreign names from borrowed syntax.
+    const ForeignOptions = struct { symbol: ?primitives.StringRange = null, exported: bool = false };
+
+    fn lowerForeignOptions(self: *Context, options: syn.NodeIndex) !ForeignOptions {
+        const fields = self.tree.structValueLiteral(options).?.fields;
+        var symbol: ?primitives.StringRange = null;
+        var exported: ?bool = null;
+        for (fields) |field| {
+            if (self.tree.tag(field) != .struct_value_field)
+                return self.foreignOptionError(field, "CFunction options must be named");
+            const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(field));
+            if (std.mem.eql(u8, name, "export")) {
+                if (exported != null) return self.foreignOptionError(field, "duplicate CFunction '.export' option");
+                const value = self.tree.data(field).node;
+                const literal = self.tree.literal(value) orelse
+                    return self.foreignOptionError(value, "CFunction '.export' requires a boolean literal");
+                const content = self.tree.tokenContent(literal.token);
+                if (content != .literal or content.literal != .bool_literal)
+                    return self.foreignOptionError(value, "CFunction '.export' requires a boolean literal");
+                exported = content.literal.bool_literal;
+                continue;
+            }
+            if (!std.mem.eql(u8, name, "symbol"))
+                return self.foreignOptionError(field, "unsupported CFunction option; expected '.symbol' or '.export'");
+            if (symbol != null) return self.foreignOptionError(field, "duplicate CFunction '.symbol' option");
+            const value = self.tree.data(field).node;
+            const literal = self.tree.literal(value) orelse
+                return self.foreignOptionError(value, "CFunction '.symbol' requires a string literal");
+            const content = self.tree.tokenContent(literal.token);
+            if (content != .literal or content.literal != .string_literal)
+                return self.foreignOptionError(value, "CFunction '.symbol' requires a string literal");
+            const raw = self.tree.tokenTextFromSource(self.source, literal.token);
+            const decoded = try tok.decodeStringLiteral(self.allocator, raw);
+            defer if (std.mem.indexOfScalar(u8, raw, '\\') != null) self.allocator.free(decoded);
+            if (decoded.len == 0 or std.mem.indexOfScalar(u8, decoded, 0) != null)
+                return self.foreignOptionError(value, "CFunction '.symbol' must be nonempty and contain no NUL bytes");
+            symbol = try self.writer.addString(decoded);
+        }
+        return .{ .symbol = symbol, .exported = exported orelse false };
+    }
+
+    fn foreignOptionError(self: *Context, node: syn.NodeIndex, message: []const u8) error{ OutOfMemory, Reported } {
+        if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(self.tree.mainToken(node)), .semantic, "{s}", .{message});
+        return error.Reported;
     }
 
     fn interfaceUsesInferredErrable(self: *const Context, fields: graph_mod.FieldRange) !bool {
@@ -460,9 +521,30 @@ const Context = struct {
         if (std.mem.eql(u8, name_text, "is") or std.mem.eql(u8, name_text, "type_of"))
             self.suppress_implicit_copies = true;
         defer self.suppress_implicit_copies = previous_suppression;
+        var callee_value: ?entities.ModuleNodeId = null;
+        if (call.module_qualifier) |qualifier| {
+            if (self.lookupBinding(self.tree.tokenTextFromSource(self.source, qualifier))) |binding| {
+                const base = try self.writer.addResolvedNode(.{
+                    .source = .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(qualifier).offset },
+                    .ty = binding.ty,
+                    .content = .{ .binding_use = binding.id },
+                });
+                const field = try self.pending(node, .{ .resolve_field = .{
+                    .node = self.nextNodeId(),
+                    .value = base,
+                    .field_name = try self.writer.addString(name_text),
+                    .source = .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(call.callee_token).offset },
+                } }, null);
+                callee_value = field.node;
+            }
+        } else if (self.lookupBinding(name_text)) |binding| {
+            callee_value = (try self.resolved(node, binding.ty, .{ .binding_use = binding.id })).node;
+        }
         const input = try self.lowerNode(call.input, null);
         try self.captureAssumedFields(node, input.node);
-        const module_path = if (call.module_qualifier) |token_index|
+        const module_path = if (callee_value != null)
+            null
+        else if (call.module_qualifier) |token_index|
             try self.modulePathForQualifier(token_index)
         else
             null;
@@ -476,6 +558,7 @@ const Context = struct {
         return self.pending(node, .{ .resolve_call = .{
             .node = self.nextNodeId(),
             .callee = external,
+            .callee_value = callee_value,
             .input = input.node,
             .expected_type = expected,
             .visible_bindings = visible_bindings,

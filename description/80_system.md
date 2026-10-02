@@ -71,7 +71,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 For buffered output, borrow the terminal's file and supply a view over an
 initialized byte buffer. Construction is infallible and does not allocate;
 the caller selects local storage, allocated storage, or a reusable buffer.
-`zeroed` constructs numbers and fixed arrays of numbers initialized to zero.
+`zeroed` constructs numeric zeros, null C callbacks, and fixed arrays of those
+values.
 It does not construct references or arbitrary resource-bearing types.
 `view($&array)` creates a writable view; `view(&array)` creates a read-only
 view. Both retain the backing array's validity dependencies.

@@ -21,5 +21,8 @@ provide cross-compilation.
 - [ ] Exercise generated programs and C ABI/layouts on the destination runner.
   Keep native defaults and reject incompatible `argi run` targets.
 
+Reuse the existing C ABI classification with the selected target. Expanding
+the supported C signature shapes is separate, consumer-driven work.
+
 Bundled cross toolchains, macOS SDK distribution, Windows cross-linking, wasm,
 32-bit and freestanding platforms are subsequent extensions, not the first scope.

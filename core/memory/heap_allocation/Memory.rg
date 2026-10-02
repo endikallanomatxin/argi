@@ -1,5 +1,6 @@
--- OS page capability. It exposes memory operations, not arbitrary FFI calls.
+-- Page mappings retain the foreign-call authorization used to acquire them.
 Memory : Type = (
+    ._ffi: $&ForeignFunctionInterface
     ._page_size: UIntNative
 )
 
@@ -9,7 +10,8 @@ _trusted_acquisition_subaddress(.base: UIntNative, .address: UIntNative) -> (.re
     result = address
 }
 
-once init(.p: $&Memory) -> () := {
+once init(.p: $&Memory, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
+    p&._ffi = ffi
     p&._page_size = _memory_getpagesize().size
     if p&._page_size == 0 { p&._page_size = 4096 }
 }
@@ -62,6 +64,7 @@ _memory_map_aligned(
 }
 
 map_pages(.self: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+    assume ffi := self&._ffi
     physical_size ::= page_allocator_round_up(.size = size, .alignment = self&._page_size).rounded
     mapped ::= _memory_map_aligned(.size = size, .alignment = alignment, .page_size = self&._page_size)
     match mapped {
@@ -75,6 +78,7 @@ map_pages(.self: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (.resul
 }
 
 deallocate(.self: $&Memory, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
+    assume ffi := self&._ffi
     physical_size ::= page_allocator_round_up(.size = size, .alignment = self&._page_size).rounded
     if _memory_munmap(.address = data.address, .length = physical_size).status != 0 { abort }
 }

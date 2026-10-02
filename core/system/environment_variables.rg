@@ -1,6 +1,7 @@
-EnvironmentVariables : Type = ()
+EnvironmentVariables : Type = (._ffi: $&ForeignFunctionInterface)
 
-once init(.p: $&EnvironmentVariables) -> () := {
+once init(.p: $&EnvironmentVariables, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
+    p&._ffi = ffi
 }
 
 environment_variables_get_c_string(
@@ -25,6 +26,7 @@ get(
     .key: StringView,
     .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: ?StringView, .reasons: (..out_of_memory))) := {
+    assume ffi := self&._ffi
     assume allocator
 
     converted ::= as_c_string(.self = key, .allocator = allocator)
@@ -41,6 +43,7 @@ has(
     .key: StringView,
     .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Bool, .reasons: (..out_of_memory))) := {
+    assume ffi := self&._ffi
     assume allocator
 
     found ::= get(.self = self, .key = key, .allocator = allocator)

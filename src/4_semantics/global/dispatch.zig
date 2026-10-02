@@ -127,6 +127,9 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
+        // A lexical callable value shadows named functions and constructors.
+        if (operation == .resolve_call and operation.resolve_call.callee_value != null)
+            return self.core.tryResolve(module_index, module, o, operation);
         var stage_start = self.profileTimestamp();
         const error_result = try self.errors.tryResolveCall(module_index, module, o, operation);
         self.profilePendingStage(.errors, stage_start, error_result);
@@ -304,5 +307,4 @@ pub const Resolver = struct {
         self.profileAccumulate(stage_start, &self.implicit_lookup_stats.generic_completion_ns);
         return .{ .function = function, .input = input };
     }
-
 };

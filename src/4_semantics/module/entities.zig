@@ -127,6 +127,7 @@ pub const FunctionSemantic = struct {
     input_bindings: BindingRange = .{ .start = 0, .len = 0 },
     output_bindings: BindingRange = .{ .start = 0, .len = 0 },
     inferred_error_reasons: ?ModuleTypeId = null,
+    foreign_symbol: ?primitives.StringRange = null,
     safety_primitive: primitives.SafetyPrimitive = .none,
     flags: primitives.FunctionFlags = .{},
 };
@@ -173,6 +174,7 @@ pub const PendingOperation = union(enum) {
     resolve_call: struct {
         node: ModuleNodeId,
         callee: ExternalRefId,
+        callee_value: ?ModuleNodeId = null,
         input: ModuleNodeId,
         expected_type: ?ModuleTypeId = null,
         // Indices into ModuleSema.binding_refs, captured at the call site.

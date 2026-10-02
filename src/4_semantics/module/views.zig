@@ -132,7 +132,7 @@ fn constructionVariant(graph: *const graph_mod.ModuleSemanticGraph, id: entities
         .payload_type = variant.payload_type,
         .option_decl = if (semantic) |value| value.option_decl else null,
         .source = .{ .file_index = variant.module_file_index, .offset = variant.source_offset },
-        .value = if (semantic) |value| value.value else @intCast(@intFromEnum(id)),
+        .value = variant.value orelse if (semantic) |value| value.value else @intCast(@intFromEnum(id)),
     };
 }
 
@@ -160,6 +160,7 @@ pub fn functionView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.Mo
         .input_bindings = if (semantic) |value| value.input_bindings else .{ .start = 0, .len = 0 },
         .output_bindings = if (semantic) |value| value.output_bindings else .{ .start = 0, .len = 0 },
         .inferred_error_reasons = if (semantic) |value| value.inferred_error_reasons else null,
+        .foreign_symbol = if (semantic) |value| value.foreign_symbol else null,
         .safety_primitive = if (semantic) |value| value.safety_primitive else .none,
         .flags = if (semantic) |value| value.flags else .{},
     };

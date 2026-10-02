@@ -1,4 +1,5 @@
 const std = @import("std");
+const c_abi = @import("c_abi.zig");
 const diagnostics_mod = @import("../../1_base/diagnostic.zig");
 const tok = @import("../../2_tokens/token.zig");
 const module_sg = @import("../module/graph.zig");
@@ -299,6 +300,8 @@ pub fn semantizeWithOptions(
     // those slots are genuinely unresolved before any resolver can inspect
     // them; unresolved is construction state, not the language type `Any`.
     try markUnresolvedTypeSlots(allocator, &relocation.graph, modules, relocation.offsets.items);
+
+    try @import("c_abi.zig").prepareForeignCapabilities(allocator, &relocation.graph);
 
     var core = core_mod.Resolver{
         .allocator = allocator,
@@ -1034,6 +1037,7 @@ fn diagnoseInvalidNumericAssignments(
                 graph.binding(binding).initialization orelse continue,
                 graph.binding(binding).ty,
             },
+            .struct_value_literal, .array_literal => findAggregateNumericMismatch(graph, id) orelse continue,
             .assignment => |assignment| .{ assignment.value, graph.binding(assignment.binding).ty },
             .pointer_assignment => |assignment| blk: {
                 const pointer_ty = graph.node(assignment.pointer).ty orelse continue;
@@ -1074,6 +1078,46 @@ fn diagnoseInvalidNumericAssignments(
         return true;
     }
     return false;
+}
+
+// Aggregate types alone do not prove that each child has the representation
+// expected by LLVM. Check typed numeric children after contextualization.
+fn findAggregateNumericMismatch(graph: *const global_sg.GlobalSemanticGraph, id: global_sg.GlobalNodeId) ?struct { global_sg.GlobalNodeId, global_sg.GlobalTypeId } {
+    const node = graph.node(id);
+    const ty = node.ty orelse return null;
+    switch (node.content) {
+        .struct_value_literal => |literal| {
+            const fields = global_types.fields(graph, ty) orelse return null;
+            for (graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, offset| {
+                var expected: ?global_sg.GlobalTypeId = null;
+                if (graph.text(field.name).len != 0) {
+                    for (graph.fields.items[fields.start..][0..fields.len]) |candidate| {
+                        if (std.mem.eql(u8, graph.text(field.name), graph.text(candidate.name))) {
+                            expected = candidate.ty;
+                            break;
+                        }
+                    }
+                } else if (offset < fields.len) expected = graph.fields.items[fields.start + offset].ty;
+                if (expected) |target| if (numericChildMismatch(graph, field.value, target)) return .{ field.value, target };
+            }
+        },
+        .array_literal => |literal| {
+            for (graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |child| {
+                if (numericChildMismatch(graph, child, literal.element_type)) return .{ child, literal.element_type };
+            }
+        },
+        else => {},
+    }
+    return null;
+}
+
+fn numericChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) bool {
+    const node = graph.node(child);
+    const actual = node.ty orelse return false;
+    // Integer range errors retain the dedicated safety diagnostic.
+    if (node.content == .int_literal and !global_types.isBuiltin(graph, expected, .Float16) and
+        !global_types.isBuiltin(graph, expected, .Float32) and !global_types.isBuiltin(graph, expected, .Float64)) return false;
+    return isNumericType(graph, actual) and isNumericType(graph, expected) and !global_types.equal(graph, actual, expected);
 }
 
 fn isNumericType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
@@ -2289,6 +2333,52 @@ fn diagnoseUnresolvedCall(
                 .offset = source.offset + @as(u32, @intCast(name.len)),
             });
 
+            if (call.callee_value) |local| {
+                const pointer = graph.node(globalizer.globalNode(offsets[module_index], local));
+                const ty = pointer.ty orelse continue;
+                if (graph.isTypeUnresolved(ty)) continue;
+                if (!c_abi.isFunctionPointer(graph, ty)) {
+                    try diagnostics.add(location, .semantic, "cannot call binding '{s}': expected a CFunctionPointer value", .{name});
+                } else {
+                    const declaration = switch (graph.resolvedSemanticType(ty).?) {
+                        .declared => |id| graph.declaration(id),
+                        else => unreachable,
+                    };
+                    const signature = graph.function(declaration.function_id.?);
+                    const input = globalizer.globalNode(offsets[module_index], call.input);
+                    if (generic_functions.core.matchCallInput(signature.input, input) == .score) {
+                        try diagnostics.add(location, .semantic, "cannot resolve C callback '{s}': .ffi uses reach [ffi] and requires a ForeignFunctionInterface capability", .{name});
+                    } else {
+                        try diagnostics.add(location, .semantic, "arguments do not match the C callback signature of '{s}'", .{name});
+                    }
+                }
+                return true;
+            }
+
+            // Incomplete identities deliberately cannot participate in value
+            // construction or layout queries. Explain that boundary before
+            // the generic missing-overload diagnostic hides the actual cause.
+            if (reference.module_path == null and (std.mem.eql(u8, name, "size_of") or std.mem.eql(u8, name, "alignment_of"))) {
+                const input_node = graph.node(globalizer.globalNode(offsets[module_index], call.input));
+                if (input_node.content == .struct_value_literal) {
+                    const fields = input_node.content.struct_value_literal.fields;
+                    for (graph.value_fields.items[fields.start..][0..fields.len]) |field| {
+                        const argument = graph.node(field.value);
+                        if (argument.content != .type_literal) continue;
+                        if (global_types.incompleteDeclaration(graph, argument.content.type_literal)) |id| {
+                            try diagnostics.add(location, .semantic, "CIncomplete type '{s}' has no size or alignment; use RawPointer for foreign handles", .{graph.text(graph.declaration(id).name)});
+                            return true;
+                        }
+                    }
+                }
+            }
+            for (try graph.declarationsNamed(allocator, name)) |id| {
+                const declaration = graph.declaration(id);
+                if (declaration.struct_layout != .c_incomplete or !functionDeclarationVisibleForDiagnostic(graph, module_index, id, qualified_module)) continue;
+                try diagnostics.add(location, .semantic, "CIncomplete type '{s}' cannot be constructed; use RawPointer for foreign handles", .{name});
+                return true;
+            }
+
             if (reference.module_path == null and reference.generic_arguments == null and std.mem.eql(u8, name, "to_virtual") and call.expected_type == null) {
                 try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "cannot infer the abstract parameter of 'to_virtual'; provide a Virtual result type or '#(AbstractName)'", .{});
                 return true;
@@ -2702,6 +2792,8 @@ fn diagnoseUnresolvedCall(
                 defer message.deinit();
                 try message.print("function '{s}' exists, but no overload matches the provided arguments.\nOverloads with omitted reach defaults:\n", .{name});
                 try message.appendSlice(reach_details.items);
+                if (std.mem.indexOf(u8, reach_details.items, ".ffi uses reach") != null)
+                    try message.appendSlice("\n\nForeign calls require a live ForeignFunctionInterface capability. Bind 'assume ffi := system.ffi' in the caller or pass '.ffi' explicitly; this dependency is not part of the C signature.");
                 try message.appendSlice("\n\nAdd a reachable value in the caller, for example:\n  main(.system: System) -> (.status_code: Int32 = 0) := { ... }\n\nOr pass the omitted argument explicitly.");
                 try diagnostics.add(location, .semantic, "{s}", .{message.items});
                 return true;
@@ -2854,6 +2946,12 @@ fn appendReachAlternatives(
 }
 
 fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) anyerror!void {
+    // Candidate signatures may still contain unresolved slots while reporting
+    // a failed call. Their poison payload is not a declaration to inspect.
+    if (graph.isTypeUnresolved(ty)) {
+        try buffer.appendSlice("<unresolved>");
+        return;
+    }
     if (global_types.arrayLength(graph, ty)) |length| {
         const element = global_types.arrayElement(graph, ty) orelse return error.InvalidArrayType;
         try buffer.append('[');
@@ -3068,4 +3166,16 @@ test "global semantizer accepts an empty program" {
     try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
     try std.testing.expectEqual(@as(u64, 0), result.stats.pending_attempts);
     try std.testing.expect(result.graph.constructionStateEmpty());
+}
+
+test "call diagnostic type names tolerate unresolved slots" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.markTypeUnresolved(allocator, @enumFromInt(0));
+    var name = std.array_list.Managed(u8).init(allocator);
+    defer name.deinit();
+    try appendTypeName(&name, &graph, @enumFromInt(0));
+    try std.testing.expectEqualStrings("<unresolved>", name.items);
 }

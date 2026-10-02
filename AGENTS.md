@@ -14,6 +14,8 @@ This repository contains a compiler for a new programming language written in Zi
     - `tests/feature_tests/_support/` contains shared fixture modules; compiler unit tests are registered through `src/internal_tests.zig`.
     - Files in the same test case directory share namespace and are compiled together as one folder-level module.
     - Negative tests should include `X` in their numeric prefix, e.g. `131X_multiple_dispatch_ambiguous`.
+    - The feature coverage check scans literal case paths in `tests/test.zig`;
+      use complete paths in registration tables rather than concatenated prefixes.
 
 - `more/`: Official library modules that are not part of `core/`.
 
@@ -108,6 +110,48 @@ feature first.
     core modules are trusted peers and can access one another's private state.
     Private acquisition/allocation receipts therefore protect against external
     modules, while their invariants remain obligations within bundled core.
+
+- Foreign imports (`CFunction` and `ExternFunction`) have a checked logical
+  `.ffi` input of the bundled core `ForeignFunctionInterface` type. Codegen
+  excludes that input from the C ABI. Keep capability dependencies in ordinary
+  call resolution and safety summaries; C-ABI bodies cannot grow implicit
+  capability parameters. Pure bounded byte copies use Argi view operations,
+  while direct calls to libc `memcpy` still require `ffi`.
+  C record representation and call lowering are separate obligations: field
+  layout does not establish a by-value ABI. Aggregate classification must use
+  the full signature, including register exhaustion. C scalar aliases and
+  narrow-value extension attributes derive from `std.Target`; the compiler
+  currently selects its native host target. Check imports and exports against
+  native C fixtures when extending either boundary. Numeric record lowering
+  also tracks SysV SSE register exhaustion and ARM64 homogeneous floating-point
+  aggregates; homogeneous ARM64 input arrays require `alignstack(8)` on Linux
+  but not Darwin. Numeric unions merge overlapping member classes; ARM64
+  homogeneous unions count the largest alternative rather than summing members.
+  Keep those rules shared between imports, exports, and calls. RawPointer leaves
+  inside C records, arrays, and unions cross as C addresses; output facts use
+  `safety/foreign_result.zig` for both checker and summaries. These facts grant
+  neither safe-reference validity nor fresh storage acquisition receipts.
+  Uniform foreign pointer arrays keep one marker; arrays of records share
+  immutable element templates. Numeric union alternatives need explicit empty
+  field facts so projection does not inherit another member's pointer effects.
+  CIncomplete declarations keep nominal identities without runtime fields or
+  layout. Only RawPointer handles may carry them across C boundaries; never
+  synthesize an empty-record layout or construct safe references to them.
+  Imported nominal constructors consult public initializers in the type's
+  defining module. Automatic cleanup falls back to that module when caller
+  lookup finds no destructor; reached arguments retain the caller's context.
+  Bundled core is already visible, so it needs no second cleanup lookup.
+  CFunctionPointer declarations are nominal types backed by signature FunctionIds,
+  not runtime symbols or direct callees. Their logical ffi dependency remains
+  separate from the physical C signature. Function-address nodes preserve selected
+  callback bodies through global semantizing and LLVM reachability. Selection
+  requires visible concrete C bodies, without captures or once semantics; callback
+  data addresses require RawPointer until foreign lifetime contracts are defined.
+  Indirect function_call nodes keep the prototype in callee and the runtime address
+  in callee_value. Every call traversal must visit that value before its arguments,
+  including checker and summary domains. Codegen shares direct C call lowering,
+  applies ABI attributes at the call site, and guards null addresses; prototypes
+  must not create LLVM symbols. Generic callback invocation remains pending.
 
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases

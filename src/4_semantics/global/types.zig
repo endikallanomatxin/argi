@@ -316,6 +316,7 @@ fn declaredLayout(graph: *const graph_mod.GlobalSemanticGraph, decl_id: graph_mo
     const raw: usize = @intFromEnum(decl_id);
     if (raw >= graph.declarations.items.len) return error.UnmaterializedGlobalType;
     const decl = graph.declarations.items[raw];
+    if (decl.struct_layout == .c_function_pointer) return .{ .size = pointer_size_bytes, .alignment = pointer_alignment_bytes };
     if (decl.struct_fields) |range| return structLayout(graph, range, decl.struct_layout);
     if (decl.choice_variants) |range| return choiceLayout(graph, range, decl.choice_layout);
     return error.TypeHasNoRuntimeLayout;
@@ -526,4 +527,30 @@ test "type helpers reject construction-time unresolved slots" {
     try std.testing.expect(!isBuiltin(&graph, @enumFromInt(0), .Any));
     try std.testing.expect(!equal(&graph, @enumFromInt(0), @enumFromInt(0)));
     try std.testing.expectError(error.UnmaterializedGlobalType, layoutOf(&graph, @enumFromInt(0)));
+}
+
+/// An incomplete C declaration has a nominal identity but no value layout.
+/// RawPointer does not query the representation of its pointee.
+pub fn incompleteDeclaration(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalDeclId {
+    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    return switch (semantic) {
+        .declared => |id| if (graph.declaration(id).struct_layout == .c_incomplete) id else null,
+        .generic => if (genericInstance(graph, ty)) |instance| switch (instance.shape) {
+            .alias => |target| incompleteDeclaration(graph, target),
+            else => null,
+        } else null,
+        else => null,
+    };
+}
+
+/// Lifecycle lookup can consult the module defining a nominal destination
+/// while retaining the caller's lexical context for reached arguments.
+pub fn nominalTypeOwner(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalModuleId {
+    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    const declaration = switch (semantic) {
+        .declared => |id| id,
+        .generic => |identity| identity.base,
+        else => return null,
+    };
+    return graph.moduleForDeclaration(declaration);
 }

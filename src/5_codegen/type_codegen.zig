@@ -60,6 +60,7 @@ pub const Lowerer = struct {
 
     fn declaredType(self: *Lowerer, decl_id: graph_mod.GlobalDeclId) Error!llvm.c.LLVMTypeRef {
         const declaration = self.graph.declarations.items[@intFromEnum(decl_id)];
+        if (declaration.struct_layout == .c_function_pointer) return c.LLVMPointerType(c.LLVMInt8Type(), 0);
         if (declaration.struct_fields) |fields| return self.structType(fields, declaration.struct_layout);
         if (declaration.choice_variants) |variants| return self.choiceType(variants, declaration.choice_layout);
         return Error.InvalidType;

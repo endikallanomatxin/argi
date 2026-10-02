@@ -30,6 +30,69 @@ pub const BuiltinType = enum {
     Any,
 };
 
+/// Builtin spellings and C aliases share one lookup across module and global
+/// semantizing. The explicit target keeps ABI width decisions out of callers.
+pub fn builtinTypeNamedForTarget(name: []const u8, target: std.Target) ?BuiltinType {
+    inline for (@typeInfo(BuiltinType).@"enum".fields) |field| {
+        if (std.mem.eql(u8, name, field.name)) return @enumFromInt(field.value);
+    }
+    const aliases = .{
+        .{ "CShort", std.Target.CType.short, true },
+        .{ "CUShort", std.Target.CType.ushort, false },
+        .{ "CInt", std.Target.CType.int, true },
+        .{ "CUInt", std.Target.CType.uint, false },
+        .{ "CLong", std.Target.CType.long, true },
+        .{ "CULong", std.Target.CType.ulong, false },
+        .{ "CLongLong", std.Target.CType.longlong, true },
+        .{ "CULongLong", std.Target.CType.ulonglong, false },
+    };
+    inline for (aliases) |alias| {
+        if (std.mem.eql(u8, name, alias[0])) return cIntegerType(target.cTypeBitSize(alias[1]), alias[2]);
+    }
+    if (std.mem.eql(u8, name, "CChar")) return cIntegerType(8, target.cCharSignedness() == .signed);
+    if (std.mem.eql(u8, name, "CSignedChar")) return .Int8;
+    if (std.mem.eql(u8, name, "CUnsignedChar")) return .UInt8;
+    if (std.mem.eql(u8, name, "CSize")) return .UIntNative;
+    if (std.mem.eql(u8, name, "CPtrDiff")) return cIntegerType(target.ptrBitWidth(), true);
+    if (std.mem.eql(u8, name, "CFloat")) return if (target.cTypeBitSize(.float) == 32) .Float32 else null;
+    if (std.mem.eql(u8, name, "CDouble")) return if (target.cTypeBitSize(.double) == 64) .Float64 else null;
+    if (std.mem.eql(u8, name, "CBool")) return .Bool;
+    return null;
+}
+
+fn cIntegerType(bits: u16, signed: bool) ?BuiltinType {
+    return switch (bits) {
+        8 => if (signed) .Int8 else .UInt8,
+        16 => if (signed) .Int16 else .UInt16,
+        32 => if (signed) .Int32 else .UInt32,
+        64 => if (signed) .Int64 else .UInt64,
+        else => null,
+    };
+}
+
+pub fn builtinTypeNamed(name: []const u8) ?BuiltinType {
+    return builtinTypeNamedForTarget(name, @import("builtin").target);
+}
+
+test "C scalar aliases follow the target data model" {
+    var target = @import("builtin").target;
+    target.cpu.arch = .x86_64;
+    target.os.tag = .linux;
+    target.abi = .gnu;
+    try std.testing.expectEqual(BuiltinType.Int64, builtinTypeNamedForTarget("CLong", target).?);
+    target.os.tag = .windows;
+    target.abi = .msvc;
+    try std.testing.expectEqual(BuiltinType.Int32, builtinTypeNamedForTarget("CLong", target).?);
+    try std.testing.expectEqual(BuiltinType.Int64, builtinTypeNamedForTarget("CPtrDiff", target).?);
+    target.cpu.arch = .aarch64;
+    target.os.tag = .linux;
+    target.abi = .gnu;
+    try std.testing.expectEqual(BuiltinType.UInt8, builtinTypeNamedForTarget("CChar", target).?);
+    target.os.tag = .macos;
+    try std.testing.expectEqual(BuiltinType.Int8, builtinTypeNamedForTarget("CChar", target).?);
+    try std.testing.expect(builtinTypeNamedForTarget("CLongDouble", target) == null);
+}
+
 pub const PointerMutability = enum(u8) { read_only, read_write };
 pub const Mutability = enum(u8) { constant, variable };
 pub const ForMode = enum(u8) { value, borrow, mut_borrow };
@@ -81,10 +144,14 @@ pub const FunctionFlags = packed struct(u16) {
     is_generic_instantiation: bool = false,
     is_abstract_dispatch: bool = false,
     is_entry: bool = false,
-    _padding: u8 = 0,
+    is_c_abi: bool = false,
+    is_c_export: bool = false,
+    has_foreign_capability: bool = false,
+    is_c_function_pointer: bool = false,
+    _padding: u4 = 0,
 };
 
-pub const StructLayout = enum(u8) { regular, c_union };
+pub const StructLayout = enum(u8) { regular, c_union, c_struct, c_incomplete, c_function_pointer };
 pub const ChoiceLayout = enum(u8) { regular, c_enum };
 pub const InferredChoiceKind = enum(u8) { errable, reasons };
 pub const LogicalOperator = enum(u8) { and_, or_ };
@@ -192,6 +259,7 @@ pub fn Function(comptime Ids: type) type {
         input_bindings: Range(Ids.BindingId) = .{ .start = 0, .len = 0 },
         output_bindings: Range(Ids.BindingId) = .{ .start = 0, .len = 0 },
         inferred_error_reasons: ?Ids.TypeId = null,
+        foreign_symbol: ?StringRange = null,
         safety_primitive: SafetyPrimitive = .none,
         flags: FunctionFlags = .{},
     };
@@ -410,8 +478,12 @@ pub fn Node(comptime Ids: type) type {
             denied_implicit_copy: Ids.NodeId,
             assignment: struct { binding: Ids.BindingId, value: Ids.NodeId },
             auto_deinit_binding: Ids.AutoDeinitId,
+            function_address: Ids.FunctionId,
             function_call: struct {
                 callee: Ids.FunctionId,
+                // For indirect C calls, callee identifies signature metadata;
+                // the runtime address is evaluated separately from arguments.
+                callee_value: ?Ids.NodeId = null,
                 input: Ids.NodeId,
                 consumes_auto_deinit: ?Ids.NodeId = null,
                 initializes_auto_deinit: ?Ids.NodeId = null,

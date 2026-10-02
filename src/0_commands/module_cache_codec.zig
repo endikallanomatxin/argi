@@ -2,7 +2,7 @@ const std = @import("std");
 const graph_mod = @import("../4_semantics/module/graph.zig");
 const verifier = @import("../4_semantics/module/complete_verify.zig");
 
-pub const format_version: u32 = 1;
+pub const format_version: u32 = 4;
 pub const max_file_bytes = 32 * 1024 * 1024;
 const max_allocation_bytes = 64 * 1024 * 1024;
 const magic = "ARGIMSG1";

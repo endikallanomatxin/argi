@@ -654,6 +654,7 @@ test "argi init creates executable package" {
     try expect(std.mem.indexOf(u8, text, "default = \"hello\"\n") != null);
     try expectEqualStrings(
         "main(.system: System) -> (.status_code: Int32 = 0) := {\n" ++
+            "    assume ffi ::= system.ffi\n" ++
             "    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)\n" ++
             "    assume error_tracer ::= FixedSizeErrorTracer(\n" ++
             "        .buffer = view($&zeroed#(.t: [4096]UInt8)()),\n" ++
@@ -1580,8 +1581,8 @@ test "feature_tests/basics/13_core_and_libc" {
 
 test "feature_tests/basics/17X_extern_call_requires_exact_argument_types" {
     try buildExpectFailExact("tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types",
-        \\tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types/main.rg:3:12: error: no overload of 'putchar' accepts arguments (.character: UInt16). Available signatures:
-        \\  - putchar (.character: UInt8) -> ()
+        \\tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types/main.rg:4:12: error: no overload of 'putchar' accepts arguments (.character: UInt16). Available signatures:
+        \\  - putchar (.character: UInt8, .ffi: $&ForeignFunctionInterface) -> ()
         \\      putchar(.character = value)
         \\             ^
         \\
@@ -3274,7 +3275,7 @@ test "feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root" {
 
 test "feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip" {
     try buildExpectFailExact("tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip",
-        \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:4:24: error: no function named 'cast' exists
+        \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:5:24: error: no function named 'cast' exists
         \\      fabricated ::= cast#(.to: &Char)(.value = address)
         \\                         ^
         \\
@@ -7746,4 +7747,626 @@ test "feature_tests/basics/45X_empty_array_inference" {
 
 test "feature_tests/basics/46X_nested_empty_array_inference" {
     try buildExpectFailWithoutNoise("tests/feature_tests/basics/46X_nested_empty_array_inference", "cannot infer the array type of 'values' from this literal; add an explicit array type annotation", "UnsupportedGlobalSemantic");
+}
+
+test "C interop links native archives by file and library name" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, "tests/feature_tests/c_interop/01_native_library" });
+    defer allocator.free(fixture);
+    const source = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(source);
+    const compiled = try runChildInCwd(&.{ "cc", "-c", source, "-o", "native.o" }, root);
+    defer allocator.free(compiled.stdout);
+    defer allocator.free(compiled.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, compiled.term);
+    const archived = try runChildInCwd(&.{ "ar", "rcs", "libargi_fixture.a", "native.o" }, root);
+    defer allocator.free(archived.stdout);
+    defer allocator.free(archived.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, archived.term);
+    for (0..2) |mode| {
+        const args: []const []const u8 = if (mode == 0)
+            &.{ argi, "build", fixture, "--output", "app", "--link-file", "libargi_fixture.a" }
+        else
+            &.{ argi, "build", fixture, "--output", "app", "--library-path", ".", "--link-library", "argi_fixture" };
+        const built = try runChildInCwd(args, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChildInCwd(&.{"./app"}, root);
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+    }
+    // A package can be built from elsewhere, from its module, or run at its
+    // root without relying on the caller's directory for native input paths.
+    try tmp.dir.createDirPath(std.testing.io, "source/app");
+    const rg_path = try std.fs.path.join(allocator, &.{ fixture, "main.rg" });
+    defer allocator.free(rg_path);
+    const rg_source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, rg_path, allocator, .limited(8192));
+    defer allocator.free(rg_source);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "source/app/main.rg", .data = rg_source });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "argi.toml", .data =
+        \\[executables.app]
+        \\path = "source/app"
+        \\[[native]]
+        \\file = "libargi_fixture.a"
+    });
+    const module_path = try std.fs.path.join(allocator, &.{ root, "source/app" });
+    defer allocator.free(module_path);
+    for ([_][]const u8{ root, module_path }) |target| {
+        const built = try runChildInCwd(&.{ argi, "build", target }, repo);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+    }
+    const ran = try runChildInCwd(&.{ argi, "run" }, root);
+    defer allocator.free(ran.stdout);
+    defer allocator.free(ran.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, ran.term);
+    const missing = try runChildInCwd(&.{ argi, "build", fixture, "--output", "missing", "--link-library", "argi_missing_library_fixture" }, root);
+    defer allocator.free(missing.stdout);
+    defer allocator.free(missing.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, missing.term);
+    try expect(std.mem.indexOf(u8, missing.stderr, "argi_missing_library_fixture") != null);
+}
+
+test "C interop rejects unsupported signatures during exhaustive checking" {
+    const cases = .{
+        .{ "tests/feature_tests/c_interop/02X_aggregate_argument", "input 'value' has an unsupported C ABI type" },
+        .{ "tests/feature_tests/c_interop/03X_multiple_outputs", "must have zero or one output" },
+        .{ "tests/feature_tests/c_interop/04X_aggregate_result", "output 'result' has an unsupported C ABI type" },
+    };
+    inline for (cases) |case| {
+        for ([_][]const u8{ "build", "check" }) |command| {
+            const result = try runArgiCommand(&.{ command, case[0] });
+            defer std.testing.allocator.free(result.stdout);
+            defer std.testing.allocator.free(result.stderr);
+            try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+            try expect(std.mem.indexOf(u8, result.stderr, case[1]) != null);
+            try expect(std.mem.indexOf(u8, result.stderr, "failed without a diagnostic") == null);
+        }
+    }
+}
+
+test "C interop symbol aliases reuse one external symbol across cached builds" {
+    const path = "tests/feature_tests/c_interop/05_symbol_alias";
+    for (0..2) |_| {
+        try expectArgiBuildSuccess(&.{ "build", path });
+        const output = try outputPathFor(path);
+        defer std.testing.allocator.free(output);
+        const result = try runChild(&.{output});
+        defer std.testing.allocator.free(result.stdout);
+        defer std.testing.allocator.free(result.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+    }
+}
+
+test "C interop diagnoses invalid symbol options and conflicting declarations" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/06X_invalid_symbol_options", "CFunction '.symbol' requires a string literal", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/07X_conflicting_symbols", "C symbol 'abs' is declared with incompatible signatures", "failed without a diagnostic");
+}
+
+test "C interop exports are reachable from native code without Argi callers" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, "tests/feature_tests/c_interop/08_exported_functions" });
+    defer allocator.free(fixture);
+    const source = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(source);
+    const compiled = try runChildInCwd(&.{ "cc", "-c", source, "-o", "native.o" }, root);
+    defer allocator.free(compiled.stdout);
+    defer allocator.free(compiled.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, compiled.term);
+    for (0..2) |_| {
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--output", "app", "--link-file", "native.o", "--emit-llvm", "app.ll" }, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChildInCwd(&.{"./app"}, root);
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+        const ir = try tmp.dir.readFileAlloc(std.testing.io, "app.ll", allocator, .limited(1024 * 1024));
+        defer allocator.free(ir);
+        try expect(std.mem.indexOf(u8, ir, "define i32 @argi_export_sum(i32") != null);
+        try expect(std.mem.indexOf(u8, ir, "define void @argi_export_set(ptr") != null);
+    }
+}
+
+test "C interop validates exported bodies and signatures" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/09X_export_without_body", "an exported CFunction requires a body", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/10X_export_aggregate", "input 'value' has an unsupported C ABI type", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/11X_duplicate_exports", "C symbol 'argi_duplicate' has multiple definitions", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/12X_reserved_export", "C export symbol 'main' is reserved", "failed without a diagnostic");
+}
+
+test "C interop checks reached and explicit authorization without ABI arguments" {
+    try expectSuccessfulBuild("tests/feature_tests/c_interop/13_foreign_capability");
+    try run("tests/feature_tests/c_interop/13_foreign_capability");
+    try expectSuccessfulBuild("tests/feature_tests/c_interop/22_byte_copy_without_ffi");
+    try run("tests/feature_tests/c_interop/22_byte_copy_without_ffi");
+}
+
+test "C interop rejects missing invalid and stale authorization" {
+    const cases = .{
+        .{ "tests/feature_tests/c_interop/14X_missing_foreign_capability", ".ffi uses reach [ffi]" },
+        .{ "tests/feature_tests/c_interop/15X_wrong_foreign_capability", "ForeignFunctionInterface" },
+        .{ "tests/feature_tests/c_interop/16X_stale_foreign_capability", "binding 'storage' was moved" },
+        .{ "tests/feature_tests/c_interop/17X_export_missing_capability", ".ffi uses reach [ffi]" },
+        .{ "tests/feature_tests/c_interop/18X_legacy_missing_capability", ".ffi uses reach [ffi]" },
+        .{ "tests/feature_tests/c_interop/19X_stale_wrapper_capability", "binding 'storage' was moved" },
+        .{ "tests/feature_tests/c_interop/20X_reserved_capability_parameter", "reserve '.ffi' for the checked capability" },
+        .{ "tests/feature_tests/c_interop/21X_counterfeit_foreign_capability", "ForeignFunctionInterface" },
+        .{ "tests/feature_tests/c_interop/23X_memory_stale_capability", "binding 'storage' was moved" },
+    };
+    inline for (cases) |case| {
+        try buildExpectFailWithoutNoise(case[0], case[1], "failed without a diagnostic");
+    }
+}
+
+fn checkNativeCFixture(path: []const u8, ir_needles: []const []const u8) !void {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, path });
+    defer allocator.free(fixture);
+    const source = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(source);
+    const compiled = try runChildInCwd(&.{ "cc", "-c", source, "-o", "native.o" }, root);
+    defer allocator.free(compiled.stdout);
+    defer allocator.free(compiled.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, compiled.term);
+    for (0..2) |_| {
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--output", "app", "--link-file", "native.o", "--emit-llvm", "app.ll" }, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChildInCwd(&.{"./app"}, root);
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+        const ir = try tmp.dir.readFileAlloc(std.testing.io, "app.ll", allocator, .limited(1024 * 1024));
+        defer allocator.free(ir);
+        for (ir_needles) |needle| try expect(std.mem.indexOf(u8, ir, needle) != null);
+    }
+}
+
+test "C interop adapts raw pointers for imports bodies and exports" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/24_raw_pointer_abi", &.{
+        "declare ptr @argi_c_static()",
+        "declare ptr @argi_c_echo(ptr)",
+        "define ptr @argi_pointer_export(ptr",
+    });
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/25X_counterfeit_raw_pointer", "input 'pointer' has an unsupported C ABI type", "failed without a diagnostic");
+}
+
+test "C interop resolves target scalar aliases" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/26_c_scalar_aliases", &.{
+        "declare i32 @argi_c_int(i32)",
+        "declare double @argi_c_double(double)",
+    });
+}
+
+test "C interop uses a bounded zlib checksum wrapper and manifest linking" {
+    const allocator = std.testing.allocator;
+    const fixture = "tests/feature_tests/c_interop/27_zlib_checksum";
+    for (0..2) |_| {
+        const built = try runArgiCommand(&.{ "build", fixture });
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChild(&.{"tests/feature_tests/c_interop/27_zlib_checksum/build/debug/checksum"});
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+    }
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/28X_zlib_missing_capability", ".ffi uses reach [ffi]", "failed without a diagnostic");
+}
+
+test "C interop preserves explicit record layouts through native pointers" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/29_c_struct_layout", &.{
+        "declare i32 @argi_c_payload_verify(ptr)",
+        "declare void @argi_c_payload_fill(ptr)",
+        "define i32 @argi_c_payload_export(ptr",
+    });
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/30X_c_struct_non_c_field", "field 'ordinary' has no supported C representation", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/31X_c_struct_by_value", "input 'record' has an unsupported C ABI type", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/32X_generic_c_struct_non_c_field", "field 'value' has no supported C representation", "failed without a diagnostic");
+}
+
+test "C interop extends narrow scalars according to the platform ABI" {
+    const target = @import("builtin").target;
+    const extends = target.cpu.arch == .x86_64 or (target.cpu.arch == .aarch64 and target.os.tag.isDarwin());
+    try checkNativeCFixture("tests/feature_tests/c_interop/33_narrow_scalar_abi", if (extends) &.{
+        "define signext i8 @argi_c_small_signed(i8 signext",
+        "define zeroext i8 @argi_c_small_unsigned(i8 zeroext",
+        "call signext i16 @argi_c_short_import(i16 signext",
+        "declare zeroext i1 @argi_c_bool_import(i1 zeroext",
+    } else &.{
+        "define i8 @argi_c_small_signed(i8",
+        "define i1 @argi_c_bool(i1",
+    });
+}
+
+test "C interop adapts integer record arguments and results" {
+    const x64 = @import("builtin").target.cpu.arch == .x86_64;
+    try checkNativeCFixture("tests/feature_tests/c_interop/34_integer_record_abi", if (x64) &.{
+        "declare i64 @argi_c_pair(i64)",
+        "declare { i64, i64 } @argi_c_words(i64, i64)",
+        "byval({ i64, i64 }) align 8",
+        "sret({ i64, i64, i64 }) align 8",
+        "define i24 @argi_c_tiny_export(i24",
+    } else &.{
+        "declare i64 @argi_c_pair(i64)",
+        "declare [2 x i64] @argi_c_words([2 x i64])",
+        "sret({ i64, i64, i64 }) align 8",
+        "define i24 @argi_c_tiny_export(i64",
+    });
+}
+
+test "C interop diagnoses conflicting function ABI attributes" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/35X_conflicting_record_abi", "C symbol 'argi_c_conflict' is declared with incompatible signatures", "failed without a diagnostic");
+    const target = @import("builtin").target;
+    if (target.cpu.arch == .x86_64 or target.os.tag.isDarwin())
+        try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/36X_conflicting_scalar_extension", "C symbol 'argi_c_conflict' is declared with incompatible signatures", "failed without a diagnostic");
+}
+
+test "C interop selects static and shared named libraries without fallback" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, "tests/feature_tests/c_interop/01_native_library" });
+    defer allocator.free(fixture);
+    const source = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(source);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "shared.c", .data = "float argi_c_scale(int value, float factor) { (void)value; (void)factor; return 0; }" });
+    const shared_path = try std.fs.path.join(allocator, &.{ root, if (@import("builtin").os.tag.isDarwin()) "libargi_mode_fixture.dylib" else "libargi_mode_fixture.so" });
+    defer allocator.free(shared_path);
+    for ([_][]const []const u8{
+        &.{ "cc", "-c", source, "-o", "native.o" },
+        &.{ "ar", "rcs", "libargi_mode_fixture.a", "native.o" },
+        &.{ "cc", if (@import("builtin").os.tag.isDarwin()) "-dynamiclib" else "-shared", "-fPIC", "shared.c", "-o", shared_path },
+    }) |args| {
+        const result = try runChildInCwd(args, root);
+        defer allocator.free(result.stdout);
+        defer allocator.free(result.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+    }
+    // The two artifacts return different results, so a successful link alone
+    // cannot conceal selection of the wrong library mode.
+    for ([_][]const u8{ "--link-static-library", "--link-shared-library" }, 0..) |flag, mode| {
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--output", "app", flag, "argi_mode_fixture", "--library-path", "." }, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const ran = try runChildInCwd(&.{"./app"}, root);
+        defer allocator.free(ran.stdout);
+        defer allocator.free(ran.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = @intCast(mode) }, ran.term);
+    }
+    try tmp.dir.createDirPath(std.testing.io, "source/app");
+    const rg_path = try std.fs.path.join(allocator, &.{ fixture, "main.rg" });
+    defer allocator.free(rg_path);
+    const rg_source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, rg_path, allocator, .limited(8192));
+    defer allocator.free(rg_source);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "source/app/main.rg", .data = rg_source });
+    for ([_][]const u8{ "static_library", "shared_library" }, 0..) |key, mode| {
+        const manifest = try std.fmt.allocPrint(allocator, "[executables.app]\npath = \"source/app\"\n[[native]]\n{s} = \"argi_mode_fixture\"\n[[native]]\nsearch_path = \".\"\n", .{key});
+        defer allocator.free(manifest);
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "argi.toml", .data = manifest });
+        const ran = try runChildInCwd(&.{ argi, "run" }, root);
+        defer allocator.free(ran.stdout);
+        defer allocator.free(ran.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = @intCast(mode) }, ran.term);
+    }
+    try tmp.dir.deleteFile(std.testing.io, "libargi_mode_fixture.a");
+    const missing = try runChildInCwd(&.{ argi, "build", fixture, "--output", "missing", "--library-path", ".", "--link-static-library", "argi_mode_fixture" }, root);
+    defer allocator.free(missing.stdout);
+    defer allocator.free(missing.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, missing.term);
+    try expect(std.mem.indexOf(u8, missing.stderr, "static native library 'argi_mode_fixture' was not found") != null);
+    try tmp.dir.deleteFile(std.testing.io, std.fs.path.basename(shared_path));
+    const archived = try runChildInCwd(&.{ "ar", "rcs", "libargi_mode_fixture.a", "native.o" }, root);
+    defer allocator.free(archived.stdout);
+    defer allocator.free(archived.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, archived.term);
+    const missing_shared = try runChildInCwd(&.{ argi, "build", fixture, "--output", "missing", "--library-path", ".", "--link-shared-library", "argi_mode_fixture" }, root);
+    defer allocator.free(missing_shared.stdout);
+    defer allocator.free(missing_shared.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, missing_shared.term);
+    try expect(std.mem.indexOf(u8, missing_shared.stderr, "shared native library 'argi_mode_fixture' was not found") != null);
+}
+
+test "C interop adapts floating and mixed record arguments and results" {
+    const target = @import("builtin").target;
+    try checkNativeCFixture("tests/feature_tests/c_interop/37_numeric_record_abi", if (target.cpu.arch == .x86_64) &.{
+        "declare float @argi_c_one(float)",
+        "declare { <2 x float>, float } @argi_c_floats(<2 x float>, float)",
+        "declare { i32, double } @argi_c_mixed(i32, double)",
+        "declare { double, i32 } @argi_c_reverse(double, i32)",
+        "byval({ float, float, float }) align 8",
+        "sret({ [4 x double] }) align 8",
+    } else if (target.os.tag.isDarwin()) &.{
+        "declare { float } @argi_c_one([1 x float])",
+        "declare { float, float, float } @argi_c_floats([3 x float])",
+        "declare { double, double, double, double } @argi_c_doubles([4 x double])",
+        "declare [2 x i64] @argi_c_mixed([2 x i64])",
+    } else &.{
+        "declare { float } @argi_c_one([1 x float] alignstack(8))",
+        "declare { float, float, float } @argi_c_floats([3 x float] alignstack(8))",
+        "declare { double, double, double, double } @argi_c_doubles([4 x double] alignstack(8))",
+        "declare [2 x i64] @argi_c_mixed([2 x i64])",
+    });
+}
+
+test "C interop adapts overlapping numeric union arguments and results" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/39X_safe_reference_union_abi", "input 'value' has an unsupported C ABI type", "failed without a diagnostic");
+    const target = @import("builtin").target;
+    try checkNativeCFixture("tests/feature_tests/c_interop/38_numeric_union_abi", if (target.cpu.arch == .x86_64) &.{
+        "declare i64 @argi_c_union_number(i64)",
+        "declare float @argi_c_union_single(float)",
+        "declare { <2 x float>, float } @argi_c_union_floats(<2 x float>, float)",
+        "declare { double, float } @argi_c_union_mixed(double, float)",
+        "sret({ [4 x double] }) align 8",
+        "byval({ [3 x float] }) align 8",
+    } else if (target.os.tag.isDarwin()) &.{
+        "declare { float } @argi_c_union_single([1 x float])",
+        "declare { float, float, float } @argi_c_union_floats([3 x float])",
+        "declare { double, double, double, double } @argi_c_union_doubles([4 x double])",
+        "declare [2 x i64] @argi_c_union_mixed([2 x i64])",
+    } else &.{
+        "declare { float } @argi_c_union_single([1 x float] alignstack(8))",
+        "declare { float, float, float } @argi_c_union_floats([3 x float] alignstack(8))",
+        "declare { double, double, double, double } @argi_c_union_doubles([4 x double] alignstack(8))",
+        "declare [2 x i64] @argi_c_union_mixed([2 x i64])",
+    });
+}
+
+test "C interop adapts raw pointer fields without accepting safe reference fields" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/41X_safe_reference_array_abi", "input 'value' has an unsupported C ABI type", "failed without a diagnostic");
+    try checkNativeCFixture("tests/feature_tests/c_interop/40_raw_pointer_record_abi", if (@import("builtin").target.cpu.arch == .x86_64) &.{
+        "declare { i64, i64 } @argi_c_buffer_get()",
+        "declare { i64, float } @argi_c_buffer_weighted(i64, float)",
+        "byval({ { i64 }, i64 }) align 8",
+        "sret({ { i64 }, i64, { i64 } }) align 8",
+    } else &.{
+        "declare [2 x i64] @argi_c_buffer_get()",
+        "declare [2 x i64] @argi_c_buffer_weighted([2 x i64])",
+        "sret({ { i64 }, i64, { i64 } }) align 8",
+    });
+}
+
+test "C interop adapts raw pointer arrays and union alternatives" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/42_raw_pointer_aggregate_abi", if (@import("builtin").target.cpu.arch == .x86_64) &.{
+        "declare { i64, i64 } @argi_c_pointers_get()",
+        "declare i64 @argi_c_address_get()",
+        "declare { i64, i64 } @argi_c_alternatives_get()",
+        "byval({ [2 x { i64 }] }) align 8",
+        "sret({ [2 x { { i64 }, i64 }] }) align 8",
+    } else &.{
+        "declare [2 x i64] @argi_c_pointers_get()",
+        "declare i64 @argi_c_address_get()",
+        "declare [2 x i64] @argi_c_alternatives_get()",
+        "sret({ [2 x { { i64 }, i64 }] }) align 8",
+    });
+}
+
+test "C interop preserves incomplete handle identities through raw pointers" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/43_incomplete_handles", &.{
+        "declare ptr @argi_c_handle_create()",
+        "define ptr @argi_c_handle_export(ptr",
+    });
+}
+
+test "C interop rejects incomplete values construction layout and definitions" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/44X_incomplete_by_value", "has no value representation", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/45X_incomplete_size", "has no size or alignment", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/46X_incomplete_construction", "cannot be constructed", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/47X_incomplete_definition", "omit the definition", "failed without a diagnostic");
+}
+
+test "C interop rejects incompatible incomplete handles and safe references" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/48X_incomplete_handle_identity", "no overload of '_read' accepts arguments", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/49X_incomplete_safe_reference", "cannot form a safe reference", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/50X_incomplete_alignment", "has no size or alignment", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/51X_incomplete_value_storage", "has no value representation", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/52X_incomplete_parameters", "cannot have compile-time parameters", "failed without a diagnostic");
+}
+
+test "C interop pairs owned handle acquisition and automatic cleanup" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/53_owned_foreign_handles", &.{
+        "declare ptr @argi_c_owned_create(i32",
+        "declare void @argi_c_owned_destroy(ptr",
+    });
+}
+
+test "C interop protects owned handles and their retained capabilities" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/54X_owned_handle_copy", "cannot be copied implicitly", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/55X_owned_handle_after_cleanup", "reference depends on a root that has ended", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/56X_owned_handle_stale_capability", "binding 'capability' was moved", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/57X_owned_handle_private_storage", "field '_handle' is private to its module", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/58X_owned_handle_stale_cleanup", "binding 'capability' was moved", "failed without a diagnostic");
+}
+
+test "feature_tests/modules/32_qualified_comptime_calls" {
+    const test_path = "tests/feature_tests/modules/32_qualified_comptime_calls";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/modules/33X_qualified_comptime_call_missing_input" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/33X_qualified_comptime_call_missing_input", "ExpectedLeftParen", "failed without a diagnostic");
+}
+
+test "C interop invokes host-managed scalar and record callbacks" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/59_host_managed_callbacks", &.{
+        "define i32 @argi_callback_add(i32",
+        "@argi_callback_packet(",
+        "define void @argi_callback_packet(ptr sret(",
+    });
+}
+
+test "C interop preserves explicit enum values across modules and caching" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/60_explicit_enum_values", &.{
+        "define i32 @argi_enum_next(i32",
+        "i32 -2147483648",
+        "i32 2147483647",
+    });
+}
+
+test "C interop rejects 61X_enum_value_overflow" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/61X_enum_value_overflow", "CEnum value is outside", "failed without a diagnostic");
+}
+
+test "C interop rejects 62X_enum_implicit_overflow" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/62X_enum_implicit_overflow", "CEnum value is outside", "failed without a diagnostic");
+}
+
+test "C interop rejects 63X_enum_value_not_integer" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/63X_enum_value_not_integer", "CEnum value must be an Int32 integer literal", "failed without a diagnostic");
+}
+
+test "C interop rejects 64X_enum_duplicate_value" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/64X_enum_duplicate_value", "duplicate CEnum numeric values", "failed without a diagnostic");
+}
+
+test "C interop diagnoses unsupported enum constant expressions" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/65X_enum_constant_expression", "constant expressions are not supported", "failed without a diagnostic");
+}
+
+test "C interop transports nominal callback pointers and record fields" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/66_typed_callback_transport", &.{
+        "declare ptr @argi_callback_lookup()",
+        "define ptr @argi_callback_echo(ptr",
+        "declare i32 @argi_callback_apply(ptr",
+    });
+}
+
+test "C interop rejects 67X_callback_wrong_body_signature" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/67X_callback_wrong_body_signature", "no visible concrete CFunction body matches", "failed without a diagnostic");
+}
+
+test "C interop rejects 68X_callback_argi_body" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/68X_callback_argi_body", "no visible concrete CFunction body matches", "failed without a diagnostic");
+}
+
+test "C interop rejects 69X_callback_numeric_construction" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/69X_callback_numeric_construction", "construction requires '.function = name'", "failed without a diagnostic");
+}
+
+test "C interop rejects 70X_callback_safe_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/70X_callback_safe_reference", "parameters require RawPointer", "failed without a diagnostic");
+}
+
+test "C interop rejects 71X_callback_declared_body" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/71X_callback_declared_body", "without symbol options or a body", "failed without a diagnostic");
+}
+
+test "C interop rejects 72X_callback_nominal_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/72X_callback_nominal_identity", "no overload of", "failed without a diagnostic");
+}
+
+test "C interop rejects 73X_callback_missing_capability" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/73X_callback_missing_capability", ".ffi uses reach [ffi]", "failed without a diagnostic");
+}
+
+test "C interop rejects 74X_callback_body_missing_capability" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/74X_callback_body_missing_capability", ".ffi uses reach [ffi]", "failed without a diagnostic");
+}
+
+test "C interop rejects 75X_callback_multiple_outputs" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/75X_callback_multiple_outputs", "must have zero or one output", "failed without a diagnostic");
+}
+
+test "C interop rejects 76X_callback_once_body" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/76X_callback_once_body", "no visible concrete CFunction body matches", "failed without a diagnostic");
+}
+
+test "C interop selects typed record callbacks with indirect results" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/77_typed_record_callback", &.{
+        "declare i32 @argi_typed_callback_probe(ptr",
+        "sret({ double, i32, { i64 } })",
+    });
+}
+
+test "C interop checks null callback values" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/78_callback_null", &.{
+        "declare ptr @argi_callback_lookup(i32",
+        "icmp eq ptr",
+        "ptr null",
+    });
+}
+
+test "C interop checks indirect callback invocation arguments and capabilities" {
+    const cases = .{
+        .{ "tests/feature_tests/c_interop/79X_callback_invocation_missing_capability", ".ffi uses reach [ffi]" },
+        .{ "tests/feature_tests/c_interop/80X_callback_invocation_wrong_argument", "arguments do not match the C callback signature" },
+        .{ "tests/feature_tests/c_interop/81X_callback_invocation_non_callable", "expected a CFunctionPointer value" },
+        .{ "tests/feature_tests/c_interop/82X_callback_invocation_moved_value", "binding 'callback' was moved" },
+        .{ "tests/feature_tests/c_interop/84X_callback_invocation_stale_capability", "binding 'storage' was moved" },
+        .{ "tests/feature_tests/c_interop/86X_callback_wrapper_stale_capability", "binding 'storage' was moved" },
+        .{ "tests/feature_tests/c_interop/87X_callback_body_invocation_missing_capability", ".ffi uses reach [ffi]" },
+    };
+    inline for (cases) |case| {
+        try buildExpectFailWithoutNoise(case[0], case[1], "failed without a diagnostic");
+    }
+}
+
+test "C interop traps null callback invocation" {
+    const path = "tests/feature_tests/c_interop/83X_callback_invocation_null";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "C interop invokes narrow floating and void callbacks" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/85_callback_invocation_scalar_signatures", &.{
+        "callback.nonnull",
+        "call signext i16 %",
+        "i8 signext",
+        "call double %",
+        "call void %",
+    });
+}
+
+test "feature_tests/basics/47_contextual_float_literals" {
+    const path = "tests/feature_tests/basics/47_contextual_float_literals";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/48X_numeric_record_field" {
+    try buildExpectFail("tests/feature_tests/basics/48X_numeric_record_field", "cannot assign numeric value of type");
 }

@@ -501,9 +501,7 @@ fn isTypeName(tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.Nod
 }
 
 fn builtinFromName(name: []const u8) ?primitives.BuiltinType {
-    inline for (@typeInfo(primitives.BuiltinType).@"enum".fields) |field|
-        if (std.mem.eql(u8, name, field.name)) return @enumFromInt(field.value);
-    return null;
+    return primitives.builtinTypeNamed(name);
 }
 
 test "abstract relation lowering owns both concrete and parameterized forms" {

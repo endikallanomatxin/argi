@@ -74,7 +74,17 @@ pub const Infer = struct {
             if (!self.engine.summaries.contains(id)) {
                 const outputs = try self.allocator.alloc(facts.ValueEffect, function.output_bindings.len);
                 @memset(outputs, .{});
+                if (function.flags.is_c_abi and !function.flags.has_declared_body and outputs.len == 1) {
+                    const ty = self.graph.fields.items[function.output.start].ty;
+                    outputs[0] = try @import("foreign_result.zig").value(facts.ValueEffect, self.allocator, self.graph, ty);
+                }
                 try self.engine.summaries.put(id, .{ .outputs = outputs });
+            }
+            if (function.flags.has_foreign_capability) {
+                // Authorization must remain live even for imports whose other
+                // storage effects are unknown. Callers compose this requirement
+                // through the same summary dependency paths as dereferences.
+                self.engine.summaries.getPtr(id).?.required_live_inputs = try self.allocator.dupe(facts.InputPath, &.{.{ .input_index = function.input.len - 1, .projections = &.{} }});
             }
             // These declarations retain their initial summary. Primitive
             // transfers are instantiated at calls with call-site identities;
@@ -1134,6 +1144,7 @@ pub const Infer = struct {
                 try flow.addresses.put(assignment.binding, try self.capability_address_targets(assignment.value, flow));
             },
             .function_call => |call| {
+                if (call.callee_value) |value| try self.infer_capability_node(function, value, flow, exits);
                 try self.infer_capability_node(function, call.input, flow, exits);
                 if (self.structArguments(call.input)) |arguments| try self.infer_capability_call(function, call.callee, arguments, flow);
             },
@@ -1844,6 +1855,7 @@ pub const Infer = struct {
                 if (error_flow.reachable) try self.recordInputPostStateExit(exits, &error_flow.states);
             },
             .function_call => |call| {
+                if (call.callee_value) |value| try self.inferInputPostStatesExpression(function_id, value, states, exits);
                 try self.inferInputPostStatesExpression(function_id, call.input, states, exits);
                 try self.applyInputPostStatesFromFunctionCall(function_id, call.callee, call.input, states);
             },
@@ -2585,6 +2597,7 @@ pub const Infer = struct {
                 if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, error_state.emptied.items);
             },
             .function_call => |call| {
+                if (call.callee_value) |value| try self.inferOpaqueEmptyExpression(function_id, value, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, call.input, effects, state, exits);
                 try self.applyOpaqueEmptyFunctionCall(function_id, call.callee, call.input, effects, state);
             },
@@ -3008,6 +3021,7 @@ pub const Infer = struct {
                 if (literal.payload) |payload| try self.inferRequiredLiveInputsNode(function_id, payload, required);
             },
             .function_call => |call| {
+                if (call.callee_value) |value| try self.inferRequiredLiveInputsNode(function_id, value, required);
                 try self.inferRequiredLiveInputsNode(function_id, call.input, required);
                 if (self.engine.summaryFor(call.callee)) |summary|
                     try self.substituteRequiredLiveInputs(function_id, summary.required_live_inputs, call.input, required);
@@ -3340,7 +3354,10 @@ pub const Infer = struct {
                 const input = expect.test_fail_input orelse break :blk .{};
                 break :blk try self.inferCall(function_id, node_id, expect.test_fail_function, input);
             },
-            .function_call => |call| try self.inferCall(function_id, node_id, call.callee, call.input),
+            .function_call => |call| blk: {
+                if (call.callee_value) |value| _ = try self.inferExpression(function_id, value);
+                break :blk try self.inferCall(function_id, node_id, call.callee, call.input);
+            },
             .virtualize => |virtualize_id| try self.inferVirtualize(function_id, virtualize_id),
             .virtual_call => |virtual_call_id| try self.inferVirtualCall(function_id, node_id, virtual_call_id),
             .error_propagation => |id| blk: {
@@ -3831,7 +3848,17 @@ pub const Infer = struct {
             .variant => |variant_index| {
                 for (effect.variants) |variant| if (variant.index == variant_index) return variant.value.*;
             },
-            else => {},
+            .static_index => |element_index| {
+                for (effect.fields) |field| if (field.index == element_index) return field.value.*;
+            },
+            .dynamic_index => {
+                if (effect.fields.len != 0) {
+                    var merged: facts.ValueEffect = .{ .foreign_storage = effect.foreign_storage };
+                    for (effect.fields) |field| merged = try self.mergeValueEffects(merged, field.value.*);
+                    return merged;
+                }
+            },
+            .dereference => {},
         }
         var result = effect;
         const dependencies = try self.allocator.alloc(facts.InputDependency, effect.input_dependencies.len);
@@ -4803,4 +4830,37 @@ test "validity-only transfer retains loaded input anchor paths" {
     try std.testing.expectEqual(@as(usize, 0), effect.input_place_values.len);
     const projected = try inference.projectValueEffect(effect, .{ .field = 7 });
     try std.testing.expectEqualDeep(path, projected.input_dependencies[0].path);
+}
+
+test "array summary projections select and merge element effects" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = Infer.init(allocator, undefined, &engine);
+    defer inference.deinit();
+
+    const foreign = facts.ValueEffect{ .foreign_storage = true };
+    const local = facts.ValueEffect{ .input_dependencies = &.{.{ .path = .{ .input_index = 2 } }} };
+    const array = facts.ValueEffect{ .fields = &.{
+        .{ .index = 0, .value = &foreign },
+        .{ .index = 1, .value = &local },
+    } };
+    const first = try inference.projectValueEffect(array, .{ .static_index = 0 });
+    try std.testing.expect(first.foreign_storage);
+    try std.testing.expectEqual(@as(usize, 0), first.input_dependencies.len);
+    const second = try inference.projectValueEffect(array, .{ .static_index = 1 });
+    try std.testing.expect(!second.foreign_storage);
+    try std.testing.expectEqualDeep(local.input_dependencies, second.input_dependencies);
+    const dynamic = try inference.projectValueEffect(array, .dynamic_index);
+    try std.testing.expect(dynamic.foreign_storage);
+    try std.testing.expectEqualDeep(local.input_dependencies, dynamic.input_dependencies);
+    try std.testing.expectEqual(@as(usize, 0), dynamic.fresh_storage_capabilities.len);
+
+    // A uniform foreign array can keep its marker on the aggregate instead
+    // of allocating metadata for every element. Individual writes add fields.
+    const uniform = facts.ValueEffect{ .foreign_storage = true, .fields = &.{.{ .index = 1, .value = &local }} };
+    try std.testing.expect((try inference.projectValueEffect(uniform, .dynamic_index)).foreign_storage);
+    try std.testing.expect((try inference.projectValueEffect(.{ .foreign_storage = true }, .{ .static_index = 5 })).foreign_storage);
 }

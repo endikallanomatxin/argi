@@ -39,6 +39,15 @@ follows:
 | `.../` | Project root |
 | No prefix | Bundled `more/` library |
 
+Module-qualified calls accept explicit compile-time arguments, such as
+`dep.identity#(.t: Int32)(.value = 42)` or `dep.identity#(Int32)(42)`.
+
+Naming an imported type exposes its public `init` overloads for construction.
+Automatic cleanup first uses the caller's visible `deinit` overloads, then the
+type's defining module if no match exists. Reached arguments still come from
+the caller's lexical context. These lifecycle lookups do not expose unrelated
+functions from the imported module to unqualified calls.
+
 Import paths must resolve at compile time.
 
 > [!IMPLEMENTATION]
@@ -119,7 +128,10 @@ Named C header import:
 some_c_lib := #c_import("c_module.h")
 ```
 
-It maps C signatures and structs to Argi calls with named arguments.
+It produces the typed declarations described in
+[C interoperability](20_c.md), including C signatures and record layouts.
+Foreign calls require the `ffi` capability; importing a header does not grant it
+or select a library to link.
 Some `more` modules may need native libraries (for example BLAS/LAPACK,
 OpenSSL, zlib, or FFmpeg). Builds should diagnose missing libraries; releases
 may bundle them per target.

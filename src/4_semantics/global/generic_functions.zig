@@ -197,6 +197,9 @@ pub const Resolver = struct {
             reach,
             compatibility.additionalTypeCompatibility(),
         )) return .deferred;
+        // Operator sugar retains its scope just like a written call: callee
+        // dependencies can extend the input after overload selection.
+        try self.core.trackReachedCall(function_id, input, reach, false);
         self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = .{
             .source = self.graph.node(left).source,
             .ty = try self.core.functionOutputType(function_id),
@@ -464,6 +467,7 @@ pub const Resolver = struct {
 
         const function = self.graph.functions.items[@intFromEnum(selected.function)];
         if (!try self.core.completeCallInputFieldsWithReach(function.input, input, reach)) return null;
+        try self.core.trackReachedCall(selected.function, input, reach, false);
         self.stats.calls += 1;
         return .{
             .source = source,
@@ -2989,11 +2993,9 @@ pub const Resolver = struct {
         }
 
         fn resolveEmptyTypeInitializer(self: *InstanceContext, name: []const u8, source: primitives.SourceRef) !?global_sg.Node {
-            inline for (@typeInfo(primitives.BuiltinType).@"enum".fields) |field| {
-                if (std.mem.eql(u8, name, field.name)) {
-                    const ty = try self.resolver.generics.internType(.{ .builtin = @enumFromInt(field.value) });
-                    return self.emptyValue(ty, source);
-                }
+            if (primitives.builtinTypeNamed(name)) |builtin_type| {
+                const ty = try self.resolver.generics.internType(.{ .builtin = builtin_type });
+                return self.emptyValue(ty, source);
             }
             for (try self.resolver.graph.declarationsNamed(self.resolver.allocator, name)) |id| {
                 const declaration = self.resolver.graph.declarations.items[@intFromEnum(id)];

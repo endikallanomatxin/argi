@@ -189,6 +189,7 @@ pub const SafetyChecker = struct {
         self.stats = .{ .timing_io = self.profile_io };
         const before = self.diagnostics.list.items.len;
         try self.validateNominalChoiceLayouts();
+        try self.validateForeignSignatures();
 
         var allocations = profile.AllocationCounter{ .child = self.allocator, .requested_bytes = &self.stats.summary_allocated_bytes };
         const inference_allocator = if (self.collect_stats) allocations.allocator() else self.allocator;
@@ -315,6 +316,62 @@ pub const SafetyChecker = struct {
         @memcpy(projections[0..path.projections.len], path.projections);
         projections[path.projections.len] = projection;
         return .{ .input_index = path.input_index, .projections = projections };
+    }
+
+    fn validateForeignSignatures(self: *SafetyChecker) !void {
+        const c_abi = @import("../global/c_abi.zig");
+        for (self.graph.bindings.items) |binding| {
+            if (types.incompleteDeclaration(self.graph, binding.ty)) |id|
+                try self.report(binding.source, "CIncomplete type '{s}' has no value representation; use RawPointer for foreign handles", .{self.graph.text(self.graph.declaration(id).name)});
+            if (self.graph.resolvedSemanticType(binding.ty)) |semantic| {
+                if (semantic == .pointer) {
+                    if (types.incompleteDeclaration(self.graph, semantic.pointer.child)) |id|
+                        try self.report(binding.source, "cannot form a safe reference to CIncomplete type '{s}'; use RawPointer for foreign handles", .{self.graph.text(self.graph.declaration(id).name)});
+                }
+            }
+        }
+        for (self.graph.declarations.items) |declaration| {
+            if (declaration.struct_layout != .c_struct) continue;
+            const fields = declaration.struct_fields orelse continue;
+            if (fields.len == 0) try self.report(declaration.source, "CStruct '{s}' must contain at least one field", .{self.graph.text(declaration.name)});
+            for (self.graph.fields.items[fields.start..][0..fields.len]) |field| {
+                if (!c_abi.supportsRepresentation(self.graph, field.ty))
+                    try self.report(field.source, "CStruct '{s}' field '{s}' has no supported C representation", .{ self.graph.text(declaration.name), self.graph.text(field.name) });
+            }
+        }
+        for (self.graph.generic_instances.items) |instance| {
+            const shape = switch (instance.shape) {
+                .structure => |value| value,
+                else => continue,
+            };
+            if (shape.layout != .c_struct) continue;
+            if (shape.fields.len == 0) try self.report(self.graph.declaration(self.graph.types.items[@intFromEnum(instance.type_id)].generic.base).source, "CStruct must contain at least one field", .{});
+            for (self.graph.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
+                if (!c_abi.supportsRepresentation(self.graph, field.ty))
+                    try self.report(field.source, "CStruct field '{s}' has no supported C representation", .{self.graph.text(field.name)});
+            }
+        }
+        for (self.graph.functions.items) |function| {
+            if (function.flags.is_abstract_dispatch) continue;
+            if (!function.flags.is_c_abi and (function.body != null or function.flags.has_declared_body)) continue;
+            const declaration = self.graph.declaration(function.declaration);
+            const name = self.graph.text(declaration.name);
+            if (function.output.len > 1) {
+                try self.report(declaration.source, "C function '{s}' must have zero or one output; use explicit pointer parameters for additional results", .{name});
+            }
+            for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
+                if (function.flags.is_c_function_pointer and index < c_abi.physicalInputCount(function) and c_abi.isSafeReferenceValue(self.graph, field.ty))
+                    try self.report(field.source, "CFunctionPointer parameters require RawPointer instead of safe references", .{});
+                if (!c_abi.supportsCValue(self.graph, field.ty))
+                    try self.report(field.source, "C function '{s}' input '{s}' has an unsupported C ABI type; aggregate arguments require target-specific lowering", .{ name, self.graph.text(field.name) });
+            }
+            for (self.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
+                if (function.flags.is_c_function_pointer and c_abi.isSafeReferenceValue(self.graph, field.ty))
+                    try self.report(field.source, "CFunctionPointer results require RawPointer instead of safe references", .{});
+                if (!c_abi.supportsCValue(self.graph, field.ty))
+                    try self.report(field.source, "C function '{s}' output '{s}' has an unsupported C ABI type; aggregate results require target-specific lowering", .{ name, self.graph.text(field.name) });
+            }
+        }
     }
 
     fn validateNominalChoiceLayouts(self: *SafetyChecker) !void {
@@ -872,6 +929,9 @@ pub const SafetyChecker = struct {
         var candidate = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
         defer candidate.deinit();
         const diagnostic_count = self.diagnostics.list.items.len;
+        if (@hasField(@TypeOf(call), "callee_value")) {
+            if (call.callee_value) |value| _ = try self.evaluate(caller, value, &candidate);
+        }
         const result = try self.evaluateCallCandidate(caller, call_node, call, &candidate);
         if (self.diagnostics.list.items.len != diagnostic_count) return .{};
         self.commitState(state, &candidate);
@@ -900,6 +960,11 @@ pub const SafetyChecker = struct {
             values[index] = try self.evaluate(caller, field.value, state);
         }
 
+        if (callee.flags.has_foreign_capability) {
+            const summary = (self.active_summaries orelse return error.MissingSafetySummary).summaryFor(call.callee) orelse return error.MissingSafetySummary;
+            if (!try self.validateSummaryRequiredLive(input_node.source, summary, values, state)) return .{};
+        }
+
         if (callee.safety_primitive != .none) {
             if (self.collect_stats) self.stats.primitive_calls += 1;
             return self.evaluatePrimitive(caller, callee.safety_primitive, argument_nodes, values, state, input_node.source);
@@ -908,8 +973,8 @@ pub const SafetyChecker = struct {
             // Argument evaluation is still part of the successful call and is
             // committed by the outer transaction. Foreign pointers themselves
             // do not become safe references implicitly.
-            if (callee.output.len == 1 and isPointer(self.graph, self.graph.fields.items[callee.output.start].ty))
-                return .{ .foreign_storage = true };
+            if (callee.output.len == 1)
+                return @import("foreign_result.zig").value(facts.ValueFacts, self.allocator, self.graph, self.graph.fields.items[callee.output.start].ty);
             return .{};
         }
 
@@ -1441,6 +1506,28 @@ pub const SafetyChecker = struct {
         return null;
     }
 
+    fn isForeignCapabilityPlace(self: *SafetyChecker, storage: facts.Place) bool {
+        var ty = self.graph.binding(storage.root).ty;
+        for (storage.projections) |projection| {
+            ty = switch (projection) {
+                .field => |index| self.fieldTypeAt(ty, index) orelse return false,
+                .variant => |index| self.variantPayloadTypeAt(ty, index) orelse return false,
+                .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse return false,
+                .dereference => switch (self.graph.semanticType(ty)) {
+                    .pointer => |pointer| pointer.child,
+                    else => return false,
+                },
+            };
+        }
+        const declaration = switch (self.graph.semanticType(ty)) {
+            .declared => |id| id,
+            else => return false,
+        };
+        if (!std.mem.eql(u8, self.graph.text(self.graph.declaration(declaration).name), "ForeignFunctionInterface")) return false;
+        const module = self.graph.moduleForDeclaration(declaration) orelse return false;
+        return self.graph.modules.items[@intFromEnum(module)].is_bundled_core;
+    }
+
     fn validateSummaryRequiredLive(
         self: *SafetyChecker,
         source: primitives.SourceRef,
@@ -1459,6 +1546,13 @@ pub const SafetyChecker = struct {
                 for (path.projections) |projection| target = try self.project(target, projection);
                 if (self.valueAtPlace(state, target)) |stored| value = try self.reconstructPlaceValue(state, target, stored);
             };
+            if (value.referenced_place) |storage| {
+                // A capability authorizes a call only while its value remains
+                // initialized. Unlike an output pointer, it is never merely a
+                // destination whose live storage may hold no initialized value.
+                if (self.isForeignCapabilityPlace(storage))
+                    try self.requirePlaceInitialized(@enumFromInt(0), source, storage, self.initializednessAtPlace(state, storage), state);
+            }
             // Summary paths select nested payloads, but ownership can live on
             // the containing choice. Keep that envelope when checking roots
             // that exist only on the selected success branch.
@@ -2051,7 +2145,7 @@ pub const SafetyChecker = struct {
                     current = found orelse current;
                 },
                 .dynamic_index => {
-                    var merged: facts.ValueFacts = .{};
+                    var merged: facts.ValueFacts = .{ .foreign_storage = current.foreign_storage };
                     for (current.fields) |field| merged = try self.mergeValueFacts(merged, field.value.*);
                     if (current.fields.len != 0) current = merged;
                 },
@@ -3052,8 +3146,8 @@ pub const SafetyChecker = struct {
             return result;
         }
         if (callee.body == null) {
-            const result: facts.ValueFacts = if (callee.output.len == 1 and isPointer(self.graph, self.graph.fields.items[callee.output.start].ty))
-                .{ .foreign_storage = true }
+            const result: facts.ValueFacts = if (callee.output.len == 1)
+                try @import("foreign_result.zig").value(facts.ValueFacts, self.allocator, self.graph, self.graph.fields.items[callee.output.start].ty)
             else
                 .{};
             if (self.diagnostics.list.items.len != diagnostic_count) return .{};
@@ -5819,4 +5913,25 @@ test "dynamic projected writes retain newly merged roots" {
     const refreshed = try checker.reconstructPlaceValue(&state, storage, .{});
     try std.testing.expect(valueDependsOnRoot(refreshed, root));
     try std.testing.expect(valueContainsOwnedRoot(refreshed, root));
+}
+
+test "array concrete projections select and merge element facts" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    const foreign = facts.ValueFacts{ .foreign_storage = true };
+    const local = facts.ValueFacts{};
+    const array = facts.ValueFacts{ .fields = &.{
+        .{ .index = 0, .value = &foreign },
+        .{ .index = 1, .value = &local },
+    } };
+    try std.testing.expect((try checker.projectValueFacts(array, &.{.{ .static_index = 0 }})).foreign_storage);
+    try std.testing.expect(!(try checker.projectValueFacts(array, &.{.{ .static_index = 1 }})).foreign_storage);
+    const dynamic = try checker.projectValueFacts(array, &.{.dynamic_index});
+    try std.testing.expect(dynamic.foreign_storage);
+    try std.testing.expectEqual(@as(usize, 0), dynamic.storage_capabilities.len);
+    const uniform = facts.ValueFacts{ .foreign_storage = true, .fields = &.{.{ .index = 1, .value = &local }} };
+    try std.testing.expect((try checker.projectValueFacts(uniform, &.{.dynamic_index})).foreign_storage);
 }

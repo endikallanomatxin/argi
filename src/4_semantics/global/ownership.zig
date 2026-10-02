@@ -279,7 +279,10 @@ pub const Resolver = struct {
             },
             .move_value, .denied_implicit_copy, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers),
             .assignment => |assignment| try self.finalizeExpressionCleanup(assignment.value, active, defers),
-            .function_call => |call| try self.finalizeExpressionCleanup(call.input, active, defers),
+            .function_call => |call| {
+                if (call.callee_value) |value| try self.finalizeExpressionCleanup(value, active, defers);
+                try self.finalizeExpressionCleanup(call.input, active, defers);
+            },
             .virtualize => |virtualize_id| try self.finalizeExpressionCleanup(
                 self.graph.virtualizes.items[@intFromEnum(virtualize_id)].value,
                 active,
@@ -608,6 +611,22 @@ pub const Resolver = struct {
         context: reach_context.Context,
         module_index: usize,
     ) !?ResolvedDestructor {
+        if (try self.resolveDestructorInScope(target, context, module_index)) |call| return call;
+        const ty = self.graph.node(target).ty orelse return null;
+        const owner = global_types.nominalTypeOwner(self.graph, ty) orelse return null;
+        if (@intFromEnum(owner) == module_index or self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) return null;
+        // A resource keeps its defining module's cleanup when passed to a
+        // caller in another module. Reached arguments still come from the
+        // caller's captured context, not from the defining module's locals.
+        return self.resolveDestructorInScope(target, context, @intFromEnum(owner));
+    }
+
+    fn resolveDestructorInScope(
+        self: *Resolver,
+        target: global_sg.GlobalNodeId,
+        context: reach_context.Context,
+        module_index: usize,
+    ) !?ResolvedDestructor {
         const profile_start = self.profileNow();
         var succeeded = false;
         defer if (self.profile_io) |io| {
@@ -786,7 +805,8 @@ pub const Resolver = struct {
                     if (!self.triviallyCopyable(field.ty)) break :blk false;
                 break :blk true;
             },
-            .declared => blk: {
+            .declared => |id| blk: {
+                if (self.graph.declaration(id).struct_layout == .c_function_pointer) break :blk true;
                 if (global_types.fields(self.graph, ty)) |fields|
                     break :blk self.fieldsTriviallyCopyable(fields);
                 if (global_types.variants(self.graph, ty)) |variants|
