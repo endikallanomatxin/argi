@@ -9,6 +9,7 @@ const module_linker = @import("module_linker.zig");
 const resolution = @import("resolution.zig");
 const types = @import("types.zig");
 const callable = @import("../primitives/callable.zig");
+const c_abi = @import("c_abi.zig");
 const primitives = @import("../primitives/schema.zig");
 
 pub const Stats = struct {
@@ -748,6 +749,9 @@ pub const Resolver = struct {
                 .length = count,
             } } };
         }
+        // A callback zero is a null C function pointer, never a data reference.
+        if (c_abi.isFunctionPointer(self.graph, ty))
+            return .{ .source = source, .ty = ty, .content = .{ .int_literal = 0 } };
         const semantic = self.graph.resolvedSemanticType(ty) orelse return error.InvalidZeroedType;
         const content: @TypeOf(@as(global_sg.Node, undefined).content) = switch (semantic) {
             .builtin => |kind| switch (kind) {
@@ -1986,7 +1990,9 @@ pub const Resolver = struct {
         right: global_sg.GlobalTypeId,
     ) bool {
         return self.isBuiltinComparable(left, right) or
-            ((operator == .equal or operator == .not_equal) and self.isCEnumPair(left, right));
+            ((operator == .equal or operator == .not_equal) and
+                (self.isCEnumPair(left, right) or
+                    (types.equal(self.graph, left, right) and c_abi.isFunctionPointer(self.graph, left))));
     }
 
     fn isBuiltinComparable(self: *Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {

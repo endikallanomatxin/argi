@@ -8321,3 +8321,11 @@ test "C interop selects typed record callbacks with indirect results" {
         "sret({ double, i32, { i64 } })",
     });
 }
+
+test "C interop checks null callback values" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/78_callback_null", &.{
+        "declare ptr @argi_callback_lookup(i32",
+        "icmp eq ptr",
+        "ptr null",
+    });
+}

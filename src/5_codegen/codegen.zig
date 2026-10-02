@@ -879,6 +879,12 @@ pub const CodeGenerator = struct {
             .bool_literal => |value| .{ .value_ref = c.LLVMConstInt(c.LLVMInt1Type(), if (value) 1 else 0, 0), .type_ref = c.LLVMInt1Type(), .ty = node.ty },
             .int_literal => |value| blk: {
                 const type_ref = if (node.ty) |ty| try self.toLLVMType(ty) else c.LLVMInt32Type();
+                // Typed callback zeros use C null representation; integer
+                // literals never manufacture non-null function addresses.
+                if (c.LLVMGetTypeKind(type_ref) == c.LLVMPointerTypeKind) {
+                    if (value != 0 or !c_abi.isFunctionPointer(self.graph, node.ty orelse return CodegenError.InvalidType)) return CodegenError.InvalidType;
+                    break :blk .{ .value_ref = c.LLVMConstNull(type_ref), .type_ref = type_ref, .ty = node.ty };
+                }
                 break :blk .{ .value_ref = c.LLVMConstInt(type_ref, @as(u64, @truncate(@as(u128, @bitCast(value)))), if (value < 0) 1 else 0), .type_ref = type_ref, .ty = node.ty };
             },
             .float_literal => |value| blk: {
