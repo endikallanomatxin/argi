@@ -690,6 +690,8 @@ pub fn semantizeWithOptions(
             return error.Reported;
         if (try diagnoseAbstractRuntimeBindings(&relocation.graph, &abstracts, diagnostics))
             return error.Reported;
+        if (try diagnoseMissingArrayTypeContext(&relocation.graph, diagnostics))
+            return error.Reported;
     }
 
     const remaining = worklists.remaining(reachable);
@@ -743,6 +745,9 @@ pub fn semantizeWithOptions(
         return error.UnsupportedGlobalSemantic;
     }
     if (relocation.graph.hasUnresolvedBindingTypes()) {
+        if (options.diagnostics) |diagnostics|
+            if (try diagnoseUnresolvedBindingTypes(&relocation.graph, diagnostics))
+                return error.Reported;
         std.debug.print("global sema unresolved binding types remain\n", .{});
         return error.UnsupportedGlobalSemantic;
     }
@@ -1737,6 +1742,49 @@ fn diagnosePrivateFields(
             );
             return true;
         }
+    }
+    return false;
+}
+
+// Positional array literals receive their element type from context. Report
+// the missing context before diagnostics for operations using the binding;
+// unresolved leaf expressions retain their own name/call diagnostics.
+fn arrayLiteralLeavesResolved(graph: *const global_sg.GlobalSemanticGraph, id: global_sg.GlobalNodeId) bool {
+    const node = graph.node(id);
+    if (node.content == .list_literal) {
+        const elements = node.content.list_literal.elements;
+        for (graph.node_refs.items[elements.start..][0..elements.len]) |element|
+            if (!arrayLiteralLeavesResolved(graph, element)) return false;
+        return true;
+    }
+    const ty = node.ty orelse return false;
+    return !graph.isTypeUnresolved(ty);
+}
+
+fn diagnoseMissingArrayTypeContext(graph: *const global_sg.GlobalSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics) !bool {
+    for (graph.bindings.items, 0..) |binding, raw| {
+        if (!graph.isBindingTypeUnresolved(@enumFromInt(raw))) continue;
+        const initialization = binding.initialization orelse continue;
+        if (graph.node(initialization).content != .list_literal or !arrayLiteralLeavesResolved(graph, initialization)) continue;
+        if (binding.name.len == 0 or binding.deferred_initialization) {
+            try diagnostics.add(diagnosticLocation(graph, diagnostics, binding.source), .semantic, "cannot infer an array type for this literal; add an explicit array type annotation", .{});
+        } else {
+            try diagnostics.add(diagnosticLocation(graph, diagnostics, binding.source), .semantic, "cannot infer the array type of '{s}' from this literal; add an explicit array type annotation", .{graph.text(binding.name)});
+        }
+        return true;
+    }
+    return false;
+}
+
+fn diagnoseUnresolvedBindingTypes(graph: *const global_sg.GlobalSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics) !bool {
+    for (graph.bindings.items, 0..) |binding, raw| {
+        if (!graph.isBindingTypeUnresolved(@enumFromInt(raw))) continue;
+        if (binding.name.len == 0 or binding.deferred_initialization) {
+            try diagnostics.add(diagnosticLocation(graph, diagnostics, binding.source), .semantic, "cannot infer the type of this value; add an explicit type annotation", .{});
+        } else {
+            try diagnostics.add(diagnosticLocation(graph, diagnostics, binding.source), .semantic, "cannot infer the type of '{s}'; add an explicit type annotation", .{graph.text(binding.name)});
+        }
+        return true;
     }
     return false;
 }
