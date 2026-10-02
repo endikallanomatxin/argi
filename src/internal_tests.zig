@@ -63,6 +63,7 @@ test {
     _ = link;
     _ = lsp;
     _ = lsp_service;
+    _ = @import("0_commands/frontend_cache_test.zig");
     _ = @import("0_commands/lsp_completion.zig");
     _ = tokenizer;
     _ = syntax_tree;

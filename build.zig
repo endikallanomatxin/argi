@@ -109,6 +109,18 @@ pub fn build(b: *std.Build) void {
     program_test_step.dependOn(&run_exe_tests.step);
     program_test_step.dependOn(b.getInstallStep());
 
+    const benchmark_mod = b.createModule(.{
+        .root_source_file = b.path("src/frontend_benchmark.zig"),
+        .target = target,
+        .optimize = optimize,
+        .error_tracing = if (optimize == .Debug) false else null,
+    });
+    const benchmark_exe = b.addExecutable(.{ .name = "frontend-benchmark", .root_module = benchmark_mod });
+    const benchmark_run = b.addRunArtifact(benchmark_exe);
+    if (b.args) |args| benchmark_run.addArgs(args);
+    const benchmark_step = b.step("benchmark-frontend", "Measure clean and reused frontend compilations");
+    benchmark_step.dependOn(&benchmark_run.step);
+
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(internal_test_step);
     test_step.dependOn(program_test_step);

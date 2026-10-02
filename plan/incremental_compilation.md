@@ -5,24 +5,27 @@ Scheduling: [0.3](0.3.md), before C interop and cross-compilation.
 ## Direction
 
 Reuse work at the existing file/module boundaries before attempting fine-grained
-incrementality. Start with in-memory `ModuleSG` reuse and a persistent consumer
-such as the LSP; decide on CLI disk persistence from measured benefits.
+incrementality. Canonical `ModuleSG`s can be reused in memory by persistent
+consumers; decide on CLI disk persistence from measured benefits.
 
 ## Work to do
 
-- [ ] Compare cold builds, unchanged rebuilds, local edits, and imported-module
-  edits; measure phase costs, total latency, and retained memory.
-- [ ] Reuse canonical module graphs while rebuilding GlobalSG, safety, and
-  codegen initially. Ordinary imported requirements remain unresolved until
-  linking; measure the extra pass for qualified imported abstracts separately.
-- [ ] Preserve source provenance and diagnostic locations across reuse, including
-  unsaved editor buffers, file changes, and failed builds followed by corrections.
-- [ ] Integrate useful reuse into LSP requests and bound retained cache memory.
-- [ ] Add versioned persistent module caches only if separate CLI builds benefit;
-  consider syntax-tree caching separately if tokenizing/syntaxing remain costly.
+- [ ] Integrate module reuse into LSP requests and bound retained cache memory.
+- [ ] Evaluate versioned persistent module caches for separate CLI builds;
+  consider syntax-tree caching if tokenizing/syntaxing remain costly.
 
-Cache keys need source-set/content fingerprints, compiler/configuration versions,
-core prelude inputs, and relevant target settings. Imported contents belong in
+## Measuring reuse
+
+Run `zig build -Doptimize=ReleaseSafe benchmark-frontend -- <module-directory>`
+(with an optional iteration count). It compares clean and reused frontend work
+for unchanged inputs and local/import/core edits, including linked abstract
+lowering and retained cache memory. Source collection, codegen, and linking are
+outside these timings. Canonical modules are reusable; GlobalSG, safety, and
+codegen are still rebuilt for each compilation.
+
+The in-memory cache fingerprints source sets/content, core prelude inputs, and
+semantizing options; compiler and target are fixed within the process. Persistent
+or target-aware caches also need compiler/format versions and target settings. Imported contents belong in
 keys only where cached decisions depend on them. Process-local IDs and borrowed
 source pointers cannot serve as persistent provenance.
 

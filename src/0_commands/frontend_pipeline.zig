@@ -8,6 +8,7 @@ const tokenizer = @import("../2_tokens/tokenizer.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
 const st_print = @import("../3_syntax/syntax_tree_print.zig");
 const syntaxer = @import("../3_syntax/syntaxer.zig");
+pub const cache = @import("frontend_cache.zig");
 const module_sg = @import("../4_semantics/module/graph.zig");
 const module_semantizer = @import("../4_semantics/module/semantizer.zig");
 const global_sg = @import("../4_semantics/global/graph.zig");
@@ -29,6 +30,7 @@ pub const FrontendPipeline = struct {
         semantizing: SemantizingOptions = .{},
         collect_stats: bool = false,
         entry_module_dir: ?[]const u8 = null,
+        module_cache: ?*cache.ModuleCache = null,
     };
 
     allocator: std.mem.Allocator,
@@ -39,6 +41,13 @@ pub const FrontendPipeline = struct {
     syntax_files: std.array_list.Managed(st.FileSyntaxTree),
     syntax_root_list: std.array_list.Managed(st.SyntaxRef),
     module_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty,
+    module_entries: std.ArrayList(*cache.ModuleCache.Entry) = .empty,
+    module_cache_hits: usize = 0,
+    module_cache_misses: usize = 0,
+    linked_module_count: usize = 0,
+    linked_module_ns: u64 = 0,
+    tokenizing_ns: u64 = 0,
+    syntaxing_ns: u64 = 0,
     /// Authoritative whole-program semantic artifact. No pointer SemanticGraph
     /// can be materialized by this pipeline anymore.
     global_graph: ?global_sg.GlobalSemanticGraph = null,
@@ -74,6 +83,7 @@ pub const FrontendPipeline = struct {
     pub fn deinit(self: *FrontendPipeline) void {
         self.clearModuleGraphs();
         self.module_graphs.deinit(self.allocator);
+        self.module_entries.deinit(self.allocator);
         for (self.syntax_files.items) |*file| file.deinit(self.allocator);
         self.syntax_files.deinit();
         self.syntax_root_list.deinit();
@@ -158,8 +168,13 @@ pub const FrontendPipeline = struct {
     }
 
     pub fn parseFiles(self: *FrontendPipeline, files: []const sf.SourceFile) ![]const st.SyntaxRef {
+        const start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         try self.tokenizeFiles(files);
-        return try self.syntax();
+        const syntax_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
+        self.tokenizing_ns = @intCast(syntax_start - start);
+        const roots = try self.syntax();
+        self.syntaxing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - syntax_start);
+        return roots;
     }
 
     /// Produce and safety-check the final indexed semantic graph. This is the
@@ -287,10 +302,15 @@ pub const FrontendPipeline = struct {
         self.clearModuleGraphs();
         errdefer self.clearModuleGraphs();
         self.module_lowered_functions = 0;
+        self.module_cache_hits = 0;
+        self.module_cache_misses = 0;
+        self.linked_module_count = 0;
+        self.linked_module_ns = 0;
 
         const ModuleInputs = struct {
             dir: []const u8,
             files: std.ArrayList(module_sg.FileInput) = .empty,
+            source_fingerprint: cache.Fingerprint = @splat(0),
         };
         var groups: std.ArrayList(ModuleInputs) = .empty;
         defer {
@@ -321,12 +341,42 @@ pub const FrontendPipeline = struct {
         // bundled-core declaration surface early enough to derive the language
         // prelude without making ordinary ModuleSema depend on arbitrary user
         // modules.
+        var core_hash = cache.ContentHash.init(.{});
+        if (self.options.module_cache != null) {
+            for (groups.items) |*group| {
+                var hash = cache.ContentHash.init(.{});
+                cache.hashBytes(&hash, group.dir);
+                for (group.files.items) |file| hashFile(&hash, file);
+                group.source_fingerprint = cache.finishHash(&hash);
+                if (group.files.items[0].is_bundled_core) {
+                    cache.hashBytes(&core_hash, group.dir);
+                    core_hash.update(&group.source_fingerprint);
+                }
+            }
+        }
+        const core_fingerprint = cache.finishHash(&core_hash);
         try self.module_graphs.ensureTotalCapacity(self.allocator, groups.items.len);
+        if (self.options.module_cache != null)
+            try self.module_entries.ensureTotalCapacity(self.allocator, groups.items.len);
         for (groups.items) |group| {
-            var graph = try module_sg.build(self.allocator, group.dir, group.files.items);
-            errdefer graph.deinit(self.allocator);
-            self.module_graphs.appendAssumeCapacity(graph);
-            graph = .{};
+            if (self.options.module_cache) |session| {
+                const fingerprint = self.moduleFingerprint(group.source_fingerprint, core_fingerprint);
+                if (session.acquire(group.dir, fingerprint)) |entry| {
+                    self.module_entries.appendAssumeCapacity(entry);
+                    self.module_graphs.appendAssumeCapacity(entry.graph);
+                    self.module_cache_hits += 1;
+                } else {
+                    const entry = try session.create(fingerprint);
+                    errdefer entry.release();
+                    entry.graph = try module_sg.build(entry.allocator(), group.dir, group.files.items);
+                    self.module_entries.appendAssumeCapacity(entry);
+                    self.module_graphs.appendAssumeCapacity(entry.graph);
+                    self.module_cache_misses += 1;
+                }
+            } else {
+                const graph = try module_sg.build(self.allocator, group.dir, group.files.items);
+                self.module_graphs.appendAssumeCapacity(graph);
+            }
         }
 
         // Bundled core is compiler semantic configuration: its abstracts are
@@ -357,15 +407,28 @@ pub const FrontendPipeline = struct {
         // Finish each durable module exactly once with the prelude already
         // known. Cross-user-module declaration kinds remain unresolved here.
         for (self.module_graphs.items, 0..) |*module, module_index| {
+            if (module.semantic.local_semantics_complete) continue;
+            const module_allocator = if (self.options.module_cache != null)
+                self.module_entries.items[module_index].allocator()
+            else
+                self.allocator;
             const stats = try module_semantizer.finishLinked(
-                self.allocator,
+                module_allocator,
                 module,
                 groups.items[module_index].files.items,
                 prelude_abstracts.items,
                 self.diagnostics,
             );
             self.module_lowered_functions += stats.lowered_functions;
+            if (self.options.module_cache != null)
+                self.module_entries.items[module_index].graph = module.*;
         }
+
+        // Cached graphs are immutable module-local artifacts. Qualified imported
+        // abstracts still produce a fresh derivative below for each compilation.
+        if (!self.diagnostics.hasErrors()) if (self.options.module_cache) |session| {
+            for (self.module_entries.items) |entry| try session.publish(entry);
+        };
 
         var module_dirs: std.ArrayList([]const u8) = .empty;
         defer module_dirs.deinit(self.allocator);
@@ -413,12 +476,15 @@ pub const FrontendPipeline = struct {
                 try linked_abstracts.appendSlice(self.allocator, prelude_abstracts.items);
                 try linked_abstracts.appendSlice(self.allocator, imported_abstracts.items);
 
+                const linked_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
                 const linked = try module_semantizer.buildLinked(
                     self.allocator,
                     groups.items[module_index].dir,
                     groups.items[module_index].files.items,
                     linked_abstracts.items,
                 );
+                self.linked_module_ns += @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - linked_start);
+                self.linked_module_count += 1;
                 try linked_graphs.append(self.allocator, linked.graph);
                 try selected_graphs.append(self.allocator, linked_graphs.items[linked_graphs.items.len - 1]);
                 self.module_lowered_functions += linked.stats.lowered_functions;
@@ -446,12 +512,37 @@ pub const FrontendPipeline = struct {
         self.global_semantic_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - global_start);
     }
 
+    fn hashFile(hash: *cache.ContentHash, file: module_sg.FileInput) void {
+        cache.hashBytes(hash, file.path);
+        cache.hashBytes(hash, file.source);
+        hash.update(&.{ @intFromBool(file.is_bundled_core), @intFromBool(file.is_entry) });
+    }
+
+    fn moduleFingerprint(self: *const FrontendPipeline, source: cache.Fingerprint, core: cache.Fingerprint) cache.Fingerprint {
+        var hash = cache.ContentHash.init(.{});
+        hash.update(&source);
+        hash.update(&core);
+        const options = self.options.semantizing;
+        hash.update(&.{
+            @intFromBool(options.include_tests),              @intFromBool(options.exhaustive_function_bodies),
+            @intFromBool(options.selected_test_name != null), @intFromBool(options.implicit_testing_module_dir != null),
+        });
+        cache.hashBytes(&hash, options.selected_test_name orelse "");
+        cache.hashBytes(&hash, options.implicit_testing_module_dir orelse "");
+        return cache.finishHash(&hash);
+    }
+
     fn clearModuleGraphs(self: *FrontendPipeline) void {
         if (self.safety_ctx) |*ctx| ctx.deinit();
         self.safety_ctx = null;
         if (self.global_graph) |*graph| graph.deinit(self.allocator);
         self.global_graph = null;
-        for (self.module_graphs.items) |*graph| graph.deinit(self.allocator);
+        if (self.options.module_cache != null) {
+            for (self.module_entries.items) |entry| entry.release();
+            self.module_entries.clearRetainingCapacity();
+        } else {
+            for (self.module_graphs.items) |*graph| graph.deinit(self.allocator);
+        }
         self.module_graphs.clearRetainingCapacity();
     }
 
