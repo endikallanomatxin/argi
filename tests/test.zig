@@ -692,7 +692,7 @@ test "argi init lib creates package without executables" {
     try expect(std.mem.indexOf(u8, text, "[run]") == null);
 }
 
-test "argi build and run executable package from cwd" {
+test "argi build and run executable package from cwd and entry module" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -727,6 +727,26 @@ test "argi build and run executable package from cwd" {
     defer std.testing.allocator.free(run_result.stdout);
     defer std.testing.allocator.free(run_result.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 0 }, run_result.term);
+
+    const entry_dir = try std.fs.path.join(std.testing.allocator, &.{ module_root, "source", "hello" });
+    defer std.testing.allocator.free(entry_dir);
+    const entry_build = try runChildInCwd(&.{ installed_argi, "build", entry_dir }, module_root);
+    defer std.testing.allocator.free(entry_build.stdout);
+    defer std.testing.allocator.free(entry_build.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, entry_build.term);
+
+    const file_build = try runChildInCwd(&.{ installed_argi, "build", "main.rg" }, entry_dir);
+    defer std.testing.allocator.free(file_build.stdout);
+    defer std.testing.allocator.free(file_build.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, file_build.term);
+
+    const entry_run = try runChildInCwd(&.{ installed_argi, "run" }, entry_dir);
+    defer std.testing.allocator.free(entry_run.stdout);
+    defer std.testing.allocator.free(entry_run.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, entry_run.term);
+    const nested_build = try std.fs.path.join(std.testing.allocator, &.{ entry_dir, "build" });
+    defer std.testing.allocator.free(nested_build);
+    try std.testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(std.testing.io, nested_build, .{}));
 }
 
 test "argi init executable package can print from generated main" {

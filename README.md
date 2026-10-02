@@ -73,7 +73,9 @@ path = "source/hello"
 default = "hello"
 ```
 
-The default output for package executables is:
+Selecting a declared entry module directly, or building from that module's
+directory, uses the same package output. The default output for package
+executables is:
 
 ```text
 build/debug/<executable-name>

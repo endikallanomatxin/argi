@@ -139,6 +139,14 @@ fn hasManifest(io: std.Io, allocator: std.mem.Allocator, module_root: []const u8
     return true;
 }
 
+fn enclosingPackageRoot(allocator: std.mem.Allocator, io: std.Io, module_dir: []const u8) !?[]u8 {
+    var current = std.fs.path.dirname(module_dir) orelse return null;
+    while (true) {
+        if (try hasManifest(io, allocator, current)) return try allocator.dupe(u8, current);
+        current = std.fs.path.dirname(current) orelse return null;
+    }
+}
+
 fn parseQuotedValue(line: []const u8) ?[]const u8 {
     const eq_idx = std.mem.indexOfScalar(u8, line, '=') orelse return null;
     var value = std.mem.trim(u8, line[eq_idx + 1 ..], " \t\r\n");
@@ -296,6 +304,25 @@ pub fn resolveBuildPlans(allocator: std.mem.Allocator, io: std.Io, target_path: 
         for (manifest.executables.items) |*executable|
             try appendExecutablePlan(allocator, io, &plans, target_path, target_dir, executable);
         return plans;
+    }
+
+    // An explicitly selected entry module still belongs to its package. Use
+    // the declared executable's output rather than creating a second build
+    // directory under source/. The nearest manifest defines this boundary;
+    // unrelated modules keep the standalone-module behavior.
+    if (try enclosingPackageRoot(allocator, io, target_dir)) |package_root| {
+        errdefer allocator.free(package_root);
+        const manifest = try readManifest(allocator, io, package_root);
+        for (manifest.executables.items) |*executable| {
+            if (flags.executable_name) |name|
+                if (!std.mem.eql(u8, name, executable.name)) continue;
+            const executable_dir = try std.fs.path.resolve(allocator, &.{ package_root, executable.path orelse executable.name });
+            defer allocator.free(executable_dir);
+            if (!std.mem.eql(u8, executable_dir, target_dir)) continue;
+            try appendExecutablePlan(allocator, io, &plans, target_path, package_root, executable);
+        }
+        if (plans.items.len != 0) return plans;
+        allocator.free(package_root);
     }
 
     if (flags.executable_name != null) {
