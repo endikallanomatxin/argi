@@ -7613,17 +7613,16 @@ test "feature_tests/types/115X_error_tracer_corrupt_header" {
     try runExpectFailure(path);
 }
 
-test "feature_tests/basics/37X_nested_array_inference" {
-    try buildExpectFailExact("tests/feature_tests/basics/37X_nested_array_inference",
-        \\tests/feature_tests/basics/37X_nested_array_inference/main.rg:2:5: error: cannot infer the array type of 'first' from this literal; add an explicit array type annotation
-        \\      first := ((1,2), (3,4))
-        \\      ^
-        \\
-    );
+test "feature_tests/basics/37_nested_array_inference" {
+    const path = "tests/feature_tests/basics/37_nested_array_inference";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
 }
 
-test "feature_tests/basics/38X_used_array_inference" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/basics/38X_used_array_inference", "cannot infer the array type of 'first' from this literal; add an explicit array type annotation", "global sema unresolved");
+test "feature_tests/basics/38_used_array_inference" {
+    const path = "tests/feature_tests/basics/38_used_array_inference";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 1);
 }
 
 test "feature_tests/basics/39_contextual_nested_array" {
@@ -7636,6 +7635,30 @@ test "feature_tests/basics/40X_array_initializer_unknown_call" {
     try buildExpectFailWithoutNoise("tests/feature_tests/basics/40X_array_initializer_unknown_call", "no function named 'missing_value' exists", "cannot infer the array type");
 }
 
-test "feature_tests/basics/41X_array_address_inference" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/basics/41X_array_address_inference", "cannot infer an array type for this literal; add an explicit array type annotation", "#address_temporary");
+test "feature_tests/basics/41_array_address_inference" {
+    const path = "tests/feature_tests/basics/41_array_address_inference";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/42_inferred_array_element_types" {
+    const path = "tests/feature_tests/basics/42_inferred_array_element_types";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/43X_heterogeneous_array_inference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/basics/43X_heterogeneous_array_inference", "cannot infer the array type of 'values' from this literal; add an explicit array type annotation", "UnsupportedGlobalSemantic");
+}
+
+test "feature_tests/basics/44X_ragged_array_inference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/basics/44X_ragged_array_inference", "cannot infer the array type of 'values' from this literal; add an explicit array type annotation", "UnsupportedGlobalSemantic");
+}
+
+test "feature_tests/basics/45X_empty_array_inference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/basics/45X_empty_array_inference", "cannot infer the array type of 'values' from this literal; add an explicit array type annotation", "UnsupportedGlobalSemantic");
+}
+
+test "feature_tests/basics/46X_nested_empty_array_inference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/basics/46X_nested_empty_array_inference", "cannot infer the array type of 'values' from this literal; add an explicit array type annotation", "UnsupportedGlobalSemantic");
 }

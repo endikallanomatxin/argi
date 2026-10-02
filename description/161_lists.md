@@ -8,18 +8,24 @@ Fixed-size arrays:
 a : [3]Int32 = (1, 2, 3)
 ```
 
-> [!IDEA]
-> A collection literal such as `(1, 2, 3)` could infer a library list type
-> from its elements or an expected type, instead of requiring an explicit
-> `List#(.t = Int32)(1, 2, 3)` constructor. Its distinction from struct and
-> native array literals needs a rule.
+A positional literal initializing an unannotated binding infers a fixed array
+from its length and homogeneous element types. Integer and floating-point literals
+use their normal defaults, `Int32` and `Float32`:
+
+```rg
+values := (1, 2, 3)           // [3]Int32
+matrix := ((1, 2), (3, 4))   // [2][2]Int32
+```
+
+An explicit type or a function parameter supplies the expected type before
+literal defaults are considered. For example, `[2][2]Int64` gives each numeric
+element an `Int64` context. Inference does not widen heterogeneous elements
+or turn rows of different lengths into a common array type. Empty literals,
+including empty rows in nested literals, require an expected element type.
 
 `[N]T` is the native fixed array type. Native bracket types represent fixed
 arrays only; slices and views are library abstractions, not native array types.
 Library collection access uses named operations rather than overload sets.
-
-> [!QUESTION] Find a way to define the length automatically.
-> Perhaps `[?]T` could let the compiler calculate it.
 
 Native fixed-array indexing follows the language-wide place model:
 

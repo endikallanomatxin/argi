@@ -1746,8 +1746,8 @@ fn diagnosePrivateFields(
     return false;
 }
 
-// Positional array literals receive their element type from context. Report
-// the missing context before diagnostics for operations using the binding;
+// Array literals whose elements do not determine a homogeneous type need
+// context. Report it before diagnostics for operations using the binding;
 // unresolved leaf expressions retain their own name/call diagnostics.
 fn arrayLiteralLeavesResolved(graph: *const global_sg.GlobalSemanticGraph, id: global_sg.GlobalNodeId) bool {
     const node = graph.node(id);

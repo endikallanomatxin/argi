@@ -222,6 +222,10 @@ pub const Resolver = struct {
             const id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
             if (!self.graph.isBindingTypeUnresolved(id)) continue;
             const initialization = binding.initialization orelse continue;
+            if (self.graph.node(initialization).content == .list_literal) {
+                const array_type = try self.inferArrayLiteralType(initialization) orelse continue;
+                _ = self.coerceContextualValue(initialization, array_type);
+            }
             const inferred = self.graph.nodes.items[@intFromEnum(initialization)].ty orelse continue;
             if (self.graph.isTypeUnresolved(inferred)) continue;
             try self.graph.resolveBindingType(id, inferred);
@@ -257,6 +261,34 @@ pub const Resolver = struct {
             else => {},
         };
         return changed;
+    }
+
+    // Infer only initializers without an expected binding type. Call arguments
+    // and annotated values retain contextual typing, including numeric literals.
+    // Nested literals are inspected without mutation until the whole array has
+    // a single element type, so an incomplete inference cannot fix a child type.
+    fn inferArrayLiteralType(self: *Resolver, id: global_sg.GlobalNodeId) error{OutOfMemory}!?global_sg.GlobalTypeId {
+        const node = self.graph.node(id);
+        if (node.content != .list_literal) {
+            const ty = node.ty orelse return null;
+            return if (self.graph.isTypeUnresolved(ty)) null else ty;
+        }
+        const elements = node.content.list_literal.elements;
+        if (elements.len == 0) return null;
+        var element_type: ?global_sg.GlobalTypeId = null;
+        for (self.graph.node_refs.items[elements.start..][0..elements.len]) |element| {
+            const ty = try self.inferArrayLiteralType(element) orelse return null;
+            if (element_type) |expected| {
+                if (!types.equal(self.graph, expected, ty)) return null;
+            } else element_type = ty;
+        }
+        for (self.graph.types.items, 0..) |ty, raw| {
+            if (ty == .array and ty.array.length == elements.len and types.equal(self.graph, ty.array.element, element_type.?))
+                return @enumFromInt(@as(u32, @intCast(raw)));
+        }
+        const ty: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
+        try self.graph.types.append(self.allocator, .{ .array = .{ .element = element_type.?, .length = elements.len } });
+        return ty;
     }
 
     pub fn defaultStringLiteralType(self: *const Resolver) ?global_sg.GlobalTypeId {
