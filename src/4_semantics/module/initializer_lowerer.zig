@@ -64,7 +64,7 @@ const Context = struct {
             self.selectFile(declaration.module_file_index);
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
             const type_declaration = switch (self.tree.tag(declaration_node)) {
-                .type_declaration => self.tree.typeDeclaration(declaration_node).?,
+                .type_declaration, .c_struct_declaration => self.tree.typeDeclaration(declaration_node).?,
                 .c_union_declaration => blk: {
                     const value = self.tree.cUnionDeclaration(declaration_node).?;
                     break :blk syn.TypeDeclaration{

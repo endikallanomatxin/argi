@@ -73,6 +73,7 @@ pub const Node = struct {
         type_declaration,
         c_enum_declaration,
         c_union_declaration,
+        c_struct_declaration,
         abstract_declaration,
         abstract_implements,
         abstract_defaultsto,
@@ -638,7 +639,7 @@ pub const FileSyntaxTree = struct {
     }
 
     pub fn typeDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?TypeDeclaration {
-        if (tree.tag(node) != .type_declaration) return null;
+        if (tree.tag(node) != .type_declaration and tree.tag(node) != .c_struct_declaration) return null;
         const payload = tree.genericValuePayload(node);
         return .{ .name_token = payload.name_token, .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .value = payload.value };
     }

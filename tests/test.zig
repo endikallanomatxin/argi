@@ -7988,3 +7988,14 @@ test "C interop uses a bounded zlib checksum wrapper and manifest linking" {
     }
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/28X_zlib_missing_capability", ".ffi uses reach [ffi]", "failed without a diagnostic");
 }
+
+test "C interop preserves explicit record layouts through native pointers" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/29_c_struct_layout", &.{
+        "declare i32 @argi_c_payload_verify(ptr)",
+        "declare void @argi_c_payload_fill(ptr)",
+        "define i32 @argi_c_payload_export(ptr",
+    });
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/30X_c_struct_non_c_field", "field 'ordinary' has no supported C representation", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/31X_c_struct_by_value", "input 'record' has an unsupported C ABI type", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/32X_generic_c_struct_non_c_field", "field 'value' has no supported C representation", "failed without a diagnostic");
+}

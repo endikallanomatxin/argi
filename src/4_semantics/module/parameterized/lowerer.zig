@@ -212,6 +212,8 @@ pub const Context = struct {
                     self.abstract_parameters.clearRetainingCapacity();
                     const params = try self.lowerParameters(payload.params, payload.params_struct);
                     const body = try self.lowerType(payload.value, false);
+                    if (self.tree.tag(declaration_node) == .c_struct_declaration)
+                        self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(body)].resolved.structural.layout = .c_struct;
                     try self.graph.semantic.parameterized_storage.parameterized_types.append(self.allocator, .{
                         .declaration = decl_id,
                         .parameters = params,
@@ -304,7 +306,7 @@ pub const Context = struct {
 
     fn genericTypePayload(self: *Context, node: syn.NodeIndex) ?GenericTypePayload {
         return switch (self.tree.tag(node)) {
-            .type_declaration => blk: {
+            .type_declaration, .c_struct_declaration => blk: {
                 const value = self.tree.typeDeclaration(node).?;
                 break :blk .{ .params = value.generic_params, .params_struct = value.generic_params_struct, .value = value.value };
             },

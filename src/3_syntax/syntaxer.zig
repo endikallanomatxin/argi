@@ -1807,11 +1807,11 @@ pub const Syntaxer = struct {
 
             if (ty_opt) |ty| {
                 const type_name = if (self.file.tag(ty) == .type_name) self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(ty))).identifier) else "";
-                if (std.mem.eql(u8, type_name, "Type") or std.mem.eql(u8, type_name, "CEnum") or std.mem.eql(u8, type_name, "CUnion")) {
+                if (std.mem.eql(u8, type_name, "Type") or std.mem.eql(u8, type_name, "CEnum") or std.mem.eql(u8, type_name, "CUnion") or std.mem.eql(u8, type_name, "CStruct")) {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                     self.advanceOne();
                     if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
-                    const tag: syn.Node.Tag = if (std.mem.eql(u8, type_name, "CEnum")) .c_enum_declaration else if (std.mem.eql(u8, type_name, "CUnion")) .c_union_declaration else .type_declaration;
+                    const tag: syn.Node.Tag = if (std.mem.eql(u8, type_name, "CEnum")) .c_enum_declaration else if (std.mem.eql(u8, type_name, "CUnion")) .c_union_declaration else if (std.mem.eql(u8, type_name, "CStruct")) .c_struct_declaration else .type_declaration;
                     const lit_node = if (tag == .c_enum_declaration or (tag == .type_declaration and self.parenthesizedTypeIsChoiceLiteral()))
                         try self.parseChoiceTypeLiteral()
                     else

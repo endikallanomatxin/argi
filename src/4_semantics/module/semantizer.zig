@@ -123,11 +123,11 @@ fn lowerNominalLayouts(allocator: std.mem.Allocator, graph: *module_sg.ModuleSem
         const file = files[declaration.module_file_index];
         const node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;
         const tag = file.tree.tag(node);
-        if (tag != .c_enum_declaration and tag != .c_union_declaration) continue;
+        if (tag != .c_enum_declaration and tag != .c_union_declaration and tag != .c_struct_declaration) continue;
         try graph.semantic.declaration_semantics.append(allocator, .{
             .declaration = @enumFromInt(@as(u32, @intCast(raw))),
             .choice_layout = if (tag == .c_enum_declaration) .c_enum else .regular,
-            .struct_layout = if (tag == .c_union_declaration) .c_union else .regular,
+            .struct_layout = if (tag == .c_union_declaration) .c_union else if (tag == .c_struct_declaration) .c_struct else .regular,
         });
     }
 }

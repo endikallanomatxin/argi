@@ -11,8 +11,8 @@ existing external calls do not establish support for every signature shape.
 
 ## Work to do
 
-- [ ] Add explicit C record layouts;
-  expand the checked ABI subset alongside cross-language tests.
+- [ ] Classify C record arguments/results for supported target ABIs; explicit
+  layouts and pointer-based native record tests already provide the foundation.
 - [ ] Add explicit static/shared named-library mode selection; manifest and CLI
   native inputs currently select exact artifacts through file paths.
 - [ ] Keep foreign-call capabilities, resource cleanup, pointer bounds, and

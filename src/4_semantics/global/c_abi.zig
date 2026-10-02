@@ -109,3 +109,37 @@ fn rawPointerDepth(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
         else => return false,
     }
 }
+
+/// Representation compatibility is independent of argument/result classification.
+/// A C record can be addressed by pointer before its by-value ABI is supported.
+pub fn supportsRepresentation(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    return representationDepth(graph, ty, 0);
+}
+
+fn representationDepth(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, depth: usize) bool {
+    if (depth >= 32) return false;
+    if (supportsDirectValue(graph, ty)) return true;
+    return switch (graph.types.items[@intFromEnum(ty)]) {
+        .declared => |id| blk: {
+            const declaration = graph.declaration(id);
+            if (declaration.struct_layout == .regular) break :blk false;
+            break :blk fieldsHaveRepresentation(graph, declaration.struct_fields orelse break :blk false, depth);
+        },
+        .array => |shape| shape.length != 0 and representationDepth(graph, shape.element, depth + 1),
+        .generic => if (types.genericInstance(graph, ty)) |instance| switch (instance.shape) {
+            .alias => |target| representationDepth(graph, target, depth + 1),
+            .array => |shape| shape.length != 0 and representationDepth(graph, shape.element, depth + 1),
+            .structure => |shape| shape.layout != .regular and fieldsHaveRepresentation(graph, shape.fields, depth),
+            else => false,
+        } else false,
+        else => false,
+    };
+}
+
+fn fieldsHaveRepresentation(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.FieldRange, depth: usize) bool {
+    if (range.len == 0) return false;
+    for (graph.fields.items[range.start..][0..range.len]) |field| {
+        if (!representationDepth(graph, field.ty, depth + 1)) return false;
+    }
+    return true;
+}

@@ -320,6 +320,27 @@ pub const SafetyChecker = struct {
 
     fn validateForeignSignatures(self: *SafetyChecker) !void {
         const c_abi = @import("../global/c_abi.zig");
+        for (self.graph.declarations.items) |declaration| {
+            if (declaration.struct_layout != .c_struct) continue;
+            const fields = declaration.struct_fields orelse continue;
+            if (fields.len == 0) try self.report(declaration.source, "CStruct '{s}' must contain at least one field", .{self.graph.text(declaration.name)});
+            for (self.graph.fields.items[fields.start..][0..fields.len]) |field| {
+                if (!c_abi.supportsRepresentation(self.graph, field.ty))
+                    try self.report(field.source, "CStruct '{s}' field '{s}' has no supported C representation", .{ self.graph.text(declaration.name), self.graph.text(field.name) });
+            }
+        }
+        for (self.graph.generic_instances.items) |instance| {
+            const shape = switch (instance.shape) {
+                .structure => |value| value,
+                else => continue,
+            };
+            if (shape.layout != .c_struct) continue;
+            if (shape.fields.len == 0) try self.report(self.graph.declaration(self.graph.types.items[@intFromEnum(instance.type_id)].generic.base).source, "CStruct must contain at least one field", .{});
+            for (self.graph.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
+                if (!c_abi.supportsRepresentation(self.graph, field.ty))
+                    try self.report(field.source, "CStruct field '{s}' has no supported C representation", .{self.graph.text(field.name)});
+            }
+        }
         for (self.graph.functions.items) |function| {
             if (function.flags.is_abstract_dispatch) continue;
             if (!function.flags.is_c_abi and (function.body != null or function.flags.has_declared_body)) continue;

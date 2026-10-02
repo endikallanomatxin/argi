@@ -359,7 +359,7 @@ fn buildStructDefinitions(allocator: std.mem.Allocator, graph: *ModuleSemanticGr
         const input = files[declaration.module_file_index];
         const declaration_node = declarationSyntaxNode(files, declaration.*) orelse continue;
         const type_declaration = switch (input.tree.tag(declaration_node)) {
-            .type_declaration => input.tree.typeDeclaration(declaration_node).?,
+            .type_declaration, .c_struct_declaration => input.tree.typeDeclaration(declaration_node).?,
             .c_union_declaration => blk: {
                 const value = input.tree.cUnionDeclaration(declaration_node).?;
                 break :blk syn.TypeDeclaration{ .name_token = value.name_token, .generic_params = value.generic_params, .generic_params_struct = value.generic_params_struct, .value = value.value };
@@ -382,7 +382,7 @@ fn buildChoiceDefinitions(allocator: std.mem.Allocator, graph: *ModuleSemanticGr
         const input = files[declaration.module_file_index];
         const declaration_node = declarationSyntaxNode(files, declaration.*) orelse continue;
         const generic_params, const generic_params_struct, const value = switch (input.tree.tag(declaration_node)) {
-            .type_declaration => blk: {
+            .type_declaration, .c_struct_declaration => blk: {
                 const item = input.tree.typeDeclaration(declaration_node).?;
                 break :blk .{ item.generic_params, item.generic_params_struct, item.value };
             },
@@ -774,7 +774,7 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
                 break :blk if (value != null and tree.tag(value.?) == .import_statement) .import_alias else .binding;
             },
             .abstract_declaration => .abstract_type,
-            .type_declaration, .c_enum_declaration, .c_union_declaration => .type,
+            .type_declaration, .c_struct_declaration, .c_enum_declaration, .c_union_declaration => .type,
             .choice_option_declaration => .choice_option,
             .function_declaration, .function_declaration_once => .function,
             .test_declaration => .test_function,
@@ -829,7 +829,7 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
 
 fn genericParameterCount(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) ?u32 {
     const params, const params_struct = switch (tree.tag(node)) {
-        .type_declaration => blk: {
+        .type_declaration, .c_struct_declaration => blk: {
             const declaration = tree.typeDeclaration(node).?;
             break :blk .{ declaration.generic_params, declaration.generic_params_struct };
         },
