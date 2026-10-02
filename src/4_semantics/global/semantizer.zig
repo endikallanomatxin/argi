@@ -2858,6 +2858,12 @@ fn appendReachAlternatives(
 }
 
 fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) anyerror!void {
+    // Candidate signatures may still contain unresolved slots while reporting
+    // a failed call. Their poison payload is not a declaration to inspect.
+    if (graph.isTypeUnresolved(ty)) {
+        try buffer.appendSlice("<unresolved>");
+        return;
+    }
     if (global_types.arrayLength(graph, ty)) |length| {
         const element = global_types.arrayElement(graph, ty) orelse return error.InvalidArrayType;
         try buffer.append('[');
@@ -3072,4 +3078,16 @@ test "global semantizer accepts an empty program" {
     try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
     try std.testing.expectEqual(@as(u64, 0), result.stats.pending_attempts);
     try std.testing.expect(result.graph.constructionStateEmpty());
+}
+
+test "call diagnostic type names tolerate unresolved slots" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.markTypeUnresolved(allocator, @enumFromInt(0));
+    var name = std.array_list.Managed(u8).init(allocator);
+    defer name.deinit();
+    try appendTypeName(&name, &graph, @enumFromInt(0));
+    try std.testing.expectEqualStrings("<unresolved>", name.items);
 }
