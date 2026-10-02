@@ -306,7 +306,8 @@ pub const CodeGenerator = struct {
 
     fn externSignature(self: *CodeGenerator, function: graph_mod.Function, name: []const u8) !ExternSignature {
         const uses_sret = function.output.len > 1;
-        const total: usize = function.input.len + @as(usize, if (uses_sret) 1 else 0);
+        const physical_inputs = @import("../4_semantics/global/c_abi.zig").physicalInputCount(function);
+        const total: usize = physical_inputs + @as(usize, if (uses_sret) 1 else 0);
         const params = try self.allocator.alloc(llvm.c.LLVMTypeRef, total);
         defer self.allocator.free(params);
         var cursor: usize = 0;
@@ -314,9 +315,9 @@ pub const CodeGenerator = struct {
             params[0] = c.LLVMPointerType(try self.fieldsLLVMType(function.output), 0);
             cursor = 1;
         }
-        for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index|
+        for (self.graph.fields.items[function.input.start..][0..physical_inputs], 0..) |field, index|
             params[cursor + index] = try self.toLLVMType(field.ty);
-        if (std.mem.eql(u8, self.externSymbolName(function, name), "free") and function.input.len == 1)
+        if (std.mem.eql(u8, self.externSymbolName(function, name), "free") and physical_inputs == 1)
             params[cursor] = c.LLVMPointerType(c.LLVMInt8Type(), 0);
 
         var ret = c.LLVMVoidType();
@@ -1730,7 +1731,8 @@ pub const CodeGenerator = struct {
             return .{ .value_ref = result, .type_ref = symbol.return_type, .ty = self.graph.nodes.items[@intFromEnum(call.input)].ty };
         }
 
-        const total: usize = callee.input.len + @as(usize, if (symbol.uses_sret) 1 else 0);
+        const physical_inputs = @import("../4_semantics/global/c_abi.zig").physicalInputCount(callee);
+        const total: usize = physical_inputs + @as(usize, if (symbol.uses_sret) 1 else 0);
         const args = try self.allocator.alloc(llvm.c.LLVMValueRef, total);
         defer self.allocator.free(args);
         var cursor: usize = 0;
@@ -1744,9 +1746,9 @@ pub const CodeGenerator = struct {
         }
         const declaration = self.graph.declarations.items[@intFromEnum(callee.declaration)];
         const name = self.graph.text(declaration.name);
-        for (self.graph.fields.items[callee.input.start..][0..callee.input.len], 0..) |field, index| {
+        for (self.graph.fields.items[callee.input.start..][0..physical_inputs], 0..) |field, index| {
             const raw = c.LLVMBuildExtractValue(self.builder, input.value_ref, @intCast(index), "extern.arg");
-            if (std.mem.eql(u8, self.externSymbolName(callee, name), "free") and callee.input.len == 1)
+            if (std.mem.eql(u8, self.externSymbolName(callee, name), "free") and physical_inputs == 1)
                 args[cursor + index] = c.LLVMBuildIntToPtr(self.builder, raw, c.LLVMPointerType(c.LLVMInt8Type(), 0), "free.address")
             else
                 args[cursor + index] = raw;

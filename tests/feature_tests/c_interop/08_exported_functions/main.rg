@@ -24,7 +24,8 @@ argi_export_float(.left: Float64, .right: Float64) -> (.result: Float64)
 
 argi_c_probe() -> (.result: Int32) : CFunction
 
-main() -> (.status_code: Int32 = 0) := {
+main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume ffi := system.ffi
     if argi_c_probe() != 0 { status_code = 1 }
     if _local(6) != 7 { status_code = 2 }
 }

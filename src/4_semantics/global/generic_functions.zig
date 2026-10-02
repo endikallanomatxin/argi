@@ -197,6 +197,9 @@ pub const Resolver = struct {
             reach,
             compatibility.additionalTypeCompatibility(),
         )) return .deferred;
+        // Operator sugar retains its scope just like a written call: callee
+        // dependencies can extend the input after overload selection.
+        try self.core.trackReachedCall(function_id, input, reach, false);
         self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = .{
             .source = self.graph.node(left).source,
             .ty = try self.core.functionOutputType(function_id),
@@ -464,6 +467,7 @@ pub const Resolver = struct {
 
         const function = self.graph.functions.items[@intFromEnum(selected.function)];
         if (!try self.core.completeCallInputFieldsWithReach(function.input, input, reach)) return null;
+        try self.core.trackReachedCall(selected.function, input, reach, false);
         self.stats.calls += 1;
         return .{
             .source = source,

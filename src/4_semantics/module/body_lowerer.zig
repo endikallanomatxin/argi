@@ -130,6 +130,13 @@ const Context = struct {
                 else => continue,
             };
             if (declaration.generic_params.len != 0 or declaration.generic_params_struct != null) continue;
+            if (declaration.c_abi and declaration.body == null) {
+                for (0..interface.input.len) |offset| {
+                    const field = try views.fieldView(self.graph, @enumFromInt(interface.input.start + @as(u32, @intCast(offset))));
+                    if (std.mem.eql(u8, self.graph.text(field.name), "ffi"))
+                        return self.foreignOptionError(declaration_node, "CFunction imports reserve '.ffi' for the checked capability; rename the C parameter");
+                }
+            }
 
             self.bindings.clearRetainingCapacity();
             self.refinements.clearRetainingCapacity();

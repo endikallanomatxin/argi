@@ -300,6 +300,8 @@ pub fn semantizeWithOptions(
     // them; unresolved is construction state, not the language type `Any`.
     try markUnresolvedTypeSlots(allocator, &relocation.graph, modules, relocation.offsets.items);
 
+    try @import("c_abi.zig").prepareForeignCapabilities(allocator, &relocation.graph);
+
     var core = core_mod.Resolver{
         .allocator = allocator,
         .graph = &relocation.graph,
@@ -2702,6 +2704,8 @@ fn diagnoseUnresolvedCall(
                 defer message.deinit();
                 try message.print("function '{s}' exists, but no overload matches the provided arguments.\nOverloads with omitted reach defaults:\n", .{name});
                 try message.appendSlice(reach_details.items);
+                if (std.mem.indexOf(u8, reach_details.items, ".ffi uses reach") != null)
+                    try message.appendSlice("\n\nForeign calls require a live ForeignFunctionInterface capability. Bind 'assume ffi := system.ffi' in the caller or pass '.ffi' explicitly; this dependency is not part of the C signature.");
                 try message.appendSlice("\n\nAdd a reachable value in the caller, for example:\n  main(.system: System) -> (.status_code: Int32 = 0) := { ... }\n\nOr pass the omitted argument explicitly.");
                 try diagnostics.add(location, .semantic, "{s}", .{message.items});
                 return true;

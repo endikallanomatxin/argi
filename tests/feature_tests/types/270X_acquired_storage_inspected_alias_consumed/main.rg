@@ -2,6 +2,7 @@ inspect(.storage: &AcquiredStorage) -> (.address: UIntNative) := {
     address = acquired_storage_address(.storage = storage).address
 }
 main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume ffi := system.ffi
     allocator :: CAllocator
     init(.p = $&allocator, .ffi = system.ffi)
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = $&allocator)

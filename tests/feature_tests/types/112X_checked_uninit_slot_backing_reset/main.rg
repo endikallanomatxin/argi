@@ -1,4 +1,5 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume ffi := system.ffi
     arena :: ArenaAllocator
     initialized ::= init(.p = $&arena, .allocator = system.page_allocator, .block_size = 64)
     match initialized {

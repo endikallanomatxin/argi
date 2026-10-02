@@ -922,6 +922,11 @@ pub const SafetyChecker = struct {
             values[index] = try self.evaluate(caller, field.value, state);
         }
 
+        if (callee.flags.has_foreign_capability) {
+            const summary = (self.active_summaries orelse return error.MissingSafetySummary).summaryFor(call.callee) orelse return error.MissingSafetySummary;
+            if (!try self.validateSummaryRequiredLive(input_node.source, summary, values, state)) return .{};
+        }
+
         if (callee.safety_primitive != .none) {
             if (self.collect_stats) self.stats.primitive_calls += 1;
             return self.evaluatePrimitive(caller, callee.safety_primitive, argument_nodes, values, state, input_node.source);
@@ -1463,6 +1468,28 @@ pub const SafetyChecker = struct {
         return null;
     }
 
+    fn isForeignCapabilityPlace(self: *SafetyChecker, storage: facts.Place) bool {
+        var ty = self.graph.binding(storage.root).ty;
+        for (storage.projections) |projection| {
+            ty = switch (projection) {
+                .field => |index| self.fieldTypeAt(ty, index) orelse return false,
+                .variant => |index| self.variantPayloadTypeAt(ty, index) orelse return false,
+                .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse return false,
+                .dereference => switch (self.graph.semanticType(ty)) {
+                    .pointer => |pointer| pointer.child,
+                    else => return false,
+                },
+            };
+        }
+        const declaration = switch (self.graph.semanticType(ty)) {
+            .declared => |id| id,
+            else => return false,
+        };
+        if (!std.mem.eql(u8, self.graph.text(self.graph.declaration(declaration).name), "ForeignFunctionInterface")) return false;
+        const module = self.graph.moduleForDeclaration(declaration) orelse return false;
+        return self.graph.modules.items[@intFromEnum(module)].is_bundled_core;
+    }
+
     fn validateSummaryRequiredLive(
         self: *SafetyChecker,
         source: primitives.SourceRef,
@@ -1481,6 +1508,13 @@ pub const SafetyChecker = struct {
                 for (path.projections) |projection| target = try self.project(target, projection);
                 if (self.valueAtPlace(state, target)) |stored| value = try self.reconstructPlaceValue(state, target, stored);
             };
+            if (value.referenced_place) |storage| {
+                // A capability authorizes a call only while its value remains
+                // initialized. Unlike an output pointer, it is never merely a
+                // destination whose live storage may hold no initialized value.
+                if (self.isForeignCapabilityPlace(storage))
+                    try self.requirePlaceInitialized(@enumFromInt(0), source, storage, self.initializednessAtPlace(state, storage), state);
+            }
             // Summary paths select nested payloads, but ownership can live on
             // the containing choice. Keep that envelope when checking roots
             // that exist only on the selected success branch.

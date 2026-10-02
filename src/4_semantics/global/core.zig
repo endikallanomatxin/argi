@@ -1700,6 +1700,9 @@ pub const Resolver = struct {
             return node;
         }
 
+        // A host entry cannot acquire capabilities by extending its C ABI.
+        if (owner.flags.is_c_abi) return null;
+
         const old_input = owner.input;
         const old_bindings = owner.input_bindings;
         const copied_fields = try self.allocator.dupe(global_sg.Field, self.graph.fields.items[old_input.start..][0..old_input.len]);

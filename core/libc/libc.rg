@@ -55,33 +55,7 @@ fwrite_from(
     ).count
 }
 
-memcpy_bytes(
-    .dst: ArrayView#(.t: UInt8),
-    .src: ArrayView#(.t: UInt8),
-) -> () := {
-    if length#(.t: UInt8)(.self = &dst).count > length#(.t: UInt8)(.self = &src).count { abort }
-    if length#(.t: UInt8)(.self = &dst).count == 0 { return }
-    memcpy(
-        .dst = trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &dst).pointer).reference,
-        .src = trusted_reinterpret_reference#(.from: UInt8, .to: Any)(.base = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(.self = &src).pointer).reference).reference,
-        .n = length#(.t: UInt8)(.self = &dst).count,
-    )
-}
-
-memcpy_bytes(
-    .dst: ArrayView#(.t: UInt8),
-    .src: ArrayViewRO#(.t: UInt8),
-) -> () := {
-    if length#(.t: UInt8)(.self = &dst).count > length#(.t: UInt8)(.self = &src).count { abort }
-    if length#(.t: UInt8)(.self = &dst).count == 0 { return }
-    memcpy(
-        .dst = trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &dst).pointer).reference,
-        .src = trusted_reinterpret_reference#(.from: UInt8, .to: Any)(.base = data#(.t: UInt8)(.self = &src).pointer).reference,
-        .n = length#(.t: UInt8)(.self = &dst).count,
-    )
-}
-
--- Explicit access to the C runtime. Memory does not grant this capability.
+-- Direct libc allocation requires its own foreign-call capability.
 malloc(.size: UIntNative, .ffi: $&ForeignFunctionInterface) -> (.address: UIntNative) := {
     address = _malloc(.size = size).address
 }

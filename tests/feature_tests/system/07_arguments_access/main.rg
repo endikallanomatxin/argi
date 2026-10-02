@@ -1,4 +1,5 @@
 main(.system: System) -> (.status_code: Int32) := {
+    assume ffi := system.ffi
     argc ::= length(.self = system.args).count
     if argc < 1 {
         status_code = 1

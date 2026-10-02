@@ -654,6 +654,7 @@ test "argi init creates executable package" {
     try expect(std.mem.indexOf(u8, text, "default = \"hello\"\n") != null);
     try expectEqualStrings(
         "main(.system: System) -> (.status_code: Int32 = 0) := {\n" ++
+            "    assume ffi ::= system.ffi\n" ++
             "    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)\n" ++
             "    assume error_tracer ::= FixedSizeErrorTracer(\n" ++
             "        .buffer = view($&zeroed#(.t: [4096]UInt8)()),\n" ++
@@ -1580,8 +1581,8 @@ test "feature_tests/basics/13_core_and_libc" {
 
 test "feature_tests/basics/17X_extern_call_requires_exact_argument_types" {
     try buildExpectFailExact("tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types",
-        \\tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types/main.rg:3:12: error: no overload of 'putchar' accepts arguments (.character: UInt16). Available signatures:
-        \\  - putchar (.character: UInt8) -> ()
+        \\tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types/main.rg:4:12: error: no overload of 'putchar' accepts arguments (.character: UInt16). Available signatures:
+        \\  - putchar (.character: UInt8, .ffi: $&ForeignFunctionInterface) -> ()
         \\      putchar(.character = value)
         \\             ^
         \\
@@ -3274,7 +3275,7 @@ test "feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root" {
 
 test "feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip" {
     try buildExpectFailExact("tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip",
-        \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:4:24: error: no function named 'cast' exists
+        \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:5:24: error: no function named 'cast' exists
         \\      fabricated ::= cast#(.to: &Char)(.value = address)
         \\                         ^
         \\
@@ -7868,4 +7869,28 @@ test "C interop validates exported bodies and signatures" {
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/10X_export_aggregate", "input 'value' has an unsupported C ABI type", "failed without a diagnostic");
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/11X_duplicate_exports", "C symbol 'argi_duplicate' has multiple definitions", "failed without a diagnostic");
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/12X_reserved_export", "C export symbol 'main' is reserved", "failed without a diagnostic");
+}
+
+test "C interop checks reached and explicit authorization without ABI arguments" {
+    try expectSuccessfulBuild("tests/feature_tests/c_interop/13_foreign_capability");
+    try run("tests/feature_tests/c_interop/13_foreign_capability");
+    try expectSuccessfulBuild("tests/feature_tests/c_interop/22_byte_copy_without_ffi");
+    try run("tests/feature_tests/c_interop/22_byte_copy_without_ffi");
+}
+
+test "C interop rejects missing invalid and stale authorization" {
+    const cases = .{
+        .{ "tests/feature_tests/c_interop/14X_missing_foreign_capability", ".ffi uses reach [ffi]" },
+        .{ "tests/feature_tests/c_interop/15X_wrong_foreign_capability", "ForeignFunctionInterface" },
+        .{ "tests/feature_tests/c_interop/16X_stale_foreign_capability", "binding 'storage' was moved" },
+        .{ "tests/feature_tests/c_interop/17X_export_missing_capability", ".ffi uses reach [ffi]" },
+        .{ "tests/feature_tests/c_interop/18X_legacy_missing_capability", ".ffi uses reach [ffi]" },
+        .{ "tests/feature_tests/c_interop/19X_stale_wrapper_capability", "binding 'storage' was moved" },
+        .{ "tests/feature_tests/c_interop/20X_reserved_capability_parameter", "reserve '.ffi' for the checked capability" },
+        .{ "tests/feature_tests/c_interop/21X_counterfeit_foreign_capability", "ForeignFunctionInterface" },
+        .{ "tests/feature_tests/c_interop/23X_memory_stale_capability", "binding 'storage' was moved" },
+    };
+    inline for (cases) |case| {
+        try buildExpectFailWithoutNoise(case[0], case[1], "failed without a diagnostic");
+    }
 }

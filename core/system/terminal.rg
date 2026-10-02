@@ -6,7 +6,7 @@ Terminal : Type = (
     .stderr: File
 )
 
-once init(.p: $&Terminal) -> () := {
+once init(.p: $&Terminal, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
     init_stdin(.p = $&p&.stdin)
     init_stdout(.p = $&p&.stdout)
     init_stderr(.p = $&p&.stderr)

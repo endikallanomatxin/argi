@@ -13,7 +13,6 @@ existing external calls do not establish support for every signature shape.
 
 - [ ] Add target C scalars, explicit C record layouts, and raw-pointer lowering;
   expand the checked ABI subset alongside cross-language tests.
-- [ ] Implement the checked `ffi` dependency outside the emitted C signature.
 - [ ] Choose a small native-library consumer and validate its wrappers, including
   aggregate arguments/results where supported.
 - [ ] Add manifest native-link configuration and explicit named-library mode

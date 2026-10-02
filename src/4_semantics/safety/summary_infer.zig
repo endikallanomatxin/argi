@@ -76,6 +76,12 @@ pub const Infer = struct {
                 @memset(outputs, .{});
                 try self.engine.summaries.put(id, .{ .outputs = outputs });
             }
+            if (function.flags.has_foreign_capability) {
+                // Authorization must remain live even for imports whose other
+                // storage effects are unknown. Callers compose this requirement
+                // through the same summary dependency paths as dereferences.
+                self.engine.summaries.getPtr(id).?.required_live_inputs = try self.allocator.dupe(facts.InputPath, &.{.{ .input_index = function.input.len - 1, .projections = &.{} }});
+            }
             // These declarations retain their initial summary. Primitive
             // transfers are instantiated at calls with call-site identities;
             // extern declarations cannot infer effects from a missing body.

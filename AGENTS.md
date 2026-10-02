@@ -109,6 +109,13 @@ feature first.
     Private acquisition/allocation receipts therefore protect against external
     modules, while their invariants remain obligations within bundled core.
 
+- Foreign imports (`CFunction` and `ExternFunction`) have a checked logical
+  `.ffi` input of the bundled core `ForeignFunctionInterface` type. Codegen
+  excludes that input from the C ABI. Keep capability dependencies in ordinary
+  call resolution and safety summaries; C-ABI bodies cannot grow implicit
+  capability parameters. Pure bounded byte copies use Argi view operations,
+  while direct calls to libc `memcpy` still require `ffi`.
+
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases
   - avoid introducing synonyms such as `parsing`, `analysis`, or `semantic` as the primary names for those phases in new APIs, diagnostics, timing output, or docs

@@ -4,6 +4,8 @@
 -- codegen supplies the host ABI adapter rather than an unchecked entry lifetime.
 __argi_entry() -> __ARGI_OUTPUT__ := {
     assume error_tracer ::= $&noop_error_tracer
+    ffi_storage ::= ForeignFunctionInterface()
+    assume ffi ::= $&ffi_storage
     memory_storage ::= Memory()
     page_allocator_storage ::= PageAllocator(.memory = $&memory_storage)
 
@@ -16,7 +18,6 @@ __argi_entry() -> __ARGI_OUTPUT__ := {
     proc_man_storage ::= ProcessManager()
     clock_storage ::= Clock()
     rand_gen_storage ::= RandomNumberGenerator()
-    ffi_storage ::= ForeignFunctionInterface()
 
     system :: System = (
         .memory = $&memory_storage,

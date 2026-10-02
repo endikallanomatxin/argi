@@ -6,6 +6,7 @@ read_window(.view: &ArrayView#(.t: UIntNative)) -> (.value: UIntNative) := {
     value = unwrap_or_abort(.value = get#(.t: UIntNative)(.self = view, .index = 0).result)
 }
 main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume ffi := system.ffi
     arena :: ArenaAllocator
     unwrap_or_abort(.value = init(.p = $&arena, .allocator = system.page_allocator))
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: UIntNative)(.allocator = $&arena, .capacity = 2))
