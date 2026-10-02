@@ -11,9 +11,9 @@ existing external calls do not establish support for every signature shape.
 
 ## Work to do
 
-- [ ] Classify full C function signatures, including record arguments/results and
-  register exhaustion, for supported target ABIs; explicit
-  layouts and pointer-based native record tests already provide the foundation.
+- [ ] Extend aggregate ABI classification beyond integer-only C records:
+  floating/mixed records, unions, and pointer-bearing records need matching
+  lowering and foreign-reference effects.
 - [ ] Add explicit static/shared named-library mode selection; manifest and CLI
   native inputs currently select exact artifacts through file paths.
 - [ ] Keep foreign-call capabilities, resource cleanup, pointer bounds, and

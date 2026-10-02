@@ -350,11 +350,11 @@ pub const SafetyChecker = struct {
                 try self.report(declaration.source, "C function '{s}' must have zero or one output; use explicit pointer parameters for additional results", .{name});
             }
             for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field| {
-                if (!c_abi.supportsDirectValue(self.graph, field.ty))
+                if (!c_abi.supportsCValue(self.graph, field.ty))
                     try self.report(field.source, "C function '{s}' input '{s}' has an unsupported C ABI type; aggregate arguments require target-specific lowering", .{ name, self.graph.text(field.name) });
             }
             for (self.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
-                if (!c_abi.supportsDirectValue(self.graph, field.ty))
+                if (!c_abi.supportsCValue(self.graph, field.ty))
                     try self.report(field.source, "C function '{s}' output '{s}' has an unsupported C ABI type; aggregate results require target-specific lowering", .{ name, self.graph.text(field.name) });
             }
         }

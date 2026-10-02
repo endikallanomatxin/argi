@@ -3,6 +3,7 @@ const llvm = @import("llvm.zig");
 const c = llvm.c;
 const graph_mod = @import("../4_semantics/global/graph.zig");
 const types = @import("../4_semantics/global/types.zig");
+const c_abi = @import("../4_semantics/global/c_abi.zig");
 const initializer_contract = @import("../4_semantics/global/initializer_contract.zig");
 const primitives = @import("../4_semantics/primitives/schema.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
@@ -50,7 +51,7 @@ const FunctionSymbol = struct {
     return_type: llvm.c.LLVMTypeRef,
     is_extern: bool,
     is_c_abi: bool = false,
-    uses_sret: bool = false,
+    c_plan: ?*c_abi.FunctionPlan = null,
 };
 
 const GlobalInitState = enum { uninitialized, in_progress, done };
@@ -120,6 +121,11 @@ pub const CodeGenerator = struct {
     pub fn deinit(self: *CodeGenerator) void {
         if (self.builder) |builder| c.LLVMDisposeBuilder(builder);
         if (self.module) |module| c.LLVMDisposeModule(module);
+        var symbols = self.functions.valueIterator();
+        while (symbols.next()) |symbol| if (symbol.c_plan) |plan| {
+            plan.deinit(self.allocator);
+            self.allocator.destroy(plan);
+        };
         self.functions.deinit();
         self.bindings.deinit();
         self.global_bindings.deinit();
@@ -214,9 +220,15 @@ pub const CodeGenerator = struct {
         const name = self.graph.text(declaration.name);
         const is_extern = function.body == null and !function.flags.has_declared_body;
         var symbol: FunctionSymbol = undefined;
+        var owned_plan: ?*c_abi.FunctionPlan = null;
+        errdefer if (owned_plan) |plan| {
+            plan.deinit(self.allocator);
+            self.allocator.destroy(plan);
+        };
 
         if (is_extern or function.flags.is_c_abi) {
             const signature = try self.externSignature(function, name);
+            owned_plan = signature.plan;
             // Bundled memory bindings remain module-private in Argi while
             // resolving the platform's public C symbols at link time.
             var lowerer = self.typeLowerer();
@@ -236,6 +248,17 @@ pub const CodeGenerator = struct {
                 try self.report(declaration.source, "C symbol '{s}' is declared with incompatible signatures", .{external_name});
                 return CodegenError.Reported;
             }
+            if (existing != null) {
+                var declarations = self.functions.valueIterator();
+                while (declarations.next()) |previous| {
+                    if (previous.ref != existing) continue;
+                    const previous_plan = previous.c_plan orelse continue;
+                    if (!c_abi.sameABIAttributes(previous_plan.*, signature.plan.*)) {
+                        try self.report(declaration.source, "C symbol '{s}' is declared with incompatible signatures", .{external_name});
+                        return CodegenError.Reported;
+                    }
+                }
+            }
             if (!is_extern and existing != null) {
                 if (!function.flags.is_c_export) {
                     try self.report(declaration.source, "private C symbol '{s}' conflicts with another declaration", .{external_name});
@@ -250,15 +273,10 @@ pub const CodeGenerator = struct {
                 }
             }
             const ref = if (existing != null) existing else c.LLVMAddFunction(self.module, name_z.ptr, signature.fn_type);
-            self.addCScalarAttributes(ref, function, false);
+            try self.addCPlanAttributes(ref, signature.plan.*, false);
             if (!is_extern and !function.flags.is_c_export)
                 c.LLVMSetLinkage(ref, c.LLVMInternalLinkage);
-            if (signature.uses_sret) {
-                const kind = c.LLVMGetEnumAttributeKindForName("sret", 4);
-                const attr = c.LLVMCreateEnumAttribute(c.LLVMGetGlobalContext(), kind, 0);
-                c.LLVMAddAttributeAtIndex(ref, 1, attr);
-            }
-            symbol = .{ .ref = ref, .type_ref = signature.fn_type, .return_type = signature.return_type, .is_extern = is_extern, .is_c_abi = true, .uses_sret = signature.uses_sret };
+            symbol = .{ .ref = ref, .type_ref = signature.fn_type, .return_type = signature.return_type, .is_extern = is_extern, .is_c_abi = true, .c_plan = signature.plan };
         } else {
             // TODO: pass large aggregate outputs through caller-owned storage
             // instead of direct LLVM returns; see the codegen task in plan/0.3.md.
@@ -274,6 +292,7 @@ pub const CodeGenerator = struct {
             symbol = .{ .ref = ref, .type_ref = fn_ty, .return_type = output_ty, .is_extern = false };
         }
         try self.functions.put(id, symbol);
+        owned_plan = null;
 
         if (function.flags.is_entry) {
             if (self.options.selected_test_name != null) {
@@ -285,7 +304,7 @@ pub const CodeGenerator = struct {
         return symbol;
     }
 
-    const ExternSignature = struct { fn_type: llvm.c.LLVMTypeRef, return_type: llvm.c.LLVMTypeRef, uses_sret: bool };
+    const ExternSignature = struct { fn_type: llvm.c.LLVMTypeRef, return_type: llvm.c.LLVMTypeRef, plan: *c_abi.FunctionPlan };
 
     fn externSymbolName(self: *CodeGenerator, function: graph_mod.Function, name: []const u8) []const u8 {
         if (function.foreign_symbol) |symbol| return self.graph.text(symbol);
@@ -326,47 +345,138 @@ pub const CodeGenerator = struct {
         return c.LLVMBuildInsertValue(self.builder, c.LLVMGetUndef(record), address, 0, "c.raw_pointer");
     }
 
-    fn addCScalarAttribute(self: *CodeGenerator, value: c.LLVMValueRef, index: c.LLVMAttributeIndex, ty: graph_mod.GlobalTypeId, call_site: bool) void {
-        const c_abi = @import("../4_semantics/global/c_abi.zig");
-        const extension = c_abi.scalarExtension(self.graph, ty, @import("builtin").target);
+    fn addCScalarAttribute(self: *CodeGenerator, value: c.LLVMValueRef, index: c.LLVMAttributeIndex, extension: c_abi.ScalarExtension, call_site: bool) void {
         const name: []const u8 = switch (extension) {
             .none => return,
             .signed => "signext",
             .unsigned => "zeroext",
         };
         const kind = c.LLVMGetEnumAttributeKindForName(name.ptr, name.len);
-        const attribute = c.LLVMCreateEnumAttribute(c.LLVMGetGlobalContext(), kind, 0);
+        const attribute = c.LLVMCreateEnumAttribute(c.LLVMGetModuleContext(self.module), kind, 0);
         if (call_site) c.LLVMAddCallSiteAttribute(value, index, attribute) else c.LLVMAddAttributeAtIndex(value, index, attribute);
     }
 
-    fn addCScalarAttributes(self: *CodeGenerator, value: c.LLVMValueRef, function: graph_mod.Function, call_site: bool) void {
-        const count = @import("../4_semantics/global/c_abi.zig").physicalInputCount(function);
-        for (self.graph.fields.items[function.input.start..][0..count], 0..) |field, index|
-            self.addCScalarAttribute(value, @intCast(index + 1), field.ty, call_site);
-        if (function.output.len == 1)
-            self.addCScalarAttribute(value, 0, self.graph.fields.items[function.output.start].ty, call_site);
+    fn addCTypeAttribute(self: *CodeGenerator, value: c.LLVMValueRef, index: u32, name: []const u8, ty: graph_mod.GlobalTypeId, alignment: u32, call_site: bool) !void {
+        const kind = c.LLVMGetEnumAttributeKindForName(name.ptr, name.len);
+        const attribute = c.LLVMCreateTypeAttribute(c.LLVMGetGlobalContext(), kind, try self.toLLVMType(ty));
+        const align_kind = c.LLVMGetEnumAttributeKindForName("align", 5);
+        const align_attribute = c.LLVMCreateEnumAttribute(c.LLVMGetGlobalContext(), align_kind, alignment);
+        if (call_site) {
+            c.LLVMAddCallSiteAttribute(value, index, attribute);
+            c.LLVMAddCallSiteAttribute(value, index, align_attribute);
+        } else {
+            c.LLVMAddAttributeAtIndex(value, index, attribute);
+            c.LLVMAddAttributeAtIndex(value, index, align_attribute);
+        }
+    }
+
+    fn addCPlanAttributes(self: *CodeGenerator, value: c.LLVMValueRef, plan: c_abi.FunctionPlan, call_site: bool) !void {
+        for (plan.inputs) |input| {
+            if (input.kind == .scalar)
+                self.addCScalarAttribute(value, input.parameter_index + 1, input.extension, call_site)
+            else if (input.byval)
+                try self.addCTypeAttribute(value, input.parameter_index + 1, "byval", input.ty, @max(8, input.alignment), call_site);
+        }
+        if (plan.result) |result| {
+            if (plan.uses_sret)
+                try self.addCTypeAttribute(value, 1, "sret", result.ty, result.alignment, call_site)
+            else if (result.kind == .scalar)
+                self.addCScalarAttribute(value, 0, result.extension, call_site);
+        }
+    }
+
+    fn cCarrierType(self: *CodeGenerator, value: c_abi.ValuePlan) !c.LLVMTypeRef {
+        if (value.kind == .scalar) return self.cValueType(value.ty);
+        if (value.kind == .record_indirect) return c.LLVMPointerType(c.LLVMInt8Type(), 0);
+        if (value.form == .single) return c.LLVMIntType(value.word_bits[0]);
+        if (value.form == .array) return c.LLVMArrayType2(c.LLVMInt64Type(), value.words);
+        var words = [_]c.LLVMTypeRef{ c.LLVMIntType(value.word_bits[0]), c.LLVMIntType(value.word_bits[1]) };
+        return c.LLVMStructType(&words, value.words, 0);
     }
 
     fn externSignature(self: *CodeGenerator, function: graph_mod.Function, name: []const u8) !ExternSignature {
-        const uses_sret = function.output.len > 1;
-        const physical_inputs = @import("../4_semantics/global/c_abi.zig").physicalInputCount(function);
-        const total: usize = physical_inputs + @as(usize, if (uses_sret) 1 else 0);
-        const params = try self.allocator.alloc(llvm.c.LLVMTypeRef, total);
+        const plan = try self.allocator.create(c_abi.FunctionPlan);
+        errdefer self.allocator.destroy(plan);
+        plan.* = try c_abi.classifyFunction(self.allocator, self.graph, function, @import("builtin").target);
+        errdefer plan.deinit(self.allocator);
+        const params = try self.allocator.alloc(c.LLVMTypeRef, plan.parameter_count);
         defer self.allocator.free(params);
-        var cursor: usize = 0;
-        if (uses_sret) {
-            params[0] = c.LLVMPointerType(try self.fieldsLLVMType(function.output), 0);
-            cursor = 1;
+        if (plan.uses_sret) params[0] = c.LLVMPointerType(c.LLVMInt8Type(), 0);
+        for (plan.inputs) |input| {
+            if (input.kind == .record_words and input.form == .split) {
+                for (0..input.words) |part| params[input.parameter_index + part] = c.LLVMIntType(input.word_bits[part]);
+            } else params[input.parameter_index] = try self.cCarrierType(input);
         }
-        for (self.graph.fields.items[function.input.start..][0..physical_inputs], 0..) |field, index|
-            params[cursor + index] = try self.cValueType(field.ty);
-        if (std.mem.eql(u8, self.externSymbolName(function, name), "free") and physical_inputs == 1)
-            params[cursor] = c.LLVMPointerType(c.LLVMInt8Type(), 0);
-
+        // Bundled libc's legacy free binding expresses an address as UIntNative.
+        // Typed RawPointer bindings already adapt through the ordinary C path.
+        if (plan.inputs.len == 1 and std.mem.eql(u8, self.externSymbolName(function, name), "free") and types.isBuiltin(self.graph, plan.inputs[0].ty, .UIntNative))
+            params[plan.inputs[0].parameter_index] = c.LLVMPointerType(c.LLVMInt8Type(), 0);
         var ret = c.LLVMVoidType();
-        if (function.output.len == 1) ret = try self.cValueType(self.graph.fields.items[function.output.start].ty);
+        if (!plan.uses_sret) if (plan.result) |result| {
+            ret = try self.cCarrierType(result);
+        };
         if (function.safety_primitive == .raw_allocated_storage) ret = c.LLVMPointerType(c.LLVMInt8Type(), 0);
-        return .{ .fn_type = c.LLVMFunctionType(ret, if (total == 0) null else params.ptr, @intCast(total), 0), .return_type = ret, .uses_sret = uses_sret };
+        return .{ .fn_type = c.LLVMFunctionType(ret, if (params.len == 0) null else params.ptr, @intCast(params.len), 0), .return_type = ret, .plan = plan };
+    }
+
+    fn cTemporary(self: *CodeGenerator, ty: c.LLVMTypeRef, alignment: u32, name: [*:0]const u8) !c.LLVMValueRef {
+        // ABI copies inside loops use a fixed entry-block stack slot, rather
+        // than executing an alloca on every iteration. Only stores stay local.
+        const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
+        const entry = c.LLVMGetEntryBasicBlock(function);
+        const builder = c.LLVMCreateBuilder() orelse return CodegenError.ModuleCreationFailed;
+        defer c.LLVMDisposeBuilder(builder);
+        if (c.LLVMGetFirstInstruction(entry)) |first| c.LLVMPositionBuilderBefore(builder, first) else c.LLVMPositionBuilderAtEnd(builder, entry);
+        const storage = c.LLVMBuildAlloca(builder, ty, name);
+        c.LLVMSetAlignment(storage, alignment);
+        return storage;
+    }
+
+    fn cRecordStorage(self: *CodeGenerator, plan: c_abi.ValuePlan) !c.LLVMValueRef {
+        const bytes = std.mem.alignForward(u64, plan.size, 8);
+        const buffer_ty = c.LLVMArrayType2(c.LLVMInt8Type(), bytes);
+        const storage = try self.cTemporary(buffer_ty, @max(8, plan.alignment), "c.record.storage");
+        _ = c.LLVMBuildStore(self.builder, c.LLVMConstNull(buffer_ty), storage);
+        return storage;
+    }
+
+    fn cWordAddress(self: *CodeGenerator, storage: c.LLVMValueRef, index: usize) c.LLVMValueRef {
+        var offset = [_]c.LLVMValueRef{c.LLVMConstInt(c.LLVMInt64Type(), index * 8, 0)};
+        return c.LLVMBuildGEP2(self.builder, c.LLVMInt8Type(), storage, &offset, 1, "c.word.address");
+    }
+
+    fn encodeCRecord(self: *CodeGenerator, value: c.LLVMValueRef, plan: c_abi.ValuePlan) !c.LLVMValueRef {
+        if (plan.kind == .scalar) return self.encodeCValue(value, plan.ty);
+        const storage = try self.cRecordStorage(plan);
+        _ = c.LLVMBuildStore(self.builder, value, storage);
+        if (plan.kind == .record_indirect) return storage;
+        var carrier = c.LLVMGetUndef(try self.cCarrierType(plan));
+        for (0..plan.words) |part| {
+            const word = c.LLVMBuildLoad2(self.builder, c.LLVMIntType(plan.word_bits[part]), self.cWordAddress(storage, part), "c.record.word");
+            if (plan.form == .single) return word;
+            carrier = c.LLVMBuildInsertValue(self.builder, carrier, word, @intCast(part), "c.record.carrier");
+        }
+        return carrier;
+    }
+
+    fn decodeCRecord(self: *CodeGenerator, value: c.LLVMValueRef, plan: c_abi.ValuePlan) !c.LLVMValueRef {
+        if (plan.kind == .scalar) return self.decodeCValue(value, plan.ty);
+        if (plan.kind == .record_indirect) return c.LLVMBuildLoad2(self.builder, try self.toLLVMType(plan.ty), value, "c.indirect.record");
+        const storage = try self.cRecordStorage(plan);
+        for (0..plan.words) |part| {
+            const word = if (plan.form == .single) value else c.LLVMBuildExtractValue(self.builder, value, @intCast(part), "c.record.word");
+            _ = c.LLVMBuildStore(self.builder, word, self.cWordAddress(storage, part));
+        }
+        return c.LLVMBuildLoad2(self.builder, try self.toLLVMType(plan.ty), storage, "c.record.value");
+    }
+
+    fn emitCResult(self: *CodeGenerator, value: c.LLVMValueRef, symbol: FunctionSymbol) !void {
+        const plan = symbol.c_plan orelse return CodegenError.InvalidType;
+        const result = plan.result orelse return CodegenError.InvalidType;
+        if (plan.uses_sret) {
+            _ = c.LLVMBuildStore(self.builder, value, c.LLVMGetParam(symbol.ref, 0));
+            _ = c.LLVMBuildRetVoid(self.builder);
+        } else _ = c.LLVMBuildRet(self.builder, try self.encodeCRecord(value, result));
     }
 
     fn predeclareGlobalBindings(self: *CodeGenerator) !void {
@@ -531,7 +641,15 @@ pub const CodeGenerator = struct {
         for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len], 0..) |binding, index| {
             try self.allocateLocalBinding(binding, null);
             const storage = self.bindings.getPtr(binding).?;
-            const value = if (symbol.is_c_abi) try self.decodeCValue(c.LLVMGetParam(symbol.ref, @intCast(index)), self.graph.binding(binding).ty) else c.LLVMBuildExtractValue(self.builder, input_value, @intCast(index), "arg");
+            const value = if (symbol.c_plan) |plan| blk: {
+                const input = plan.inputs[index];
+                var carrier = c.LLVMGetParam(symbol.ref, input.parameter_index);
+                if (input.kind == .record_words and input.form == .split) {
+                    carrier = c.LLVMGetUndef(try self.cCarrierType(input));
+                    for (0..input.words) |part| carrier = c.LLVMBuildInsertValue(self.builder, carrier, c.LLVMGetParam(symbol.ref, input.parameter_index + @as(u32, @intCast(part))), @intCast(part), "c.input.carrier");
+                }
+                break :blk try self.decodeCRecord(carrier, input);
+            } else c.LLVMBuildExtractValue(self.builder, input_value, @intCast(index), "arg");
             _ = c.LLVMBuildStore(self.builder, value, storage.ref);
             storage.initialized = true;
             if (storage.drop_state) |drop| self.storeDropState(drop, true);
@@ -1127,6 +1245,11 @@ pub const CodeGenerator = struct {
         if (ret.expression) |expression| {
             const value = (try self.visitNode(expression)) orelse return CodegenError.ValueNotFound;
             for (self.graph.node_refs.items[ret.cleanup.start..][0..ret.cleanup.len]) |cleanup| _ = try self.visitNode(cleanup);
+            const symbol = self.functions.get(self.current_function.?) orelse return CodegenError.InvalidType;
+            if (symbol.is_c_abi) {
+                try self.emitCResult(value.value_ref, symbol);
+                return;
+            }
             const return_type = self.current_return_type orelse return CodegenError.InvalidType;
             if (return_type == value.type_ref) {
                 _ = c.LLVMBuildRet(self.builder, value.value_ref);
@@ -1157,7 +1280,7 @@ pub const CodeGenerator = struct {
                 const binding = self.graph.binding_refs.items[function.output_bindings.start];
                 const storage = self.bindings.get(binding) orelse return CodegenError.SymbolNotFound;
                 const value = c.LLVMBuildLoad2(self.builder, storage.type_ref, storage.ref, "return.c");
-                _ = c.LLVMBuildRet(self.builder, try self.encodeCValue(value, self.graph.binding(binding).ty));
+                try self.emitCResult(value, self.functions.get(self.current_function.?).?);
             }
             return;
         }
@@ -1774,41 +1897,35 @@ pub const CodeGenerator = struct {
             return .{ .value_ref = result, .type_ref = symbol.return_type, .ty = self.graph.nodes.items[@intFromEnum(call.input)].ty };
         }
 
-        const physical_inputs = @import("../4_semantics/global/c_abi.zig").physicalInputCount(callee);
-        const total: usize = physical_inputs + @as(usize, if (symbol.uses_sret) 1 else 0);
-        const args = try self.allocator.alloc(llvm.c.LLVMValueRef, total);
+        const plan = symbol.c_plan orelse return CodegenError.InvalidType;
+        const args = try self.allocator.alloc(c.LLVMValueRef, plan.parameter_count);
         defer self.allocator.free(args);
-        var cursor: usize = 0;
-        var sret_storage: llvm.c.LLVMValueRef = null;
-        var sret_type: llvm.c.LLVMTypeRef = c.LLVMVoidType();
-        if (symbol.uses_sret) {
-            sret_type = try self.fieldsLLVMType(callee.output);
-            sret_storage = c.LLVMBuildAlloca(self.builder, sret_type, "sret");
+        var sret_storage: c.LLVMValueRef = null;
+        if (plan.uses_sret) {
+            sret_storage = try self.cRecordStorage(plan.result.?);
             args[0] = sret_storage;
-            cursor = 1;
         }
         const declaration = self.graph.declarations.items[@intFromEnum(callee.declaration)];
         const name = self.graph.text(declaration.name);
-        for (self.graph.fields.items[callee.input.start..][0..physical_inputs], 0..) |field, index| {
+        for (plan.inputs, 0..) |argument, index| {
             const raw = c.LLVMBuildExtractValue(self.builder, input.value_ref, @intCast(index), "extern.arg");
-            if (std.mem.eql(u8, self.externSymbolName(callee, name), "free") and physical_inputs == 1)
-                args[cursor + index] = c.LLVMBuildIntToPtr(self.builder, raw, c.LLVMPointerType(c.LLVMInt8Type(), 0), "free.address")
+            const carrier = if (plan.inputs.len == 1 and std.mem.eql(u8, self.externSymbolName(callee, name), "free") and types.isBuiltin(self.graph, argument.ty, .UIntNative))
+                c.LLVMBuildIntToPtr(self.builder, raw, c.LLVMPointerType(c.LLVMInt8Type(), 0), "free.address")
             else
-                args[cursor + index] = try self.encodeCValue(raw, field.ty);
+                try self.encodeCRecord(raw, argument);
+            if (argument.kind == .record_words and argument.form == .split) {
+                for (0..argument.words) |part| args[argument.parameter_index + part] = c.LLVMBuildExtractValue(self.builder, carrier, @intCast(part), "c.arg.word");
+            } else args[argument.parameter_index] = carrier;
         }
-        const call_value = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, if (total == 0) null else args.ptr, @intCast(total), if (symbol.return_type == c.LLVMVoidType()) "" else "call");
-        self.addCScalarAttributes(call_value, callee, true);
+        const call_value = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, if (args.len == 0) null else args.ptr, @intCast(args.len), if (symbol.return_type == c.LLVMVoidType()) "" else "call");
+        try self.addCPlanAttributes(call_value, plan.*, true);
         try self.markCallDropState(call, call_value, true);
-        if (callee.output.len == 0) return null;
-        if (callee.output.len == 1) {
-            const field = self.graph.fields.items[callee.output.start];
-            if (callee.safety_primitive == .raw_allocated_storage) {
-                const address_type = try self.toLLVMType(field.ty);
-                return .{ .value_ref = c.LLVMBuildPtrToInt(self.builder, call_value, address_type, "raw.address"), .type_ref = address_type, .ty = field.ty };
-            }
-            return .{ .value_ref = try self.decodeCValue(call_value, field.ty), .type_ref = try self.toLLVMType(field.ty), .ty = field.ty };
+        const result = plan.result orelse return null;
+        if (callee.safety_primitive == .raw_allocated_storage) {
+            const address_type = try self.toLLVMType(result.ty);
+            return .{ .value_ref = c.LLVMBuildPtrToInt(self.builder, call_value, address_type, "raw.address"), .type_ref = address_type, .ty = result.ty };
         }
-        return .{ .value_ref = c.LLVMBuildLoad2(self.builder, sret_type, sret_storage, "sret.value"), .type_ref = sret_type, .ty = null };
+        return .{ .value_ref = try self.decodeCRecord(if (plan.uses_sret) sret_storage else call_value, result), .type_ref = try self.toLLVMType(result.ty), .ty = result.ty };
     }
 
     fn opaqueStore(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId) !?TypedValue {
