@@ -83,6 +83,10 @@ feature first.
 - CLI builds reuse canonical module snapshots under `.argi-cache/frontend/`.
   Use `argi build --no-cache` when comparing against a fresh frontend build;
   `--stats` reports reuse. Global semantizing, safety, and codegen still run.
+  Measure in-memory reuse with
+  `zig build -Doptimize=ReleaseSafe benchmark-frontend -- <module-directory>`
+  (optional iteration count). It compares clean/reused frontend work and edits;
+  source collection, codegen, and linking are outside these timings.
 
 - When investigating compiler memory growth or recursive function-summary
   expansion, run focused tests serially with `-j1` and apply a process memory
@@ -169,11 +173,12 @@ faster.
 - Treat `plan/*.md` as active planning documents. If you notice they are
   outdated while doing relevant work, update them so they remain useful as
   development references.
-- When a feature or tooling milestone is clearly finished, update the relevant
-  checklist in the corresponding active release plan in the same change if
-  practical. If you choose not to update
-  it immediately, leave an explicit TODO in code or docs explaining
-  the mismatch so the plan does not silently drift.
+- Before merging completed work, remove its finished tasks from active release
+  plans and update the remaining development order. Delete dedicated planning
+  notes once they have no pending work; do not keep completion reports in
+  `plan/`. Move useful lasting knowledge into the appropriate documentation or
+  source comments before deleting a note. Include this cleanup in the feature
+  branch before merging it into `develop`.
 
 
 ## Release workflow
