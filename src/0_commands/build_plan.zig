@@ -66,6 +66,8 @@ pub fn parseBuildArgs(allocator: std.mem.Allocator, args: []const []const u8) !P
         } else if (std.mem.eql(u8, arg, "--no-cache")) {
             parsed.flags.use_cache = false;
         } else if (std.mem.eql(u8, arg, "--link-library") or
+            std.mem.eql(u8, arg, "--link-static-library") or
+            std.mem.eql(u8, arg, "--link-shared-library") or
             std.mem.eql(u8, arg, "--library-path") or
             std.mem.eql(u8, arg, "--link-file"))
         {
@@ -75,6 +77,10 @@ pub fn parseBuildArgs(allocator: std.mem.Allocator, args: []const []const u8) !P
             if (value.len == 0 or value[0] == '-') return error.InvalidNativeLinkInput;
             const input: link.NativeInput = if (std.mem.eql(u8, arg, "--link-library"))
                 .{ .library = value }
+            else if (std.mem.eql(u8, arg, "--link-static-library"))
+                .{ .static_library = value }
+            else if (std.mem.eql(u8, arg, "--link-shared-library"))
+                .{ .shared_library = value }
             else if (std.mem.eql(u8, arg, "--library-path"))
                 .{ .search_path = value }
             else
@@ -197,7 +203,7 @@ fn readManifest(allocator: std.mem.Allocator, io: std.Io, module_root: []const u
     const text = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1024 * 1024));
     return parseManifest(allocator, module_root, text) catch |err| {
         if (err == error.InvalidNativeLinkInput) {
-            std.debug.print("Error: invalid native link configuration in {s}; each [[native]] entry requires one library, search_path, or file string.\n", .{path});
+            std.debug.print("Error: invalid native link configuration in {s}; each [[native]] entry requires one library, static_library, shared_library, search_path, or file string.\n", .{path});
             return error.CompilationFailed;
         }
         return err;
@@ -235,6 +241,10 @@ fn parseManifest(allocator: std.mem.Allocator, module_root: []const u8, text: []
             if (value.len == 0 or value[0] == '-') return error.InvalidNativeLinkInput;
             const input: link.NativeInput = if (std.mem.eql(u8, key, "library"))
                 .{ .library = try allocator.dupe(u8, value) }
+            else if (std.mem.eql(u8, key, "static_library"))
+                .{ .static_library = try allocator.dupe(u8, value) }
+            else if (std.mem.eql(u8, key, "shared_library"))
+                .{ .shared_library = try allocator.dupe(u8, value) }
             else if (std.mem.eql(u8, key, "search_path"))
                 .{ .search_path = try std.fs.path.resolve(allocator, &.{ module_root, value }) }
             else if (std.mem.eql(u8, key, "file"))
@@ -491,4 +501,18 @@ test "native manifest inputs reject missing duplicate and unknown fields" {
         "[[native]]\nfile = \"-Wl,bad\"",
         "[[native]]\nfile = \"one.a\" trailing",
     }) |text| try std.testing.expectError(error.InvalidNativeLinkInput, parseManifest(arena.allocator(), ".", text));
+}
+
+test "native library modes are explicit in CLI and manifests" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const parsed = try parseBuildArgs(allocator, &.{ "--link-static-library", "one", "--link-shared-library", "two" });
+    try std.testing.expectEqualStrings("one", parsed.flags.native_inputs[0].static_library);
+    try std.testing.expectEqualStrings("two", parsed.flags.native_inputs[1].shared_library);
+    const manifest = try parseManifest(allocator, ".", "[[native]]\nstatic_library = \"one\"\n[[native]]\nshared_library = \"two\"\n");
+    try std.testing.expectEqualStrings("one", manifest.native_inputs.items[0].static_library);
+    try std.testing.expectEqualStrings("two", manifest.native_inputs.items[1].shared_library);
+    try std.testing.expectError(error.InvalidNativeLinkInput, parseManifest(allocator, ".", "[[native]]\nlibrary = \"one\"\nstatic_library = \"one\""));
+    try std.testing.expectError(error.MissingFlagValue, parseBuildArgs(allocator, &.{"--link-shared-library"}));
 }

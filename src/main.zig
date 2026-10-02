@@ -49,6 +49,8 @@ fn printHelp() void {
     std.debug.print("  --sysroot <path>                       Use an Argi installation prefix for core\n", .{});
     std.debug.print("  --exec <name>                          Build a named executable from argi.toml\n", .{});
     std.debug.print("  --link-library <name>                 Link a native library by name (repeatable)\n", .{});
+    std.debug.print("  --link-static-library <name>          Link a named static archive (repeatable)\n", .{});
+    std.debug.print("  --link-shared-library <name>          Link a named shared library (repeatable)\n", .{});
     std.debug.print("  --library-path <path>                 Add a native library search path (repeatable)\n", .{});
     std.debug.print("  --link-file <path>                    Link a native object/archive/shared library (repeatable)\n", .{});
     std.debug.print("  --no-cache                             Rebuild modules without reading or writing the frontend cache\n", .{});

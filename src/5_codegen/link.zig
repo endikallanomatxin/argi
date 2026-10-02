@@ -102,6 +102,8 @@ fn chooseLinkerCommand(cc_env: ?[]const u8) []const u8 {
 /// never shell command fragments. Target/toolchain selection can reuse this list.
 pub const NativeInput = union(enum) {
     library: []const u8,
+    static_library: []const u8,
+    shared_library: []const u8,
     search_path: []const u8,
     file: []const u8,
 };
@@ -123,9 +125,63 @@ fn buildLinkArgv(
             try argv.appendSlice(allocator, &.{ "-L", path });
         },
         .file => |path| try argv.append(allocator, path),
+        .static_library, .shared_library => unreachable,
     };
     try argv.append(allocator, "-lc");
     return argv.toOwnedSlice(allocator);
+}
+
+// Resolve an explicit mode to an exact artifact before building linker argv.
+// This avoids changing the search mode for later libraries or implicit libc.
+// Search directories apply to every library, as they do for the native linker.
+fn resolveNamedLibrary(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: ?*const std.process.Environ.Map,
+    linker: []const u8,
+    inputs: []const NativeInput,
+    name: []const u8,
+    shared: bool,
+) ![]const u8 {
+    if (std.mem.indexOfAny(u8, name, "/\\") != null) {
+        std.debug.print("Error: native library name '{s}' contains a path; use --link-file instead.\n", .{name});
+        return error.LinkFailed;
+    }
+    const suffixes: []const []const u8 = if (!shared)
+        &.{".a"}
+    else if (@import("builtin").os.tag.isDarwin())
+        &.{ ".dylib", ".tbd" }
+    else
+        &.{".so"};
+    for (inputs) |input| {
+        if (input != .search_path) continue;
+        for (suffixes) |suffix| {
+            const filename = try std.fmt.allocPrint(allocator, "lib{s}{s}", .{ name, suffix });
+            const path = try std.fs.path.resolve(allocator, &.{ input.search_path, filename });
+            std.Io.Dir.cwd().access(io, path, .{}) catch continue;
+            return try std.Io.Dir.cwd().realPathFileAlloc(io, path, allocator);
+        }
+    }
+    // Ask the selected C driver about its own toolchain paths rather than
+    // hard-coding architecture-specific system library directories.
+    for (suffixes) |suffix| {
+        const filename = try std.fmt.allocPrint(allocator, "lib{s}{s}", .{ name, suffix });
+        const query = try std.fmt.allocPrint(allocator, "-print-file-name={s}", .{filename});
+        const result = std.process.run(allocator, io, .{
+            .argv = &.{ linker, query },
+            .environ_map = environ_map,
+        }) catch |err| {
+            std.debug.print("Error: cannot query native library paths with '{s}': {s}\n", .{ linker, @errorName(err) });
+            return error.LinkFailed;
+        };
+        const path = std.mem.trim(u8, result.stdout, " \t\r\n");
+        if (result.term != .exited or result.term.exited != 0 or
+            path.len == 0 or std.mem.eql(u8, path, filename)) continue;
+        std.Io.Dir.cwd().access(io, path, .{}) catch continue;
+        return try std.Io.Dir.cwd().realPathFileAlloc(io, path, allocator);
+    }
+    std.debug.print("Error: {s} native library '{s}' was not found; add --library-path or select an exact artifact with --link-file.\n", .{ if (shared) "shared" else "static", name });
+    return error.LinkFailed;
 }
 
 fn printLinkCommand(argv: []const []const u8) void {
@@ -191,8 +247,15 @@ pub fn linkWithLibc(
     const cc_env = if (environ_map) |env_map| env_map.get("CC") else null;
     const linker = chooseLinkerCommand(cc_env);
 
-    const argv = try buildLinkArgv(allocator.*, linker, obj_path, output_path, inputs);
-    defer allocator.free(argv);
+    var arena = std.heap.ArenaAllocator.init(allocator.*);
+    defer arena.deinit();
+    const resolved = try arena.allocator().dupe(NativeInput, inputs);
+    for (resolved) |*input| switch (input.*) {
+        .static_library => |name| input.* = .{ .file = try resolveNamedLibrary(arena.allocator(), io, environ_map, linker, inputs, name, false) },
+        .shared_library => |name| input.* = .{ .file = try resolveNamedLibrary(arena.allocator(), io, environ_map, linker, inputs, name, true) },
+        else => {},
+    };
+    const argv = try buildLinkArgv(arena.allocator(), linker, obj_path, output_path, resolved);
 
     const result = std.process.run(allocator.*, io, .{
         .argv = argv,

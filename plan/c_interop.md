@@ -14,8 +14,6 @@ existing external calls do not establish support for every signature shape.
 - [ ] Extend aggregate ABI classification beyond integer-only C records:
   floating/mixed records, unions, and pointer-bearing records need matching
   lowering and foreign-reference effects.
-- [ ] Add explicit static/shared named-library mode selection; manifest and CLI
-  native inputs currently select exact artifacts through file paths.
 - [ ] Keep foreign-call capabilities, resource cleanup, pointer bounds, and
   allocation/free pairing explicit in wrappers; headers do not prove safety.
 - [ ] Settle incomplete types, callback syntax, and foreign storage effects,

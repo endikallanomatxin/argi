@@ -8036,3 +8036,76 @@ test "C interop diagnoses conflicting function ABI attributes" {
     if (target.cpu.arch == .x86_64 or target.os.tag.isDarwin())
         try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/36X_conflicting_scalar_extension", "C symbol 'argi_c_conflict' is declared with incompatible signatures", "failed without a diagnostic");
 }
+
+test "C interop selects static and shared named libraries without fallback" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, "tests/feature_tests/c_interop/01_native_library" });
+    defer allocator.free(fixture);
+    const source = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(source);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "shared.c", .data = "float argi_c_scale(int value, float factor) { (void)value; (void)factor; return 0; }" });
+    const shared_path = try std.fs.path.join(allocator, &.{ root, if (@import("builtin").os.tag.isDarwin()) "libargi_mode_fixture.dylib" else "libargi_mode_fixture.so" });
+    defer allocator.free(shared_path);
+    for ([_][]const []const u8{
+        &.{ "cc", "-c", source, "-o", "native.o" },
+        &.{ "ar", "rcs", "libargi_mode_fixture.a", "native.o" },
+        &.{ "cc", if (@import("builtin").os.tag.isDarwin()) "-dynamiclib" else "-shared", "-fPIC", "shared.c", "-o", shared_path },
+    }) |args| {
+        const result = try runChildInCwd(args, root);
+        defer allocator.free(result.stdout);
+        defer allocator.free(result.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+    }
+    // The two artifacts return different results, so a successful link alone
+    // cannot conceal selection of the wrong library mode.
+    for ([_][]const u8{ "--link-static-library", "--link-shared-library" }, 0..) |flag, mode| {
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--output", "app", flag, "argi_mode_fixture", "--library-path", "." }, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const ran = try runChildInCwd(&.{"./app"}, root);
+        defer allocator.free(ran.stdout);
+        defer allocator.free(ran.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = @intCast(mode) }, ran.term);
+    }
+    try tmp.dir.createDirPath(std.testing.io, "source/app");
+    const rg_path = try std.fs.path.join(allocator, &.{ fixture, "main.rg" });
+    defer allocator.free(rg_path);
+    const rg_source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, rg_path, allocator, .limited(8192));
+    defer allocator.free(rg_source);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "source/app/main.rg", .data = rg_source });
+    for ([_][]const u8{ "static_library", "shared_library" }, 0..) |key, mode| {
+        const manifest = try std.fmt.allocPrint(allocator, "[executables.app]\npath = \"source/app\"\n[[native]]\n{s} = \"argi_mode_fixture\"\n[[native]]\nsearch_path = \".\"\n", .{key});
+        defer allocator.free(manifest);
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "argi.toml", .data = manifest });
+        const ran = try runChildInCwd(&.{ argi, "run" }, root);
+        defer allocator.free(ran.stdout);
+        defer allocator.free(ran.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = @intCast(mode) }, ran.term);
+    }
+    try tmp.dir.deleteFile(std.testing.io, "libargi_mode_fixture.a");
+    const missing = try runChildInCwd(&.{ argi, "build", fixture, "--output", "missing", "--library-path", ".", "--link-static-library", "argi_mode_fixture" }, root);
+    defer allocator.free(missing.stdout);
+    defer allocator.free(missing.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, missing.term);
+    try expect(std.mem.indexOf(u8, missing.stderr, "static native library 'argi_mode_fixture' was not found") != null);
+    try tmp.dir.deleteFile(std.testing.io, std.fs.path.basename(shared_path));
+    const archived = try runChildInCwd(&.{ "ar", "rcs", "libargi_mode_fixture.a", "native.o" }, root);
+    defer allocator.free(archived.stdout);
+    defer allocator.free(archived.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, archived.term);
+    const missing_shared = try runChildInCwd(&.{ argi, "build", fixture, "--output", "missing", "--library-path", ".", "--link-shared-library", "argi_mode_fixture" }, root);
+    defer allocator.free(missing_shared.stdout);
+    defer allocator.free(missing_shared.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, missing_shared.term);
+    try expect(std.mem.indexOf(u8, missing_shared.stderr, "shared native library 'argi_mode_fixture' was not found") != null);
+}
