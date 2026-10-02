@@ -7999,3 +7999,17 @@ test "C interop preserves explicit record layouts through native pointers" {
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/31X_c_struct_by_value", "input 'record' has an unsupported C ABI type", "failed without a diagnostic");
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/32X_generic_c_struct_non_c_field", "field 'value' has no supported C representation", "failed without a diagnostic");
 }
+
+test "C interop extends narrow scalars according to the platform ABI" {
+    const target = @import("builtin").target;
+    const extends = target.cpu.arch == .x86_64 or (target.cpu.arch == .aarch64 and target.os.tag.isDarwin());
+    try checkNativeCFixture("tests/feature_tests/c_interop/33_narrow_scalar_abi", if (extends) &.{
+        "define signext i8 @argi_c_small_signed(i8 signext",
+        "define zeroext i8 @argi_c_small_unsigned(i8 zeroext",
+        "call signext i16 @argi_c_short_import(i16 signext",
+        "declare zeroext i1 @argi_c_bool_import(i1 zeroext",
+    } else &.{
+        "define i8 @argi_c_small_signed(i8",
+        "define i1 @argi_c_bool(i1",
+    });
+}

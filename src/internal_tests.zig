@@ -56,8 +56,10 @@ const semantic_representation_test = @import("4_semantics/semantic_representatio
 
 const type_codegen = @import("5_codegen/type_codegen.zig");
 const codegen = @import("5_codegen/codegen.zig");
+const c_abi = @import("4_semantics/global/c_abi.zig");
 
 test {
+    _ = c_abi;
     _ = semantic_literals;
     _ = source_files;
     _ = link;

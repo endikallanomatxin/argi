@@ -6,6 +6,10 @@ const types = @import("types.zig");
 /// LLVM type lowering. Record layout alone does not establish how a platform's
 /// C ABI classifies an aggregate argument or result. Extend this predicate only
 /// alongside matching call lowering and cross-language executable tests.
+/// Aggregate classification must consider the full function signature: SysV
+/// register exhaustion can move an entire argument to memory even when that
+/// same record uses registers in another function. A per-type layout cache
+/// cannot encode that calling convention.
 pub fn supportsDirectValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
     return supportsValue(graph, ty, 0);
 }
@@ -142,4 +146,55 @@ fn fieldsHaveRepresentation(graph: *const graph_mod.GlobalSemanticGraph, range: 
         if (!representationDepth(graph, field.ty, depth + 1)) return false;
     }
     return true;
+}
+
+pub const ScalarExtension = enum { none, signed, unsigned };
+
+/// Narrow scalar extension is a target calling-convention rule, independent
+/// of its in-memory size. Darwin ARM64 differs from Linux AAPCS64 here.
+pub fn scalarExtensionForTarget(builtin_type: @import("../primitives/schema.zig").BuiltinType, target: std.Target) ScalarExtension {
+    const extends = switch (target.cpu.arch) {
+        .x86_64, .x86 => target.os.tag != .windows,
+        .aarch64 => target.os.tag.isDarwin(),
+        else => false,
+    };
+    if (!extends) return .none;
+    return switch (builtin_type) {
+        .Int8, .Int16 => .signed,
+        .UInt8, .UInt16, .Bool => .unsigned,
+        else => .none,
+    };
+}
+
+pub fn scalarExtension(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, target: std.Target) ScalarExtension {
+    var current = ty;
+    for (0..32) |_| {
+        const semantic = graph.resolvedSemanticType(current) orelse return .none;
+        switch (semantic) {
+            .builtin => |value| return scalarExtensionForTarget(value, target),
+            .generic => {
+                const instance = types.genericInstance(graph, current) orelse return .none;
+                current = switch (instance.shape) {
+                    .alias => |value| value,
+                    else => return .none,
+                };
+            },
+            else => return .none,
+        }
+    }
+    return .none;
+}
+
+test "C narrow scalar extension follows the native ABI family" {
+    var target = @import("builtin").target;
+    target.cpu.arch = .x86_64;
+    target.os.tag = .linux;
+    try std.testing.expectEqual(ScalarExtension.signed, scalarExtensionForTarget(.Int16, target));
+    try std.testing.expectEqual(ScalarExtension.unsigned, scalarExtensionForTarget(.Bool, target));
+    target.cpu.arch = .aarch64;
+    try std.testing.expectEqual(ScalarExtension.none, scalarExtensionForTarget(.Int16, target));
+    target.os.tag = .macos;
+    try std.testing.expectEqual(ScalarExtension.signed, scalarExtensionForTarget(.Int16, target));
+    try std.testing.expectEqual(ScalarExtension.unsigned, scalarExtensionForTarget(.UInt8, target));
+    try std.testing.expectEqual(ScalarExtension.none, scalarExtensionForTarget(.Int32, target));
 }

@@ -11,7 +11,8 @@ existing external calls do not establish support for every signature shape.
 
 ## Work to do
 
-- [ ] Classify C record arguments/results for supported target ABIs; explicit
+- [ ] Classify full C function signatures, including record arguments/results and
+  register exhaustion, for supported target ABIs; explicit
   layouts and pointer-based native record tests already provide the foundation.
 - [ ] Add explicit static/shared named-library mode selection; manifest and CLI
   native inputs currently select exact artifacts through file paths.

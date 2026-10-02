@@ -250,6 +250,7 @@ pub const CodeGenerator = struct {
                 }
             }
             const ref = if (existing != null) existing else c.LLVMAddFunction(self.module, name_z.ptr, signature.fn_type);
+            self.addCScalarAttributes(ref, function, false);
             if (!is_extern and !function.flags.is_c_export)
                 c.LLVMSetLinkage(ref, c.LLVMInternalLinkage);
             if (signature.uses_sret) {
@@ -323,6 +324,27 @@ pub const CodeGenerator = struct {
         const record = try self.toLLVMType(ty);
         const address = c.LLVMBuildPtrToInt(self.builder, value, c.LLVMStructGetTypeAtIndex(record, 0), "c.address");
         return c.LLVMBuildInsertValue(self.builder, c.LLVMGetUndef(record), address, 0, "c.raw_pointer");
+    }
+
+    fn addCScalarAttribute(self: *CodeGenerator, value: c.LLVMValueRef, index: c.LLVMAttributeIndex, ty: graph_mod.GlobalTypeId, call_site: bool) void {
+        const c_abi = @import("../4_semantics/global/c_abi.zig");
+        const extension = c_abi.scalarExtension(self.graph, ty, @import("builtin").target);
+        const name: []const u8 = switch (extension) {
+            .none => return,
+            .signed => "signext",
+            .unsigned => "zeroext",
+        };
+        const kind = c.LLVMGetEnumAttributeKindForName(name.ptr, name.len);
+        const attribute = c.LLVMCreateEnumAttribute(c.LLVMGetGlobalContext(), kind, 0);
+        if (call_site) c.LLVMAddCallSiteAttribute(value, index, attribute) else c.LLVMAddAttributeAtIndex(value, index, attribute);
+    }
+
+    fn addCScalarAttributes(self: *CodeGenerator, value: c.LLVMValueRef, function: graph_mod.Function, call_site: bool) void {
+        const count = @import("../4_semantics/global/c_abi.zig").physicalInputCount(function);
+        for (self.graph.fields.items[function.input.start..][0..count], 0..) |field, index|
+            self.addCScalarAttribute(value, @intCast(index + 1), field.ty, call_site);
+        if (function.output.len == 1)
+            self.addCScalarAttribute(value, 0, self.graph.fields.items[function.output.start].ty, call_site);
     }
 
     fn externSignature(self: *CodeGenerator, function: graph_mod.Function, name: []const u8) !ExternSignature {
@@ -1775,6 +1797,7 @@ pub const CodeGenerator = struct {
                 args[cursor + index] = try self.encodeCValue(raw, field.ty);
         }
         const call_value = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, if (total == 0) null else args.ptr, @intCast(total), if (symbol.return_type == c.LLVMVoidType()) "" else "call");
+        self.addCScalarAttributes(call_value, callee, true);
         try self.markCallDropState(call, call_value, true);
         if (callee.output.len == 0) return null;
         if (callee.output.len == 1) {

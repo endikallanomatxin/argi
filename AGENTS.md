@@ -115,6 +115,12 @@ feature first.
   call resolution and safety summaries; C-ABI bodies cannot grow implicit
   capability parameters. Pure bounded byte copies use Argi view operations,
   while direct calls to libc `memcpy` still require `ffi`.
+  C record representation and call lowering are separate obligations: field
+  layout does not establish a by-value ABI. Aggregate classification must use
+  the full signature, including register exhaustion. C scalar aliases and
+  narrow-value extension attributes derive from `std.Target`; the compiler
+  currently selects its native host target. Check imports and exports against
+  native C fixtures when extending either boundary.
 
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases
