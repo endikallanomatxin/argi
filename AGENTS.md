@@ -125,10 +125,13 @@ feature first.
   aggregates; homogeneous ARM64 input arrays require `alignstack(8)` on Linux
   but not Darwin. Numeric unions merge overlapping member classes; ARM64
   homogeneous unions count the largest alternative rather than summing members.
-  Keep those rules shared between imports, exports, and calls. RawPointer struct
-  fields cross as C addresses; foreign output facts are built by
+  Keep those rules shared between imports, exports, and calls. RawPointer leaves
+  inside C records, arrays, and unions cross as C addresses; output facts use
   `safety/foreign_result.zig` for both checker and summaries. These facts grant
   neither safe-reference validity nor fresh storage acquisition receipts.
+  Uniform foreign pointer arrays keep one marker; arrays of records share
+  immutable element templates. Numeric union alternatives need explicit empty
+  field facts so projection does not inherit another member's pointer effects.
 
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases

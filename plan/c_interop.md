@@ -11,8 +11,8 @@ existing external calls do not establish support for every signature shape.
 
 ## Work to do
 
-- [ ] Extend raw-pointer field effects to arrays and unions; safe-reference
-  fields require an explicit foreign lifetime contract before ABI adaptation.
+- [ ] Define an explicit foreign lifetime contract before adapting safe-reference
+  fields across the ABI.
 - [ ] Keep foreign-call capabilities, resource cleanup, pointer bounds, and
   allocation/free pairing explicit in wrappers; headers do not prove safety.
 - [ ] Settle incomplete types, callback syntax, and foreign storage effects,

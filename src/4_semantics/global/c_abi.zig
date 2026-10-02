@@ -242,12 +242,11 @@ fn supportsRecordTarget(target: std.Target) bool {
     return target.ptrBitWidth() == 64 and (isSysVX64(target) or (target.cpu.arch == .aarch64 and (target.os.tag == .linux or target.os.tag.isDarwin())));
 }
 
-/// RawPointer fields are addresses, not safe references. Arrays and unions
-/// still accept numeric storage only, until their foreign projections are
-/// modeled. Legacy reference fields cannot silently acquire safe provenance.
-fn recordStorage(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, depth: usize, raw_fields: bool) bool {
+/// RawPointer leaves are addresses, including inside arrays and unions.
+/// Legacy reference fields cannot silently acquire safe provenance.
+fn recordStorage(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, depth: usize) bool {
     if (depth >= 32) return false;
-    if (isRawPointer(graph, ty)) return raw_fields;
+    if (isRawPointer(graph, ty)) return true;
     const semantic = graph.resolvedSemanticType(ty) orelse return false;
     return switch (semantic) {
         .builtin => |value| switch (value) {
@@ -258,25 +257,25 @@ fn recordStorage(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
             const declaration = graph.declaration(id);
             if (declaration.choice_layout == .c_enum and declaration.choice_variants != null) break :blk true;
             if (declaration.struct_layout == .regular) break :blk false;
-            break :blk recordFields(graph, declaration.struct_fields orelse break :blk false, depth, raw_fields and declaration.struct_layout == .c_struct);
+            break :blk recordFields(graph, declaration.struct_fields orelse break :blk false, depth);
         },
-        .structural => |shape| shape.layout != .regular and recordFields(graph, shape.fields, depth, raw_fields and shape.layout == .c_struct),
+        .structural => |shape| shape.layout != .regular and recordFields(graph, shape.fields, depth),
         .structural_choice => |shape| shape.layout == .c_enum,
-        .array => |shape| shape.length != 0 and recordStorage(graph, shape.element, depth + 1, false),
+        .array => |shape| shape.length != 0 and recordStorage(graph, shape.element, depth + 1),
         .generic => if (types.genericInstance(graph, ty)) |instance| switch (instance.shape) {
-            .alias => |value| recordStorage(graph, value, depth + 1, raw_fields),
-            .array => |shape| shape.length != 0 and recordStorage(graph, shape.element, depth + 1, false),
-            .structure => |shape| shape.layout != .regular and recordFields(graph, shape.fields, depth, raw_fields and shape.layout == .c_struct),
+            .alias => |value| recordStorage(graph, value, depth + 1),
+            .array => |shape| shape.length != 0 and recordStorage(graph, shape.element, depth + 1),
+            .structure => |shape| shape.layout != .regular and recordFields(graph, shape.fields, depth),
             .choice => |shape| shape.layout == .c_enum,
         } else false,
         else => false,
     };
 }
 
-fn recordFields(graph: *const graph_mod.GlobalSemanticGraph, fields: graph_mod.FieldRange, depth: usize, raw_fields: bool) bool {
+fn recordFields(graph: *const graph_mod.GlobalSemanticGraph, fields: graph_mod.FieldRange, depth: usize) bool {
     if (fields.len == 0) return false;
     for (graph.fields.items[fields.start..][0..fields.len]) |field| {
-        if (!recordStorage(graph, field.ty, depth + 1, raw_fields)) return false;
+        if (!recordStorage(graph, field.ty, depth + 1)) return false;
     }
     return true;
 }
@@ -416,7 +415,7 @@ fn classifyValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
     if (supportsScalarValue(graph, ty, 0)) return .{ .ty = ty, .extension = scalarExtension(graph, ty, target) };
     // An array has C storage representation but is not itself a by-value C
     // parameter. Only explicit record identities enter composite classification.
-    if (types.fields(graph, ty) == null or !supportsRecordTarget(target) or !recordStorage(graph, ty, 0, true)) return null;
+    if (types.fields(graph, ty) == null or !supportsRecordTarget(target) or !recordStorage(graph, ty, 0)) return null;
     const layout = types.layoutOf(graph, ty) catch return null;
     if (layout.size == 0 or layout.size > std.math.maxInt(i64) or layout.alignment > 8) return null;
     var plan: ValuePlan = .{ .ty = ty, .size = layout.size, .alignment = @intCast(layout.alignment), .kind = .record_indirect };

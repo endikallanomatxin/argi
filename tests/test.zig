@@ -8133,7 +8133,7 @@ test "C interop adapts floating and mixed record arguments and results" {
 }
 
 test "C interop adapts overlapping numeric union arguments and results" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/39X_pointer_union_abi", "input 'value' has an unsupported C ABI type", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/39X_safe_reference_union_abi", "input 'value' has an unsupported C ABI type", "failed without a diagnostic");
     const target = @import("builtin").target;
     try checkNativeCFixture("tests/feature_tests/c_interop/38_numeric_union_abi", if (target.cpu.arch == .x86_64) &.{
         "declare i64 @argi_c_union_number(i64)",
@@ -8156,7 +8156,7 @@ test "C interop adapts overlapping numeric union arguments and results" {
 }
 
 test "C interop adapts raw pointer fields without accepting safe reference fields" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/41X_raw_pointer_array_abi", "input 'value' has an unsupported C ABI type", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/41X_safe_reference_array_abi", "input 'value' has an unsupported C ABI type", "failed without a diagnostic");
     try checkNativeCFixture("tests/feature_tests/c_interop/40_raw_pointer_record_abi", if (@import("builtin").target.cpu.arch == .x86_64) &.{
         "declare { i64, i64 } @argi_c_buffer_get()",
         "declare { i64, float } @argi_c_buffer_weighted(i64, float)",
@@ -8166,5 +8166,20 @@ test "C interop adapts raw pointer fields without accepting safe reference field
         "declare [2 x i64] @argi_c_buffer_get()",
         "declare [2 x i64] @argi_c_buffer_weighted([2 x i64])",
         "sret({ { i64 }, i64, { i64 } }) align 8",
+    });
+}
+
+test "C interop adapts raw pointer arrays and union alternatives" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/42_raw_pointer_aggregate_abi", if (@import("builtin").target.cpu.arch == .x86_64) &.{
+        "declare { i64, i64 } @argi_c_pointers_get()",
+        "declare i64 @argi_c_address_get()",
+        "declare { i64, i64 } @argi_c_alternatives_get()",
+        "byval({ [2 x { i64 }] }) align 8",
+        "sret({ [2 x { { i64 }, i64 }] }) align 8",
+    } else &.{
+        "declare [2 x i64] @argi_c_pointers_get()",
+        "declare i64 @argi_c_address_get()",
+        "declare [2 x i64] @argi_c_alternatives_get()",
+        "sret({ [2 x { { i64 }, i64 }] }) align 8",
     });
 }
