@@ -11,7 +11,6 @@ persistence from measured benefits.
 
 ## Work to do
 
-- [ ] Resolve imports from unsaved dependency buffers during source collection.
 - [ ] Evaluate versioned persistent module caches for separate CLI builds;
   consider syntax-tree caching if tokenizing/syntaxing remain costly.
 

@@ -26,6 +26,9 @@ pub const CoreResolutionOptions = struct {
     explicit_sysroot: ?[]const u8 = null,
     environ_map: ?*const std.process.Environ.Map = null,
     fallback_core_dir: []const u8 = "core",
+    /// Editor/session buffers participate in discovery, cycle checks, and loading.
+    /// Origin is assigned by the loader, never by the supplied override.
+    source_overrides: []const SourceFile = &.{},
 };
 
 const CoreCandidate = struct {
@@ -187,6 +190,7 @@ fn collectRgFilesRecursively(
     list: *std.array_list.Managed(SourceFile),
     dir_path: []const u8,
     seen_files: *DirSet,
+    overrides: []const SourceFile,
 ) !void {
     var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch |e| {
         std.debug.print("failed to open source directory '{s}': {any}\n", .{ dir_path, e });
@@ -225,7 +229,7 @@ fn collectRgFilesRecursively(
 
     for (paths.items) |full_path| {
         try seen_files.put(try alloc.dupe(u8, full_path), {});
-        try list.append(try readFile(alloc, io, full_path));
+        try list.append(try readSource(alloc, io, full_path, overrides));
     }
 }
 
@@ -236,6 +240,7 @@ fn collectRgFilesInDir(
     dir_path: []const u8,
     skip_path: ?[]const u8,
     seen_files: *DirSet,
+    overrides: []const SourceFile,
 ) !void {
     var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch |e| {
         std.debug.print("failed to open module directory '{s}': {any}\n", .{ dir_path, e });
@@ -270,6 +275,19 @@ fn collectRgFilesInDir(
         try paths.append(full_path);
     }
 
+    for (overrides) |source| {
+        if (!std.mem.endsWith(u8, source.path, ".rg")) continue;
+        if (!std.mem.eql(u8, std.fs.path.dirname(source.path) orelse ".", dir_path)) continue;
+        if (skip_path) |skip| if (std.mem.eql(u8, source.path, skip)) continue;
+        if (seen_files.contains(source.path)) continue;
+        var found = false;
+        for (paths.items) |path| if (std.mem.eql(u8, path, source.path)) {
+            found = true;
+            break;
+        };
+        if (!found) try paths.append(try alloc.dupe(u8, source.path));
+    }
+
     std.mem.sort([]u8, paths.items, {}, struct {
         fn lessThan(_: void, lhs: []u8, rhs: []u8) bool {
             return std.mem.lessThan(u8, lhs, rhs);
@@ -278,7 +296,7 @@ fn collectRgFilesInDir(
 
     for (paths.items) |full_path| {
         try seen_files.put(try alloc.dupe(u8, full_path), {});
-        try list.append(try readFile(alloc, io, full_path));
+        try list.append(try readSource(alloc, io, full_path, overrides));
     }
 }
 
@@ -553,6 +571,7 @@ fn validateModuleGraphAcyclic(
     dir_path: []const u8,
     skip_path: ?[]const u8,
     entry_override: ?SourceFile,
+    overrides: []const SourceFile,
     visited_dirs: *DirSet,
     stack: *std.array_list.Managed([]const u8),
 ) !void {
@@ -576,7 +595,7 @@ fn validateModuleGraphAcyclic(
         seen_module_files.deinit();
     }
 
-    try collectRgFilesInDir(alloc, io, &module_files, dir_path, skip_path, &seen_module_files);
+    try collectRgFilesInDir(alloc, io, &module_files, dir_path, skip_path, &seen_module_files, overrides);
     if (entry_override) |entry_source| {
         try module_files.append(.{
             .path = try alloc.dupe(u8, entry_source.path),
@@ -593,7 +612,7 @@ fn validateModuleGraphAcyclic(
 
     for (imports.items) |entry| {
         try ensureImportDirExists(io, entry);
-        try validateModuleGraphAcyclic(alloc, io, entry.resolved_dir, null, null, visited_dirs, stack);
+        try validateModuleGraphAcyclic(alloc, io, entry.resolved_dir, null, null, overrides, visited_dirs, stack);
     }
 
     try visited_dirs.put(try alloc.dupe(u8, dir_path), {});
@@ -605,6 +624,7 @@ fn collectModuleOrder(
     dir_path: []const u8,
     skip_path: ?[]const u8,
     entry_override: ?SourceFile,
+    overrides: []const SourceFile,
     visited_dirs: *DirSet,
     ordered_dirs: *std.array_list.Managed([]const u8),
 ) !void {
@@ -619,7 +639,7 @@ fn collectModuleOrder(
         seen_module_files.deinit();
     }
 
-    try collectRgFilesInDir(alloc, io, &module_files, dir_path, skip_path, &seen_module_files);
+    try collectRgFilesInDir(alloc, io, &module_files, dir_path, skip_path, &seen_module_files, overrides);
     if (entry_override) |entry_source| {
         try module_files.append(.{
             .path = try alloc.dupe(u8, entry_source.path),
@@ -636,11 +656,21 @@ fn collectModuleOrder(
 
     for (imports.items) |entry| {
         try ensureImportDirExists(io, entry);
-        try collectModuleOrder(alloc, io, entry.resolved_dir, null, null, visited_dirs, ordered_dirs);
+        try collectModuleOrder(alloc, io, entry.resolved_dir, null, null, overrides, visited_dirs, ordered_dirs);
     }
 
     try visited_dirs.put(try alloc.dupe(u8, dir_path), {});
     try ordered_dirs.append(try alloc.dupe(u8, dir_path));
+}
+
+fn readSource(alloc: *const std.mem.Allocator, io: std.Io, path: []const u8, overrides: []const SourceFile) !SourceFile {
+    for (overrides) |source| {
+        if (!std.mem.eql(u8, source.path, path)) continue;
+        const owned_path = try alloc.dupe(u8, path);
+        errdefer alloc.free(owned_path);
+        return .{ .path = owned_path, .code = try alloc.dupe(u8, source.code) };
+    }
+    return readFile(alloc, io, path);
 }
 
 /// Reads a single file.
@@ -730,7 +760,7 @@ pub fn collectModuleWithOptions(
     }
 
     const core_start = list.items.len;
-    try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files);
+    try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files, options.source_overrides);
     markBundledCore(list.items[core_start..]);
 
     try validateModuleGraphAcyclic(
@@ -739,6 +769,7 @@ pub fn collectModuleWithOptions(
         resolved_module_dir,
         null,
         null,
+        options.source_overrides,
         &acyclic_dirs,
         &stack,
     );
@@ -748,12 +779,13 @@ pub fn collectModuleWithOptions(
         resolved_module_dir,
         null,
         null,
+        options.source_overrides,
         &ordered_seen,
         &ordered_dirs,
     );
 
     for (ordered_dirs.items) |dir_path| {
-        try collectRgFilesInDir(alloc, io, &list, dir_path, null, &seen_files);
+        try collectRgFilesInDir(alloc, io, &list, dir_path, null, &seen_files, options.source_overrides);
     }
 
     return list;
@@ -823,7 +855,7 @@ pub fn collectWithEntrySourceWithOptions(
 
     // ─── core/ ────────────────────────────────────────────────────────────
     const core_start = list.items.len;
-    try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files);
+    try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files, options.source_overrides);
     markBundledCore(list.items[core_start..]);
 
     // ─── user entry-point directory and explicit imports ────────────────
@@ -836,6 +868,7 @@ pub fn collectWithEntrySourceWithOptions(
         root_module_dir,
         user_path,
         entry_source,
+        options.source_overrides,
         &acyclic_dirs,
         &stack,
     );
@@ -845,13 +878,14 @@ pub fn collectWithEntrySourceWithOptions(
         root_module_dir,
         user_path,
         entry_source,
+        options.source_overrides,
         &ordered_seen,
         &ordered_dirs,
     );
 
     for (ordered_dirs.items) |dir_path| {
         const skip_path = if (std.mem.eql(u8, dir_path, user_dir)) user_path else null;
-        try collectRgFilesInDir(alloc, io, &list, dir_path, skip_path, &seen_files);
+        try collectRgFilesInDir(alloc, io, &list, dir_path, skip_path, &seen_files, options.source_overrides);
     }
 
     // ─── user entry point at the end ────────────────────────────────────

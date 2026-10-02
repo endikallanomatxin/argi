@@ -540,13 +540,12 @@ pub const LanguageService = struct {
 
     fn collectFiles(self: *LanguageService, allocator: *std.mem.Allocator, doc: *Document) ![]const sf.SourceFile {
         const core_dir = try self.preferredCoreDir(allocator.*);
-        const files = try sf.collectWithEntrySource(allocator, self.io, core_dir, doc.path, doc.text);
-        // TODO: Apply open dependency buffers during import discovery as well.
-        // Replacing their text here updates declarations, but cannot discover
-        // newly added imports absent from the on-disk dependency sources.
-        for (files.items) |*source_file| for (self.documents.items) |open_document| {
-            if (std.mem.eql(u8, source_file.path, open_document.path)) source_file.code = open_document.text;
-        };
+        const overrides = try allocator.alloc(sf.SourceFile, self.documents.items.len);
+        for (self.documents.items, overrides) |document, *source| source.* = .{ .path = document.path, .code = document.text };
+        const files = try sf.collectWithEntrySourceWithOptions(allocator, self.io, .{
+            .fallback_core_dir = core_dir,
+            .source_overrides = overrides,
+        }, doc.path, doc.text);
         return files.items;
     }
 
@@ -1331,4 +1330,59 @@ test "LSP module reuse preserves navigation across unsaved imports and file chan
     defer from_disk.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u32, 0), from_disk.range.start.line);
     try std.testing.expect(service.module_cache.retained_bytes <= service.module_cache.limits.bytes);
+}
+
+test "LSP module reuse discovers unsaved transitive imports and cycles" {
+    const code =
+        \\dep := import("./dep")
+        \\main() -> (.status_code: Int32) := {
+        \\    status_code = dep.answer().result
+        \\}
+    ;
+    const original = "answer() -> (.result: Int32 = 7) := {}\n";
+    const edited = "next := import(\"../next\")\nanswer() -> (.result: Int32) := { result = next.number().result }\n";
+    const next_code = "number() -> (.result: Int32 = 9) := {}\n";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDir(std.testing.io, "dep", .default_dir);
+    try tmp.dir.createDir(std.testing.io, "next", .default_dir);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "dep/answer.rg", .data = original });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "next/number.rg", .data = next_code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    const dep_path = try @import("../test_support.zig").tmpFilePath(&tmp, "dep/answer.rg");
+    defer std.testing.allocator.free(dep_path);
+    const next_path = try @import("../test_support.zig").tmpFilePath(&tmp, "next/number.rg");
+    defer std.testing.allocator.free(next_path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///unsaved-import-main.rg";
+    const opened = try service.openDocument(uri, path, 1, code);
+    defer opened.deinit();
+    const added_import = try service.openDocument("file:///unsaved-import-dep.rg", dep_path, 1, edited);
+    defer added_import.deinit();
+    try std.testing.expectEqual(@as(usize, 0), added_import.items.len);
+    const definition = (try service.definition(uri, .{ .line = 2, .character = 23 })).?;
+    defer definition.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(dep_path, definition.path);
+    try std.testing.expectEqual(@as(u32, 1), definition.range.start.line);
+
+    const cycle = try service.openDocument("file:///unsaved-import-next.rg", next_path, 1, "back := import(\"../dep\")\n" ++ next_code);
+    defer cycle.deinit();
+    try std.testing.expectEqual(@as(usize, 1), cycle.items.len);
+    try std.testing.expectEqualStrings("import cycle detected", cycle.items[0].message);
+    const root_cycle = try service.changeDocument(uri, path, 2, code);
+    defer root_cycle.deinit();
+    try std.testing.expectEqualStrings("import cycle detected", root_cycle.items[0].message);
+    const repaired = try service.changeDocument("file:///unsaved-import-next.rg", next_path, 2, next_code);
+    defer repaired.deinit();
+    try std.testing.expectEqual(@as(usize, 0), repaired.items.len);
+    const root_repaired = try service.changeDocument(uri, path, 3, code);
+    defer root_repaired.deinit();
+    try std.testing.expectEqual(@as(usize, 0), root_repaired.items.len);
+    service.closeDocument("file:///unsaved-import-dep.rg");
+    const reverted = (try service.definition(uri, .{ .line = 2, .character = 23 })).?;
+    defer reverted.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u32, 0), reverted.range.start.line);
 }
