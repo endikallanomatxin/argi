@@ -10,38 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-15]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Zig 0.16.0
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-
-      - name: Install LLVM 21 on Linux
-        if: runner.os == 'Linux'
-        run: |
-          wget -q https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 21
-          sudo apt-get install -y llvm-21-dev
-          llvm-config-21 --version
-
-      - name: Install LLVM 21 on macOS
-        if: runner.os == 'macOS'
-        run: |
-          brew install llvm@21
-          llvm_config="$(brew --prefix llvm@21)/bin/llvm-config"
-          "$llvm_config" --version
-          echo "LLVM_INCLUDE_DIR=$("$llvm_config" --includedir)" >> "$GITHUB_ENV"
-          echo "LLVM_LIB_DIR=$("$llvm_config" --libdir)" >> "$GITHUB_ENV"
-          echo "LLVM_LIBS=$("$llvm_config" --libs)" >> "$GITHUB_ENV"
-
-      - name: Run tests
-        run: zig build -j1 test --summary all
+  validate:
+    uses: ./.github/workflows/build.yml
+    with:
+      package: true

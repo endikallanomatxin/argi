@@ -181,16 +181,15 @@ faster.
 - Prepare a release on `develop`. When the preparation changes release notes,
   version metadata, plans, or other release artifacts, keep those changes in a
   focused commit named `Prepare release X.Y.Z`.
-- Publish by checking out `main` and merging `develop` with an explicit
+- Create the release candidate by checking out `main` and merging `develop`
+  with an explicit
   no-fast-forward merge whose message is exactly `Release X.Y.Z`:
 
   ```bash
   git merge --no-ff develop -m "Release X.Y.Z"
   ```
 
-- Create the release tag as an annotated tag named `vX.Y.Z` on that merge
-  commit.
-- Immediately fast-forward `develop` to the published merge; do not create a
+- Immediately fast-forward `develop` to the release merge; do not create a
   later `main`-to-`develop` merge commit:
 
   ```bash
@@ -198,6 +197,19 @@ faster.
   git merge --ff-only main
   ```
 
+- Push `main` and `develop` together. `.github/workflows/release.yml` validates
+  the exact merge commit on Linux x86_64/ARM64 and macOS Intel/Apple Silicon,
+  builds relocatable distributions, and exercises the extracted packages.
+  Only after every job succeeds does it create the annotated `vX.Y.Z` tag and
+  publish the GitHub release with binary archives and `SHA256SUMS`.
+- Do not create tags or publish releases manually. Release notes come from
+  `releases/X.Y.Z.md`; the workflow does not generate a changelog. To retry
+  a failed release, run `gh workflow run release.yml --ref main`. Investigate
+  failures before changing the release candidate; published versions must not
+  be overwritten without an explicit request.
+- Binary packages include non-system runtime dependencies and their license
+  notices. Build with a baseline CPU target, preserve the installed core
+  layout, and validate relocation. Consumers still need a system C linker.
 - Immediately after publication, `main`, `develop`, and `vX.Y.Z` must identify
   the same commit. Subsequent development continues from that common point on
   `develop`.

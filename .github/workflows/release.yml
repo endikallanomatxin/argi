@@ -1,0 +1,66 @@
+name: Release
+
+"on":
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release metadata
+        id: version
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          assert os.environ['GITHUB_REF'] == 'refs/heads/main', 'Release from main only'
+          version = re.search(r'\.version = "([0-9]+\.[0-9]+\.[0-9]+)"', Path('build.zig.zon').read_text())[1]
+          subject = subprocess.check_output(['git', 'log', '-1', '--format=%s'], text=True).strip()
+          assert subject == f'Release {version}', 'Expected an explicit release merge'
+          parents = subprocess.check_output(['git', 'cat-file', '-p', 'HEAD'], text=True).splitlines()
+          assert len([line for line in parents if line.startswith('parent ')]) == 2, 'Expected a release merge'
+          notes = Path(f'releases/{version}.md').read_text()
+          assert notes.startswith(f'# Argi {version}\n'), 'Release notes do not match the version'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\n')
+          PY
+
+  validate:
+    needs: metadata
+    uses: ./.github/workflows/build.yml
+    with:
+      package: true
+
+  publish:
+    needs: [metadata, validate]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: argi-*
+          merge-multiple: true
+          path: dist
+      - name: Publish validated release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        run: python .github/scripts/publish_release.py

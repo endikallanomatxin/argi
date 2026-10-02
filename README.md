@@ -153,7 +153,23 @@ argi init --lib math_utils
 
 ## Installation
 
-### Platform support
+### Binary distributions
+
+Download a package and `SHA256SUMS` from the
+[latest release](https://github.com/endikallanomatxin/argi/releases/latest).
+Packages are available for Linux x86_64/ARM64 and macOS Intel/Apple Silicon,
+with the compiler, core library, and LLVM runtime included. Extract the package
+and add its `bin` directory to `PATH`; keep `bin` and `lib` together.
+
+Zig and a separate LLVM installation are not required. You still need a system
+C compiler/linker to build Argi programs. Linux packages require glibc 2.39 or
+newer; macOS packages require macOS 15 or newer. See the
+[binary installation guide](.github/scripts/binary_installation.md) for checksums and
+platform setup.
+
+### Building from source
+
+#### Platform support
 
 Native CI covers Linux and macOS.
 
@@ -170,14 +186,14 @@ The build script looks for `llvm-config`, or you can set:
 Building Argi programs also requires a C compiler/linker. By default Argi uses
 `cc`. Set `CC=/path/to/compiler` to override it.
 
-### Prerequisites
+#### Prerequisites
 
 The build script needs to know where LLVM is installed. In restricted
 environments, set the environment variables above instead of relying on
 `llvm-config`.
 
 
-### Compilation
+#### Compilation
 
 To build the tool in the repository-local `zig-out/` prefix:
 

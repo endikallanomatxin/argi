@@ -5,3 +5,6 @@ references/
 .argi-cache
 zig-out
 output*
+
+dist/
+__pycache__/

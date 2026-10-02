@@ -1,0 +1,106 @@
+name: Native validation
+
+"on":
+  workflow_call:
+    inputs:
+      package:
+        description: Build and validate binary distributions
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux-x86_64
+          - os: ubuntu-24.04-arm
+            target: linux-aarch64
+          - os: macos-15-intel
+            target: macos-x86_64
+          - os: macos-15
+            target: macos-aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - uses: actions/setup-python@v5
+        if: inputs.package
+        with:
+          python-version: '3.12'
+
+      - name: Install LLVM 21 on Linux
+        if: runner.os == 'Linux'
+        run: |
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+          sudo apt-get install -y llvm-21-dev patchelf
+          llvm-config-21 --version
+
+      - name: Install LLVM 21 on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm@21
+          llvm_config="$(brew --prefix llvm@21)/bin/llvm-config"
+          "$llvm_config" --version
+          echo "LLVM_INCLUDE_DIR=$("$llvm_config" --includedir)" >> "$GITHUB_ENV"
+          echo "LLVM_LIB_DIR=$("$llvm_config" --libdir)" >> "$GITHUB_ENV"
+          echo "LLVM_LIBS=$("$llvm_config" --libs)" >> "$GITHUB_ENV"
+
+      - name: Run tests
+        run: zig build -j1 test --summary all
+
+      - name: Build binary distribution
+        if: inputs.package
+        env:
+          PACKAGE_TARGET: ${{ matrix.target }}
+        run: |
+          zig build -j1 -Doptimize=ReleaseSafe -Dcpu=baseline --prefix "$RUNNER_TEMP/argi-install" --summary all
+          python .github/scripts/package_release.py --prefix "$RUNNER_TEMP/argi-install" --output dist --target "$PACKAGE_TARGET"
+
+      - name: Verify and exercise extracted distribution
+        if: inputs.package
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          import tarfile
+          import tempfile
+          import subprocess
+          archive, = Path('dist').glob('*.tar.gz')
+          expected = Path(str(archive) + '.sha256').read_text().split()[0]
+          with archive.open('rb') as source:
+              assert hashlib.file_digest(source, 'sha256').hexdigest() == expected
+          with tempfile.TemporaryDirectory(prefix='argi-relocated-') as directory:
+              with tarfile.open(archive) as source:
+                  source.extractall(directory, filter='data')
+              package, = Path(directory).iterdir()
+              subprocess.run(['python', '.github/scripts/smoke_release.py', str(package)], check=True)
+          PY
+
+      - name: Exercise Linux distribution without installed LLVM
+        if: inputs.package && runner.os == 'Linux'
+        run: |
+          docker run --rm -v "$PWD/dist:/packages:ro" -v "$PWD/.github/scripts:/scripts:ro" ubuntu:24.04 sh -ec '
+            apt-get update -qq
+            apt-get install -y --no-install-recommends gcc libc6-dev python3
+            mkdir /consumer
+            tar -xzf /packages/*.tar.gz -C /consumer
+            python3 /scripts/smoke_release.py /consumer/argi-*
+          '
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.package
+        with:
+          name: argi-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
