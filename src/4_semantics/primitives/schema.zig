@@ -81,7 +81,9 @@ pub const FunctionFlags = packed struct(u16) {
     is_generic_instantiation: bool = false,
     is_abstract_dispatch: bool = false,
     is_entry: bool = false,
-    _padding: u8 = 0,
+    is_c_abi: bool = false,
+    is_c_export: bool = false,
+    _padding: u6 = 0,
 };
 
 pub const StructLayout = enum(u8) { regular, c_union };

@@ -147,10 +147,13 @@ const Context = struct {
             const output_range = try self.writer.appendBindingRefs(outputs.items);
             self.writer.pending_owner_function = function_id;
             const body = if (declaration.body) |body_node| try self.lowerBlock(body_node) else null;
+            const foreign = if (declaration.c_options) |options| try self.lowerForeignOptions(options) else ForeignOptions{};
+            if (foreign.exported and declaration.body == null)
+                return self.foreignOptionError(declaration.c_options.?, "an exported CFunction requires a body");
             try self.graph.semantic.function_semantics.append(self.allocator, .{
                 .function = function_id,
                 .body = body,
-                .foreign_symbol = if (declaration.c_options) |options| try self.lowerForeignSymbol(options) else null,
+                .foreign_symbol = foreign.symbol,
                 .input_bindings = input_range,
                 .output_bindings = output_range,
                 .flags = .{
@@ -158,6 +161,8 @@ const Context = struct {
                     .is_once = declaration.is_once,
                     .is_test = source_decl.kind == .test_function,
                     .has_declared_body = declaration.body != null,
+                    .is_c_abi = declaration.c_abi,
+                    .is_c_export = foreign.exported,
                     .uses_inferred_error_reasons = try self.interfaceUsesInferredErrable(interface.output),
                 },
             });
@@ -170,15 +175,29 @@ const Context = struct {
 
     // Options become owned module-local metadata. Cached canonical graphs and
     // global relocation must not recover foreign names from borrowed syntax.
-    fn lowerForeignSymbol(self: *Context, options: syn.NodeIndex) !?primitives.StringRange {
+    const ForeignOptions = struct { symbol: ?primitives.StringRange = null, exported: bool = false };
+
+    fn lowerForeignOptions(self: *Context, options: syn.NodeIndex) !ForeignOptions {
         const fields = self.tree.structValueLiteral(options).?.fields;
         var symbol: ?primitives.StringRange = null;
+        var exported: ?bool = null;
         for (fields) |field| {
             if (self.tree.tag(field) != .struct_value_field)
                 return self.foreignOptionError(field, "CFunction options must be named");
             const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(field));
+            if (std.mem.eql(u8, name, "export")) {
+                if (exported != null) return self.foreignOptionError(field, "duplicate CFunction '.export' option");
+                const value = self.tree.data(field).node;
+                const literal = self.tree.literal(value) orelse
+                    return self.foreignOptionError(value, "CFunction '.export' requires a boolean literal");
+                const content = self.tree.tokenContent(literal.token);
+                if (content != .literal or content.literal != .bool_literal)
+                    return self.foreignOptionError(value, "CFunction '.export' requires a boolean literal");
+                exported = content.literal.bool_literal;
+                continue;
+            }
             if (!std.mem.eql(u8, name, "symbol"))
-                return self.foreignOptionError(field, "unsupported CFunction option; only '.symbol' is implemented");
+                return self.foreignOptionError(field, "unsupported CFunction option; expected '.symbol' or '.export'");
             if (symbol != null) return self.foreignOptionError(field, "duplicate CFunction '.symbol' option");
             const value = self.tree.data(field).node;
             const literal = self.tree.literal(value) orelse
@@ -193,7 +212,7 @@ const Context = struct {
                 return self.foreignOptionError(value, "CFunction '.symbol' must be nonempty and contain no NUL bytes");
             symbol = try self.writer.addString(decoded);
         }
-        return symbol;
+        return .{ .symbol = symbol, .exported = exported orelse false };
     }
 
     fn foreignOptionError(self: *Context, node: syn.NodeIndex, message: []const u8) error{ OutOfMemory, Reported } {

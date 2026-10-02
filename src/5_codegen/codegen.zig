@@ -49,6 +49,7 @@ const FunctionSymbol = struct {
     type_ref: llvm.c.LLVMTypeRef,
     return_type: llvm.c.LLVMTypeRef,
     is_extern: bool,
+    is_c_abi: bool = false,
     uses_sret: bool = false,
 };
 
@@ -214,24 +215,49 @@ pub const CodeGenerator = struct {
         const is_extern = function.body == null and !function.flags.has_declared_body;
         var symbol: FunctionSymbol = undefined;
 
-        if (is_extern) {
+        if (is_extern or function.flags.is_c_abi) {
             const signature = try self.externSignature(function, name);
             // Bundled memory bindings remain module-private in Argi while
             // resolving the platform's public C symbols at link time.
-            const external_name = self.externSymbolName(function, name);
+            var lowerer = self.typeLowerer();
+            const private_name = if (!is_extern and !function.flags.is_c_export and function.foreign_symbol == null)
+                try lowerer.mangledFunctionName(id)
+            else
+                null;
+            defer if (private_name) |allocated| self.allocator.free(allocated);
+            const external_name = private_name orelse self.externSymbolName(function, name);
+            if (function.flags.is_c_export and std.mem.eql(u8, external_name, "main")) {
+                try self.report(declaration.source, "C export symbol 'main' is reserved for the generated program entrypoint", .{});
+                return CodegenError.Reported;
+            }
             const name_z = try self.dupZ(external_name);
             const existing = c.LLVMGetNamedFunction(self.module, name_z.ptr);
             if (existing != null and c.LLVMGlobalGetValueType(existing) != signature.fn_type) {
                 try self.report(declaration.source, "C symbol '{s}' is declared with incompatible signatures", .{external_name});
                 return CodegenError.Reported;
             }
+            if (!is_extern and existing != null) {
+                if (!function.flags.is_c_export) {
+                    try self.report(declaration.source, "private C symbol '{s}' conflicts with another declaration", .{external_name});
+                    return CodegenError.Reported;
+                }
+                var symbols = self.functions.valueIterator();
+                while (symbols.next()) |previous| {
+                    if (previous.ref == existing and !previous.is_extern) {
+                        try self.report(declaration.source, "C symbol '{s}' has multiple definitions", .{external_name});
+                        return CodegenError.Reported;
+                    }
+                }
+            }
             const ref = if (existing != null) existing else c.LLVMAddFunction(self.module, name_z.ptr, signature.fn_type);
+            if (!is_extern and !function.flags.is_c_export)
+                c.LLVMSetLinkage(ref, c.LLVMInternalLinkage);
             if (signature.uses_sret) {
                 const kind = c.LLVMGetEnumAttributeKindForName("sret", 4);
                 const attr = c.LLVMCreateEnumAttribute(c.LLVMGetGlobalContext(), kind, 0);
                 c.LLVMAddAttributeAtIndex(ref, 1, attr);
             }
-            symbol = .{ .ref = ref, .type_ref = signature.fn_type, .return_type = signature.return_type, .is_extern = true, .uses_sret = signature.uses_sret };
+            symbol = .{ .ref = ref, .type_ref = signature.fn_type, .return_type = signature.return_type, .is_extern = is_extern, .is_c_abi = true, .uses_sret = signature.uses_sret };
         } else {
             // TODO: pass large aggregate outputs through caller-owned storage
             // instead of direct LLVM returns; see the codegen task in plan/0.3.md.
@@ -457,11 +483,11 @@ pub const CodeGenerator = struct {
 
         const entry = c.LLVMAppendBasicBlock(symbol.ref, "entry");
         c.LLVMPositionBuilderAtEnd(self.builder, entry);
-        const input_value = c.LLVMGetParam(symbol.ref, 0);
+        const input_value = if (!symbol.is_c_abi) c.LLVMGetParam(symbol.ref, 0) else null;
         for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len], 0..) |binding, index| {
             try self.allocateLocalBinding(binding, null);
             const storage = self.bindings.getPtr(binding).?;
-            const value = c.LLVMBuildExtractValue(self.builder, input_value, @intCast(index), "arg");
+            const value = if (symbol.is_c_abi) c.LLVMGetParam(symbol.ref, @intCast(index)) else c.LLVMBuildExtractValue(self.builder, input_value, @intCast(index), "arg");
             _ = c.LLVMBuildStore(self.builder, value, storage.ref);
             storage.initialized = true;
             if (storage.drop_state) |drop| self.storeDropState(drop, true);
@@ -1080,6 +1106,17 @@ pub const CodeGenerator = struct {
     }
 
     fn emitOutputBindings(self: *CodeGenerator, function: graph_mod.Function) !void {
+        if (function.flags.is_c_abi) {
+            if (function.output_bindings.len == 0) {
+                _ = c.LLVMBuildRetVoid(self.builder);
+            } else {
+                const binding = self.graph.binding_refs.items[function.output_bindings.start];
+                const storage = self.bindings.get(binding) orelse return CodegenError.SymbolNotFound;
+                const value = c.LLVMBuildLoad2(self.builder, storage.type_ref, storage.ref, "return.c");
+                _ = c.LLVMBuildRet(self.builder, value);
+            }
+            return;
+        }
         const return_type = self.current_return_type orelse return CodegenError.InvalidType;
         var aggregate = c.LLVMGetUndef(return_type);
         for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len], 0..) |binding, index| {
@@ -1681,7 +1718,7 @@ pub const CodeGenerator = struct {
         defer self.default_location_source = previous_source;
         const input = (try self.visitNode(call.input)) orelse return CodegenError.ValueNotFound;
 
-        if (!symbol.is_extern) {
+        if (!symbol.is_c_abi) {
             var args = [_]llvm.c.LLVMValueRef{input.value_ref};
             const result = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 1, "call");
             try self.markCallDropState(call, result, false);
@@ -2272,9 +2309,17 @@ pub const CodeGenerator = struct {
         var worklist = std.ArrayList(llvm.c.LLVMValueRef).empty;
         defer worklist.deinit(self.allocator);
 
-        // The generated C wrapper is the executable root. A defined function
-        // whose address escapes a direct call is also a root because it can be
-        // reached through runtime dispatch, including generated virtual tables.
+        // The generated C wrapper and explicit exports are roots. Native
+        // callers are outside this module's call graph. Address escapes also
+        // preserve runtime dispatch, including generated virtual tables.
+        for (self.graph.functions.items, 0..) |record, raw| {
+            if (!record.flags.is_c_export) continue;
+            const symbol = self.functions.get(@enumFromInt(@as(u32, @intCast(raw)))) orelse continue;
+            if (defined.contains(symbol.ref) and !reachable.contains(symbol.ref)) {
+                try reachable.put(symbol.ref, {});
+                try worklist.append(self.allocator, symbol.ref);
+            }
+        }
         if (c.LLVMGetNamedFunction(self.module, "main")) |main_function| {
             if (defined.contains(main_function)) {
                 try reachable.put(main_function, {});

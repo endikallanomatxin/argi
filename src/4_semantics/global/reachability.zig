@@ -63,7 +63,7 @@ pub fn roots(
         // inspected while resolving an otherwise reachable caller.
         const trace_runtime = (if (graph.moduleForDeclaration(function.declaration)) |owner| graph.modules.items[@intFromEnum(owner)].is_bundled_core else false) and
             (std.mem.eql(u8, name, "_add_error_context") or std.mem.eql(u8, name, "_add_error_context_text") or std.mem.eql(u8, name, "source_location"));
-        if (entrypoint or trace_runtime or function.flags.uses_inferred_error_reasons)
+        if (entrypoint or trace_runtime or function.flags.is_c_export or function.flags.uses_inferred_error_reasons)
             _ = try result.include(@enumFromInt(@as(u32, @intCast(raw))));
     }
     return result;

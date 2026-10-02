@@ -1516,6 +1516,7 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
         self.advanceOne();
         const output = try self.parseFunctionOutputType();
+        self.skipNewLinesAndComments();
         if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
         self.advanceOne();
 
@@ -1528,10 +1529,17 @@ pub const Syntaxer = struct {
                         syn.OptionalNodeIndex.init(try self.parseCollectionLiteral(true))
                     else
                         syn.OptionalNodeIndex.none;
-                    if (options != .none and (generic_params.start != generic_params.end or generic_params_struct != null)) {
+                    if (generic_params.start != generic_params.end or generic_params_struct != null) {
                         try self.diags.add(self.tokenLocation(), .syntax, "CFunction options require a concrete non-generic declaration", .{});
                         return SyntaxerError.ExpectedStructField;
                     }
+                    self.skipNewLinesAndComments();
+                    const body: syn.OptionalNodeIndex = if (self.tokenIs(.colon)) blk: {
+                        self.advanceOne();
+                        if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
+                        self.advanceOne();
+                        break :blk (try self.parseCodeBlock()).optional();
+                    } else .none;
                     const extra = try self.addExtra(syn.FunctionExtra{
                         .name_token = name.token,
                         .generic_params_start = generic_params.start,
@@ -1539,8 +1547,9 @@ pub const Syntaxer = struct {
                         .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
                         .input = input,
                         .output = output,
-                        .body = .none,
+                        .body = body,
                         .c_options = options,
+                        .c_abi = 1,
                     });
                     return try self.addNode(if (is_once) .function_declaration_once else .function_declaration, name.token, .{ .extra = extra });
                 }

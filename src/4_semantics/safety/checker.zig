@@ -321,8 +321,8 @@ pub const SafetyChecker = struct {
     fn validateForeignSignatures(self: *SafetyChecker) !void {
         const c_abi = @import("../global/c_abi.zig");
         for (self.graph.functions.items) |function| {
-            if (function.body != null or function.flags.has_declared_body or
-                function.flags.is_abstract_dispatch) continue;
+            if (function.flags.is_abstract_dispatch) continue;
+            if (!function.flags.is_c_abi and (function.body != null or function.flags.has_declared_body)) continue;
             const declaration = self.graph.declaration(function.declaration);
             const name = self.graph.text(declaration.name);
             if (function.output.len > 1) {
