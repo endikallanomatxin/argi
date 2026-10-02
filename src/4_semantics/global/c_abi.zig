@@ -238,14 +238,16 @@ fn isSysVX64(target: std.Target) bool {
     return target.cpu.arch == .x86_64 and (target.os.tag == .linux or target.os.tag.isDarwin());
 }
 
-fn supportsNumericRecords(target: std.Target) bool {
+fn supportsRecordTarget(target: std.Target) bool {
     return target.ptrBitWidth() == 64 and (isSysVX64(target) or (target.cpu.arch == .aarch64 and (target.os.tag == .linux or target.os.tag.isDarwin())));
 }
 
-/// Numeric C records and unions have no foreign-reference effects.
-/// Pointer-bearing and over-aligned records require separate handling.
-fn numericRecordStorage(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, depth: usize) bool {
+/// RawPointer fields are addresses, not safe references. Arrays and unions
+/// still accept numeric storage only, until their foreign projections are
+/// modeled. Legacy reference fields cannot silently acquire safe provenance.
+fn recordStorage(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, depth: usize, raw_fields: bool) bool {
     if (depth >= 32) return false;
+    if (isRawPointer(graph, ty)) return raw_fields;
     const semantic = graph.resolvedSemanticType(ty) orelse return false;
     return switch (semantic) {
         .builtin => |value| switch (value) {
@@ -256,25 +258,25 @@ fn numericRecordStorage(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_m
             const declaration = graph.declaration(id);
             if (declaration.choice_layout == .c_enum and declaration.choice_variants != null) break :blk true;
             if (declaration.struct_layout == .regular) break :blk false;
-            break :blk numericFields(graph, declaration.struct_fields orelse break :blk false, depth);
+            break :blk recordFields(graph, declaration.struct_fields orelse break :blk false, depth, raw_fields and declaration.struct_layout == .c_struct);
         },
-        .structural => |shape| shape.layout != .regular and numericFields(graph, shape.fields, depth),
+        .structural => |shape| shape.layout != .regular and recordFields(graph, shape.fields, depth, raw_fields and shape.layout == .c_struct),
         .structural_choice => |shape| shape.layout == .c_enum,
-        .array => |shape| shape.length != 0 and numericRecordStorage(graph, shape.element, depth + 1),
+        .array => |shape| shape.length != 0 and recordStorage(graph, shape.element, depth + 1, false),
         .generic => if (types.genericInstance(graph, ty)) |instance| switch (instance.shape) {
-            .alias => |value| numericRecordStorage(graph, value, depth + 1),
-            .array => |shape| shape.length != 0 and numericRecordStorage(graph, shape.element, depth + 1),
-            .structure => |shape| shape.layout != .regular and numericFields(graph, shape.fields, depth),
+            .alias => |value| recordStorage(graph, value, depth + 1, raw_fields),
+            .array => |shape| shape.length != 0 and recordStorage(graph, shape.element, depth + 1, false),
+            .structure => |shape| shape.layout != .regular and recordFields(graph, shape.fields, depth, raw_fields and shape.layout == .c_struct),
             .choice => |shape| shape.layout == .c_enum,
         } else false,
         else => false,
     };
 }
 
-fn numericFields(graph: *const graph_mod.GlobalSemanticGraph, fields: graph_mod.FieldRange, depth: usize) bool {
+fn recordFields(graph: *const graph_mod.GlobalSemanticGraph, fields: graph_mod.FieldRange, depth: usize, raw_fields: bool) bool {
     if (fields.len == 0) return false;
     for (graph.fields.items[fields.start..][0..fields.len]) |field| {
-        if (!numericRecordStorage(graph, field.ty, depth + 1)) return false;
+        if (!recordStorage(graph, field.ty, depth + 1, raw_fields)) return false;
     }
     return true;
 }
@@ -337,6 +339,11 @@ const NumericShape = struct {
 
 fn numericShape(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, offset: u64, shape: *NumericShape, depth: usize) void {
     if (depth >= 32) return;
+    if (isRawPointer(graph, ty)) {
+        const layout = types.layoutOf(graph, ty) catch return;
+        shape.leaf(offset, layout.size, false);
+        return;
+    }
     const semantic = graph.resolvedSemanticType(ty) orelse return;
     var fields: ?graph_mod.FieldRange = null;
     var overlapping = false;
@@ -409,11 +416,11 @@ fn classifyValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
     if (supportsScalarValue(graph, ty, 0)) return .{ .ty = ty, .extension = scalarExtension(graph, ty, target) };
     // An array has C storage representation but is not itself a by-value C
     // parameter. Only explicit record identities enter composite classification.
-    if (types.fields(graph, ty) == null or !supportsNumericRecords(target) or !numericRecordStorage(graph, ty, 0)) return null;
+    if (types.fields(graph, ty) == null or !supportsRecordTarget(target) or !recordStorage(graph, ty, 0, true)) return null;
     const layout = types.layoutOf(graph, ty) catch return null;
     if (layout.size == 0 or layout.size > std.math.maxInt(i64) or layout.alignment > 8) return null;
     var plan: ValuePlan = .{ .ty = ty, .size = layout.size, .alignment = @intCast(layout.alignment), .kind = .record_indirect };
-    // Four doubles are the largest supported HFA. Larger numeric records
+    // Four doubles are the largest supported HFA. Larger records
     // always use memory, so avoid expanding nested arrays just to classify them.
     if (layout.size > 32) {
         plan.byval = isSysVX64(target) and !result;

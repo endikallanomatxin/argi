@@ -956,8 +956,8 @@ pub const SafetyChecker = struct {
             // Argument evaluation is still part of the successful call and is
             // committed by the outer transaction. Foreign pointers themselves
             // do not become safe references implicitly.
-            if (callee.output.len == 1 and (isPointer(self.graph, self.graph.fields.items[callee.output.start].ty) or @import("../global/c_abi.zig").isRawPointer(self.graph, self.graph.fields.items[callee.output.start].ty)))
-                return .{ .foreign_storage = true };
+            if (callee.output.len == 1)
+                return @import("foreign_result.zig").value(facts.ValueFacts, self.allocator, self.graph, self.graph.fields.items[callee.output.start].ty);
             return .{};
         }
 
@@ -3129,8 +3129,8 @@ pub const SafetyChecker = struct {
             return result;
         }
         if (callee.body == null) {
-            const result: facts.ValueFacts = if (callee.output.len == 1 and (isPointer(self.graph, self.graph.fields.items[callee.output.start].ty) or @import("../global/c_abi.zig").isRawPointer(self.graph, self.graph.fields.items[callee.output.start].ty)))
-                .{ .foreign_storage = true }
+            const result: facts.ValueFacts = if (callee.output.len == 1)
+                try @import("foreign_result.zig").value(facts.ValueFacts, self.allocator, self.graph, self.graph.fields.items[callee.output.start].ty)
             else
                 .{};
             if (self.diagnostics.list.items.len != diagnostic_count) return .{};

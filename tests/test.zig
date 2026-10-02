@@ -8154,3 +8154,17 @@ test "C interop adapts overlapping numeric union arguments and results" {
         "declare [2 x i64] @argi_c_union_mixed([2 x i64])",
     });
 }
+
+test "C interop adapts raw pointer fields without accepting safe reference fields" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/41X_raw_pointer_array_abi", "input 'value' has an unsupported C ABI type", "failed without a diagnostic");
+    try checkNativeCFixture("tests/feature_tests/c_interop/40_raw_pointer_record_abi", if (@import("builtin").target.cpu.arch == .x86_64) &.{
+        "declare { i64, i64 } @argi_c_buffer_get()",
+        "declare { i64, float } @argi_c_buffer_weighted(i64, float)",
+        "byval({ { i64 }, i64 }) align 8",
+        "sret({ { i64 }, i64, { i64 } }) align 8",
+    } else &.{
+        "declare [2 x i64] @argi_c_buffer_get()",
+        "declare [2 x i64] @argi_c_buffer_weighted([2 x i64])",
+        "sret({ { i64 }, i64, { i64 } }) align 8",
+    });
+}

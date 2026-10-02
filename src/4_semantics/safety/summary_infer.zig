@@ -76,8 +76,7 @@ pub const Infer = struct {
                 @memset(outputs, .{});
                 if (function.flags.is_c_abi and !function.flags.has_declared_body and outputs.len == 1) {
                     const ty = self.graph.fields.items[function.output.start].ty;
-                    if (self.graph.semanticType(ty) == .pointer or @import("../global/c_abi.zig").isRawPointer(self.graph, ty))
-                        outputs[0].foreign_storage = true;
+                    outputs[0] = try @import("foreign_result.zig").value(facts.ValueEffect, self.allocator, self.graph, ty);
                 }
                 try self.engine.summaries.put(id, .{ .outputs = outputs });
             }
