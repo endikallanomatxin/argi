@@ -11,7 +11,7 @@ existing external calls do not establish support for every signature shape.
 
 ## Work to do
 
-- [ ] Add target C scalars, explicit C record layouts, and raw-pointer lowering;
+- [ ] Add target C scalars and explicit C record layouts;
   expand the checked ABI subset alongside cross-language tests.
 - [ ] Choose a small native-library consumer and validate its wrappers, including
   aggregate arguments/results where supported.

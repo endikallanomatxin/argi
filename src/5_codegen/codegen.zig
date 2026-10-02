@@ -304,6 +304,27 @@ pub const CodeGenerator = struct {
         return name;
     }
 
+    // Raw addresses remain records inside Argi. Encode/decode only where a
+    // typed C signature crosses the boundary; no safe reference is acquired.
+    fn cValueType(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) !llvm.c.LLVMTypeRef {
+        if (@import("../4_semantics/global/c_abi.zig").isRawPointer(self.graph, ty))
+            return c.LLVMPointerType(c.LLVMInt8Type(), 0);
+        return self.toLLVMType(ty);
+    }
+
+    fn encodeCValue(self: *CodeGenerator, value: llvm.c.LLVMValueRef, ty: graph_mod.GlobalTypeId) !llvm.c.LLVMValueRef {
+        if (!@import("../4_semantics/global/c_abi.zig").isRawPointer(self.graph, ty)) return value;
+        const address = c.LLVMBuildExtractValue(self.builder, value, 0, "c.address");
+        return c.LLVMBuildIntToPtr(self.builder, address, try self.cValueType(ty), "c.pointer");
+    }
+
+    fn decodeCValue(self: *CodeGenerator, value: llvm.c.LLVMValueRef, ty: graph_mod.GlobalTypeId) !llvm.c.LLVMValueRef {
+        if (!@import("../4_semantics/global/c_abi.zig").isRawPointer(self.graph, ty)) return value;
+        const record = try self.toLLVMType(ty);
+        const address = c.LLVMBuildPtrToInt(self.builder, value, c.LLVMStructGetTypeAtIndex(record, 0), "c.address");
+        return c.LLVMBuildInsertValue(self.builder, c.LLVMGetUndef(record), address, 0, "c.raw_pointer");
+    }
+
     fn externSignature(self: *CodeGenerator, function: graph_mod.Function, name: []const u8) !ExternSignature {
         const uses_sret = function.output.len > 1;
         const physical_inputs = @import("../4_semantics/global/c_abi.zig").physicalInputCount(function);
@@ -316,12 +337,12 @@ pub const CodeGenerator = struct {
             cursor = 1;
         }
         for (self.graph.fields.items[function.input.start..][0..physical_inputs], 0..) |field, index|
-            params[cursor + index] = try self.toLLVMType(field.ty);
+            params[cursor + index] = try self.cValueType(field.ty);
         if (std.mem.eql(u8, self.externSymbolName(function, name), "free") and physical_inputs == 1)
             params[cursor] = c.LLVMPointerType(c.LLVMInt8Type(), 0);
 
         var ret = c.LLVMVoidType();
-        if (function.output.len == 1) ret = try self.toLLVMType(self.graph.fields.items[function.output.start].ty);
+        if (function.output.len == 1) ret = try self.cValueType(self.graph.fields.items[function.output.start].ty);
         if (function.safety_primitive == .raw_allocated_storage) ret = c.LLVMPointerType(c.LLVMInt8Type(), 0);
         return .{ .fn_type = c.LLVMFunctionType(ret, if (total == 0) null else params.ptr, @intCast(total), 0), .return_type = ret, .uses_sret = uses_sret };
     }
@@ -488,7 +509,7 @@ pub const CodeGenerator = struct {
         for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len], 0..) |binding, index| {
             try self.allocateLocalBinding(binding, null);
             const storage = self.bindings.getPtr(binding).?;
-            const value = if (symbol.is_c_abi) c.LLVMGetParam(symbol.ref, @intCast(index)) else c.LLVMBuildExtractValue(self.builder, input_value, @intCast(index), "arg");
+            const value = if (symbol.is_c_abi) try self.decodeCValue(c.LLVMGetParam(symbol.ref, @intCast(index)), self.graph.binding(binding).ty) else c.LLVMBuildExtractValue(self.builder, input_value, @intCast(index), "arg");
             _ = c.LLVMBuildStore(self.builder, value, storage.ref);
             storage.initialized = true;
             if (storage.drop_state) |drop| self.storeDropState(drop, true);
@@ -1114,7 +1135,7 @@ pub const CodeGenerator = struct {
                 const binding = self.graph.binding_refs.items[function.output_bindings.start];
                 const storage = self.bindings.get(binding) orelse return CodegenError.SymbolNotFound;
                 const value = c.LLVMBuildLoad2(self.builder, storage.type_ref, storage.ref, "return.c");
-                _ = c.LLVMBuildRet(self.builder, value);
+                _ = c.LLVMBuildRet(self.builder, try self.encodeCValue(value, self.graph.binding(binding).ty));
             }
             return;
         }
@@ -1751,8 +1772,7 @@ pub const CodeGenerator = struct {
             if (std.mem.eql(u8, self.externSymbolName(callee, name), "free") and physical_inputs == 1)
                 args[cursor + index] = c.LLVMBuildIntToPtr(self.builder, raw, c.LLVMPointerType(c.LLVMInt8Type(), 0), "free.address")
             else
-                args[cursor + index] = raw;
-            _ = field;
+                args[cursor + index] = try self.encodeCValue(raw, field.ty);
         }
         const call_value = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, if (total == 0) null else args.ptr, @intCast(total), if (symbol.return_type == c.LLVMVoidType()) "" else "call");
         try self.markCallDropState(call, call_value, true);
@@ -1763,7 +1783,7 @@ pub const CodeGenerator = struct {
                 const address_type = try self.toLLVMType(field.ty);
                 return .{ .value_ref = c.LLVMBuildPtrToInt(self.builder, call_value, address_type, "raw.address"), .type_ref = address_type, .ty = field.ty };
             }
-            return .{ .value_ref = call_value, .type_ref = symbol.return_type, .ty = field.ty };
+            return .{ .value_ref = try self.decodeCValue(call_value, field.ty), .type_ref = try self.toLLVMType(field.ty), .ty = field.ty };
         }
         return .{ .value_ref = c.LLVMBuildLoad2(self.builder, sret_type, sret_storage, "sret.value"), .type_ref = sret_type, .ty = null };
     }

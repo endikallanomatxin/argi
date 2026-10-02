@@ -12,6 +12,7 @@ pub fn supportsDirectValue(graph: *const graph_mod.GlobalSemanticGraph, ty: grap
 
 fn supportsValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, depth: usize) bool {
     if (depth >= 32) return false;
+    if (isRawPointer(graph, ty)) return true;
     return switch (graph.types.items[@intFromEnum(ty)]) {
         .builtin => |builtin| switch (builtin) {
             .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative, .Float32, .Float64, .Char, .Bool => true,
@@ -80,4 +81,31 @@ pub fn prepareForeignCapabilities(allocator: std.mem.Allocator, graph: *graph_mo
 
 pub fn physicalInputCount(function: graph_mod.Function) u32 {
     return function.input.len - @as(u32, if (function.flags.has_foreign_capability) 1 else 0);
+}
+
+/// Only the bundled RawPointer value has this ABI adaptation. A structurally
+/// identical user record still requires explicit C record layout/classification.
+pub fn isRawPointer(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    return rawPointerDepth(graph, ty, 0);
+}
+
+fn rawPointerDepth(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, depth: usize) bool {
+    if (depth >= 32) return false;
+    const generic = switch (graph.types.items[@intFromEnum(ty)]) {
+        .generic => |value| value,
+        else => return false,
+    };
+    const instance = types.genericInstance(graph, ty) orelse return false;
+    switch (instance.shape) {
+        .alias => |target| return rawPointerDepth(graph, target, depth + 1),
+        .structure => |shape| {
+            const declaration = graph.declaration(generic.base);
+            if (!std.mem.eql(u8, graph.text(declaration.name), "RawPointer")) return false;
+            const module = graph.moduleForDeclaration(generic.base) orelse return false;
+            if (!graph.modules.items[@intFromEnum(module)].is_bundled_core or shape.fields.len != 1) return false;
+            const field = graph.fields.items[shape.fields.start];
+            return std.mem.eql(u8, graph.text(field.name), "address") and types.isBuiltin(graph, field.ty, .UIntNative);
+        },
+        else => return false,
+    }
 }
