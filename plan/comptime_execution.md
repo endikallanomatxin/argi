@@ -1,23 +1,28 @@
-# Compile-time execution and interactive tooling
+# Interactive execution and compile-time machinery
 
-Scheduling: [0.4](0.4.md). This note describes the investigation,
-not an additional release requirement.
+Scheduling: [0.4](0.4.md), after the first Python bridge. Further VM/JIT and
+shared compile-time work can move to [0.6](0.6.md) according to the experiment.
 
-Explore whether compile-time execution, a REPL, JIT, and ahead-of-time builds
-can share one execution model. This is an implementation direction, not a
-language requirement.
+## Direction
 
-- Evaluate a compact, typed, serializable executable IR as a common input to
-  a compile-time interpreter and native codegen. A lightweight VM is one
-  candidate for comptime and interactive execution; LLVM could consume the
-  same semantics for JIT and ahead-of-time output. Reuse the existing
-  semantic representation where possible before adding another IR.
-- Investigate a persistent compiler session that caches function
-  specializations by declaration, concrete type arguments, compile-time
-  values, and dependencies. Generate them when first needed and invalidate
-  entries when relevant code or inputs change.
-- For a REPL, decide whether redefinition changes existing callers and how
-  live values survive type changes. Recompilation alone cannot preserve
-  incompatible program state.
-- Measure the cost and benefits of shared execution machinery before
-  committing to a VM or JIT architecture.
+Build on module reuse to shorten edit/evaluate cycles. Prototype with the
+existing native execution path before choosing a VM, direct LLVM JIT, or a
+combination. Interactive tooling is the goal; a tiered execution engine is one
+possible implementation.
+
+## Work to do
+
+- [ ] Reuse modules and function specializations in a persistent compiler session,
+  with dependency-aware invalidation and ordinary safety checks.
+- [ ] Measure evaluation latency, separating compilation, emission, linking,
+  and startup. Isolated submissions can precede persistent mutable values.
+- [ ] Define which definitions/values survive inputs, cleanup on reset/exit,
+  recovery after failed submissions, and redefinition with live values.
+- [ ] Compare native execution, JIT, and a small typed interpreter/VM on actual
+  interactive workloads. Reuse existing representations before adding an IR.
+- [ ] If multiple executors are justified, share value/call/error/cleanup
+  semantics and check parity with ahead-of-time execution.
+
+Shared compile-time execution additionally needs effect restrictions,
+deterministic build inputs, and execution limits. Transparent live-value migration,
+arbitrary hot replacement, and tiered optimization are outside the initial scope.
