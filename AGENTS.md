@@ -120,7 +120,10 @@ feature first.
   the full signature, including register exhaustion. C scalar aliases and
   narrow-value extension attributes derive from `std.Target`; the compiler
   currently selects its native host target. Check imports and exports against
-  native C fixtures when extending either boundary.
+  native C fixtures when extending either boundary. Numeric record lowering
+  also tracks SysV SSE register exhaustion and ARM64 homogeneous floating-point
+  aggregates; homogeneous ARM64 input arrays require `alignstack(8)` on Linux
+  but not Darwin. Keep those rules shared between imports, exports, and calls.
 
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases

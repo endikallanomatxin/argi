@@ -2,7 +2,7 @@ const std = @import("std");
 const graph_mod = @import("graph.zig");
 const types = @import("types.zig");
 
-/// The supported foreign scalar boundary is deliberately narrower than ordinary
+/// The supported foreign value boundary is deliberately narrower than ordinary
 /// LLVM type lowering. Record layout alone does not establish how a platform's
 /// C ABI classifies an aggregate argument or result. Extend this predicate only
 /// alongside matching call lowering and cross-language executable tests.
@@ -122,13 +122,14 @@ pub fn supportsRepresentation(graph: *const graph_mod.GlobalSemanticGraph, ty: g
 
 fn representationDepth(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, depth: usize) bool {
     if (depth >= 32) return false;
-    if (supportsCValue(graph, ty)) return true;
+    if (supportsScalarValue(graph, ty, depth)) return true;
     return switch (graph.types.items[@intFromEnum(ty)]) {
         .declared => |id| blk: {
             const declaration = graph.declaration(id);
             if (declaration.struct_layout == .regular) break :blk false;
             break :blk fieldsHaveRepresentation(graph, declaration.struct_fields orelse break :blk false, depth);
         },
+        .structural => |shape| shape.layout != .regular and fieldsHaveRepresentation(graph, shape.fields, depth),
         .array => |shape| shape.length != 0 and representationDepth(graph, shape.element, depth + 1),
         .generic => if (types.genericInstance(graph, ty)) |instance| switch (instance.shape) {
             .alias => |target| representationDepth(graph, target, depth + 1),
@@ -199,6 +200,7 @@ test "C narrow scalar extension follows the native ABI family" {
     try std.testing.expectEqual(ScalarExtension.none, scalarExtensionForTarget(.Int32, target));
 }
 
+pub const WordClass = enum { integer, float, float_pair, double };
 pub const RecordForm = enum { single, split, array };
 pub const ValueKind = enum { scalar, record_words, record_indirect };
 pub const ValuePlan = struct {
@@ -206,7 +208,10 @@ pub const ValuePlan = struct {
     kind: ValueKind = .scalar,
     size: u64 = 0,
     alignment: u32 = 1,
-    word_bits: [2]u16 = .{ 0, 0 },
+    word_bits: [4]u16 = .{ 0, 0, 0, 0 },
+    word_classes: [4]WordClass = @splat(.integer),
+    word_offsets: [4]u8 = .{ 0, 8, 16, 24 },
+    stack_alignment: u32 = 0,
     words: u8 = 0,
     form: RecordForm = .single,
     byval: bool = false,
@@ -233,56 +238,156 @@ fn isSysVX64(target: std.Target) bool {
     return target.cpu.arch == .x86_64 and (target.os.tag == .linux or target.os.tag.isDarwin());
 }
 
-fn supportsIntegerRecords(target: std.Target) bool {
+fn supportsNumericRecords(target: std.Target) bool {
     return target.ptrBitWidth() == 64 and (isSysVX64(target) or (target.cpu.arch == .aarch64 and (target.os.tag == .linux or target.os.tag.isDarwin())));
 }
 
-/// Integer-only C records share the INTEGER class on SysV and the ordinary
-/// composite class on AAPCS64. Floating, pointer-bearing, union, and over-aligned
-/// records need separate classification/effect handling and remain rejected.
-fn integerRecordStorage(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, depth: usize) bool {
+/// Numeric C records have no foreign-reference effects. Pointer-bearing,
+/// union, and over-aligned records need separate handling and remain rejected.
+fn numericRecordStorage(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, depth: usize) bool {
     if (depth >= 32) return false;
     const semantic = graph.resolvedSemanticType(ty) orelse return false;
     return switch (semantic) {
         .builtin => |value| switch (value) {
-            .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative, .Char, .Bool => true,
+            .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative, .Char, .Bool, .Float32, .Float64 => true,
             else => false,
         },
         .declared => |id| blk: {
             const declaration = graph.declaration(id);
             if (declaration.choice_layout == .c_enum and declaration.choice_variants != null) break :blk true;
             if (declaration.struct_layout != .c_struct) break :blk false;
-            break :blk integerFields(graph, declaration.struct_fields orelse break :blk false, depth);
+            break :blk numericFields(graph, declaration.struct_fields orelse break :blk false, depth);
         },
-        .structural => |shape| shape.layout == .c_struct and integerFields(graph, shape.fields, depth),
+        .structural => |shape| shape.layout == .c_struct and numericFields(graph, shape.fields, depth),
         .structural_choice => |shape| shape.layout == .c_enum,
-        .array => |shape| shape.length != 0 and integerRecordStorage(graph, shape.element, depth + 1),
+        .array => |shape| shape.length != 0 and numericRecordStorage(graph, shape.element, depth + 1),
         .generic => if (types.genericInstance(graph, ty)) |instance| switch (instance.shape) {
-            .alias => |value| integerRecordStorage(graph, value, depth + 1),
-            .array => |shape| shape.length != 0 and integerRecordStorage(graph, shape.element, depth + 1),
-            .structure => |shape| shape.layout == .c_struct and integerFields(graph, shape.fields, depth),
+            .alias => |value| numericRecordStorage(graph, value, depth + 1),
+            .array => |shape| shape.length != 0 and numericRecordStorage(graph, shape.element, depth + 1),
+            .structure => |shape| shape.layout == .c_struct and numericFields(graph, shape.fields, depth),
             .choice => |shape| shape.layout == .c_enum,
         } else false,
         else => false,
     };
 }
 
-fn integerFields(graph: *const graph_mod.GlobalSemanticGraph, fields: graph_mod.FieldRange, depth: usize) bool {
+fn numericFields(graph: *const graph_mod.GlobalSemanticGraph, fields: graph_mod.FieldRange, depth: usize) bool {
     if (fields.len == 0) return false;
     for (graph.fields.items[fields.start..][0..fields.len]) |field| {
-        if (!integerRecordStorage(graph, field.ty, depth + 1)) return false;
+        if (!numericRecordStorage(graph, field.ty, depth + 1)) return false;
     }
     return true;
+}
+
+// Collect leaves after C layout, not declaration nesting: arrays and nested
+// records participate in homogeneous aggregate detection. SysV INTEGER wins
+// over SSE within an eightbyte; padding contributes neither a class nor bits.
+const NumericShape = struct {
+    classes: [2]?WordClass = .{ null, null },
+    bits: [2]u16 = .{ 0, 0 },
+    homogeneous: bool = true,
+    float_bits: u16 = 0,
+    float_count: u8 = 0,
+
+    fn leaf(self: *NumericShape, offset: u64, size: u64, floating: bool) void {
+        if (!floating) {
+            self.homogeneous = false;
+        } else {
+            const bits: u16 = @intCast(size * 8);
+            if (self.float_bits != 0 and self.float_bits != bits) self.homogeneous = false;
+            self.float_bits = bits;
+            self.float_count = @min(5, self.float_count + 1);
+        }
+        if (offset >= 16) return;
+        const slot: usize = @intCast(offset / 8);
+        const end: u16 = @intCast((offset % 8 + size) * 8);
+        self.bits[slot] = @max(self.bits[slot], end);
+        const class: WordClass = if (!floating) .integer else if (size == 8) .double else .float;
+        const previous = self.classes[slot];
+        self.classes[slot] = if (previous == .integer or class == .integer) .integer else if (previous == .float and class == .float) .float_pair else class;
+    }
+};
+
+fn numericShape(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, offset: u64, shape: *NumericShape, depth: usize) void {
+    if (depth >= 32) return;
+    const semantic = graph.resolvedSemanticType(ty) orelse return;
+    var fields: ?graph_mod.FieldRange = null;
+    var array: ?struct { element: graph_mod.GlobalTypeId, length: u64 } = null;
+    switch (semantic) {
+        .builtin, .structural_choice => {
+            const layout = types.layoutOf(graph, ty) catch return;
+            shape.leaf(offset, layout.size, scalarIsFloating(graph, ty));
+            return;
+        },
+        .declared => |id| {
+            const declaration = graph.declaration(id);
+            if (declaration.choice_variants != null) {
+                const layout = types.layoutOf(graph, ty) catch return;
+                shape.leaf(offset, layout.size, false);
+                return;
+            }
+            fields = declaration.struct_fields;
+        },
+        .structural => |record| fields = record.fields,
+        .array => |value| array = .{ .element = value.element, .length = value.length },
+        .generic => if (types.genericInstance(graph, ty)) |instance| switch (instance.shape) {
+            .alias => |value| return numericShape(graph, value, offset, shape, depth + 1),
+            .structure => |record| fields = record.fields,
+            .array => |value| array = .{ .element = value.element, .length = value.length },
+            .choice => {
+                const layout = types.layoutOf(graph, ty) catch return;
+                shape.leaf(offset, layout.size, false);
+                return;
+            },
+        },
+        else => return,
+    }
+    if (fields) |range| {
+        var position = offset;
+        for (graph.fields.items[range.start..][0..range.len]) |field| {
+            const layout = types.layoutOf(graph, field.ty) catch return;
+            position = std.mem.alignForward(u64, position, layout.alignment);
+            numericShape(graph, field.ty, position, shape, depth + 1);
+            position += layout.size;
+        }
+    } else if (array) |value| {
+        const layout = types.layoutOf(graph, value.element) catch return;
+        const stride = std.mem.alignForward(u64, layout.size, layout.alignment);
+        // More than four elements cannot be an HFA. Inspect enough elements to
+        // classify both SysV eightbytes without walking a large storage array.
+        if (value.length > 4) shape.homogeneous = false;
+        for (0..@min(value.length, 16)) |index| numericShape(graph, value.element, offset + index * stride, shape, depth + 1);
+    }
 }
 
 fn classifyValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, target: std.Target, result: bool) ?ValuePlan {
     if (supportsScalarValue(graph, ty, 0)) return .{ .ty = ty, .extension = scalarExtension(graph, ty, target) };
     // An array has C storage representation but is not itself a by-value C
     // parameter. Only explicit record identities enter composite classification.
-    if (types.fields(graph, ty) == null or !supportsIntegerRecords(target) or !integerRecordStorage(graph, ty, 0)) return null;
+    if (types.fields(graph, ty) == null or !supportsNumericRecords(target) or !numericRecordStorage(graph, ty, 0)) return null;
     const layout = types.layoutOf(graph, ty) catch return null;
     if (layout.size == 0 or layout.size > std.math.maxInt(i64) or layout.alignment > 8) return null;
     var plan: ValuePlan = .{ .ty = ty, .size = layout.size, .alignment = @intCast(layout.alignment), .kind = .record_indirect };
+    // Four doubles are the largest supported HFA. Larger numeric records
+    // always use memory, so avoid expanding nested arrays just to classify them.
+    if (layout.size > 32) {
+        plan.byval = isSysVX64(target) and !result;
+        return plan;
+    }
+    var shape: NumericShape = .{};
+    numericShape(graph, ty, 0, &shape, 0);
+    if (!isSysVX64(target) and shape.homogeneous and shape.float_count > 0 and shape.float_count <= 4) {
+        plan.kind = .record_words;
+        plan.words = shape.float_count;
+        plan.form = if (result) .split else .array;
+        plan.stack_alignment = if (!result and !target.os.tag.isDarwin()) 8 else 0;
+        for (0..plan.words) |index| {
+            plan.word_bits[index] = shape.float_bits;
+            plan.word_classes[index] = if (shape.float_bits == 32) .float else .double;
+            plan.word_offsets[index] = @intCast(index * (shape.float_bits / 8));
+        }
+        return plan;
+    }
     if (layout.size > 16) {
         plan.byval = isSysVX64(target) and !result;
         return plan;
@@ -291,17 +396,21 @@ fn classifyValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
     plan.words = if (layout.size > 8) 2 else 1;
     if (isSysVX64(target)) {
         plan.form = if (plan.words == 2) .split else .single;
-        plan.word_bits = .{ @intCast(@as(u64, @min(layout.size, 8)) * 8), if (plan.words == 2) @intCast((layout.size - 8) * 8) else 0 };
+        for (0..plan.words) |index| {
+            plan.word_classes[index] = shape.classes[index] orelse .integer;
+            plan.word_bits[index] = shape.bits[index];
+        }
     } else {
         plan.form = if (plan.words == 2) .array else .single;
-        plan.word_bits = .{ if (result and plan.words == 1) @intCast(layout.size * 8) else 64, if (plan.words == 2) 64 else 0 };
+        plan.word_bits = .{ if (result and plan.words == 1) @intCast(layout.size * 8) else 64, if (plan.words == 2) 64 else 0, 0, 0 };
     }
     return plan;
 }
 
 /// Signature planning is shared by declarations, incoming bindings, outgoing
-/// calls, and returns. Byval arguments consume no SysV integer register, leaving
-/// a remaining register available to later scalar arguments. AAPCS64 indirect
+/// calls, and returns. SysV aggregate arguments reserve all required integer
+/// and SSE registers together, or consume none when passed byval. This leaves
+/// the remaining registers available to later scalar arguments. AAPCS64 indirect
 /// arguments instead pass a pointer to a caller-owned copy.
 pub fn classifyFunction(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.Function, target: std.Target) !FunctionPlan {
     if (function.output.len > 1) return error.UnsupportedCABI;
@@ -311,9 +420,15 @@ pub fn classifyFunction(allocator: std.mem.Allocator, graph: *const graph_mod.Gl
     errdefer allocator.free(inputs);
     var cursor: u32 = if (sret) 1 else 0;
     var integer_registers: u32 = if (isSysVX64(target)) (if (sret) @as(u32, 5) else 6) else 8;
+    var float_registers: u32 = 8;
     for (graph.fields.items[function.input.start..][0..inputs.len], inputs) |field, *plan| {
         plan.* = classifyValue(graph, field.ty, target, false) orelse return error.UnsupportedCABI;
-        if (isSysVX64(target) and plan.kind == .record_words and plan.words == 2 and integer_registers < 2) {
+        var integers: u32 = 0;
+        var floats: u32 = 0;
+        if (plan.kind == .record_words) for (plan.word_classes[0..plan.words]) |class| {
+            if (class == .integer) integers += 1 else floats += 1;
+        };
+        if (isSysVX64(target) and plan.kind == .record_words and plan.words > 1 and (integer_registers < integers or float_registers < floats)) {
             plan.kind = .record_indirect;
             plan.byval = true;
         }
@@ -321,10 +436,12 @@ pub fn classifyFunction(allocator: std.mem.Allocator, graph: *const graph_mod.Gl
         cursor += plan.parameterCount();
         const registers: u32 = switch (plan.kind) {
             .record_indirect => if (plan.byval) 0 else 1,
-            .record_words => plan.words,
+            .record_words => integers,
             .scalar => if (scalarIsFloating(graph, field.ty)) 0 else 1,
         };
         integer_registers -= @min(integer_registers, registers);
+        const floating: u32 = if (plan.kind == .record_words) floats else if (plan.kind == .scalar and scalarIsFloating(graph, field.ty)) 1 else 0;
+        float_registers -= @min(float_registers, floating);
     }
     return .{ .inputs = inputs, .result = output, .parameter_count = cursor, .uses_sret = sret };
 }
@@ -357,7 +474,7 @@ pub fn sameABIAttributes(left: FunctionPlan, right: FunctionPlan) bool {
     const right_return = if (right.result) |value| value.extension else ScalarExtension.none;
     if (left_return != right_return) return false;
     for (0..left.parameter_count) |index| {
-        if (parameterExtension(left, index) != parameterExtension(right, index)) return false;
+        if (parameterExtension(left, index) != parameterExtension(right, index) or parameterStackAlignment(left, index) != parameterStackAlignment(right, index)) return false;
     }
     if (left.uses_sret and (left.result.?.size != right.result.?.size or left.result.?.alignment != right.result.?.alignment)) return false;
     for (left.inputs) |input| {
@@ -427,4 +544,66 @@ fn parameterExtension(plan: FunctionPlan, index: usize) ScalarExtension {
         if (input.parameter_index == index) return input.extension;
     }
     return .none;
+}
+
+fn parameterStackAlignment(plan: FunctionPlan, index: usize) u32 {
+    for (plan.inputs) |input| if (input.parameter_index == index) return input.stack_alignment;
+    return 0;
+}
+
+test "C numeric record planning tracks SSE exhaustion and ARM homogeneous aggregates" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Float32 },
+        .{ .builtin = .Float64 },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 3 }, .layout = .c_struct } },
+        .{ .structural = .{ .fields = .{ .start = 3, .len = 4 }, .layout = .c_struct } },
+    });
+    const field: graph_mod.Field = .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = .{ .file_index = 0, .offset = 0 } };
+    try graph.fields.appendNTimes(allocator, field, 3);
+    var double = field;
+    double.ty = @enumFromInt(1);
+    try graph.fields.appendNTimes(allocator, double, 4);
+    try graph.fields.appendNTimes(allocator, field, 7);
+    var record = field;
+    record.ty = @enumFromInt(2);
+    try graph.fields.append(allocator, record);
+    try graph.fields.append(allocator, field);
+    try graph.fields.append(allocator, record);
+    const function: graph_mod.Function = .{ .declaration = @enumFromInt(0), .input = .{ .start = 7, .len = 9 }, .output = .{ .start = 16, .len = 1 } };
+    try graph.fields.append(allocator, field);
+    try graph.fields.append(allocator, double);
+    try graph.fields.appendNTimes(allocator, field, 5);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .structural = .{ .fields = .{ .start = 17, .len = 2 }, .layout = .c_struct } },
+        .{ .structural = .{ .fields = .{ .start = 19, .len = 5 }, .layout = .c_struct } },
+    });
+    try std.testing.expect(supportsRepresentation(&graph, @enumFromInt(2)));
+    var target = @import("builtin").target;
+    target.cpu.arch = .x86_64;
+    target.os.tag = .linux;
+    var sysv = try classifyFunction(allocator, &graph, function, target);
+    defer sysv.deinit(allocator);
+    try std.testing.expect(sysv.inputs[7].byval);
+    try std.testing.expectEqual(WordClass.float_pair, sysv.result.?.word_classes[0]);
+    try std.testing.expectEqual(WordClass.float, sysv.result.?.word_classes[1]);
+    try std.testing.expectEqual(ValueKind.record_indirect, classifyValue(&graph, @enumFromInt(3), target, true).?.kind);
+    target.cpu.arch = .aarch64;
+    var arm = try classifyFunction(allocator, &graph, function, target);
+    defer arm.deinit(allocator);
+    try std.testing.expect(!arm.inputs[7].byval);
+    try std.testing.expectEqual(@as(u8, 3), arm.inputs[7].words);
+    try std.testing.expectEqual(@as(u8, 4), arm.inputs[7].word_offsets[1]);
+    try std.testing.expectEqual(@as(u32, 8), arm.inputs[7].stack_alignment);
+    const hfa = classifyValue(&graph, @enumFromInt(3), target, true).?;
+    try std.testing.expectEqual(ValueKind.record_words, hfa.kind);
+    try std.testing.expectEqual(@as(u8, 4), hfa.words);
+    try std.testing.expectEqual(WordClass.double, hfa.word_classes[3]);
+    const mixed_widths = classifyValue(&graph, @enumFromInt(4), target, false).?;
+    try std.testing.expectEqual(WordClass.integer, mixed_widths.word_classes[0]);
+    try std.testing.expectEqual(ValueKind.record_indirect, classifyValue(&graph, @enumFromInt(5), target, false).?.kind);
+    target.os.tag = .macos;
+    try std.testing.expectEqual(@as(u32, 0), classifyValue(&graph, @enumFromInt(2), target, false).?.stack_alignment);
 }

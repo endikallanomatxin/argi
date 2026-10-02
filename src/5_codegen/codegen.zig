@@ -372,6 +372,10 @@ pub const CodeGenerator = struct {
 
     fn addCPlanAttributes(self: *CodeGenerator, value: c.LLVMValueRef, plan: c_abi.FunctionPlan, call_site: bool) !void {
         for (plan.inputs) |input| {
+            if (input.stack_alignment != 0) {
+                const attribute = c.LLVMCreateEnumAttribute(c.LLVMGetModuleContext(self.module), c.LLVMGetEnumAttributeKindForName("alignstack", 10), input.stack_alignment);
+                if (call_site) c.LLVMAddCallSiteAttribute(value, input.parameter_index + 1, attribute) else c.LLVMAddAttributeAtIndex(value, input.parameter_index + 1, attribute);
+            }
             if (input.kind == .scalar)
                 self.addCScalarAttribute(value, input.parameter_index + 1, input.extension, call_site)
             else if (input.byval)
@@ -385,12 +389,22 @@ pub const CodeGenerator = struct {
         }
     }
 
+    fn cWordType(plan: c_abi.ValuePlan, part: usize) c.LLVMTypeRef {
+        return switch (plan.word_classes[part]) {
+            .integer => c.LLVMIntType(plan.word_bits[part]),
+            .float => c.LLVMFloatType(),
+            .double => c.LLVMDoubleType(),
+            .float_pair => c.LLVMVectorType(c.LLVMFloatType(), 2),
+        };
+    }
+
     fn cCarrierType(self: *CodeGenerator, value: c_abi.ValuePlan) !c.LLVMTypeRef {
         if (value.kind == .scalar) return self.cValueType(value.ty);
         if (value.kind == .record_indirect) return c.LLVMPointerType(c.LLVMInt8Type(), 0);
-        if (value.form == .single) return c.LLVMIntType(value.word_bits[0]);
-        if (value.form == .array) return c.LLVMArrayType2(c.LLVMInt64Type(), value.words);
-        var words = [_]c.LLVMTypeRef{ c.LLVMIntType(value.word_bits[0]), c.LLVMIntType(value.word_bits[1]) };
+        if (value.form == .single) return cWordType(value, 0);
+        if (value.form == .array) return c.LLVMArrayType2(cWordType(value, 0), value.words);
+        var words: [4]c.LLVMTypeRef = undefined;
+        for (0..value.words) |part| words[part] = cWordType(value, part);
         return c.LLVMStructType(&words, value.words, 0);
     }
 
@@ -404,7 +418,7 @@ pub const CodeGenerator = struct {
         if (plan.uses_sret) params[0] = c.LLVMPointerType(c.LLVMInt8Type(), 0);
         for (plan.inputs) |input| {
             if (input.kind == .record_words and input.form == .split) {
-                for (0..input.words) |part| params[input.parameter_index + part] = c.LLVMIntType(input.word_bits[part]);
+                for (0..input.words) |part| params[input.parameter_index + part] = cWordType(input, part);
             } else params[input.parameter_index] = try self.cCarrierType(input);
         }
         // Bundled libc's legacy free binding expresses an address as UIntNative.
@@ -440,8 +454,8 @@ pub const CodeGenerator = struct {
         return storage;
     }
 
-    fn cWordAddress(self: *CodeGenerator, storage: c.LLVMValueRef, index: usize) c.LLVMValueRef {
-        var offset = [_]c.LLVMValueRef{c.LLVMConstInt(c.LLVMInt64Type(), index * 8, 0)};
+    fn cWordAddress(self: *CodeGenerator, storage: c.LLVMValueRef, offset_bytes: u64) c.LLVMValueRef {
+        var offset = [_]c.LLVMValueRef{c.LLVMConstInt(c.LLVMInt64Type(), offset_bytes, 0)};
         return c.LLVMBuildGEP2(self.builder, c.LLVMInt8Type(), storage, &offset, 1, "c.word.address");
     }
 
@@ -452,7 +466,7 @@ pub const CodeGenerator = struct {
         if (plan.kind == .record_indirect) return storage;
         var carrier = c.LLVMGetUndef(try self.cCarrierType(plan));
         for (0..plan.words) |part| {
-            const word = c.LLVMBuildLoad2(self.builder, c.LLVMIntType(plan.word_bits[part]), self.cWordAddress(storage, part), "c.record.word");
+            const word = c.LLVMBuildLoad2(self.builder, cWordType(plan, part), self.cWordAddress(storage, plan.word_offsets[part]), "c.record.word");
             if (plan.form == .single) return word;
             carrier = c.LLVMBuildInsertValue(self.builder, carrier, word, @intCast(part), "c.record.carrier");
         }
@@ -465,7 +479,7 @@ pub const CodeGenerator = struct {
         const storage = try self.cRecordStorage(plan);
         for (0..plan.words) |part| {
             const word = if (plan.form == .single) value else c.LLVMBuildExtractValue(self.builder, value, @intCast(part), "c.record.word");
-            _ = c.LLVMBuildStore(self.builder, word, self.cWordAddress(storage, part));
+            _ = c.LLVMBuildStore(self.builder, word, self.cWordAddress(storage, plan.word_offsets[part]));
         }
         return c.LLVMBuildLoad2(self.builder, try self.toLLVMType(plan.ty), storage, "c.record.value");
     }
