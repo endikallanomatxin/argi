@@ -5,19 +5,23 @@ Language contracts belong in `description/20_c.md` and `description/02_modules.m
 
 ## Direction
 
-Make a real C library usable through explicit bindings before automating header
-imports. Existing external calls, C enums/unions, and C strings provide a base,
-but do not establish support for every C ABI shape.
+Implement the accepted typed-binding design before automating header imports.
+Validate the ABI against C and exercise a real library through Argi wrappers;
+existing external calls do not establish support for every signature shape.
 
 ## Work to do
 
-- [ ] Choose a small native-library consumer and validate its signatures/layouts
-  against C, including aggregate arguments/results.
+- [ ] Add cross-language ABI tests, target C scalars, explicit C record layouts,
+  and raw-pointer lowering; diagnose unsupported signatures.
+- [ ] Implement `CFunction` symbol options, imports/exports, and the checked
+  `ffi` dependency outside the emitted C signature.
+- [ ] Choose a small native-library consumer and validate its wrappers, including
+  aggregate arguments/results where supported.
 - [ ] Make library names, search paths, and static/shared linking explicit and
   reusable by the target/toolchain work.
 - [ ] Keep foreign-call capabilities, resource cleanup, pointer bounds, and
   allocation/free pairing explicit in wrappers; headers do not prove safety.
-- [ ] Add exported C-callable functions and scope function pointers/callbacks,
+- [ ] Settle incomplete types, callback syntax, and foreign storage effects,
   preparing the later Python bridge.
 - [ ] Introduce a bounded `#c_import` subset after explicit bindings work;
   account for headers, defines, include paths, and target inputs in caching.

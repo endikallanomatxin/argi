@@ -104,8 +104,9 @@ move_x(.point: $&Point, .delta: Int32) -> () := {
 
 `size_of(.type = T)` and `alignment_of(.type = T)` return `UIntNative`
 values. Ordinary struct layout is chosen by the compiler; code must not
-assume field offsets from declaration order. C interoperation also provides
-`CUnion`, whose fields share storage.
+assume field offsets from declaration order. C interoperation provides
+`CStruct`, with the target's C field layout, and `CUnion`, whose fields share
+storage. See [C interoperability](20_c.md).
 
 > [!IDEA]
 > **Explicit struct layout.** A declaration could choose its layout while the
@@ -121,7 +122,7 @@ assume field offsets from declaration order. C interoperation also provides
 >
 > Possible layout choices include `..Optimal` for compiler-selected padding,
 > `..RespectOrder` for declaration order, `..Packed`, `..Aligned(n)`, `..C`
-> for C ABI layout, and a more advanced `..Custom` with explicit offsets and
+> as a layout-based spelling of `CStruct`, and a more advanced `..Custom` with explicit offsets and
 > size. The exact syntax and guarantees still need design. An `offset_of`
 > query and an editor view of field offsets would make the chosen layout
 > inspectable alongside `size_of` and `alignment_of`.

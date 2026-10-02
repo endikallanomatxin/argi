@@ -119,7 +119,10 @@ Named C header import:
 some_c_lib := #c_import("c_module.h")
 ```
 
-It maps C signatures and structs to Argi calls with named arguments.
+It produces the typed declarations described in
+[C interoperability](20_c.md), including C signatures and record layouts.
+Foreign calls require the `ffi` capability; importing a header does not grant it
+or select a library to link.
 Some `more` modules may need native libraries (for example BLAS/LAPACK,
 OpenSSL, zlib, or FFmpeg). Builds should diagnose missing libraries; releases
 may bundle them per target.
