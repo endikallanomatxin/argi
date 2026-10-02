@@ -38,6 +38,9 @@ pub fn build(b: *std.Build) void {
         .name = "argi",
         .root_module = exe_mod,
     });
+    // Binary distributions replace Homebrew library paths with relative load
+    // commands. Leave room for longer names before signing the relocated image.
+    exe.headerpad_max_install_names = target.result.os.tag == .macos;
 
     linkLlvmModule(exe_mod, llvm_lib_path, llvm_libs_raw);
 
