@@ -87,7 +87,9 @@ for target selection, output paths, and LLVM/object emission options.
 
 Packages declare executables in `argi.toml`; outputs go to
 `build/debug/<name>`, including when selecting a declared entry module directly.
-Standalone modules use `build/output`; test artifacts use `.argi-cache/`.
+Standalone modules use `build/output`; test artifacts and reusable compiler
+snapshots use `.argi-cache/`. Use `--no-cache` for a fresh frontend build and
+`--stats` to inspect module reuse.
 See [package configuration](description/02_modules.md) and
 [language-level testing](description/72_testing.md).
 

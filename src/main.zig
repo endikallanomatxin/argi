@@ -48,6 +48,7 @@ fn printHelp() void {
     std.debug.print("  --just-emit-obj <path>                 Emit an object file there and skip final linking\n", .{});
     std.debug.print("  --sysroot <path>                       Use an Argi installation prefix for core\n", .{});
     std.debug.print("  --exec <name>                          Build a named executable from argi.toml\n", .{});
+    std.debug.print("  --no-cache                             Rebuild modules without reading or writing the frontend cache\n", .{});
     std.debug.print("  --stats                                Print compilation timings and internal statistics\n", .{});
     std.debug.print("  --release                              Use the optimized machine-code backend\n", .{});
     std.debug.print("\nTest flags:\n", .{});
