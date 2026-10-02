@@ -98,6 +98,15 @@ fn printStats(
     std.debug.print("  codegen:          {d:.3} ms\n", .{@as(f64, @floatFromInt(codegen_ns)) / 1_000_000.0});
     std.debug.print("  link:             {d:.3} ms\n", .{@as(f64, @floatFromInt(link_ns)) / 1_000_000.0});
 
+    if (pipeline.options.module_cache) |cache| {
+        std.debug.print("Module reuse\n", .{});
+        std.debug.print("  cache hits:          {d}\n", .{pipeline.module_cache_hits});
+        std.debug.print("  cache misses:        {d}\n", .{pipeline.module_cache_misses});
+        std.debug.print("  persistent hits:     {d}\n", .{cache.disk_hits});
+        std.debug.print("  rejected snapshots:  {d}\n", .{cache.disk_rejections});
+        std.debug.print("  cache write failures: {d}\n", .{cache.disk_write_failures});
+    }
+
     std.debug.print("Global semantizing\n", .{});
     std.debug.print("  relocate and link:           {d:.3} ms\n", .{milliseconds(semantic_timings.relocation_ns)});
     std.debug.print("  setup:                       {d:.3} ms\n", .{milliseconds(semantic_timings.setup_ns)});
@@ -304,7 +313,17 @@ pub fn compileTarget(
         std.debug.print("Error: --output is ambiguous when building multiple executables.\n", .{});
         return error.CompilationFailed;
     }
-    for (plans.items) |plan| try compileResolvedPlan(allocator, plan, flags, options, io, environ_map);
+    var module_cache = frontend.cache.ModuleCache.init(std.heap.page_allocator, .{});
+    defer module_cache.deinit();
+    var compile_options = options;
+    if (!flags.use_cache) {
+        compile_options.frontend_options.module_cache = null;
+    } else if (compile_options.frontend_options.module_cache == null) {
+        const cache_root = try planning.localCacheRoot(allocator);
+        try module_cache.enablePersistence(io, cache_root);
+        compile_options.frontend_options.module_cache = &module_cache;
+    }
+    for (plans.items) |plan| try compileResolvedPlan(allocator, plan, flags, compile_options, io, environ_map);
 }
 
 fn compileResolvedPlan(

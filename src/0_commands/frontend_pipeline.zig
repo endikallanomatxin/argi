@@ -520,6 +520,7 @@ pub const FrontendPipeline = struct {
 
     fn moduleFingerprint(self: *const FrontendPipeline, source: cache.Fingerprint, core: cache.Fingerprint) cache.Fingerprint {
         var hash = cache.ContentHash.init(.{});
+        cache.hashConfiguration(&hash);
         hash.update(&source);
         hash.update(&core);
         const options = self.options.semantizing;

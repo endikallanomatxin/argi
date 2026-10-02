@@ -6,6 +6,7 @@ pub const BuildFlags = struct {
     show_syntax_tree: bool = false,
     show_semantic_graph: bool = false,
     stats: bool = false,
+    use_cache: bool = true,
     output_path: ?[]const u8 = null,
     llvm_ir_path: ?[]const u8 = null,
     object_path: ?[]const u8 = null,
@@ -57,6 +58,8 @@ pub fn parseBuildArgs(args: []const []const u8) !ParsedBuildArgs {
             parsed.flags.show_semantic_graph = true;
         } else if (std.mem.eql(u8, arg, "--stats")) {
             parsed.flags.stats = true;
+        } else if (std.mem.eql(u8, arg, "--no-cache")) {
+            parsed.flags.use_cache = false;
         } else if (std.mem.eql(u8, arg, "--release")) {
             parsed.flags.optimization_mode = .release;
         } else if (std.mem.eql(u8, arg, "--output")) {

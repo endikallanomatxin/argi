@@ -1133,6 +1133,71 @@ test "build publishes artifacts outside the staging filesystem" {
     }
 }
 
+test "build persists module snapshots across processes and dependency edits" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    try tmp.dir.createDirPath(io, "app");
+    try tmp.dir.createDirPath(io, "dep");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "app/main.rg",
+        .data = "dep := import(\"../dep\")\nmain() -> (.status_code: Int32) := { status_code = dep.answer().result }\n",
+    });
+    const source = "answer() -> (.result: Int32) := { result = 7 }\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "dep/answer.rg", .data = source });
+    for (0..4) |revision| {
+        if (revision == 1) {
+            try tmp.dir.writeFile(io, .{ .sub_path = "dep/answer.rg", .data = "answer() -> (.result: Int32) := { result = 9 }\n" });
+        } else if (revision == 2) {
+            try tmp.dir.writeFile(io, .{ .sub_path = "dep/extra.rg", .data = "extra() -> (.result: Int32) := { result = 11 }\n" });
+        } else if (revision == 3) {
+            try tmp.dir.deleteFile(io, "dep/extra.rg");
+            try tmp.dir.rename("dep/answer.rg", tmp.dir, "dep/renamed.rg", io);
+        }
+        for (0..3) |mode| {
+            const args: []const []const u8 = if (mode == 2)
+                &.{ argi, "build", "app", "--no-cache", "--stats", "--emit-llvm", "clean.ll" }
+            else
+                &.{ argi, "build", "app", "--stats", "--emit-llvm", "cached.ll" };
+            const result = try runChildInCwd(args, root);
+            defer allocator.free(result.stdout);
+            defer allocator.free(result.stderr);
+            try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+            if (mode == 1) {
+                try expect(std.mem.indexOf(u8, result.stderr, "cache misses:        0") != null);
+                try expect(std.mem.indexOf(u8, result.stderr, "persistent hits:     0\n") == null);
+                try expect(std.mem.indexOf(u8, result.stderr, "rejected snapshots:  0") != null);
+            }
+        }
+        const cached = try tmp.dir.readFileAlloc(io, "cached.ll", allocator, .limited(1024 * 1024));
+        defer allocator.free(cached);
+        const clean_ir = try tmp.dir.readFileAlloc(io, "clean.ll", allocator, .limited(1024 * 1024));
+        defer allocator.free(clean_ir);
+        try expectEqualStrings(clean_ir, cached);
+    }
+    try tmp.dir.writeFile(io, .{ .sub_path = "dep/renamed.rg", .data = "answer(\n" });
+    const broken = try runChildInCwd(&.{ argi, "build", "app" }, root);
+    defer allocator.free(broken.stdout);
+    defer allocator.free(broken.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, broken.term);
+    try tmp.dir.writeFile(io, .{ .sub_path = "dep/renamed.rg", .data = source });
+    const recovered = try runChildInCwd(&.{ argi, "build", "app" }, root);
+    defer allocator.free(recovered.stdout);
+    defer allocator.free(recovered.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, recovered.term);
+    const output = try std.fs.path.join(allocator, &.{ root, "app", "build", "output" });
+    defer allocator.free(output);
+    const executed = try runChildInCwd(&.{output}, root);
+    defer allocator.free(executed.stdout);
+    defer allocator.free(executed.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 7 }, executed.term);
+}
+
 test "build overwrites existing output binary" {
     const test_path = "tests/feature_tests/basics/01_minimal_main";
     try clean(test_path);

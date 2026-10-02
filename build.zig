@@ -5,6 +5,8 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const test_filters = b.option([]const []const u8, "test-filter", "Only run tests whose name contains this text (repeatable)") orelse &.{};
     const test_progress = b.option(bool, "test-progress", "Print each test as it runs") orelse false;
+    const frontend_build_options = b.addOptions();
+    frontend_build_options.addOption([32]u8, "cache_build_id", compilerFingerprint(b) catch @panic("cannot fingerprint compiler sources"));
 
     const llvm_include_path, const llvm_lib_path, const llvm_libs_raw = prepareLlvm(b) catch |err| {
         if (err != error.LlvmNotFound) {
@@ -34,6 +36,7 @@ pub fn build(b: *std.Build) void {
     llvm_c.addIncludePath(llvm_include_path);
     const llvm_c_mod = llvm_c.createModule();
     exe_mod.addImport("llvm_c", llvm_c_mod);
+    exe_mod.addOptions("frontend_build_options", frontend_build_options);
 
     const exe = b.addExecutable(.{
         .name = "argi",
@@ -95,6 +98,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     internal_tests_mod.addImport("llvm_c", llvm_c_mod);
+    internal_tests_mod.addOptions("frontend_build_options", frontend_build_options);
     linkLlvmModule(internal_tests_mod, llvm_lib_path, llvm_libs_raw);
     const internal_tests = b.addTest(.{
         .root_module = internal_tests_mod,
@@ -115,6 +119,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .error_tracing = if (optimize == .Debug) false else null,
     });
+    benchmark_mod.addOptions("frontend_build_options", frontend_build_options);
     const benchmark_exe = b.addExecutable(.{ .name = "frontend-benchmark", .root_module = benchmark_mod });
     const benchmark_run = b.addRunArtifact(benchmark_exe);
     if (b.args) |args| benchmark_run.addArgs(args);
@@ -248,4 +253,39 @@ fn linkLlvm(module: *std.Build.Module, libs_str: []const u8) void {
             module.linkSystemLibrary(tok[2..], .{});
         }
     }
+}
+
+// Persistent modules must not survive a compiler/schema change even when the
+// public language version is unchanged during development. Use relative source
+// paths and content, not mtimes or the checkout location, for the build identity.
+fn compilerFingerprint(b: *std.Build) ![32]u8 {
+    const io = b.graph.io;
+    var dir = try std.Io.Dir.cwd().openDir(io, b.pathFromRoot("src"), .{ .iterate = true });
+    defer dir.close(io);
+    var walker = try dir.walk(b.allocator);
+    defer walker.deinit();
+    var paths: std.ArrayList([]const u8) = .empty;
+    while (try walker.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.path, ".zig") and !std.mem.endsWith(u8, entry.path, ".rg")) continue;
+        try paths.append(b.allocator, try b.allocator.dupe(u8, entry.path));
+    }
+    std.mem.sort([]const u8, paths.items, {}, struct {
+        fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+            return std.mem.lessThan(u8, lhs, rhs);
+        }
+    }.lessThan);
+    var hash = std.crypto.hash.Blake3.init(.{});
+    for (paths.items) |path| {
+        const contents = try dir.readFileAlloc(io, path, b.allocator, .limited(16 * 1024 * 1024));
+        const length: u64 = @intCast(path.len);
+        hash.update(std.mem.asBytes(&length));
+        hash.update(path);
+        const content_length: u64 = @intCast(contents.len);
+        hash.update(std.mem.asBytes(&content_length));
+        hash.update(contents);
+    }
+    var fingerprint: [32]u8 = undefined;
+    hash.final(&fingerprint);
+    return fingerprint;
 }

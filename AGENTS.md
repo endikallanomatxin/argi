@@ -80,6 +80,10 @@ feature first.
 - When validating the compiler locally, prefer:
   `env ZIG_LOCAL_CACHE_DIR=$PWD/.zig-cache ZIG_GLOBAL_CACHE_DIR=$PWD/.zig-global-cache zig build test`
 
+- CLI builds reuse canonical module snapshots under `.argi-cache/frontend/`.
+  Use `argi build --no-cache` when comparing against a fresh frontend build;
+  `--stats` reports reuse. Global semantizing, safety, and codegen still run.
+
 - When investigating compiler memory growth or recursive function-summary
   expansion, run focused tests serially with `-j1` and apply a process memory
   limit where supported. Record the first failing test and peak memory use

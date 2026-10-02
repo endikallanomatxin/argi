@@ -259,3 +259,106 @@ test "frontend module cache does not retain partially lowered modules" {
     try std.testing.expectEqual(@as(usize, 1), bad.misses);
     try std.testing.expectEqual(@as(usize, 0), session.entries.items.len);
 }
+
+test "frontend module cache persists canonical graphs across sessions" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try @import("../test_support.zig").tmpRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    const files = [_]sf.SourceFile{ .{ .path = "app/main.rg", .code = main_source }, .{ .path = "dep/answer.rg", .code = dep_source } };
+    {
+        var first = ModuleCache.init(std.testing.allocator, .{});
+        defer first.deinit();
+        try first.enablePersistence(std.testing.io, root);
+        const cold = try expectCleanEquivalent(&files, &first);
+        defer cold.deinit();
+        try std.testing.expectEqual(@as(usize, 2), cold.misses);
+        try std.testing.expectEqual(@as(usize, 0), first.disk_write_failures);
+    }
+    {
+        var second = ModuleCache.init(std.testing.allocator, .{});
+        defer second.deinit();
+        try second.enablePersistence(std.testing.io, root);
+        const warm = try expectCleanEquivalent(&files, &second);
+        defer warm.deinit();
+        try std.testing.expectEqual(@as(usize, 2), warm.hits);
+        try std.testing.expectEqual(@as(usize, 2), second.disk_hits);
+        try std.testing.expectEqual(@as(usize, 0), second.disk_rejections);
+    }
+    {
+        var third = ModuleCache.init(std.testing.allocator, .{});
+        defer third.deinit();
+        try third.enablePersistence(std.testing.io, root);
+        var edited = files;
+        edited[1].code = "answer() -> (.result: Int32) := { result = 11 }\n";
+        const changed = try expectCleanEquivalent(&edited, &third);
+        defer changed.deinit();
+        try std.testing.expectEqual(@as(usize, 1), changed.hits);
+        try std.testing.expectEqual(@as(usize, 1), changed.misses);
+        try std.testing.expectEqual(@as(usize, 1), third.disk_hits);
+    }
+}
+
+test "frontend module cache rebuilds truncated corrupt and incompatible snapshots" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try @import("../test_support.zig").tmpRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main() -> (.status_code: Int32 = 0) := {}\n" }};
+    for (0..4) |damage| {
+        {
+            var first = ModuleCache.init(std.testing.allocator, .{});
+            defer first.deinit();
+            try first.enablePersistence(std.testing.io, root);
+            const valid = try expectCleanEquivalent(&files, &first);
+            valid.deinit();
+        }
+        var dir = try tmp.dir.openDir(std.testing.io, "frontend/v1", .{ .iterate = true });
+        defer dir.close(std.testing.io);
+        var iterator = dir.iterate();
+        const file = (try iterator.next(std.testing.io)).?;
+        const data = try dir.readFileAlloc(std.testing.io, file.name, std.testing.allocator, .limited(32 * 1024 * 1024));
+        defer std.testing.allocator.free(data);
+        const changed = switch (damage) {
+            0 => data[0 .. data.len / 2],
+            1 => blk: {
+                data[data.len - 1] ^= 1;
+                break :blk data;
+            },
+            2 => blk: {
+                data[8] ^= 1;
+                break :blk data;
+            },
+            3 => blk: {
+                data[12] ^= 1;
+                break :blk data;
+            },
+            else => unreachable,
+        };
+        try dir.writeFile(std.testing.io, .{ .sub_path = file.name, .data = changed });
+        var recovered = ModuleCache.init(std.testing.allocator, .{});
+        defer recovered.deinit();
+        try recovered.enablePersistence(std.testing.io, root);
+        const rebuilt = try expectCleanEquivalent(&files, &recovered);
+        defer rebuilt.deinit();
+        try std.testing.expectEqual(@as(usize, 1), rebuilt.misses);
+        try std.testing.expectEqual(@as(usize, 1), recovered.disk_rejections);
+        try std.testing.expectEqual(@as(usize, 0), recovered.disk_write_failures);
+    }
+}
+
+test "frontend module cache treats unwritable cache paths as optional" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "not-a-directory", .data = "" });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "not-a-directory");
+    defer std.testing.allocator.free(path);
+    var session = ModuleCache.init(std.testing.allocator, .{});
+    defer session.deinit();
+    try session.enablePersistence(std.testing.io, path);
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main() -> (.status_code: Int32 = 0) := {}\n" }};
+    const result = try expectCleanEquivalent(&files, &session);
+    defer result.deinit();
+    try std.testing.expect(result.failure == null);
+    try std.testing.expectEqual(@as(usize, 1), session.disk_write_failures);
+}
