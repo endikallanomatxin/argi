@@ -13,8 +13,9 @@ existing external calls do not establish support for every signature shape.
 
 - [ ] Define an explicit foreign lifetime contract before adapting safe-reference
   fields across the ABI.
-- [ ] Settle callback syntax and foreign storage effects,
-  preparing the later Python bridge.
+- [ ] Add typed C callback pointers, concrete function selection, and invocation.
+  Start with synchronous non-capturing callbacks; define retained context and
+  storage effects before supporting registration, preparing the Python bridge.
 - [ ] Introduce a bounded `#c_import` subset after explicit bindings work;
   account for headers, defines, include paths, and target inputs in caching.
 

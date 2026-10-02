@@ -8230,3 +8230,11 @@ test "feature_tests/modules/32_qualified_comptime_calls" {
 test "feature_tests/modules/33X_qualified_comptime_call_missing_input" {
     try buildExpectFailWithoutNoise("tests/feature_tests/modules/33X_qualified_comptime_call_missing_input", "ExpectedLeftParen", "failed without a diagnostic");
 }
+
+test "C interop invokes host-managed scalar and record callbacks" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/59_host_managed_callbacks", &.{
+        "define i32 @argi_callback_add(i32",
+        "@argi_callback_packet(",
+        "define void @argi_callback_packet(ptr sret(",
+    });
+}
