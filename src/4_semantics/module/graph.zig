@@ -328,9 +328,9 @@ fn predeclareTypes(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph) !v
 
 fn buildFunctionInterfaces(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, files: []const FileInput) !void {
     for (graph.declarations.items, 0..) |*declaration, declaration_index| {
-        if (declaration.kind != .function and declaration.kind != .test_function) continue;
         const file_input = files[declaration.module_file_index];
         const declaration_node = declarationSyntaxNode(files, declaration.*) orelse continue;
+        if (declaration.kind != .function and declaration.kind != .test_function and file_input.tree.tag(declaration_node) != .c_function_pointer_declaration) continue;
         const function = if (declaration.kind == .test_function)
             file_input.tree.testDeclaration(declaration_node).?.function
         else
@@ -777,7 +777,7 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
                 break :blk if (value != null and tree.tag(value.?) == .import_statement) .import_alias else .binding;
             },
             .abstract_declaration => .abstract_type,
-            .type_declaration, .c_struct_declaration, .c_incomplete_declaration, .c_enum_declaration, .c_union_declaration => .type,
+            .type_declaration, .c_struct_declaration, .c_incomplete_declaration, .c_enum_declaration, .c_union_declaration, .c_function_pointer_declaration => .type,
             .choice_option_declaration => .choice_option,
             .function_declaration, .function_declaration_once => .function,
             .test_declaration => .test_function,

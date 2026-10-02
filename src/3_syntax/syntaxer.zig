@@ -1588,6 +1588,29 @@ pub const Syntaxer = struct {
         switch (self.currentContent()) {
             .identifier => |ident_range| {
                 const ident_name = self.tokenText(ident_range);
+                if (std.mem.eql(u8, ident_name, "CFunctionPointer")) {
+                    self.advanceOne();
+                    if (is_once or generic_params.start != generic_params.end or generic_params_struct != null) {
+                        try self.diags.add(self.tokenLocation(), .syntax, "CFunctionPointer requires a concrete signature without 'once'", .{});
+                        return SyntaxerError.ExpectedStructField;
+                    }
+                    self.skipNewLinesAndComments();
+                    if (self.tokenIs(.open_parenthesis) or self.tokenIs(.colon)) {
+                        try self.diags.add(self.tokenLocation(), .syntax, "CFunctionPointer declares a type, without symbol options or a body", .{});
+                        return SyntaxerError.ExpectedStructField;
+                    }
+                    const extra = try self.addExtra(syn.FunctionExtra{
+                        .name_token = name.token,
+                        .generic_params_start = generic_params.start,
+                        .generic_params_end = generic_params.end,
+                        .generic_params_struct = .none,
+                        .input = input,
+                        .output = output,
+                        .body = .none,
+                        .c_abi = 1,
+                    });
+                    return try self.addNode(.c_function_pointer_declaration, name.token, .{ .extra = extra });
+                }
                 if (std.mem.eql(u8, ident_name, "ExternFunction") or std.mem.eql(u8, ident_name, "CFunction")) {
                     self.advanceOne();
                     const options = if (self.tokenIs(.open_parenthesis))

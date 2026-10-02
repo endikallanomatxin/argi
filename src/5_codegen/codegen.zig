@@ -198,8 +198,9 @@ pub const CodeGenerator = struct {
             // Abstract contract instances are compile-time dispatch metadata.
             // Runtime calls and vtables reference their selected concrete
             // implementations, so an abstract Self type must not enter ABI
-            // lowering as though it were a material runtime type.
-            if (function.flags.is_abstract_dispatch) continue;
+            // lowering as though it were a material runtime type. Callback
+            // signature rows describe pointer types and have no LLVM symbols.
+            if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
             // Declarations that promised a body but have no global body are
             // semantic contracts/templates, not runtime ABI symbols.
             if (function.body == null and function.flags.has_declared_body) continue;
@@ -788,6 +789,10 @@ pub const CodeGenerator = struct {
             .auto_deinit_binding => |auto| blk: {
                 try self.genAutoDeinit(auto);
                 break :blk null;
+            },
+            .function_address => |id| blk: {
+                const symbol = self.functions.get(id) orelse return CodegenError.SymbolNotFound;
+                break :blk .{ .value_ref = symbol.ref, .type_ref = try self.toLLVMType(node.ty.?), .ty = node.ty.? };
             },
             .function_call => |call| try self.genFunctionCall(call, node.source),
             .virtualize => |virtualize| try self.genVirtualize(virtualize),

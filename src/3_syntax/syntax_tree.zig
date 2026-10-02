@@ -79,6 +79,7 @@ pub const Node = struct {
         abstract_implements,
         abstract_defaultsto,
         abstract_function_requirement,
+        c_function_pointer_declaration,
         function_declaration,
         function_declaration_once,
         test_declaration,
@@ -227,6 +228,7 @@ pub const FunctionDeclaration = struct {
     output: NodeIndex,
     body: ?NodeIndex,
     is_once: bool,
+    c_function_pointer: bool = false,
     c_options: ?NodeIndex = null,
     c_abi: bool = false,
 };
@@ -475,7 +477,7 @@ pub const FileSyntaxTree = struct {
 
     pub fn functionDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?FunctionDeclaration {
         const node_tag = tree.tag(node);
-        if (node_tag != .function_declaration and node_tag != .function_declaration_once) return null;
+        if (node_tag != .function_declaration and node_tag != .function_declaration_once and node_tag != .c_function_pointer_declaration) return null;
         const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
         return .{
             .name_token = extra.name_token,
@@ -487,6 +489,7 @@ pub const FileSyntaxTree = struct {
             .is_once = node_tag == .function_declaration_once,
             .c_options = extra.c_options.unwrap(),
             .c_abi = extra.c_abi != 0,
+            .c_function_pointer = node_tag == .c_function_pointer_declaration,
         };
     }
 

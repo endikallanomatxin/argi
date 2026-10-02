@@ -139,6 +139,12 @@ feature first.
   defining module. Automatic cleanup falls back to that module when caller
   lookup finds no destructor; reached arguments retain the caller's context.
   Bundled core is already visible, so it needs no second cleanup lookup.
+  CFunctionPointer declarations are nominal types backed by signature FunctionIds,
+  not runtime symbols or direct callees. Their logical ffi dependency remains
+  separate from the physical C signature. Function-address nodes preserve selected
+  callback bodies through global semantizing and LLVM reachability. Selection
+  requires visible concrete C bodies, without captures or once semantics; callback
+  data addresses require RawPointer until foreign lifetime contracts are defined.
 
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases

@@ -802,7 +802,8 @@ pub const Resolver = struct {
                     if (!self.triviallyCopyable(field.ty)) break :blk false;
                 break :blk true;
             },
-            .declared => blk: {
+            .declared => |id| blk: {
+                if (self.graph.declaration(id).struct_layout == .c_function_pointer) break :blk true;
                 if (global_types.fields(self.graph, ty)) |fields|
                     break :blk self.fieldsTriviallyCopyable(fields);
                 if (global_types.variants(self.graph, ty)) |variants|

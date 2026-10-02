@@ -161,6 +161,7 @@ const State = struct {
                 if (value.deinit_fn) |callee| try self.includeFunction(callee);
                 try self.includeAutoDeinitFields(value.fields);
             },
+            .function_address => |id| try self.includeFunction(id),
             .function_call => |call| {
                 try self.walkNode(call.input);
                 if (call.consumes_auto_deinit) |value| try self.walkNode(value);

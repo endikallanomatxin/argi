@@ -16,7 +16,7 @@ pub fn supportsCValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod
 
 fn supportsScalarValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, depth: usize) bool {
     if (depth >= 32) return false;
-    if (isRawPointer(graph, ty)) return true;
+    if (isRawPointer(graph, ty) or isFunctionPointer(graph, ty)) return true;
     return switch (graph.types.items[@intFromEnum(ty)]) {
         .builtin => |builtin| switch (builtin) {
             .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative, .Float32, .Float64, .Char, .Bool => true,
@@ -85,6 +85,36 @@ pub fn prepareForeignCapabilities(allocator: std.mem.Allocator, graph: *graph_mo
 
 pub fn physicalInputCount(function: graph_mod.Function) u32 {
     return function.input.len - @as(u32, if (function.flags.has_foreign_capability) 1 else 0);
+}
+
+/// Callback nominal identities carry signature FunctionIds, never C symbols.
+/// Their runtime value is a C function address; the signature uses the same
+/// full-signature classification as ordinary foreign calls.
+pub fn isFunctionPointer(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    const semantic = graph.resolvedSemanticType(ty) orelse return false;
+    return switch (semantic) {
+        .declared => |id| graph.declaration(id).struct_layout == .c_function_pointer,
+        else => false,
+    };
+}
+
+pub fn isSafeReferenceValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    var current = ty;
+    for (0..32) |_| {
+        const semantic = graph.resolvedSemanticType(current) orelse return false;
+        switch (semantic) {
+            .pointer => return true,
+            .generic => {
+                const instance = types.genericInstance(graph, current) orelse return false;
+                current = switch (instance.shape) {
+                    .alias => |target| target,
+                    else => return false,
+                };
+            },
+            else => return false,
+        }
+    }
+    return false;
 }
 
 /// Only the bundled RawPointer value has this ABI adaptation. A structurally
@@ -246,7 +276,7 @@ fn supportsRecordTarget(target: std.Target) bool {
 /// Legacy reference fields cannot silently acquire safe provenance.
 fn recordStorage(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, depth: usize) bool {
     if (depth >= 32) return false;
-    if (isRawPointer(graph, ty)) return true;
+    if (isRawPointer(graph, ty) or isFunctionPointer(graph, ty)) return true;
     const semantic = graph.resolvedSemanticType(ty) orelse return false;
     return switch (semantic) {
         .builtin => |value| switch (value) {
@@ -338,7 +368,7 @@ const NumericShape = struct {
 
 fn numericShape(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, offset: u64, shape: *NumericShape, depth: usize) void {
     if (depth >= 32) return;
-    if (isRawPointer(graph, ty)) {
+    if (isRawPointer(graph, ty) or isFunctionPointer(graph, ty)) {
         const layout = types.layoutOf(graph, ty) catch return;
         shape.leaf(offset, layout.size, false);
         return;
@@ -692,4 +722,18 @@ test "C union classification merges shared storage and homogeneous member counts
     try std.testing.expectEqual(@as(u8, 3), hfa.words);
     const combined = classifyValue(&graph, @enumFromInt(4), target, false).?;
     try std.testing.expectEqual(@as(u8, 4), combined.words);
+}
+
+test "callback signatures reject safe references through materialized aliases" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+        .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } },
+    });
+    try graph.generic_instances.append(allocator, .{ .type_id = @enumFromInt(2), .shape = .{ .alias = @enumFromInt(1) } });
+    try std.testing.expect(isSafeReferenceValue(&graph, @enumFromInt(2)));
+    try std.testing.expect(!isSafeReferenceValue(&graph, @enumFromInt(0)));
 }

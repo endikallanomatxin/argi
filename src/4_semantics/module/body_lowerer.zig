@@ -125,7 +125,7 @@ const Context = struct {
             self.source = file.source;
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, source_decl) orelse continue;
             const declaration = switch (source_decl.kind) {
-                .function => self.tree.functionDeclaration(declaration_node) orelse continue,
+                .function, .type => self.tree.functionDeclaration(declaration_node) orelse continue,
                 .test_function => (self.tree.testDeclaration(declaration_node) orelse continue).function,
                 else => continue,
             };
@@ -164,11 +164,12 @@ const Context = struct {
                 .input_bindings = input_range,
                 .output_bindings = output_range,
                 .flags = .{
-                    .is_entry = self.files[self.file_index].is_entry,
+                    .is_entry = self.files[self.file_index].is_entry and !declaration.c_function_pointer,
                     .is_once = declaration.is_once,
                     .is_test = source_decl.kind == .test_function,
                     .has_declared_body = declaration.body != null,
                     .is_c_abi = declaration.c_abi,
+                    .is_c_function_pointer = declaration.c_function_pointer,
                     .is_c_export = foreign.exported,
                     .uses_inferred_error_reasons = try self.interfaceUsesInferredErrable(interface.output),
                 },

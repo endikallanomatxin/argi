@@ -503,6 +503,7 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .denied_implicit_copy => |id| .{ .denied_implicit_copy = globalNode(o, id) },
             .assignment => |value| .{ .assignment = .{ .binding = globalBinding(o, value.binding), .value = globalNode(o, value.value) } },
             .auto_deinit_binding => |id| .{ .auto_deinit_binding = globalAutoDeinit(o, id) },
+            .function_address => |id| .{ .function_address = globalFunction(o, id) },
             .function_call => |value| .{ .function_call = .{
                 .callee = globalFunction(o, value.callee),
                 .input = globalNode(o, value.input),

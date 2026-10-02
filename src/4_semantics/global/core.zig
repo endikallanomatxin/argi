@@ -444,7 +444,7 @@ pub const Resolver = struct {
         var saw_deferred = false;
         for (try self.graph.functionsNamed(self.allocator, name)) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
-            if (function.flags.is_abstract_dispatch) continue;
+            if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
             const score = switch (try self.matchCallInputWithReach(function.input, input_node, context)) {
                 .no_match => continue,
@@ -481,7 +481,7 @@ pub const Resolver = struct {
         var saw_deferred = false;
         for (try self.graph.functionsNamed(self.allocator, name)) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
-            if (function.flags.is_abstract_dispatch) continue;
+            if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
             const score = switch (self.matchCallInput(function.input, input_node)) {
                 .no_match => continue,

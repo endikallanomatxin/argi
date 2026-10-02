@@ -39,6 +39,9 @@ pub const Resolver = struct {
     }
 
     fn resolveNameUse(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !bool {
+        // A callback constructor resolves a function selector against its
+        // signature; ordinary name lookup must preserve that selected address.
+        if (self.graph.node(globalizer.globalNode(o, value.node)).content == .function_address) return true;
         const name = module.text(value.name);
         if (value.module_path) |path| {
             const target = module_linker.resolveImportPath(

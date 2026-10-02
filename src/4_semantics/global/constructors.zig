@@ -13,6 +13,8 @@ const types = @import("types.zig");
 const abstract_mod = @import("abstracts.zig");
 const call_compatibility = @import("call_compatibility.zig");
 const initializer_contract = @import("initializer_contract.zig");
+const c_abi = @import("c_abi.zig");
+const module_linker = @import("module_linker.zig");
 const diagnostics_mod = @import("../../1_base/diagnostic.zig");
 
 /// Resolves call syntax whose callee is a declared type. A visible `init`
@@ -168,6 +170,90 @@ pub const Resolver = struct {
         };
     }
 
+    fn callbackError(self: *Resolver, source: primitives.SourceRef, message: []const u8) !resolution.Result {
+        if (self.diagnostics) |diagnostics| {
+            var file_id: u32 = 0;
+            const file = self.graph.files.items[source.file_index];
+            const name = self.graph.text(file.path);
+            const dir = self.graph.text(self.graph.modules.items[@intFromEnum(file.module)].dir);
+            for (diagnostics.source_files, 0..) |candidate, index| {
+                if (std.mem.eql(u8, std.fs.path.basename(candidate.path), name) and std.mem.eql(u8, std.fs.path.dirname(candidate.path) orelse ".", dir)) {
+                    file_id = @intCast(index);
+                    break;
+                }
+            }
+            try diagnostics.add(.{ .file = @enumFromInt(file_id), .offset = source.offset }, .semantic, "{s}", .{message});
+        }
+        return error.Reported;
+    }
+
+    fn resolveCallbackConstructor(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype, declaration: global_sg.Declaration, ty: global_sg.GlobalTypeId, input: global_sg.GlobalNodeId) !resolution.Result {
+        const target = globalizer.globalNode(o, value.node);
+        const local_source = module.semantic.external_refs.items[@intFromEnum(value.callee)].source;
+        const source: primitives.SourceRef = .{ .file_index = o.file_base + local_source.file_index, .offset = local_source.offset };
+        const literal = switch (self.graph.node(input).content) {
+            .struct_value_literal => |item| item,
+            else => return .deferred,
+        };
+        if (literal.fields.len != 1) return self.callbackError(source, "CFunctionPointer construction requires '.function = name'");
+        const field = self.graph.value_fields.items[literal.fields.start];
+        if (!std.mem.eql(u8, self.graph.text(field.name), "function")) return self.callbackError(source, "CFunctionPointer construction requires '.function = name'");
+        var selector = field.value;
+        var reference: ?module_entities.ExternalRef = null;
+        // Selection consumes source-name metadata, not a runtime value. Follow
+        // the implicit copy wrapper so ordinary bindings keep their own rules.
+        for (0..8) |_| {
+            const raw = @intFromEnum(selector);
+            if (raw < o.node_base or raw - o.node_base >= module.semantic.nodes.items.len) break;
+            const pending = switch (module.semantic.nodes.items[raw - o.node_base]) {
+                .pending => |id| module.semantic.pending_operations.items[@intFromEnum(id)],
+                else => break,
+            };
+            switch (pending) {
+                .resolve_copy => |copy| selector = globalizer.globalNode(o, copy.value),
+                .resolve_name_use => |name| {
+                    reference = .{ .kind = .function, .name = name.name, .module_path = name.module_path, .source = name.source };
+                    break;
+                },
+                else => break,
+            }
+        }
+        const name_ref = reference orelse return self.callbackError(source, "callback '.function' must name a concrete CFunction body");
+        const filter = if (name_ref.module_path) |path|
+            try module_linker.resolveImportPath(self.core.allocator, self.graph, self.modules, module_index, module.text(path))
+        else
+            null;
+        const signature = self.graph.function(declaration.function_id orelse return .deferred);
+        var selected: ?global_sg.GlobalFunctionId = null;
+        for (try self.graph.functionsNamed(self.core.allocator, module.text(name_ref.name))) |id| {
+            const candidate = self.graph.function(id);
+            if (!candidate.flags.is_c_abi or !candidate.flags.has_declared_body or candidate.flags.is_once or candidate.flags.is_c_function_pointer) continue;
+            if (!self.core.declarationVisible(module_index, candidate.declaration, filter)) continue;
+            if (c_abi.physicalInputCount(candidate) != c_abi.physicalInputCount(signature) or candidate.output.len != signature.output.len) continue;
+            var matches = true;
+            for (0..c_abi.physicalInputCount(signature)) |i| {
+                const expected = self.graph.fields.items[signature.input.start + i].ty;
+                const actual = self.graph.fields.items[candidate.input.start + i].ty;
+                if (self.graph.isTypeUnresolved(expected) or self.graph.isTypeUnresolved(actual)) return .deferred;
+                if (!types.equal(self.graph, expected, actual)) matches = false;
+            }
+            for (0..signature.output.len) |i| {
+                const expected = self.graph.fields.items[signature.output.start + i].ty;
+                const actual = self.graph.fields.items[candidate.output.start + i].ty;
+                if (self.graph.isTypeUnresolved(expected) or self.graph.isTypeUnresolved(actual)) return .deferred;
+                if (!types.equal(self.graph, expected, actual)) matches = false;
+            }
+            if (!matches) continue;
+            if (selected != null) return self.callbackError(source, "callback function selection is ambiguous for this C signature");
+            selected = id;
+        }
+        const function = selected orelse return self.callbackError(source, "no visible concrete CFunction body matches the callback signature");
+        const node: global_sg.Node = .{ .source = source, .ty = ty, .content = .{ .function_address = function } };
+        self.graph.nodes.items[@intFromEnum(selector)] = node;
+        self.graph.nodes.items[@intFromEnum(target)] = node;
+        return .resolved;
+    }
+
     fn resolveCall(
         self: *Resolver,
         module_index: usize,
@@ -189,6 +275,8 @@ pub const Resolver = struct {
         if (type_generics.isParameterizedTypeDeclaration(declaration_id))
             return self.resolveImplicitGenericCall(module_index, module, o, value, reference, declaration_id, input);
         const ty = declaration.type_id orelse return .deferred;
+        if (declaration.struct_layout == .c_function_pointer)
+            return self.resolveCallbackConstructor(module_index, module, o, value, declaration, ty, input);
 
         const initializer = self.findInitializer(
             module_index,

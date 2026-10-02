@@ -239,6 +239,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
             try require(verify.idFits(item.value, bounds.nodes));
         },
         .auto_deinit_binding => |id| try require(verify.idFits(id, bounds.auto_deinits)),
+        .function_address => |id| try require(verify.idFits(id, bounds.functions)),
         .function_call => |item| {
             try require(verify.idFits(item.callee, bounds.functions));
             try require(verify.idFits(item.input, bounds.nodes));

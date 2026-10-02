@@ -147,10 +147,11 @@ pub const FunctionFlags = packed struct(u16) {
     is_c_abi: bool = false,
     is_c_export: bool = false,
     has_foreign_capability: bool = false,
-    _padding: u5 = 0,
+    is_c_function_pointer: bool = false,
+    _padding: u4 = 0,
 };
 
-pub const StructLayout = enum(u8) { regular, c_union, c_struct, c_incomplete };
+pub const StructLayout = enum(u8) { regular, c_union, c_struct, c_incomplete, c_function_pointer };
 pub const ChoiceLayout = enum(u8) { regular, c_enum };
 pub const InferredChoiceKind = enum(u8) { errable, reasons };
 pub const LogicalOperator = enum(u8) { and_, or_ };
@@ -477,6 +478,7 @@ pub fn Node(comptime Ids: type) type {
             denied_implicit_copy: Ids.NodeId,
             assignment: struct { binding: Ids.BindingId, value: Ids.NodeId },
             auto_deinit_binding: Ids.AutoDeinitId,
+            function_address: Ids.FunctionId,
             function_call: struct {
                 callee: Ids.FunctionId,
                 input: Ids.NodeId,

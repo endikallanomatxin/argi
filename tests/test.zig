@@ -8266,3 +8266,58 @@ test "C interop rejects 64X_enum_duplicate_value" {
 test "C interop diagnoses unsupported enum constant expressions" {
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/65X_enum_constant_expression", "constant expressions are not supported", "failed without a diagnostic");
 }
+
+test "C interop transports nominal callback pointers and record fields" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/66_typed_callback_transport", &.{
+        "declare ptr @argi_callback_lookup()",
+        "define ptr @argi_callback_echo(ptr",
+        "declare i32 @argi_callback_apply(ptr",
+    });
+}
+
+test "C interop rejects 67X_callback_wrong_body_signature" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/67X_callback_wrong_body_signature", "no visible concrete CFunction body matches", "failed without a diagnostic");
+}
+
+test "C interop rejects 68X_callback_argi_body" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/68X_callback_argi_body", "no visible concrete CFunction body matches", "failed without a diagnostic");
+}
+
+test "C interop rejects 69X_callback_numeric_construction" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/69X_callback_numeric_construction", "construction requires '.function = name'", "failed without a diagnostic");
+}
+
+test "C interop rejects 70X_callback_safe_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/70X_callback_safe_reference", "parameters require RawPointer", "failed without a diagnostic");
+}
+
+test "C interop rejects 71X_callback_declared_body" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/71X_callback_declared_body", "without symbol options or a body", "failed without a diagnostic");
+}
+
+test "C interop rejects 72X_callback_nominal_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/72X_callback_nominal_identity", "no overload of", "failed without a diagnostic");
+}
+
+test "C interop rejects 73X_callback_missing_capability" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/73X_callback_missing_capability", ".ffi uses reach [ffi]", "failed without a diagnostic");
+}
+
+test "C interop rejects 74X_callback_body_missing_capability" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/74X_callback_body_missing_capability", ".ffi uses reach [ffi]", "failed without a diagnostic");
+}
+
+test "C interop rejects 75X_callback_multiple_outputs" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/75X_callback_multiple_outputs", "must have zero or one output", "failed without a diagnostic");
+}
+
+test "C interop rejects 76X_callback_once_body" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/76X_callback_once_body", "no visible concrete CFunction body matches", "failed without a diagnostic");
+}
+
+test "C interop selects typed record callbacks with indirect results" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/77_typed_record_callback", &.{
+        "declare i32 @argi_typed_callback_probe(ptr",
+        "sret({ double, i32, { i64 } })",
+    });
+}

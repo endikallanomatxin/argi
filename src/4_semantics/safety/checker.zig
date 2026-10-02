@@ -359,11 +359,15 @@ pub const SafetyChecker = struct {
             if (function.output.len > 1) {
                 try self.report(declaration.source, "C function '{s}' must have zero or one output; use explicit pointer parameters for additional results", .{name});
             }
-            for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field| {
+            for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
+                if (function.flags.is_c_function_pointer and index < c_abi.physicalInputCount(function) and c_abi.isSafeReferenceValue(self.graph, field.ty))
+                    try self.report(field.source, "CFunctionPointer parameters require RawPointer instead of safe references", .{});
                 if (!c_abi.supportsCValue(self.graph, field.ty))
                     try self.report(field.source, "C function '{s}' input '{s}' has an unsupported C ABI type; aggregate arguments require target-specific lowering", .{ name, self.graph.text(field.name) });
             }
             for (self.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
+                if (function.flags.is_c_function_pointer and c_abi.isSafeReferenceValue(self.graph, field.ty))
+                    try self.report(field.source, "CFunctionPointer results require RawPointer instead of safe references", .{});
                 if (!c_abi.supportsCValue(self.graph, field.ty))
                     try self.report(field.source, "C function '{s}' output '{s}' has an unsupported C ABI type; aggregate results require target-specific lowering", .{ name, self.graph.text(field.name) });
             }

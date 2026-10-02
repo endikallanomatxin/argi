@@ -316,6 +316,7 @@ fn declaredLayout(graph: *const graph_mod.GlobalSemanticGraph, decl_id: graph_mo
     const raw: usize = @intFromEnum(decl_id);
     if (raw >= graph.declarations.items.len) return error.UnmaterializedGlobalType;
     const decl = graph.declarations.items[raw];
+    if (decl.struct_layout == .c_function_pointer) return .{ .size = pointer_size_bytes, .alignment = pointer_alignment_bytes };
     if (decl.struct_fields) |range| return structLayout(graph, range, decl.struct_layout);
     if (decl.choice_variants) |range| return choiceLayout(graph, range, decl.choice_layout);
     return error.TypeHasNoRuntimeLayout;
