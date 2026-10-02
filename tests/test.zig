@@ -7786,6 +7786,33 @@ test "C interop links native archives by file and library name" {
         defer allocator.free(executed.stderr);
         try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
     }
+    // A package can be built from elsewhere, from its module, or run at its
+    // root without relying on the caller's directory for native input paths.
+    try tmp.dir.createDirPath(std.testing.io, "source/app");
+    const rg_path = try std.fs.path.join(allocator, &.{ fixture, "main.rg" });
+    defer allocator.free(rg_path);
+    const rg_source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, rg_path, allocator, .limited(8192));
+    defer allocator.free(rg_source);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "source/app/main.rg", .data = rg_source });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "argi.toml", .data =
+        \\[executables.app]
+        \\path = "source/app"
+        \\[[native]]
+        \\file = "libargi_fixture.a"
+    });
+    const module_path = try std.fs.path.join(allocator, &.{ root, "source/app" });
+    defer allocator.free(module_path);
+    for ([_][]const u8{ root, module_path }) |target| {
+        const built = try runChildInCwd(&.{ argi, "build", target }, repo);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+    }
+    const ran = try runChildInCwd(&.{ argi, "run" }, root);
+    defer allocator.free(ran.stdout);
+    defer allocator.free(ran.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, ran.term);
     const missing = try runChildInCwd(&.{ argi, "build", fixture, "--output", "missing", "--link-library", "argi_missing_library_fixture" }, root);
     defer allocator.free(missing.stdout);
     defer allocator.free(missing.stderr);

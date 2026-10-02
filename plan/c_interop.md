@@ -15,8 +15,8 @@ existing external calls do not establish support for every signature shape.
   expand the checked ABI subset alongside cross-language tests.
 - [ ] Choose a small native-library consumer and validate its wrappers, including
   aggregate arguments/results where supported.
-- [ ] Add manifest native-link configuration and explicit named-library mode
-  selection, building on the typed CLI library/search-path/file inputs.
+- [ ] Add explicit static/shared named-library mode selection; manifest and CLI
+  native inputs currently select exact artifacts through file paths.
 - [ ] Keep foreign-call capabilities, resource cleanup, pointer bounds, and
   allocation/free pairing explicit in wrappers; headers do not prove safety.
 - [ ] Settle incomplete types, callback syntax, and foreign storage effects,

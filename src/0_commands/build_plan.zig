@@ -28,6 +28,7 @@ pub const BuildPlan = struct {
     output_path: []const u8,
     executable_name: ?[]const u8 = null,
     module_root: ?[]const u8 = null,
+    native_inputs: []const link.NativeInput = &.{},
 };
 
 const ManifestExecutable = struct {
@@ -39,6 +40,7 @@ const ModuleManifest = struct {
     name: ?[]const u8 = null,
     run_default: ?[]const u8 = null,
     executables: std.array_list.Managed(ManifestExecutable),
+    native_inputs: std.ArrayList(link.NativeInput) = .empty,
 
     fn init(allocator: std.mem.Allocator) ModuleManifest {
         return .{ .executables = std.array_list.Managed(ManifestExecutable).init(allocator) };
@@ -193,17 +195,31 @@ fn readManifest(allocator: std.mem.Allocator, io: std.Io, module_root: []const u
     const path = try manifestPath(allocator, module_root);
     defer allocator.free(path);
     const text = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1024 * 1024));
+    return parseManifest(allocator, module_root, text) catch |err| {
+        if (err == error.InvalidNativeLinkInput) {
+            std.debug.print("Error: invalid native link configuration in {s}; each [[native]] entry requires one library, search_path, or file string.\n", .{path});
+            return error.CompilationFailed;
+        }
+        return err;
+    };
+}
 
+fn parseManifest(allocator: std.mem.Allocator, module_root: []const u8, text: []const u8) !ModuleManifest {
     var manifest = ModuleManifest.init(allocator);
     var current_executable: ?*ManifestExecutable = null;
     var in_run = false;
+    var in_native = false;
+    var native_has_input = false;
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |raw_line| {
         const line = std.mem.trim(u8, raw_line, " \t\r\n");
         if (line.len == 0 or line[0] == '#') continue;
         if (line[0] == '[' and line[line.len - 1] == ']') {
+            if (in_native and !native_has_input) return error.InvalidNativeLinkInput;
             const section = line[1 .. line.len - 1];
             in_run = std.mem.eql(u8, section, "run");
+            in_native = std.mem.eql(u8, line, "[[native]]");
+            native_has_input = false;
             current_executable = null;
             if (std.mem.startsWith(u8, section, "executables.")) {
                 const name = section["executables.".len..];
@@ -212,8 +228,23 @@ fn readManifest(allocator: std.mem.Allocator, io: std.Io, module_root: []const u
             }
             continue;
         }
-
         const key = parseKey(line);
+        if (in_native) {
+            if (native_has_input) return error.InvalidNativeLinkInput;
+            const value = parseNativeString(line) orelse return error.InvalidNativeLinkInput;
+            if (value.len == 0 or value[0] == '-') return error.InvalidNativeLinkInput;
+            const input: link.NativeInput = if (std.mem.eql(u8, key, "library"))
+                .{ .library = try allocator.dupe(u8, value) }
+            else if (std.mem.eql(u8, key, "search_path"))
+                .{ .search_path = try std.fs.path.resolve(allocator, &.{ module_root, value }) }
+            else if (std.mem.eql(u8, key, "file"))
+                .{ .file = try std.fs.path.resolve(allocator, &.{ module_root, value }) }
+            else
+                return error.InvalidNativeLinkInput;
+            try manifest.native_inputs.append(allocator, input);
+            native_has_input = true;
+            continue;
+        }
         const value = parseQuotedValue(line) orelse continue;
         if (current_executable) |executable| {
             if (std.mem.eql(u8, key, "path")) executable.path = try allocator.dupe(u8, value);
@@ -223,7 +254,23 @@ fn readManifest(allocator: std.mem.Allocator, io: std.Io, module_root: []const u
             manifest.name = try allocator.dupe(u8, value);
         }
     }
+    if (in_native and !native_has_input) return error.InvalidNativeLinkInput;
     return manifest;
+}
+
+// Native link configuration accepts single-line literal or basic strings.
+// Literal strings preserve backslashes; basic strings with escapes require a
+// TOML parser rather than silently passing a different filename to the linker.
+fn parseNativeString(line: []const u8) ?[]const u8 {
+    const equals = std.mem.indexOfScalar(u8, line, '=') orelse return null;
+    const value = std.mem.trim(u8, line[equals + 1 ..], " \t\r");
+    if (value.len < 2 or (value[0] != '"' and value[0] != '\'')) return null;
+    const close = std.mem.indexOfScalarPos(u8, value, 1, value[0]) orelse return null;
+    const rest = std.mem.trim(u8, value[close + 1 ..], " \t\r");
+    if (rest.len != 0 and rest[0] != '#') return null;
+    const content = value[1..close];
+    if (value[0] == '"' and std.mem.indexOfScalar(u8, content, '\\') != null) return null;
+    return content;
 }
 
 fn printAvailableExecutables(executables: []const ManifestExecutable) void {
@@ -288,6 +335,7 @@ fn appendExecutablePlan(
     target_path: []const u8,
     module_root: []const u8,
     executable: *const ManifestExecutable,
+    native_inputs: []const link.NativeInput,
 ) !void {
     const relative_path = executable.path orelse executable.name;
     const executable_path = try std.fs.path.resolve(allocator, &.{ module_root, relative_path });
@@ -303,6 +351,7 @@ fn appendExecutablePlan(
         .module_root = module_root,
         .module_dir = executable_path,
         .executable_name = executable.name,
+        .native_inputs = native_inputs,
         .output_path = try defaultOutputPathForExecutable(allocator, module_root, executable.name),
     });
 }
@@ -320,11 +369,11 @@ pub fn resolveBuildPlans(allocator: std.mem.Allocator, io: std.Io, target_path: 
         }
         if (flags.executable_name) |name| {
             const executable = try selectExecutable(&manifest, name);
-            try appendExecutablePlan(allocator, io, &plans, target_path, target_dir, executable);
+            try appendExecutablePlan(allocator, io, &plans, target_path, target_dir, executable, manifest.native_inputs.items);
             return plans;
         }
         for (manifest.executables.items) |*executable|
-            try appendExecutablePlan(allocator, io, &plans, target_path, target_dir, executable);
+            try appendExecutablePlan(allocator, io, &plans, target_path, target_dir, executable, manifest.native_inputs.items);
         return plans;
     }
 
@@ -341,7 +390,7 @@ pub fn resolveBuildPlans(allocator: std.mem.Allocator, io: std.Io, target_path: 
             const executable_dir = try std.fs.path.resolve(allocator, &.{ package_root, executable.path orelse executable.name });
             defer allocator.free(executable_dir);
             if (!std.mem.eql(u8, executable_dir, target_dir)) continue;
-            try appendExecutablePlan(allocator, io, &plans, target_path, package_root, executable);
+            try appendExecutablePlan(allocator, io, &plans, target_path, package_root, executable, manifest.native_inputs.items);
         }
         if (plans.items.len != 0) return plans;
         allocator.free(package_root);
@@ -383,7 +432,7 @@ pub fn resolveRunPlan(allocator: std.mem.Allocator, io: std.Io, requested_execut
     }
     const executable = try selectRunExecutable(&manifest, requested_executable);
     var plans = std.array_list.Managed(BuildPlan).init(allocator);
-    try appendExecutablePlan(allocator, io, &plans, ".", target_dir, executable);
+    try appendExecutablePlan(allocator, io, &plans, ".", target_dir, executable, manifest.native_inputs.items);
     return plans.items[0];
 }
 
@@ -407,4 +456,39 @@ test "build planning validates and preserves native link input order" {
     try std.testing.expectEqualStrings("last.o", inputs[3].file);
     try std.testing.expectError(error.MissingFlagValue, parseBuildArgs(allocator, &.{"--link-library"}));
     try std.testing.expectError(error.InvalidNativeLinkInput, parseBuildArgs(allocator, &.{ "--link-file", "-Wl,bad" }));
+}
+
+test "native manifest inputs preserve order and resolve package paths" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const root = try std.fs.path.resolve(allocator, &.{"native package"});
+    const manifest = try parseManifest(allocator, root,
+        \\[[native]]
+        \\search_path = "native # libs" # comment
+        \\[[native]]
+        \\file = 'lib first.a'
+        \\[[native]]
+        \\library = "second"
+        \\[executables.app]
+        \\path = "source/app"
+    );
+    try std.testing.expectEqual(@as(usize, 3), manifest.native_inputs.items.len);
+    try std.testing.expectEqualStrings(try std.fs.path.resolve(allocator, &.{ root, "native # libs" }), manifest.native_inputs.items[0].search_path);
+    try std.testing.expectEqualStrings(try std.fs.path.resolve(allocator, &.{ root, "lib first.a" }), manifest.native_inputs.items[1].file);
+    try std.testing.expectEqualStrings("second", manifest.native_inputs.items[2].library);
+}
+
+test "native manifest inputs reject missing duplicate and unknown fields" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    for ([_][]const u8{
+        "[[native]]",
+        "[[native]]\nlibrary = 3",
+        "[[native]]\nlibrary = \"\"",
+        "[[native]]\nlibrary = \"one\"\nfile = \"two.a\"",
+        "[[native]]\nlibary = \"one\"",
+        "[[native]]\nfile = \"-Wl,bad\"",
+        "[[native]]\nfile = \"one.a\" trailing",
+    }) |text| try std.testing.expectError(error.InvalidNativeLinkInput, parseManifest(arena.allocator(), ".", text));
 }

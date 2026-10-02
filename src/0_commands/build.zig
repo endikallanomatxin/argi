@@ -421,11 +421,16 @@ fn compileResolvedPlan(
     const triple_message = c.LLVMGetDefaultTargetTriple();
     defer c.LLVMDisposeMessage(triple_message);
     const triple = std.mem.span(triple_message);
+    // Manifest paths are resolved from the package root; CLI paths retain the
+    // invoking directory. Keep both lists ordered for archive dependencies.
+    const native_inputs = try allocator.alloc(link.NativeInput, plan.native_inputs.len + flags.native_inputs.len);
+    @memcpy(native_inputs[0..plan.native_inputs.len], plan.native_inputs);
+    @memcpy(native_inputs[plan.native_inputs.len..], flags.native_inputs);
     const link_start = nowNs(io);
     if (object_only)
         try link.emitObjectFile(module, triple, temp_obj, flags.optimization_mode)
     else
-        try link.linkWithLibc(module, triple, temp_stem, &allocator, io, environ_map, flags.optimization_mode, flags.native_inputs);
+        try link.linkWithLibc(module, triple, temp_stem, &allocator, io, environ_map, flags.optimization_mode, native_inputs);
     const link_ns = elapsedSince(io, link_start);
 
     if (temp_ir) |src| try replaceFile(io, src, final_ir.?);
