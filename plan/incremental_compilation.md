@@ -6,11 +6,12 @@ Scheduling: [0.3](0.3.md), before C interop and cross-compilation.
 
 Reuse work at the existing file/module boundaries before attempting fine-grained
 incrementality. Canonical `ModuleSG`s can be reused in memory by persistent
-consumers; decide on CLI disk persistence from measured benefits.
+consumers. LSP semantic requests share a bounded cache; decide on CLI disk
+persistence from measured benefits.
 
 ## Work to do
 
-- [ ] Integrate module reuse into LSP requests and bound retained cache memory.
+- [ ] Resolve imports from unsaved dependency buffers during source collection.
 - [ ] Evaluate versioned persistent module caches for separate CLI builds;
   consider syntax-tree caching if tokenizing/syntaxing remain costly.
 

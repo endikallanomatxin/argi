@@ -194,14 +194,21 @@ pub const LanguageService = struct {
     io: std.Io,
     documents: std.array_list.Managed(Document),
     root_path: ?[]u8 = null,
+    module_cache: frontend.cache.ModuleCache,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) LanguageService {
-        return .{ .allocator = allocator, .io = io, .documents = std.array_list.Managed(Document).init(allocator) };
+        return .{
+            .allocator = allocator,
+            .io = io,
+            .documents = std.array_list.Managed(Document).init(allocator),
+            .module_cache = frontend.cache.ModuleCache.init(allocator, .{}),
+        };
     }
 
     pub fn deinit(self: *LanguageService) void {
         for (self.documents.items) |*document| document.deinit(self.allocator);
         self.documents.deinit();
+        self.module_cache.deinit();
         if (self.root_path) |path| self.allocator.free(path);
     }
 
@@ -479,7 +486,7 @@ pub const LanguageService = struct {
         const files = self.collectFiles(&work, doc) catch |err| return self.loadFailureDiagnostic(doc, err);
         var diagnostics = diag.Diagnostics.init(&work, files);
         defer diagnostics.deinit();
-        var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{});
+        var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{ .module_cache = &self.module_cache });
         defer pipeline.deinit();
         _ = pipeline.semantizeGlobalFiles(files) catch {};
 
@@ -508,7 +515,7 @@ pub const LanguageService = struct {
         };
         var diagnostics = diag.Diagnostics.init(allocator, files);
         defer diagnostics.deinit();
-        var pipeline = frontend.FrontendPipeline.init(allocator.*, self.io, &diagnostics, .{});
+        var pipeline = frontend.FrontendPipeline.init(allocator.*, self.io, &diagnostics, .{ .module_cache = &self.module_cache });
         defer pipeline.deinit();
         _ = pipeline.semantizeGlobalFiles(files) catch {
             // Parsing/global semantic failures leave no graph. Safety failures,
@@ -534,6 +541,9 @@ pub const LanguageService = struct {
     fn collectFiles(self: *LanguageService, allocator: *std.mem.Allocator, doc: *Document) ![]const sf.SourceFile {
         const core_dir = try self.preferredCoreDir(allocator.*);
         const files = try sf.collectWithEntrySource(allocator, self.io, core_dir, doc.path, doc.text);
+        // TODO: Apply open dependency buffers during import discovery as well.
+        // Replacing their text here updates declarations, but cannot discover
+        // newly added imports absent from the on-disk dependency sources.
         for (files.items) |*source_file| for (self.documents.items) |open_document| {
             if (std.mem.eql(u8, source_file.path, open_document.path)) source_file.code = open_document.text;
         };
@@ -1253,4 +1263,72 @@ test "LSP definitions remain available with unresolved matrix initializers" {
     const data = (try service.definition(uri, .{ .line = 4, .character = 34 })).?;
     defer data.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u32, 3), data.range.start.line);
+}
+
+test "LSP module reuse preserves navigation across unsaved imports and file changes" {
+    const code =
+        \\dep := import("./dep")
+        \\main() -> (.status_code: Int32) := {
+        \\    status_code = dep.answer().result
+        \\}
+    ;
+    const dependency = "answer() -> (.result: Int32 = 7) := {}\n";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDir(std.testing.io, "dep", .default_dir);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "dep/answer.rg", .data = dependency });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    const dep_path = try @import("../test_support.zig").tmpFilePath(&tmp, "dep/answer.rg");
+    defer std.testing.allocator.free(dep_path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///incremental.rg";
+    const opened = try service.openDocument(uri, path, 1, code);
+    defer opened.deinit();
+    try std.testing.expectEqual(@as(usize, 0), opened.items.len);
+    const misses = service.module_cache.misses;
+    const modules = service.module_cache.entries.items.len;
+    const position = Position{ .line = 2, .character = 22 };
+    const definition = (try service.definition(uri, position)).?;
+    defer definition.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(dep_path, definition.path);
+    try std.testing.expectEqual(@as(u32, 0), definition.range.start.line);
+    try std.testing.expectEqual(misses, service.module_cache.misses);
+    try std.testing.expectEqual(modules, service.module_cache.hits);
+
+    // The imported buffer stays unsaved on disk; its source location changes.
+    const changed = try service.openDocument("file:///incremental-dep.rg", dep_path, 1, "\n" ++ dependency);
+    defer changed.deinit();
+    const moved = (try service.definition(uri, position)).?;
+    defer moved.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u32, 1), moved.range.start.line);
+    try std.testing.expectEqual(misses + 1, service.module_cache.misses);
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "helper.rg", .data = "helper() -> () := {}\n" });
+    const with_file = (try service.definition(uri, position)).?;
+    defer with_file.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(dep_path, with_file.path);
+    try std.testing.expectEqual(@as(u32, 1), with_file.range.start.line);
+    try std.testing.expectEqual(misses + 2, service.module_cache.misses);
+    try tmp.dir.deleteFile(std.testing.io, "helper.rg");
+    const without_file = (try service.definition(uri, position)).?;
+    defer without_file.deinit(std.testing.allocator);
+    try std.testing.expectEqual(misses + 3, service.module_cache.misses);
+
+    const broken = try service.changeDocument(uri, path, 2, "main(\n");
+    defer broken.deinit();
+    try std.testing.expect(broken.items.len != 0);
+    const repaired = try service.changeDocument(uri, path, 3, code);
+    defer repaired.deinit();
+    try std.testing.expectEqual(@as(usize, 0), repaired.items.len);
+    const hover = (try service.hover(uri, position)).?;
+    defer std.testing.allocator.free(hover.contents);
+    try std.testing.expect(std.mem.indexOf(u8, hover.contents, "answer(") != null);
+    service.closeDocument("file:///incremental-dep.rg");
+    const from_disk = (try service.definition(uri, position)).?;
+    defer from_disk.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u32, 0), from_disk.range.start.line);
+    try std.testing.expect(service.module_cache.retained_bytes <= service.module_cache.limits.bytes);
 }
