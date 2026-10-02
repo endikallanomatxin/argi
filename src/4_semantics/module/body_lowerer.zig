@@ -521,9 +521,30 @@ const Context = struct {
         if (std.mem.eql(u8, name_text, "is") or std.mem.eql(u8, name_text, "type_of"))
             self.suppress_implicit_copies = true;
         defer self.suppress_implicit_copies = previous_suppression;
+        var callee_value: ?entities.ModuleNodeId = null;
+        if (call.module_qualifier) |qualifier| {
+            if (self.lookupBinding(self.tree.tokenTextFromSource(self.source, qualifier))) |binding| {
+                const base = try self.writer.addResolvedNode(.{
+                    .source = .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(qualifier).offset },
+                    .ty = binding.ty,
+                    .content = .{ .binding_use = binding.id },
+                });
+                const field = try self.pending(node, .{ .resolve_field = .{
+                    .node = self.nextNodeId(),
+                    .value = base,
+                    .field_name = try self.writer.addString(name_text),
+                    .source = .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(call.callee_token).offset },
+                } }, null);
+                callee_value = field.node;
+            }
+        } else if (self.lookupBinding(name_text)) |binding| {
+            callee_value = (try self.resolved(node, binding.ty, .{ .binding_use = binding.id })).node;
+        }
         const input = try self.lowerNode(call.input, null);
         try self.captureAssumedFields(node, input.node);
-        const module_path = if (call.module_qualifier) |token_index|
+        const module_path = if (callee_value != null)
+            null
+        else if (call.module_qualifier) |token_index|
             try self.modulePathForQualifier(token_index)
         else
             null;
@@ -537,6 +558,7 @@ const Context = struct {
         return self.pending(node, .{ .resolve_call = .{
             .node = self.nextNodeId(),
             .callee = external,
+            .callee_value = callee_value,
             .input = input.node,
             .expected_type = expected,
             .visible_bindings = visible_bindings,

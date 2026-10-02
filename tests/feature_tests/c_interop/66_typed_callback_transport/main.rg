@@ -19,6 +19,10 @@ _difference(.left: CFloat, .right: CFloat) -> (.result: CFloat) : CFunction := {
     result = left + right
 }
 
+_invoke(.callback: types.Comparator) -> (.result: CInt) := {
+    result = callback(.left = 21, .right = 4)
+}
+
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume ffi := system.ffi
     selected := types.Comparator(.function = _difference)
@@ -32,12 +36,28 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         return
     }
     callback := _lookup()
+    if callback(.left = 8, .right = 3) != 5 {
+        status_code = 7
+        return
+    }
+    if selected(11, 4) != 7 {
+        status_code = 8
+        return
+    }
+    if _invoke(.callback = callback) != 17 {
+        status_code = 9
+        return
+    }
     copied := callback
     if _apply(.callback = copied, .left = 7, .right = 3) != 4 {
         status_code = 1
         return
     }
     entry := _entry(.callback = callback)
+    if entry.callback(.left = 10, .right = 3) != 7 {
+        status_code = 10
+        return
+    }
     if _apply_entry(.entry = entry) != 21 {
         status_code = 2
         return

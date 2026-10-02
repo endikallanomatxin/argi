@@ -8329,3 +8329,34 @@ test "C interop checks null callback values" {
         "ptr null",
     });
 }
+
+test "C interop checks indirect callback invocation arguments and capabilities" {
+    const cases = .{
+        .{ "tests/feature_tests/c_interop/79X_callback_invocation_missing_capability", ".ffi uses reach [ffi]" },
+        .{ "tests/feature_tests/c_interop/80X_callback_invocation_wrong_argument", "arguments do not match the C callback signature" },
+        .{ "tests/feature_tests/c_interop/81X_callback_invocation_non_callable", "expected a CFunctionPointer value" },
+        .{ "tests/feature_tests/c_interop/82X_callback_invocation_moved_value", "binding 'callback' was moved" },
+        .{ "tests/feature_tests/c_interop/84X_callback_invocation_stale_capability", "binding 'storage' was moved" },
+        .{ "tests/feature_tests/c_interop/86X_callback_wrapper_stale_capability", "binding 'storage' was moved" },
+        .{ "tests/feature_tests/c_interop/87X_callback_body_invocation_missing_capability", ".ffi uses reach [ffi]" },
+    };
+    inline for (cases) |case| {
+        try buildExpectFailWithoutNoise(case[0], case[1], "failed without a diagnostic");
+    }
+}
+
+test "C interop traps null callback invocation" {
+    const path = "tests/feature_tests/c_interop/83X_callback_invocation_null";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "C interop invokes narrow floating and void callbacks" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/85_callback_invocation_scalar_signatures", &.{
+        "callback.nonnull",
+        "call signext i16 %",
+        "i8 signext",
+        "call double %",
+        "call void %",
+    });
+}

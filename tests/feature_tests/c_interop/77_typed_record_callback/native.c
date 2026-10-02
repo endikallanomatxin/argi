@@ -9,3 +9,8 @@ int argi_typed_callback_probe(Transformer callback) {
     if (result.context != packet.context || context != 17) return 3;
     return 0;
 }
+
+struct Packet argi_typed_callback_packet(void) {
+    struct Packet packet = {3.5, 8, 0};
+    return packet;
+}

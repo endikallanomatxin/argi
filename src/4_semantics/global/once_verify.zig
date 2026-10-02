@@ -107,6 +107,7 @@ const State = struct {
                 if (auto.deinit_fn) |callee| try self.walkCall(node_id, callee);
             },
             .function_call => |call| {
+                if (call.callee_value) |value| try self.walkNode(value);
                 try self.walkNode(call.input);
                 if (call.consumes_auto_deinit) |value| try self.walkNode(value);
                 if (call.initializes_auto_deinit) |value| try self.walkNode(value);

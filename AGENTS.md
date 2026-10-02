@@ -14,6 +14,8 @@ This repository contains a compiler for a new programming language written in Zi
     - `tests/feature_tests/_support/` contains shared fixture modules; compiler unit tests are registered through `src/internal_tests.zig`.
     - Files in the same test case directory share namespace and are compiled together as one folder-level module.
     - Negative tests should include `X` in their numeric prefix, e.g. `131X_multiple_dispatch_ambiguous`.
+    - The feature coverage check scans literal case paths in `tests/test.zig`;
+      use complete paths in registration tables rather than concatenated prefixes.
 
 - `more/`: Official library modules that are not part of `core/`.
 
@@ -145,6 +147,11 @@ feature first.
   callback bodies through global semantizing and LLVM reachability. Selection
   requires visible concrete C bodies, without captures or once semantics; callback
   data addresses require RawPointer until foreign lifetime contracts are defined.
+  Indirect function_call nodes keep the prototype in callee and the runtime address
+  in callee_value. Every call traversal must visit that value before its arguments,
+  including checker and summary domains. Codegen shares direct C call lowering,
+  applies ABI attributes at the call site, and guards null addresses; prototypes
+  must not create LLVM symbols. Generic callback invocation remains pending.
 
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases

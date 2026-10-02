@@ -101,7 +101,10 @@ pub const Resolver = struct {
             },
             .binding_declaration => |id| if (self.graph.binding(id).initialization) |child| try self.collectNode(function, child, out),
             .move_value, .address_of => |child| try self.collectNode(function, child, out),
-            .function_call => |call| try self.collectNode(function, call.input, out),
+            .function_call => |call| {
+                if (call.callee_value) |value| try self.collectNode(function, value, out);
+                try self.collectNode(function, call.input, out);
+            },
             .virtualize => |id| try self.collectNode(function, self.graph.virtualizes.items[@intFromEnum(id)].value, out),
             .virtual_call => |id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
@@ -529,7 +532,7 @@ pub const Resolver = struct {
             .binding_declaration => |binding| if (self.graph.bindings.items[@intFromEnum(binding)].initialization) |child| self.nodeContains(child, target) else false,
             .move_value, .address_of => |child| self.nodeContains(child, target),
             .assignment => |value| self.nodeContains(value.value, target),
-            .function_call => |call| self.nodeContains(call.input, target),
+            .function_call => |call| (if (call.callee_value) |value| self.nodeContains(value, target) else false) or self.nodeContains(call.input, target),
             .virtual_call => |id| blk: {
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
                 break :blk self.nodeContains(call.handle, target) or self.nodeContains(call.input, target);

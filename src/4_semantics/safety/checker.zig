@@ -929,6 +929,9 @@ pub const SafetyChecker = struct {
         var candidate = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
         defer candidate.deinit();
         const diagnostic_count = self.diagnostics.list.items.len;
+        if (@hasField(@TypeOf(call), "callee_value")) {
+            if (call.callee_value) |value| _ = try self.evaluate(caller, value, &candidate);
+        }
         const result = try self.evaluateCallCandidate(caller, call_node, call, &candidate);
         if (self.diagnostics.list.items.len != diagnostic_count) return .{};
         self.commitState(state, &candidate);

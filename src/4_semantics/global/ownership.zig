@@ -279,7 +279,10 @@ pub const Resolver = struct {
             },
             .move_value, .denied_implicit_copy, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers),
             .assignment => |assignment| try self.finalizeExpressionCleanup(assignment.value, active, defers),
-            .function_call => |call| try self.finalizeExpressionCleanup(call.input, active, defers),
+            .function_call => |call| {
+                if (call.callee_value) |value| try self.finalizeExpressionCleanup(value, active, defers);
+                try self.finalizeExpressionCleanup(call.input, active, defers);
+            },
             .virtualize => |virtualize_id| try self.finalizeExpressionCleanup(
                 self.graph.virtualizes.items[@intFromEnum(virtualize_id)].value,
                 active,

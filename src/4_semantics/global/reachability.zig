@@ -163,6 +163,7 @@ const State = struct {
             },
             .function_address => |id| try self.includeFunction(id),
             .function_call => |call| {
+                if (call.callee_value) |value| try self.walkNode(value);
                 try self.walkNode(call.input);
                 if (call.consumes_auto_deinit) |value| try self.walkNode(value);
                 if (call.initializes_auto_deinit) |value| try self.walkNode(value);

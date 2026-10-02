@@ -424,7 +424,7 @@ pub const CodeGenerator = struct {
         }
         // Bundled libc's legacy free binding expresses an address as UIntNative.
         // Typed RawPointer bindings already adapt through the ordinary C path.
-        if (plan.inputs.len == 1 and std.mem.eql(u8, self.externSymbolName(function, name), "free") and types.isBuiltin(self.graph, plan.inputs[0].ty, .UIntNative))
+        if (!function.flags.is_c_function_pointer and plan.inputs.len == 1 and std.mem.eql(u8, self.externSymbolName(function, name), "free") and types.isBuiltin(self.graph, plan.inputs[0].ty, .UIntNative))
             params[plan.inputs[0].parameter_index] = c.LLVMPointerType(c.LLVMInt8Type(), 0);
         var ret = c.LLVMVoidType();
         if (!plan.uses_sret) if (plan.result) |result| {
@@ -1914,7 +1914,18 @@ pub const CodeGenerator = struct {
         if (callee.safety_primitive == .trusted_opaque_move_out) return self.opaqueTake(call.input);
         if (callee.safety_primitive == .trusted_opaque_relocate) return self.opaqueRelocate(call.input);
         if (callee.safety_primitive == .trusted_opaque_drop) return self.opaqueDrop(call.input, callee);
-        const symbol = self.functions.get(call.callee) orelse return CodegenError.SymbolNotFound;
+        var indirect_signature: ?ExternSignature = null;
+        defer if (indirect_signature) |signature| {
+            signature.plan.deinit(self.allocator);
+            self.allocator.destroy(signature.plan);
+        };
+        const symbol = if (call.callee_value) |pointer| blk: {
+            const address = (try self.visitNode(pointer)) orelse return CodegenError.ValueNotFound;
+            try self.checkCallbackAddress(address.value_ref);
+            const signature = try self.externSignature(callee, "");
+            indirect_signature = signature;
+            break :blk FunctionSymbol{ .ref = address.value_ref, .type_ref = signature.fn_type, .return_type = signature.return_type, .is_extern = true, .is_c_abi = true, .c_plan = signature.plan };
+        } else self.functions.get(call.callee) orelse return CodegenError.SymbolNotFound;
         const previous_source = self.default_location_source;
         self.default_location_source = source;
         defer self.default_location_source = previous_source;
@@ -1944,7 +1955,7 @@ pub const CodeGenerator = struct {
         const name = self.graph.text(declaration.name);
         for (plan.inputs, 0..) |argument, index| {
             const raw = c.LLVMBuildExtractValue(self.builder, input.value_ref, @intCast(index), "extern.arg");
-            const carrier = if (plan.inputs.len == 1 and std.mem.eql(u8, self.externSymbolName(callee, name), "free") and types.isBuiltin(self.graph, argument.ty, .UIntNative))
+            const carrier = if (call.callee_value == null and plan.inputs.len == 1 and std.mem.eql(u8, self.externSymbolName(callee, name), "free") and types.isBuiltin(self.graph, argument.ty, .UIntNative))
                 c.LLVMBuildIntToPtr(self.builder, raw, c.LLVMPointerType(c.LLVMInt8Type(), 0), "free.address")
             else
                 try self.encodeCRecord(raw, argument);
@@ -1961,6 +1972,20 @@ pub const CodeGenerator = struct {
             return .{ .value_ref = c.LLVMBuildPtrToInt(self.builder, call_value, address_type, "raw.address"), .type_ref = address_type, .ty = result.ty };
         }
         return .{ .value_ref = try self.decodeCRecord(if (plan.uses_sret) sret_storage else call_value, result), .type_ref = try self.toLLVMType(result.ty), .ty = result.ty };
+    }
+
+    fn checkCallbackAddress(self: *CodeGenerator, address: c.LLVMValueRef) !void {
+        const non_null = c.LLVMBuildICmp(self.builder, c.LLVMIntNE, address, c.LLVMConstNull(c.LLVMTypeOf(address)), "callback.nonnull");
+        const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
+        const valid = c.LLVMAppendBasicBlock(function, "callback.valid");
+        const invalid = c.LLVMAppendBasicBlock(function, "callback.null");
+        _ = c.LLVMBuildCondBr(self.builder, non_null, valid, invalid);
+        c.LLVMPositionBuilderAtEnd(self.builder, invalid);
+        const trap_type = c.LLVMFunctionType(c.LLVMVoidType(), null, 0, 0);
+        const trap = c.LLVMGetNamedFunction(self.module, "llvm.trap") orelse c.LLVMAddFunction(self.module, "llvm.trap", trap_type);
+        _ = c.LLVMBuildCall2(self.builder, trap_type, trap, null, 0, "");
+        _ = c.LLVMBuildUnreachable(self.builder);
+        c.LLVMPositionBuilderAtEnd(self.builder, valid);
     }
 
     fn opaqueStore(self: *CodeGenerator, input_id: graph_mod.GlobalNodeId) !?TypedValue {

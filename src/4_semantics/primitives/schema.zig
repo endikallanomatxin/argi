@@ -481,6 +481,9 @@ pub fn Node(comptime Ids: type) type {
             function_address: Ids.FunctionId,
             function_call: struct {
                 callee: Ids.FunctionId,
+                // For indirect C calls, callee identifies signature metadata;
+                // the runtime address is evaluated separately from arguments.
+                callee_value: ?Ids.NodeId = null,
                 input: Ids.NodeId,
                 consumes_auto_deinit: ?Ids.NodeId = null,
                 initializes_auto_deinit: ?Ids.NodeId = null,

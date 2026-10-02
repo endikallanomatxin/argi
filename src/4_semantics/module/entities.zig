@@ -174,6 +174,7 @@ pub const PendingOperation = union(enum) {
     resolve_call: struct {
         node: ModuleNodeId,
         callee: ExternalRefId,
+        callee_value: ?ModuleNodeId = null,
         input: ModuleNodeId,
         expected_type: ?ModuleTypeId = null,
         // Indices into ModuleSema.binding_refs, captured at the call site.

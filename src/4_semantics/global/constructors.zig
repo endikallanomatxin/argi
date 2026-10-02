@@ -261,6 +261,7 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         value: anytype,
     ) !resolution.Result {
+        if (value.callee_value != null) return .not_applicable;
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
         if (reference.generic_arguments) |arguments|
             return self.resolveExplicitGenericCall(module_index, module, o, value, reference, arguments);

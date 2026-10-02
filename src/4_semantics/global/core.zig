@@ -634,6 +634,31 @@ pub const Resolver = struct {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
         if (reference.generic_arguments != null) return .not_applicable;
         const input = globalizer.globalNode(o, value.input);
+        if (value.callee_value) |local| {
+            const pointer = globalizer.globalNode(o, local);
+            const ty = self.graph.node(pointer).ty orelse return .deferred;
+            if (self.graph.isTypeUnresolved(ty)) return .deferred;
+            if (!c_abi.isFunctionPointer(self.graph, ty)) return .invalid;
+            const declaration = switch (self.graph.resolvedSemanticType(ty).?) {
+                .declared => |id| self.graph.declaration(id),
+                else => unreachable,
+            };
+            const signature = declaration.function_id orelse return .deferred;
+            switch (self.matchCallInput(self.graph.function(signature).input, input)) {
+                .deferred => return .deferred,
+                .no_match => return .invalid,
+                .score => {},
+            }
+            const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
+            if (!try self.completeCallInputWithReach(signature, input, reach)) return .deferred;
+            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = .{
+                .source = self.sourceFor(reference.source, o),
+                .ty = try self.functionOutputType(signature),
+                .content = .{ .function_call = .{ .callee = signature, .callee_value = pointer, .input = input } },
+            };
+            self.stats.calls += 1;
+            return .resolved;
+        }
         if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "length")) {
             const literal = switch (self.graph.node(input).content) {
                 .struct_value_literal => |item| item,
@@ -727,7 +752,7 @@ pub const Resolver = struct {
         return .resolved;
     }
 
-    /// Zero construction is limited to numeric values and arrays thereof;
+    /// Zero construction supports numeric zeros, null callbacks, and arrays;
     /// zero bytes cannot establish references or arbitrary resource invariants.
     pub fn makeZeroed(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef) !?global_sg.Node {
         const ty = self.typeArgument(input) orelse return null;

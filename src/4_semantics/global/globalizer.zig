@@ -506,6 +506,7 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .function_address => |id| .{ .function_address = globalFunction(o, id) },
             .function_call => |value| .{ .function_call = .{
                 .callee = globalFunction(o, value.callee),
+                .callee_value = if (value.callee_value) |id| globalNode(o, id) else null,
                 .input = globalNode(o, value.input),
                 .consumes_auto_deinit = if (value.consumes_auto_deinit) |id| globalNode(o, id) else null,
                 .initializes_auto_deinit = if (value.initializes_auto_deinit) |id| globalNode(o, id) else null,

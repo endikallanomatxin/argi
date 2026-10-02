@@ -1,4 +1,5 @@
 const std = @import("std");
+const c_abi = @import("c_abi.zig");
 const diagnostics_mod = @import("../../1_base/diagnostic.zig");
 const tok = @import("../../2_tokens/token.zig");
 const module_sg = @import("../module/graph.zig");
@@ -2290,6 +2291,28 @@ fn diagnoseUnresolvedCall(
                 .file_index = source.file_index,
                 .offset = source.offset + @as(u32, @intCast(name.len)),
             });
+
+            if (call.callee_value) |local| {
+                const pointer = graph.node(globalizer.globalNode(offsets[module_index], local));
+                const ty = pointer.ty orelse continue;
+                if (graph.isTypeUnresolved(ty)) continue;
+                if (!c_abi.isFunctionPointer(graph, ty)) {
+                    try diagnostics.add(location, .semantic, "cannot call binding '{s}': expected a CFunctionPointer value", .{name});
+                } else {
+                    const declaration = switch (graph.resolvedSemanticType(ty).?) {
+                        .declared => |id| graph.declaration(id),
+                        else => unreachable,
+                    };
+                    const signature = graph.function(declaration.function_id.?);
+                    const input = globalizer.globalNode(offsets[module_index], call.input);
+                    if (generic_functions.core.matchCallInput(signature.input, input) == .score) {
+                        try diagnostics.add(location, .semantic, "cannot resolve C callback '{s}': .ffi uses reach [ffi] and requires a ForeignFunctionInterface capability", .{name});
+                    } else {
+                        try diagnostics.add(location, .semantic, "arguments do not match the C callback signature of '{s}'", .{name});
+                    }
+                }
+                return true;
+            }
 
             // Incomplete identities deliberately cannot participate in value
             // construction or layout queries. Explain that boundary before

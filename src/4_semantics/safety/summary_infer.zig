@@ -1144,6 +1144,7 @@ pub const Infer = struct {
                 try flow.addresses.put(assignment.binding, try self.capability_address_targets(assignment.value, flow));
             },
             .function_call => |call| {
+                if (call.callee_value) |value| try self.infer_capability_node(function, value, flow, exits);
                 try self.infer_capability_node(function, call.input, flow, exits);
                 if (self.structArguments(call.input)) |arguments| try self.infer_capability_call(function, call.callee, arguments, flow);
             },
@@ -1854,6 +1855,7 @@ pub const Infer = struct {
                 if (error_flow.reachable) try self.recordInputPostStateExit(exits, &error_flow.states);
             },
             .function_call => |call| {
+                if (call.callee_value) |value| try self.inferInputPostStatesExpression(function_id, value, states, exits);
                 try self.inferInputPostStatesExpression(function_id, call.input, states, exits);
                 try self.applyInputPostStatesFromFunctionCall(function_id, call.callee, call.input, states);
             },
@@ -2595,6 +2597,7 @@ pub const Infer = struct {
                 if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, error_state.emptied.items);
             },
             .function_call => |call| {
+                if (call.callee_value) |value| try self.inferOpaqueEmptyExpression(function_id, value, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, call.input, effects, state, exits);
                 try self.applyOpaqueEmptyFunctionCall(function_id, call.callee, call.input, effects, state);
             },
@@ -3018,6 +3021,7 @@ pub const Infer = struct {
                 if (literal.payload) |payload| try self.inferRequiredLiveInputsNode(function_id, payload, required);
             },
             .function_call => |call| {
+                if (call.callee_value) |value| try self.inferRequiredLiveInputsNode(function_id, value, required);
                 try self.inferRequiredLiveInputsNode(function_id, call.input, required);
                 if (self.engine.summaryFor(call.callee)) |summary|
                     try self.substituteRequiredLiveInputs(function_id, summary.required_live_inputs, call.input, required);
@@ -3350,7 +3354,10 @@ pub const Infer = struct {
                 const input = expect.test_fail_input orelse break :blk .{};
                 break :blk try self.inferCall(function_id, node_id, expect.test_fail_function, input);
             },
-            .function_call => |call| try self.inferCall(function_id, node_id, call.callee, call.input),
+            .function_call => |call| blk: {
+                if (call.callee_value) |value| _ = try self.inferExpression(function_id, value);
+                break :blk try self.inferCall(function_id, node_id, call.callee, call.input);
+            },
             .virtualize => |virtualize_id| try self.inferVirtualize(function_id, virtualize_id),
             .virtual_call => |virtual_call_id| try self.inferVirtualCall(function_id, node_id, virtual_call_id),
             .error_propagation => |id| blk: {

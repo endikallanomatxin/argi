@@ -781,3 +781,43 @@ test "reached defaults propagate through an intermediate function" {
     }
     try std.testing.expect(found);
 }
+
+test "callback invocation preserves binding and field editor targets" {
+    const allocator = std.testing.allocator;
+    const source =
+        "Callback() -> (.result: Int32) : CFunctionPointer\n" ++
+        "Holder : Type = (.callback: Callback)\n" ++
+        "main(.callback: Callback, .entry: Holder) -> (.result: Int32) := {\n" ++
+        "    result = callback() + entry.callback()\n" ++
+        "}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try module_semantizer.build(allocator, "callback_editor", &.{.{ .path = "callback_editor/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+    defer result.graph.deinit(allocator);
+    var index = try @import("../../0_commands/lsp_index.zig").Index.build(allocator, &result.graph);
+    defer index.deinit(allocator);
+    const callback_offset = std.mem.indexOf(u8, source, "callback()").?;
+    const entry_offset = std.mem.indexOf(u8, source, "entry.callback()").?;
+    var found_callback = false;
+    var found_entry = false;
+    var found_field = false;
+    for (index.occurrences.items) |occurrence| {
+        if (occurrence.source.offset == callback_offset) {
+            try std.testing.expect(occurrence.target == .binding);
+            try std.testing.expectEqualStrings("callback", result.graph.text(result.graph.binding(occurrence.target.binding).name));
+            found_callback = true;
+        }
+        if (occurrence.source.offset == entry_offset) {
+            try std.testing.expect(occurrence.target == .binding);
+            try std.testing.expectEqualStrings("entry", result.graph.text(result.graph.binding(occurrence.target.binding).name));
+            found_entry = true;
+        }
+        if (occurrence.source.offset == entry_offset + "entry.".len) {
+            try std.testing.expect(occurrence.target == .field);
+            found_field = true;
+        }
+    }
+    try std.testing.expect(found_callback and found_entry and found_field);
+}

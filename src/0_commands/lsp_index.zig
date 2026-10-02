@@ -77,6 +77,7 @@ pub const Index = struct {
 
         for (graph.nodes.items) |node| switch (node.content) {
             .function_call => |call| {
+                if (call.callee_value != null) continue;
                 const function = graph.functions.items[@intFromEnum(call.callee)];
                 const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
                 try result.add(allocator, .{
