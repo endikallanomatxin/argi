@@ -3,6 +3,10 @@ name: Native validation
 "on":
   workflow_call:
     inputs:
+      native_matrix:
+        description: Native runner matrix for focused diagnosis
+        type: string
+        default: ''
       package:
         description: Build and validate binary distributions
         type: boolean
@@ -15,16 +19,7 @@ jobs:
   native:
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            target: linux-x86_64
-          - os: ubuntu-24.04-arm
-            target: linux-aarch64
-          - os: macos-15-intel
-            target: macos-x86_64
-          - os: macos-15
-            target: macos-aarch64
+      matrix: ${{ fromJSON(inputs.native_matrix || '{"include":[{"os":"ubuntu-24.04","target":"linux-x86_64"},{"os":"ubuntu-24.04-arm","target":"linux-aarch64"},{"os":"macos-15-intel","target":"macos-x86_64"},{"os":"macos-15","target":"macos-aarch64"}]}') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +55,8 @@ jobs:
         run: python .github/scripts/test_release.py
 
       - name: Run tests
-        run: zig build -j1 test --summary all
+        timeout-minutes: 30
+        run: zig build -j1 -Dtest-progress=true test --summary all
 
       - name: Build binary distribution
         if: inputs.package

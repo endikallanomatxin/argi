@@ -4,6 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const test_filters = b.option([]const []const u8, "test-filter", "Only run tests whose name contains this text (repeatable)") orelse &.{};
+    const test_progress = b.option(bool, "test-progress", "Print each test as it runs") orelse false;
 
     const llvm_include_path, const llvm_lib_path, const llvm_libs_raw = prepareLlvm(b) catch |err| {
         if (err != error.LlvmNotFound) {
@@ -85,7 +86,7 @@ pub fn build(b: *std.Build) void {
         .root_module = tests_mod,
         .filters = test_filters,
     });
-    const run_exe_tests = b.addRunArtifact(exe_tests);
+    const run_exe_tests = addTestRun(b, exe_tests, test_progress);
     run_exe_tests.step.dependOn(b.getInstallStep());
 
     const internal_tests_mod = b.createModule(.{
@@ -99,7 +100,7 @@ pub fn build(b: *std.Build) void {
         .root_module = internal_tests_mod,
         .filters = test_filters,
     });
-    const run_internal_tests = b.addRunArtifact(internal_tests);
+    const run_internal_tests = addTestRun(b, internal_tests, test_progress);
 
     const internal_test_step = b.step("test-internal", "Run compiler unit tests");
     internal_test_step.dependOn(&run_internal_tests.step);
@@ -111,6 +112,17 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(internal_test_step);
     test_step.dependOn(program_test_step);
+}
+
+fn addTestRun(b: *std.Build, tests: *std.Build.Step.Compile, progress: bool) *std.Build.Step.Run {
+    if (!progress) return b.addRunArtifact(tests);
+    // Terminal mode reports the active case even when a test never returns.
+    // It retains the standard test runner's failure exit status.
+    const run = std.Build.Step.Run.create(b, "run tests with progress");
+    run.producer = tests;
+    run.addArtifactArg(tests);
+    run.stdio = .inherit;
+    return run;
 }
 
 // Core installation must discard removed source files before copying the

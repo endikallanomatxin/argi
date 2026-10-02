@@ -84,6 +84,7 @@ feature first.
   expansion, run focused tests serially with `-j1` and apply a process memory
   limit where supported. Record the first failing test and peak memory use
   before widening the run; avoid parallel full-suite runs during diagnosis.
+  Use `-Dtest-progress=true` to identify an active case when a run stalls.
 
 - `zig build` installs the bundled core under `zig-out/lib/argi/core`. Rebuild
   after editing core before manually invoking `zig-out/bin/argi`, so validation
