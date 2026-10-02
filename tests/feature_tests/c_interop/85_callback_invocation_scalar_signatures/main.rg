@@ -17,6 +17,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if narrow(.value = -7) != -14 { status_code = 1 }
     values := _get_values()
     if floating(.left = values.left, .right = values.right) != values.expected { status_code = 2 }
+    if floating(.left = 2.5, .right = 1.25) != values.expected { status_code = 4 }
     notify(.value = 19)
     if _notified() != 19 { status_code = 3 }
 }

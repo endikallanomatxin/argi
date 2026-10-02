@@ -1037,6 +1037,7 @@ fn diagnoseInvalidNumericAssignments(
                 graph.binding(binding).initialization orelse continue,
                 graph.binding(binding).ty,
             },
+            .struct_value_literal, .array_literal => findAggregateNumericMismatch(graph, id) orelse continue,
             .assignment => |assignment| .{ assignment.value, graph.binding(assignment.binding).ty },
             .pointer_assignment => |assignment| blk: {
                 const pointer_ty = graph.node(assignment.pointer).ty orelse continue;
@@ -1077,6 +1078,46 @@ fn diagnoseInvalidNumericAssignments(
         return true;
     }
     return false;
+}
+
+// Aggregate types alone do not prove that each child has the representation
+// expected by LLVM. Check typed numeric children after contextualization.
+fn findAggregateNumericMismatch(graph: *const global_sg.GlobalSemanticGraph, id: global_sg.GlobalNodeId) ?struct { global_sg.GlobalNodeId, global_sg.GlobalTypeId } {
+    const node = graph.node(id);
+    const ty = node.ty orelse return null;
+    switch (node.content) {
+        .struct_value_literal => |literal| {
+            const fields = global_types.fields(graph, ty) orelse return null;
+            for (graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, offset| {
+                var expected: ?global_sg.GlobalTypeId = null;
+                if (graph.text(field.name).len != 0) {
+                    for (graph.fields.items[fields.start..][0..fields.len]) |candidate| {
+                        if (std.mem.eql(u8, graph.text(field.name), graph.text(candidate.name))) {
+                            expected = candidate.ty;
+                            break;
+                        }
+                    }
+                } else if (offset < fields.len) expected = graph.fields.items[fields.start + offset].ty;
+                if (expected) |target| if (numericChildMismatch(graph, field.value, target)) return .{ field.value, target };
+            }
+        },
+        .array_literal => |literal| {
+            for (graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |child| {
+                if (numericChildMismatch(graph, child, literal.element_type)) return .{ child, literal.element_type };
+            }
+        },
+        else => {},
+    }
+    return null;
+}
+
+fn numericChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) bool {
+    const node = graph.node(child);
+    const actual = node.ty orelse return false;
+    // Integer range errors retain the dedicated safety diagnostic.
+    if (node.content == .int_literal and !global_types.isBuiltin(graph, expected, .Float16) and
+        !global_types.isBuiltin(graph, expected, .Float32) and !global_types.isBuiltin(graph, expected, .Float64)) return false;
+    return isNumericType(graph, actual) and isNumericType(graph, expected) and !global_types.equal(graph, actual, expected);
 }
 
 fn isNumericType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {

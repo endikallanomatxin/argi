@@ -8360,3 +8360,13 @@ test "C interop invokes narrow floating and void callbacks" {
         "call void %",
     });
 }
+
+test "feature_tests/basics/47_contextual_float_literals" {
+    const path = "tests/feature_tests/basics/47_contextual_float_literals";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/48X_numeric_record_field" {
+    try buildExpectFail("tests/feature_tests/basics/48X_numeric_record_field", "cannot assign numeric value of type");
+}

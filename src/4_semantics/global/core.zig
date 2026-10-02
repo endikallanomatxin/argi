@@ -1846,8 +1846,16 @@ pub const Resolver = struct {
         return true;
     }
 
+    pub fn floatLiteralFits(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+        if (self.graph.node(node).content != .float_literal) return false;
+        return switch (self.graph.semanticType(target)) {
+            .builtin => |value| value == .Float16 or value == .Float32 or value == .Float64,
+            else => false,
+        };
+    }
+
     pub fn contextualLiteralFits(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
-        if (self.integerLiteralFits(node, target)) return true;
+        if (self.integerLiteralFits(node, target) or self.floatLiteralFits(node, target)) return true;
         switch (self.graph.nodes.items[@intFromEnum(node)].content) {
             .string_literal => return switch (self.graph.types.items[@intFromEnum(target)]) {
                 .pointer => |pointer| pointer.mutability == .read_only and types.isBuiltin(self.graph, pointer.child, .Char),
