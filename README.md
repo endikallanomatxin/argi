@@ -135,6 +135,6 @@ zig build test --summary all
 
 ## Release status
 
-The latest experimental release is [0.1.0](releases/0.1.0.md).
+The latest experimental release is [0.2.0](releases/0.2.0.md).
 `main` and annotated version tags contain published releases; `develop`
 contains work for the next release. Breaking changes are expected.
