@@ -11,6 +11,8 @@ permissions:
 
 jobs:
   validate:
+    # Release pushes are validated by the publication workflow on the same SHA.
+    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Release ')
     uses: ./.github/workflows/build.yml
     with:
       package: true

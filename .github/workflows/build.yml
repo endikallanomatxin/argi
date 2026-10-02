@@ -55,6 +55,10 @@ jobs:
           echo "LLVM_LIB_DIR=$("$llvm_config" --libdir)" >> "$GITHUB_ENV"
           echo "LLVM_LIBS=$("$llvm_config" --libs)" >> "$GITHUB_ENV"
 
+      - name: Check publication guards
+        if: inputs.package
+        run: python .github/scripts/test_release.py
+
       - name: Run tests
         run: zig build -j1 test --summary all
 
