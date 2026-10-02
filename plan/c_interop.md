@@ -11,8 +11,8 @@ existing external calls do not establish support for every signature shape.
 
 ## Work to do
 
-- [ ] Extend aggregate ABI classification to unions and pointer-bearing
-  records, with matching lowering and foreign-reference effects.
+- [ ] Extend aggregate ABI classification to pointer-bearing records, with
+  matching lowering and foreign-reference effects.
 - [ ] Keep foreign-call capabilities, resource cleanup, pointer bounds, and
   allocation/free pairing explicit in wrappers; headers do not prove safety.
 - [ ] Settle incomplete types, callback syntax, and foreign storage effects,

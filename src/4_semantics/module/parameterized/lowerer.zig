@@ -213,7 +213,9 @@ pub const Context = struct {
                     const params = try self.lowerParameters(payload.params, payload.params_struct);
                     const body = try self.lowerType(payload.value, false);
                     if (self.tree.tag(declaration_node) == .c_struct_declaration)
-                        self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(body)].resolved.structural.layout = .c_struct;
+                        self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(body)].resolved.structural.layout = .c_struct
+                    else if (self.tree.tag(declaration_node) == .c_union_declaration)
+                        self.graph.semantic.parameterized_storage.ir.types.items[@intFromEnum(body)].resolved.structural.layout = .c_union;
                     try self.graph.semantic.parameterized_storage.parameterized_types.append(self.allocator, .{
                         .declaration = decl_id,
                         .parameters = params,

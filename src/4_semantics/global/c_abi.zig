@@ -242,8 +242,8 @@ fn supportsNumericRecords(target: std.Target) bool {
     return target.ptrBitWidth() == 64 and (isSysVX64(target) or (target.cpu.arch == .aarch64 and (target.os.tag == .linux or target.os.tag.isDarwin())));
 }
 
-/// Numeric C records have no foreign-reference effects. Pointer-bearing,
-/// union, and over-aligned records need separate handling and remain rejected.
+/// Numeric C records and unions have no foreign-reference effects.
+/// Pointer-bearing and over-aligned records require separate handling.
 fn numericRecordStorage(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, depth: usize) bool {
     if (depth >= 32) return false;
     const semantic = graph.resolvedSemanticType(ty) orelse return false;
@@ -255,16 +255,16 @@ fn numericRecordStorage(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_m
         .declared => |id| blk: {
             const declaration = graph.declaration(id);
             if (declaration.choice_layout == .c_enum and declaration.choice_variants != null) break :blk true;
-            if (declaration.struct_layout != .c_struct) break :blk false;
+            if (declaration.struct_layout == .regular) break :blk false;
             break :blk numericFields(graph, declaration.struct_fields orelse break :blk false, depth);
         },
-        .structural => |shape| shape.layout == .c_struct and numericFields(graph, shape.fields, depth),
+        .structural => |shape| shape.layout != .regular and numericFields(graph, shape.fields, depth),
         .structural_choice => |shape| shape.layout == .c_enum,
         .array => |shape| shape.length != 0 and numericRecordStorage(graph, shape.element, depth + 1),
         .generic => if (types.genericInstance(graph, ty)) |instance| switch (instance.shape) {
             .alias => |value| numericRecordStorage(graph, value, depth + 1),
             .array => |shape| shape.length != 0 and numericRecordStorage(graph, shape.element, depth + 1),
-            .structure => |shape| shape.layout == .c_struct and numericFields(graph, shape.fields, depth),
+            .structure => |shape| shape.layout != .regular and numericFields(graph, shape.fields, depth),
             .choice => |shape| shape.layout == .c_enum,
         } else false,
         else => false,
@@ -285,6 +285,7 @@ fn numericFields(graph: *const graph_mod.GlobalSemanticGraph, fields: graph_mod.
 const NumericShape = struct {
     classes: [2]?WordClass = .{ null, null },
     bits: [2]u16 = .{ 0, 0 },
+    float_mask: [2]u8 = .{ 0, 0 },
     homogeneous: bool = true,
     float_bits: u16 = 0,
     float_count: u8 = 0,
@@ -303,8 +304,34 @@ const NumericShape = struct {
         const end: u16 = @intCast((offset % 8 + size) * 8);
         self.bits[slot] = @max(self.bits[slot], end);
         const class: WordClass = if (!floating) .integer else if (size == 8) .double else .float;
+        if (floating and size == 4) self.float_mask[slot] |= @as(u8, 1) << @intCast(offset % 8 / 4);
+        self.mergeClass(slot, class);
+    }
+
+    fn mergeClass(self: *NumericShape, slot: usize, other: ?WordClass) void {
         const previous = self.classes[slot];
-        self.classes[slot] = if (previous == .integer or class == .integer) .integer else if (previous == .float and class == .float) .float_pair else class;
+        self.classes[slot] = if (previous == .integer or other == .integer)
+            .integer
+        else if (previous == .double or other == .double)
+            .double
+        else if (self.float_mask[slot] == 3)
+            .float_pair
+        else
+            previous orelse other;
+    }
+
+    fn merge(self: *NumericShape, other: NumericShape, overlapping: bool) void {
+        self.homogeneous = self.homogeneous and other.homogeneous;
+        if (self.float_bits != 0 and other.float_bits != 0 and self.float_bits != other.float_bits) self.homogeneous = false;
+        if (self.float_bits == 0) self.float_bits = other.float_bits;
+        // Union alternatives share addresses. HFA size counts the largest
+        // alternative, whereas sequential record members add their counts.
+        self.float_count = if (overlapping) @max(self.float_count, other.float_count) else @min(5, self.float_count + other.float_count);
+        for (0..2) |slot| {
+            self.bits[slot] = @max(self.bits[slot], other.bits[slot]);
+            self.float_mask[slot] |= other.float_mask[slot];
+            self.mergeClass(slot, other.classes[slot]);
+        }
     }
 };
 
@@ -312,6 +339,7 @@ fn numericShape(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Globa
     if (depth >= 32) return;
     const semantic = graph.resolvedSemanticType(ty) orelse return;
     var fields: ?graph_mod.FieldRange = null;
+    var overlapping = false;
     var array: ?struct { element: graph_mod.GlobalTypeId, length: u64 } = null;
     switch (semantic) {
         .builtin, .structural_choice => {
@@ -327,12 +355,19 @@ fn numericShape(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Globa
                 return;
             }
             fields = declaration.struct_fields;
+            overlapping = declaration.struct_layout == .c_union;
         },
-        .structural => |record| fields = record.fields,
+        .structural => |record| {
+            fields = record.fields;
+            overlapping = record.layout == .c_union;
+        },
         .array => |value| array = .{ .element = value.element, .length = value.length },
         .generic => if (types.genericInstance(graph, ty)) |instance| switch (instance.shape) {
             .alias => |value| return numericShape(graph, value, offset, shape, depth + 1),
-            .structure => |record| fields = record.fields,
+            .structure => |record| {
+                fields = record.fields;
+                overlapping = record.layout == .c_union;
+            },
             .array => |value| array = .{ .element = value.element, .length = value.length },
             .choice => {
                 const layout = types.layoutOf(graph, ty) catch return;
@@ -343,6 +378,16 @@ fn numericShape(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Globa
         else => return,
     }
     if (fields) |range| {
+        if (overlapping) {
+            var combined: NumericShape = .{};
+            for (graph.fields.items[range.start..][0..range.len]) |field| {
+                var member: NumericShape = .{};
+                numericShape(graph, field.ty, offset, &member, depth + 1);
+                combined.merge(member, true);
+            }
+            shape.merge(combined, false);
+            return;
+        }
         var position = offset;
         for (graph.fields.items[range.start..][0..range.len]) |field| {
             const layout = types.layoutOf(graph, field.ty) catch return;
@@ -606,4 +651,39 @@ test "C numeric record planning tracks SSE exhaustion and ARM homogeneous aggreg
     try std.testing.expectEqual(ValueKind.record_indirect, classifyValue(&graph, @enumFromInt(5), target, false).?.kind);
     target.os.tag = .macos;
     try std.testing.expectEqual(@as(u32, 0), classifyValue(&graph, @enumFromInt(2), target, false).?.stack_alignment);
+}
+
+test "C union classification merges shared storage and homogeneous member counts" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Float32 },
+        .{ .array = .{ .element = @enumFromInt(0), .length = 3 } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 2 }, .layout = .c_union } },
+        .{ .structural = .{ .fields = .{ .start = 2, .len = 2 }, .layout = .c_union } },
+        .{ .structural = .{ .fields = .{ .start = 4, .len = 2 }, .layout = .c_struct } },
+    });
+    const field: graph_mod.Field = .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = .{ .file_index = 0, .offset = 0 } };
+    try graph.fields.appendNTimes(allocator, field, 3);
+    var array = field;
+    array.ty = @enumFromInt(1);
+    try graph.fields.append(allocator, array);
+    var nested = field;
+    nested.ty = @enumFromInt(3);
+    try graph.fields.append(allocator, nested);
+    try graph.fields.append(allocator, field);
+    var target = @import("builtin").target;
+    target.cpu.arch = .x86_64;
+    target.os.tag = .linux;
+    const single = classifyValue(&graph, @enumFromInt(2), target, false).?;
+    try std.testing.expectEqual(WordClass.float, single.word_classes[0]);
+    const floats = classifyValue(&graph, @enumFromInt(3), target, false).?;
+    try std.testing.expectEqual(WordClass.float_pair, floats.word_classes[0]);
+    try std.testing.expectEqual(WordClass.float, floats.word_classes[1]);
+    target.cpu.arch = .aarch64;
+    const hfa = classifyValue(&graph, @enumFromInt(3), target, false).?;
+    try std.testing.expectEqual(@as(u8, 3), hfa.words);
+    const combined = classifyValue(&graph, @enumFromInt(4), target, false).?;
+    try std.testing.expectEqual(@as(u8, 4), combined.words);
 }

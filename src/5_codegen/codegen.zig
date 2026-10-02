@@ -434,7 +434,7 @@ pub const CodeGenerator = struct {
     }
 
     fn cTemporary(self: *CodeGenerator, ty: c.LLVMTypeRef, alignment: u32, name: [*:0]const u8) !c.LLVMValueRef {
-        // ABI copies inside loops use a fixed entry-block stack slot, rather
+        // ABI and union copies use a fixed entry-block stack slot, rather
         // than executing an alloca on every iteration. Only stores stay local.
         const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
         const entry = c.LLVMGetEntryBasicBlock(function);
@@ -926,7 +926,9 @@ pub const CodeGenerator = struct {
             return .{ .value_ref = c.LLVMGetUndef(type_ref), .type_ref = type_ref, .ty = ty };
         const range = types.fields(self.graph, ty) orelse return CodegenError.InvalidType;
         if (self.isCUnion(ty)) {
-            const temp = c.LLVMBuildAlloca(self.builder, type_ref, "union.literal");
+            const layout = types.layoutOf(self.graph, ty) catch return CodegenError.InvalidType;
+            const temp = try self.cTemporary(type_ref, @intCast(layout.alignment), "union.literal");
+            _ = c.LLVMBuildStore(self.builder, c.LLVMConstNull(type_ref), temp);
             for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |value_field| {
                 const name = self.graph.text(value_field.name);
                 const hit = types.findField(self.graph, ty, name) orelse return CodegenError.InvalidType;
@@ -963,6 +965,14 @@ pub const CodeGenerator = struct {
         }
         const aggregate = (try self.visitNode(access.value)) orelse return CodegenError.ValueNotFound;
         const type_ref = try self.toLLVMType(field_ty);
+        if (aggregate.ty) |base_ty| if (self.isCUnion(base_ty)) {
+            const layout = types.layoutOf(self.graph, base_ty) catch return CodegenError.InvalidType;
+            const temp = try self.cTemporary(aggregate.type_ref, @intCast(layout.alignment), "union.result");
+            _ = c.LLVMBuildStore(self.builder, aggregate.value_ref, temp);
+            var lowerer = self.typeLowerer();
+            const pointer = try lowerer.buildUnionFieldPointer(self.builder, temp, field_ty, "union.result.field");
+            return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, pointer, "union.field"), .type_ref = type_ref, .ty = field_ty };
+        };
         return .{ .value_ref = c.LLVMBuildExtractValue(self.builder, aggregate.value_ref, access.field_index, "field"), .type_ref = type_ref, .ty = field_ty };
     }
 

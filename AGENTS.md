@@ -123,7 +123,9 @@ feature first.
   native C fixtures when extending either boundary. Numeric record lowering
   also tracks SysV SSE register exhaustion and ARM64 homogeneous floating-point
   aggregates; homogeneous ARM64 input arrays require `alignstack(8)` on Linux
-  but not Darwin. Keep those rules shared between imports, exports, and calls.
+  but not Darwin. Numeric unions merge overlapping member classes; ARM64
+  homogeneous unions count the largest alternative rather than summing members.
+  Keep those rules shared between imports, exports, and calls.
 
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases
