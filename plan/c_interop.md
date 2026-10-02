@@ -13,8 +13,6 @@ existing external calls do not establish support for every signature shape.
 
 - [ ] Add explicit C record layouts;
   expand the checked ABI subset alongside cross-language tests.
-- [ ] Choose a small native-library consumer and validate its wrappers, including
-  aggregate arguments/results where supported.
 - [ ] Add explicit static/shared named-library mode selection; manifest and CLI
   native inputs currently select exact artifacts through file paths.
 - [ ] Keep foreign-call capabilities, resource cleanup, pointer bounds, and

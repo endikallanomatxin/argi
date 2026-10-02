@@ -7971,3 +7971,20 @@ test "C interop resolves target scalar aliases" {
         "declare double @argi_c_double(double)",
     });
 }
+
+test "C interop uses a bounded zlib checksum wrapper and manifest linking" {
+    const allocator = std.testing.allocator;
+    const fixture = "tests/feature_tests/c_interop/27_zlib_checksum";
+    for (0..2) |_| {
+        const built = try runArgiCommand(&.{ "build", fixture });
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChild(&.{"tests/feature_tests/c_interop/27_zlib_checksum/build/debug/checksum"});
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+    }
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/28X_zlib_missing_capability", ".ffi uses reach [ffi]", "failed without a diagnostic");
+}
