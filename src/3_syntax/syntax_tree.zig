@@ -255,7 +255,11 @@ pub const ChoiceTypeVariant = struct {
     module_qualifier: ?TokenIndex,
     payload_type: ?NodeIndex,
     is_default: bool,
+    value: ?i32,
 };
+/// C enum tags are representation values, independent of choice ordinals.
+/// The extra-data words preserve negative tags without converting them to IDs.
+pub const ChoiceVariantExtra = struct { qualifier: OptionalTokenIndex, payload: OptionalNodeIndex, value_bits: u32, has_value: u32 };
 pub const StructValueLiteral = struct { fields: []const NodeIndex, positional_prefix_count: u32 };
 pub const CodeBlock = struct { statements: []const NodeIndex };
 pub const ListLiteral = struct { elements: []const NodeIndex };
@@ -555,11 +559,12 @@ pub const FileSyntaxTree = struct {
     pub fn choiceTypeVariant(tree: *const FileSyntaxTree, node: NodeIndex) ?ChoiceTypeVariant {
         const node_tag = tree.tag(node);
         if (node_tag != .choice_type_variant and node_tag != .choice_type_variant_default) return null;
-        const payload = tree.data(node).optional_token_and_optional_node;
+        const payload = tree.extraData(ChoiceVariantExtra, tree.data(node).extra);
         return .{
             .name_token = tree.mainToken(node),
-            .module_qualifier = payload.token.unwrap(),
-            .payload_type = payload.node.unwrap(),
+            .module_qualifier = payload.qualifier.unwrap(),
+            .payload_type = payload.payload.unwrap(),
+            .value = if (payload.has_value != 0) @bitCast(payload.value_bits) else null,
             .is_default = node_tag == .choice_type_variant_default,
         };
     }

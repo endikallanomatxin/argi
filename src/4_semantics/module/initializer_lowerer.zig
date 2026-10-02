@@ -133,7 +133,7 @@ const Context = struct {
                     .payload_type = if (variant.payload_type) |payload| try self.lowerType(payload) else null,
                     .option_decl = option_decl,
                     .source = self.sourceRef(variant_node),
-                    .value = @intCast(index),
+                    .value = variant.value orelse @intCast(index),
                 });
             }
             self.graph.declarations.items[raw].choice_variants = .{ .start = start, .len = @intCast(literal.variants.len) };

@@ -8238,3 +8238,31 @@ test "C interop invokes host-managed scalar and record callbacks" {
         "define void @argi_callback_packet(ptr sret(",
     });
 }
+
+test "C interop preserves explicit enum values across modules and caching" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/60_explicit_enum_values", &.{
+        "define i32 @argi_enum_next(i32",
+        "i32 -2147483648",
+        "i32 2147483647",
+    });
+}
+
+test "C interop rejects 61X_enum_value_overflow" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/61X_enum_value_overflow", "CEnum value is outside", "failed without a diagnostic");
+}
+
+test "C interop rejects 62X_enum_implicit_overflow" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/62X_enum_implicit_overflow", "CEnum value is outside", "failed without a diagnostic");
+}
+
+test "C interop rejects 63X_enum_value_not_integer" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/63X_enum_value_not_integer", "CEnum value must be an Int32 integer literal", "failed without a diagnostic");
+}
+
+test "C interop rejects 64X_enum_duplicate_value" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/64X_enum_duplicate_value", "duplicate CEnum numeric values", "failed without a diagnostic");
+}
+
+test "C interop diagnoses unsupported enum constant expressions" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/65X_enum_constant_expression", "constant expressions are not supported", "failed without a diagnostic");
+}

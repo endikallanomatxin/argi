@@ -52,7 +52,9 @@ pub const Field = struct {
     module_file_index: u32 = 0,
 };
 pub const FunctionInterface = struct { declaration: ModuleDeclId, input: FieldRange, output: FieldRange };
-pub const ChoiceVariant = struct { name: StringRange, qualifier: ?StringRange, payload_type: ?ModuleTypeId, source_offset: u32, module_file_index: u32 };
+/// Explicit C enum tags survive canonicalization and relocation; ordinary
+/// choices leave this unset and derive their tags from variant order.
+pub const ChoiceVariant = struct { value: ?i32 = null, name: StringRange, qualifier: ?StringRange, payload_type: ?ModuleTypeId, source_offset: u32, module_file_index: u32 };
 pub const GenericTypeArgument = struct { name: StringRange, ty: ModuleTypeId };
 
 pub const DeclarationKind = primitives.DeclarationKind;
@@ -409,6 +411,7 @@ fn buildChoiceDefinitions(allocator: std.mem.Allocator, graph: *ModuleSemanticGr
             else
                 null;
             try graph.choice_variant_entries.append(allocator, .{
+                .value = variant.value,
                 .name = try graph.addString(allocator, input.tree.tokenTextFromSource(input.source, variant.name_token)),
                 .qualifier = if (variant.module_qualifier) |qualifier| try graph.addString(allocator, input.tree.tokenTextFromSource(input.source, qualifier)) else null,
                 .payload_type = payload_type,

@@ -132,7 +132,7 @@ fn constructionVariant(graph: *const graph_mod.ModuleSemanticGraph, id: entities
         .payload_type = variant.payload_type,
         .option_decl = if (semantic) |value| value.option_decl else null,
         .source = .{ .file_index = variant.module_file_index, .offset = variant.source_offset },
-        .value = if (semantic) |value| value.value else @intCast(@intFromEnum(id)),
+        .value = variant.value orelse if (semantic) |value| value.value else @intCast(@intFromEnum(id)),
     };
 }
 

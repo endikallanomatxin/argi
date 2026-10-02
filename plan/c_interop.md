@@ -18,6 +18,8 @@ existing external calls do not establish support for every signature shape.
   storage effects before supporting registration, preparing the Python bridge.
 - [ ] Introduce a bounded `#c_import` subset after explicit bindings work;
   account for headers, defines, include paths, and target inputs in caching.
+  Extend enum constant expressions, aliases, and representation selection as
+  required by that subset.
 
 Start on supported native hosts. Full macro translation, C++, arbitrary
 variadics, and automatic dependency downloads remain later extensions.

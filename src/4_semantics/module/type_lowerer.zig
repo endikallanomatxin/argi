@@ -142,7 +142,7 @@ pub const Context = struct {
                 .payload_type = payload_type,
                 .option_decl = option_decl,
                 .source = .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(variant.name_token).offset },
-                .value = @intCast(count),
+                .value = variant.value orelse @intCast(count),
             });
             if (first == null) first = id;
             count += 1;

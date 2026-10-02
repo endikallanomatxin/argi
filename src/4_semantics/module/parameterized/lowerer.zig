@@ -708,7 +708,7 @@ pub const Context = struct {
                 .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, variant.name_token)),
                 .payload_type = if (variant.payload_type) |payload| try self.lowerType(payload, allow_self) else null,
                 .source = self.sourceRef(variant_node),
-                .value = @intCast(index),
+                .value = variant.value orelse @intCast(index),
             } });
         }
         const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.variants.items.len);

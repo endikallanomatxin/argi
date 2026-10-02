@@ -421,7 +421,7 @@ pub const Syntaxer = struct {
             return try self.addNode(if (mutable) .pointer_type_mut else .pointer_type, main_token, .{ .node = base_ty_opt.? });
         } else if (self.tokenIs(.open_parenthesis)) {
             if (self.parenthesizedTypeIsChoiceLiteral()) {
-                return try self.parseChoiceTypeLiteral();
+                return try self.parseChoiceTypeLiteral(false);
             }
             return try self.parseStructTypeLiteral();
         }
@@ -672,7 +672,34 @@ pub const Syntaxer = struct {
         return try self.addNode(.struct_type_literal, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
     }
 
-    fn parseChoiceTypeLiteral(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+    fn parseCEnumValue(self: *Syntaxer) SyntaxerError!i64 {
+        self.skipNewLinesAndComments();
+        const location = self.tokenLocation();
+        var negative = false;
+        if (self.currentContent() == .binary_operator and self.currentContent().binary_operator == .subtraction) {
+            negative = true;
+            self.advanceOne();
+        }
+        const text = switch (self.currentContent()) {
+            .literal => |literal| switch (literal) {
+                .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => |range| self.tokenText(range),
+                else => "",
+            },
+            else => "",
+        };
+        const magnitude = std.fmt.parseInt(i64, text, 0) catch {
+            try self.diags.add(location, .syntax, "CEnum value must be an Int32 integer literal", .{});
+            return SyntaxerError.ExpectedIntLiteral;
+        };
+        self.advanceOne();
+        if (self.currentContent() == .binary_operator) {
+            try self.diags.add(location, .syntax, "CEnum value must be an Int32 integer literal; constant expressions are not supported", .{});
+            return SyntaxerError.ExpectedIntLiteral;
+        }
+        return if (negative) -magnitude else magnitude;
+    }
+
+    fn parseChoiceTypeLiteral(self: *Syntaxer, c_enum: bool) SyntaxerError!syn.NodeIndex {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         const start_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
@@ -681,6 +708,9 @@ pub const Syntaxer = struct {
         const scratch_top = self.scratch.items.len;
         defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
+        var next_value: i64 = 0;
+        var enum_values: std.AutoHashMapUnmanaged(i32, void) = .empty;
+        defer enum_values.deinit(self.allocator);
         while (!self.tokenIs(.close_parenthesis)) {
             var is_default = false;
             if (self.tokenIs(.equal)) {
@@ -708,13 +738,32 @@ pub const Syntaxer = struct {
             if (self.tokenStartsChoicePayloadType()) {
                 payload_type = (try self.parseType()).?;
             }
+            var numeric_value: ?i32 = null;
+            if (c_enum) {
+                if (self.tokenIs(.equal)) {
+                    self.advanceOne();
+                    next_value = try self.parseCEnumValue();
+                }
+                numeric_value = std.math.cast(i32, next_value) orelse {
+                    try self.diags.add(self.locationAt(@intFromEnum(vname.token)), .syntax, "CEnum value is outside the supported Int32 range", .{});
+                    return SyntaxerError.ExpectedIntLiteral;
+                };
+                const entry = try enum_values.getOrPut(self.allocator, numeric_value.?);
+                if (entry.found_existing) {
+                    try self.diags.add(self.locationAt(@intFromEnum(vname.token)), .syntax, "duplicate CEnum numeric values are not supported", .{});
+                    return SyntaxerError.ExpectedIntLiteral;
+                }
+                next_value += 1;
+            }
             try self.scratch.append(self.allocator, try self.addNode(
                 if (is_default) .choice_type_variant_default else .choice_type_variant,
                 vname.token,
-                .{ .optional_token_and_optional_node = .{
-                    .token = syn.OptionalTokenIndex.init(if (module_qualifier) |qualifier| qualifier.token else null),
-                    .node = syn.OptionalNodeIndex.init(payload_type),
-                } },
+                .{ .extra = try self.addExtra(syn.ChoiceVariantExtra{
+                    .qualifier = syn.OptionalTokenIndex.init(if (module_qualifier) |qualifier| qualifier.token else null),
+                    .payload = syn.OptionalNodeIndex.init(payload_type),
+                    .value_bits = if (numeric_value) |value| @bitCast(value) else 0,
+                    .has_value = if (numeric_value != null) 1 else 0,
+                }) },
             ));
 
             self.skipNewLinesAndComments();
@@ -1843,7 +1892,7 @@ pub const Syntaxer = struct {
                     if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
                     const tag: syn.Node.Tag = if (std.mem.eql(u8, type_name, "CEnum")) .c_enum_declaration else if (std.mem.eql(u8, type_name, "CUnion")) .c_union_declaration else if (std.mem.eql(u8, type_name, "CStruct")) .c_struct_declaration else .type_declaration;
                     const lit_node = if (tag == .c_enum_declaration or (tag == .type_declaration and self.parenthesizedTypeIsChoiceLiteral()))
-                        try self.parseChoiceTypeLiteral()
+                        try self.parseChoiceTypeLiteral(tag == .c_enum_declaration)
                     else
                         try self.parseStructTypeLiteral();
                     const extra = try self.addExtra(syn.GenericValueExtra{
