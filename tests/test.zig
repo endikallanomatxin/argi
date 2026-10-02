@@ -8220,3 +8220,13 @@ test "C interop protects owned handles and their retained capabilities" {
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/57X_owned_handle_private_storage", "field '_handle' is private to its module", "failed without a diagnostic");
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/58X_owned_handle_stale_cleanup", "binding 'capability' was moved", "failed without a diagnostic");
 }
+
+test "feature_tests/modules/32_qualified_comptime_calls" {
+    const test_path = "tests/feature_tests/modules/32_qualified_comptime_calls";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/modules/33X_qualified_comptime_call_missing_input" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/33X_qualified_comptime_call_missing_input", "ExpectedLeftParen", "failed without a diagnostic");
+}

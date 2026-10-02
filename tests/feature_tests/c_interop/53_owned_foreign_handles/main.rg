@@ -56,7 +56,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         return
     }
     {
-        explicit :: owned.GenericHandle#(.t: Int32) = unwrap_or_abort(.value = owned.GenericHandle(.tag = 41))
+        explicit ::= unwrap_or_abort(.value = owned.GenericHandle#(.t: Int32)(.tag = 41))
         inferred ::= unwrap_or_abort(.value = owned.GenericHandle(.tag = 42))
         if explicit.tag != 41 or inferred.tag != 42 or owned.live() != 2 {
             status_code = 9

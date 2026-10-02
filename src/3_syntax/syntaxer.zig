@@ -1013,17 +1013,27 @@ pub const Syntaxer = struct {
                 continue;
             }
 
-            if (self.tokenIs(.open_parenthesis)) {
+            if (self.tokenIs(.open_parenthesis) or self.tokenIs(.hash)) {
                 if (self.file.tag(node) == .struct_field_access) {
                     const sfa = self.file.data(node).token_and_node;
                     if (self.file.tag(sfa.node) != .identifier) break;
+                    var type_args = try self.addNodeRange(&.{});
+                    var type_args_struct: ?syn.NodeIndex = null;
+                    if (self.tokenIs(.hash)) {
+                        self.advanceOne();
+                        if (self.comptime_arguments_are_named()) {
+                            type_args_struct = try self.parseStructTypeLiteral();
+                        } else {
+                            type_args = try self.parseTypeList();
+                        }
+                    }
+                    if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
                     const struct_value_literal = try self.parseCollectionLiteral(true);
-                    const empty = try self.addNodeRange(&.{});
                     const extra = try self.addExtra(syn.CallExtra{
                         .module_qualifier = syn.OptionalTokenIndex.init(self.file.mainToken(sfa.node)),
-                        .type_arguments_start = empty.start,
-                        .type_arguments_end = empty.end,
-                        .type_arguments_struct = .none,
+                        .type_arguments_start = type_args.start,
+                        .type_arguments_end = type_args.end,
+                        .type_arguments_struct = syn.OptionalNodeIndex.init(type_args_struct),
                         .input = struct_value_literal,
                     });
                     node = try self.addNode(.function_call, sfa.token, .{ .extra = extra });

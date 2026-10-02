@@ -39,6 +39,9 @@ follows:
 | `.../` | Project root |
 | No prefix | Bundled `more/` library |
 
+Module-qualified calls accept explicit compile-time arguments, such as
+`dep.identity#(.t: Int32)(.value = 42)` or `dep.identity#(Int32)(42)`.
+
 Naming an imported type exposes its public `init` overloads for construction.
 Automatic cleanup first uses the caller's visible `deinit` overloads, then the
 type's defining module if no match exists. Reached arguments still come from
