@@ -527,3 +527,17 @@ test "type helpers reject construction-time unresolved slots" {
     try std.testing.expect(!equal(&graph, @enumFromInt(0), @enumFromInt(0)));
     try std.testing.expectError(error.UnmaterializedGlobalType, layoutOf(&graph, @enumFromInt(0)));
 }
+
+/// An incomplete C declaration has a nominal identity but no value layout.
+/// RawPointer does not query the representation of its pointee.
+pub fn incompleteDeclaration(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalDeclId {
+    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    return switch (semantic) {
+        .declared => |id| if (graph.declaration(id).struct_layout == .c_incomplete) id else null,
+        .generic => if (genericInstance(graph, ty)) |instance| switch (instance.shape) {
+            .alias => |target| incompleteDeclaration(graph, target),
+            else => null,
+        } else null,
+        else => null,
+    };
+}

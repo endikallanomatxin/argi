@@ -26,6 +26,8 @@ pub const SyntaxerError = error{
     ExpectedKeywordWhile,
     ExpectedAmpersand,
     ExpectedStringLiteral,
+    IncompleteTypeCannotBeParameterized,
+    IncompleteTypeHasNoDefinition,
     OutOfMemory,
 };
 
@@ -72,6 +74,10 @@ pub const Syntaxer = struct {
         } catch |err| {
             if (err == SyntaxerError.OutOfMemory) {
                 try self.diags.add(self.tokenLocation(), .internal, "out of memory while parsing", .{});
+            } else if (err == SyntaxerError.IncompleteTypeHasNoDefinition) {
+                try self.diags.add(self.tokenLocation(), .syntax, "CIncomplete declares only a type identity; omit the definition", .{});
+            } else if (err == SyntaxerError.IncompleteTypeCannotBeParameterized) {
+                try self.diags.add(self.tokenLocation(), .syntax, "CIncomplete declarations cannot have compile-time parameters", .{});
             } else {
                 try self.diags.add(self.tokenLocation(), .syntax, "syntax error: {s}", .{@errorName(err)});
             }
@@ -1807,6 +1813,20 @@ pub const Syntaxer = struct {
 
             if (ty_opt) |ty| {
                 const type_name = if (self.file.tag(ty) == .type_name) self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(ty))).identifier) else "";
+                if (std.mem.eql(u8, type_name, "CIncomplete")) {
+                    if (generic_params.start != generic_params.end or generic_params_struct != null)
+                        return SyntaxerError.IncompleteTypeCannotBeParameterized;
+                    if (self.tokenIs(.equal)) return SyntaxerError.IncompleteTypeHasNoDefinition;
+                    // A nominal identity without a runtime definition. Reuse
+                    // the declaration payload; no structural literal is built.
+                    const extra = try self.addExtra(syn.GenericValueExtra{
+                        .generic_params_start = generic_params.start,
+                        .generic_params_end = generic_params.end,
+                        .generic_params_struct = syn.OptionalNodeIndex.init(null),
+                        .value = ty,
+                    });
+                    return try self.addNode(.c_incomplete_declaration, name.token, .{ .extra = extra });
+                }
                 if (std.mem.eql(u8, type_name, "Type") or std.mem.eql(u8, type_name, "CEnum") or std.mem.eql(u8, type_name, "CUnion") or std.mem.eql(u8, type_name, "CStruct")) {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                     self.advanceOne();

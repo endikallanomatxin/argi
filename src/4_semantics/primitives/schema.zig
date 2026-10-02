@@ -150,7 +150,7 @@ pub const FunctionFlags = packed struct(u16) {
     _padding: u5 = 0,
 };
 
-pub const StructLayout = enum(u8) { regular, c_union, c_struct };
+pub const StructLayout = enum(u8) { regular, c_union, c_struct, c_incomplete };
 pub const ChoiceLayout = enum(u8) { regular, c_enum };
 pub const InferredChoiceKind = enum(u8) { errable, reasons };
 pub const LogicalOperator = enum(u8) { and_, or_ };

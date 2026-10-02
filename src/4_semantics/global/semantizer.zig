@@ -2291,6 +2291,30 @@ fn diagnoseUnresolvedCall(
                 .offset = source.offset + @as(u32, @intCast(name.len)),
             });
 
+            // Incomplete identities deliberately cannot participate in value
+            // construction or layout queries. Explain that boundary before
+            // the generic missing-overload diagnostic hides the actual cause.
+            if (reference.module_path == null and (std.mem.eql(u8, name, "size_of") or std.mem.eql(u8, name, "alignment_of"))) {
+                const input_node = graph.node(globalizer.globalNode(offsets[module_index], call.input));
+                if (input_node.content == .struct_value_literal) {
+                    const fields = input_node.content.struct_value_literal.fields;
+                    for (graph.value_fields.items[fields.start..][0..fields.len]) |field| {
+                        const argument = graph.node(field.value);
+                        if (argument.content != .type_literal) continue;
+                        if (global_types.incompleteDeclaration(graph, argument.content.type_literal)) |id| {
+                            try diagnostics.add(location, .semantic, "CIncomplete type '{s}' has no size or alignment; use RawPointer for foreign handles", .{graph.text(graph.declaration(id).name)});
+                            return true;
+                        }
+                    }
+                }
+            }
+            for (try graph.declarationsNamed(allocator, name)) |id| {
+                const declaration = graph.declaration(id);
+                if (declaration.struct_layout != .c_incomplete or !functionDeclarationVisibleForDiagnostic(graph, module_index, id, qualified_module)) continue;
+                try diagnostics.add(location, .semantic, "CIncomplete type '{s}' cannot be constructed; use RawPointer for foreign handles", .{name});
+                return true;
+            }
+
             if (reference.module_path == null and reference.generic_arguments == null and std.mem.eql(u8, name, "to_virtual") and call.expected_type == null) {
                 try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "cannot infer the abstract parameter of 'to_virtual'; provide a Virtual result type or '#(AbstractName)'", .{});
                 return true;

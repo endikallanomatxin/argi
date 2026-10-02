@@ -8183,3 +8183,25 @@ test "C interop adapts raw pointer arrays and union alternatives" {
         "sret({ [2 x { { i64 }, i64 }] }) align 8",
     });
 }
+
+test "C interop preserves incomplete handle identities through raw pointers" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/43_incomplete_handles", &.{
+        "declare ptr @argi_c_handle_create()",
+        "define ptr @argi_c_handle_export(ptr",
+    });
+}
+
+test "C interop rejects incomplete values construction layout and definitions" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/44X_incomplete_by_value", "has no value representation", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/45X_incomplete_size", "has no size or alignment", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/46X_incomplete_construction", "cannot be constructed", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/47X_incomplete_definition", "omit the definition", "failed without a diagnostic");
+}
+
+test "C interop rejects incompatible incomplete handles and safe references" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/48X_incomplete_handle_identity", "no overload of '_read' accepts arguments", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/49X_incomplete_safe_reference", "cannot form a safe reference", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/50X_incomplete_alignment", "has no size or alignment", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/51X_incomplete_value_storage", "has no value representation", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/52X_incomplete_parameters", "cannot have compile-time parameters", "failed without a diagnostic");
+}

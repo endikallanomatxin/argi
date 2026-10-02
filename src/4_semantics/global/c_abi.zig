@@ -24,7 +24,7 @@ fn supportsScalarValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mo
         },
         // Legacy bindings use references as pointer parameters. Their pointee
         // layout and foreign effects remain obligations of the binding.
-        .pointer => true,
+        .pointer => |pointer| types.incompleteDeclaration(graph, pointer.child) == null,
         .declared => |id| graph.declaration(id).choice_variants != null and
             graph.declaration(id).choice_layout == .c_enum,
         .structural_choice => |shape| shape.layout == .c_enum,

@@ -320,6 +320,16 @@ pub const SafetyChecker = struct {
 
     fn validateForeignSignatures(self: *SafetyChecker) !void {
         const c_abi = @import("../global/c_abi.zig");
+        for (self.graph.bindings.items) |binding| {
+            if (types.incompleteDeclaration(self.graph, binding.ty)) |id|
+                try self.report(binding.source, "CIncomplete type '{s}' has no value representation; use RawPointer for foreign handles", .{self.graph.text(self.graph.declaration(id).name)});
+            if (self.graph.resolvedSemanticType(binding.ty)) |semantic| {
+                if (semantic == .pointer) {
+                    if (types.incompleteDeclaration(self.graph, semantic.pointer.child)) |id|
+                        try self.report(binding.source, "cannot form a safe reference to CIncomplete type '{s}'; use RawPointer for foreign handles", .{self.graph.text(self.graph.declaration(id).name)});
+                }
+            }
+        }
         for (self.graph.declarations.items) |declaration| {
             if (declaration.struct_layout != .c_struct) continue;
             const fields = declaration.struct_fields orelse continue;

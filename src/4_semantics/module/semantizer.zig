@@ -117,17 +117,19 @@ pub fn finishLinked(
     };
 }
 
+// CIncomplete declarations skip structural field lowering. Their explicit
+// metadata distinguishes intentional absence of layout from unresolved types.
 fn lowerNominalLayouts(allocator: std.mem.Allocator, graph: *module_sg.ModuleSemanticGraph, files: []const module_sg.FileInput) !void {
     for (graph.declarations.items, 0..) |declaration, raw| {
         if (declaration.kind != .type) continue;
         const file = files[declaration.module_file_index];
         const node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;
         const tag = file.tree.tag(node);
-        if (tag != .c_enum_declaration and tag != .c_union_declaration and tag != .c_struct_declaration) continue;
+        if (tag != .c_enum_declaration and tag != .c_union_declaration and tag != .c_struct_declaration and tag != .c_incomplete_declaration) continue;
         try graph.semantic.declaration_semantics.append(allocator, .{
             .declaration = @enumFromInt(@as(u32, @intCast(raw))),
             .choice_layout = if (tag == .c_enum_declaration) .c_enum else .regular,
-            .struct_layout = if (tag == .c_union_declaration) .c_union else if (tag == .c_struct_declaration) .c_struct else .regular,
+            .struct_layout = if (tag == .c_union_declaration) .c_union else if (tag == .c_struct_declaration) .c_struct else if (tag == .c_incomplete_declaration) .c_incomplete else .regular,
         });
     }
 }

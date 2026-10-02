@@ -132,6 +132,9 @@ feature first.
   Uniform foreign pointer arrays keep one marker; arrays of records share
   immutable element templates. Numeric union alternatives need explicit empty
   field facts so projection does not inherit another member's pointer effects.
+  CIncomplete declarations keep nominal identities without runtime fields or
+  layout. Only RawPointer handles may carry them across C boundaries; never
+  synthesize an empty-record layout or construct safe references to them.
 
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases
