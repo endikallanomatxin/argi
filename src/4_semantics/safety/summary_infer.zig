@@ -3841,7 +3841,17 @@ pub const Infer = struct {
             .variant => |variant_index| {
                 for (effect.variants) |variant| if (variant.index == variant_index) return variant.value.*;
             },
-            else => {},
+            .static_index => |element_index| {
+                for (effect.fields) |field| if (field.index == element_index) return field.value.*;
+            },
+            .dynamic_index => {
+                if (effect.fields.len != 0) {
+                    var merged: facts.ValueEffect = .{ .foreign_storage = effect.foreign_storage };
+                    for (effect.fields) |field| merged = try self.mergeValueEffects(merged, field.value.*);
+                    return merged;
+                }
+            },
+            .dereference => {},
         }
         var result = effect;
         const dependencies = try self.allocator.alloc(facts.InputDependency, effect.input_dependencies.len);
@@ -4813,4 +4823,37 @@ test "validity-only transfer retains loaded input anchor paths" {
     try std.testing.expectEqual(@as(usize, 0), effect.input_place_values.len);
     const projected = try inference.projectValueEffect(effect, .{ .field = 7 });
     try std.testing.expectEqualDeep(path, projected.input_dependencies[0].path);
+}
+
+test "array summary projections select and merge element effects" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = Infer.init(allocator, undefined, &engine);
+    defer inference.deinit();
+
+    const foreign = facts.ValueEffect{ .foreign_storage = true };
+    const local = facts.ValueEffect{ .input_dependencies = &.{.{ .path = .{ .input_index = 2 } }} };
+    const array = facts.ValueEffect{ .fields = &.{
+        .{ .index = 0, .value = &foreign },
+        .{ .index = 1, .value = &local },
+    } };
+    const first = try inference.projectValueEffect(array, .{ .static_index = 0 });
+    try std.testing.expect(first.foreign_storage);
+    try std.testing.expectEqual(@as(usize, 0), first.input_dependencies.len);
+    const second = try inference.projectValueEffect(array, .{ .static_index = 1 });
+    try std.testing.expect(!second.foreign_storage);
+    try std.testing.expectEqualDeep(local.input_dependencies, second.input_dependencies);
+    const dynamic = try inference.projectValueEffect(array, .dynamic_index);
+    try std.testing.expect(dynamic.foreign_storage);
+    try std.testing.expectEqualDeep(local.input_dependencies, dynamic.input_dependencies);
+    try std.testing.expectEqual(@as(usize, 0), dynamic.fresh_storage_capabilities.len);
+
+    // A uniform foreign array can keep its marker on the aggregate instead
+    // of allocating metadata for every element. Individual writes add fields.
+    const uniform = facts.ValueEffect{ .foreign_storage = true, .fields = &.{.{ .index = 1, .value = &local }} };
+    try std.testing.expect((try inference.projectValueEffect(uniform, .dynamic_index)).foreign_storage);
+    try std.testing.expect((try inference.projectValueEffect(.{ .foreign_storage = true }, .{ .static_index = 5 })).foreign_storage);
 }

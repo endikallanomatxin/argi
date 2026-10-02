@@ -2128,7 +2128,7 @@ pub const SafetyChecker = struct {
                     current = found orelse current;
                 },
                 .dynamic_index => {
-                    var merged: facts.ValueFacts = .{};
+                    var merged: facts.ValueFacts = .{ .foreign_storage = current.foreign_storage };
                     for (current.fields) |field| merged = try self.mergeValueFacts(merged, field.value.*);
                     if (current.fields.len != 0) current = merged;
                 },
@@ -5896,4 +5896,25 @@ test "dynamic projected writes retain newly merged roots" {
     const refreshed = try checker.reconstructPlaceValue(&state, storage, .{});
     try std.testing.expect(valueDependsOnRoot(refreshed, root));
     try std.testing.expect(valueContainsOwnedRoot(refreshed, root));
+}
+
+test "array concrete projections select and merge element facts" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    const foreign = facts.ValueFacts{ .foreign_storage = true };
+    const local = facts.ValueFacts{};
+    const array = facts.ValueFacts{ .fields = &.{
+        .{ .index = 0, .value = &foreign },
+        .{ .index = 1, .value = &local },
+    } };
+    try std.testing.expect((try checker.projectValueFacts(array, &.{.{ .static_index = 0 }})).foreign_storage);
+    try std.testing.expect(!(try checker.projectValueFacts(array, &.{.{ .static_index = 1 }})).foreign_storage);
+    const dynamic = try checker.projectValueFacts(array, &.{.dynamic_index});
+    try std.testing.expect(dynamic.foreign_storage);
+    try std.testing.expectEqual(@as(usize, 0), dynamic.storage_capabilities.len);
+    const uniform = facts.ValueFacts{ .foreign_storage = true, .fields = &.{.{ .index = 1, .value = &local }} };
+    try std.testing.expect((try checker.projectValueFacts(uniform, &.{.dynamic_index})).foreign_storage);
 }
