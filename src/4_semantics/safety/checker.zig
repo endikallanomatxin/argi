@@ -189,6 +189,7 @@ pub const SafetyChecker = struct {
         self.stats = .{ .timing_io = self.profile_io };
         const before = self.diagnostics.list.items.len;
         try self.validateNominalChoiceLayouts();
+        try self.validateForeignSignatures();
 
         var allocations = profile.AllocationCounter{ .child = self.allocator, .requested_bytes = &self.stats.summary_allocated_bytes };
         const inference_allocator = if (self.collect_stats) allocations.allocator() else self.allocator;
@@ -315,6 +316,27 @@ pub const SafetyChecker = struct {
         @memcpy(projections[0..path.projections.len], path.projections);
         projections[path.projections.len] = projection;
         return .{ .input_index = path.input_index, .projections = projections };
+    }
+
+    fn validateForeignSignatures(self: *SafetyChecker) !void {
+        const c_abi = @import("../global/c_abi.zig");
+        for (self.graph.functions.items) |function| {
+            if (function.body != null or function.flags.has_declared_body or
+                function.flags.is_abstract_dispatch) continue;
+            const declaration = self.graph.declaration(function.declaration);
+            const name = self.graph.text(declaration.name);
+            if (function.output.len > 1) {
+                try self.report(declaration.source, "C function '{s}' must have zero or one output; use explicit pointer parameters for additional results", .{name});
+            }
+            for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field| {
+                if (!c_abi.supportsDirectValue(self.graph, field.ty))
+                    try self.report(field.source, "C function '{s}' input '{s}' has an unsupported C ABI type; aggregate arguments require target-specific lowering", .{ name, self.graph.text(field.name) });
+            }
+            for (self.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
+                if (!c_abi.supportsDirectValue(self.graph, field.ty))
+                    try self.report(field.source, "C function '{s}' output '{s}' has an unsupported C ABI type; aggregate results require target-specific lowering", .{ name, self.graph.text(field.name) });
+            }
+        }
     }
 
     fn validateNominalChoiceLayouts(self: *SafetyChecker) !void {

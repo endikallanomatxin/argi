@@ -7791,3 +7791,21 @@ test "C interop links native archives by file and library name" {
     try expectEqual(std.process.Child.Term{ .exited = 1 }, missing.term);
     try expect(std.mem.indexOf(u8, missing.stderr, "argi_missing_library_fixture") != null);
 }
+
+test "C interop rejects unsupported signatures during exhaustive checking" {
+    const cases = .{
+        .{ "tests/feature_tests/c_interop/02X_aggregate_argument", "input 'value' has an unsupported C ABI type" },
+        .{ "tests/feature_tests/c_interop/03X_multiple_outputs", "must have zero or one output" },
+        .{ "tests/feature_tests/c_interop/04X_aggregate_result", "output 'result' has an unsupported C ABI type" },
+    };
+    inline for (cases) |case| {
+        for ([_][]const u8{ "build", "check" }) |command| {
+            const result = try runArgiCommand(&.{ command, case[0] });
+            defer std.testing.allocator.free(result.stdout);
+            defer std.testing.allocator.free(result.stderr);
+            try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+            try expect(std.mem.indexOf(u8, result.stderr, case[1]) != null);
+            try expect(std.mem.indexOf(u8, result.stderr, "failed without a diagnostic") == null);
+        }
+    }
+}
