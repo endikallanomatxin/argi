@@ -2993,11 +2993,9 @@ pub const Resolver = struct {
         }
 
         fn resolveEmptyTypeInitializer(self: *InstanceContext, name: []const u8, source: primitives.SourceRef) !?global_sg.Node {
-            inline for (@typeInfo(primitives.BuiltinType).@"enum".fields) |field| {
-                if (std.mem.eql(u8, name, field.name)) {
-                    const ty = try self.resolver.generics.internType(.{ .builtin = @enumFromInt(field.value) });
-                    return self.emptyValue(ty, source);
-                }
+            if (primitives.builtinTypeNamed(name)) |builtin_type| {
+                const ty = try self.resolver.generics.internType(.{ .builtin = builtin_type });
+                return self.emptyValue(ty, source);
             }
             for (try self.resolver.graph.declarationsNamed(self.resolver.allocator, name)) |id| {
                 const declaration = self.resolver.graph.declarations.items[@intFromEnum(id)];

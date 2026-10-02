@@ -7937,3 +7937,10 @@ test "C interop adapts raw pointers for imports bodies and exports" {
     });
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/25X_counterfeit_raw_pointer", "input 'pointer' has an unsupported C ABI type", "failed without a diagnostic");
 }
+
+test "C interop resolves target scalar aliases" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/26_c_scalar_aliases", &.{
+        "declare i32 @argi_c_int(i32)",
+        "declare double @argi_c_double(double)",
+    });
+}

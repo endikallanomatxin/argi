@@ -144,13 +144,7 @@ pub const Resolver = struct {
                 if (reference.kind != .type) continue;
                 if (reference.module_path == null and reference.generic_arguments == null) {
                     const name = module.text(reference.name);
-                    var resolved_builtin: ?primitives.BuiltinType = null;
-                    inline for (@typeInfo(primitives.BuiltinType).@"enum".fields) |field| {
-                        if (std.mem.eql(u8, name, field.name)) {
-                            resolved_builtin = @enumFromInt(field.value);
-                            break;
-                        }
-                    }
+                    const resolved_builtin = primitives.builtinTypeNamed(name);
                     if (resolved_builtin) |builtin_type| {
                         try self.graph.resolveType(globalizer.globalType(o, local_id), .{ .builtin = builtin_type });
                         self.stats.external_types += 1;

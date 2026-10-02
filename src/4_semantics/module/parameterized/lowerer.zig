@@ -1381,9 +1381,7 @@ pub fn isTypeParameter(tree: *const syn.FileSyntaxTree, source: []const u8, fiel
 }
 
 fn builtinFromName(name: []const u8) ?primitives.BuiltinType {
-    inline for (@typeInfo(primitives.BuiltinType).@"enum".fields) |field|
-        if (std.mem.eql(u8, name, field.name)) return @enumFromInt(field.value);
-    return null;
+    return primitives.builtinTypeNamed(name);
 }
 
 fn parameterizedDetailForTag(tag: syn.Node.Tag) ir.PendingExpressionDetail {

@@ -292,9 +292,7 @@ pub const Context = struct {
 };
 
 fn builtinFromName(name: []const u8) ?graph_mod.BuiltinType {
-    inline for (@typeInfo(graph_mod.BuiltinType).@"enum".fields) |field|
-        if (std.mem.eql(u8, name, field.name)) return @enumFromInt(field.value);
-    return null;
+    return primitives.builtinTypeNamed(name);
 }
 
 test "module type lowerer preserves imported generic arguments without syntax" {

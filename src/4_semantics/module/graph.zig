@@ -761,8 +761,7 @@ fn findTypeReference(graph: *const ModuleSemanticGraph, module_file_index: u32, 
 }
 
 fn builtinFromName(name: []const u8) ?BuiltinType {
-    inline for (@typeInfo(BuiltinType).@"enum".fields) |field| if (std.mem.eql(u8, name, field.name)) return @enumFromInt(field.value);
-    return null;
+    return primitives.builtinTypeNamed(name);
 }
 
 fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input: FileInput, module_file_index: u32) !void {
