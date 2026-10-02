@@ -48,89 +48,17 @@ are in [`more/`](more/).
 
 ## Usage
 
-### Building
-
-Build the natural target for the current module directory:
-
-```bash
-argi build
-```
-
-Build a specific module directory:
-
-```bash
-argi build <root_dir>
-```
-
-If the directory contains `argi.toml`, the tool uses its package configuration.
-Executable packages declare build targets with `[executables.*]`:
-
-```toml
-[executables.hello]
-path = "source/hello"
-
-[run]
-default = "hello"
-```
-
-Selecting a declared entry module directly, or building from that module's
-directory, uses the same package output. The default output for package
-executables is:
-
-```text
-build/debug/<executable-name>
-```
-
-Run the default executable with:
-
-```bash
-argi run
-```
-
-### Checking
-
-Validate every function body in a module, including functions that a normal
-executable build would leave unreachable:
-
-```bash
-argi check <root_dir>
-```
-
-Use `--release` with `build` or `run` for optimized machine code. `build` also
-supports `--output <path>`, `--emit-llvm <path>`, `--emit-obj <path>`, and
-`--just-emit-obj <path>`. See `argi help` for the complete CLI.
-
-### LSP
-
-Start the language server:
-
-```sh
-argi lsp
-```
-
-The server provides diagnostics, semantic highlighting, navigation, and basic
-completion for visible names, function signatures, named arguments, and imported
-module members. Field completion supports annotated types and direct constructor
-initializers, including reference field chains.
-
-### Scaffolding
-
-Create an executable package:
+Create and run a program:
 
 ```sh
 argi init hello
 cd hello
-argi build
 argi run
 ```
 
-Without a name, `argi init` initializes the current directory and derives the
-package and default executable name from its directory name. `argi init --lib`
-likewise initializes a library in the current directory. Existing files are
-preserved.
-
-The generated entrypoint selects its allocator, error tracer, buffered output
-writer, and input reader explicitly:
+`argi init` without a name initializes the current directory; `argi init --lib`
+creates a library. Existing files are preserved. The generated entrypoint
+sets up allocator, error tracing, and I/O capabilities:
 
 ```rg
 main(.system: System) -> (.status_code: Int32 = 0) := {
@@ -146,164 +74,67 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 }
 ```
 
-Create a library/importable package with no executables:
+| Command | Purpose |
+| --- | --- |
+| `argi build [dir]` | Compile the current package or a selected module. |
+| `argi run` | Compile and run the default executable. |
+| `argi check [dir]` | Check all function bodies, including unreachable ones. |
+| `argi test [dir]` | Run language-level tests. |
+| `argi lsp` | Start the language server. |
 
-```sh
-argi init --lib math_utils
-```
+Use `--release` with `build` or `run` for optimized executables. See `argi help`
+for target selection, output paths, and LLVM/object emission options.
 
+Packages declare executables in `argi.toml`; outputs go to
+`build/debug/<name>`, including when selecting a declared entry module directly.
+Standalone modules use `build/output`; test artifacts use `.argi-cache/`.
+See [package configuration](description/02_modules.md) and
+[language-level testing](description/72_testing.md).
+
+The LSP provides diagnostics, semantic highlighting, hover, completion, and
+navigation to definitions.
 
 ## Installation
 
-### Binary distributions
+### Binary packages
 
-Download a package and `SHA256SUMS` from the
+Download your platform's archive and `SHA256SUMS` from the
 [latest release](https://github.com/endikallanomatxin/argi/releases/latest).
-Packages are available for Linux x86_64/ARM64 and macOS Intel/Apple Silicon,
-with the compiler, core library, and LLVM runtime included. Extract the package
-and add its `bin` directory to `PATH`; keep `bin` and `lib` together.
+Linux x86_64/ARM64 and macOS Intel/Apple Silicon packages include the compiler,
+core, and LLVM runtime. Extract the package and add its `bin` directory to
+`PATH`, keeping `bin` and `lib` together.
 
-Zig and a separate LLVM installation are not required. You still need a system
-C compiler/linker to build Argi programs. Linux packages require glibc 2.39 or
-newer; macOS packages require macOS 15 or newer. See the
-[binary installation guide](.github/scripts/binary_installation.md) for checksums and
-platform setup.
+You need a system C compiler/linker to build Argi programs, but no Zig or
+separate LLVM installation. See the
+[binary installation guide](.github/scripts/binary_installation.md) for supported
+OS versions, checksum verification, and platform setup. Windows support is
+planned.
 
-### Building from source
+### From source
 
-#### Platform support
-
-Native CI covers Linux and macOS.
-
-Windows is not an official target yet.
-
-Building the compiler requires Zig 0.16.x and LLVM 21 development files. When
-several LLVM versions are installed, use `llvm-config-21` to set the paths.
-The build script looks for `llvm-config`, or you can set:
-
-- `LLVM_INCLUDE_DIR`
-- `LLVM_LIB_DIR`
-- `LLVM_LIBS`
-
-Building Argi programs also requires a C compiler/linker. By default Argi uses
-`cc`. Set `CC=/path/to/compiler` to override it.
-
-#### Prerequisites
-
-The build script needs to know where LLVM is installed. In restricted
-environments, set the environment variables above instead of relying on
-`llvm-config`.
-
-
-#### Compilation
-
-To build the tool in the repository-local `zig-out/` prefix:
+Building the compiler requires Zig 0.16.x and LLVM 21 development files:
 
 ```sh
-zig build
-```
-
-That creates:
-
-```text
-zig-out/
-├── bin/
-│   └── argi
-└── lib/
-    └── argi/
-        └── core/
-```
-
-For a normal user installation, install into a prefix such as `~/.local`:
-
-```sh
-zig build -p ~/.local
-```
-
-That installs:
-
-```text
-~/.local/
-├── bin/
-│   └── argi
-└── lib/
-    └── argi/
-        └── core/
-```
-
-Make sure `~/.local/bin` is in your `PATH`:
-
-```sh
+zig build                    # local installation in zig-out/
+zig build -p ~/.local        # user installation, including core
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-The compiler resolves the required `core` library from the installation prefix,
-so symlinking only the binary is not the recommended installation path.
-`ARGI_SYSROOT=/path/to/prefix` and `--sysroot /path/to/prefix` are available as
-development/debugging overrides when you need to point the compiler at a
-specific Argi installation prefix.
+LLVM is located through `llvm-config-21` or `llvm-config`; override paths with
+`LLVM_INCLUDE_DIR`, `LLVM_LIB_DIR`, and `LLVM_LIBS` when needed. Argi uses `cc`
+to link programs; set `CC` to select another compiler. `--sysroot` or
+`ARGI_SYSROOT` can select another Argi installation prefix.
 
+## Compiler tests
 
-Also, for recompiling and using the tool directly, you can run:
+Run the compiler's regression suite with:
 
-```bash
-zig build run -- <arguments>
-```
-
-
-## Testing
-
-Argi has native language-level tests.
-
-Use:
-
-```bash
-./zig-out/bin/argi test tests/some_module
-```
-
-Generated test binaries and other transient testing artifacts live under the
-project-local `.argi-cache/` directory. Package executable outputs live under
-`build/debug/`. Explicit module-directory builds keep their legacy default
-`build/output` path for now, or use the path given with `--output`.
-
-Tests are declared explicitly in source:
-
-```rg
-test my_test(.system: System) -> !() := {
-    testing.expect(true)!
-}
-```
-
-Normal builds ignore `test` declarations:
-
-```bash
-./zig-out/bin/argi build tests/some_module
-```
-
-Compiler regression tests for Argi itself still run through Zig:
-
-```bash
+```sh
 zig build test --summary all
 ```
 
-
-## Safety scope
-
-The compiler checks temporal validity and ownership effects. Core allocations,
-initialized array views, and collection access provide checked bounded-storage
-paths. Trusted low-level operations still require their callers to prove
-physical storage obligations; arbitrary raw-pointer operations do not acquire
-a general spatial-safety guarantee. Mutable references do not imply exclusive
-access or concurrency safety. See [the safety model](description/34_safety_model.md)
-and [allocation contracts](description/35_allocation.md).
-
 ## Release status
 
-The `develop` branch prepares the `0.2.0` experimental release.
-Published releases remain on `main` and their annotated version tags.
-
-The language, compiler API, standard library layout, runtime model and tooling
-are not stable yet. Breaking changes are expected.
-
-See [releases/0.2.0.md](releases/0.2.0.md) for the prepared release notes and
-[releases/0.1.0.md](releases/0.1.0.md) for the preceding release.
+The latest experimental release is [0.1.0](releases/0.1.0.md).
+`main` and annotated version tags contain published releases; `develop`
+contains work for the next release. Breaking changes are expected.
