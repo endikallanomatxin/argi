@@ -5,11 +5,11 @@ Writer : Abstract = (
 
 write(
     .self: $&Writer,
-    .text: String,
+    .text: &String,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
-    while i < text.length {
-        wrote ::= write_byte(.self = self, .byte = bytes_get(.string = &text, .index = i).byte)
+    while i < text&.length {
+        wrote ::= write_byte(.self = self, .byte = bytes_get(.string = text, .index = i).byte)
         match wrote {
             ..ok _ {
             }
@@ -29,8 +29,9 @@ write(
 ) -> (.result: Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     wrote_count :: UIntNative = 0
 
-    while wrote_count < buffer.length {
-        wrote ::= write_byte(.self = self, .byte = buffer[wrote_count])
+    while wrote_count < length#(.t: UInt8)(.self = &buffer).count {
+        ptr ::= trusted_reference_offset#(.t: UInt8)(.base = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(.self = &buffer).pointer).reference, .elements = wrote_count).reference
+        wrote ::= write_byte(.self = self, .byte = ptr&)
         match wrote {
             ..ok _ {
                 wrote_count = wrote_count + 1

@@ -1,0 +1,53 @@
+Library ideas retained for future evaluation
+
+This is an exploratory inventory, not a promise of core APIs or a release
+schedule. Some ideas may belong in more/ or external tooling. Existing
+sketches can use obsolete syntax; their presence does not establish support.
+Implementation priorities belong in plan/.
+
+System and tooling
+
+- Dynamic library loading, with explicit platform and foreign-call capabilities.
+- Build-script facilities, target descriptions, and reusable option handling;
+  see description/03_building.md and the tooling plans.
+- Command-line flag parsing beyond raw program arguments.
+- Process signals and environment/process extensions beyond current helpers.
+- Progress reporting for long-running operations.
+- Time-zone support alongside date/time facilities.
+
+Collections and values
+
+- Treaps and other ordered collections whose use cases justify an extra type.
+- Ring buffers and deques; exploratory shapes remain in
+  description/169_other_collections.md.
+- Semantic version comparison/parsing; core/semantic_versioning/Version.rg
+  retains a commented baseline.
+- Value canonicalization/interning facilities, inspired by the earlier unique
+  entry, only if their ownership and lifetime semantics are useful and clear.
+- Weak references, only with an explicit model for detecting an ended lifetime.
+
+Runtime and diagnostics
+
+- Timeout/cancellation contexts for asynchronous operations; relate these to
+  description/81_runtime.md rather than introducing an unrelated runtime model.
+- Threads, synchronization, channels, and atomics; existing concurrency notes
+  and core/memory/atomic/Atomic.txt retain partial designs.
+- Logging, assertions, structured dumps, profiling, and diagnostic tooling;
+  more/logging/logging.rg retains an initial logging sketch.
+- Exportable runtime metrics, inspired by the earlier expvar entry.
+- Debug/build information and binary-format inspection when tooling needs it:
+  DWARF/PDB and ELF/Mach-O/PE are possible interoperability topics, not a mandate
+  to reproduce another language's debug package inventory.
+- Integration with memory-analysis tools where useful; do not confuse external
+  tooling with the language's safety guarantees.
+
+Comptime and library foundations
+
+- Type introspection/reflection utilities consistent with Argi's comptime model.
+- Random generation: existing system, pseudo-random, and cryptographic sketches
+  need distinct capability and quality contracts.
+- Low-level/unsafe facilities must name their trusted obligations explicitly.
+
+These ideas originated as reference-library comparisons. They require original
+Argi designs; compiler sources, platform startup internals, and entire foreign
+standard-library packages are not automatically public library requirements.

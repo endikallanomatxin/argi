@@ -1,14 +1,14 @@
-Linkea con BLAS y LAPACK.
-- Qué ofrecen: la base de la álgebra lineal densa (multiplicación de vectores/matrices y descomposiciones avanzadas).
-- Por qué importan: prácticamente todo software científico, de machine learning o simulación numérica (Matlab, R, Julia, NumPy/SciPy, PETSc…) las usa bajo el capó para garantizar rendimiento en cualquier CPU.
+Link against BLAS and LAPACK.
+- What they provide: the foundation for dense linear algebra (vector and matrix multiplication, plus advanced decompositions).
+- Why they matter: nearly all scientific, machine learning, and numerical simulation software (MATLAB, R, Julia, NumPy/SciPy, PETSc…) uses them under the hood to deliver performance across CPUs.
 
-Checkea si están instaladas en el sistema en orden de preferencia.
-Si no están te dice que las instales sugiriendote un comando.
+Check whether they are installed on the system, in order of preference.
+If none are installed, suggest a command to install them.
 
 
-Creo que Julia es muy bueno para trabajar con arrays y vectores y demas
+Julia seems very good for working with arrays, vectors, and related structures.
 
-> [!TODO] Pensar nombre del tipo más general.
+> [!TODO] Choose a name for the most general type.
 
 ```
 NDVector : Abstract = (
@@ -25,7 +25,7 @@ Implementors of `NDVector`:
 
 ```
 v :: Vector = [1, 2, 3]
--- Se convierte en
+-- Becomes
 v ::= Vector((1, 2, 3))
 ```
 
@@ -37,7 +37,7 @@ Both Vector and Matrix have additional information about their orientation.
 They are coherent with that when doing operations.
 
 
-Producto escalar:
+Dot product:
 ```
 v1 ::= Vector((1, 2, 3))
 v2 ::= Vector((4, 5, 6))
@@ -47,7 +47,7 @@ v1|dot(v2) == 32
 v1 * v2|transpose == 32
 ```
 
-Producto vectorial:
+Cross product:
 ```
 v1 ::= Vector((1, 2, 3))
 v2 ::= Vector((4, 5, 6))
@@ -55,7 +55,7 @@ v2 ::= Vector((4, 5, 6))
 v1|cross(v2) == Vector([-3, 6, -3])
 ```
 
-Tipos de matrices:
+Matrix types:
 
 ```
 Matrix : Abstract = (
@@ -89,8 +89,8 @@ Implementors of `Vector`:
 - `GeneralVector`
 - `OnesVector`
 - `ZerosVector`
-- `OneHotVector`  -- Solo tiene un 1. El resto son 0. Permite mucha optimización.
-- `ManyHotVector` -- Tiene varios 1s. El resto son 0.
+- `OneHotVector`  -- Contains one 1; the rest are 0. Enables many optimizations.
+- `ManyHotVector` -- Contains several 1s; the rest are 0.
 ```
 
 
@@ -100,23 +100,23 @@ Implementors of `Vector`:
 det(), inv(), eig(), qr(), lu(), norm()
 ```
 
-A veces es importante como se guardan los datos en memoria para que las operaciones sean más eficientes.
+How data is stored in memory can matter for operation efficiency.
 
 ```
 m|to_stack
 m|to_column_major
 ```
 
-Se tiene que poder definir al inicializar.
+This must be configurable during initialization.
 ```
 m := Matrix(((1, 2, 3),
 	     (4, 5, 6)),
 		 storage_implementation = ..ColumnMajor)
 ```
 
-Que se pueda:
+Supported options:
 
 - storage_implementation: column_major, row_major, stack. (default: column_major)
 - definition_inner_orientation: row, column. (default: row)
 
-Optimizar usando BLAS y LAPACK.
+Optimize using BLAS and LAPACK.

@@ -1,2 +1,2 @@
-Embed sirve para embedir archivos en el propio binario.
+Embed is used to embed files directly in the binary.
 (from go)

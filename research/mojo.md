@@ -1,2 +1,0 @@
-[](https://docs.modular.com/mojo/manual/values/)
-

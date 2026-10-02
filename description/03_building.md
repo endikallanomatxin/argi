@@ -1,28 +1,31 @@
 # Building
 
-Usamos LLVM.
+> [!IDEA]
+> This is an early proposal for a procedural build layer. Current packages use
+> `argi.toml` and `[executables.*]` as described in `02_modules.md`.
 
-Copiar:
+We use LLVM.
 
-- cargo de rust, go, uv de python...
-    Errores y warnings de compilación de rust o de gleam son muy buenos.
+Take inspiration from:
 
-- zig build system
+- Rust's Cargo, Go, Python's uv...
+    Rust and Gleam have very good compile errors and warnings.
 
-Los gestores de paquetes quieren la información de forma declarativa, pero la
-forma procedural de zig es muy útil cuando hace falta más control. Lo mejor es
-intentar encontrar un hibrido entre ambos.
+- Zig's build system
+
+Package managers expect declarative information, while Zig's procedural
+approach is useful when more control is needed. Find a balance between the two.
 
 
 ## Specification file
 
-- Es más limpio que sea declarativo (pyproject.toml)
+- Declarative configuration is cleaner (`pyproject.toml`).
 
-- Es más versátil que sea procedural (build.zig)
+- Procedural configuration is more versatile (`build.zig`).
 
-Hay que encontrar un balance entre ambos.
+Find a balance between the two.
 
-project.rgo
+Possible future `project.rgo`:
 
 ```rg
 (
@@ -54,34 +57,33 @@ project.rgo
             .version   = ">2"
             .lock_hash = "wxyz1234abcd5678efgh9012ijkl3456mnop7890qrst"
         )
-        -- TODO: Pensar si separa los locks en otro archivo.
     )
 
     .commands = (
 
-        -- Deben poder correr at compile time
+        -- These commands must be able to run at compile time.
 
-        "build" = default_executable_creation (.module = "./entrypoints/main")
-        -- o para librerías estáticamente linkadas.
+        "build" = default_executable_creation (.module = "source/app")
+        -- Or for statically linked libraries.
         -- "build" = default_dynamically_linked_library_creation (.module = ".")
 
         "test"  = default_testing (.all_inside_folder = ".")
 
         "install" = (.ct: CommandContext) -> () {
             ct.do("build")
-            -- Aquí procedural
+            -- Procedural code goes here.
         }
 
         "uninstall" = (.ct: CommandContext) -> () {
-            -- Aquí procedural
+            -- Procedural code goes here.
         }
 
         "distribute" = (.ct: CommandContext) -> () {
-            -- llena la carpeta dist/ con los compilados para todas las plataformas
+            -- Fill dist/ with builds for all platforms.
         }
 
         "custom" = (.ct: CommandContext) -> () {
-            -- Aquí procedural
+            -- Procedural code goes here.
         }
     )
 )
@@ -151,15 +153,13 @@ lib : Library = (
 lib | install
 ```
 
-> [!IDEA] Gestión de dependencias externas.
-> Lo mismo que conda puede asegurarse de que dispones de ciertas librerías, el
-> sistema de build podría asegurarse de que tienes instalaciones concretas.
-> Podría funcionar ruteando en función de la plataforma y probar a instalar con
-> apt, brew, dnf...
+> [!IDEA] External dependency management.
+> Like conda, the build system could ensure that certain libraries are available.
+> It could select a package manager based on the platform and try installing
+> dependencies with apt, brew, dnf, and similar tools.
 
 
 ## Targets
 
-Estaría bien que se pudiera compilar para microcontroladores, sistemas embedidos... Rust puede.
-Que se pudiera compilar a JS o algo así para que permita hacer movidas de web?
-
+It would be useful to compile for microcontrollers and embedded systems, as Rust can.
+Could we compile to JS or something similar to support web development?

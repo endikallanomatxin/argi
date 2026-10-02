@@ -1,4 +1,12 @@
-# Runtime
+# Runtime (future design proposal)
+
+> [!IDEA]
+> This document explores a possible async and concurrency runtime. The
+> examples are sketches, not accepted language or core library APIs.
+
+The current `System` is defined in `core/system/system.rg`; it provides
+`.memory`, `.page_allocator`, and other process capabilities. The sketches
+below may need syntax and ownership updates before implementation.
 
 The idea is inspired by Zig's `Io` approach, but in Argi we call it `Runtime`
 because it is not only about input/output.
@@ -50,11 +58,42 @@ The concrete runtime determines how tasks are executed:
 - `FiberRuntime`: uses light threads/fibers multiplexed over OS threads.
 - `TestRuntime`: deterministic runtime for tests, fake timers, fake IO, etc.
 
+OS thread sketches: spawn from an explicit capability and wait on the handle.
+The API, capture rules, and ownership of the handle are still open.
+
+```rg
+thread := system.proc_man | spawn_thread($&_, {
+    do_work()
+})
+thread | wait($&_)
+
+-- Pass a function and its arguments instead of a closure.
+thread := system.proc_man | spawn_thread($&_, my_function, (x, y, z))
+
+-- A worker that runs continuously.
+thread := system.proc_man | spawn_thread($&_, {
+    loop {
+        do_work()
+    }
+})
+
+-- Launch several workers; each closure can use its loop value.
+for i in Range(.start = 1, .end = 10) {
+    system.proc_man | spawn_thread($&_, {
+        work_on(.index = i)
+    })
+}
+wait_all_threads()
+```
+
+The syntax and scope for waiting on a group of handles need design.
+
 ---
 
 ## Runtime and System
 
-By default, `system.runtime` should be a `BlockingRuntime`.
+One proposal is for a future `system.runtime` to be a `BlockingRuntime` by
+default. The following `System` shape is hypothetical:
 
 ```rg
 System : Type = (
@@ -66,7 +105,7 @@ System : Type = (
     .threads   : $&ThreadCapability
     .runtime   : $&Runtime
 )
-````
+```
 
 The default runtime is intentionally boring:
 
@@ -102,9 +141,11 @@ runtime.
 For example:
 
 ```rg
-main(.system: System = System()) -> !(.status_code: Int32 = 0) := {
+main(.system: System) -> !(.status_code: Int32 = 0) := {
+    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
+
     runtime := FiberRuntime(
-        .allocator = system.allocator,
+        .allocator = allocator,
         .threads = system.threads,
         .count = 4,
     )
@@ -153,12 +194,12 @@ runtime implementation and the capabilities used to construct it.
 
 ## Reached runtime
 
-Functions may still receive a runtime through `#reach`, but this does not imply
+Functions may still receive a runtime through `reach`, but this does not imply
 that they get real concurrency.
 
 ```rg
 do_work(
-    .runtime: $&Runtime = #reach runtime, system.runtime,
+    .runtime: $&Runtime = reach runtime, system.runtime,
 ) -> !() := {
     runtime | checkpoint($&_)!
     ...
@@ -168,13 +209,15 @@ do_work(
 If the caller only has `system.runtime`, this resolves to the default
 `BlockingRuntime`.
 
-If the caller has created a real runtime and binds it locally, `#reach runtime`
+If the caller has created a real runtime and binds it locally, `reach runtime`
 will find the local runtime first:
 
 ```rg
-main(.system: System = System()) -> !(.status_code: Int32 = 0) := {
+main(.system: System) -> !(.status_code: Int32 = 0) := {
+    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
+
     runtime := FiberRuntime(
-        .allocator = system.allocator,
+        .allocator = allocator,
         .threads = system.threads,
         .count = 4,
     )
@@ -193,7 +236,7 @@ No custom runtime created:
     functions use system.runtime -> BlockingRuntime
 
 Custom runtime created locally:
-    functions use local runtime through #reach
+    functions use local runtime through reach
 
 Runtime with OS threads:
     requires explicit thread capability from System
@@ -371,7 +414,7 @@ Example:
 
 ```rg
 heavy_cpu_task(
-    .runtime: $&Runtime = #reach runtime, system.runtime,
+    .runtime: $&Runtime = reach runtime, system.runtime,
 ) -> !() := {
     for i in Range(.start = 0, .end = huge_number) {
         do_step(i)
@@ -409,7 +452,7 @@ Example:
 
 ```rg
 parse_large_file(
-    .runtime: $&Runtime = #reach runtime, system.runtime,
+    .runtime: $&Runtime = reach runtime, system.runtime,
     .content: &String,
 ) -> !(.ast: Ast) := {
     for token in tokenize(content) {
@@ -465,7 +508,7 @@ In the long term, `main` should run inside the root runtime task, so that main
 itself can call `yield`, `checkpoint`, `sleep`, `await`, channels, etc.
 
 ```rg
-main(.system: System = System()) -> !(.status_code: Int32 = 0) := {
+main(.system: System) -> !(.status_code: Int32 = 0) := {
     runtime : $&Runtime = system.runtime
 
     future := runtime | concurrent($&_, Task({
@@ -620,7 +663,7 @@ Channel operations are side-effects and may suspend the current task.
 
 ---
 
-Ejemplos / Código antiguo:
+Examples / Old code:
 
 ```
 funcion_enviadora (c:Channel) -> () := {
@@ -679,12 +722,12 @@ print(channel|get)
 ```
 a: Spot(Int)
 branch {
-	a|put funcion 1
+	a|put function 1
 }
 
 b: Spot(Int)
 branch {
-	b|put funcion 2
+	b|put function 2
 }
 
 c = a|get + b|get
@@ -779,10 +822,10 @@ Writers block both readers and other writers.
 
 Like mutexes, RW locks should be runtime-aware.
 
-> En una charla de zig sobre concurrencia
-> (https://www.youtube.com/watch?v=x1N9JPPPC18&list=WL&index=3) dice que es
-> mejor usar RW locks que mutexes, porque los lectores solo bloquean a los
-> escritores, y no a otros lectores.
+> In a Zig talk about concurrency
+> (https://www.youtube.com/watch?v=x1N9JPPPC18&list=WL&index=3), the speaker says
+> RW locks are better than mutexes because readers block writers, but not other
+> readers.
 
 ---
 
@@ -961,8 +1004,8 @@ Example:
 
 ```rg
 read_file(
-    .file_sys: $&FileSystem = #reach file_sys, system.file_sys,
-    .runtime: $&Runtime = #reach runtime, system.runtime,
+    .file_sys: $&FileSystem = reach file_sys, system.file_sys,
+    .runtime: $&Runtime = reach runtime, system.runtime,
     .path: String,
 ) -> !(.content: String) := {
     ...
@@ -1071,15 +1114,12 @@ Shared mutable state:
 ---
 
 >[!QUESTION]
->Lo único que no habría que permitir closures, porque no está claro como se va
->a comportar no?
+> The only thing that should perhaps be disallowed is closures, since their
+> behavior is unclear.
 
-Tiene sentido no permitir que el input no sean deep_copies o mutex o channels?
-La mutabilidad como se gestiona?
+Does it make sense to require inputs to be deep copies, mutexes, or channels?
+How should mutability be managed?
 
->[!ERROR]
->En go las goroutines no puedes return. Eso es una asyn func.
->Igual la clave es encontrar una sintaxis que me permita hacer algo similar de
->forma sencilla.
-
-
+>[!IDEA]
+> In Go, goroutines cannot return; that is an async function.
+> Perhaps the key is finding syntax that makes something similar easy to write.

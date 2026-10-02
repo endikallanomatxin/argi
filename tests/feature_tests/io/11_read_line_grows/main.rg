@@ -21,40 +21,51 @@ read_byte(.self: $&DummyInput) -> (.result: Errable#(.t: ReadByte, .reasons: (..
 
 DummyInput implements Reader
 
-main(.system: System = System()) -> (.status_code: Int32) := {
-    stdin :: DummyInput = (
+main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
+
+    stdin_storage :: DummyInput = (
         .index = 0
     )
-    result ::= read_line(.allocator = system.allocator, .stdin = $&stdin)
+    assume reader ::= $&stdin_storage
+    result ::= read_line(.allocator = $&allocator_storage, .reader = $&stdin_storage)
 
-    if is(.value = result, .variant = ..ok) {
-    } else {
-        status_code = 1
-        return
+    match result {
+        ..error _ {
+            status_code = 1
+        }
+        ..ok ~ outer {
+            match outer {
+                ..end {
+                    status_code = 1
+                }
+                ..ok ~ line_payload {
+                    line ::= ~line_payload
+                    if line.length != 20 {
+                        status_code = 2
+                        return
+                    }
+
+                    if capacity(.self = &line).value < 20 {
+                        status_code = 3
+                        return
+                    }
+
+                    if bytes_get(.string = &line, .index = 0).byte != 65 {
+                        status_code = 4
+                        return
+                    }
+
+                    if bytes_get(.string = &line, .index = 19).byte != 65 {
+                        status_code = 5
+                        return
+                    }
+
+                    deinit(.self = $&line, .allocator = $&allocator_storage)
+                    status_code = 0
+                }
+            }
+        }
     }
-
-    line ::= result..ok..ok
-
-    if line.length != 20 {
-        status_code = 2
-        return
-    }
-
-    if capacity(.self = &line).value < 20 {
-        status_code = 3
-        return
-    }
-
-    if bytes_get(.string = &line, .index = 0).byte != 65 {
-        status_code = 4
-        return
-    }
-
-    if bytes_get(.string = &line, .index = 19).byte != 65 {
-        status_code = 5
-        return
-    }
-
-    deinit(.self = $&line, .allocator = system.allocator)
-    status_code = 0
 }

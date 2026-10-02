@@ -21,10 +21,9 @@ StackArray#(.t: Type, .n: UIntNative) : Type = (
 )
 
 StackArray#(.t: Type, .n: UIntNative) implements StaticList#(.t: t, .n: n)
-StackArray#(.t: Type, .n: UIntNative) implements Indexable#(.t: t)
 StackArray#(.t: Type, .n: UIntNative) implements List#(.t: t)
 
-get[]#(.t: Type, .n: UIntNative)(.self: &StackArray#(.t: t, .n: n), .index: UIntNative) -> (.value: t) := {
+get#(.t: Type, .n: UIntNative)(.self: &StackArray#(.t: t, .n: n), .index: UIntNative) -> (.value: t) := {
     if index >= n {
         panic("Index out of bounds")
     }

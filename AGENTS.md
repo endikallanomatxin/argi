@@ -10,13 +10,14 @@ This repository contains a compiler for a new programming language written in Zi
     - The compiler is structured in four phases:
     tokenizing, syntaxing, semantizing and codegen.
 - `tests/`: Example `.rg` programs used as tests.
-    - Test cases live under `tests/<case_name>/main.rg`.
+    - Feature cases live under `tests/feature_tests/<category>/<case_name>/main.rg`.
+    - `tests/feature_tests/_support/` contains shared fixture modules; compiler unit tests are registered through `src/internal_tests.zig`.
     - Files in the same test case directory share namespace and are compiled together as one folder-level module.
     - Negative tests should include `X` in their numeric prefix, e.g. `131X_multiple_dispatch_ambiguous`.
 
 - `more/`: Official library modules that are not part of `core/`.
 
-- `description/`: Design documents and architecture notes.
+- `description/`: Language specification and open language-design questions.
 
 - `references/`: Local reference checkouts.
     - `references/go`
@@ -28,24 +29,36 @@ This repository contains a compiler for a new programming language written in Zi
 
 - Build compiler: `zig build`
 - Run compiler tests: `zig build test`
-- Compile a test program: `./zig-out/bin/argi build tests/00_minimal_main`
+- Compile a test program: `./zig-out/bin/argi build tests/feature_tests/basics/01_minimal_main`
 
 > It might be necessary to set the following environment variables to make zig work:
 > `ZIG_LOCAL_CACHE_DIR="$PWD/.zig-cache"`
 > `ZIG_GLOBAL_CACHE_DIR="$PWD/.zig-global-cache"`
+> If Zig still selects a read-only global cache, use
+> `zig build --global-cache-dir .zig-global-cache test`.
 >
-> The current compiler has been updated to run with Zig `0.15.x`. If the local
+> The current compiler has been updated to run with Zig `0.16.x`. If the local
 > Zig version differs significantly, check `build.zig` and stdlib API
 > usage before assuming a compiler regression.
+>
+> LLVM 21 is the supported local codegen baseline, matching Zig `0.16.x`'s
+> LLVM generation. When multiple LLVM versions are installed and the unversioned
+> `llvm-config` selects another release, set `LLVM_INCLUDE_DIR`, `LLVM_LIB_DIR`,
+> and `LLVM_LIBS` from `llvm-config-21`.
 
 
 ## Guidelines
 
+- Write all repository-authored content in English, including documentation,
+  comments, TODOs, plans, commit messages, and user-facing text. Preserve other
+  languages only when they are required by an example, test fixture, or the
+  language feature being documented.
+
 - To add a new feature:
     1. Checkout the language description and `more/` to understand the
        feature.
-    2. Create a `.rg` test that demonstrates the feature in `tests/<case_name>/main.rg`.
-       Put positive executable cases under `tests/<case_name>/main.rg`.
+    2. Create a `.rg` test that demonstrates the feature in `tests/feature_tests/<category>/<case_name>/main.rg`.
+       Put positive executable cases under `tests/feature_tests/<category>/<case_name>/main.rg`.
     3. Draft a small implementation plan, evaluating whether the change affects
        tokenizing, syntaxing, semantizing or codegen.
     4. Implement the feature in `src/` until it compiles.
@@ -67,12 +80,26 @@ feature first.
 - When validating the compiler locally, prefer:
   `env ZIG_LOCAL_CACHE_DIR=$PWD/.zig-cache ZIG_GLOBAL_CACHE_DIR=$PWD/.zig-global-cache zig build test`
 
+- When investigating compiler memory growth or recursive function-summary
+  expansion, run focused tests serially with `-j1` and apply a process memory
+  limit where supported. Record the first failing test and peak memory use
+  before widening the run; avoid parallel full-suite runs during diagnosis.
+  Use `-Dtest-progress=true` to identify an active case when a run stalls.
+
+- `zig build` installs the bundled core under `zig-out/lib/argi/core`. Rebuild
+  after editing core before manually invoking `zig-out/bin/argi`, so validation
+  uses the edited library rather than its previous installed copy.
+
 - Current module rules in the compiler:
   - all `.rg` files in a folder share namespace
   - `argi build` compiles a folder module, not a single `.rg` file
-  - `#import(...)` must be assigned to a name
+  - `import("...")` must be assigned to a name
   - `./` is current module, `../` is parent, `.../` is project root
   - bare import names resolve under `more/`
+  - underscore-prefixed declarations and fields are module-private; bundled
+    core modules are trusted peers and can access one another's private state.
+    Private acquisition/allocation receipts therefore protect against external
+    modules, while their invariants remain obligations within bundled core.
 
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases
@@ -101,23 +128,93 @@ move any still-useful notes into comments in `feature.rg`. If some ideas remain
 unfinished, leave them commented there rather than keeping a parallel `.txt`
 file around.
 
-- Commits: focused, descriptive subject in imperative mood (e.g., "Add binary
-literals to lexer").
+- Keep commits small and conceptually focused. Each commit should be one
+  coherent unit of change, with any corresponding tests and documentation in
+  the same logical commit when appropriate. Do not mix tangential refactors
+  into the main task.
+- Write clear commit messages in English with an imperative subject that
+  describes the change, not the process used to discover it. Avoid vague or
+  temporary subjects such as `fix stuff`, `update`, or `wip`. Use the
+  repository's natural subject style; do not add Conventional Commit prefixes.
+  Keep every line of a commit message at 72 characters or fewer.
 
 - If you think some important information is missing from this guide, please
 add it. If you learn something non-obvious, document it here so future work is
 faster.
-- Compiler architecture and performance findings should not live only in commit
-  messages or temporary notes. When a round of compiler work changes the shape
-  of `tokenizing` / `syntaxing` / `semantizing` / `codegen`, or produces a
-  useful measured conclusion, document it close to the implementation with
-  comments in the relevant compiler source files. Use `description/*.md` for
-  language design, not compiler-internal architecture notes.
+- Compiler architecture findings should not live only in commit messages or
+  temporary notes. When compiler work changes the shape of `tokenizing` /
+  `syntaxing` / `semantizing` / `codegen`, document the design close to the
+  implementation with comments in the relevant compiler source files. Keep
+  measured performance results out of source comments; summarize them in the
+  relevant commit body as before/after deltas measured in the same environment,
+  including enough context to interpret the comparison. Avoid standalone
+  absolute timings that primarily describe the measurement device.
+  Use `description/*.md` for language design, not compiler-internal architecture
+  notes.
+
+- Treat `description/` as the specification of the intended language, not a
+  snapshot of the current compiler. Write accepted language design as normal
+  documentation, even when it is not implemented yet.
+- Use `[!IMPLEMENTATION]` only to note gaps between that specification and the
+  current implementation. Use `[!QUESTION]` for unresolved design decisions
+  and `[!IDEA]` for exploratory possibilities that are not yet part of the
+  language design.
+- Keep implementation scheduling, milestones, and work tracking in `plan/`;
+  do not duplicate the language specification there.
 
 - Treat `plan/*.md` as active planning documents. If you notice they are
   outdated while doing relevant work, update them so they remain useful as
   development references.
 - When a feature or tooling milestone is clearly finished, update the relevant
-  checklist in `plan/0.1.md` in the same change if practical. If you choose not
-  to update it immediately, leave an explicit TODO in code or docs explaining
+  checklist in the corresponding active release plan in the same change if
+  practical. If you choose not to update
+  it immediately, leave an explicit TODO in code or docs explaining
   the mismatch so the plan does not silently drift.
+
+
+## Release workflow
+
+- `main` contains only published, stable releases. Do not use it for normal
+  development or merge incomplete work into it.
+- `develop` contains development for the next release. Normal work and
+  temporary branches start from the appropriate point on `develop` and merge
+  back into `develop`.
+- Prepare a release on `develop`. When the preparation changes release notes,
+  version metadata, plans, or other release artifacts, keep those changes in a
+  focused commit named `Prepare release X.Y.Z`.
+- Create the release candidate by checking out `main` and merging `develop`
+  with an explicit
+  no-fast-forward merge whose message is exactly `Release X.Y.Z`:
+
+  ```bash
+  git merge --no-ff develop -m "Release X.Y.Z"
+  ```
+
+- Immediately fast-forward `develop` to the release merge; do not create a
+  later `main`-to-`develop` merge commit:
+
+  ```bash
+  git switch develop
+  git merge --ff-only main
+  ```
+
+- Push `main` and `develop` together. `.github/workflows/release.yml` validates
+  the exact merge commit on Linux x86_64/ARM64 and macOS Intel/Apple Silicon,
+  builds relocatable distributions, and exercises the extracted packages.
+  Only after every job succeeds does it create the annotated `vX.Y.Z` tag and
+  publish the GitHub release with binary archives and `SHA256SUMS`.
+- Do not create tags or publish releases manually. Release notes come from
+  `releases/X.Y.Z.md`; the workflow does not generate a changelog. To retry
+  a failed release, run `gh workflow run release.yml --ref main`. Investigate
+  failures before changing the release candidate; published versions must not
+  be overwritten without an explicit request.
+- Binary packages include non-system runtime dependencies and their license
+  notices. Build with a baseline CPU target, preserve the installed core
+  layout, and validate relocation. Consumers still need a system C linker.
+- Immediately after publication, `main`, `develop`, and `vX.Y.Z` must identify
+  the same commit. Subsequent development continues from that common point on
+  `develop`.
+- Keep temporary branches short-lived. Delete them locally and remotely once
+  their work is integrated. Before deleting an old branch, verify that it does
+  not contain unique work; preserve and rebase unique work onto the appropriate
+  current base when necessary.

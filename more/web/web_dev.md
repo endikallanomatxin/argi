@@ -18,12 +18,12 @@ Compile to WASM or JS.
 
 ### Functional way of declaring templates.
 
-Tiene que ser un poco functional, más que imperative.
+It should be somewhat functional rather than imperative.
 
 See go templ
 
-Aunque realmente lo único que necesito es simplemente una función.
-Yo creo que es la mejor forma de hacer templating.
+Though all I really need is a function.
+I think this is the best way to do templating.
 
 #### Web UI Component
 
@@ -40,9 +40,9 @@ JS   :: Type = String
 
 ```
 
-No se yo si es lo mejor, por que CSS y JS es mejor que se manden como archivos estáticos que se aprovechan de poder cachearse.
+I am not sure this is best, because CSS and JS are better served as static files that can be cached.
 
-Igual podríamos hacer algo rollo GenerateAndCollectStatic. O algo así. Pero para eso habría que tener todos los componentes registrados en alguna variable.
+We could provide something like `GenerateAndCollectStatic`. That would require registering all components in a shared variable.
 
 
 ```
@@ -77,7 +77,7 @@ my_component : WebComponent = (
 ```
 
 
-Igual es mejor una sintaxis rollo:
+Perhaps a syntax like this would be better:
 
 ```
 my_component : WebComponent = [
@@ -94,7 +94,7 @@ my_component : WebComponent = [
 	]
 ```
 
-O igual un estilo más funcional:
+Or perhaps a more functional style:
 
 ```
 my_component(my_var) := [
@@ -111,12 +111,12 @@ my_component(my_var) := [
 ```
 
 
-O algo más como elm:
+Or something closer to Elm:
 
 ```
 Element : Interface = [
 	view : (_) -> HTML
-	-- update : (_) -- Igual mejor no es parte de la interfaz, sino algo opcional.
+	-- update : (_) -- Perhaps this should be optional rather than part of the interface.
 ]
 
 MyElement : Type = [
@@ -128,8 +128,8 @@ view(e: &MyElement) := Div(
 		P(
 			[
 				Text("Count: {e.some_state}", onclick=update(e, e.some_state + 1))
-				-- O igual update no debería verse ahí, sino solo los argumentos?
-				-- Darle una vuelta.
+				-- Perhaps update should not appear here, only its arguments?
+				-- Reconsider this.
 			]
 		)
 	]
@@ -140,7 +140,7 @@ update(e: &MyElement, new_state: Int) := {
 }
 ```
 
-Yo creo que ese es el camino.
+I think that is the way to go.
 
 
 Elm Architecture:
@@ -152,7 +152,7 @@ Elm Architecture:
 - Show the new HTML on screen
 - Repeat!
 
-Luego todo esto se compila a js.
+All of this is then compiled to JS.
 
 ```
 LoginForm : Type = [
@@ -186,7 +186,7 @@ update_password(e: &LoginForm, new_password: String) := {
 }
 
 submit(e: &LoginForm) := {
-	-- Pensar en como conectarlo con el frontend.
+	-- Consider how to connect this to the frontend.
 }
 ```
 
@@ -204,17 +204,17 @@ my_thing := """html
 	"""
 ```
 
-En lugar de poner la variable, pone el js necesario para que haga listen a cambios, server side events.
+Instead of inserting the variable, generate the JS needed to listen for changes, such as server-sent events.
 
 
 #### Page transition
 
-Pensar en como hacerlo.
+Consider how to implement this.
 
 
 #### Multiplatform native
 
-Que se pueda convertir en aplicaciones nativas. Como dioxus.
+It should be possible to turn these into native applications, as with Dioxus.
 
 
 ## Backend
@@ -227,4 +227,4 @@ Asset :: Type = [...]
 my_image : Asset = [...]
 ```
 
-Cuando se hace el frontend, se referencian.
+These are referenced when building the frontend.

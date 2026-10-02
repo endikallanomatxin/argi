@@ -1,70 +1,55 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
-    arr ::= DynamicArray#(.t: Int32)(.capacity = 1)
-    #defer deinit(.self = $&arr, .allocator = system.allocator)
+main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
-    push(.self = $&arr, .value = 10, .allocator = system.allocator)
-    push(.self = $&arr, .value = 20, .allocator = system.allocator)
+    arr ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 1))
+    #defer deinit(.self = $&arr, .allocator = $&allocator_storage)
 
-    copied :: DynamicArray#(.t: Int32) = arr
-    #defer deinit(.self = $&copied, .allocator = system.allocator)
+    push(.self = $&arr, .value = 10, .allocator = $&allocator_storage)
+    push(.self = $&arr, .value = 20, .allocator = $&allocator_storage)
 
-    copied[0] = 99
-    push(.self = $&copied, .value = 30, .allocator = system.allocator)
+    copied_result ::= copy#(.t: Int32)(.self = &arr)
+    if is(.value = copied_result, .variant = ..error) {
+        status_code = 5
+        return
+    }
+    copied ::= ~copied_result..ok
+    #defer deinit(.self = $&copied, .allocator = $&allocator_storage)
 
-    if arr.length != 2 {
+    set_result ::= set(.self = $&copied, .index = 0, .value = 99, .allocator = $&allocator_storage).result
+    if is(.value = set_result, .variant = ..error) {
+        status_code = 6
+        return
+    }
+    push(.self = $&copied, .value = 30, .allocator = $&allocator_storage)
+
+    if length#(.t: Int32)(.self = &arr).count != 2 {
         status_code = 1
         return
     }
 
-    if copied.length != 3 {
+    if length#(.t: Int32)(.self = &copied).count != 3 {
         status_code = 2
         return
     }
 
-    if arr[0] != 10 {
+    first_result ::= get(.self = &arr, .index = 0).result
+    if is(.value = first_result, .variant = ..error) {
+        status_code = 3
+        return
+    }
+    if first_result..ok != 10 {
         status_code = 3
         return
     }
 
-    if copied[0] != 99 {
+    copied_first_result ::= get(.self = &copied, .index = 0).result
+    if is(.value = copied_first_result, .variant = ..error) {
         status_code = 4
         return
     }
-
-    text ::= String(.allocator = system.allocator, .length = 2)
-    bytes_set(.string = $&text, .index = 0, .value = 79)
-    bytes_set(.string = $&text, .index = 1, .value = 75)
-
-    strings ::= DynamicArray#(.t: String)(.capacity = 1)
-    #defer deinit(.self = $&strings, .allocator = system.allocator)
-    push(.self = $&strings, .value = text, .allocator = system.allocator)
-
-    copied_strings :: DynamicArray#(.t: String) = strings
-    #defer deinit(.self = $&copied_strings, .allocator = system.allocator)
-
-    copied_first_addr ::= dynamic_array_element_address#(.t: String)(.array = &copied_strings, .offset = 0).address
-    copied_first_ptr : &String = cast#(.to: &String)(.value = copied_first_addr)
-    first_string ::= copy(.self = copied_first_ptr&, .allocator = system.allocator)
-    #defer deinit(.self = $&first_string, .allocator = system.allocator)
-    bytes_set(.string = $&first_string, .index = 0, .value = 78)
-    copied_strings[0] = first_string
-
-    original_first_addr ::= dynamic_array_element_address#(.t: String)(.array = &strings, .offset = 0).address
-    original_first_ptr : &String = cast#(.to: &String)(.value = original_first_addr)
-    original_first ::= copy(.self = original_first_ptr&, .allocator = system.allocator)
-    #defer deinit(.self = $&original_first, .allocator = system.allocator)
-    copied_first_after_addr ::= dynamic_array_element_address#(.t: String)(.array = &copied_strings, .offset = 0).address
-    copied_first_after_ptr : &String = cast#(.to: &String)(.value = copied_first_after_addr)
-    copied_first ::= copy(.self = copied_first_after_ptr&, .allocator = system.allocator)
-    #defer deinit(.self = $&copied_first, .allocator = system.allocator)
-
-    if bytes_get(.string = &original_first, .index = 0).byte != 79 {
-        status_code = 5
-        return
-    }
-
-    if bytes_get(.string = &copied_first, .index = 0).byte != 78 {
-        status_code = 6
+    if copied_first_result..ok != 99 {
+        status_code = 4
         return
     }
 

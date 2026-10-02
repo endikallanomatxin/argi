@@ -1,8 +1,8 @@
 const std = @import("std");
 const tok = @import("token.zig");
-const tok_print = @import("token_print.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const sf = @import("../1_base/source_files.zig");
+const source_db = @import("../1_base/source_db.zig");
 
 pub const TokenizerError = error{
     UnknownCharacter,
@@ -17,13 +17,13 @@ const NumericLiteralKind = enum {
     scientific_float,
 };
 
-const LiteralTag = std.meta.Tag(tok.Literal);
+const LiteralTag = std.meta.Tag(tok.TokenLiteral);
 
 pub const Tokenizer = struct {
     allocator: std.mem.Allocator,
     diagnostics: *diag.Diagnostics,
     source: []const u8,
-    tokens: std.array_list.Managed(tok.Token),
+    tokens: tok.List,
 
     location: tok.Location,
 
@@ -31,25 +31,27 @@ pub const Tokenizer = struct {
         allocator: std.mem.Allocator,
         diagnostics: *diag.Diagnostics,
         source: []const u8,
-        file_name: []const u8,
+        file_id: source_db.FileId,
     ) Tokenizer {
         return Tokenizer{
             .allocator = allocator,
             .diagnostics = diagnostics,
             .source = source,
-            .tokens = std.array_list.Managed(tok.Token).init(allocator),
+            .tokens = .empty,
             .location = tok.Location{
-                .file = file_name,
+                .file = file_id,
                 .offset = 0,
-                .line = 1,
-                .column = 1,
             },
         };
     }
 
-    /// Llama a `lexNextToken` repetidas veces hasta terminar, y devuelve
-    /// el slice de `Token` generado.
-    pub fn tokenize(self: *Tokenizer) ![]tok.Token {
+    /// Calls `lexNextToken` repeatedly until completion and returns a borrowed
+    /// view of the generated tokens.
+    pub fn tokenize(self: *Tokenizer) !tok.View {
+        // Source code typically needs one token for roughly four bytes. This
+        // keeps the direct SoA construction from repeatedly relocating its
+        // columns while remaining only an estimate for comment-heavy files.
+        try self.tokens.ensureTotalCapacity(self.allocator, self.source.len / 4 + 1);
         while (self.location.offset < self.source.len) {
             lexNextToken(self) catch |err| {
                 if (err == error.ReachedEOF) {
@@ -59,18 +61,25 @@ pub const Tokenizer = struct {
                 }
             };
         }
-        // Añadir el token EOF al final
+        // Append the EOF token.
         try self.addToken(tok.Content{ .eof = .{} }, self.location);
-        return self.tokens.items;
+        return tok.View.init(&self.tokens);
     }
 
-    /// Añade un token a la lista de tokens, actualizando la ubicación actual.
+    /// Transfers the compact token columns to a file frontend artifact.
+    pub fn takeTokens(self: *Tokenizer) tok.List {
+        const tokens = self.tokens;
+        self.tokens = .empty;
+        return tokens;
+    }
+
+    /// Adds a token to the token list and updates the current location.
     pub fn addToken(self: *Tokenizer, content: tok.Content, location: tok.Location) !void {
         const token = tok.Token{
             .content = content,
             .location = location,
         };
-        try self.tokens.append(token);
+        try self.tokens.append(self.allocator, token);
     }
 
     pub fn peek(self: *Tokenizer) ?u8 {
@@ -86,12 +95,7 @@ pub const Tokenizer = struct {
     pub fn advance(self: *Tokenizer) bool {
         const c = self.peek() orelse return false;
         self.location.offset += 1;
-        if (c == '\n') {
-            self.location.line += 1;
-            self.location.column = 1;
-        } else {
-            self.location.column += 1;
-        }
+        _ = c;
         return true;
     }
 
@@ -152,16 +156,20 @@ pub const Tokenizer = struct {
         start: usize,
         kind: NumericLiteralKind,
     ) !void {
-        const num_str = self.source[start..self.location.offset];
+        const num_range = self.textRange(start, self.location.offset);
         const literal = switch (kind) {
-            .decimal_int => tok.Literal{ .decimal_int_literal = num_str },
-            .hexadecimal_int => tok.Literal{ .hexadecimal_int_literal = num_str },
-            .octal_int => tok.Literal{ .octal_int_literal = num_str },
-            .binary_int => tok.Literal{ .binary_int_literal = num_str },
-            .regular_float => tok.Literal{ .regular_float_literal = num_str },
-            .scientific_float => tok.Literal{ .scientific_float_literal = num_str },
+            .decimal_int => tok.TokenLiteral{ .decimal_int_literal = num_range },
+            .hexadecimal_int => tok.TokenLiteral{ .hexadecimal_int_literal = num_range },
+            .octal_int => tok.TokenLiteral{ .octal_int_literal = num_range },
+            .binary_int => tok.TokenLiteral{ .binary_int_literal = num_range },
+            .regular_float => tok.TokenLiteral{ .regular_float_literal = num_range },
+            .scientific_float => tok.TokenLiteral{ .scientific_float_literal = num_range },
         };
         try self.addToken(tok.Content{ .literal = literal }, loc);
+    }
+
+    fn textRange(_: *const Tokenizer, start: usize, end: usize) tok.TextRange {
+        return .{ .start = @intCast(start), .len = @intCast(end - start) };
     }
 
     fn lexPrefixedInteger(
@@ -338,8 +346,7 @@ pub const Tokenizer = struct {
                 if (c == '\n') break;
                 _ = self.advance();
             }
-            const comment = self.source[start..self.location.offset];
-            try self.addToken(tok.Content{ .comment = comment }, loc);
+            try self.addToken(tok.Content{ .comment = self.textRange(start, self.location.offset) }, loc);
             return;
         }
 
@@ -377,7 +384,9 @@ pub const Tokenizer = struct {
                 _ = self.advance();
             }
             const word = self.source[start..self.location.offset];
-            if (std.mem.eql(u8, word, "return")) {
+            if (std.mem.eql(u8, word, "abort")) {
+                try self.addToken(tok.Content{ .keyword_abort = .{} }, loc);
+            } else if (std.mem.eql(u8, word, "return")) {
                 try self.addToken(tok.Content{ .keyword_return = .{} }, loc);
             } else if (std.mem.eql(u8, word, "if")) {
                 try self.addToken(tok.Content{ .keyword_if = .{} }, loc);
@@ -395,6 +404,12 @@ pub const Tokenizer = struct {
                 try self.addToken(tok.Content{ .keyword_break = .{} }, loc);
             } else if (std.mem.eql(u8, word, "continue")) {
                 try self.addToken(tok.Content{ .keyword_continue = .{} }, loc);
+            } else if (std.mem.eql(u8, word, "reach")) {
+                try self.addToken(tok.Content{ .keyword_reach = .{} }, loc);
+            } else if (std.mem.eql(u8, word, "import")) {
+                try self.addToken(tok.Content{ .keyword_import = .{} }, loc);
+            } else if (std.mem.eql(u8, word, "assume")) {
+                try self.addToken(tok.Content{ .keyword_assume = .{} }, loc);
             } else if (std.mem.eql(u8, word, "once")) {
                 try self.addToken(tok.Content{ .keyword_once = .{} }, loc);
             } else if (std.mem.eql(u8, word, "test")) {
@@ -408,12 +423,12 @@ pub const Tokenizer = struct {
             } else if (std.mem.eql(u8, word, "false")) {
                 try self.addToken(tok.Content{ .literal = .{ .bool_literal = false } }, loc);
             } else {
-                try self.addToken(tok.Content{ .identifier = word }, loc);
+                try self.addToken(tok.Content{ .identifier = self.textRange(start, self.location.offset) }, loc);
             }
             return;
         }
 
-        // Para tokens individuales según el carácter:
+        // Handle single-character tokens:
         switch (current) {
             '#' => {
                 try self.addToken(tok.Content{ .hash = .{} }, loc);
@@ -440,7 +455,7 @@ pub const Tokenizer = struct {
                 // Check for double colon
                 if (self.peekNext() == ':') {
                     try self.addToken(tok.Content{ .double_colon = .{} }, loc);
-                    _ = self.advance(); // Avanzar el segundo ':'
+                    _ = self.advance(); // Advance past the second ':'.
                 } else {
                     try self.addToken(tok.Content{ .colon = .{} }, loc);
                 }
@@ -448,7 +463,7 @@ pub const Tokenizer = struct {
             '=' => {
                 if (self.peekNext() == '=') {
                     try self.addToken(tok.Content{ .comparison_operator = .equal }, loc);
-                    _ = self.advance(); // Avanzar el segundo '='
+                    _ = self.advance(); // Advance past the second '='.
                 } else {
                     try self.addToken(tok.Content{ .equal = .{} }, loc);
                 }
@@ -456,10 +471,10 @@ pub const Tokenizer = struct {
             '!' => {
                 if (self.peekNext() == '=') {
                     try self.addToken(tok.Content{ .comparison_operator = .not_equal }, loc);
-                    _ = self.advance(); // Avanzar el segundo '!'
+                    _ = self.advance(); // Advance past the second '!'.
                 } else if (self.peekNext() == '!') {
                     try self.addToken(tok.Content{ .double_bang = .{} }, loc);
-                    _ = self.advance(); // Avanzar el segundo '!'
+                    _ = self.advance(); // Advance past the second '!'.
                 } else {
                     try self.addToken(tok.Content{ .bang = .{} }, loc);
                 }
@@ -467,7 +482,7 @@ pub const Tokenizer = struct {
             '<' => {
                 if (self.peekNext() == '=') {
                     try self.addToken(tok.Content{ .comparison_operator = .less_than_or_equal }, loc);
-                    _ = self.advance(); // Avanzar el '='
+                    _ = self.advance(); // Advance past '='.
                 } else {
                     try self.addToken(tok.Content{ .comparison_operator = .less_than }, loc);
                 }
@@ -475,7 +490,7 @@ pub const Tokenizer = struct {
             '>' => {
                 if (self.peekNext() == '=') {
                     try self.addToken(tok.Content{ .comparison_operator = .greater_than_or_equal }, loc);
-                    _ = self.advance(); // Avanzar el '='
+                    _ = self.advance(); // Advance past '='.
                 } else {
                     try self.addToken(tok.Content{ .comparison_operator = .greater_than }, loc);
                 }
@@ -519,36 +534,36 @@ pub const Tokenizer = struct {
                 try self.addToken(tok.Content{ .question_mark = .{} }, loc);
             },
             '\'' => {
-                // Salta la comilla de apertura
+                // Skip the opening quote.
                 _ = self.advance();
 
-                // 1. ¿escape (`\`) o carácter directo?
+                // 1. Escape (`\\`) or literal character?
                 var char_val: u8 = undefined;
                 if (self.peek() == null) {
                     try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
                     return TokenizerError.UnknownCharacter;
                 }
                 if (self.peek().? == '\\') { // -- escape --
-                    _ = self.advance(); // salta la '\'
+                    _ = self.advance(); // Skip the backslash.
 
                     const esc = self.peek() orelse {
                         try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
                         return TokenizerError.UnknownCharacter;
                     };
                     char_val = switch (esc) {
-                        'n' => '\n', // salto de línea
-                        't' => '\t', // tabulador
-                        'r' => '\r', // retorno de carro
-                        '\\' => '\\', // barra invertida
-                        '\'' => '\'', // comilla simple
+                        'n' => '\n', // newline
+                        't' => '\t', // tab
+                        'r' => '\r', // carriage return
+                        '\\' => '\\', // backslash
+                        '\'' => '\'', // single quote
                         '0' => 0, // NUL
                         else => {
                             try self.diagnostics.add(loc, .syntax, "unsupported escape: \\{c}", .{esc});
                             return TokenizerError.UnknownCharacter;
                         },
                     };
-                    _ = self.advance(); // salta la letra de escape
-                } else { // -- carácter simple --
+                    _ = self.advance(); // Skip the escape character.
+                } else { // -- ordinary character --
                     if (self.peek().? == '\'') {
                         try self.diagnostics.add(loc, .syntax, "empty char literal", .{});
                         return TokenizerError.UnknownCharacter;
@@ -557,52 +572,43 @@ pub const Tokenizer = struct {
                     _ = self.advance();
                 }
 
-                // 2. debe venir la comilla de cierre
+                // 2. The closing quote must follow.
                 if (self.peek() != '\'') {
                     try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
                     return TokenizerError.UnknownCharacter;
                 }
-                _ = self.advance(); // salta la comilla de cierre
+                _ = self.advance(); // Skip the closing quote.
 
                 try self.addToken(
-                    tok.Content{ .literal = tok.Literal{ .char_literal = char_val } },
+                    tok.Content{ .literal = tok.TokenLiteral{ .char_literal = char_val } },
                     loc,
                 );
                 return;
             },
 
             '"' => {
-                // saltamos la comilla inicial
+                // Skip the opening quote.
                 _ = self.advance();
+                const text_start = self.location.offset;
 
-                var buf = std.array_list.Managed(u8).init(self.allocator);
-                defer buf.deinit();
-
-                // recopilamos caracteres, gestionando escapes
+                // Collect characters while handling escapes.
                 while (self.peek()) |c| {
                     if (c == '"') break;
                     if (c == '\\') {
-                        _ = self.advance(); // salta '\'
+                        _ = self.advance(); // Skip '\'
                         const esc = self.peek() orelse {
                             try self.diagnostics.add(loc, .syntax, "unterminated string literal", .{});
                             return TokenizerError.UnknownCharacter;
                         };
-                        const ch: u8 = switch (esc) { // escapes comunes
-                            'n' => '\n',
-                            't' => '\t',
-                            'r' => '\r',
-                            '\\' => '\\',
-                            '"' => '"',
-                            '0' => 0,
+                        switch (esc) { // Common escapes.
+                            'n', 't', 'r', '\\', '"', '0' => {},
                             else => {
                                 try self.diagnostics.add(loc, .syntax, "unsupported escape: \\{c}", .{esc});
                                 return TokenizerError.UnknownCharacter;
                             },
-                        };
-                        try buf.append(ch);
+                        }
                         _ = self.advance();
                     } else {
-                        try buf.append(c);
                         _ = self.advance();
                     }
                 }
@@ -610,22 +616,19 @@ pub const Tokenizer = struct {
                     try self.diagnostics.add(loc, .syntax, "unterminated string literal", .{});
                     return TokenizerError.UnknownCharacter;
                 }
-                // cerramos comilla
+                const text_end = self.location.offset;
+                // Close the quote.
                 _ = self.advance();
 
-                // copiamos a memoria propia (slice independiente del source)
-                const data = try self.allocator.alloc(u8, buf.items.len);
-                std.mem.copyForwards(u8, data, buf.items);
-
                 try self.addToken(
-                    tok.Content{ .literal = tok.Literal{ .string_literal = data } },
+                    tok.Content{ .literal = tok.TokenLiteral{ .string_literal = self.textRange(text_start, text_end) } },
                     loc,
                 );
                 return;
             },
             else => {
                 try self.diagnostics.add(loc, .syntax, "unrecognized character: '{c}'", .{current});
-                _ = self.advance(); // saltamos y seguimos
+                _ = self.advance(); // Skip it and continue.
                 return;
             },
         }
@@ -634,17 +637,7 @@ pub const Tokenizer = struct {
     }
 
     pub fn deinit(self: *Tokenizer) void {
-        self.tokens.deinit();
-    }
-
-    pub fn printTokens(self: *Tokenizer) void {
-        std.debug.print("\nTOKENS\n", .{});
-        var i: usize = 0;
-        for (self.tokens.items) |token| {
-            std.debug.print("{d}: ", .{i});
-            tok_print.printTokenWithLocation(token, token.location);
-            i += 1;
-        }
+        self.tokens.deinit(self.allocator);
     }
 };
 
@@ -664,7 +657,7 @@ fn expectTokenizerDiagnostics(source: []const u8, should_diagnose: bool) !void {
         allocator,
         &diagnostics,
         source,
-        files[0].path,
+        diagnostics.source_db.fileId(0),
     );
     defer tokenizer_ctx.deinit();
 
@@ -688,24 +681,24 @@ fn expectNumericLiteralToken(source: []const u8, expected_tag: LiteralTag) !void
         allocator,
         &diagnostics,
         source,
-        files[0].path,
+        diagnostics.source_db.fileId(0),
     );
     defer tokenizer_ctx.deinit();
 
     const tokens = try tokenizer_ctx.tokenize();
     try std.testing.expect(!diagnostics.hasErrors());
     try std.testing.expect(tokens.len >= 2);
-    try std.testing.expect(tokens[0].content == .literal);
-    try std.testing.expectEqual(expected_tag, std.meta.activeTag(tokens[0].content.literal));
+    try std.testing.expect(tokens.contents[0] == .literal);
+    try std.testing.expectEqual(expected_tag, std.meta.activeTag(tokens.contents[0].literal));
 }
 
 test "tokenizer crash resistance at EOF" {
-    try expectTokenizerDiagnostics("-- comentario sin newline final", false);
+    try expectTokenizerDiagnostics("-- comment without trailing newline", false);
     try expectTokenizerDiagnostics("0", false);
     try expectTokenizerDiagnostics("0x", true);
     try expectTokenizerDiagnostics("0b", true);
     try expectTokenizerDiagnostics("1e", true);
-    try expectTokenizerDiagnostics("\"string sin cerrar", true);
+    try expectTokenizerDiagnostics("\"unterminated string", true);
     try expectTokenizerDiagnostics("'c", true);
     try expectTokenizerDiagnostics("-", false);
 }

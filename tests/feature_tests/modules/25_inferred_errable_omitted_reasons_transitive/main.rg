@@ -1,5 +1,5 @@
 run() -> (.result: Errable#(.t: Int32)) := {
-    dep := #import("./dep")
+    dep := import("./dep")
     value := dep.load()!
     result = ..ok value
 }

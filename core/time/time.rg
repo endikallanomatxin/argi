@@ -1,23 +1,23 @@
--- Pensar si la capability tiene que ir aquí o no
+-- Consider whether the capability belongs here.
 
 Clock : Type = ()
 
 once init(.p: $&Clock) -> () := {
 }
 -- getCurrentTime :: IO UTCTime
--- Obtiene la hora actual en UTC.
+-- Gets the current time in UTC.
 -- getZonedTime :: IO ZonedTime
--- Obtiene la hora actual con zona horaria local.
+-- Gets the current time in the local time zone.
 -- threadDelay :: Int → IO ()
--- Suspende el hilo actual N microsegundos
+-- Suspends the current thread for N microseconds.
 
 -------
 
 
 -- Clock     : Type = ()
 -- TimeUnit  : Type = (..ns, ..us, ..ms, ..s, ..min, ..h, ..d, ..w, ..mo, ..y)
--- Duration  : Type = NumberWithUnit#(.t: Int, .unit: TimeUnit) -- Igual mejor ns y ya.
--- TimeStamp : Type = NumberWithUnit#(.t: Int, .unit: TimeUnit) -- Igual mejor ns y ya.
+-- Duration  : Type = NumberWithUnit#(.t: Int, .unit: TimeUnit) -- Perhaps nanoseconds are enough.
+-- TimeStamp : Type = NumberWithUnit#(.t: Int, .unit: TimeUnit) -- Perhaps nanoseconds are enough.
 -- 
 -- Date : Type = (
 -- 	.year: Int

@@ -26,11 +26,15 @@ read_byte(.self: $&DummyInput) -> (.result: Errable#(.t: ReadByte, .reasons: (..
 
 DummyInput implements Reader
 
-main(.system: System = System()) -> (.status_code: Int32) := {
-    stdin :: DummyInput = (
+main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
+
+    stdin_storage :: DummyInput = (
         .index = 0
     )
-    result ::= read_line(.allocator = system.allocator, .stdin = $&stdin)
+    assume reader ::= $&stdin_storage
+    result ::= read_line(.allocator = $&allocator_storage, .reader = $&stdin_storage)
 
     if is(.value = result, .variant = ..ok) {
     } else {
@@ -38,23 +42,29 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    line ::= result..ok..ok
-
-    if line.length != 2 {
+    outer ::= ~result..ok
+    if is(.value = outer, .variant = ..ok) {
+    } else {
         status_code = 2
         return
     }
+    line ::= ~outer..ok
 
-    if bytes_get(.string = &line, .index = 0).byte != 79 {
+    if line.length != 2 {
         status_code = 3
         return
     }
 
-    if bytes_get(.string = &line, .index = 1).byte != 75 {
+    if bytes_get(.string = &line, .index = 0).byte != 79 {
         status_code = 4
         return
     }
 
-    deinit(.self = $&line, .allocator = system.allocator)
+    if bytes_get(.string = &line, .index = 1).byte != 75 {
+        status_code = 5
+        return
+    }
+
+    deinit(.self = $&line, .allocator = $&allocator_storage)
     status_code = 0
 }

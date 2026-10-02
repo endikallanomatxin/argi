@@ -1,5 +1,8 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
-    text :: String = String(.allocator = system.allocator, .length = 5)
+main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
+
+    text :: String = unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .length = 5))
     bytes_set(.string = $&text, .index = 0, .value = 104)
     bytes_set(.string = $&text, .index = 1, .value = 101)
     bytes_set(.string = $&text, .index = 2, .value = 108)

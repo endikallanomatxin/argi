@@ -1,10 +1,17 @@
 const std = @import("std");
 
-/// Buffer in-memory de un fichero fuente.
+/// In-memory buffer for a source file.
 pub const SourceFile = struct {
     path: []const u8, // ruta (relativa a cwd)
     code: []const u8, // contenido completo
+    origin: Origin = .user,
+
+    pub const Origin = enum { user, bundled_core };
 };
+
+fn markBundledCore(files: []SourceFile) void {
+    for (files) |*file| file.origin = .bundled_core;
+}
 
 const DirSet = std.StringHashMap(void);
 const ImportList = std.array_list.Managed(ResolvedImport);
@@ -311,14 +318,14 @@ fn collectImportDirsFromSource(
 }
 
 const ParsedImportDirective = struct {
-    hash_offset: usize,
+    import_offset: usize,
     path: []const u8,
     next_offset: usize,
 };
 
 pub fn firstImportDirectiveOffset(source_code: []const u8) ?usize {
     var offset: usize = 0;
-    return if (nextImportDirective(source_code, &offset)) |parsed| parsed.hash_offset else null;
+    return if (nextImportDirective(source_code, &offset)) |parsed| parsed.import_offset else null;
 }
 
 fn nextImportDirective(source_code: []const u8, offset: *usize) ?ParsedImportDirective {
@@ -339,13 +346,15 @@ fn nextImportDirective(source_code: []const u8, offset: *usize) ?ParsedImportDir
             continue;
         }
 
-        if (source_code[offset.*] != '#') {
+        if (source_code[offset.*] != 'i' or
+            (offset.* > 0 and (isIdentifierByte(source_code[offset.* - 1]) or source_code[offset.* - 1] == '#')))
+        {
             offset.* += 1;
             continue;
         }
 
-        const hash_offset = offset.*;
-        const parsed = parseImportDirective(source_code, hash_offset) orelse {
+        const import_offset = offset.*;
+        const parsed = parseImportDirective(source_code, import_offset) orelse {
             offset.* += 1;
             continue;
         };
@@ -373,19 +382,21 @@ fn skipWhitespace(source_code: []const u8, offset: *usize) void {
     while (offset.* < source_code.len and std.ascii.isWhitespace(source_code[offset.*])) : (offset.* += 1) {}
 }
 
-fn parseImportDirective(source_code: []const u8, hash_offset: usize) ?ParsedImportDirective {
-    var offset = hash_offset + 1;
-    skipWhitespace(source_code, &offset);
+fn isIdentifierByte(byte: u8) bool {
+    return std.ascii.isAlphanumeric(byte) or byte == '_';
+}
 
+fn parseImportDirective(source_code: []const u8, import_offset: usize) ?ParsedImportDirective {
+    var offset = import_offset;
     const import_name = "import";
     if (offset + import_name.len > source_code.len) return null;
     if (!std.mem.eql(u8, source_code[offset .. offset + import_name.len], import_name)) return null;
     offset += import_name.len;
+    if (offset < source_code.len and isIdentifierByte(source_code[offset])) return null;
 
     skipWhitespace(source_code, &offset);
     if (offset >= source_code.len or source_code[offset] != '(') return null;
     offset += 1;
-
     skipWhitespace(source_code, &offset);
     if (offset >= source_code.len or source_code[offset] != '"') return null;
     offset += 1;
@@ -402,7 +413,7 @@ fn parseImportDirective(source_code: []const u8, hash_offset: usize) ?ParsedImpo
             skipWhitespace(source_code, &offset);
             if (offset >= source_code.len or source_code[offset] != ')') return null;
             return .{
-                .hash_offset = hash_offset,
+                .import_offset = import_offset,
                 .path = path,
                 .next_offset = offset + 1,
             };
@@ -477,11 +488,14 @@ test "import scanner ignores comments strings and chars" {
         &std.testing.allocator,
         std.testing.io,
         "tests/feature_tests/modules/example/main.rg",
-        \\-- ignored := #import("./comment_dep")
-        \\message := "#import(\"./string_dep\")"
+        \\-- ignored := import("./comment_dep")
+        \\message := "import(\"./string_dep\")"
         \\quote := '#'
-        \\dep := #import("./real_dep")
-        \\spaced := # import ( "./spaced_dep" )
+        \\notimport("./identifier_dep")
+        \\importer("./suffix_dep")
+        \\old := #import("./old_dep")
+        \\dep := import("./real_dep")
+        \\spaced := import ( "./spaced_dep" )
     ,
         &imports,
     );
@@ -499,7 +513,7 @@ test "import scanner ignores unterminated strings" {
         &std.testing.allocator,
         std.testing.io,
         "tests/feature_tests/modules/example/main.rg",
-        "message := \"#import(\\\"./string_dep\\\")",
+        "message := \"import(\\\"./string_dep\\\")",
         &imports,
     );
 
@@ -508,13 +522,13 @@ test "import scanner ignores unterminated strings" {
 
 test "first import offset uses lexical import scanner" {
     const source =
-        \\-- ignored := #import("./comment_dep")
-        \\message := "#import(\"./string_dep\")"
-        \\dep := #import("./real_dep")
+        \\-- ignored := import("./comment_dep")
+        \\message := "import(\"./string_dep\")"
+        \\dep := import("./real_dep")
     ;
 
     const offset = firstImportDirectiveOffset(source) orelse return error.ExpectedImportOffset;
-    try std.testing.expectEqualStrings("#import", source[offset .. offset + "#import".len]);
+    try std.testing.expectEqualStrings("import", source[offset .. offset + "import".len]);
     try std.testing.expect(std.mem.indexOf(u8, source[0..offset], "dep :=") != null);
 }
 
@@ -629,13 +643,13 @@ fn collectModuleOrder(
     try ordered_dirs.append(try alloc.dupe(u8, dir_path));
 }
 
-/// Lee un único fichero.
+/// Reads a single file.
 pub fn readFile(alloc: *const std.mem.Allocator, io: std.Io, path: []const u8) !SourceFile {
-    const code = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc.*, .limited(1 << 24)); // 16 MiB máx.
+    const code = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc.*, .limited(1 << 24)); // 16 MiB maximum.
     return .{ .path = try alloc.dupe(u8, path), .code = code };
 }
 
-/// Reúne todos los .rg de `core_dir` + el `user_path`.
+/// Collects all `.rg` files from `core_dir` and `user_path`.
 pub fn collect(
     alloc: *const std.mem.Allocator,
     io: std.Io,
@@ -715,7 +729,9 @@ pub fn collectModuleWithOptions(
         ordered_seen.deinit();
     }
 
+    const core_start = list.items.len;
     try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files);
+    markBundledCore(list.items[core_start..]);
 
     try validateModuleGraphAcyclic(
         alloc,
@@ -806,9 +822,11 @@ pub fn collectWithEntrySourceWithOptions(
     }
 
     // ─── core/ ────────────────────────────────────────────────────────────
+    const core_start = list.items.len;
     try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files);
+    markBundledCore(list.items[core_start..]);
 
-    // ─── carpeta del entrypoint del usuario y imports explícitos ─────────
+    // ─── user entry-point directory and explicit imports ────────────────
     const user_dir = std.fs.path.dirname(user_path) orelse ".";
     const root_module_dir = try alloc.dupe(u8, user_dir);
     defer alloc.free(root_module_dir);
@@ -836,7 +854,7 @@ pub fn collectWithEntrySourceWithOptions(
         try collectRgFilesInDir(alloc, io, &list, dir_path, skip_path, &seen_files);
     }
 
-    // ─── entrypoint del usuario al final ─────────────────────────────────
+    // ─── user entry point at the end ────────────────────────────────────
     for (list.items) |*source_file| {
         if (!std.mem.eql(u8, source_file.path, user_path)) continue;
 
@@ -854,7 +872,7 @@ pub fn collectWithEntrySourceWithOptions(
     return list;
 }
 
-/// Libera los `code` y la lista.
+/// Frees the `code` buffers and the list.
 pub fn freeList(
     alloc: *const std.mem.Allocator,
     list: *std.array_list.Managed(SourceFile),

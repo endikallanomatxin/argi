@@ -11,5 +11,14 @@ main() -> (.status_code: Int32) := {
         return
     }
 
+    for $& value in values {
+        value& = value& + 1
+    }
+
+    if values[0] != 3 or values[1] != 5 or values[2] != 7 {
+        status_code = 2
+        return
+    }
+
     status_code = 0
 }

@@ -3,6 +3,8 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const test_filters = b.option([]const []const u8, "test-filter", "Only run tests whose name contains this text (repeatable)") orelse &.{};
+    const test_progress = b.option(bool, "test-progress", "Print each test as it runs") orelse false;
 
     const llvm_include_path, const llvm_lib_path, const llvm_libs_raw = prepareLlvm(b) catch |err| {
         if (err != error.LlvmNotFound) {
@@ -19,6 +21,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        // Zig 0.16 error tracing can fault while recording handled I/O errors
+        // (reproduced in createDirPath when PathAlreadyExists is returned).
+        .error_tracing = if (optimize == .Debug) false else null,
     });
 
     const llvm_c = b.addTranslateC(.{
@@ -34,22 +39,31 @@ pub fn build(b: *std.Build) void {
         .name = "argi",
         .root_module = exe_mod,
     });
+    // Binary distributions replace Homebrew library paths with relative load
+    // commands. Leave room for longer names before signing the relocated image.
+    exe.headerpad_max_install_names = target.result.os.tag == .macos;
 
     linkLlvmModule(exe_mod, llvm_lib_path, llvm_libs_raw);
 
     b.installArtifact(exe);
-    b.installDirectory(.{
+    const installed_core_path = b.getInstallPath(.prefix, "lib/argi/core");
+    if (!std.mem.endsWith(u8, installed_core_path, "lib/argi/core")) {
+        @panic("refusing to clean an unexpected core installation path");
+    }
+    const clean_installed_core = CleanInstalledCore.create(b, installed_core_path);
+    const install_core = b.addInstallDirectory(.{
         .source_dir = b.path("core"),
         .install_dir = .prefix,
         .install_subdir = "lib/argi/core",
     });
+    install_core.step.dependOn(&clean_installed_core.step);
+    b.getInstallStep().dependOn(&install_core.step);
 
     //
     // INSTALL AND RUN EXECUTABLE ---------------------------------------------
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    // Allow argument passing: `zig build run -- arg1 arg2 etc`
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
@@ -70,8 +84,9 @@ pub fn build(b: *std.Build) void {
 
     const exe_tests = b.addTest(.{
         .root_module = tests_mod,
+        .filters = test_filters,
     });
-    const run_exe_tests = b.addRunArtifact(exe_tests);
+    const run_exe_tests = addTestRun(b, exe_tests, test_progress);
     run_exe_tests.step.dependOn(b.getInstallStep());
 
     const internal_tests_mod = b.createModule(.{
@@ -83,18 +98,61 @@ pub fn build(b: *std.Build) void {
     linkLlvmModule(internal_tests_mod, llvm_lib_path, llvm_libs_raw);
     const internal_tests = b.addTest(.{
         .root_module = internal_tests_mod,
+        .filters = test_filters,
     });
-    const run_internal_tests = b.addRunArtifact(internal_tests);
+    const run_internal_tests = addTestRun(b, internal_tests, test_progress);
 
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_exe_tests.step);
-    test_step.dependOn(&run_internal_tests.step);
-    test_step.dependOn(b.getInstallStep());
+    const internal_test_step = b.step("test-internal", "Run compiler unit tests");
+    internal_test_step.dependOn(&run_internal_tests.step);
+
+    const program_test_step = b.step("test-programs", "Run Argi program tests");
+    program_test_step.dependOn(&run_exe_tests.step);
+    program_test_step.dependOn(b.getInstallStep());
+
+    const test_step = b.step("test", "Run all tests");
+    test_step.dependOn(internal_test_step);
+    test_step.dependOn(program_test_step);
 }
 
+fn addTestRun(b: *std.Build, tests: *std.Build.Step.Compile, progress: bool) *std.Build.Step.Run {
+    if (!progress) return b.addRunArtifact(tests);
+    // Terminal mode reports the active case even when a test never returns.
+    // It retains the standard test runner's failure exit status.
+    const run = std.Build.Step.Run.create(b, "run tests with progress");
+    run.producer = tests;
+    run.addArtifactArg(tests);
+    run.stdio = .inherit;
+    return run;
+}
+
+// Core installation must discard removed source files before copying the
+// current bundle. Use the build runner's I/O rather than a host shell utility.
+const CleanInstalledCore = struct {
+    step: std.Build.Step,
+    path: []const u8,
+
+    fn create(b: *std.Build, path: []const u8) *CleanInstalledCore {
+        const clean = b.allocator.create(CleanInstalledCore) catch @panic("OOM");
+        clean.* = .{
+            .step = std.Build.Step.init(.{
+                .id = .custom,
+                .name = "clean installed core",
+                .owner = b,
+                .makeFn = make,
+            }),
+            .path = b.dupe(path),
+        };
+        return clean;
+    }
+
+    fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) !void {
+        _ = options;
+        const clean: *CleanInstalledCore = @fieldParentPtr("step", step);
+        try std.Io.Dir.cwd().deleteTree(step.owner.graph.io, clean.path);
+    }
+};
+
 fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, []const u8 } {
-    // Obtain LLVM paths. First try environment variables to avoid spawning
-    // `llvm-config` which might not be supported in restricted environments.
     const env_include = b.graph.environ_map.get("LLVM_INCLUDE_DIR");
     const env_lib = b.graph.environ_map.get("LLVM_LIB_DIR");
     const env_libs = b.graph.environ_map.get("LLVM_LIBS");
@@ -132,6 +190,7 @@ fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, 
 }
 
 const llvm_config_candidates = [_][]const u8{
+    "llvm-config-21",
     "llvm-config",
     "llvm-config-20",
     "llvm-config-19",

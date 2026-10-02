@@ -3,22 +3,22 @@ Network : Type = ()
 once init(.p: $&Network) -> () := {
 }
 
--- No se si meter también aquí todos los protocolos de red
--- O eso igual no corresponde a system
+-- Consider whether all network protocols belong here too.
+-- Perhaps they do not belong under system.
 
 ---
 -- socket :: Family → SocketType → ProtocolNumber → IO Socket
--- Crea un socket de bajo nivel.
+-- Creates a low-level socket.
 -- connect :: Socket → SockAddr → IO ()
--- Conecta un socket a una dirección remota.
+-- Connects a socket to a remote address.
 -- bind :: Socket → SockAddr → IO ()
--- Asocia un socket a una dirección local.
+-- Binds a socket to a local address.
 -- listen :: Socket → Int → IO ()
--- Pone un socket en modo escucha, con backlog dado.
+-- Puts a socket into listening mode with the given backlog.
 -- accept :: Socket → IO (Socket, SockAddr)
--- Acepta una conexión entrante, devolviendo un nuevo socket y la dirección del cliente.
+-- Accepts an incoming connection and returns a new socket and the client address.
 -- recv :: Socket → Int → IO ByteString
--- Recibe hasta N bytes del socket.
+-- Receives up to N bytes from the socket.
 -- send :: Socket → ByteString → IO Int
--- Envía datos por el socket; devuelve cuántos bytes se enviaron.
+-- Sends data through the socket and returns the number of bytes sent.
 ---

@@ -1,6 +1,6 @@
 ### Figures
 
-Tener un tipo figura centralizado viene bien para unificar todo el tema del renderizado.
+A centralized figure type helps unify rendering.
 
 ```
 Figure : Type = (
@@ -11,7 +11,7 @@ Figure : Type = (
 Layout :: Tree<LayoutElement>
 ```
 
-Explorar esto un poco
+Explore this further.
 
 
 
@@ -19,10 +19,10 @@ Explorar esto un poco
 
 Like matplotlib, but cleaner and easier to use.
 
-Tiene que poder renderizarse a:
+It should be possible to render to:
 
-- Interfaz nativa (algo como tkinter, raylib...)  (con capacidad interactiva)
-- Web (con capacidad interactiva)
+- Native interface (such as tkinter or raylib), with interactivity.
+- Web, with interactivity.
 - SVG
 - PNG, JPG, etc.
 - Terminal
@@ -30,9 +30,9 @@ Tiene que poder renderizarse a:
 	https://en.wikipedia.org/wiki/Block_Elements
 	http://gnuplot.info/docs/loc19448.html
 
-Es importante que la interfaz permita hacer gráficos interactivos.
+The interface should support interactive plots.
 
-Un plot en la terminal podría ser algo así:
+A terminal plot could look like this:
 
 ```
 my_series :: Series = [
@@ -52,7 +52,7 @@ plot|render(..terminal)|show
 
 ```
 
-Más cosas:
+Additional options:
 
 ```
 plot :: Plot = [
@@ -103,4 +103,3 @@ plot :: Plot = [
     .background_color = "white",
 ]
 ```
-

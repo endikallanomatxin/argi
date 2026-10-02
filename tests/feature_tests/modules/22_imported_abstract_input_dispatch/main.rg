@@ -1,5 +1,6 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
-    dep := #import("./dep")
+main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    dep := import("./dep")
 
-    status_code = dep.load(.allocator = system.allocator).status_code
+    status_code = dep.load(.allocator = $&allocator_storage).status_code
 }

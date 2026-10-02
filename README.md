@@ -12,24 +12,28 @@ It’s an early work-in-progress.
 ## Highlights
 
 - 🧩 Consistency and simplicity.
-- 🧮 Manual but very ergonomic memory management.
+- 🧮 Explicit memory allocation strategies through dependency injection.
+- 🛡️ Automatic deterministic cleanup and temporal memory safety, with
+  compile-time checks for value validity and reference lifetimes across moves,
+  cleanup, and storage reuse.
 - 🎯 Explicitness without annoyance:
-  - ⚠️ Side-effects are always explicit.
+  - ⚠️ Application-visible side effects are designed to be explicit.
   - 🔐 Capability-based design for resource management.
-  - 🪶 `reach` feature for reducing function signature clutter while
-  maintaining explicitness.
+  - 🪶 `assume` for lexical implicit arguments and `reach` for propagating
+    dependencies through intermediate calls.
 - 🚫 No objects or inheritance.
 - 🔀 Polymorphism through:
   - 🎛️ Multiple dispatch
-  - ⚙️ Compile time parameters (rust's generics style)
-  - 📜 Abstract types that are monomorphisized at compile time (rust's traits
-  style)
+  - ⚙️ Compile-time parameters (Rust's generics style)
+  - 📜 Abstract types specialized at compile time (Rust's traits style)
   - 🎭 Virtual types for runtime dynamic dispatch.
-- ❓ Errable and Nullable types.
-- 📚 Batteries included. Two official module libraries: Minimalist `core` and
-maximalist `more`.
-- 🛠️ Tooling for building, testing, scaffolding, LSP, and a planned formatter
-  (not in 0.1 yet).
+- ❓ Errable and Nullable types, with nominal error reasons, reason-set
+  inference, and explicit propagation with optional trace context.
+- 📚 Two official module libraries: foundational `core` and domain-oriented
+  `more`. Some modules remain design sketches; consult their implementations
+  for supported APIs.
+- 🛠️ Tooling for building, exhaustive checking, testing, scaffolding, and LSP.
+  Source formatting remains planned.
 
 
 ## Repository structure
@@ -44,191 +48,93 @@ are in [`more/`](more/).
 
 ## Usage
 
-### Building
-
-Build the natural target for the current module directory:
-
-```bash
-argi build
-```
-
-Build a specific module directory:
-
-```bash
-argi build <root_dir>
-```
-
-If the directory contains `argi.toml`, the tool uses its package configuration.
-Executable packages declare build targets with `[executables.*]`:
-
-```toml
-[executables.hello]
-path = "source/entrypoints/hello"
-
-[run]
-default = "hello"
-```
-
-The default output for package executables is:
-
-```text
-build/debug/<executable-name>
-```
-
-Run the default executable with:
-
-```bash
-argi run
-```
-
-### LSP
-
-Start the language server:
-
-```sh
-argi lsp
-```
-
-### Scaffolding
-
-Create an executable package:
+Create and run a program:
 
 ```sh
 argi init hello
 cd hello
-argi build
 argi run
 ```
 
-Create a library/importable package with no executables:
-
-```sh
-argi init --lib math_utils
-```
-
-
-## Installation
-
-### Platform support
-
-Argi 0.1 is primarily tested on Linux and macOS.
-
-Windows is not an official 0.1 target yet.
-
-Building the compiler requires Zig 0.16.x and LLVM development files. The build
-script looks for `llvm-config`, or you can set:
-
-- `LLVM_INCLUDE_DIR`
-- `LLVM_LIB_DIR`
-- `LLVM_LIBS`
-
-Building Argi programs also requires a C compiler/linker. By default Argi uses
-`cc`. Set `CC=/path/to/compiler` to override it.
-
-### Prerequisites
-
-The build script needs to know where LLVM is installed. In restricted
-environments, set the environment variables above instead of relying on
-`llvm-config`.
-
-
-### Compilation
-
-To build the tool in the repository-local `zig-out/` prefix:
-
-```sh
-zig build
-```
-
-That creates:
-
-```text
-zig-out/
-├── bin/
-│   └── argi
-└── lib/
-    └── argi/
-        └── core/
-```
-
-For a normal user installation, install into a prefix such as `~/.local`:
-
-```sh
-zig build -p ~/.local
-```
-
-That installs:
-
-```text
-~/.local/
-├── bin/
-│   └── argi
-└── lib/
-    └── argi/
-        └── core/
-```
-
-Make sure `~/.local/bin` is in your `PATH`:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-The compiler resolves the required `core` library from the installation prefix,
-so symlinking only the binary is not the recommended installation path.
-`ARGI_SYSROOT=/path/to/prefix` and `--sysroot /path/to/prefix` are available as
-development/debugging overrides when you need to point the compiler at a
-specific Argi installation prefix.
-
-
-Also, for recompiling and using the tool directly, you can run:
-
-```bash
-zig build run -- <arguments>
-```
-
-
-## Testing
-
-Argi has native language-level tests.
-
-Use:
-
-```bash
-./zig-out/bin/argi test tests/some_module
-```
-
-Generated test binaries and other transient testing artifacts live under the
-project-local `.argi-cache/` directory. Package executable outputs live under
-`build/debug/`. Explicit module-directory builds keep their legacy default
-`build/output` path for now, or use the path given with `--output`.
-
-Tests are declared explicitly in source:
+`argi init` without a name initializes the current directory; `argi init --lib`
+creates a library. Existing files are preserved. The generated entrypoint
+sets up allocator, error tracing, and I/O capabilities:
 
 ```rg
-test my_test(.system: System = System()) -> !() := {
-    testing.expect(true)!
+main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume error_tracer ::= FixedSizeErrorTracer(
+        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
+    ) | to_virtual#(ErrorTracer)($&_) | $&_
+    assume writer ::= $&BufferedWriter#(.base_type: File)(
+        .base = $&system.terminal&.stdout,
+        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
+    )
+    assume reader ::= $&system.terminal&.stdin
 }
 ```
 
-Normal builds ignore `test` declarations:
+| Command | Purpose |
+| --- | --- |
+| `argi build [dir]` | Compile the current package or a selected module. |
+| `argi run` | Compile and run the default executable. |
+| `argi check [dir]` | Check all function bodies, including unreachable ones. |
+| `argi test [dir]` | Run language-level tests. |
+| `argi lsp` | Start the language server. |
 
-```bash
-./zig-out/bin/argi build tests/some_module
+Use `--release` with `build` or `run` for optimized executables. See `argi help`
+for target selection, output paths, and LLVM/object emission options.
+
+Packages declare executables in `argi.toml`; outputs go to
+`build/debug/<name>`, including when selecting a declared entry module directly.
+Standalone modules use `build/output`; test artifacts use `.argi-cache/`.
+See [package configuration](description/02_modules.md) and
+[language-level testing](description/72_testing.md).
+
+The LSP provides diagnostics, semantic highlighting, hover, completion, and
+navigation to definitions.
+
+## Installation
+
+### Binary packages
+
+Download your platform's archive and `SHA256SUMS` from the
+[latest release](https://github.com/endikallanomatxin/argi/releases/latest).
+Linux x86_64/ARM64 and macOS Intel/Apple Silicon packages include the compiler,
+core, and LLVM runtime. Extract the package and add its `bin` directory to
+`PATH`, keeping `bin` and `lib` together.
+
+You need a system C compiler/linker to build Argi programs, but no Zig or
+separate LLVM installation. See the
+[binary installation guide](.github/scripts/binary_installation.md) for supported
+OS versions, checksum verification, and platform setup. Windows support is
+planned.
+
+### From source
+
+Building the compiler requires Zig 0.16.x and LLVM 21 development files:
+
+```sh
+zig build                    # local installation in zig-out/
+zig build -p ~/.local        # user installation, including core
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Compiler regression tests for Argi itself still run through Zig:
+LLVM is located through `llvm-config-21` or `llvm-config`; override paths with
+`LLVM_INCLUDE_DIR`, `LLVM_LIB_DIR`, and `LLVM_LIBS` when needed. Argi uses `cc`
+to link programs; set `CC` to select another compiler. `--sysroot` or
+`ARGI_SYSROOT` can select another Argi installation prefix.
 
-```bash
+## Compiler tests
+
+Run the compiler's regression suite with:
+
+```sh
 zig build test --summary all
 ```
 
-
 ## Release status
 
-Argi is currently in the `0.1.x` experimental release series.
-
-The language, compiler API, standard library layout, runtime model and tooling
-are not stable yet. Breaking changes are expected.
-
-See [releases/0.1.0.md](releases/0.1.0.md) for the current release notes.
+The latest experimental release is [0.2.0](releases/0.2.0.md).
+`main` and annotated version tags contain published releases; `develop`
+contains work for the next release. Breaking changes are expected.

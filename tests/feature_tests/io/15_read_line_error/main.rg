@@ -8,11 +8,15 @@ read_byte(.self: $&DummyInput) -> (.result: Errable#(.t: ReadByte, .reasons: (..
 
 DummyInput implements Reader
 
-main(.system: System = System()) -> (.status_code: Int32) := {
-    stdin :: DummyInput = (
+main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
+
+    stdin_storage :: DummyInput = (
         .failed = false
     )
-    result ::= read_line(.allocator = system.allocator, .stdin = $&stdin)
+    assume reader ::= $&stdin_storage
+    result ::= read_line(.allocator = $&allocator_storage, .reader = $&stdin_storage)
 
     if is(.value = result, .variant = ..error) {
     } else {

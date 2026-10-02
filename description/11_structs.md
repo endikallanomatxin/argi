@@ -1,187 +1,148 @@
 # Structs
 
-This declares a new struct type:
-
-```
-Pokemon : Type = (
-	.ID   : Int64  = 0    -- It allows default values
-	.Name : String = ""
-)
-```
-
-
-This declares a new anonymous struct:
-
-```
-data : (
-	.ID   : Int64    -- Struct type literal
-	.Name : String
-) = (
-	.ID = 0          -- Struct value literal
-	.Name = ""
-)
-```
-
-Structs' types are structural only when anonymous.
-
-> [!IDEA] Default fields could be filled in the call site.
-> This helps by reducing the need to dive into the function calls to see what
-> inputs are being overridden.
-
-## Protected fields
-
-Es importante proteger algunos campos para conseguir una mejor encapsulación.
-
-Los campos que empiecen por _ serán privados y no podrán ser accedidos desde
-fuera del package.
-
-Por ejemplo:
-
-```
-MyStruct : Type = (
-	._x :: Int = 0
-)
-
-get_x(s: MyStruct) := Int {
-	return s._x
-}
-
-set_x(s: MyStruct, x: Int) {
-	s._x = x
-}
-```
-
-También puede ser útil para garantizar que un struct se inicializa correctamente.
-
-```
-MyStruct : Type = (
-	._x :: Int = 0
-	._y :: Int = 0
-	._z :: Int = 0
-)
-
-init (ms: $&MyStruct, x: Int, y: Int, z: Int) -> () := {
-	return MyStruct(x, y, z)
-}
-```
-
-We use dynamic dispatch by return type to create the initializer.
-
-```
-my_var := MyType(1, 2, 3)
-```
-
-Esto realmente es:
-
-```
-my_var : MyType
-init($&my_var, 1, 2, 3)
-```
-
-y queda muy limpio.
-
-
-> [!IDEA] Struct field types
-> Cuando tienes una app web en go por ejemplo, tienes structs para tus models que tienen un montón de campos que más adelante no vas a usar siempre al completo.
-> A veces aunque solo tengas que usar el campo del ID pasas el struct entero para al menos mantener la semántica.
-> Igual se podría hacer que cuando se define un struct también se definen tipos nuevos.
-> 
-> Por ejemplo:
->
->	```
->	User := (
->		ID    :: Int64
->		Name  :: String
->	)
->	userIDs : List(User.ID)  -- En lugar de Users, o simplemente Int64
->	```
->
-> Con esto ganamos la información semántica de a qué corresponde lo que estamos usando, sin pagar el precio de pasar todo el struct.
-
-
-## Memory layout
-
-You can specify:
-- **alignment**: How the struct is aligned in memory.
-- **listing_behavior**: How the fields are listed in memory (AOS or SOA).
-
-
-```
-MyStruct : Type = struct(
-    alignment: ..RespectOrder
-    listing_behavior: ..SOA
-)(
-	.a : u8
-	.b : u32
-	.c : u16
-)
-```
-
-AOS and SOA, are inspected when creating lists (taken care of in the core library).
-
-```
-StructListingBehaviour : Type = (
-    =..AOS
-    -- Array of Structures (AOS) layout.
-    -- Each element is a structure, and fields are stored together.
-
-    ..SOA
-    -- Structure of Arrays (SOA) layout.
-    -- Each field is stored in a separate array, optimizing memory access patterns.
-)
-```
-
-Struct layout is something that the compiler takes care of.
+A named struct declares a distinct type with named fields:
 
 ```rg
-StructLayout : Type = (
-    =..Optimal
-    -- Compiler optimizes for minimal padding.
+Coordinates : Type = (
+    .x: Int32
+    .y: Int32 = 0
+)
 
-    ..RespectOrder
-    -- Respects the order of fields as declared.
+coordinates :: Coordinates = (.x = 20)
+```
 
-    ..Packed
-    -- Minimizes size by removing padding (may penalize performance). Useful for communication.
+`coordinates.y` receives its declared default. Fields without defaults must be
+initialized before the value is used. Field access uses `value.field`; the
+same notation selects a field through a reference after dereferencing it.
 
-    ..Aligned(n)
-    -- Aligns the struct to the specified boundary (n bytes).
+Named types are nominal: two separately declared structs do not become the
+same type merely because their fields match. An unnamed struct type can be
+written directly in a declaration:
 
-    ..Custom(offsets: List(Int), size: Int)
-    -- Custom layout with specified offsets and size.
-
-    ..C
-    -- Follows the C standard layout (ABI compatibility). Respects the order of
-    -- field declaration in structures and applies padding only to meet alignment
-    -- requirements.
+```rg
+position : (
+    .x: Int32
+    .y: Int32
+) = (
+    .x = 20
+    .y = 22
 )
 ```
 
-Herramientas para inspeccionar layout:
+Unnamed struct types use their field structure for type identity. Struct
+value literals provide fields by name; constructors may also accept
+positional arguments when their order is unambiguous.
 
-```
-inspect_layout MyStruct
+A constant struct binding cannot be reassigned, have its fields changed, or
+be borrowed through `$&`. Reading its fields and taking `&` references
+remain possible.
+
+## Field visibility
+
+A field whose name begins with `_` is private to the module that declares
+the struct. Files in that directory share the module and may access it;
+another module in the same package may not.
+
+```rg
+Counter : Type = (
+    ._value: Int32
+)
+
+read(.counter: &Counter) -> (.value: Int32) := {
+    value = counter&._value
+}
 ```
 
-```
-Layout of MyStruct:
-Field    Offset    Size    Alignment
-a        0         1       1
-b        4         4       4
-c        8         2       2
-Total size: 12 bytes (4 bytes of padding)
-```
-igual incluso un dibujito
-```
-A...BBBBCC..
-```
-que se podría poner debajo de la declaración en el editor.
+Private fields let a module expose operations while controlling how values
+are constructed and changed outside that module.
 
+## Construction
 
-El lenguaje debe proporcionar funciones estándar para interactuar con el layout en tiempo de ejecución:
-- **`align_of`**: Devuelve la alineación de un tipo.
-- **`size_of`**: Devuelve el tamaño de un tipo.
-- **`offset_of`**: Devuelve el offset de un campo en una estructura.
+A type may define `init` with a mutable destination and explicit inputs:
 
-`size_of` y `align_of` deberían devolver `UIntNative`.
+```rg
+Point : Type = (
+    .x: Int32
+    .y: Int32
+)
 
+init(.p: $&Point, .x: Int32, .y: Int32) -> () := {
+    p& = (.x = x, .y = y)
+}
+
+point := Point(.x = 20, .y = 22)
+```
+
+`Point(...)` selects a visible initializer for `Point`; the destination type
+is already known from the constructor name. Selection is based on the input
+types, not on a function's output type. An initializer must leave a complete
+value on success. When a visible `init` exists, callers construct through
+that operation rather than bypassing it with a field initializer.
+
+An initializer that can fail returns one `Errable#(.t: Void, .reasons: R)`.
+Then `Point(...)` returns `Errable#(.t: Point, .reasons: R)`, and `..ok`
+contains the constructed point. The initializer must leave its destination
+complete on success and empty on error.
+
+## Structs and behavior
+
+Argi has no object-owned methods or implicit receiver. A struct holds state;
+ordinary functions operate on it through explicit inputs. For example:
+
+```rg
+move_x(.point: $&Point, .delta: Int32) -> () := {
+    point&.x = point&.x + delta
+}
+
+{
+    point :: Point = Point(20, 22)
+    point | move_x($&_, 3)
+}
+```
+
+## Layout
+
+`size_of(.type = T)` and `alignment_of(.type = T)` return `UIntNative`
+values. Ordinary struct layout is chosen by the compiler; code must not
+assume field offsets from declaration order. C interoperation also provides
+`CUnion`, whose fields share storage.
+
+> [!IDEA]
+> **Explicit struct layout.** A declaration could choose its layout while the
+> ordinary default remains compiler-selected. For example, this is proposed
+> syntax, not an available constructor:
+>
+> ```rg
+> Packet : Type = struct(.layout = ..C)(
+>     .tag: UInt8
+>     .length: UInt32
+> )
+> ```
+>
+> Possible layout choices include `..Optimal` for compiler-selected padding,
+> `..RespectOrder` for declaration order, `..Packed`, `..Aligned(n)`, `..C`
+> for C ABI layout, and a more advanced `..Custom` with explicit offsets and
+> size. The exact syntax and guarantees still need design. An `offset_of`
+> query and an editor view of field offsets would make the chosen layout
+> inspectable alongside `size_of` and `alignment_of`.
+
+> [!IDEA]
+> **Field-specific types.** A field such as `User.ID` could also name a distinct
+> type with the representation of `Int64`. Code handling a collection of user
+> identifiers could then accept `User.ID` values without passing whole `User`
+> structs or treating arbitrary integers as identifiers. For example, a
+> proposed declaration could use `ids: List#(.t: User.ID)`. Whether the field
+> declaration itself creates that type, and which conversions it permits,
+> remain open.
+
+> [!IDEA]
+> **Structural delegation.** A wrapper could explicitly expose selected
+> operations of one field, for example `expose .buffer`, instead of writing
+> forwarding functions for every operation. This would need rules for name
+> conflicts and for which operations become visible.
+
+> [!IDEA]
+> Dot access could extend to structural indices, such as `array.3`, alongside
+> `value.field`. Dynamic collections could still use their explicit `get` and
+> `set` operations. The boundary between field access and indexing needs a
+> separate design.

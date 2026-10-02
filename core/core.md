@@ -1,74 +1,36 @@
-## Standard library
+# Core library
 
-En general, copiemos la de zig, y si algo no está, copiemos la de go.
+`core/` supplies the bundled library used by Argi programs. Building the
+compiler installs it under `zig-out/lib/argi/core`; rebuild after editing core
+before running the installed compiler manually.
 
+The implemented foundations include:
 
-From Zig, not incorporated:
-	Build
-	DynLib
-	Options
-	Progress
-	Random
-	RingBuffer
-	SemanticVersion
-	Target
-	Thread
-	Treap
-	Tz
-	builtin
-	log
-	debug
-		dwarf
-		pdb
-	macho
-	meta  -- Type introspection related
-	start
-	valgrind  -- Memory management issue detector
-	zig  -- Zig compiler source itself (not meant for use from the language)
-	     -- Igual podríamos hacer que sí estuviera pensado para ser usando desde build.rg
+- Memory: raw storage, allocations, temporal dependencies, opaque ownership,
+  and allocator composition.
+- Collections and text: arrays, array views, dynamic arrays, strings, and
+  named collection operations.
+- System and I/O: program capabilities, files, filesystem operations, terminal
+  streams, and reader/writer contracts.
+- Errors: nominal reasons, `Errable`, explicit propagation, and tracing policies.
+- Interoperability: explicit foreign-function capability and libc declarations.
 
-CHATGPT not incorporated:
+A directory's presence does not imply that its module is complete. Consult
+its `.rg` implementation and registered feature tests for the supported
+operations. Language contracts belong in `description/`; planned library
+extensions and implementation milestones belong in the
+[0.3 library checklist](../plan/0.3.md#core-library) and
+[0.4 candidates](../plan/0.4.md#core-library).
+Exploratory possibilities that are not scheduled remain in
+[the library ideas inventory](library_ideas.txt), alongside existing module
+sketches.
 
- ├── os/
- │    ├── env
- │    ├── process
- │    ├── signals
- │    ├── fs
- │    └── ...
- ├── concurrency/
- │    ├── thread
- │    ├── sync
- │    ├── channel
- │    ├── atomic
- │    └── ...
- ├── reflect/  (si tu lenguaje tiene introspección/reflexión)
- ├── debug/    (profilers, asserts ampliados, dumps, etc.)
- └── build/    (si tienes un “build script” estilo Zig/Go)
+Core trusted operations form an explicit compiler boundary. Their contracts
+must preserve the distinction between owned bytes, initialized values,
+physical ranges, and temporal validity. Names alone do not grant trust:
+recognition requires the bundled source identity and matching declaration.
+See [the safety model](../description/34_safety_model.md).
 
-
-From Go std, not incorporated:
-
-- context  -- For managing timeouts and cancellation signals in async operations
-
-- debug
-
-	- buildinfo
-	- dwarf
-	- elf
-	- gosym
-	- macho
-	- pe
-	- plan9obj
-
-- expvar
-
-- flag -- Command-line flag parsing
-
-- go (the compiler and runtime)
-    - ast
-	- ...
-
-- unique
-- unsafe
-- weak
-
+Other language libraries can inform API choices, but Argi's capability,
+ownership, and error contracts determine the design. Reference checkouts
+are inspiration; do not copy their implementations or documentation.

@@ -1,4 +1,7 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
+
     map ::= StringHashMap#(.value: Int32)(.capacity = 1)
 
     put#(.value: Int32)(.self = $&map, .key = "alpha", .value = 1)

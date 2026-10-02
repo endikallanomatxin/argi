@@ -1,4 +1,7 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
+
     missing_path ::= from_literal(.data = "tests/feature_tests/system/26_file_system_error_reasons/build/missing.txt")
     renamed_path ::= from_literal(.data = "tests/feature_tests/system/26_file_system_error_reasons/build/renamed.txt")
 

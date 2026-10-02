@@ -3,5 +3,4 @@ FixedPoint<i: Type Int, f: Int> : Type = (
     -- For representing money, for example.
 )
 
--- TODO: Pensar en como restringir el tipo de i para que cumpla con Int
-
+-- TODO: Consider how to constrain the type of `i` to satisfy `Int`.

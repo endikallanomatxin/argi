@@ -128,6 +128,16 @@ const LanguageServer = struct {
                     log.err("semanticTokens/range failed: {s}", .{@errorName(err)});
                     self.respondInternalErrorOrLog(&writer, id, "semantic tokens failed");
                 };
+            } else if (std.mem.eql(u8, method, "textDocument/inlayHint")) {
+                if (id_value) |id| self.handleInlayHints(&writer, id, params_value) catch |err| {
+                    log.err("inlay hints failed: {s}", .{@errorName(err)});
+                    self.respondInternalErrorOrLog(&writer, id, "inlay hints failed");
+                };
+            } else if (std.mem.eql(u8, method, "textDocument/completion")) {
+                if (id_value) |id| self.handle_completion(&writer, id, params_value) catch |err| {
+                    log.err("completion failed: {s}", .{@errorName(err)});
+                    self.respondInternalErrorOrLog(&writer, id, "completion failed");
+                };
             } else if (std.mem.eql(u8, method, "textDocument/hover")) {
                 if (id_value) |id| self.handleHover(&writer, id, params_value) catch |err| {
                     log.err("hover failed: {s}", .{@errorName(err)});
@@ -154,7 +164,7 @@ const LanguageServer = struct {
                     self.respondInternalErrorOrLog(&writer, id, "rename failed");
                 };
             } else {
-                // Método desconocido -> ignorar
+                // Ignore unknown methods.
             }
         }
     }
@@ -338,30 +348,27 @@ const LanguageServer = struct {
         try stream.beginObject();
         try stream.objectField("tokenTypes");
         try stream.beginArray();
-        // usa los que vayas a producir ya en el MVP:
-        try stream.write("namespace");
-        try stream.write("type");
-        try stream.write("function");
-        try stream.write("method");
-        try stream.write("variable");
-        try stream.write("property");
-        try stream.write("keyword");
-        try stream.write("number");
-        try stream.write("string");
-        try stream.write("comment");
-        try stream.write("operator");
+        for (service.semantic_token_types) |name| try stream.write(name);
         try stream.endArray();
         try stream.objectField("tokenModifiers");
         try stream.beginArray();
-        try stream.write("declaration"); // opcional, ya
-        try stream.write("readonly"); // opcional
+        for (service.semantic_token_modifiers) |name| try stream.write(name);
         try stream.endArray();
         try stream.endObject();
 
         // soporte
         try stream.objectField("full");
-        try stream.write(true); // MVP: full, sin delta
+        try stream.write(true); // MVP: full, without deltas.
         try stream.objectField("range");
+        try stream.write(false);
+        try stream.endObject();
+        try stream.objectField("inlayHintProvider");
+        try stream.write(true);
+        try stream.objectField("completionProvider");
+        try stream.beginObject();
+        try stream.objectField("triggerCharacters");
+        try stream.write([_][]const u8{"."});
+        try stream.objectField("resolveProvider");
         try stream.write(false);
         try stream.endObject();
         try stream.objectField("hoverProvider");
@@ -542,8 +549,8 @@ const LanguageServer = struct {
         const uri_value = getField(&text_document_value.object, "uri") orelse return;
         if (uri_value != .string) return;
 
-        // La spec manda un "range" aquí; por ahora lo ignoramos (MVP),
-        // pero lo parseamos para que no falle si viene.
+        // The spec requires a "range" here. For now, ignore it (MVP),
+        // but parse it so the request does not fail when it is present.
         _ = getField(&params.object, "range");
 
         if (self.service) |*svc| {
@@ -570,6 +577,91 @@ const LanguageServer = struct {
 
             try self.sendMessage(writer, payload.writer.buffered());
         }
+    }
+
+    fn handleInlayHints(self: *LanguageServer, writer: anytype, id_value: json.Value, params_value: ?json.Value) !void {
+        const params = params_value orelse return;
+        if (params != .object) return;
+        const document = getField(&params.object, "textDocument") orelse return;
+        if (document != .object) return;
+        const uri = getField(&document.object, "uri") orelse return;
+        if (uri != .string) return;
+        const range = if (getField(&params.object, "range")) |value| parseRange(value) else null;
+        if (self.service) |*svc| {
+            var hints = try svc.inlayHints(uri.string, range);
+            defer hints.deinit();
+            var payload = std.Io.Writer.Allocating.init(self.allocator);
+            defer payload.deinit();
+            var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
+            try stream.beginObject();
+            try stream.objectField("jsonrpc");
+            try stream.write("2.0");
+            try stream.objectField("id");
+            try stream.write(id_value);
+            try stream.objectField("result");
+            try stream.write(hints.items);
+            try stream.endObject();
+            try self.sendMessage(writer, payload.writer.buffered());
+        }
+    }
+
+    fn handle_completion(self: *LanguageServer, writer: anytype, id_value: json.Value, params_value: ?json.Value) !void {
+        const params = params_value orelse return self.respondNullResult(writer, id_value);
+        if (params != .object) return self.respondNullResult(writer, id_value);
+        const document = getField(&params.object, "textDocument") orelse return self.respondNullResult(writer, id_value);
+        if (document != .object) return self.respondNullResult(writer, id_value);
+        const uri = getField(&document.object, "uri") orelse return self.respondNullResult(writer, id_value);
+        const position_value = getField(&params.object, "position") orelse return self.respondNullResult(writer, id_value);
+        const position = parsePosition(position_value) orelse return self.respondNullResult(writer, id_value);
+        if (uri != .string) return self.respondNullResult(writer, id_value);
+        const svc = if (self.service) |*value| value else return self.respondNullResult(writer, id_value);
+        var result = svc.completions(uri.string, position) catch |err| switch (err) {
+            error.InvalidPosition, error.DocumentNotOpen => return self.respondNullResult(writer, id_value),
+            else => return err,
+        };
+        defer result.deinit();
+        var payload = std.Io.Writer.Allocating.init(self.allocator);
+        defer payload.deinit();
+        var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
+        try stream.beginObject();
+        try stream.objectField("jsonrpc");
+        try stream.write("2.0");
+        try stream.objectField("id");
+        try stream.write(id_value);
+        try stream.objectField("result");
+        try stream.beginObject();
+        try stream.objectField("isIncomplete");
+        try stream.write(false);
+        try stream.objectField("items");
+        try stream.beginArray();
+        const text = svc.document_text(uri.string) orelse return error.DocumentNotFound;
+        const line_start = std.mem.lastIndexOfScalar(u8, text[0..result.start], '\n');
+        const base = if (line_start) |index| index + 1 else 0;
+        const range = service.Range{
+            .start = .{ .line = position.line, .character = @intCast(result.start - base) },
+            .end = .{ .line = position.line, .character = @intCast(result.end - base) },
+        };
+        for (result.items) |item| {
+            try stream.beginObject();
+            try stream.objectField("label");
+            try stream.write(item.label);
+            try stream.objectField("kind");
+            try stream.write(@intFromEnum(item.kind));
+            try stream.objectField("detail");
+            try stream.write(item.detail);
+            try stream.objectField("textEdit");
+            try stream.beginObject();
+            try stream.objectField("range");
+            try writeRange(&stream, range);
+            try stream.objectField("newText");
+            try stream.write(item.insert_text);
+            try stream.endObject();
+            try stream.endObject();
+        }
+        try stream.endArray();
+        try stream.endObject();
+        try stream.endObject();
+        try self.sendMessage(writer, payload.writer.buffered());
     }
 
     fn handleHover(
@@ -1033,6 +1125,11 @@ test "initialize response is framed and flushed" {
     try std.testing.expect(response.value.object.get("result").? == .object);
     const capabilities = response.value.object.get("result").?.object.get("capabilities").?.object;
     try std.testing.expect(capabilities.get("hoverProvider").?.bool);
+    try std.testing.expect(capabilities.get("inlayHintProvider").?.bool);
+    const completion_provider = capabilities.get("completionProvider").?.object;
+    try std.testing.expect(!completion_provider.get("resolveProvider").?.bool);
+    try std.testing.expectEqualStrings(".", completion_provider.get("triggerCharacters").?.array.items[0].string);
+
     try std.testing.expect(capabilities.get("definitionProvider").?.bool);
 }
 
@@ -1068,6 +1165,7 @@ test "initialize response advertises hover definition references and rename" {
 
     const capabilities = root.get("result").?.object.get("capabilities").?.object;
     try std.testing.expect(capabilities.get("hoverProvider").?.bool);
+    try std.testing.expect(capabilities.get("inlayHintProvider").?.bool);
     try std.testing.expect(capabilities.get("definitionProvider").?.bool);
     try std.testing.expect(capabilities.get("referencesProvider").?.bool);
     try std.testing.expect(capabilities.get("prepareProvider") == null);
@@ -1075,6 +1173,15 @@ test "initialize response advertises hover definition references and rename" {
     const semantic_tokens = capabilities.get("semanticTokensProvider").?.object;
     try std.testing.expect(semantic_tokens.get("full").?.bool);
     try std.testing.expect(!semantic_tokens.get("range").?.bool);
+    const legend = semantic_tokens.get("legend").?.object;
+    const token_types = legend.get("tokenTypes").?.array.items;
+    try std.testing.expectEqual(service.semantic_token_types.len, token_types.len);
+    for (service.semantic_token_types, token_types) |expected, actual|
+        try std.testing.expectEqualStrings(expected, actual.string);
+    const modifiers = legend.get("tokenModifiers").?.array.items;
+    try std.testing.expectEqual(service.semantic_token_modifiers.len, modifiers.len);
+    for (service.semantic_token_modifiers, modifiers) |expected, actual|
+        try std.testing.expectEqualStrings(expected, actual.string);
 
     const rename_provider = capabilities.get("renameProvider").?.object;
     try std.testing.expect(rename_provider.get("prepareProvider").?.bool);
@@ -1474,4 +1581,47 @@ fn parsePosition(value: json.Value) ?service.Position {
         .line = @intCast(line_value.integer),
         .character = @intCast(char_value.integer),
     };
+}
+
+test "LSP completion response uses standard kinds and a full identifier text edit" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const code = "main(.system: System) -> (.status_code: Int32 = 0) := {\n    print(.value = \"hello\", .stdout = $&system.terminal&.stdout)\n}\n";
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try test_support.tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{path});
+    defer std.testing.allocator.free(uri);
+    var server = LanguageServer.init(std.testing.allocator, std.testing.io);
+    defer server.deinit();
+    server.service = service.LanguageService.init(std.testing.allocator, std.testing.io);
+    var diagnostics = try server.service.?.openDocument(uri, path, 1, code);
+    defer diagnostics.deinit();
+    const request = try std.fmt.allocPrint(std.testing.allocator,
+        \\{{"textDocument":{{"uri":"{s}"}},"position":{{"line":1,"character":7}}}}
+    , .{uri});
+    defer std.testing.allocator.free(request);
+    var params = try json.parseFromSlice(json.Value, std.testing.allocator, request, .{});
+    defer params.deinit();
+    var out: CapturedResponseWriter = undefined;
+    out.init(std.testing.allocator);
+    defer out.deinit();
+    try server.handle_completion(&out.writer, .{ .integer = 2 }, params.value);
+    var response = try json.parseFromSlice(json.Value, std.testing.allocator, try payloadFromLspMessage(out.writer.buffered()), .{});
+    defer response.deinit();
+    const result = response.value.object.get("result").?.object;
+    try std.testing.expect(!result.get("isIncomplete").?.bool);
+    var found = false;
+    for (result.get("items").?.array.items) |item| {
+        const object = item.object;
+        if (!std.mem.eql(u8, object.get("label").?.string, "print")) continue;
+        found = true;
+        try std.testing.expectEqual(@as(i64, 3), object.get("kind").?.integer);
+        const edit = object.get("textEdit").?.object;
+        try std.testing.expectEqualStrings("print", edit.get("newText").?.string);
+        const range = edit.get("range").?.object;
+        try std.testing.expectEqual(@as(i64, 4), range.get("start").?.object.get("character").?.integer);
+        try std.testing.expectEqual(@as(i64, 9), range.get("end").?.object.get("character").?.integer);
+    }
+    try std.testing.expect(found);
 }

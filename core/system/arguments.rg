@@ -45,8 +45,18 @@ argument_at(
     .index: UIntNative,
 ) -> (.text: &Char) := {
     addr ::= argument_pointer_address(.self = self, .index = index).address
-    ptr : &UIntNative = cast#(.to: &UIntNative)(.value = addr)
-    text = cast#(.to: &Char)(.value = ptr&)
+    raw ::= raw_pointer#(.t: UIntNative)(.address = addr)
+    ptr ::= trusted_establish_inherited_reference#(.t: UIntNative)(
+        .raw = raw,
+        .root = erase_reference#(.t: Arguments)(.base = self).reference,
+    ).reference
+    text_address ::= ptr&
+    text_raw ::= raw_pointer#(.t: Char)(.address = text_address)
+    inherited ::= trusted_establish_inherited_reference#(.t: Char)(
+        .raw = text_raw,
+        .root = erase_reference#(.t: Arguments)(.base = self).reference,
+    ).reference
+    text = read_reference#(.t: Char)(.base = inherited).reference
 }
 
 argument_view_at(
@@ -55,16 +65,20 @@ argument_view_at(
 ) -> (.view: StringView) := {
     text ::= argument_at(.self = self, .index = index)
     view = (
-        .data = cast#(.to: UIntNative)(.value = text),
+        .data = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,
         .length = strlen(.string = text).length,
     )
 }
 
-operator get[](
+get(
     .self: &Arguments,
     .index: UIntNative,
-) -> (.view: StringView) := {
-    view = argument_view_at(.self = self, .index = index)
+) -> (.result: Errable#(.t: StringView, .reasons: (..out_of_bounds))) := {
+    if index >= self&.count {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    result = ..ok argument_view_at(.self = self, .index = index)
 }
 
 to_iterator(
@@ -86,7 +100,7 @@ next(
     .self: $&ArgumentsIterator,
 ) -> (.value: StringView) := {
     current_index :: UIntNative = self&.index
-    value = self&.args[current_index]
+    value = argument_view_at(.self = self&.args, .index = current_index)
     self& = (
         .args = self&.args,
         .index = current_index + 1,

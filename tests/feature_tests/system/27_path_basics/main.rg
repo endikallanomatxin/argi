@@ -1,8 +1,11 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
-    full :: Path = Path(
-        .allocator = system.allocator,
+main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
+
+    full :: Path = unwrap_or_abort(.value = Path(
+        .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "/tmp/demo/file.txt"),
-    )
+    ))
 
     if is_absolute(.self = &full).ok {
     } else {
@@ -50,26 +53,26 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         }
     }
 
-    base :: Path = Path(
-        .allocator = system.allocator,
+    base :: Path = unwrap_or_abort(.value = Path(
+        .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "/tmp/demo"),
-    )
-    child :: Path = Path(
-        .allocator = system.allocator,
+    ))
+    child :: Path = unwrap_or_abort(.value = Path(
+        .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "child.txt"),
-    )
+    ))
 
-    joined_result ::= join(.left = &base, .right = &child, .allocator = system.allocator)
+    joined_result ::= join(.left = &base, .right = &child, .allocator = $&allocator_storage)
     match joined_result {
-        ..ok & payload {
-            joined ::= copy(.self = payload&, .allocator = system.allocator)
+        ..ok ~ payload {
+            joined ::= ~payload
             joined_view ::= as_view(.self = &joined)
             if joined_view == "/tmp/demo/child.txt" {
             } else {
                 status_code = 8
                 return
             }
-            deinit(.self = $&joined, .allocator = system.allocator)
+            deinit(.self = $&joined, .allocator = $&allocator_storage)
         }
         ..error _ {
             status_code = 9
@@ -77,8 +80,8 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         }
     }
 
-    deinit(.self = $&child, .allocator = system.allocator)
-    deinit(.self = $&base, .allocator = system.allocator)
-    deinit(.self = $&full, .allocator = system.allocator)
+    deinit(.self = $&child, .allocator = $&allocator_storage)
+    deinit(.self = $&base, .allocator = $&allocator_storage)
+    deinit(.self = $&full, .allocator = $&allocator_storage)
     status_code = 0
 }

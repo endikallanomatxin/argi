@@ -6,12 +6,13 @@ init(.payload: $&Payload) -> () := {}
 
 deinit(.payload: $&Payload) -> () := {}
 
-copy(.payload: Payload, .tag: Int32 = 1) -> (.out: Payload) := {
-    out = Payload(.value = payload.value)
+
+copy(.self: &Payload, .tag: Int32 = 1) -> (.value: Payload) := {
+    value = Payload(.value = self&.value)
 }
 
-copy(.payload: Payload, .flag: Bool = true) -> (.out: Payload) := {
-    out = Payload(.value = payload.value)
+copy(.self: &Payload, .flag: Bool = true) -> (.value: Payload) := {
+    value = Payload(.value = self&.value)
 }
 
 Result : Type = (

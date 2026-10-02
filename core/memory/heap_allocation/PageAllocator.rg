@@ -1,28 +1,15 @@
 PageAllocator : Type = (
-    --
-    -- Baseline page-sized allocator.
-    --
-    -- For 0.1 this keeps the public allocator shape simple by using libc to
-    -- obtain page-aligned, page-sized heap allocations. A future platform
-    -- layer can replace the internals with direct OS page mapping without
-    -- changing users of `Allocator`.
-    --
-    .page_size : UIntNative = 0
+    .memory: $&Memory
+    .page_size: UIntNative
 )
 
-page_allocator_page_size(
-    .self: $&PageAllocator,
-) -> (.size: UIntNative) := {
-    cached ::= self&.page_size
-    if cached == 0 {
-        detected ::= getpagesize().size
-        if detected == 0 {
-            detected = 4096
-        }
-        self&.page_size = detected
-        cached = detected
-    }
-    size = cached
+init(.p: $&PageAllocator, .memory: $&Memory) -> () := {
+    p&.memory = memory
+    p&.page_size = memory&._page_size
+}
+
+page_allocator_page_size(.self: $&PageAllocator) -> (.size: UIntNative) := {
+    size = self&.page_size
 }
 
 page_allocator_round_up(
@@ -43,31 +30,20 @@ page_allocator_round_up(
     }
 }
 
-init(
-    .p: $&PageAllocator,
-) -> () := {
-    p&.page_size = getpagesize().size
-    if p&.page_size == 0 {
-        p&.page_size = 4096
+allocate(.self: $&PageAllocator, .size: UIntNative, .alignment: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+    mapped ::= map_pages(.self = self&.memory, .size = size, .alignment = alignment)
+    match mapped {
+        ..error _ { result = ..error(.reason = ..out_of_memory) }
+        ..ok ~ payload {
+            allocation ::= ~payload
+            allocation.size = size
+            -- Page padding is not part of the range granted to the caller.
+            -- Memory rounds this extent back to pages during physical cleanup.
+            allocation._storage_size = size
+            allocation._release_size = size
+            result = ..ok ~allocation
+        }
     }
-}
-
-allocate(
-    .self: $&PageAllocator,
-    .size: UIntNative,
-) -> (.data: $&UInt8) := {
-    page_size ::= page_allocator_page_size(.self = self).size
-    aligned_size ::= page_allocator_round_up(.size = size, .alignment = page_size).rounded
-    raw ::= aligned_alloc(.alignment = page_size, .size = aligned_size)
-    data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = raw))
-}
-
-deallocate(
-    .self: $&PageAllocator,
-    .data: $&UInt8,
-    .size: UIntNative,
-) -> () := {
-    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = data)))
 }
 
 PageAllocator implements Allocator

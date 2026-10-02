@@ -14,13 +14,13 @@ init(.t: Type = FileLogger, .file: $&Writer) -> (.out: FileLogger) := {
 }
 
 StdLogger : Type = (
-    .stdout: $&Writer
-    .stderr: $&Writer
+    .writer: $&Writer
+    .error_writer: $&Writer
 )
 
-init(.t: Type = StdLogger, .stdout: $&Writer, .stderr: $&Writer) -> (.out: StdLogger) := {
-    -- TODO: Pensar como eso se puede declarar usando la sintaxis cómoda de init.
-    return StdLogger(.stdout = stdout, .stderr = stderr)
+init(.t: Type = StdLogger, .writer: $&Writer, .error_writer: $&Writer) -> (.out: StdLogger) := {
+    -- TODO: Consider how to declare this with the convenient init syntax.
+    return StdLogger(.writer = writer, .error_writer = error_writer)
 }
 
 LoggerMultiplexer : Type = (

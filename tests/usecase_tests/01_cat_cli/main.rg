@@ -1,7 +1,11 @@
-main(.system: System = System()) -> (.status_code: Int32 = 0) := {
+main(.system: System) -> (.status_code: Int32 = 0) := {
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
+    assume writer ::= $&system.terminal&.stdout
+
     argc ::= system.args | length(&_)
     if argc >= 2 {
-        first_arg := system.args[1]
+        first_arg := argument_view_at(.self = system.args, .index = 1)
         if first_arg == "-h" or first_arg == "--help" {
             print(.value = "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help.\n")
             return
@@ -15,17 +19,17 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
 
     i :: UIntNative = 1
     while i < argc {
-        path := system.args[i]
+        path := argument_at(.self = system.args, .index = i)
         text_result ::= read_file(system.file_sys, path)
         match text_result {
-            ..ok payload {
-                text ::= payload
+            ..ok ~ payload {
+                text ::= ~payload
                 view ::= as_view(.self = &text)
                 print(.value = view)
                 i = i + 1
             }
-            ..error & err {
-                match err&.reason {
+            ..error ~ err {
+                match err.reason {
                     ..path_open_failed {
                         print(.value = "cat: failed to open file\n")
                     }

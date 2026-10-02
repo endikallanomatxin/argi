@@ -2,16 +2,19 @@ Payload : Type = (
     .value: Int32,
 )
 
-init(.payload: $&Payload) -> () := {}
+init(.payload: $&Payload, .value: Int32) -> () := {
+    payload& = (.value = value)
+}
 
 deinit(.payload: $&Payload) -> () := {}
 
-copy(.payload: Payload, .tag: Int32 = 1) -> (.out: Payload) := {
-    out = Payload(.value = payload.value)
+
+copy(.self: &Payload, .tag: Int32 = 1) -> (.value: Payload) := {
+    value = Payload(.value = self&.value)
 }
 
-copy(.payload: Payload, .flag: Bool = true) -> (.out: Payload) := {
-    out = Payload(.value = payload.value)
+copy(.self: &Payload, .flag: Bool = true) -> (.value: Payload) := {
+    value = Payload(.value = self&.value)
 }
 
 Result : Type = (

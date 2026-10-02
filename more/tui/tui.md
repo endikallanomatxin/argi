@@ -3,9 +3,9 @@
 - UI
 
 log:
-- print debe permitir indentación
+- `print` should support indentation.
 - warnings
-- texto con estilo
+- styled text
 
 #### TUI
 
@@ -77,7 +77,7 @@ b. Unicode Box-Drawing Characters
 Using Unicode offers a more polished look with smoother lines and rounded corners:
 
 css
-Copiar
+Copy
 ╭──────────────╮
 │ Panel Title  │
 ├──────────────┤
@@ -95,7 +95,7 @@ Titles:
 ╰──────────────────────╯
 ```
 
-Python rich hace  con argumentos. Algo así quedaría:
+Python Rich uses arguments. It could look like this:
 
 ```
 my_panel :: Panel(
@@ -108,26 +108,24 @@ my_panel :: Panel(
 my_panel|print
 ```
 
-Rust TUI-RS y Go Tview usan algo más parecido a un builder pattern.
-Igual es simplemente porque no tienen default arguments.
+Rust TUI-RS and Go Tview use something closer to a builder pattern.
+Perhaps this is simply because they do not have default arguments.
 
 
-Pensar también en como hacer una table.
+Also consider how to make a table.
 Syntax highlighting.
 Logging
 Progress bars
 Trees
 Markdown rendering.
 
-Modos: podría haber como: stagedTUI, o singlepageTUI
+Modes could include `stagedTUI` or `singlepageTUI`.
 
 TRACEBACKS de errores.
-Desarrollar la librería para que esto se haga bien bonito. Y así ya tenemos la librería en sí. Intentar poner todo lo posible en la librería de TUI.
-(tracebacks como se ven en python's rich, están muy bien, que te imprima las variables locales disponibles está super bien.)
+Develop the library so this works well, and put as much functionality as possible in the TUI library.
+(Tracebacks in Python Rich look great; printing available local variables is especially useful.)
 
-Echarle un ojo a textual, para python, lleva el concepto de TUI un poco más allá
+Take a look at Textual for Python; it pushes the TUI concept further.
 
 >[!QUOTE]  Primeagen
 >I love rust for cli tools.
-
-

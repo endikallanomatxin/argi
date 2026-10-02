@@ -1,6 +1,6 @@
 ### Machine learning
 
-Tiene que poder trackear el grafo de operaciones y diferenciar.
+It must be possible to track and distinguish the operation graph.
 
 Inspirarse en JAX, pytorch
 
@@ -62,4 +62,4 @@ deltas ::= loss|backward()
 deltas.apply_gradients(0.01)
 ```
 
-O algo así.
+Or something like that.

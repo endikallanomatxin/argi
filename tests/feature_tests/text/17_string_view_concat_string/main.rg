@@ -1,12 +1,15 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
-    left :: String = String(.allocator = system.allocator, .length = 5)
+main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
+
+    left :: String = unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .length = 5))
     bytes_set(.string = $&left, .index = 0, .value = 104)
     bytes_set(.string = $&left, .index = 1, .value = 101)
     bytes_set(.string = $&left, .index = 2, .value = 108)
     bytes_set(.string = $&left, .index = 3, .value = 108)
     bytes_set(.string = $&left, .index = 4, .value = 111)
 
-    right :: String = String(.allocator = system.allocator, .length = 6)
+    right :: String = unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .length = 6))
     bytes_set(.string = $&right, .index = 0, .value = 32)
     bytes_set(.string = $&right, .index = 1, .value = 119)
     bytes_set(.string = $&right, .index = 2, .value = 111)
@@ -15,7 +18,10 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     bytes_set(.string = $&right, .index = 5, .value = 100)
 
     left_view ::= as_view(.self = &left)
-    combined :: String = &left_view + &right
+    combined_result ::= &left_view + &right
+    match combined_result {
+    ..error _ { status_code = 2 }
+    ..ok ~ combined {
 
     combined_view ::= as_view(.self = &combined)
 
@@ -23,5 +29,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         status_code = 0
     } else {
         status_code = 1
+    }
+    }
     }
 }

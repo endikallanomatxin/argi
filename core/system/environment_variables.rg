@@ -7,7 +7,7 @@ environment_variables_get_c_string(
     .key: &Char,
 ) -> (.value: ?StringView) := {
     raw_ptr ::= getenv(.name = key).value
-    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = raw_ptr)
+    raw_addr :: UIntNative = UIntNative(.value = raw_ptr)
 
     if raw_addr == 0 {
         value = ..none
@@ -15,7 +15,7 @@ environment_variables_get_c_string(
     }
 
     value = ..some(.value = (
-        .data = raw_addr,
+        .data = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = raw_ptr).reference,
         .length = strlen(.string = raw_ptr).length,
     ))
 }
@@ -23,40 +23,29 @@ environment_variables_get_c_string(
 get(
     .self: &EnvironmentVariables,
     .key: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.value: ?StringView) := {
-    c_key ::= as_c_string(.self = key, .allocator = allocator)
-    found ::= environment_variables_get_c_string(.key = c_key.text)
-    deinit(.self = $&c_key.storage, .allocator = allocator)
-    if found? {
-        payload ::= found..some
-        value = ..some(.value = payload.value)
-        return
-    }
+    .allocator: $&Allocator,
+) -> (.result: Errable#(.t: ?StringView, .reasons: (..out_of_memory))) := {
+    assume allocator
 
-    value = ..none
+    converted ::= as_c_string(.self = key, .allocator = allocator)
+    match converted {
+        ..error _ { result = ..error(.reason = ..out_of_memory) }
+        ..ok ~ c_key {
+            result = ..ok environment_variables_get_c_string(.key = c_key.text)
+        }
+    }
 }
 
 has(
     .self: &EnvironmentVariables,
     .key: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.ok: Bool) := {
+    .allocator: $&Allocator,
+) -> (.result: Errable#(.t: Bool, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     found ::= get(.self = self, .key = key, .allocator = allocator)
-    ok = found?
-}
-
-operator get[](
-    .self: &EnvironmentVariables,
-    .index: StringView,
-) -> (.value: ?StringView) := {
-    allocator :: CAllocator = CAllocator()
-    found ::= get(.self = self, .key = index, .allocator = $&allocator)
-    if found? {
-        payload ::= found..some
-        value = ..some(.value = payload.value)
-        return
+    match found {
+        ..ok payload { result = ..ok payload? }
+        ..error _ { result = ..error(.reason = ..out_of_memory) }
     }
-
-    value = ..none
 }

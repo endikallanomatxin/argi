@@ -1,14 +1,12 @@
 # Errors
 
-Dirección aceptada:
-- Propagación y ergonomía en la línea de Zig.
-- Contexto y traza humana acumulable al propagar, en la línea de `anyhow`.
-- La identidad del error ya no es un `Type` arbitrario: es una `choice option`
-  nominal.
+Errors have nominal reasons, explicit propagation, and a trace of the places
+where they were propagated. The trace policy is supplied as a capability.
+Propagation is infallible; its memory and I/O costs depend on that policy.
 
 ## Choice options
 
-Una `choice option` se declara suelta:
+A `choice option` is declared on its own:
 
 ```rg
 ..file_not_found
@@ -16,35 +14,35 @@ Una `choice option` se declara suelta:
 ..invalid_format
 ```
 
-Semántica:
-- Cada declaración define un símbolo nominal.
-- El compilador asigna a cada opción un id numérico único durante la
-  compilación.
-- Ese id es la identidad real de la opción.
-- El texto `..name` solo es la forma de referirse a ella.
+Semantics:
+- Each declaration defines a nominal symbol.
+- The compiler assigns each option a unique numeric ID during compilation.
+- That ID is the option's actual identity.
+- The text `..name` is only how the option is referenced.
 
-No hay autodeclaración por uso:
-- `..file_not_found` en posición de valor referencia una opción existente.
-- Si no existe, es error.
+Use does not declare an option:
+- `..file_not_found` in value position refers to an existing option.
+- If it does not exist, it is an error.
 
 ## Open choices
 
-Las opciones se agrupan en `choices` cerrados cuando hace falta tipado o
-exhaustividad.
+Options are grouped into closed `choices` when typing or exhaustiveness is
+needed.
 
 ```rg
 reason : (..file_not_found, ..permission_denied) = ..permission_denied
 ```
 
-Un `choice` puede ser:
-- anónimo, como en el ejemplo anterior
-- nombrado, usando un alias o tipo del lenguaje
+A `choice` can be:
+- anonymous, as in the previous example
+- named, using a language alias or type
 
-Los `choices` usados para errores son cerrados y finitos.
+The `choices` used for errors are closed and finite.
 
 ## Error values
 
-La traza sigue viviendo dentro del propio error.
+An error carries its reason and a small handle to its trace. Trace entries are
+held by the configured tracer, not embedded in each error value.
 
 ```rg
 Error#(.reasons: Choice) : Type = (
@@ -53,13 +51,16 @@ Error#(.reasons: Choice) : Type = (
 )
 ```
 
-Restricciones:
-- `.reason` debe ser un `choice` sin payloads
-- `.trace` mantiene el mecanismo actual de entradas de traza
+`.reason` must be a `choice` without payloads. `ErrorTrace` retains a reference
+to the original virtual `ErrorTracer`. The bundled policies use a shared log,
+so the reference itself is the complete handle.
+Creating an error records its origin through that tracer. The tracer must
+outlive errors referring to it; clearing its retained context does not end
+the lifetime of the error or change its reason.
 
 ## Error unions
 
-`Errable` queda definido sobre un conjunto de razones:
+`Errable` is defined over a set of reasons:
 
 ```rg
 Errable#(.t: Type, .reasons: Choice) : Type = (
@@ -68,12 +69,12 @@ Errable#(.t: Type, .reasons: Choice) : Type = (
 )
 ```
 
-Consecuencias:
-- una función declara el conjunto de razones que puede devolver
-- `!` permite propagar un subconjunto hacia un superset compatible
-- el remapeo de tags entre conjuntos distintos lo hace el compilador/codegen
+Consequences:
+- A function declares the set of reasons it can return.
+- `!` can propagate a subset into a compatible superset.
+- The compiler/codegen remaps tags between different sets.
 
-Ejemplo:
+Example:
 
 ```rg
 ..file_not_found
@@ -120,8 +121,8 @@ looking at the actual propagation and return sites in the function body. That
 inferred subset is surfaced in tooling hover even when the full declared
 `.reasons` are still written explicitly in source.
 
-En `core`, la misma idea ya se usa para fallos de apertura, de sistema de
-ficheros y de streams:
+In `core`, the same idea is already used for file opening, filesystem, and
+stream failures:
 
 ```rg
 ..file_open_failed
@@ -148,24 +149,23 @@ write_byte(.self: $&Writer, .byte: UInt8)
     -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
 ```
 
-`read_line()` y `read_file()` ya propagan `..out_of_memory` de forma explícita.
-`read_line()` y `read_file()` delegan ya la creación y el crecimiento del buffer
-en helpers fallibles de `String`.
+`read_line()` and `read_file()` explicitly propagate `..out_of_memory`.
+They delegate buffer creation and growth to fallible `String` helpers.
 
-En `core`, la dirección idiomática para operaciones de crecimiento o reserva ya
-no es:
-- puntero crudo + comparar con `0`
-- `Bool` para decir si la reserva salió bien
+In `core`, the idiomatic approach for growth or allocation operations is no
+longer:
+- a raw pointer checked against `0`
+- a `Bool` indicating whether allocation succeeded
 
-Sino:
-- `allocate_fallible(...) -> Errable#(.t: UIntNative, .reasons: (..out_of_memory))`
-- helpers como `string_with_capacity(...)`
-- operaciones de crecimiento que devuelven `Errable#(.t: Void, .reasons: (..out_of_memory))`
+Instead, use:
+- `allocate(...) -> Errable#(.t: Allocation, .reasons: (..out_of_memory))`
+- helpers such as `string_with_capacity(...)`
+- growth operations returning `Errable#(.t: Void, .reasons: (..out_of_memory))`
 
-Eso ya se aplica en `String` y en las rutas fallibles de `DynamicArray`
+This is already used in `String` and the fallible paths of `DynamicArray`
 (`push_growing`, `insert_growing`, `dynamic_array_grow_growing`).
 
-EOF sigue fuera del canal de error:
+EOF remains outside the error channel:
 
 ```rg
 ReadByte : Choice = (
@@ -176,51 +176,164 @@ ReadByte : Choice = (
 
 ## Propagation
 
-`!` y `!!`:
-- hacen short-circuit
-- ejecutan `defer`s
-- añaden una entrada a la traza
-- exigen que el `Errable` actual pueda representar todas las razones
-  propagadas
-- pueden usarse tanto en posición de expresión como como sentencia pura, por
-  ejemplo `step()!`, cuando el valor `..ok` no interesa
+`!` and `!!`:
+- short-circuit
+- execute `defer`s
+- add an entry to the trace
+- require the current `Errable` to represent every propagated reason
+- can be used in expression position or as a standalone statement, for example
+  `step()!`, when the `..ok` value is not needed
 
-Hoy ya se usan de forma normal en contextos de expresión comunes:
+They are already used in common expression contexts:
 - bindings: `value := read_file()!`
-- argumentos de llamada: `use(.x = read_int()!)`
-- condiciones: `if ready()! { ... }`
-- asignaciones: `cached = load()!`
-- sentencias puras: `flush()!`
+- call arguments: `use(.x = read_int()!)`
+- conditions: `if ready()! { ... }`
+- assignments: `cached = load()!`
+- standalone statements: `flush()!`
 
-`!!` además adjunta contexto textual a la entrada de traza.
+The expression yields the `..ok` value. A named struct remains whole even
+when it has only one field. An anonymous one-field payload is unpacked to
+that field's value.
 
-Dirección actual de la inferencia de reasons:
-- la firma sigue escribiendo el conjunto completo declarado
-- `-> !T` ya permite omitir `.reasons` en el caso especial de un único
-  resultado `result`
-- `Errable#(.t: T)` sin `.reasons` también se acepta ya en outputs de función
-  explícitos
-- semántica calcula un subconjunto inferido a partir de `return`, asignaciones a
-  outputs y propagaciones con `!` / `!!`
-- el hover muestra ese subconjunto inferido para que se pueda consultar sin
-  ruido extra en el código
-- el siguiente paso será permitir omitir `.reasons` en más sitios una vez esta
-  inferencia sea suficientemente robusta también entre módulos
+`!! "context"` also attaches textual context to the trace entry. A tracer
+that retains the context copies it, so the entry does not borrow a temporary
+string. A tracer that emits the entry immediately can use the text during the
+call.
 
-## Exhaustividad
+## Error tracing
 
-La exhaustividad se chequea contra un `choice` cerrado, no contra una opción
-suelta.
+`ErrorTracer` is an `Abstract` for the tracing policy:
 
-Eso permite:
-- `match` sobre `Errable`
-- chequeos sobre `.reason`
-- remapeo seguro entre subconjuntos y supersets de razones
+```rg
+ErrorTracer : Abstract = (
+    add_context(.self: $&Self, .location: SourceLocationId, .context: StringView) -> ()
+    reset_context(...) -- infallible: clear retained context and reuse storage
+    report(...)  -- write a trace; may return an I/O error
+)
+```
 
-## Future Ergonomics
+`!` calls `add_context` with the propagation location and empty context.
+`!! "context"` calls it with
+the location and context. `add_context` cannot return an error: propagation must
+still succeed when tracing cannot retain or emit an entry. A policy may
+allocate or write during `add_context`, but must handle those failures internally.
+`report` resolves locations and writes the trace; it may return an I/O error.
+The capability has type `$&Virtual#(.abstract: ErrorTracer)`. A tracer may
+be supplied through `reach error_tracer`, so intermediate
+functions need not list it manually. This capability selects the tracer when
+an error is created. Later propagation and reporting use the reference in
+that error, even under a different `assume error_tracer`:
 
-Propuesta futura aceptada como dirección de ergonomía, pero todavía no
-implementada:
+```rg
+assume error_tracer ::= FixedSizeErrorTracer(
+    .buffer = view($&zeroed#(.t: [4096]UInt8)()),
+) | to_virtual#(ErrorTracer)($&_) | $&_
+
+run()
+```
+
+The positional comptime argument of `to_virtual#(ErrorTracer)` selects the
+abstract. Alternatively, a declared `$&Virtual#(.abstract: ErrorTracer)`
+capability type permits `to_virtual($&_)` through contextual inference. The
+concrete tracer and virtual wrapper temporaries remain alive for the enclosing
+`assume` scope. The capability is still a pointer to the virtual wrapper.
+
+`FixedSizeErrorTracer` borrows an initialized byte view supplied by its caller.
+Construction is infallible and does not allocate. Callers may supply a local
+array, a slice, or storage obtained from an allocator. The buffer must remain
+valid for the tracer's lifetime; cleanup does not free or invalidate it.
+Headers are copied as bytes, so the buffer requires no additional alignment.
+Trace entries, including copies of `!!` context text, occupy that buffer
+without allocation. Each slot copies at most 128 context bytes;
+longer context is truncated. Buffer space smaller than a complete slot is
+unused. A buffer with no complete slots drops every entry.
+For a single trace, roughly half preserves the origin and first contexts;
+the other half is a ring buffer retaining recent frames. If the trace exceeds
+the buffer, `report` shows the beginning, a truncation marker, and the end.
+The middle is discarded. When several errors share the buffer, this
+implementation may also evict entries belonging to other errors.
+
+Storage isolation between errors is not required. A tracer may interleave
+entries from several errors and report shared context, using separators as
+appropriate. Retention, truncation, eviction, and loss indicators belong to
+each implementation's policy. Reporting either of two errors referring to a
+shared-log tracer observes that tracer's retained context, not an isolated
+chain belonging to the selected error. Reset followed by propagation of an
+older error can therefore make that new context visible through both errors.
+Their nominal reasons and original tracer references remain independent of
+this diagnostic retention policy. No policy may interpret reused storage as an
+old entry or access storage that is no longer valid.
+
+Entries store compact `SourceLocationId` values. Executable metadata maps
+them to filenames, lines, and source text when `report` runs. `Error` therefore
+needs neither source strings nor an allocator.
+
+`reset_context` clears the tracer's retained diagnostic context and permits
+storage reuse. Existing errors remain valid: their reasons and tracer
+references are unchanged, and they may still be propagated or reported.
+The tracer must recognize handles from before the reset without accessing
+stale entries. Later propagation can record new context for those errors;
+cleared context is not recovered. Any generations used to distinguish reused
+storage are internal to the tracer, not lifetimes of the error value.
+
+`NoopErrorTracer` is another valid policy. It records no frames while keeping
+the same infallible propagation interface. Other policies can implement the
+same abstract interface.
+
+Tracer initialization uses an already available tracer. At bootstrap, a
+`NoopErrorTracer` with program lifetime provides this capability without
+allocation. If a new tracer's initialization fails, its error retains the
+previous tracer; the partially initialized tracer is never published.
+
+`report` returns ordinary I/O errors, but errors created by the reporting
+operation use the program-lifetime `NoopErrorTracer`. Reporting must not
+automatically report its own failures or invoke the failing tracer again.
+The caller decides whether to propagate, inspect, or ignore a report failure.
+
+> [!IDEA]
+> An allocating tracer could retain complete traces, growing storage during
+> `add_context`. If allocation fails, it would drop or truncate entries and keep
+> propagation infallible.
+>
+> A streaming tracer could format each entry into a small buffer and flush it
+> to a terminal as soon as context is added. This suits a REPL, where seeing
+> the trace as execution proceeds may matter more than retaining it for a
+> later `report`. Because `add_context` is infallible, write failures during these
+> flushes must be ignored or recorded for a later fallible `report`.
+
+Fallible virtual methods receive the reached tracer capability alongside
+ordinary arguments, including implementations whose bodies always succeed.
+This keeps runtime dispatch consistent when an implementation creates an error.
+`source_location(.id)` resolves a recorded ID to immutable source metadata;
+IDs that were not produced by `error_location_id()` abort.
+
+Current direction for reason inference:
+- The signature still spells out the complete declared set.
+- `-> !T` already allows `.reasons` to be omitted in the special case of a
+  single `result` output.
+- `Errable#(.t: T)` without `.reasons` is also accepted in explicit function
+  outputs.
+- Semantizing infers a subset from `return`, output assignments, and `!` / `!!`
+  propagation.
+- Hover shows this inferred subset without adding noise to the code.
+- The next step is to allow `.reasons` to be omitted in more places once this
+  inference is robust enough across modules.
+
+## Exhaustiveness
+
+Exhaustiveness is checked against a closed `choice`, not a standalone option.
+
+This enables:
+- `match` on `Errable`
+- checks on `.reason`
+- safe remapping between subsets and supersets of reasons
+
+## Handling errors
+
+`handle` provides a shorter form for handling an `Errable`:
+
+> [!IMPLEMENTATION]
+> The `handle` form is not implemented yet.
 
 ```argi
 my_thing := fallible() handle value, error {
@@ -229,31 +342,31 @@ my_thing := fallible() handle value, error {
             value = 0
         }
         ..permission_denied {
-            report_trace(.trace = &error.trace)
+            report(.trace = &error.trace)!
             value = 1
         }
     }
 }
 ```
 
-Semántica esperada:
-- `handle` sería azúcar específica para `Errable`
-- la expresión a la izquierda debe tener tipo `Errable#(.t: T, ...)`
-- `value` sería el slot de resultado común
-- si el `Errable` es `..ok x`, entonces `value = x`
-- si es `..error(...)`, el bloque se ejecuta con `error` bindeado al payload
-  completo del error
-- dentro del bloque se usa `match` normal sobre `error.reason`
-- el bloque no devuelve valor de forma especial; solo asigna a `value`
-- la construcción completa produce `value`
-- el compilador debería exigir que `value` quede asignado en todos los caminos
-  del bloque de error
+Expected semantics:
+- `handle` would be syntactic sugar specific to `Errable`.
+- The expression on the left must have type `Errable#(.t: T, ...)`.
+- `value` would be the shared result slot.
+- If the `Errable` is `..ok x`, then `value = x`.
+- If it is `..error(...)`, the block runs with `error` bound to the complete
+  error payload.
+- Use regular `match` on `error.reason` inside the block.
+- The block does not return a value specially; it only assigns to `value`.
+- The complete construct produces `value`.
+- The compiler should require `value` to be assigned on every path through the
+  error block.
 
-Motivación:
-- no introduce un `match` nuevo
-- no introduce bloques que devuelvan valor
-- no cambia la semántica de `return`
-- es solo azúcar ergonómica sobre el patrón habitual de consumir un `Errable`
-  localmente y producir un valor final
-- cubre el caso dominante en el que una función quiere manejar un `Errable`
-  localmente en vez de seguir propagándolo
+Motivation:
+- It does not introduce a new `match` form.
+- It does not introduce value-returning blocks.
+- It does not change `return` semantics.
+- It is only ergonomic sugar over the common pattern of handling an `Errable`
+  locally and producing a final value.
+- It covers the common case where a function handles an `Errable` locally
+  instead of propagating it.

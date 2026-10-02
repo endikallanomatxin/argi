@@ -7,7 +7,6 @@ StackAllocation : Type = (
 new_stack_allocation (.size: Int32) -> (.sa: StackAllocation) = {
     -- Use libc's alloca to allocate on the stack
     pointer = alloca(.size=size)
-    -- BUG: Se va a liberar al final de la funcion
+    -- BUG: It will be freed at the end of the function.
     sa = StackAllocation{._data=pointer, ._size=size}
 }
-

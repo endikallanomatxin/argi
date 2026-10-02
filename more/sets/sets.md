@@ -14,5 +14,4 @@ an unordered collection of unique items.
 m : Set<Int> = [1, 2, 3]
 ```
 
-Como usa un list literal, siempre hay que especificar el tipo.
-
+Because this uses a list literal, the type must always be specified.

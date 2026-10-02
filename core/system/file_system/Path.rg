@@ -41,7 +41,7 @@ string_view_slice(
     .length: UIntNative,
 ) -> (.out: StringView) := {
     out = (
-        .data = view&.data + start,
+        .data = trusted_reference_offset#(.t: UInt8)(.base = view&.data, .elements = start).reference,
         .length = length,
     )
 }
@@ -51,67 +51,49 @@ init(
     .text: String,
 ) -> () := {
     p& = (
-        .text = text,
+        .text = ~text,
     )
 }
 
 init(
     .p: $&Path,
     .view: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> () := {
-    text :: String = String(.allocator = allocator, .capacity = view.length)
-    pushed ::= push_view(.self = $&text, .view = view)
-    match pushed {
-        ..ok _ {
-        }
-        ..error _ {
-        }
-    }
-    p& = (
-        .text = text,
-    )
+    .allocator: $&Allocator,
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
+    p& = path_with_view(.view = view, .allocator = allocator)!
+    result = ..ok Void()
 }
 
 path_with_view(
     .view: StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
-    created ::= string_with_capacity(.allocator = allocator, .capacity = view.length)
-    match created {
-        ..ok payload {
-            text ::= payload
-            pushed ::= push_view(.self = $&text, .view = view, .allocator = allocator)
-            match pushed {
-                ..ok _ {
-                    result = ..ok (.text = text)
-                }
-                ..error _ {
-                    deinit(.self = $&text, .allocator = allocator)
-                    result = ..error(.reason = ..out_of_memory)
-                }
-            }
-        }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-        }
-    }
+    assume allocator
+
+    text ::= string_with_capacity(.allocator = allocator, .capacity = view.length)!
+    push_view(.self = $&text, .view = view, .allocator = allocator)!
+    result = ..ok (.text = ~text)
 }
 
 deinit(
     .self: $&Path,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> () := {
+    assume allocator
+
     deinit(.self = $&self&.text, .allocator = allocator)
 }
 
 copy(
-    .self: Path,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.out: Path) := {
-    out = (
-        .text = copy(.self = self.text, .allocator = allocator),
-    )
+    .self: &Path,
+    .allocator: $&Allocator,
+) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
+    assume allocator
+
+    text ::= copy(.self = &self&.text, .allocator = allocator)!
+    result = ..ok (.text = ~text)
 }
 
 as_view(
@@ -219,8 +201,10 @@ extension(
 join_views(
     .left: &StringView,
     .right: &StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     target_capacity ::= left&.length + right&.length
     if left&.length > 0 and right&.length > 0 {
         if path_is_separator(.byte = bytes_get(.view = left, .index = left&.length - 1).byte).ok {
@@ -231,46 +215,22 @@ join_views(
 
     created ::= string_with_capacity(.allocator = allocator, .capacity = target_capacity)
     match created {
-        ..ok payload {
-            text ::= payload
-
-            pushed_left ::= push_view(.self = $&text, .view = left&, .allocator = allocator)
-            match pushed_left {
-                ..ok _ {
-                }
-                ..error _ {
-                    deinit(.self = $&text, .allocator = allocator)
-                    result = ..error(.reason = ..out_of_memory)
-                    return
-                }
-            }
+        ..ok ~ created_text {
+            text ::= ~created_text
+            left_bytes ::= _trusted_array_view_ro#(.t: UInt8)(.data = left&.data, .length = left&.length)
+            string_append_bytes(.self = $&text, .source = left_bytes)
 
             if left&.length > 0 and right&.length > 0 {
                 if path_is_separator(.byte = bytes_get(.view = left, .index = left&.length - 1).byte).ok {
                 } else {
-                    pushed_sep ::= push_byte(.self = $&text, .byte = 47, .allocator = allocator)
-                    match pushed_sep {
-                        ..ok _ {
-                        }
-                        ..error _ {
-                            deinit(.self = $&text, .allocator = allocator)
-                            result = ..error(.reason = ..out_of_memory)
-                            return
-                        }
-                    }
+                    string_append_byte(.self = $&text, .byte = 47)
                 }
             }
 
-            pushed_right ::= push_view(.self = $&text, .view = right&, .allocator = allocator)
-            match pushed_right {
-                ..ok _ {
-                    result = ..ok (.text = text)
-                }
-                ..error _ {
-                    deinit(.self = $&text, .allocator = allocator)
-                    result = ..error(.reason = ..out_of_memory)
-                }
-            }
+            right_bytes ::= _trusted_array_view_ro#(.t: UInt8)(.data = right&.data, .length = right&.length)
+            string_append_bytes(.self = $&text, .source = right_bytes)
+            result = ..ok (.text = ~text)
+            return
         }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
@@ -281,8 +241,10 @@ join_views(
 join(
     .left: &Path,
     .right: &Path,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     left_view ::= as_view(.self = left)
     right_view ::= as_view(.self = right)
     result = join_views(.left = &left_view, .right = &right_view, .allocator = allocator)

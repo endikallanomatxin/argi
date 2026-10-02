@@ -1,11 +1,15 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
+    assume writer ::= $&system.terminal&.stdout
+
     input_file ::= File(.stream_address = 0, .should_close = 0 == 1)
     init_stdin(.p = $&input_file)
-    input_reader ::= BufferedReader#(.base_type: File)(.allocator = system.allocator, .base = $&input_file, .capacity = 4)
+    input_reader ::= unwrap_or_abort(.value = BufferedReader#(.base_type: File)(.allocator = $&allocator_storage, .base = $&input_file, .capacity = 4))
 
     output_file ::= File(.stream_address = 0, .should_close = 0 == 1)
     init_stdout(.p = $&output_file)
-    output_writer ::= BufferedWriter#(.base_type: File)(.allocator = system.allocator, .base = $&output_file, .capacity = 4)
+    output_writer ::= BufferedWriter#(.base_type: File)(.base = $&output_file, .buffer = array_view(.array = $&zeroed#(.t: [4]UInt8)()))
 
     if is_open(.self = &input_file).ok {
     } else {
@@ -24,7 +28,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     }
 
     flush(.self = $&output_writer)
-    deinit(.self = $&input_reader, .allocator = system.allocator)
-    deinit(.self = $&output_writer, .allocator = system.allocator)
+    deinit(.self = $&input_reader, .allocator = $&allocator_storage)
+    deinit(.self = $&output_writer)
     status_code = 0
 }

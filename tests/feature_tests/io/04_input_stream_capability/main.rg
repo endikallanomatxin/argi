@@ -27,31 +27,61 @@ read_byte(
 DummyInput implements Reader
 
 main() -> (.status_code: Int32) := {
-    stdin :: DummyInput = DummyInput()
-    first_result ::= read_byte(.self = $&stdin)
-    second_result ::= read_byte(.self = $&stdin)
-    third_result ::= read_byte(.self = $&stdin)
+    stdin_storage :: DummyInput = DummyInput()
+    assume reader ::= $&stdin_storage
+    first_result ::= read_byte(.self = $&stdin_storage)
+    second_result ::= read_byte(.self = $&stdin_storage)
+    third_result ::= read_byte(.self = $&stdin_storage)
+    first :: UInt8 = 0
+    second :: UInt8 = 0
 
-    if is(.value = first_result, .variant = ..ok) {
-    } else {
-        status_code = 1
-        return
+    match first_result {
+        ..ok first_read {
+            match first_read {
+                ..ok value { first = value }
+                ..end {
+                    status_code = 1
+                    return
+                }
+            }
+        }
+        ..error _ {
+            status_code = 1
+            return
+        }
     }
 
-    if is(.value = second_result, .variant = ..ok) {
-    } else {
-        status_code = 2
-        return
+    match second_result {
+        ..ok second_read {
+            match second_read {
+                ..ok value { second = value }
+                ..end {
+                    status_code = 2
+                    return
+                }
+            }
+        }
+        ..error _ {
+            status_code = 2
+            return
+        }
     }
 
-    if is(.value = third_result..ok, .variant = ..end) {
-    } else {
-        status_code = 3
-        return
+    match third_result {
+        ..ok third_read {
+            match third_read {
+                ..ok _ {
+                    status_code = 3
+                    return
+                }
+                ..end {}
+            }
+        }
+        ..error _ {
+            status_code = 3
+            return
+        }
     }
-
-    first ::= first_result..ok..ok
-    second ::= second_result..ok..ok
 
     if first != 79 {
         status_code = 4

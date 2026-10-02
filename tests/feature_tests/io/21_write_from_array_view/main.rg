@@ -21,25 +21,22 @@ flush(
 DummyOutput implements Writer
 
 main() -> (.status_code: Int32) := {
-    raw ::= malloc(.size = 3)
-    if cast#(.to: UIntNative)(.value = raw) == 0 {
-        status_code = 10
+    bytes : Array#(.n = 3, .t: UInt8) = (0, 0, 0)
+    buffer ::= array_view(.array = $&bytes)
+    first_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 0, .value = 2).result
+    second_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 1, .value = 3).result
+    third_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 2, .value = 5).result
+    if is(.value = first_set, .variant = ..error) or is(.value = second_set, .variant = ..error) or is(.value = third_set, .variant = ..error) {
+        status_code = 14
         return
     }
 
-    buffer ::= array_view#(.t: UInt8)(
-        .data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = raw)),
-        .length = 3,
-    )
-    buffer[0] = 2
-    buffer[1] = 3
-    buffer[2] = 5
+    stdout_storage :: DummyOutput = (
 
-    stdout :: DummyOutput = (
         .write_count = 0,
     )
-    write_result ::= write(.self = $&stdout, .buffer = buffer)
-    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
+    assume writer ::= $&stdout_storage
+    write_result ::= write(.self = $&stdout_storage, .buffer = buffer)
 
     if is(.value = write_result, .variant = ..ok) {
     } else {
@@ -53,7 +50,7 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    if stdout.write_count != 3 {
+    if stdout_storage.write_count != 3 {
         status_code = 13
         return
     }

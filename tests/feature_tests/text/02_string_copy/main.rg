@@ -1,11 +1,16 @@
 main(.system: System) -> (.status_code: Int32) := {
-    allocator ::= system.allocator
-    original ::= String(.length = 3)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
+    original ::= unwrap_or_abort(.value = String(.length = 3))
     bytes_set(.string = $&original, .index = 0, .value = 65)
     bytes_set(.string = $&original, .index = 1, .value = 114)
     bytes_set(.string = $&original, .index = 2, .value = 103)
 
-    copied ::= copy(.self = original)
+    copied_result ::= copy(.self = &original)
+    match copied_result {
+    ..error _ { status_code = 4 }
+    ..ok ~ copied_payload {
+    copied ::= ~copied_payload
     bytes_set(.string = $&copied, .index = 0, .value = 66)
 
     original_first ::= bytes_get(.string = &original, .index = 0).byte
@@ -28,4 +33,6 @@ main(.system: System) -> (.status_code: Int32) := {
     }
 
     status_code = 0
+    }
+    }
 }

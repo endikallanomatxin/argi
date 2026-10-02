@@ -23,45 +23,43 @@ read_byte(
 DummyInput implements Reader
 
 main() -> (.status_code: Int32) := {
-    raw ::= malloc(.size = 4)
-    if cast#(.to: UIntNative)(.value = raw) == 0 {
-        status_code = 10
-        return
-    }
-
-    buffer ::= array_view#(.t: UInt8)(
-        .data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = raw)),
-        .length = 4,
-    )
-    stdin :: DummyInput = DummyInput()
-    read_result ::= read(.self = $&stdin, .buffer = buffer)
+    bytes : Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
+    buffer ::= array_view(.array = $&bytes)
+    stdin_storage :: DummyInput = DummyInput()
+    assume reader ::= $&stdin_storage
+    read_result ::= read(.self = $&stdin_storage, .buffer = buffer)
 
     if is(.value = read_result, .variant = ..ok) {
     } else {
-        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
         status_code = 11
         return
     }
 
     copied ::= read_result..ok
     if copied != 2 {
-        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
         status_code = 12
         return
     }
 
-    if buffer[0] != 65 {
-        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
+    first_result ::= get(.self = &buffer, .index = 0).result
+    if is(.value = first_result, .variant = ..error) {
+        status_code = 13
+        return
+    }
+    if first_result..ok != 65 {
         status_code = 13
         return
     }
 
-    if buffer[1] != 66 {
-        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
+    second_result ::= get(.self = &buffer, .index = 1).result
+    if is(.value = second_result, .variant = ..error) {
+        status_code = 14
+        return
+    }
+    if second_result..ok != 66 {
         status_code = 14
         return
     }
 
-    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
     status_code = 0
 }

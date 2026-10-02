@@ -1,3 +1,3 @@
-linkea con libcurl
-- Qué ofrece: cliente de HTTP(S), FTP, SFTP, WebDAV… con soporte de proxies, cookies y multi-handle asíncrono.
-- Por qué importa: cualquier programa que hable con APIs REST, descargue ficheros o realice transferencias complejas recurre a libcurl por su versatilidad y robustez.
+Link against libcurl.
+- What it provides: an HTTP(S), FTP, SFTP, and WebDAV client with proxy, cookie, and asynchronous multi-handle support.
+- Why it matters: programs that use REST APIs, download files, or perform complex transfers rely on libcurl for its versatility and robustness.

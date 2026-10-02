@@ -1,0 +1,25 @@
+name: Test
+
+"on":
+  workflow_dispatch:
+    inputs:
+      native_matrix:
+        description: Optional native runner matrix JSON for focused diagnosis
+        type: string
+        default: ''
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    # Release pushes are validated by the publication workflow on the same SHA.
+    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Release ')
+    uses: ./.github/workflows/build.yml
+    with:
+      package: true
+      native_matrix: ${{ inputs.native_matrix || '' }}

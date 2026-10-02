@@ -3,18 +3,17 @@ Atomic<t: Type> : Type = [
 	._data: t
 ]
 
--- Carga atómica
+-- Atomic load
 load(self: &Atomic<T>, order: AtomicOrder) := T {
     atomicLoad(T, &self._data, order)  -- builtin
 }
 
--- Almacenamiento atómico
+-- Atomic store
 store(self: &Atomic<T>, value: T, order: AtomicOrder) := {
     atomicStore(T, &self._data, value, order)  -- builtin
 }
 
--- Intercambio atómico (exchange)
+-- Atomic exchange
 swap(self: &Atomic<T>, operand: T, order: AtomicOrder) := T {
     return atomicRmw(T, &self._data, AtomicRmwOp.Xchg, operand, order)  -- builtin
 }
-

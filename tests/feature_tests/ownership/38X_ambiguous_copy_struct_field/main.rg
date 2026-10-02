@@ -4,12 +4,13 @@ init(.res: $&Resource) -> () := {}
 
 deinit(.res: $&Resource) -> () := {}
 
-copy(.res: Resource, .tag: Int32 = 1) -> (.out: Resource) := {
-    out = Resource()
+
+copy(.self: &Resource, .tag: Int32 = 1) -> (.value: Resource) := {
+    value = Resource()
 }
 
-copy(.res: Resource, .flag: Bool = true) -> (.out: Resource) := {
-    out = Resource()
+copy(.self: &Resource, .flag: Bool = true) -> (.value: Resource) := {
+    value = Resource()
 }
 
 Wrapper : Type = (

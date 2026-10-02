@@ -4,19 +4,25 @@ DummyWriter : Type = (
 
 init(
     .p: $&DummyWriter,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> () := {
-    p&.bytes = String(.allocator = allocator, .capacity = 16)
+    assume allocator
+
+    p&.bytes = unwrap_or_abort(.value = String(.allocator = allocator, .capacity = 16))
 }
 
 deinit(
     .self: $&DummyWriter,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
 ) -> () := {
+    assume allocator
+
     deinit(.self = $&self&.bytes, .allocator = allocator)
 }
 
 write_byte(.self: $&DummyWriter, .byte: UInt8, .allocator: $&Allocator) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    assume allocator
+
     pushed ::= push_byte(.self = $&self&.bytes, .byte = byte, .allocator = allocator)
     if is(.value = pushed, .variant = ..error) {
         result = ..error(.reason = ..stream_write_failed)
@@ -29,8 +35,11 @@ flush(.self: $&DummyWriter) -> (.result: Errable#(.t: Void, .reasons: (..stream_
     result = ..ok(.value = Void())
 }
 
-main(.system: System = System()) -> (.status_code: Int32) := {
-    buffer ::= String(.allocator = system.allocator, .capacity = 16)
+main(.system: System) -> (.status_code: Int32) := {
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
+
+    buffer ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .capacity = 16))
     match push_c_string(.self = $&buffer, .text = "OK") {
         ..ok _ {
         }
@@ -45,13 +54,13 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    writer ::= DummyWriter(.allocator = system.allocator)
+    writer ::= DummyWriter(.allocator = $&allocator_storage)
     i :: UIntNative = 0
     while i < buffer.length {
-        write_byte(.self = $&writer, .byte = bytes_get(.string = &buffer, .index = i).byte, .allocator = system.allocator)
+        write_byte(.self = $&writer, .byte = bytes_get(.string = &buffer, .index = i).byte, .allocator = $&allocator_storage)
         i = i + 1
     }
-    write_byte(.self = $&writer, .byte = 10, .allocator = system.allocator)
+    write_byte(.self = $&writer, .byte = 10, .allocator = $&allocator_storage)
 
     if writer.bytes.length != 3 {
         status_code = 2
@@ -74,7 +83,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    deinit(.self = $&buffer, .allocator = system.allocator)
-    deinit(.self = $&writer, .allocator = system.allocator)
+    deinit(.self = $&buffer, .allocator = $&allocator_storage)
+    deinit(.self = $&writer, .allocator = $&allocator_storage)
     status_code = 0
 }

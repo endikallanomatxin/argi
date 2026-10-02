@@ -1,202 +1,131 @@
 # Abstract types
 
-Abstract types should be one of the main reusable abstraction mechanisms of the
-language. They are primarily for expressing static contracts.
+Abstracts express static callable contracts. A concrete type declares an
+explicit `implements` relationship, and matching functions satisfy the
+contract. Concrete types may expose other operations as well. Abstracts
+contain callable requirements and can compose other abstracts; they do not
+declare instance fields.
 
-- Permiten definir qué funciones deben poder llamarse sobre un tipo.
+A function input declared with an abstract is monomorphized for its concrete
+argument type. Request runtime dispatch explicitly with
+`Virtual#(.abstract: A)`; see [Virtual types](134_virtual_types.md).
 
-- Obligan a especificar explícitamente qué tipos subyacen al abstract type.
+## Declaration and defaults
 
-- Permiten definir un tipo por defecto, que será el que se inicialice si se usa
-  como tipo al ser declarado.
+`Self` inside an abstract refers to the implementing concrete type:
 
-- NO permiten definir propiedades (Para evitar malas prácticas)
-
-- Se pueden componer.
-
-- Se pueden extender fuera de sus módulos de origen.
-
-- Si se usan en la firma de una función, se monomorfiza por defecto; para usar
-despacho dinámico en runtime, hay que usar `Virtual#(AbstractType)`.
-
-- Los tipos concretos que implementan un abstract pueden tener parámetros de
-  comptime extra, pero tienen que poder mapear explícitamente los parámetros del
-  contrato abstracto.
-
-
-## Declaración
-
-En el cuerpo del abstract, se pueden usar Self como el tipo que lo implementa.
-
-
-Así se declara un abstract:
-
-```
+```rg
 Animal : Abstract = (
-	-- Las funciones se definen con la sintaxis de currying.
-	speak(.who: Self) -> (.text: String)
+    speak(.who: &Self) -> (.sound: Int32)
 )
-
-speak (.d: Dog) -> (.s: String) := {
-	return "Woof"
-}
-
--- Requiere manifestación explícita de la implementación.
+Dog : Type = (.voice: Int32)
 Dog implements Animal
 
--- Permite definir un valor por defecto.
+speak(.who: &Dog) -> (.sound: Int32) := {
+    sound = who&.voice
+}
 Animal defaultsto Dog
 ```
 
-> [!CHECK] Valorar default
-> Como la sintaxis cómoda para definición de listas al final no se va a dar,
-> igual no tiene sentido esto.
+`defaultsto` selects a concrete type when an abstract is used as a value's
+specified type. Without a default, use a concrete type for that value.
+A default does not turn ordinary abstract inputs into virtual dispatch.
 
-```
-Addable : Abstract = (
-	operator + (.left: Self, .right: Self) -> (.result: Self)
-)
-```
+## Associated parameters
 
-To use with generics:
+The parameters of an abstract are compile-time information associated with the
+implementing type. For each concrete pair `(Self, Abstract)`, resolution must
+produce one unique argument vector:
 
-```
-Indexable#(.t: Type) : Abstract = (
-	operator get[] (.self: &Self, .i: UIntNative) -> (.value: t)
-)
-
-Resizable#(.t: Type) : Abstract = (
-	operator get[] (.self: &Self, .i: UIntNative) -> (.value: t)
-	operator set[] (.self: $&Self, .i: UIntNative, .value: t) -> ()
-	push (.self: $&Self, .value: t) -> ()
-)
-
-DynamicArray#(.t: Type) implements Resizable#(.t: t)
-Array#(.n: UIntNative, .t: Type) implements Indexable#(.t: t)
+```text
+(Self, Abstract) -> [GenericArgValue]
 ```
 
-To compose them:
+They do not select among multiple implementations. Several composition paths
+may prove the same implementation when they produce equal arguments; paths
+that produce different arguments conflict.
 
-```
-Number : Abstract = (
-    Addable
-    Substractable
-    Multiplicable
-    -- You can mix functions and other Abstract here.
-)
-```
+Associated parameters are not limited to types. They use the same compile-time
+argument domain as generics, so an abstract may associate both types and values
+such as integer dimensions. For example, `AbstractMatrix#(.t: Type, .rows:
+UIntNative, .cols: UIntNative)` associates all three values with each concrete
+matrix type.
 
-Cases:
+Inference is deliberately directional. The compiler first infers `Self`, then
+resolves its abstract implementation, and finally binds or checks the
+associated parameters. It never searches backwards from an associated
+parameter to discover a possible `Self`. Relations that genuinely need several
+independently selected types belong in multiple dispatch, with `where(...)`
+reserved as a possible future constraint mechanism.
 
-- When a function takes more than one abstract type, types are not assumed to
-be the same, to express that, use compile-time-parameters.
+For example, resolving `FalliblyCopyable` for a type determines its unique
+`.reasons` choice, while resolving `Iterator` determines its unique `.t`.
 
-    ```
-    foo#(.t: Type: ExampleAbstract) (.a: t, .b: t) -> (.r: t) := { ... }
-    ```
+## Composition and shared concrete types
 
-    Todas las llamadas a funciones que usan abstracts se podrían expresar
-    usando generics en realidad. El caso habitual de uso de abstracts, es
-    cómodo cuando no se asume nada del input.
+An abstract can include other abstract contracts alongside its own callable
+requirements. Satisfying the composed contract requires satisfying each
+included contract with consistent associated arguments.
 
+Two independently abstract inputs need not have the same concrete type.
+Use one constrained comptime type parameter when their types must match:
 
-- When specifying an interaction between two types from abstracts to more
-concrete types, multiple dispatch will choose the most specific one. So, it is
-important not only that the compiler checks that the type implements the
-abstract contract, but it also has to check that no other function with the
-same name and compatible input types breaks the contract.
-
-This is one of the areas where it is worth preferring simpler rules over more
-expressive ones. If the interaction between abstracts, generics and multiple
-dispatch becomes difficult to explain, the design should be narrowed.
-
-
-## Expresiveness
-
-Abstract types in Julia are extremely flexible and powerful while being easy to
-use. To have those simultaneously, they are just nominal. Thus, the languaje
-doesn't know about what functions you can call with the abstract types. You
-just call, and wait for the error at runtime.
-
-If we want to have the same flexibility and power but with compile-time checking, we
-need to have a way to express the possible interoperability between abstract types.
-
-
-Challlenge for expresssiveness 1: "Abstract Matrices that interoperate".
-
-```
-AbstractMatrix#(.t: Type) : Abstract = (
-
-    -- Closed under addition
-    operator + (.left: Self, .right: Self) -> (.result: Self)
-
-    -- Closed under multiplication
-    operator * (.left: Self, .right: Self) -> (.result: Self)
-
-    -- Multiplicable with other AbstractMatrix types:
-    operator * (.left: Self, .right: AnyOther#(.t: t)) -> (.result: SomeOther#(.t: t))
-    -- If you don't want to implement it with all other AbstractMatrix types,
-    -- you can provide a default implementation that uses conversion to DenseMatrix.
-)
+```rg
+combine#(.t: Type: Addable)(.left: t, .right: t) -> (.result: t)
 ```
 
-Challenge for expressiveness 2: "Abstract Matrices that check dimensions at
-compile time".
+Interactions between independently selected concrete types use multiple
+dispatch rather than reverse inference of abstract-associated arguments.
+Contract checking and overload resolution must agree on which callable
+implementation satisfies a requirement. See [Multiple dispatch](131_multiple_dispatch.md).
 
+## Collection contracts
 
-```
-AbstractMatrix#(
-    .t             : Type
-    .indexing_type : Type:UInt
-    .rows          : indexing_type
-    .cols          : indexing_type
-) : Abstract = (
+`Indexable`, `IndexableMutable`, `IndexableValue`, and `Resizable` describe
+named collection operations, element types, and associated failure reasons.
+They use ordinary abstract parameters and callable requirements rather than
+library-defined bracket operators. See [Lists](161_lists.md) and
+`core/lists/List.rg` for their contracts.
 
-    -- Rows and cols
-    n_rows(.m: Self) -> (.n: indexing_type)
-    n_cols(.m: Self) -> (.n: indexing_type)
+> [!IMPLEMENTATION]
+> `DynamicArray` provides corresponding operations but does not yet declare
+> an explicit `implements Resizable` relationship.
 
+## Expressiveness checks
 
-    -- Get item
-    operator get[] (.m: &Self, .i: IndexingSpec) -> (.r: t)
+Library use cases should test whether abstracts express useful static
+contracts. A matrix abstract can associate an element type and dimensions;
+generic operations can then use that contract to check operand compatibility.
+Being a matrix and being compatible with another matrix are distinct claims.
+Approximate contract and operation examples are retained in
+[the matrix exploration notes](../more/math/linear_algebra/abstract_matrix.txt).
 
-    -- Set item
-    operator set[] (.m: $&Self, .i: IndexingSpec, .v: t) -> ()
-
-
-    -- Addable with other matrix types of the same shape
-    operator + (
-        .left  : Self
-	.right : AnyOther#(.t: t, .rows = rows, .cols = cols)
-    ) -> (
-	.result: SomeOther#(.t: t, .rows = rows, .cols = cols)
-    )
-
-    -- Multiplicable with other compatible AbstractMatrix types:
-    operator * #(
-        .right_matrix_cols: indexing_type
-    ) (
-        .left  : Self
-        .right : AnyOther#(.t: t, .rows = cols, .cols = right_matrix_cols)
-    ) -> (
-        .result: SomeOther#(.t: t, .rows = rows, .cols = right_matrix_cols)
-    )
-)
-```
-
----
-
-> [!TODO] Pensar si implementar orphan rule o permitir type piracy como julia.
+> [!QUESTION]
+> Can the abstract system express the same compatibility checks when operands
+> have different concrete representations, such as sparse and dense matrices?
+> Infer each concrete type first, resolve its associated element type and
+> dimensions, then check their relationship. Demonstrate that a generic
+> algorithm can use this contract without enumerating every representation
+> pair or reverse-searching for an unknown `Self`.
 >
-> Conviene tomarse esto en serio pronto. Si se permite demasiada libertad aquí,
-> el lenguaje puede ganar expresividad pero perder modularidad y predictibilidad.
+> Selecting a result representation is a separate question: compatible shapes
+> do not determine whether the result is sparse, dense, or another type. Nor
+> is every representation closed under an operation. Use this case to evaluate
+> whether existing bounds and multiple dispatch suffice or a small relational
+> constraint mechanism is needed; do not assume the full case is implemented.
 
-> [!TODO] Subtyping con genéricos.
-> ¿Vector<Int64> es usable donde se espera Vector<Number>?
+## Open design questions
 
-
-> [!TODO] Where clauses en la cabecera de funciones y de los abstracts.
-> Pensar si merece la pena.
-
-> [!TODO]
-> Se permite que el abstract aporte tipos asociados?
+> [!QUESTION]
+> Define visibility and authorization for external `implements` declarations
+> alongside cross-module overload lookup and orphan rules.
+>
+> [!QUESTION]
+> Decide whether `where(...)` constraints are needed for relationships between
+> several independently selected types. Keep associated-parameter inference
+> directional rather than using a constraint to search for an unknown `Self`.
+>
+> [!QUESTION]
+> Define whether any generic subtyping is intended. A relationship between
+> `Int64` and an abstract `Number` alone does not establish that
+> `Vector<Int64>` can be used as `Vector<Number>`.

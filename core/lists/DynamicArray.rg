@@ -1,3 +1,9 @@
+-- A shape generation gives borrowed views an invalidation
+-- boundary independent of allocation roots. Structural changes renew it;
+-- replacing an element's value without changing shape does not.
+_DynamicArrayShape : Type = (.marker: UInt8)
+deinit(.self: $&_DynamicArrayShape) -> () := {}
+
 DynamicArray #(.t: Type) : Type = (
     --
     -- Canonical contiguous owning dynamic list.
@@ -5,148 +11,220 @@ DynamicArray #(.t: Type) : Type = (
     -- It owns heap memory through `Allocation` and should serve as the default
     -- resizable list shape in `core`.
     --
-    -- Growth may reallocate and copy contents. Alternative strategies can be
-    -- modeled later as separate types if needed.
+    -- Storage operations own, move, relocate, and destroy elements without
+    -- requiring any copy capability from `t`. Value reads and whole-array
+    -- copies are separate conditional capabilities.
     --
-    .allocation : Allocation
-    .length     : UIntNative
-    .capacity   : UIntNative
-    --
-    -- Views into the array should use `ListViewRO#(.list_type=Self, .list_value_type=t)`
-    -- or `ListViewRW#(.list_type=Self, .list_value_type=t)` and remain non-owning.
+    ._allocation : Allocation
+    -- `length` is the runtime opaque-slot invariant: indices below it contain
+    -- exactly one live value; the rest are vacant MaybeUninit<t> slots. The
+    -- handles are formed only when operating on a slot, so no per-slot state
+    -- is stored alongside the allocation.
+    ._length     : UIntNative
+    ._capacity   : UIntNative
+    ._shape      : _DynamicArrayShape
 )
 
-DynamicArrayIterator#(.t: Type) : Type = (
-    .array : &DynamicArray#(.t: t)
-    .index : UIntNative
-)
+length #(.t: Type)(.self: &DynamicArray#(.t: t)) -> (.count: UIntNative) := {
+    count = self&._length
+}
 
-DynamicArrayROPointerIterator#(.t: Type) : Type = (
-    .array : &DynamicArray#(.t: t)
-    .index : UIntNative
-)
+capacity #(.t: Type)(.self: &DynamicArray#(.t: t)) -> (.count: UIntNative) := {
+    count = self&._capacity
+}
 
-DynamicArrayRWPointerIterator#(.t: Type) : Type = (
-    .array : $&DynamicArray#(.t: t)
-    .index : UIntNative
-)
-
-DynamicArrayIterator#(.t: Type) implements Iterator#(.t: t)
-DynamicArrayROPointerIterator#(.t: Type) implements Iterator#(.t: &t)
-DynamicArrayRWPointerIterator#(.t: Type) implements Iterator#(.t: $&t)
-DynamicArray#(.t: Type) implements Iterable#(.t: t)
-DynamicArray#(.t: Type) implements ROPointerIterable#(.t: t)
-DynamicArray#(.t: Type) implements RWPointerIterable#(.t: t)
+-- An owner that has consumed every element may need to expose the empty
+-- opaque storage state to the safety checker before ending a temporal root.
+_trusted_dynamic_array_mark_empty #(.t: Type)(.self: $&DynamicArray#(.t: t)) -> () := {
+    if self&._length != 0 { abort }
+    trusted_opaque_mark_empty(.storage = $&self&._allocation)
+}
 
 init #(.t: Type) (
     .p: $&DynamicArray#(.t: t),
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .capacity: UIntNative,
-) -> () := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     element_size :: UIntNative = size_of(.type = t)
     actual_capacity ::= capacity
-    zero :: UIntNative = 0
-    one :: UIntNative = 1
 
-    if actual_capacity == zero {
-        actual_capacity = one
+    if actual_capacity == 0 {
+        actual_capacity = 1
     }
 
-    bytes :: UIntNative = actual_capacity * element_size
-    p& = (
-        .allocation = (
-            .data = allocate(.self = allocator, .size = bytes),
-            .size = bytes,
-        ),
-        .length = zero,
-        .capacity = actual_capacity,
-    )
+    bytes ::= actual_capacity * element_size
+    if element_size != 0 and bytes / element_size != actual_capacity {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
+    allocated ::= allocate#(.t: t)(.self = allocator, .count = actual_capacity)
+    match allocated {
+        ..ok ~ payload {
+            p& = (
+                ._allocation = ~payload,
+                ._length = 0,
+                ._capacity = actual_capacity,
+                ._shape = (.marker = 0),
+            )
+            result = ..ok Void()
+        }
+        ..error _ {
+            result = ..error(.reason = ..out_of_memory)
+        }
+    }
 }
 
 deinit #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .self: $&DynamicArray#(.t: t)
 ) -> () := {
-    zero :: UIntNative = 0
-    deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
-    self& = (
-        .allocation = self&.allocation,
-        .length = zero,
-        .capacity = zero,
-    )
-}
-
-copy #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-    .self: DynamicArray#(.t: t),
-) -> (.out: DynamicArray#(.t: t)) := {
-    init#(.t: t)(.p = $&out, .allocator = allocator, .capacity = self.length)
+    assume allocator
 
     i :: UIntNative = 0
-    while i < self.length {
-        addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = &self, .offset = i).address
-        ptr : &t = cast#(.to: &t)(.value = addr)
-        push#(.t: t)(.allocator = allocator, .self = $&out, .value = ptr&)
+    while i < self&._length {
+        occupied ::= _trusted_dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = i).pointer
+        trusted_opaque_drop(.slot = occupied, .allocator = allocator)
         i = i + 1
+    }
+    -- Capacity records whether backing allocation ownership exists.
+    trusted_opaque_mark_empty(.storage = $&self&._allocation)
+    if self&._capacity != 0 {
+        deinit(.self = $&self&._allocation)
     }
 }
 
-dynamic_array_element_address #(.t: Type) (
+copy #(.t: Type: InfalliblyCopyable) (
+    .self: &DynamicArray#(.t: t),
+    .allocator: $&Allocator,
+) -> (.result: Errable#(.t: DynamicArray#(.t: t), .reasons: (..out_of_memory))) := {
+    assume allocator
+
+    -- Copying an owning element still requires an explicit element copy
+    -- operation; a plain slot read is insufficient for owning `t`.
+    out :: DynamicArray#(.t: t)
+    initialized ::= init#(.t: t)(.p = $&out, .allocator = allocator, .capacity = self&._length)
+    if is(.value = initialized, .variant = ..error) {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
+
+    i :: UIntNative = 0
+    while i < self&._length {
+        ptr ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
+        element ::= copy(.self = ptr)
+        pushed ::= push#(.t: t)(.allocator = allocator, .self = $&out, .value = ~element)
+        if is(.value = pushed, .variant = ..error) {
+            deinit#(.t: t)(.allocator = allocator, .self = $&out)
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+        i = i + 1
+    }
+    result = ..ok ~out
+}
+
+DynamicArray#(.t: Type: InfalliblyCopyable) implements FalliblyCopyable#(.reasons: (..out_of_memory))
+
+copy #(
+    .t: Type: FalliblyCopyable#(.reasons: element_reasons),
+    .element_reasons: Type,
+) (
+    .self: &DynamicArray#(.t: t),
+    .allocator: $&Allocator,
+) -> (.result: Errable#(
+    .t: DynamicArray#(.t: t),
+    .reasons: choice_union#(.a: element_reasons, .b: (..out_of_memory)),
+)) := {
+    assume allocator
+
+    out :: DynamicArray#(.t: t)
+    initialized ::= init#(.t: t)(.p = $&out, .allocator = allocator, .capacity = self&._length)
+    if is(.value = initialized, .variant = ..error) {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
+
+    i :: UIntNative = 0
+    while i < self&._length {
+        ptr ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
+        copied ::= copy(.self = ptr)
+        match copied {
+            ..ok ~ payload {
+                push_assume_capacity#(.t: t)(.self = $&out, .value = ~payload)
+            }
+            ..error ~ err {
+                deinit#(.t: t)(.allocator = allocator, .self = $&out)
+                result = ..error(.reason = err.reason)
+                return
+            }
+        }
+        i = i + 1
+    }
+    result = ..ok ~out
+}
+
+DynamicArray#(.t: Type: FalliblyCopyable#(.reasons: element_reasons)) implements FalliblyCopyable#(
+    .reasons: choice_union#(.a: element_reasons, .b: (..out_of_memory)),
+)
+
+-- Only the occupied prefix may cross from a slot handle to a normal reference.
+_trusted_dynamic_array_element_ro_pointer #(.t: Type) (
     .array: &DynamicArray#(.t: t),
     .offset: UIntNative,
-) -> (.address: UIntNative) := {
-    element_size :: UIntNative = size_of(.type = t)
-    base :: UIntNative = cast#(.to: UIntNative)(.value = array&.allocation.data)
-    address = base + offset * element_size
+) -> (.pointer: &t) := {
+    if offset >= array&._length { abort }
+    slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
+    mutable ::= trusted_establish_allocation_slot#(.t: t)(.allocation = &array&._allocation, .slot = slot._raw, .anchor = array&._allocation.anchor).reference
+    pointer = read_reference#(.t: t)(.base = mutable).reference
+}
+
+_trusted_dynamic_array_element_rw_pointer #(.t: Type) (
+    .array: $&DynamicArray#(.t: t),
+    .offset: UIntNative,
+) -> (.pointer: $&t) := {
+    if offset >= array&._length { abort }
+    slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = offset)
+    pointer = trusted_establish_allocation_slot#(.t: t)(.allocation = &array&._allocation, .slot = slot._raw, .anchor = array&._allocation.anchor).reference
 }
 
 dynamic_array_grow #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-    .array: $&DynamicArray#(.t: t),
-    .min_capacity: UIntNative,
-) -> () := {
-    element_size :: UIntNative = size_of(.type = t)
-    new_capacity ::= array&.capacity
-    zero :: UIntNative = 0
-    one :: UIntNative = 1
-
-    if new_capacity == zero {
-        new_capacity = one
-    }
-
-    if new_capacity < min_capacity {
-        new_capacity = min_capacity
-    }
-
-    new_bytes :: UIntNative = new_capacity * element_size
-    new_data ::= allocate(.self = allocator, .size = new_bytes)
-
-    if array&.length > zero {
-        bytes_to_copy :: UIntNative = array&.length * element_size
-        dst_view ::= array_view#(.t: UInt8)(.data = new_data, .length = bytes_to_copy)
-        src_view ::= array_view#(.t: UInt8)(.data = array&.allocation.data, .length = bytes_to_copy)
-        memcpy_bytes(.dst = dst_view, .src = src_view)
-    }
-
-    deallocate(.self = allocator, .data = array&.allocation.data, .size = array&.allocation.size)
-
-    array& = (
-        .allocation = (
-            .data = new_data,
-            .size = new_bytes,
-        ),
-        .length = array&.length,
-        .capacity = new_capacity,
-    )
-}
-
-dynamic_array_grow_growing #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .array: $&DynamicArray#(.t: t),
     .min_capacity: UIntNative,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
+    result = dynamic_array_grow_growing#(.t: t)(.allocator = allocator, .array = array, .min_capacity = min_capacity)
+}
+
+-- Ensures space for at least `capacity` elements without changing length.
+-- Callers that must commit an external resource after a successful capacity
+-- check can follow this with `push_assume_capacity` without another OOM point.
+ensure_capacity #(.t: Type) (
+    .allocator: $&Allocator,
+    .self: $&DynamicArray#(.t: t),
+    .capacity: UIntNative,
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
+    if self&._capacity >= capacity {
+        result = ..ok Void()
+        return
+    }
+    result = dynamic_array_grow_growing#(.t: t)(.allocator = allocator, .array = self, .min_capacity = capacity)
+}
+
+dynamic_array_grow_growing #(.t: Type) (
+    .allocator: $&Allocator,
+    .array: $&DynamicArray#(.t: t),
+    .min_capacity: UIntNative,
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    assume allocator
+
     element_size :: UIntNative = size_of(.type = t)
-    new_capacity ::= array&.capacity
+    new_capacity ::= array&._capacity
     zero :: UIntNative = 0
     one :: UIntNative = 1
 
@@ -159,27 +237,35 @@ dynamic_array_grow_growing #(.t: Type) (
     }
 
     new_bytes :: UIntNative = new_capacity * element_size
-    allocate_result ::= allocate_fallible(.self = allocator, .size = new_bytes)
+    if element_size != 0 and new_bytes / element_size != new_capacity {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
+    allocate_result ::= allocate#(.t: t)(.self = allocator, .count = new_capacity)
     match allocate_result {
-        ..ok payload {
-            new_data : $&UInt8 = cast#(.to: $&UInt8)(.value = payload)
-
-            if array&.length > zero {
-                bytes_to_copy :: UIntNative = array&.length * element_size
-                dst_view ::= array_view#(.t: UInt8)(.data = new_data, .length = bytes_to_copy)
-                src_view ::= array_view#(.t: UInt8)(.data = array&.allocation.data, .length = bytes_to_copy)
-                memcpy_bytes(.dst = dst_view, .src = src_view)
+        ..ok ~ payload {
+            new_allocation ::= ~payload
+            i :: UIntNative = 0
+            while i < array&._length {
+                old_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &array&._allocation, .index = i)
+                new_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &new_allocation, .index = i)
+                _trusted_uninit_relocate#(.t: t)(
+                    .source_allocation = &array&._allocation,
+                    .source = old_slot,
+                    .destination_allocation = &new_allocation,
+                    .destination = new_slot,
+                )
+                i = i + 1
             }
 
-            deallocate(.self = allocator, .data = array&.allocation.data, .size = array&.allocation.size)
+            deinit(.self = $&array&._allocation)
 
+            _invalidate_dynamic_array_shape#(.t: t)(.array = array)
             array& = (
-                .allocation = (
-                    .data = new_data,
-                    .size = new_bytes,
-                ),
-                .length = array&.length,
-                .capacity = new_capacity,
+                ._allocation = ~new_allocation,
+                ._length = array&._length,
+                ._capacity = new_capacity,
+                ._shape = (.marker = 0),
             )
             result = ..ok Void()
         }
@@ -190,274 +276,259 @@ dynamic_array_grow_growing #(.t: Type) (
 }
 
 push #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .self: $&DynamicArray#(.t: t),
     .value: t,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    one :: UIntNative = 1
-    offset ::= self&.length
+    assume allocator
 
-    if self&.length == self&.capacity {
-        growth_result ::= dynamic_array_grow_growing#(.t: t)(.allocator = allocator, .array = self, .min_capacity = self&.length + one)
+    one :: UIntNative = 1
+
+    if self&._length == self&._capacity {
+        growth_result ::= dynamic_array_grow_growing#(.t: t)(.allocator = allocator, .array = self, .min_capacity = self&._length + one)
         match growth_result {
             ..ok _ {
             }
             ..error _ {
+                trusted_opaque_drop(.slot = $&value, .allocator = allocator)
                 result = ..error(.reason = ..out_of_memory)
                 return
             }
         }
-        offset = self&.length
     }
 
-    ptr_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = offset).address
-    ptr : $&t = cast#(.to: $&t)(.value = ptr_addr)
-    ptr& = value
-    self& = (
-        .allocation = self&.allocation,
-        .length = offset + one,
-        .capacity = self&.capacity,
-    )
+    push_assume_capacity#(.t: t)(.self = self, .value = ~value)
     result = ..ok Void()
+}
+
+-- Appends without allocation. The caller must first ensure `length < capacity`,
+-- normally through `ensure_capacity`.
+push_assume_capacity #(.t: Type) (
+    .self: $&DynamicArray#(.t: t),
+    .value: t,
+) -> () := {
+    if self&._length >= self&._capacity { abort }
+    offset ::= self&._length
+    slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = offset)
+    _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~value)
+    _invalidate_dynamic_array_shape#(.t: t)(.array = self)
+    self&._length = offset + 1
 }
 
 pop #(.t: Type) (
     .self: $&DynamicArray#(.t: t),
-) -> (.value: t) := {
+) -> (.result: Errable#(.t: t, .reasons: (..empty))) := {
+    if self&._length == 0 {
+        result = ..error(.reason = ..empty)
+        return
+    }
     one :: UIntNative = 1
-    new_length ::= self&.length - one
-    self& = (
-        .allocation = self&.allocation,
-        .length = new_length,
-        .capacity = self&.capacity,
-    )
-    addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = new_length).address
-    ptr : &t = cast#(.to: &t)(.value = addr)
-    value = ptr&
+    new_length ::= self&._length - one
+    slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = new_length)
+    moved_out ::= _trusted_uninit_take#(.t: t)(.allocation = $&self&._allocation, .slot = slot)
+    _invalidate_dynamic_array_shape#(.t: t)(.array = self)
+    self&._length = new_length
+    result = ..ok ~moved_out
 }
 
 insert #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .self: $&DynamicArray#(.t: t),
     .i: UIntNative,
     .value: t,
-) -> () := {
-    one :: UIntNative = 1
-    current_length ::= self&.length
-    element_size :: UIntNative = size_of(.type = t)
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory, ..out_of_bounds))) := {
+    assume allocator
 
-    if self&.length == self&.capacity {
-        dynamic_array_grow#(.t: t)(.allocator = allocator, .array = self, .min_capacity = self&.length + one)
-        current_length = self&.length
+    if i > self&._length {
+        trusted_opaque_drop(.slot = $&value, .allocator = allocator)
+        result = ..error(.reason = ..out_of_bounds)
+        return
     }
 
-    if current_length > i {
-        count_to_shift :: UIntNative = current_length - i
-        bytes_to_shift :: UIntNative = count_to_shift * element_size
-        temp_data ::= allocate(.self = allocator, .size = bytes_to_shift)
-        temp_addr :: UIntNative = cast#(.to: UIntNative)(.value = temp_data)
-
-        source_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = i).address
-        dest_addr ::= source_addr + element_size
-
-        temp_view ::= array_view#(.t: UInt8)(.data = temp_data, .length = bytes_to_shift)
-        source_view ::= array_view_from_address#(.t: UInt8)(.address = source_addr, .length = bytes_to_shift)
-        dest_view ::= array_view_from_address#(.t: UInt8)(.address = dest_addr, .length = bytes_to_shift)
-
-        memcpy_bytes(.dst = temp_view, .src = source_view)
-        memcpy_bytes(.dst = dest_view, .src = temp_view)
-
-        deallocate(.self = allocator, .data = temp_data, .size = bytes_to_shift)
-    }
-
-    ptr_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = i).address
-    ptr : $&t = cast#(.to: $&t)(.value = ptr_addr)
-    ptr& = value
-    self& = (
-        .allocation = self&.allocation,
-        .length = current_length + one,
-        .capacity = self&.capacity,
-    )
+    result = insert_growing#(.t: t)(.allocator = allocator, .self = self, .i = i, .value = ~value)
 }
 
 insert_growing #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&Allocator,
     .self: $&DynamicArray#(.t: t),
     .i: UIntNative,
     .value: t,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    one :: UIntNative = 1
-    current_length ::= self&.length
-    element_size :: UIntNative = size_of(.type = t)
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory, ..out_of_bounds))) := {
+    assume allocator
 
-    if self&.length == self&.capacity {
-        growth_result ::= dynamic_array_grow_growing#(.t: t)(.allocator = allocator, .array = self, .min_capacity = self&.length + one)
+    if i > self&._length {
+        trusted_opaque_drop(.slot = $&value, .allocator = allocator)
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+
+    one :: UIntNative = 1
+    current_length ::= self&._length
+
+    if self&._length == self&._capacity {
+        growth_result ::= dynamic_array_grow_growing#(.t: t)(.allocator = allocator, .array = self, .min_capacity = self&._length + one)
         match growth_result {
             ..ok _ {
             }
             ..error _ {
+                trusted_opaque_drop(.slot = $&value, .allocator = allocator)
                 result = ..error(.reason = ..out_of_memory)
                 return
             }
         }
-        current_length = self&.length
+        current_length = self&._length
     }
 
-    if current_length > i {
-        count_to_shift :: UIntNative = current_length - i
-        bytes_to_shift :: UIntNative = count_to_shift * element_size
-        temp_result ::= allocate_fallible(.self = allocator, .size = bytes_to_shift)
-        match temp_result {
-            ..ok payload {
-                temp_data : $&UInt8 = cast#(.to: $&UInt8)(.value = payload)
-
-                source_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = i).address
-                dest_addr ::= source_addr + element_size
-
-                temp_view ::= array_view#(.t: UInt8)(.data = temp_data, .length = bytes_to_shift)
-                source_view ::= array_view_from_address#(.t: UInt8)(.address = source_addr, .length = bytes_to_shift)
-                dest_view ::= array_view_from_address#(.t: UInt8)(.address = dest_addr, .length = bytes_to_shift)
-
-                memcpy_bytes(.dst = temp_view, .src = source_view)
-                memcpy_bytes(.dst = dest_view, .src = temp_view)
-
-                deallocate(.self = allocator, .data = temp_data, .size = bytes_to_shift)
-            }
-            ..error _ {
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-        }
+    cursor ::= current_length
+    while cursor > i {
+        source_index ::= cursor - one
+        source_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = source_index)
+        destination_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = cursor)
+        _trusted_uninit_relocate#(.t: t)(
+            .source_allocation = &self&._allocation,
+            .source = source_slot,
+            .destination_allocation = &self&._allocation,
+            .destination = destination_slot,
+        )
+        cursor = source_index
     }
 
-    ptr_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = i).address
-    ptr : $&t = cast#(.to: $&t)(.value = ptr_addr)
-    ptr& = value
-    self& = (
-        .allocation = self&.allocation,
-        .length = current_length + one,
-        .capacity = self&.capacity,
-    )
+    slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = i)
+    _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~value)
+    _invalidate_dynamic_array_shape#(.t: t)(.array = self)
+    self&._length = current_length + one
     result = ..ok Void()
 }
 
-operator get[] #(.t: Type) (
-    .self: &DynamicArray#(.t: t),
-    .index: UIntNative,
-) -> (.value: t) := {
-    addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
-    ptr : &t = cast#(.to: &t)(.value = addr)
-    value = ptr&
+remove #(.t: Type) (
+    .self: $&DynamicArray#(.t: t),
+    .i: UIntNative,
+) -> (.result: Errable#(.t: t, .reasons: (..out_of_bounds))) := {
+    if i >= self&._length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    one :: UIntNative = 1
+    new_length ::= self&._length - one
+    removed_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = i)
+    moved_out ::= _trusted_uninit_take#(.t: t)(.allocation = $&self&._allocation, .slot = removed_slot)
+
+    cursor ::= i
+    while cursor < new_length {
+        source_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = cursor + one)
+        destination_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = cursor)
+        _trusted_uninit_relocate#(.t: t)(
+            .source_allocation = &self&._allocation,
+            .source = source_slot,
+            .destination_allocation = &self&._allocation,
+            .destination = destination_slot,
+        )
+        cursor = cursor + one
+    }
+
+    _invalidate_dynamic_array_shape#(.t: t)(.array = self)
+    self&._length = new_length
+    result = ..ok ~moved_out
 }
 
-operator get_ro_pointer[] #(.t: Type) (
+get #(.t: Type: ImplicitlyCopyable) (
     .self: &DynamicArray#(.t: t),
     .index: UIntNative,
-) -> (.value: &t) := {
-    addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
-    value = cast#(.to: &t)(.value = addr)
+) -> (.result: Errable#(.t: t, .reasons: (..out_of_bounds))) := {
+    if index >= self&._length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    ptr ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = index).pointer
+    result = ..ok ptr&
 }
 
-operator get_rw_pointer[] #(.t: Type) (
+get_ro_ref #(.t: Type) (
+    .self: &DynamicArray#(.t: t),
+    .index: UIntNative,
+) -> (.result: Errable#(.t: &t, .reasons: (..out_of_bounds))) := {
+    if index >= self&._length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    result = ..ok dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = index).pointer
+}
+
+get_rw_ref #(.t: Type) (
     .self: $&DynamicArray#(.t: t),
     .index: UIntNative,
-) -> (.value: $&t) := {
-    addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
-    value = cast#(.to: $&t)(.value = addr)
+) -> (.result: Errable#(.t: $&t, .reasons: (..out_of_bounds))) := {
+    if index >= self&._length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    result = ..ok dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = index).pointer
 }
 
-operator set[] #(.t: Type) (
+set #(.t: Type) (
     .self: $&DynamicArray#(.t: t),
     .index: UIntNative,
     .value: t,
-) -> () := {
-    addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
-    ptr : $&t = cast#(.to: $&t)(.value = addr)
-    ptr& = value
-}
-
-to_iterator#(.t: Type) (
-    .value: &DynamicArray#(.t: t)
-) -> (.iterator: DynamicArrayIterator#(.t: t)) := {
-    iterator = (
-        .array = value,
-        .index = 0,
+    .allocator: $&Allocator,
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_bounds))) := {
+    assume allocator
+    if index >= self&._length {
+        trusted_opaque_drop(.slot = $&value, .allocator = allocator)
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    ptr ::= _trusted_dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = index).pointer
+    trusted_opaque_drop(.slot = ptr, .allocator = allocator)
+    trusted_opaque_move_in#(.t: t, .storage_type: Allocation)(
+        .storage = $&self&._allocation,
+        .destination = ptr,
+        .source = ~value,
     )
+    -- Replacement ends the old content lifetime even when its address stays.
+    _invalidate_dynamic_array_shape#(.t: t)(.array = self)
+    result = ..ok Void()
 }
 
-to_ro_pointer_iterator#(.t: Type) (
-    .value: &DynamicArray#(.t: t)
-) -> (.iterator: DynamicArrayROPointerIterator#(.t: t)) := {
-    iterator = (
-        .array = value,
-        .index = 0,
-    )
-}
-
-to_rw_pointer_iterator#(.t: Type) (
-    .value: $&DynamicArray#(.t: t)
-) -> (.iterator: DynamicArrayRWPointerIterator#(.t: t)) := {
-    iterator = (
-        .array = value,
-        .index = 0,
-    )
-}
-
-has_next#(.t: Type) (
-    .self: &DynamicArrayIterator#(.t: t)
-) -> (.ok: Bool) := {
-    iterator :: DynamicArrayIterator#(.t: t) = self&
-    ok = iterator.index < iterator.array&.length
-}
-
-next#(.t: Type) (
-    .self: $&DynamicArrayIterator#(.t: t)
+-- Internal collection operations may rely on their own index invariants.
+-- These entrypoints still check length at runtime, but do not add Errable to
+-- every internal lookup in an already validated data structure.
+_trusted_dynamic_array_get #(.t: Type: ImplicitlyCopyable) (
+    .array: &DynamicArray#(.t: t),
+    .index: UIntNative,
 ) -> (.value: t) := {
-    iterator :: DynamicArrayIterator#(.t: t) = self&
-    current_index :: UIntNative = iterator.index
-    addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = iterator.array, .offset = current_index).address
-    ptr : &t = cast#(.to: &t)(.value = addr)
-    value = ptr&
-    self& = (
-        .array = iterator.array,
-        .index = current_index + 1,
+    value = _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = array, .offset = index).pointer&
+}
+
+_trusted_dynamic_array_get_ro_ref #(.t: Type) (
+    .array: &DynamicArray#(.t: t),
+    .index: UIntNative,
+) -> (.reference: &t) := {
+    reference = _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = array, .offset = index).pointer
+}
+
+_trusted_dynamic_array_get_rw_ref #(.t: Type) (
+    .array: $&DynamicArray#(.t: t),
+    .index: UIntNative,
+) -> (.reference: $&t) := {
+    reference = _trusted_dynamic_array_element_rw_pointer#(.t: t)(.array = array, .offset = index).pointer
+}
+
+_trusted_dynamic_array_set #(.t: Type) (
+    .array: $&DynamicArray#(.t: t),
+    .index: UIntNative,
+    .value: t,
+) -> () := {
+    ptr ::= _trusted_dynamic_array_element_rw_pointer#(.t: t)(.array = array, .offset = index).pointer
+    trusted_opaque_drop(.slot = ptr)
+    trusted_opaque_move_in#(.t: t, .storage_type: Allocation)(
+        .storage = $&array&._allocation,
+        .destination = ptr,
+        .source = ~value,
     )
+    _invalidate_dynamic_array_shape#(.t: t)(.array = array)
 }
 
-has_next#(.t: Type) (
-    .self: &DynamicArrayROPointerIterator#(.t: t)
-) -> (.ok: Bool) := {
-    iterator :: DynamicArrayROPointerIterator#(.t: t) = self&
-    ok = iterator.index < iterator.array&.length
-}
-
-next#(.t: Type) (
-    .self: $&DynamicArrayROPointerIterator#(.t: t)
-) -> (.value: &t) := {
-    iterator :: DynamicArrayROPointerIterator#(.t: t) = self&
-    current_index :: UIntNative = iterator.index
-    value = cast#(.to: &t)(.value = dynamic_array_element_address#(.t: t)(.array = iterator.array, .offset = current_index).address)
-    self& = (
-        .array = iterator.array,
-        .index = current_index + 1,
-    )
-}
-
-has_next#(.t: Type) (
-    .self: &DynamicArrayRWPointerIterator#(.t: t)
-) -> (.ok: Bool) := {
-    iterator :: DynamicArrayRWPointerIterator#(.t: t) = self&
-    ok = iterator.index < iterator.array&.length
-}
-
-next#(.t: Type) (
-    .self: $&DynamicArrayRWPointerIterator#(.t: t)
-) -> (.value: $&t) := {
-    iterator :: DynamicArrayRWPointerIterator#(.t: t) = self&
-    current_index :: UIntNative = iterator.index
-    value = cast#(.to: $&t)(.value = dynamic_array_element_address#(.t: t)(.array = iterator.array, .offset = current_index).address)
-    self& = (
-        .array = iterator.array,
-        .index = current_index + 1,
-    )
-}
+DynamicArray#(.t: Type) implements Indexable#(.t: t)
+DynamicArray#(.t: Type) implements IndexableMutable#(.t: t)
+DynamicArray#(.t: Type: ImplicitlyCopyable) implements IndexableValue#(.t: t)
+DynamicArray#(.t: Type) implements Resizable#(.t: t)

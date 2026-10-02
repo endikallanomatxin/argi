@@ -1,7 +1,7 @@
 ## C interoperability
 
-Es muy importante que usar librería en c sea fácil.
-Casi todo el código útil del mundo está escrito en c.
+It is important to make C libraries easy to use.
+Much of the world's useful software is written in C.
 
 Zig offers the `zig translate-c` command, which converts C headers into Zig's syntax. This is particularly useful for complex C libraries, as it automates the creation of Zig bindings.
 
@@ -18,4 +18,3 @@ pub fn main() void {
 ```
 
 ## Null terminated arrays and strings
-

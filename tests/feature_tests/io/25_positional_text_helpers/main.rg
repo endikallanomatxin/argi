@@ -50,43 +50,52 @@ read_byte(.self: $&DummyInput) -> (.result: Errable#(.t: ReadByte, .reasons: (..
 
 DummyInput implements Reader
 
-main(.system: System = System()) -> (.status_code: Int32 = 0) := {
-    stdout :: DummyOutput = DummyOutput()
-    stderr :: DummyOutput = DummyOutput()
+main(.system: System) -> (.status_code: Int32 = 0) := {
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= $&allocator_storage
 
-    text ::= String(.length = 1)
+    stdout_storage :: DummyOutput = DummyOutput()
+    assume writer ::= $&stdout_storage
+    stderr_storage :: DummyOutput = DummyOutput()
+
+    text ::= unwrap_or_abort(.value = String(.length = 1))
     bytes_set(.string = $&text, .index = 0, .value = 65)
     view ::= as_view(.self = &text)
 
     print(view)
     flush()
-    print_error(view)
-    flush_error()
+    {
+        assume writer ::= $&stderr_storage
+        print_error(view)
+        flush_error()
+    }
 
-    if stdout.write_count != 1 {
+    if stdout_storage.write_count != 1 {
         status_code = 1
         return
     }
 
-    if stdout.flush_count != 2 {
+    if stdout_storage.flush_count != 2 {
         status_code = 2
         return
     }
 
-    if stderr.write_count != 1 {
+    if stderr_storage.write_count != 1 {
         status_code = 3
         return
     }
 
-    if stderr.flush_count != 1 {
+    if stderr_storage.flush_count != 1 {
         status_code = 4
         return
     }
 
-    stdin :: DummyInput = (
+    stdin_storage :: DummyInput = (
+
         .index = 0
     )
-    buffer ::= String(.allocator = system.allocator, .capacity = 4)
+    assume reader ::= $&stdin_storage
+    buffer ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .capacity = 4))
     into_buffer ::= read_line_into_buffer($&buffer)
     if is(.value = into_buffer, .variant = ..ok) {
     } else {
@@ -109,34 +118,44 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
         return
     }
 
-    deinit(.self = $&buffer, .allocator = system.allocator)
+    deinit(.self = $&buffer, .allocator = $&allocator_storage)
 
-    stdin = (
+    stdin_storage = (
         .index = 0
     )
     line_result ::= read_line()
-    if is(.value = line_result, .variant = ..ok) {
-    } else {
-        status_code = 9
-        return
-    }
+    match line_result {
+        ..error _ {
+            status_code = 9
+            return
+        }
+        ..ok ~ outer {
+            match outer {
+                ..end {
+                    status_code = 9
+                    return
+                }
+                ..ok ~ line_payload {
+                    line ::= ~line_payload
+                    if line.length != 2 {
+                        status_code = 10
+                        return
+                    }
 
-    line ::= line_result..ok..ok
-    if line.length != 2 {
-        status_code = 10
-        return
-    }
+                    if bytes_get(.string = &line, .index = 0).byte != 79 {
+                        status_code = 11
+                        return
+                    }
 
-    if bytes_get(.string = &line, .index = 0).byte != 79 {
-        status_code = 11
-        return
-    }
+                    if bytes_get(.string = &line, .index = 1).byte != 75 {
+                        status_code = 12
+                        return
+                    }
 
-    if bytes_get(.string = &line, .index = 1).byte != 75 {
-        status_code = 12
-        return
+                    deinit(.self = $&line, .allocator = $&allocator_storage)
+                }
+            }
+        }
     }
-
-    deinit(.self = $&line, .allocator = system.allocator)
-    deinit(.self = $&text, .allocator = system.allocator)
+    deinit(.self = $&text, .allocator = $&allocator_storage)
 }

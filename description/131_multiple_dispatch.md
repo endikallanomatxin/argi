@@ -21,6 +21,24 @@ dispatching.
 Thus, you cannot redefine a function with the same name and input fields, but
 with different input-field names compile-time-parameters or return types.
 
+## Cross-module dispatch (open design)
+
+> [!QUESTION]
+> Cross-module candidate visibility, external `implements`, and an orphan rule
+> remain undecided.
+
+The rules above describe how candidates are compared, but the candidate set
+across modules is not yet specified. Before supporting external extensions,
+decide:
+
+- Which overloads are visible at a call site, including those from imported
+  modules and the implicit `core` prelude.
+- Whether a module may declare `implements` for a type and abstract defined
+  elsewhere, and where that relationship is visible.
+- Whether an orphan rule restricts such declarations to avoid type piracy.
+
+These questions remain open; this section does not define extension lookup.
+
 ## Anti-pattern: adapter overloads
 
 Multiple dispatch should model genuinely different semantic operations, not

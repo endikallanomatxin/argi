@@ -19,7 +19,7 @@ init#(.t: Type)(.p: $&StructOfArrays#(.t: t), .source) -> () := {
     ...
 }
 
-get[]#(.t: Type)(.self: &StructOfArrays#(.t: t), .i: UIntNative) -> (.value: t) := {
+get#(.t: Type)(.self: &StructOfArrays#(.t: t), .i: UIntNative) -> (.value: t) := {
     ---
     Return the struct that would be at position i
     ---
@@ -29,7 +29,7 @@ get[]#(.t: Type)(.self: &StructOfArrays#(.t: t), .i: UIntNative) -> (.value: t) 
 ...
 
 to_soa#(.t: Type)(.list) -> (.soa: StructOfArrays#(.t: t)) := {
-    -- pensar en cómo referirnos a una colección de structs sin cerrar todavía
-    -- qué abstract exacto debe pedir esta conversión.
+    -- Consider how to refer to a collection of structs without committing yet
+    -- to the exact abstract required by this conversion.
     ...
 }

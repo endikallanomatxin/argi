@@ -1,28 +1,26 @@
-Copiar a zig, que lo hace muy bien.
+# Documentation comments
 
-Igual se podría hacer que:
+`--` introduces a line comment. Documentation comments could be collected
+from source declarations and rendered by language tooling.
 
-```
-a = 1  -- Esto sea un comentario en linea
+> [!IDEA]
+> A distinct delimiter such as `---` could mark documentation comments:
+>
+> ```rg
+> --- Explain the declaration below.
+> Widget : Type = ()
+> ```
+>
+> Multiline documentation might use paired `---` delimiters. This overlaps
+> with a proposed multiline ordinary comment form in
+> [Syntax overview](00_syntax_overview.md); choose delimiters for both
+> together. Markdown inside documentation comments is also an option.
 
---
-Esto sea un comentario multilinea
---
+> [!IDEA]
+> `argi doc` could build documentation from these comments, and
+> `argi serve-doc` could preview it locally.
 
-b = 2  --- Esto sea un comentario de documentación en línea
-
----
-Esto sea un comentario de documentación multilinea
----
-```
-
-Y los --- se recopilen cuando hagas.
-
-```bash
-argi doc
-```
-
-```bash
-argi serve-doc
-```
-
+> [!IDEA]
+> Declarations could carry deprecation metadata for documentation and
+> tooling. Decide whether using a deprecated declaration emits a warning or
+> only marks it in generated documentation.

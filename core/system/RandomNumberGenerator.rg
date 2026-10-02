@@ -4,8 +4,8 @@ once init(.p: $&RandomNumberGenerator) -> () := {
 }
 
 -- randomRIO :: Random a ⇒ (a, a) → IO a
--- Genera un valor aleatorio en el rango inclusivo dado, usando la generación global.
+-- Generates a random value in the given inclusive range using the global generator.
 -- getStdRandom :: (StdGen → (a, StdGen)) → IO a
--- Permite usar funciones que trabajan con el generador de manera puramente funcional, actualizando la semilla interna.
+-- Allows purely functional use of generator operations by updating the internal seed.
 -- newStdGen :: IO StdGen
--- Separa el generador global en dos: uno nuevo para el hilo, y devuelve el que queda para uso puro.
+-- Splits the global generator in two: one new generator for the thread, and one returned for pure use.
