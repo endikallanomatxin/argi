@@ -608,6 +608,22 @@ pub const Resolver = struct {
         context: reach_context.Context,
         module_index: usize,
     ) !?ResolvedDestructor {
+        if (try self.resolveDestructorInScope(target, context, module_index)) |call| return call;
+        const ty = self.graph.node(target).ty orelse return null;
+        const owner = global_types.nominalTypeOwner(self.graph, ty) orelse return null;
+        if (@intFromEnum(owner) == module_index or self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) return null;
+        // A resource keeps its defining module's cleanup when passed to a
+        // caller in another module. Reached arguments still come from the
+        // caller's captured context, not from the defining module's locals.
+        return self.resolveDestructorInScope(target, context, @intFromEnum(owner));
+    }
+
+    fn resolveDestructorInScope(
+        self: *Resolver,
+        target: global_sg.GlobalNodeId,
+        context: reach_context.Context,
+        module_index: usize,
+    ) !?ResolvedDestructor {
         const profile_start = self.profileNow();
         var succeeded = false;
         defer if (self.profile_io) |io| {

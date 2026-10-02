@@ -468,6 +468,14 @@ pub const Resolver = struct {
         return .resolved;
     }
 
+    fn initializerVisible(self: *Resolver, caller: usize, candidate: global_sg.GlobalDeclId, type_owner: ?global_sg.GlobalModuleId) bool {
+        // Naming an imported type also exposes its public initializer. Only
+        // overloads for that destination participate; other module functions
+        // remain subject to ordinary qualified-name visibility.
+        return self.core.declarationVisible(caller, candidate, null) or
+            (type_owner != null and self.core.declarationVisible(caller, candidate, type_owner));
+    }
+
     fn findInitializer(
         self: *Resolver,
         module_index: usize,
@@ -482,7 +490,7 @@ pub const Resolver = struct {
             if (function.input.len == 0) continue;
             const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
             if (!std.mem.eql(u8, self.graph.text(declaration.name), "init")) continue;
-            if (!self.core.declarationVisible(module_index, function.declaration, null)) continue;
+            if (!self.initializerVisible(module_index, function.declaration, types.nominalTypeOwner(self.graph, constructed_ty))) continue;
 
             const destination = self.graph.fields.items[function.input.start];
             const pointer = switch (self.graph.types.items[@intFromEnum(destination.ty)]) {
@@ -548,7 +556,7 @@ pub const Resolver = struct {
                 const declaration_id = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
                 const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
                 if (!std.mem.eql(u8, self.graph.text(declaration.name), "init")) continue;
-                if (!self.core.declarationVisible(module_index, declaration_id, null)) continue;
+                if (!self.initializerVisible(module_index, declaration_id, self.graph.moduleForDeclaration(constructed_declaration))) continue;
                 if (!self.parameterizedInitializerOwnsType(generics, candidate_index, parameterized, constructed_declaration)) continue;
                 result.has_visible_initializer = true;
 
@@ -738,7 +746,7 @@ pub const Resolver = struct {
                 const declaration_id = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
                 const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
                 if (!std.mem.eql(u8, self.graph.text(declaration.name), "init")) continue;
-                if (!self.core.declarationVisible(module_index, declaration_id, null)) continue;
+                if (!self.initializerVisible(module_index, declaration_id, types.nominalTypeOwner(self.graph, constructed_ty))) continue;
 
                 const probe = try self.probeGenericInitializer(
                     generics,

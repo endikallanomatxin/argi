@@ -135,6 +135,10 @@ feature first.
   CIncomplete declarations keep nominal identities without runtime fields or
   layout. Only RawPointer handles may carry them across C boundaries; never
   synthesize an empty-record layout or construct safe references to them.
+  Imported nominal constructors consult public initializers in the type's
+  defining module. Automatic cleanup falls back to that module when caller
+  lookup finds no destructor; reached arguments retain the caller's context.
+  Bundled core is already visible, so it needs no second cleanup lookup.
 
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases

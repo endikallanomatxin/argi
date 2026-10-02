@@ -13,8 +13,6 @@ existing external calls do not establish support for every signature shape.
 
 - [ ] Define an explicit foreign lifetime contract before adapting safe-reference
   fields across the ABI.
-- [ ] Exercise an owning foreign-resource wrapper with explicit allocation/free
-  pairing, cleanup, and capability retention.
 - [ ] Settle callback syntax and foreign storage effects,
   preparing the later Python bridge.
 - [ ] Introduce a bounded `#c_import` subset after explicit bindings work;

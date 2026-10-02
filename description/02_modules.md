@@ -39,6 +39,12 @@ follows:
 | `.../` | Project root |
 | No prefix | Bundled `more/` library |
 
+Naming an imported type exposes its public `init` overloads for construction.
+Automatic cleanup first uses the caller's visible `deinit` overloads, then the
+type's defining module if no match exists. Reached arguments still come from
+the caller's lexical context. These lifecycle lookups do not expose unrelated
+functions from the imported module to unqualified calls.
+
 Import paths must resolve at compile time.
 
 > [!IMPLEMENTATION]
