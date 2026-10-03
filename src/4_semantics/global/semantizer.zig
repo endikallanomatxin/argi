@@ -2607,6 +2607,14 @@ fn diagnoseUnresolvedCall(
                 .struct_value_literal => |value| value,
                 else => continue,
             };
+            var candidates: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
+            defer candidates.deinit(allocator);
+            for (graph.functions.items, 0..) |function, raw| {
+                const declaration = graph.declaration(function.declaration);
+                if (!std.mem.eql(u8, graph.text(declaration.name), name)) continue;
+                if (!functionDeclarationVisibleForDiagnostic(graph, module_index, function.declaration, qualified_module)) continue;
+                try candidates.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
+            }
             var input_complete = true;
             for (graph.value_fields.items[input.fields.start..][0..input.fields.len]) |field| {
                 const ty = graph.node(field.value).ty orelse {
@@ -2618,7 +2626,24 @@ fn diagnoseUnresolvedCall(
                     break;
                 }
             }
-            if (!input_complete) continue;
+            if (!input_complete) {
+                // Untyped choice arguments can still make multiple candidate
+                // contracts fit. Diagnose that ambiguity before waiting for a
+                // context that only selection of a candidate could provide.
+                var contextual_core = core_mod.Resolver{
+                    .allocator = allocator,
+                    .graph = graph,
+                    .modules = modules,
+                    .offsets = offsets,
+                };
+                var contextual_matches: usize = 0;
+                for (candidates.items) |candidate| {
+                    const function = graph.function(candidate);
+                    if (function.flags.is_abstract_dispatch) continue;
+                    if (contextual_core.matchCallInput(function.input, input_id) == .score) contextual_matches += 1;
+                }
+                if (contextual_matches < 2) continue;
+            }
 
             var constraint_failures: std.ArrayList(generic_functions_mod.ConstraintFailure) = .empty;
             defer constraint_failures.deinit(allocator);
@@ -2650,14 +2675,6 @@ fn diagnoseUnresolvedCall(
                 return true;
             }
 
-            var candidates: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
-            defer candidates.deinit(allocator);
-            for (graph.functions.items, 0..) |function, raw| {
-                const declaration = graph.declaration(function.declaration);
-                if (!std.mem.eql(u8, graph.text(declaration.name), name)) continue;
-                if (!functionDeclarationVisibleForDiagnostic(graph, module_index, function.declaration, qualified_module)) continue;
-                try candidates.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
-            }
             if (candidates.items.len == 0) {
                 if (generic_functions.hasVisibleParameterizedFunctionName(module_index, name, qualified_module)) {
                     var generic_ties: std.ArrayList(global_sg.GlobalDeclId) = .empty;

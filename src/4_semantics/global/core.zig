@@ -1073,7 +1073,7 @@ pub const Resolver = struct {
                         .offset = reference.source.offset,
                     },
                     .ty = try self.builtin(.Int32),
-                    .content = .{ .int_literal = hit.variant.value },
+                    .content = .{ .int_literal = types.variantTag(self.graph, choice_ty, hit) },
                 };
                 return true;
             },
@@ -1869,6 +1869,7 @@ pub const Resolver = struct {
 
     pub fn contextualLiteralFits(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
         if (self.integerLiteralFits(node, target) or self.floatLiteralFits(node, target)) return true;
+        if (self.pendingChoiceLiteralFits(node, target)) return true;
         switch (self.graph.nodes.items[@intFromEnum(node)].content) {
             .string_literal => return switch (self.graph.types.items[@intFromEnum(target)]) {
                 .pointer => |pointer| pointer.mutability == .read_only and types.isBuiltin(self.graph, pointer.child, .Char),
@@ -1878,6 +1879,33 @@ pub const Resolver = struct {
             .list_literal => |literal| return self.contextualListLiteralFits(literal, target),
             else => return false,
         }
+    }
+
+    fn pendingChoiceLiteralFits(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+        if (self.graph.node(node).ty != null or types.variants(self.graph, target) == null) return false;
+        // Probe the candidate's contract without assigning it to the literal.
+        // Shared variant names must not depend on unrelated choices elsewhere
+        // in core; only completion of the selected call commits the context.
+        const index = @intFromEnum(node);
+        for (self.modules, self.offsets) |module, o| {
+            if (index < o.node_base or index - o.node_base >= module.semantic.nodes.items.len) continue;
+            for (module.semantic.pending_operations.items) |pending| switch (pending) {
+                .resolve_choice_literal => |choice| {
+                    if (globalizer.globalNode(o, choice.node) != node or choice.expected_type != null) continue;
+                    const reference = module.semantic.external_refs.items[@intFromEnum(choice.option)];
+                    const hit = types.findVariant(self.graph, target, module.text(reference.name)) orelse return false;
+                    const payload = choice.payload orelse return hit.variant.payload_type == null;
+                    const expected = hit.variant.payload_type orelse return false;
+                    const supplied = globalizer.globalNode(o, payload);
+                    if (self.callArgumentType(supplied)) |actual| {
+                        if (types.equal(self.graph, actual, expected) or self.callTypesCompatible(actual, expected)) return true;
+                    }
+                    return self.contextualLiteralFits(supplied, expected);
+                },
+                else => {},
+            };
+        }
+        return false;
     }
 
     fn contextualListLiteralFits(self: *const Resolver, literal: anytype, target: global_sg.GlobalTypeId) bool {

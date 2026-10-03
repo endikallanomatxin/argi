@@ -448,7 +448,7 @@ pub const Resolver = struct {
                 try self.graph.resolveBindingType(binding, try self.matchBindingType(payload_ty, case.mode));
             }
 
-            const tag = try self.appendIntNode(hit.variant.value, self.sourceFor(option_ref.source, o));
+            const tag = try self.appendIntNode(types.variantTag(self.graph, choice_ty, hit), self.sourceFor(option_ref.source, o));
             try self.graph.switch_cases.append(self.allocator, .{
                 .value = tag,
                 .variant = hit.id,

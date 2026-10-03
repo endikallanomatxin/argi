@@ -8761,3 +8761,13 @@ test "formatter prepares all files before changing any source" {
     defer std.testing.allocator.free(after);
     try expectEqualStrings(source, after);
 }
+
+test "feature_tests/polymorphism/65_contextual_choice_arguments" {
+    const path = "tests/feature_tests/polymorphism/65_contextual_choice_arguments";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/polymorphism/66X_contextual_choice_ambiguous" {
+    try buildExpectFail("tests/feature_tests/polymorphism/66X_contextual_choice_ambiguous", "ambiguous call to 'select'");
+}

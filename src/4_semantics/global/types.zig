@@ -108,6 +108,22 @@ pub fn findVariant(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
     return null;
 }
 
+pub fn variantTag(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, hit: VariantHit) i32 {
+    const layout: primitives.ChoiceLayout = switch (graph.semanticType(ty)) {
+        .declared => |id| graph.declaration(id).choice_layout,
+        .structural_choice => |shape| shape.layout,
+        .generic => if (genericInstance(graph, ty)) |instance| switch (instance.shape) {
+            .choice => |shape| shape.layout,
+            .alias => |child| return variantTag(graph, child, hit),
+            else => .regular,
+        } else .regular,
+        else => .regular,
+    };
+    // Regular choices use the position within their family. C enums preserve
+    // the explicit C value, independently of where their variants are stored.
+    return if (layout == .c_enum) hit.variant.value else @intCast(hit.index);
+}
+
 /// Nullable is an inference-friendly wrapper until consumers need its concrete
 /// choice layout. Parameterized bodies may create and consume the type within
 /// one instantiation, before the outer semantizing fixed point can materialize

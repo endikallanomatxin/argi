@@ -253,7 +253,7 @@ pub fn matchInputWithReach(
 
 fn contextualLiteralFits(compatibility: Abstract, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
     const graph = compatibility.core.graph;
-    if (integerLiteralFits(graph, node, target) or compatibility.core.floatLiteralFits(node, target)) return true;
+    if (integerLiteralFits(graph, node, target) or compatibility.core.contextualLiteralFits(node, target)) return true;
     switch (graph.nodes.items[@intFromEnum(node)].content) {
         .string_literal => return switch (graph.types.items[@intFromEnum(target)]) {
             .pointer => |pointer| pointer.mutability == .read_only and types.isBuiltin(graph, pointer.child, .Char),
