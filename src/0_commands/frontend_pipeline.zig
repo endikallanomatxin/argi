@@ -27,6 +27,7 @@ pub const FrontendPipeline = struct {
     };
 
     pub const Options = struct {
+        target: @import("../1_base/target.zig").Config = .{},
         semantizing: SemantizingOptions = .{},
         collect_stats: bool = false,
         entry_module_dir: ?[]const u8 = null,
@@ -368,13 +369,13 @@ pub const FrontendPipeline = struct {
                 } else {
                     const entry = try session.create(fingerprint);
                     errdefer entry.release();
-                    entry.graph = try module_sg.build(entry.allocator(), group.dir, group.files.items);
+                    entry.graph = try module_sg.buildForTarget(entry.allocator(), group.dir, group.files.items, self.options.target);
                     self.module_entries.appendAssumeCapacity(entry);
                     self.module_graphs.appendAssumeCapacity(entry.graph);
                     self.module_cache_misses += 1;
                 }
             } else {
-                const graph = try module_sg.build(self.allocator, group.dir, group.files.items);
+                const graph = try module_sg.buildForTarget(self.allocator, group.dir, group.files.items, self.options.target);
                 self.module_graphs.appendAssumeCapacity(graph);
             }
         }
@@ -477,11 +478,12 @@ pub const FrontendPipeline = struct {
                 try linked_abstracts.appendSlice(self.allocator, imported_abstracts.items);
 
                 const linked_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-                const linked = try module_semantizer.buildLinked(
+                const linked = try module_semantizer.buildLinkedForTarget(
                     self.allocator,
                     groups.items[module_index].dir,
                     groups.items[module_index].files.items,
                     linked_abstracts.items,
+                    self.options.target,
                 );
                 self.linked_module_ns += @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - linked_start);
                 self.linked_module_count += 1;
@@ -496,6 +498,7 @@ pub const FrontendPipeline = struct {
 
         const global_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         const result = try global_semantizer.semantizeWithOptions(self.allocator, selected_graphs.items, .{
+            .target = self.options.target,
             .selected_test_name = self.options.semantizing.selected_test_name,
             .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
             .diagnostics = self.diagnostics,
@@ -521,6 +524,9 @@ pub const FrontendPipeline = struct {
     fn moduleFingerprint(self: *const FrontendPipeline, source: cache.Fingerprint, core: cache.Fingerprint) cache.Fingerprint {
         var hash = cache.ContentHash.init(.{});
         cache.hashConfiguration(&hash);
+        cache.hashBytes(&hash, @tagName(self.options.target.arch));
+        cache.hashBytes(&hash, @tagName(self.options.target.os));
+        cache.hashBytes(&hash, @tagName(self.options.target.abi));
         hash.update(&source);
         hash.update(&core);
         const options = self.options.semantizing;

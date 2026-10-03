@@ -412,7 +412,7 @@ pub const CodeGenerator = struct {
     fn externSignature(self: *CodeGenerator, function: graph_mod.Function, name: []const u8) !ExternSignature {
         const plan = try self.allocator.create(c_abi.FunctionPlan);
         errdefer self.allocator.destroy(plan);
-        plan.* = try c_abi.classifyFunction(self.allocator, self.graph, function, @import("builtin").target);
+        plan.* = try c_abi.classifyFunction(self.allocator, self.graph, function, self.graph.target.stdTarget());
         errdefer plan.deinit(self.allocator);
         const params = try self.allocator.alloc(c.LLVMTypeRef, plan.parameter_count);
         defer self.allocator.free(params);
@@ -2373,7 +2373,7 @@ pub const CodeGenerator = struct {
             .builtin => |builtin| if (builtin == .UIntNative) return self.toLLVMType(@enumFromInt(@as(u32, @intCast(raw)))),
             else => {},
         };
-        return switch (types.pointer_size_bytes) {
+        return switch (self.graph.target.pointerBytes()) {
             4 => c.LLVMInt32Type(),
             8 => c.LLVMInt64Type(),
             else => CodegenError.InvalidType,

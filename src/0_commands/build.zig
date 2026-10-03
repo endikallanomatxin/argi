@@ -316,6 +316,7 @@ pub fn compileTarget(
     var module_cache = frontend.cache.ModuleCache.init(std.heap.page_allocator, .{});
     defer module_cache.deinit();
     var compile_options = options;
+    compile_options.frontend_options.target = flags.target;
     if (!flags.use_cache) {
         compile_options.frontend_options.module_cache = null;
     } else if (compile_options.frontend_options.module_cache == null) {
@@ -344,6 +345,10 @@ fn compileResolvedPlan(
     else
         null;
     const object_only = flags.just_object_path != null;
+    if (!flags.target.isNative() and !object_only and !options.check_only) {
+        std.debug.print("Error: cross-target linking requires an explicit toolchain; use --just-emit-obj for object emission.\n", .{});
+        return error.CrossLinkToolchainRequired;
+    }
     if (!options.check_only) {
         if (!object_only) try ensureParentDir(io, final_output);
         if (final_ir) |path| try ensureParentDir(io, path);
@@ -396,7 +401,7 @@ fn compileResolvedPlan(
     };
     const triple_message = c.LLVMGetDefaultTargetTriple();
     defer c.LLVMDisposeMessage(triple_message);
-    const triple = std.mem.span(triple_message);
+    const triple = if (flags.target.isNative()) std.mem.span(triple_message) else try allocator.dupeZ(u8, if (flags.target.arch == .aarch64) "aarch64-unknown-linux-gnu" else "x86_64-unknown-linux-gnu");
     try link.prepareModule(module, triple, flags.optimization_mode);
     const codegen_ns = elapsedSince(io, codegen_start);
 

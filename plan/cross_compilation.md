@@ -13,8 +13,6 @@ provide cross-compilation.
 
 - [ ] Share target configuration across semantizing/layouts, safety, codegen,
   core platform selection, and linking; include relevant settings in cache keys.
-- [ ] Replace host-derived assumptions such as pointer size and native LLVM
-  target initialization with target-aware decisions.
 - [ ] Start with Linux x86_64 → aarch64 object emission, then executable linking.
 - [ ] Expose linker/CC, sysroot, and target library inputs explicitly; diagnose
   missing inputs rather than silently using host libraries.

@@ -68,7 +68,7 @@ pub const Context = struct {
     ) !entities.ModuleTypeId {
         const name_text = self.tree.tokenTextFromSource(self.source, name_token);
         if (qualifier_token == null and generic_arguments == null) {
-            if (builtinFromName(name_text)) |builtin| return self.internBuiltin(builtin);
+            if (primitives.builtinTypeNamedForTarget(name_text, self.graph.target.stdTarget())) |builtin| return self.internBuiltin(builtin);
             if (self.localTypeDeclaration(name_text)) |declaration| {
                 return self.graph.declarations.items[@intFromEnum(declaration)].type_id orelse error.LocalTypeNotPredeclared;
             }
@@ -290,10 +290,6 @@ pub const Context = struct {
         return .{ .file_index = self.file_index, .offset = self.tree.location(node).offset };
     }
 };
-
-fn builtinFromName(name: []const u8) ?graph_mod.BuiltinType {
-    return primitives.builtinTypeNamed(name);
-}
 
 test "module type lowerer preserves imported generic arguments without syntax" {
     const allocator = std.testing.allocator;

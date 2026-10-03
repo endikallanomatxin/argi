@@ -2,6 +2,7 @@ const std = @import("std");
 const link = @import("../5_codegen/link.zig");
 
 pub const BuildFlags = struct {
+    target: @import("../1_base/target.zig").Config = .{},
     show_cascade: bool = false,
     show_syntax_tree: bool = false,
     show_semantic_graph: bool = false,
@@ -86,6 +87,13 @@ pub fn parseBuildArgs(allocator: std.mem.Allocator, args: []const []const u8) !P
             else
                 .{ .file = value };
             try inputs.append(allocator, input);
+        } else if (std.mem.eql(u8, arg, "--target")) {
+            idx += 1;
+            if (idx >= args.len) return error.MissingFlagValue;
+            parsed.flags.target = @import("../1_base/target.zig").Config.parse(args[idx]) catch |err| {
+                std.debug.print("Error: invalid or unsupported target '{s}'; use native or Linux x86_64/aarch64 with gnu ABI.\n", .{args[idx]});
+                return err;
+            };
         } else if (std.mem.eql(u8, arg, "--release")) {
             parsed.flags.optimization_mode = .release;
         } else if (std.mem.eql(u8, arg, "--output")) {

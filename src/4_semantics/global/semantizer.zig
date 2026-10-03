@@ -26,6 +26,7 @@ const reachability_mod = @import("reachability.zig");
 const reach_context = @import("reach_context.zig");
 
 pub const Options = struct {
+    target: @import("../../1_base/target.zig").Config = .{},
     selected_test_name: ?[]const u8 = null,
     exhaustive_function_bodies: bool = true,
     diagnostics: ?*diagnostics_mod.Diagnostics = null,
@@ -292,6 +293,7 @@ pub fn semantizeWithOptions(
 ) !Result {
     const profile_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
     var relocation = try globalizer.relocate(allocator, modules, .allow_holes);
+    relocation.graph.target = options.target;
     errdefer relocation.deinit(allocator);
     try module_linker.link(allocator, &relocation.graph, modules, relocation.offsets.items);
     const profile_relocated = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;

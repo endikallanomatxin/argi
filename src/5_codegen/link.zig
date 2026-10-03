@@ -35,8 +35,10 @@ fn createTargetMachine(
     triple: [:0]const u8,
     optimization_mode: OptimizationMode,
 ) !llvm.c.LLVMTargetMachineRef {
-    if (c.LLVMInitializeNativeTarget() != 0 or c.LLVMInitializeNativeAsmPrinter() != 0)
-        return error.LLVMTargetInitFailed;
+    c.LLVMInitializeAllTargetInfos();
+    c.LLVMInitializeAllTargets();
+    c.LLVMInitializeAllTargetMCs();
+    c.LLVMInitializeAllAsmPrinters();
 
     var err_ptr: [*c]u8 = null;
     var target_ref: llvm.c.LLVMTargetRef = null;

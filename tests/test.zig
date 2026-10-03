@@ -8393,3 +8393,26 @@ test "feature_tests/basics/49_release_ir_optimization" {
     try expect(std.mem.count(u8, before, "alloca ") > std.mem.count(u8, after, "alloca "));
     try expect(std.mem.count(u8, before, "store i1 ") > std.mem.count(u8, after, "store i1 "));
 }
+
+test "feature_tests/cross_compilation/01_aarch64_data_model" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const object_path = try std.fs.path.join(allocator, &.{ root, "arm64.o" });
+    defer allocator.free(object_path);
+    const fixture = "tests/feature_tests/cross_compilation/01_aarch64_data_model";
+    // The second process exercises durable ModuleSG reuse for this target.
+    for (0..2) |_| try expectArgiBuildSuccess(&.{ "build", fixture, "--target", "aarch64-linux-gnu", "--just-emit-obj", object_path });
+    const object = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, object_path, allocator, .limited(1024 * 1024));
+    defer allocator.free(object);
+    try expectEqualStrings("\x7fELF", object[0..4]);
+    try expectEqual(@as(u16, 183), std.mem.readInt(u16, object[18..20], .little));
+    // The same sources cannot reuse ARM64's unsigned CChar decision on x86_64.
+    const other = try runArgiCommand(&.{ "build", fixture, "--target", "x86_64-linux-gnu", "--just-emit-obj", object_path });
+    defer allocator.free(other.stdout);
+    defer allocator.free(other.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, other.term);
+    try expect(std.mem.indexOf(u8, other.stderr, "255") != null);
+}

@@ -36,14 +36,13 @@ pub const Lowerer = struct {
     }
 
     fn builtinType(self: *Lowerer, builtin: primitives.BuiltinType) Error!llvm.c.LLVMTypeRef {
-        _ = self;
         return switch (builtin) {
             .Void => c.LLVMStructType(null, 0, 0),
             .Int8, .UInt8, .Char => c.LLVMInt8Type(),
             .Int16, .UInt16 => c.LLVMInt16Type(),
             .Int32, .UInt32 => c.LLVMInt32Type(),
             .Int64, .UInt64 => c.LLVMInt64Type(),
-            .UIntNative => switch (types.pointer_size_bytes) {
+            .UIntNative => switch (self.graph.target.pointerBytes()) {
                 2 => c.LLVMInt16Type(),
                 4 => c.LLVMInt32Type(),
                 8 => c.LLVMInt64Type(),

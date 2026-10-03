@@ -153,6 +153,13 @@ feature first.
   applies ABI attributes at the call site, and guards null addresses; prototypes
   must not create LLVM symbols. Generic callback invocation remains pending.
 
+- Compilation target identity lives in `src/1_base/target.zig` and is carried
+  by ModuleSG and GlobalSG. Resolve C aliases, layouts, safety checks, and C ABI
+  classification from that identity rather than the compiler host. Persistent
+  module fingerprints include the target; bump the wire version when its stored
+  representation changes. Cross-target object emission initializes LLVM target
+  backends and uses the selected target data layout before IR optimization.
+
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases
   - avoid introducing synonyms such as `parsing`, `analysis`, or `semantic` as the primary names for those phases in new APIs, diagnostics, timing output, or docs

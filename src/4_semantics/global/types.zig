@@ -276,8 +276,8 @@ pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTyp
 pub fn layoutOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) LayoutError!Layout {
     const semantic = graph.resolvedSemanticType(ty) orelse return error.UnmaterializedGlobalType;
     return switch (semantic) {
-        .builtin => |builtin| builtinLayout(builtin),
-        .pointer => .{ .size = pointer_size_bytes, .alignment = pointer_alignment_bytes },
+        .builtin => |builtin| builtinLayout(graph, builtin),
+        .pointer => .{ .size = graph.target.pointerBytes(), .alignment = graph.target.pointerBytes() },
         .array => |array| blk: {
             const element = try layoutOf(graph, array.element);
             const stride = alignForward(element.size, element.alignment);
@@ -288,7 +288,7 @@ pub fn layoutOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Globa
         .structural_choice => |shape| choiceLayout(graph, shape.variants, shape.layout),
         .inferred_choice => |shape| choiceLayout(graph, shape.variants, .regular),
         .generic => genericLayout(graph, ty),
-        .virtual => .{ .size = pointer_size_bytes * 2, .alignment = pointer_alignment_bytes },
+        .virtual => .{ .size = graph.target.pointerBytes() * 2, .alignment = graph.target.pointerBytes() },
         .nullable, .inferred_errable => error.UnmaterializedGlobalType,
     };
 }
@@ -301,14 +301,14 @@ pub fn alignmentOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
     return (try layoutOf(graph, ty)).alignment;
 }
 
-fn builtinLayout(builtin: primitives.BuiltinType) Layout {
+fn builtinLayout(graph: *const graph_mod.GlobalSemanticGraph, builtin: primitives.BuiltinType) Layout {
     return switch (builtin) {
         .Void => .{ .size = 0, .alignment = 1 },
         .Int8, .UInt8, .Char, .Bool, .Any => .{ .size = 1, .alignment = 1 },
         .Int16, .UInt16, .Float16 => .{ .size = 2, .alignment = 2 },
         .Int32, .UInt32, .Float32 => .{ .size = 4, .alignment = 4 },
         .Int64, .UInt64, .Float64 => .{ .size = 8, .alignment = 8 },
-        .UIntNative, .Type => .{ .size = pointer_size_bytes, .alignment = pointer_alignment_bytes },
+        .UIntNative, .Type => .{ .size = graph.target.pointerBytes(), .alignment = graph.target.pointerBytes() },
     };
 }
 
@@ -316,7 +316,7 @@ fn declaredLayout(graph: *const graph_mod.GlobalSemanticGraph, decl_id: graph_mo
     const raw: usize = @intFromEnum(decl_id);
     if (raw >= graph.declarations.items.len) return error.UnmaterializedGlobalType;
     const decl = graph.declarations.items[raw];
-    if (decl.struct_layout == .c_function_pointer) return .{ .size = pointer_size_bytes, .alignment = pointer_alignment_bytes };
+    if (decl.struct_layout == .c_function_pointer) return .{ .size = graph.target.pointerBytes(), .alignment = graph.target.pointerBytes() };
     if (decl.struct_fields) |range| return structLayout(graph, range, decl.struct_layout);
     if (decl.choice_variants) |range| return choiceLayout(graph, range, decl.choice_layout);
     return error.TypeHasNoRuntimeLayout;

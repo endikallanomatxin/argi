@@ -56,7 +56,11 @@ pub fn buildLinked(
     files: []const module_sg.FileInput,
     abstract_types: []const QualifiedAbstract,
 ) !BuildResult {
-    var graph = try module_sg.build(allocator, module_dir, files);
+    return buildLinkedForTarget(allocator, module_dir, files, abstract_types, .{});
+}
+
+pub fn buildLinkedForTarget(allocator: std.mem.Allocator, module_dir: []const u8, files: []const module_sg.FileInput, abstract_types: []const QualifiedAbstract, target: @import("../../1_base/target.zig").Config) !BuildResult {
+    var graph = try module_sg.buildForTarget(allocator, module_dir, files, target);
     errdefer graph.deinit(allocator);
     const stats = try finishLinked(allocator, &graph, files, abstract_types, null);
     return .{ .graph = graph, .stats = stats };

@@ -11,7 +11,7 @@ const types = @import("types.zig");
 /// same record uses registers in another function. A per-type layout cache
 /// cannot encode that calling convention.
 pub fn supportsCValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
-    return classifyValue(graph, ty, @import("builtin").target, false) != null;
+    return classifyValue(graph, ty, graph.target.stdTarget(), false) != null;
 }
 
 fn supportsScalarValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, depth: usize) bool {
