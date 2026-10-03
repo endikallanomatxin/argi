@@ -8532,6 +8532,12 @@ test "feature_tests/basics/53X_array_reference_shape" {
     try buildExpectFail("tests/feature_tests/basics/53X_array_reference_shape", "array value has type '&[3][3]Int32'; expected '&[2][2]Int32'");
 }
 
+test "feature_tests/basics/54_generic_numeric_zero" {
+    const path = "tests/feature_tests/basics/54_generic_numeric_zero";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
 test "feature_tests/io/33_print_owned_text" {
     const path = "tests/feature_tests/io/33_print_owned_text";
     try expectSuccessfulBuild(path);

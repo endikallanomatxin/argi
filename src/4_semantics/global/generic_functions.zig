@@ -2853,8 +2853,9 @@ pub const Resolver = struct {
         ) !global_sg.Node {
             const module = &self.resolver.modules[self.module_index];
             const name = module.text(name_range);
-            if (module_path == null and arguments.len == 0 and std.mem.eql(u8, name, "UIntNative"))
-                return (try self.resolver.makeAddressConversion(input, self.resolver.sourceFor(self.module_index, source))) orelse error.InvalidAddressConversion;
+            if (module_path == null and arguments.len == 0 and std.mem.eql(u8, name, "UIntNative")) {
+                if (try self.resolver.makeAddressConversion(input, self.resolver.sourceFor(self.module_index, source))) |node| return node;
+            }
             if (module_path == null and std.mem.eql(u8, name, "__trusted_reference_from_address")) {
                 // The hook has no global declaration and cannot be selected by
                 // ordinary lookup. Only these concrete primitive bodies use it.
@@ -2995,7 +2996,17 @@ pub const Resolver = struct {
         fn resolveEmptyTypeInitializer(self: *InstanceContext, name: []const u8, source: primitives.SourceRef) !?global_sg.Node {
             if (primitives.builtinTypeNamedForTarget(name, self.resolver.graph.target.stdTarget())) |builtin_type| {
                 const ty = try self.resolver.generics.internType(.{ .builtin = builtin_type });
-                return self.emptyValue(ty, source);
+                // Builtin constructors produce scalar values, even when their
+                // call arguments were represented by an empty aggregate.
+                const content: @TypeOf(@as(global_sg.Node, undefined).content) = switch (builtin_type) {
+                    .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative => .{ .int_literal = 0 },
+                    .Float16, .Float32, .Float64 => .{ .float_literal = 0 },
+                    .Bool => .{ .bool_literal = false },
+                    .Char => .{ .char_literal = 0 },
+                    .Void => return self.emptyValue(ty, source),
+                    else => return null,
+                };
+                return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = ty, .content = content };
             }
             for (try self.resolver.graph.declarationsNamed(self.resolver.allocator, name)) |id| {
                 const declaration = self.resolver.graph.declarations.items[@intFromEnum(id)];
