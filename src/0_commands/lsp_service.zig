@@ -1386,3 +1386,22 @@ test "LSP module reuse discovers unsaved transitive imports and cycles" {
     defer reverted.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u32, 0), reverted.range.start.line);
 }
+
+test "LSP reports assignment without a previous declaration" {
+    const code = "main() -> (.status_code: Int32 = 0) := {\n    value = 1\n}\n";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const diagnostics = try service.openDocument("file:///assignment.rg", path, 1, code);
+    defer diagnostics.deinit();
+    try std.testing.expect(diagnostics.items.len > 0);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostics.items[0].message, "cannot assign to undeclared binding 'value'") != null);
+    try std.testing.expectEqual(@as(u32, 1), diagnostics.items[0].range.start.line);
+    const corrected = try service.changeDocument("file:///assignment.rg", path, 2, "main() -> (.status_code: Int32 = 0) := {\n    value ::= 1\n    value = 2\n    status_code = value\n}\n");
+    defer corrected.deinit();
+    try std.testing.expectEqual(@as(usize, 0), corrected.items.len);
+}

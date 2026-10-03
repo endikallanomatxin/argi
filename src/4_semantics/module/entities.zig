@@ -290,6 +290,7 @@ pub const PendingOperation = union(enum) {
         source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 },
     },
     resolve_name_assignment: struct {
+        source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 },
         node: ModuleNodeId,
         name: primitives.StringRange,
         value: ModuleNodeId,

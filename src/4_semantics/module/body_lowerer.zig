@@ -481,6 +481,7 @@ const Context = struct {
         }
         const value = try self.valuePosition(assignment.value, try self.lowerNode(assignment.value, expected));
         return self.pending(node, .{ .resolve_name_assignment = .{
+            .source = self.sourceRef(node),
             .node = self.nextNodeId(),
             .name = try self.writer.addString(name_text),
             .value = value.node,

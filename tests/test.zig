@@ -8484,3 +8484,12 @@ test "cross compilation rejects the host C driver" {
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expect(std.mem.indexOf(u8, result.stderr, "incompatible with") != null);
 }
+
+test "feature_tests/basics/50X_undeclared_assignment" {
+    try buildExpectFailExact("tests/feature_tests/basics/50X_undeclared_assignment",
+        \\tests/feature_tests/basics/50X_undeclared_assignment/main.rg:2:5: error: cannot assign to undeclared binding 'value'; declare it first with ':=' or '::='
+        \\      value = 1
+        \\      ^
+        \\
+    );
+}

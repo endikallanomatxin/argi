@@ -706,6 +706,8 @@ pub fn semantizeWithOptions(
     };
     if (remaining != 0) {
         if (options.diagnostics) |diagnostics| {
+            if (try diagnoseUnresolvedAssignments(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                return error.Reported;
             if (try diagnoseUnresolvedArithmetic(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
             if (try diagnoseUnresolvedDereference(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
@@ -2191,6 +2193,41 @@ fn diagnoseUnresolvedChoice(
                 },
                 else => {},
             }
+        }
+    }
+    return false;
+}
+
+fn diagnoseUnresolvedAssignments(
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    resolved: []const bool,
+    reachable: ?*const reachability_mod.FunctionSet,
+    offsets: []const globalizer.Offsets,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    var flat: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
+            defer flat += 1;
+            const access = switch (operation) {
+                .resolve_name_assignment => |value| value,
+                else => continue,
+            };
+            const owner = if (operation_index < module.semantic.pending_owner_functions.items.len)
+                if (module.semantic.pending_owner_functions.items[operation_index]) |value| globalizer.globalFunction(offsets[module_index], value) else null
+            else
+                null;
+            if (resolved[flat] or (reachable != null and owner != null and !reachable.?.contains(owner.?))) continue;
+            var source = access.source;
+            source.file_index += offsets[module_index].file_base;
+            try diagnostics.add(
+                diagnosticLocation(graph, diagnostics, source),
+                .semantic,
+                "cannot assign to undeclared binding '{s}'; declare it first with ':=' or '::='",
+                .{module.text(access.name)},
+            );
+            return true;
         }
     }
     return false;
