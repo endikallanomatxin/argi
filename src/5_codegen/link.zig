@@ -35,10 +35,17 @@ fn createTargetMachine(
     triple: [:0]const u8,
     optimization_mode: OptimizationMode,
 ) !llvm.c.LLVMTargetMachineRef {
-    c.LLVMInitializeAllTargetInfos();
-    c.LLVMInitializeAllTargets();
-    c.LLVMInitializeAllTargetMCs();
-    c.LLVMInitializeAllAsmPrinters();
+    // Initialize the backends supported by target selection. The C headers of
+    // one LLVM installation can list more backends than a redistributable DLL
+    // contains, so the all-target helpers would require unrelated symbols.
+    c.LLVMInitializeX86TargetInfo();
+    c.LLVMInitializeX86Target();
+    c.LLVMInitializeX86TargetMC();
+    c.LLVMInitializeX86AsmPrinter();
+    c.LLVMInitializeAArch64TargetInfo();
+    c.LLVMInitializeAArch64Target();
+    c.LLVMInitializeAArch64TargetMC();
+    c.LLVMInitializeAArch64AsmPrinter();
 
     var err_ptr: [*c]u8 = null;
     var target_ref: llvm.c.LLVMTargetRef = null;

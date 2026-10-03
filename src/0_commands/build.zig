@@ -399,9 +399,7 @@ fn compileResolvedPlan(
         if (!diagnostics.hasErrors()) std.debug.print("indexed codegen failed without a diagnostic: {s}\n", .{@errorName(err)});
         return error.CompilationFailed;
     };
-    const triple_message = c.LLVMGetDefaultTargetTriple();
-    defer c.LLVMDisposeMessage(triple_message);
-    const triple = if (flags.target.isNative()) std.mem.span(triple_message) else try allocator.dupeZ(u8, if (flags.target.arch == .aarch64) "aarch64-unknown-linux-gnu" else "x86_64-unknown-linux-gnu");
+    const triple = try flags.target.llvmTriple(allocator);
     try link.prepareModule(module, triple, flags.optimization_mode);
     const codegen_ns = elapsedSince(io, codegen_start);
 
