@@ -143,7 +143,7 @@ fn runChildInCwdWithEnv(
 fn normalizeRunResult(result: std.process.RunResult) !std.process.RunResult {
     const root = try repoRootPrefix();
     defer std.testing.allocator.free(root);
-    const root_with_sep = try std.fmt.allocPrint(std.testing.allocator, "{s}/", .{root});
+    const root_with_sep = try std.fmt.allocPrint(std.testing.allocator, "{s}{c}", .{ root, std.fs.path.sep });
     defer std.testing.allocator.free(root_with_sep);
 
     var normalized = result;
@@ -154,8 +154,27 @@ fn normalizeRunResult(result: std.process.RunResult) !std.process.RunResult {
     const stderr = normalized.stderr;
     normalized.stderr = try std.mem.replaceOwned(u8, std.testing.allocator, stderr, root_with_sep, "");
     std.testing.allocator.free(stderr);
+    if (@import("builtin").os.tag == .windows) normalizeDiagnosticPaths(normalized.stderr);
 
     return normalized;
+}
+
+// Normalize source-location headers only; code excerpts and program output may
+// contain literal backslashes whose spelling is part of the asserted behavior.
+fn normalizeDiagnosticPaths(bytes: []u8) void {
+    var start: usize = 0;
+    while (start < bytes.len) {
+        const end = std.mem.indexOfScalarPos(u8, bytes, start, '\n') orelse bytes.len;
+        const line = bytes[start..end];
+        if (line.len > 0 and !std.ascii.isWhitespace(line[0])) {
+            if (std.mem.indexOf(u8, line, ".rg:")) |path_end| {
+                for (line[0 .. path_end + 3]) |*byte| if (byte.* == '\\') {
+                    byte.* = '/';
+                };
+            }
+        }
+        start = end + 1;
+    }
 }
 
 fn repoRootPrefix() ![]u8 {
@@ -8520,4 +8539,10 @@ test "feature_tests/system/48_windows_path_roots" {
     const test_path = "tests/feature_tests/system/48_windows_path_roots";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
+}
+
+test "diagnostic path normalization preserves code excerpt spelling" {
+    var bytes = "tests\\feature_tests\\case\\main.rg:2:5: error: invalid value\n    path := \"C:\\file.rg:test\"\n".*;
+    normalizeDiagnosticPaths(&bytes);
+    try expectEqualStrings("tests/feature_tests/case/main.rg:2:5: error: invalid value\n    path := \"C:\\file.rg:test\"\n", &bytes);
 }

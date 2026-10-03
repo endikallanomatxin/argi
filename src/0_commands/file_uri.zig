@@ -35,7 +35,7 @@ pub fn decode(allocator: std.mem.Allocator, uri: []const u8, windows: bool) !?[]
     var result: std.ArrayList(u8) = .empty;
     defer result.deinit(allocator);
     if (!local) {
-        try result.appendSlice(allocator, "//");
+        try result.appendSlice(allocator, "\\\\");
         try result.appendSlice(allocator, authority);
     }
     var path = rest[slash..];
@@ -52,7 +52,8 @@ pub fn decode(allocator: std.mem.Allocator, uri: []const u8, windows: bool) !?[]
             index += 2;
         }
         if (byte == 0) return null;
-        try result.append(allocator, byte);
+        // Match the native paths used by source discovery and module identity.
+        try result.append(allocator, if (windows and byte == '/') '\\' else byte);
     }
     return try result.toOwnedSlice(allocator);
 }
@@ -60,8 +61,8 @@ pub fn decode(allocator: std.mem.Allocator, uri: []const u8, windows: bool) !?[]
 test "file URIs preserve Windows drives, UNC paths and escaped names" {
     const allocator = std.testing.allocator;
     const cases = [_]struct { path: []const u8, uri: []const u8, decoded: []const u8, windows: bool }{
-        .{ .path = "C:\\project files\\main#.rg", .uri = "file:///C:/project%20files/main%23.rg", .decoded = "C:/project files/main#.rg", .windows = true },
-        .{ .path = "\\\\server\\share\\main.rg", .uri = "file://server/share/main.rg", .decoded = "//server/share/main.rg", .windows = true },
+        .{ .path = "C:\\project files\\main#.rg", .uri = "file:///C:/project%20files/main%23.rg", .decoded = "C:\\project files\\main#.rg", .windows = true },
+        .{ .path = "\\\\server\\share\\main.rg", .uri = "file://server/share/main.rg", .decoded = "\\\\server\\share\\main.rg", .windows = true },
         .{ .path = "/tmp/a% b.rg", .uri = "file:///tmp/a%25%20b.rg", .decoded = "/tmp/a% b.rg", .windows = false },
     };
     for (cases) |case| {
@@ -74,7 +75,7 @@ test "file URIs preserve Windows drives, UNC paths and escaped names" {
     }
     const local = (try decode(allocator, "file://localhost/C:/main.rg", true)).?;
     defer allocator.free(local);
-    try std.testing.expectEqualStrings("C:/main.rg", local);
+    try std.testing.expectEqualStrings("C:\\main.rg", local);
     for ([_][]const u8{ "file:///a%00b", "file:///a%xx", "file:///a%", "file://remote/a", "https://host/a" }) |uri| {
         try std.testing.expectEqual(@as(?[]u8, null), try decode(allocator, uri, false));
     }

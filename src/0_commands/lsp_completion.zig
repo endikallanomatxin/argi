@@ -422,10 +422,18 @@ fn test_completion(marked: []const u8, dependencies: []const sf.SourceFile) !Res
     const text = try std.mem.concat(std.testing.allocator, u8, &.{ marked[0..offset], marked[offset + 1 ..] });
     defer std.testing.allocator.free(text);
     var sources: std.array_list.Managed(sf.SourceFile) = .init(std.testing.allocator);
-    defer sources.deinit();
-    try sources.append(.{ .path = "/project/main.rg", .code = text });
-    try sources.appendSlice(dependencies);
-    return complete(std.testing.allocator, std.testing.io, sources.items, "/project/main.rg", offset);
+    defer {
+        for (sources.items) |source| std.testing.allocator.free(source.path);
+        sources.deinit();
+    }
+    const path = try std.fs.path.resolve(std.testing.allocator, &.{"/project/main.rg"});
+    try sources.append(.{ .path = path, .code = text });
+    for (dependencies) |dependency| {
+        var source = dependency;
+        source.path = try std.fs.path.resolve(std.testing.allocator, &.{dependency.path});
+        try sources.append(source);
+    }
+    return complete(std.testing.allocator, std.testing.io, sources.items, path, offset);
 }
 
 fn item_named(result: Result, name: []const u8) ?Item {

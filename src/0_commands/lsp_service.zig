@@ -1252,12 +1252,12 @@ test "LSP navigation and hovers use written symbols and source declarations" {
     try std.testing.expectEqual(@as(u32, 0), identity.range.start.character);
     const specialized = (try service.definition(uri, .{ .line = 6, .character = 4 })).?;
     defer specialized.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.endsWith(u8, specialized.path, "/system/terminal.rg"));
+    try std.testing.expect(std.mem.endsWith(u8, specialized.path, if (@import("builtin").os.tag == .windows) "\\system\\terminal.rg" else "/system/terminal.rg"));
     try std.testing.expectEqual(@as(u32, 0), specialized.range.start.character);
     try std.testing.expectEqual(@as(u32, 5), specialized.range.end.character);
     const terminal = (try service.definition(uri, .{ .line = 3, .character = 30 })).?;
     defer terminal.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.endsWith(u8, terminal.path, "/system/system.rg"));
+    try std.testing.expect(std.mem.endsWith(u8, terminal.path, if (@import("builtin").os.tag == .windows) "\\system\\system.rg" else "/system/system.rg"));
     try std.testing.expectEqual(@as(u32, 8), terminal.range.end.character - terminal.range.start.character);
 }
 
@@ -1350,10 +1350,10 @@ test "LSP definitions remain available with unresolved matrix initializers" {
     try service.documents.append(try Document.init(std.testing.allocator, uri, path, 1, code));
     const system = (try service.definition(uri, .{ .line = 1, .character = 14 })).?;
     defer system.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.endsWith(u8, system.path, "/system/system.rg"));
+    try std.testing.expect(std.mem.endsWith(u8, system.path, if (@import("builtin").os.tag == .windows) "\\system\\system.rg" else "/system/system.rg"));
     const print = (try service.definition(uri, .{ .line = 5, .character = 4 })).?;
     defer print.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.endsWith(u8, print.path, "/system/terminal.rg"));
+    try std.testing.expect(std.mem.endsWith(u8, print.path, if (@import("builtin").os.tag == .windows) "\\system\\terminal.rg" else "/system/terminal.rg"));
     const matrix = (try service.definition(uri, .{ .line = 4, .character = 9 })).?;
     defer matrix.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings(path, matrix.path);
