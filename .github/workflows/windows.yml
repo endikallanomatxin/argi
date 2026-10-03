@@ -19,6 +19,10 @@ name: Windows port validation
       - 'build.zig'
       - '.github/workflows/windows.yml'
 
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -93,3 +97,9 @@ jobs:
             argi.exe build "$fixture" --no-cache --link-file windows-interop.o
             "$fixture/build/output.exe"
           done
+
+      - name: Validate UTF-8 filesystem paths
+        shell: msys2 {0}
+        run: |
+          gcc -Wall -Wextra -Werror tests/native/windows/utf8_files.c core/platforms/windows/runtime.c -o windows-files.exe
+          ./windows-files.exe

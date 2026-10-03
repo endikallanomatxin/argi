@@ -320,8 +320,11 @@ pub const CodeGenerator = struct {
                 .{ "_memory_release_aligned", "_argi_page_release" },
                 .{ "_aligned_alloc", "_argi_aligned_alloc" },
                 .{ "_aligned_free", "_aligned_free" },
-                .{ "fdopen", "_fdopen" },
-                .{ "access", "_access" },
+                .{ "fdopen", "_argi_fdopen" },
+                .{ "fopen", "_argi_fopen_utf8" },
+                .{ "remove", "_argi_remove_utf8" },
+                .{ "rename", "_argi_rename_utf8" },
+                .{ "access", "_argi_access_utf8" },
             };
             inline for (windows_aliases) |alias| if (std.mem.eql(u8, name, alias[0])) return alias[1];
         }
