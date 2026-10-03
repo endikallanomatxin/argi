@@ -334,11 +334,27 @@ pub fn linkWithLibc(
         .shared_library => |name| input.* = .{ .file = try resolveNamedLibrary(arena.allocator(), io, environ_map, linker, inputs, name, true, options.target, driver_args.items) },
         else => {},
     };
-    const argv = try buildLinkArgv(arena.allocator(), linker, obj_path, output_path, resolved, driver_args.items, options.target);
+    // MinGW binutils may interpret Unicode command-line paths through the ANSI
+    // code page. Let process creation select the Unicode output directory and
+    // give the linker local artifact names instead. Resolve other paths before
+    // changing the child directory so relative native inputs keep their meaning.
+    const windows = options.target.os == .windows;
+    const link_dir = if (windows) try std.fs.path.resolve(arena.allocator(), &.{std.fs.path.dirname(output_path) orelse "."}) else null;
+    if (windows) for (resolved) |*input| switch (input.*) {
+        .file => |path| input.* = .{ .file = try std.fs.path.resolve(arena.allocator(), &.{path}) },
+        .search_path => |path| input.* = .{ .search_path = try std.fs.path.resolve(arena.allocator(), &.{path}) },
+        else => {},
+    };
+    const driver = if (windows and (std.mem.indexOfAny(u8, linker, "/\\") != null))
+        try std.fs.path.resolve(arena.allocator(), &.{linker})
+    else
+        linker;
+    const argv = try buildLinkArgv(arena.allocator(), driver, if (windows) std.fs.path.basename(obj_path) else obj_path, if (windows) std.fs.path.basename(output_path) else output_path, resolved, driver_args.items, options.target);
 
     const result = std.process.run(allocator.*, io, .{
         .argv = argv,
         .environ_map = environ_map,
+        .cwd = if (link_dir) |dir| .{ .path = dir } else .inherit,
     }) catch |err| {
         printLinkerFailure(linker, argv, null, err);
         return error.LinkFailed;
