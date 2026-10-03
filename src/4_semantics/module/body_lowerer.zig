@@ -782,7 +782,7 @@ const Context = struct {
     fn lowerIndex(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId, store: ?entities.ModuleNodeId) !Lowered {
         const access = self.tree.indexAccess(node).?;
         const value = try self.lowerNode(access.value, null);
-        const index = try self.lowerNode(access.index, try self.builtin(.Int32));
+        const index = try self.lowerNode(access.index, null);
         return self.pending(node, .{ .resolve_index = .{
             .node = self.nextNodeId(),
             .value = value.node,
@@ -795,7 +795,7 @@ const Context = struct {
         const assignment = self.tree.indexAssignment(node).?;
         const target = self.tree.indexAccess(assignment.target) orelse return error.InvalidIndexAssignmentTarget;
         const collection = try self.lowerNode(target.value, null);
-        const index = try self.lowerNode(target.index, try self.builtin(.Int32));
+        const index = try self.lowerNode(target.index, null);
         const value = try self.lowerNode(assignment.value, expected);
         return self.pending(node, .{ .resolve_index = .{
             .node = self.nextNodeId(),

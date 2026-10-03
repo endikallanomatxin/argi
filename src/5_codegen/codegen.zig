@@ -1201,7 +1201,22 @@ pub const CodeGenerator = struct {
     }
 
     fn arrayIndex(self: *CodeGenerator, access: anytype) !TypedValue {
-        const pointer = try self.addressablePointer(access.array_ptr);
+        const pointer = self.addressablePointer(access.array_ptr) catch |err| switch (err) {
+            error.InvalidType => blk: {
+                // A read may project an array from a temporary record. Keep
+                // the receiver's evaluation before the index and materialize
+                // it once; this storage is not exposed as a mutable place.
+                const type_ref = try self.toLLVMType(access.array_type);
+                const storage = c.LLVMBuildAlloca(self.builder, type_ref, "array.read.temporary");
+                if (!try self.storeLargeNode(access.array_ptr, storage)) {
+                    const value = (try self.visitNode(access.array_ptr)) orelse return CodegenError.ValueNotFound;
+                    if (value.type_ref != type_ref) return CodegenError.InvalidType;
+                    _ = c.LLVMBuildStore(self.builder, value.value_ref, storage);
+                }
+                break :blk TypedValue{ .value_ref = storage, .type_ref = c.LLVMPointerType(type_ref, 0), .ty = access.array_type };
+            },
+            else => return err,
+        };
         const index = (try self.visitNode(access.index)) orelse return CodegenError.ValueNotFound;
         const array_type = try self.toLLVMType(access.array_type);
         const element_type = try self.toLLVMType(access.element_type);

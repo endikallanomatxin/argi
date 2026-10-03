@@ -8544,6 +8544,18 @@ test "feature_tests/basics/55_large_aggregate_returns" {
     try runExpect(path, 0);
 }
 
+test "feature_tests/basics/56_temporary_record_array_read" {
+    const path = "tests/feature_tests/basics/56_temporary_record_array_read";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/57X_temporary_record_array_bounds" {
+    const path = "tests/feature_tests/basics/57X_temporary_record_array_bounds";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
 test "feature_tests/io/33_print_owned_text" {
     const path = "tests/feature_tests/io/33_print_owned_text";
     try expectSuccessfulBuild(path);
