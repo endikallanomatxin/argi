@@ -1002,6 +1002,8 @@ pub const Resolver = struct {
         if (self.graph.nodes.items[@intFromEnum(right)].ty == null and
             self.contextualizeChoiceOperand(module_index, o, right, left_ty)) return false;
         var right_ty = self.graph.nodes.items[@intFromEnum(right)].ty orelse return false;
+        // TODO: Contextualize floating literals against the other operand and
+        // diagnose incompatible widths instead of leaving comparisons unresolved.
         self.coerceIntegerPair(left, &left_ty, right, &right_ty);
         const bool_ty = try self.builtin(.Bool);
         const target = globalizer.globalNode(o, value.node);

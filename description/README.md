@@ -32,6 +32,7 @@ For a first pass, read [Syntax overview](00_syntax_overview.md),
   [Virtual types](134_virtual_types.md).
 - **Collections:** [Lists](161_lists.md), [Strings](162_strings.md), and
   [Other collections](169_other_collections.md).
+- **Numeric utilities:** [Deterministic randomness](163_randomness.md).
 - **Integration and tooling:** [Modules](02_modules.md),
   [C interoperability](20_c.md), [Testing](72_testing.md),
   [Documentation comments](73_documentation.md), and [System](80_system.md).

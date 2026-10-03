@@ -8821,3 +8821,13 @@ test "feature_tests/text/44_float16_formatting_roundtrip" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/numbers/01_pcg32" {
+    const path = "tests/feature_tests/numbers/01_pcg32";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/numbers/02X_pcg32_private_state" {
+    try buildExpectFail("tests/feature_tests/numbers/02X_pcg32_private_state", "field '_state' is private to its module");
+}

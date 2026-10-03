@@ -44,8 +44,8 @@ Runtime and diagnostics
 Comptime and library foundations
 
 - Type introspection/reflection utilities consistent with Argi's comptime model.
-- Random generation: existing system, pseudo-random, and cryptographic sketches
-  need distinct capability and quality contracts.
+- Random generation: system entropy and cryptographic operations need distinct
+  capability and quality contracts from deterministic PRNG state.
 - Low-level/unsafe facilities must name their trusted obligations explicitly.
 
 These ideas originated as reference-library comparisons. They require original
