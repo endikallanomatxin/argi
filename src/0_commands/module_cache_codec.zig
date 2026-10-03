@@ -176,13 +176,19 @@ test "module cache codec rejects invalid lengths and scalar encodings" {
     const fingerprint: [32]u8 = @splat(7);
     const encoded = try encode(std.testing.allocator, &graph, fingerprint);
     defer std.testing.allocator.free(encoded);
-    for (0..2) |damage| {
+    var target_bytes: std.ArrayList(u8) = .empty;
+    defer target_bytes.deinit(std.testing.allocator);
+    try writeValue(std.testing.allocator, &target_bytes, graph.target);
+    const module_offset = header_size + target_bytes.items.len;
+    for (0..3) |damage| {
         const data = try std.testing.allocator.dupe(u8, encoded);
         defer std.testing.allocator.free(data);
         if (damage == 0) {
-            std.mem.writeInt(u32, data[header_size..][0..4], std.math.maxInt(u32), .little);
+            std.mem.writeInt(u32, data[module_offset..][0..4], std.math.maxInt(u32), .little);
+        } else if (damage == 1) {
+            data[module_offset + 4 + graph.module_dir.len] = 2;
         } else {
-            data[header_size + 4 + graph.module_dir.len] = 2;
+            data[header_size] = 255;
         }
         Hash.hash(data[header_size..], data[header_size - 32 ..][0..32], .{});
         var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
