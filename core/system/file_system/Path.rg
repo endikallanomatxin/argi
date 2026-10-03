@@ -1,9 +1,9 @@
 --
 -- Baseline owning path type.
 --
--- v1 keeps path semantics intentionally simple and POSIX-oriented:
--- components are separated by '/' and the type is mostly a thin owner
--- around `String` plus a handful of helpers commonly needed by the core.
+-- Paths own their UTF-8 text. Separator and drive-root recognition follows
+-- the compilation target; joining uses '/' on both supported platform families.
+-- This type does not canonicalize paths or query the filesystem.
 --
 Path : Type = (
     .text: String
@@ -12,7 +12,7 @@ Path : Type = (
 path_is_separator(
     .byte: UInt8,
 ) -> (.ok: Bool) := {
-    ok = byte == 47
+    ok = _platform_path_is_separator(.byte = byte).ok
 }
 
 path_last_separator_index(
@@ -117,7 +117,7 @@ is_absolute(
         return
     }
 
-    ok = path_is_separator(.byte = bytes_get(.view = &view, .index = 0).byte).ok
+    ok = _platform_path_root_length(.view = &view).length > 0
 }
 
 file_name(
@@ -125,6 +125,11 @@ file_name(
 ) -> (.value: ?StringView) := {
     view ::= as_view(.self = self)
     if view.length == 0 {
+        value = ..none
+        return
+    }
+
+    if view.length <= _platform_path_root_length(.view = &view).length {
         value = ..none
         return
     }
@@ -152,8 +157,9 @@ parent(
     sep_index ::= path_last_separator_index(.view = &view).value
     match sep_index {
         ..some payload {
-            if payload.value == 0 {
-                value = ..some(.value = string_view_slice(.view = &view, .start = 0, .length = 1))
+            root_length ::= _platform_path_root_length(.view = &view).length
+            if payload.value < root_length {
+                value = ..some(.value = string_view_slice(.view = &view, .start = 0, .length = root_length))
                 return
             }
             value = ..some(.value = string_view_slice(.view = &view, .start = 0, .length = payload.value))

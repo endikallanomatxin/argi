@@ -103,3 +103,19 @@ jobs:
         run: |
           gcc -Wall -Wextra -Werror tests/native/windows/utf8_files.c core/platforms/windows/runtime.c -o windows-files.exe
           ./windows-files.exe
+
+      - name: Validate Windows path roots and generated projects
+        shell: msys2 {0}
+        run: |
+          export PATH="$PWD/zig-out/bin:$PATH"
+          argi.exe build tests/feature_tests/system/48_windows_path_roots --no-cache
+          tests/feature_tests/system/48_windows_path_roots/build/output.exe
+          argi.exe init windows_smoke
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('windows_smoke/source/windows_smoke/main.rg')
+          text = source.read_text()
+          end = text.rindex('}')
+          source.write_text(text[:end] + '    print("Windows core works")\n' + text[end:])
+          PY
+          argi.exe run windows_smoke

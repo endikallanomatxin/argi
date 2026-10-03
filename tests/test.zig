@@ -3,7 +3,7 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualStrings = std.testing.expectEqualStrings;
 
-const argi_bin = "zig-out/bin/argi";
+const argi_bin = if (@import("builtin").os.tag == .windows) "zig-out/bin/argi.exe" else "zig-out/bin/argi";
 
 fn compilerRoot() []const u8 {
     const this_file = @src().file;
@@ -12,11 +12,7 @@ fn compilerRoot() []const u8 {
 }
 
 fn outputPathFor(name: []const u8) ![]u8 {
-    return std.fmt.allocPrint(
-        std.testing.allocator,
-        "{s}/build/output",
-        .{name},
-    );
+    return std.fmt.allocPrint(std.testing.allocator, "{s}/build/output{s}", .{ name, if (@import("builtin").os.tag == .windows) ".exe" else "" });
 }
 
 fn irPathFor(name: []const u8) ![]u8 {
@@ -8517,4 +8513,11 @@ test "feature_tests/io/34_print_terminator" {
     const path = "tests/feature_tests/io/34_print_terminator";
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
+}
+
+test "feature_tests/system/48_windows_path_roots" {
+    if (@import("builtin").os.tag != .windows) return error.SkipZigTest;
+    const test_path = "tests/feature_tests/system/48_windows_path_roots";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
 }
