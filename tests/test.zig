@@ -600,6 +600,56 @@ test "installed argi resolves core from its installation prefix outside repo" {
     try expectEqual(std.process.Child.Term{ .exited = 0 }, run_result.term);
 }
 
+fn copyInstalledTree(source: []const u8, destination: std.Io.Dir, prefix: []const u8) !void {
+    var directory = try std.Io.Dir.cwd().openDir(std.testing.io, source, .{ .iterate = true });
+    defer directory.close(std.testing.io);
+    var walker = try directory.walk(std.testing.allocator);
+    defer walker.deinit();
+    while (try walker.next(std.testing.io)) |entry| {
+        if (entry.kind != .file) continue;
+        const target = try std.fs.path.join(std.testing.allocator, &.{ prefix, entry.path });
+        defer std.testing.allocator.free(target);
+        try directory.copyFile(entry.path, destination, target, std.testing.io, .{ .make_path = true });
+    }
+}
+
+test "installed more imports survive relocation outside the checkout" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const repo = try repoRootPrefix();
+    defer std.testing.allocator.free(repo);
+    const root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    for ([_][]const u8{ "bin", "lib/argi/core", "lib/argi/more" }) |part| {
+        const source = try std.fs.path.join(std.testing.allocator, &.{ repo, "zig-out", part });
+        defer std.testing.allocator.free(source);
+        const destination = try std.fs.path.join(std.testing.allocator, &.{ "package", part });
+        defer std.testing.allocator.free(destination);
+        try copyInstalledTree(source, tmp.dir, destination);
+    }
+    try tmp.dir.createDirPath(std.testing.io, "outside");
+    const executable = try std.fs.path.join(std.testing.allocator, &.{ root, "package", "bin", std.fs.path.basename(argi_bin) });
+    defer std.testing.allocator.free(executable);
+    const fixture = try std.fs.path.join(std.testing.allocator, &.{ repo, "tests/feature_tests/modules/09_import_more_library" });
+    defer std.testing.allocator.free(fixture);
+    const outside = try std.fs.path.join(std.testing.allocator, &.{ root, "outside" });
+    defer std.testing.allocator.free(outside);
+    var environment = try std.testing.environ.createMap(std.testing.allocator);
+    defer environment.deinit();
+    _ = environment.swapRemove("ARGI_SYSROOT");
+    const built = try runChildInCwdWithEnv(&.{ executable, "build", fixture, "--output", "app", "--no-cache" }, outside, &environment);
+    defer std.testing.allocator.free(built.stdout);
+    defer std.testing.allocator.free(built.stderr);
+    if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+    const app = try std.fs.path.join(std.testing.allocator, &.{ outside, if (@import("builtin").os.tag == .windows) "app.exe" else "app" });
+    defer std.testing.allocator.free(app);
+    const executed = try runChildInCwd(&.{app}, outside);
+    defer std.testing.allocator.free(executed.stdout);
+    defer std.testing.allocator.free(executed.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+}
+
 test "installed argi test resolves core from its installation prefix outside repo" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

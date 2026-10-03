@@ -175,12 +175,19 @@ fn resolveToolMoreDir(alloc: *const std.mem.Allocator, io: std.Io) ![]u8 {
     const exe_dir = try std.process.executableDirPathAlloc(io, alloc.*);
     defer alloc.free(exe_dir);
 
+    // Match the relocatable core layout. Working-tree candidates remain
+    // available for library development; installed imports need no checkout.
+    // TODO: Thread explicit sysroot selection through more import discovery.
+    const installed_more = try std.fs.path.resolve(alloc.*, &.{ exe_dir, "..", "lib", "argi", "more" });
+    defer alloc.free(installed_more);
+
     const bundled_more = try std.fs.path.resolve(alloc.*, &.{ exe_dir, "..", "..", "..", "more" });
     defer alloc.free(bundled_more);
 
     return try firstExistingDir(alloc, io, &.{
         "more",
         "../more",
+        installed_more,
         bundled_more,
     });
 }

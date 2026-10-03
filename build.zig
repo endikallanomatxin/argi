@@ -54,7 +54,7 @@ pub fn build(b: *std.Build) void {
     if (!std.mem.endsWith(u8, installed_core_path, core_suffix)) {
         @panic("refusing to clean an unexpected core installation path");
     }
-    const clean_installed_core = CleanInstalledCore.create(b, installed_core_path);
+    const clean_installed_core = CleanInstalledLibrary.create(b, installed_core_path, "clean installed core");
     const install_core = b.addInstallDirectory(.{
         .source_dir = b.path("core"),
         .install_dir = .prefix,
@@ -62,6 +62,20 @@ pub fn build(b: *std.Build) void {
     });
     install_core.step.dependOn(&clean_installed_core.step);
     b.getInstallStep().dependOn(&install_core.step);
+
+    const more_suffix = std.fs.path.join(b.allocator, &.{ "lib", "argi", "more" }) catch @panic("out of memory");
+    const installed_more_path = b.getInstallPath(.prefix, more_suffix);
+    if (!std.mem.endsWith(u8, installed_more_path, more_suffix)) {
+        @panic("refusing to clean an unexpected more installation path");
+    }
+    const clean_installed_more = CleanInstalledLibrary.create(b, installed_more_path, "clean installed more");
+    const install_more = b.addInstallDirectory(.{
+        .source_dir = b.path("more"),
+        .install_dir = .prefix,
+        .install_subdir = "lib/argi/more",
+    });
+    install_more.step.dependOn(&clean_installed_more.step);
+    b.getInstallStep().dependOn(&install_more.step);
 
     //
     // INSTALL AND RUN EXECUTABLE ---------------------------------------------
@@ -143,18 +157,18 @@ fn addTestRun(b: *std.Build, tests: *std.Build.Step.Compile, progress: bool) *st
     return run;
 }
 
-// Core installation must discard removed source files before copying the
+// Library installation must discard removed source files before copying the
 // current bundle. Use the build runner's I/O rather than a host shell utility.
-const CleanInstalledCore = struct {
+const CleanInstalledLibrary = struct {
     step: std.Build.Step,
     path: []const u8,
 
-    fn create(b: *std.Build, path: []const u8) *CleanInstalledCore {
-        const clean = b.allocator.create(CleanInstalledCore) catch @panic("OOM");
+    fn create(b: *std.Build, path: []const u8, name: []const u8) *CleanInstalledLibrary {
+        const clean = b.allocator.create(CleanInstalledLibrary) catch @panic("OOM");
         clean.* = .{
             .step = std.Build.Step.init(.{
                 .id = .custom,
-                .name = "clean installed core",
+                .name = name,
                 .owner = b,
                 .makeFn = make,
             }),
@@ -165,7 +179,7 @@ const CleanInstalledCore = struct {
 
     fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) !void {
         _ = options;
-        const clean: *CleanInstalledCore = @fieldParentPtr("step", step);
+        const clean: *CleanInstalledLibrary = @fieldParentPtr("step", step);
         try std.Io.Dir.cwd().deleteTree(step.owner.graph.io, clean.path);
     }
 };

@@ -96,9 +96,11 @@ feature first.
   before widening the run; avoid parallel full-suite runs during diagnosis.
   Use `-Dtest-progress=true` to identify an active case when a run stalls.
 
-- `zig build` installs the bundled core under `zig-out/lib/argi/core`. Rebuild
-  after editing core before manually invoking `zig-out/bin/argi`, so validation
-  uses the edited library rather than its previous installed copy.
+- `zig build` installs core under `zig-out/lib/argi/core` and the official
+  more library under `zig-out/lib/argi/more`. Rebuild after editing either
+  library before manually invoking `zig-out/bin/argi`, so validation uses the
+  edited installed bundle. Both directories are cleaned before installation
+  to remove stale modules.
 
 - Current module rules in the compiler:
   - all `.rg` files in a folder share namespace

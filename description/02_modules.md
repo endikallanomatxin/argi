@@ -12,6 +12,11 @@ to every program; its public names form an implicit prelude. `more/` is the
 broader library for collections, codecs, mathematics, and other domains. Its
 modules are imported explicitly. Much of `more/` is still under construction.
 
+Installations include `core` and `more` under `lib/argi/`. Bare imports can
+therefore resolve without a source checkout. Library development may use a
+local `more/` tree in the working directory or its parent before the installed
+library.
+
 ## Imports and visibility
 
 Names beginning with `_` are private to their module, except that bundled
