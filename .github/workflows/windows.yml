@@ -1,9 +1,9 @@
-name: Windows port validation
+name: Windows validation
 
 "on":
   workflow_dispatch:
   push:
-    branches: [windows-support]
+    branches: [develop]
     paths:
       - 'src/**'
       - 'core/**'
