@@ -1612,6 +1612,24 @@ pub const CodeGenerator = struct {
             if (value.type_ref != target_ref) return CodegenError.InvalidType;
             return .{ .value_ref = value.value_ref, .type_ref = target_ref, .ty = target };
         }
+        const source_kind = switch (self.graph.semanticType(source)) {
+            .builtin => |kind| kind,
+            else => null,
+        };
+        const target_kind = switch (self.graph.semanticType(target)) {
+            .builtin => |kind| kind,
+            else => null,
+        };
+        if (source_kind != null and target_kind != null and
+            primitives.integerRange(source_kind.?, self.graph.target.stdTarget()) != null and
+            primitives.integerRange(target_kind.?, self.graph.target.stdTarget()) != null)
+        {
+            const signed = switch (source_kind.?) {
+                .Int8, .Int16, .Int32, .Int64 => true,
+                else => false,
+            };
+            return .{ .value_ref = c.LLVMBuildIntCast2(self.builder, value.value_ref, target_ref, @intFromBool(signed), "integer.convert"), .type_ref = target_ref, .ty = target };
+        }
         const source_ptr = self.isPointer(source);
         const target_ptr = self.isPointer(target);
         const source_native = types.isBuiltin(self.graph, source, .UIntNative);

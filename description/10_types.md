@@ -44,6 +44,28 @@ Conversion uses the destination type as the callee. For example,
 `UIntNative` is the pointer-sized integer type used for addresses. The
 integer carries no validity dependency on the referenced storage.
 
+Integer conversions use `Destination(.value = source)`. Their return type
+depends on the complete ranges of the two types, never on the particular
+value or the expected result type. If the destination contains the source's
+entire range, the conversion returns the destination type directly. Otherwise
+it returns `Errable#(.t: Destination, .reasons: (..out_of_range))`, including
+when the supplied value happens to fit. A checked conversion returns an error
+outside the destination's range; it never wraps, saturates, or truncates a
+value outside that range.
+
+```rg
+byte : UInt8 = 255
+wide : Int16 = Int16(.value = byte)
+checked ::= Int8(.value = wide)  -- Errable<Int8>: the Int16 range is larger
+```
+
+The same rules apply to signedness changes, `UIntNative`, and C integer aliases.
+Native widths and aliases use the compilation target. All conversions between
+typed integer values remain explicit, including widening conversions in
+assignments, function arguments, arithmetic, and comparisons. Literals retain
+their contextual typing rules; a conversion argument without a type context
+uses the normal literal default.
+
 Creating a reference from an address requires a named core operation that
 connects it to a valid lifetime, such as `trusted_establish_inherited_reference`.
 Allocation establishment creates a fresh root for newly acquired storage.

@@ -8651,3 +8651,29 @@ test "feature_tests/ownership/300_opaque_scalar_borrow_cleanup" {
 test "feature_tests/ownership/301X_opaque_scalar_borrow_element_moved" {
     try buildExpectFail("tests/feature_tests/ownership/301X_opaque_scalar_borrow_element_moved", "place rooted at 'element' is moved and cannot be used");
 }
+
+test "feature_tests/basics/61_explicit_integer_conversions" {
+    const path = "tests/feature_tests/basics/61_explicit_integer_conversions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/62_integer_conversion_ranges" {
+    const path = "tests/feature_tests/basics/62_integer_conversion_ranges";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/63X_implicit_integer_widening" {
+    try buildExpectFail("tests/feature_tests/basics/63X_implicit_integer_widening", "implicit numeric conversion is not supported");
+}
+
+test "feature_tests/basics/64X_checked_integer_conversion_requires_errable" {
+    try buildExpectFail("tests/feature_tests/basics/64X_checked_integer_conversion_requires_errable", "cannot assign a fallible numeric result directly");
+}
+
+test "feature_tests/basics/65_integer_conversion_error_trace" {
+    const path = "tests/feature_tests/basics/65_integer_conversion_error_trace";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

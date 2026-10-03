@@ -490,6 +490,14 @@ pub const Resolver = struct {
         const local_args = reference.generic_arguments;
         const name = module.text(reference.name);
         const input = globalizer.globalNode(o, value.input);
+        if (local_args == null and reference.module_path == null) {
+            const conversion_reach = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
+            if (try self.makeIntegerConversion(name, input, self.sourceFor(module_index, reference.source), conversion_reach)) |node| {
+                self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+                self.stats.calls += 1;
+                return .resolved;
+            }
+        }
         if (local_args == null and reference.module_path == null and std.mem.eql(u8, name, "UIntNative")) {
             const node = (try self.makeAddressConversion(input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
             self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
@@ -1885,6 +1893,65 @@ pub const Resolver = struct {
         };
     }
 
+    fn makeIntegerConversion(
+        self: *Resolver,
+        name: []const u8,
+        input: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+        reach: ReachInferenceContext,
+    ) !?global_sg.Node {
+        const target_kind = primitives.builtinTypeNamedForTarget(name, self.graph.target.stdTarget()) orelse return null;
+        const target_range = primitives.integerRange(target_kind, self.graph.target.stdTarget()) orelse return null;
+        const literal = switch (self.graph.node(input).content) {
+            .struct_value_literal => |value| value,
+            else => return null,
+        };
+        if (literal.fields.len != 1) return null;
+        const field = self.graph.value_fields.items[literal.fields.start];
+        if (!std.mem.eql(u8, self.graph.text(field.name), "value")) return null;
+        const source_type = self.graph.node(field.value).ty orelse return null;
+        const source_kind = switch (self.graph.resolvedSemanticType(source_type) orelse return null) {
+            .builtin => |kind| kind,
+            else => return null,
+        };
+        const source_range = primitives.integerRange(source_kind, self.graph.target.stdTarget()) orelse return null;
+        const target_type = try self.core.builtin(target_kind);
+        if (target_range.minimum <= source_range.minimum and target_range.maximum >= source_range.maximum)
+            return .{ .source = source, .ty = target_type, .content = .{ .explicit_cast = .{ .value = field.value, .target_type = target_type } } };
+
+        // Checked conversions are ordinary core calls: their error trace and
+        // reached capabilities participate in the same machinery as any error.
+        var helper: ?global_sg.GlobalDeclId = null;
+        for (self.graph.declarations.items, 0..) |declaration, raw| {
+            if (!std.mem.eql(u8, self.graph.text(declaration.name), "_checked_integer_conversion")) continue;
+            const id: global_sg.GlobalDeclId = @enumFromInt(raw);
+            const owner = self.graph.moduleForDeclaration(id) orelse continue;
+            if (self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) {
+                helper = id;
+                break;
+            }
+        }
+        const declaration = helper orelse return null;
+        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        try self.graph.generic_arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, "from"), .value = .{ .type = source_type } });
+        try self.graph.generic_arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, "to"), .value = .{ .type = target_type } });
+        const function = try self.instantiate(declaration, .{ .start = start, .len = 2 });
+        var operands = [_]global_sg.GlobalNodeId{ field.value, undefined, undefined };
+        for ([_]i128{ @max(source_range.minimum, target_range.minimum), @min(source_range.maximum, target_range.maximum) }, 0..) |bound, index| {
+            operands[index + 1] = @enumFromInt(self.graph.nodes.items.len);
+            try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = source_type, .content = .{ .int_literal = bound } });
+        }
+        const input_start: u32 = @intCast(self.graph.value_fields.items.len);
+        for (operands, 0..) |operand, index| {
+            try self.graph.value_fields.append(self.allocator, .{ .name = self.graph.fields.items[self.graph.function(function).input.start + index].name, .value = operand });
+        }
+        const call_input: global_sg.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
+        try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = input_start, .len = 3 } } } });
+        try self.core.trackReachedCall(function, call_input, reach, false);
+        _ = try self.core.completeCallInputFieldsWithReach(self.graph.function(function).input, call_input, reach);
+        return .{ .source = source, .ty = try self.core.functionOutputType(function), .content = .{ .function_call = .{ .callee = function, .input = call_input } } };
+    }
+
     fn makeSizeOf(
         self: *Resolver,
         input: global_sg.GlobalNodeId,
@@ -2875,6 +2942,28 @@ pub const Resolver = struct {
         ) !global_sg.Node {
             const module = &self.resolver.modules[self.module_index];
             const name = module.text(name_range);
+            if (module_path == null and arguments.len == 0 and primitives.builtinTypeNamedForTarget(name, self.resolver.graph.target.stdTarget()) != null) {
+                var conversion_reach = try self.operatorContext(null);
+                defer self.resolver.allocator.free(conversion_reach.global.visible_bindings);
+                if (self.resolver.graph.node(input).content == .struct_value_literal)
+                    conversion_reach.global.assumed_fields = self.resolver.graph.node(input).content.struct_value_literal.assumed_fields;
+                if (try self.resolver.makeIntegerConversion(name, input, self.resolver.sourceFor(self.module_index, source), conversion_reach)) |node| return node;
+            }
+            if (module_path == null and std.mem.eql(u8, name, "__integer_conversion")) {
+                const declaration = module.declarations.items[@intFromEnum(self.parameterized.declaration)];
+                if (!module.is_bundled_core or !std.mem.eql(u8, module.text(declaration.name), "_checked_integer_conversion")) return error.NoMatchingGenericFunction;
+                const declaration_source = self.resolver.graph.declaration(globalizer.globalDecl(self.resolver.offsets[self.module_index], self.parameterized.declaration)).source;
+                const path = self.resolver.graph.text(self.resolver.graph.files.items[declaration_source.file_index].path);
+                if (!std.mem.eql(u8, std.fs.path.basename(path), "integer_conversion.rg")) return error.NoMatchingGenericFunction;
+                var target: ?global_sg.GlobalTypeId = null;
+                for (self.resolver.graph.generic_arguments.items[arguments.start..][0..arguments.len]) |argument| {
+                    if (std.mem.eql(u8, self.resolver.graph.text(argument.name), "to") and argument.value == .type) target = argument.value.type;
+                }
+                const literal = self.resolver.graph.node(input).content.struct_value_literal;
+                if (literal.fields.len != 1) return error.InvalidIntegerConversion;
+                const value = self.resolver.graph.value_fields.items[literal.fields.start].value;
+                return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = target orelse return error.InvalidIntegerConversion, .content = .{ .explicit_cast = .{ .value = value, .target_type = target.? } } };
+            }
             if (module_path == null and arguments.len == 0 and std.mem.eql(u8, name, "UIntNative")) {
                 if (try self.resolver.makeAddressConversion(input, self.resolver.sourceFor(self.module_index, source))) |node| return node;
             }

@@ -1158,6 +1158,21 @@ fn diagnoseInvalidNumericAssignments(
             else => false,
         }) continue;
         const actual = graph.node(value).ty orelse continue;
+        if (isNumericType(graph, expected)) {
+            if (global_types.findVariant(graph, actual, "ok")) |ok| {
+                if (ok.variant.payload_type) |payload| {
+                    if (global_types.equal(graph, payload, expected) and global_types.findVariant(graph, actual, "error") != null) {
+                        if (diagnostics) |sink| try sink.add(
+                            diagnosticLocation(graph, sink, graph.node(value).source),
+                            .semantic,
+                            "cannot assign a fallible numeric result directly; handle its error or propagate it with '!'",
+                            .{},
+                        );
+                        return true;
+                    }
+                }
+            }
+        }
         if (!isNumericType(graph, actual) or !isNumericType(graph, expected)) continue;
         if (global_types.equal(graph, actual, expected)) continue;
         if (diagnostics) |sink| {

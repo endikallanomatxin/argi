@@ -30,6 +30,39 @@ pub const BuiltinType = enum {
     Any,
 };
 
+pub const IntegerRange = struct { minimum: i128, maximum: i128 };
+
+/// Conversion contracts depend on the compilation target, including native
+/// integers and C aliases already resolved to their underlying builtin.
+pub fn integerRange(kind: BuiltinType, target: std.Target) ?IntegerRange {
+    const bits: u7 = switch (kind) {
+        .Int8, .UInt8 => 8,
+        .Int16, .UInt16 => 16,
+        .Int32, .UInt32 => 32,
+        .Int64, .UInt64 => 64,
+        .UIntNative => @intCast(target.ptrBitWidth()),
+        else => return null,
+    };
+    const signed = switch (kind) {
+        .Int8, .Int16, .Int32, .Int64 => true,
+        else => false,
+    };
+    const bound = @as(i128, 1) << (if (signed) bits - 1 else bits);
+    return .{ .minimum = if (signed) -bound else 0, .maximum = bound - 1 };
+}
+
+test "integer conversion ranges follow signedness and target pointer width" {
+    var target = @import("builtin").target;
+    target.cpu.arch = .x86_64;
+    try std.testing.expectEqualDeep(IntegerRange{ .minimum = -128, .maximum = 127 }, integerRange(.Int8, target).?);
+    try std.testing.expectEqualDeep(IntegerRange{ .minimum = 0, .maximum = 255 }, integerRange(.UInt8, target).?);
+    try std.testing.expectEqualDeep(IntegerRange{ .minimum = -9223372036854775808, .maximum = 9223372036854775807 }, integerRange(.Int64, target).?);
+    try std.testing.expectEqualDeep(IntegerRange{ .minimum = 0, .maximum = 18446744073709551615 }, integerRange(.UIntNative, target).?);
+    target.cpu.arch = .x86;
+    try std.testing.expectEqualDeep(IntegerRange{ .minimum = 0, .maximum = 4294967295 }, integerRange(.UIntNative, target).?);
+    try std.testing.expect(integerRange(.Float32, target) == null);
+}
+
 /// Builtin spellings and C aliases share one lookup across module and global
 /// semantizing. The explicit target keeps ABI width decisions out of callers.
 pub fn builtinTypeNamedForTarget(name: []const u8, target: std.Target) ?BuiltinType {
