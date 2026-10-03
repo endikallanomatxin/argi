@@ -8370,3 +8370,117 @@ test "feature_tests/basics/47_contextual_float_literals" {
 test "feature_tests/basics/48X_numeric_record_field" {
     try buildExpectFail("tests/feature_tests/basics/48X_numeric_record_field", "cannot assign numeric value of type");
 }
+
+test "feature_tests/basics/49_release_ir_optimization" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const fixture = "tests/feature_tests/basics/49_release_ir_optimization";
+    const debug_ir = try std.fs.path.join(allocator, &.{ root, "debug.ll" });
+    defer allocator.free(debug_ir);
+    const release_ir = try std.fs.path.join(allocator, &.{ root, "release.ll" });
+    defer allocator.free(release_ir);
+    try expectArgiBuildSuccess(&.{ "build", fixture, "--emit-llvm", debug_ir });
+    try runExpect(fixture, 0);
+    try expectArgiBuildSuccess(&.{ "build", fixture, "--release", "--emit-llvm", release_ir });
+    try runExpect(fixture, 0);
+    const before = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, debug_ir, allocator, .limited(1024 * 1024));
+    defer allocator.free(before);
+    const after = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, release_ir, allocator, .limited(1024 * 1024));
+    defer allocator.free(after);
+    try expect(std.mem.count(u8, before, "alloca ") > std.mem.count(u8, after, "alloca "));
+    try expect(std.mem.count(u8, before, "store i1 ") > std.mem.count(u8, after, "store i1 "));
+}
+
+test "feature_tests/cross_compilation/01_aarch64_data_model" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const object_path = try std.fs.path.join(allocator, &.{ root, "arm64.o" });
+    defer allocator.free(object_path);
+    const fixture = "tests/feature_tests/cross_compilation/01_aarch64_data_model";
+    // The second process exercises durable ModuleSG reuse for this target.
+    for (0..2) |_| try expectArgiBuildSuccess(&.{ "build", fixture, "--target", "aarch64-linux-gnu", "--just-emit-obj", object_path });
+    const object = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, object_path, allocator, .limited(1024 * 1024));
+    defer allocator.free(object);
+    try expectEqualStrings("\x7fELF", object[0..4]);
+    try expectEqual(@as(u16, 183), std.mem.readInt(u16, object[18..20], .little));
+    // The same sources cannot reuse ARM64's unsigned CChar decision on x86_64.
+    const other = try runArgiCommand(&.{ "build", fixture, "--target", "x86_64-linux-gnu", "--just-emit-obj", object_path });
+    defer allocator.free(other.stdout);
+    defer allocator.free(other.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, other.term);
+    try expect(std.mem.indexOf(u8, other.stderr, "255") != null);
+}
+
+test "cross compilation rejects incompatible run targets" {
+    const target = if (@import("builtin").cpu.arch == .aarch64 and @import("builtin").os.tag == .linux) "x86_64-linux-gnu" else "aarch64-linux-gnu";
+    const result = try runArgiCommand(&.{ "run", "tests/feature_tests/basics/01_minimal_main", "--target", target });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "cannot execute an incompatible target") != null);
+}
+
+test "feature_tests/cross_compilation/02_aarch64_c_roundtrip" {
+    const allocator = std.testing.allocator;
+    var env_map = try std.testing.environ.createMap(allocator);
+    defer env_map.deinit();
+    const cc = env_map.get("ARGI_CROSS_CC") orelse return error.SkipZigTest;
+    const runner = env_map.get("ARGI_CROSS_RUNNER") orelse return error.SkipZigTest;
+    const runtime_root = env_map.get("ARGI_CROSS_RUNTIME_ROOT") orelse return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, "tests/feature_tests/cross_compilation/02_aarch64_c_roundtrip" });
+    defer allocator.free(fixture);
+    const native = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(native);
+    const compiled = try runChildInCwd(&.{ cc, "-c", native, "-o", "native.o" }, root);
+    defer allocator.free(compiled.stdout);
+    defer allocator.free(compiled.stderr);
+    if (compiled.term != .exited or compiled.term.exited != 0) std.debug.print("cross C fixture failed: {s}\n", .{compiled.stderr});
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, compiled.term);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    for ([_][]const u8{ "--stats", "--release" }) |mode| {
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--target", "aarch64-linux-gnu", "--cc", cc, "--link-file", "native.o", "--output", "app", mode }, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("cross build failed: {s}\n", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChildInCwd(&.{ runner, "-L", runtime_root, "./app" }, root);
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+    }
+}
+
+test "cross compilation requires an explicitly configured driver" {
+    const allocator = std.testing.allocator;
+    var env_map = try std.testing.environ.createMap(allocator);
+    defer env_map.deinit();
+    _ = env_map.swapRemove("CC");
+    const target = if (@import("builtin").cpu.arch == .aarch64 and @import("builtin").os.tag == .linux) "x86_64-linux-gnu" else "aarch64-linux-gnu";
+    const result = try runArgiCommandWithEnv(&.{ "build", "tests/feature_tests/basics/01_minimal_main", "--target", target }, &env_map);
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "requires an explicit toolchain") != null);
+}
+
+test "cross compilation rejects the host C driver" {
+    const target = if (@import("builtin").cpu.arch == .aarch64 and @import("builtin").os.tag == .linux) "x86_64-linux-gnu" else "aarch64-linux-gnu";
+    const result = try runArgiCommand(&.{ "build", "tests/feature_tests/basics/01_minimal_main", "--target", target, "--cc", "cc" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "incompatible with") != null);
+}

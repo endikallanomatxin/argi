@@ -83,6 +83,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 | `argi test [dir]` | Run language-level tests. |
 | `argi lsp` | Start the language server. |
 
+Use `--target aarch64-linux-gnu --just-emit-obj output.o` to emit a Linux
+ARM64 object; the default target is native. `argi run` requires a compatible
+native target. For an ARM64 executable, select a target-configured driver with
+`--cc aarch64-linux-gnu-gcc`. `--cc-arg` supplies individual driver arguments
+and `--c-sysroot` selects its C sysroot; `--sysroot` still selects Argi core.
+
 Use `--release` with `build` or `run` for optimized executables. See `argi help`
 for target selection, output paths, and LLVM/object emission options.
 

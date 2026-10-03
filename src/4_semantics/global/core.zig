@@ -145,7 +145,7 @@ pub const Resolver = struct {
                 if (reference.kind != .type) continue;
                 if (reference.module_path == null and reference.generic_arguments == null) {
                     const name = module.text(reference.name);
-                    const resolved_builtin = primitives.builtinTypeNamed(name);
+                    const resolved_builtin = primitives.builtinTypeNamedForTarget(name, self.graph.target.stdTarget());
                     if (resolved_builtin) |builtin_type| {
                         try self.graph.resolveType(globalizer.globalType(o, local_id), .{ .builtin = builtin_type });
                         self.stats.external_types += 1;

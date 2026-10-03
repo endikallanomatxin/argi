@@ -316,6 +316,7 @@ pub fn compileTarget(
     var module_cache = frontend.cache.ModuleCache.init(std.heap.page_allocator, .{});
     defer module_cache.deinit();
     var compile_options = options;
+    compile_options.frontend_options.target = flags.target;
     if (!flags.use_cache) {
         compile_options.frontend_options.module_cache = null;
     } else if (compile_options.frontend_options.module_cache == null) {
@@ -344,6 +345,10 @@ fn compileResolvedPlan(
     else
         null;
     const object_only = flags.just_object_path != null;
+    if (!flags.target.isNative() and !object_only and !options.check_only and flags.cc == null and (environ_map == null or environ_map.?.get("CC") == null)) {
+        std.debug.print("Error: cross-target linking requires an explicit toolchain; select --cc (or CC), or use --just-emit-obj for object emission.\n", .{});
+        return error.CrossLinkToolchainRequired;
+    }
     if (!options.check_only) {
         if (!object_only) try ensureParentDir(io, final_output);
         if (final_ir) |path| try ensureParentDir(io, path);
@@ -394,6 +399,10 @@ fn compileResolvedPlan(
         if (!diagnostics.hasErrors()) std.debug.print("indexed codegen failed without a diagnostic: {s}\n", .{@errorName(err)});
         return error.CompilationFailed;
     };
+    const triple_message = c.LLVMGetDefaultTargetTriple();
+    defer c.LLVMDisposeMessage(triple_message);
+    const triple = if (flags.target.isNative()) std.mem.span(triple_message) else try allocator.dupeZ(u8, if (flags.target.arch == .aarch64) "aarch64-unknown-linux-gnu" else "x86_64-unknown-linux-gnu");
+    try link.prepareModule(module, triple, flags.optimization_mode);
     const codegen_ns = elapsedSince(io, codegen_start);
 
     if (!object_only and options.codegen_options.selected_test_name == null and !hasExecutableMain(graph)) {
@@ -418,9 +427,6 @@ fn compileResolvedPlan(
         }
     }
 
-    const triple_message = c.LLVMGetDefaultTargetTriple();
-    defer c.LLVMDisposeMessage(triple_message);
-    const triple = std.mem.span(triple_message);
     // Manifest paths are resolved from the package root; CLI paths retain the
     // invoking directory. Keep both lists ordered for archive dependencies.
     const native_inputs = try allocator.alloc(link.NativeInput, plan.native_inputs.len + flags.native_inputs.len);
@@ -430,7 +436,7 @@ fn compileResolvedPlan(
     if (object_only)
         try link.emitObjectFile(module, triple, temp_obj, flags.optimization_mode)
     else
-        try link.linkWithLibc(module, triple, temp_stem, &allocator, io, environ_map, flags.optimization_mode, native_inputs);
+        try link.linkWithLibc(module, triple, temp_stem, &allocator, io, environ_map, flags.optimization_mode, native_inputs, .{ .target = flags.target, .cc = flags.cc, .args = flags.cc_args, .sysroot = flags.c_sysroot });
     const link_ns = elapsedSince(io, link_start);
 
     if (temp_ir) |src| try replaceFile(io, src, final_ir.?);

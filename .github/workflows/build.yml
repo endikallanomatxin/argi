@@ -50,6 +50,14 @@ jobs:
           echo "LLVM_LIB_DIR=$("$llvm_config" --libdir)" >> "$GITHUB_ENV"
           echo "LLVM_LIBS=$("$llvm_config" --libs)" >> "$GITHUB_ENV"
 
+      - name: Install Linux ARM64 cross-validation tools
+        if: matrix.target == 'linux-x86_64'
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu qemu-user
+          echo "ARGI_CROSS_CC=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          echo "ARGI_CROSS_RUNNER=qemu-aarch64" >> "$GITHUB_ENV"
+          echo "ARGI_CROSS_RUNTIME_ROOT=/usr/aarch64-linux-gnu" >> "$GITHUB_ENV"
+
       - name: Check publication guards
         if: inputs.package
         run: python .github/scripts/test_release.py

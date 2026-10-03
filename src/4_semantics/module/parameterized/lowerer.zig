@@ -565,7 +565,7 @@ pub const Context = struct {
         if (allow_self and std.mem.eql(u8, name, "Self")) return self.addType(.abstract_self);
         if (qualifier == null) {
             if (self.parameter(name)) |binding| if (binding.kind == .type) return self.addType(.{ .parameter = binding.id });
-            if (builtinFromName(name)) |builtin| {
+            if (primitives.builtinTypeNamedForTarget(name, self.graph.target.stdTarget())) |builtin| {
                 const concrete = try self.moduleBuiltin(builtin);
                 return self.addType(.{ .concrete = concrete });
             }
@@ -691,7 +691,7 @@ pub const Context = struct {
             const name = self.tree.tokenTextFromSource(self.source, token);
             if (self.parameter(name)) |binding| {
                 if (binding.kind == .type) return .{ .type = try self.addType(.{ .parameter = binding.id }) };
-            } else if (builtinFromName(name) != null or self.localType(name) != null) {
+            } else if (primitives.builtinTypeNamedForTarget(name, self.graph.target.stdTarget()) != null or self.localType(name) != null) {
                 return .{ .type = try self.lowerNamedType(node, token, null, allow_self) };
             }
         }
@@ -1382,10 +1382,6 @@ pub fn isTypeParameter(tree: *const syn.FileSyntaxTree, source: []const u8, fiel
     const start = name_location.offset + tree.tokenTextFromSource(source, field.name_token).len;
     if (start > type_location.offset or type_location.offset > source.len) return false;
     return std.mem.count(u8, source[start..type_location.offset], ":") >= 2;
-}
-
-fn builtinFromName(name: []const u8) ?primitives.BuiltinType {
-    return primitives.builtinTypeNamed(name);
 }
 
 fn parameterizedDetailForTag(tag: syn.Node.Tag) ir.PendingExpressionDetail {

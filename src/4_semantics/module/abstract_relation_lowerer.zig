@@ -314,7 +314,7 @@ const Context = struct {
             .name => |name| {
                 if (name.qualifier_token != null) return;
                 const text = self.tree.tokenTextFromSource(self.source, name.name_token);
-                if (builtinFromName(text) != null or self.localType(text) != null) return;
+                if (primitives.builtinTypeNamedForTarget(text, self.graph.target.stdTarget()) != null or self.localType(text) != null) return;
                 for (self.params.items) |parameter| if (std.mem.eql(u8, parameter.name, text)) return;
                 const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
                 try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
@@ -498,10 +498,6 @@ fn hasParams(params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex) bool 
 fn isTypeName(tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex, expected: []const u8) bool {
     const ty = tree.syntaxType(node) orelse return false;
     return ty == .name and ty.name.qualifier_token == null and std.mem.eql(u8, tree.tokenTextFromSource(source, ty.name.name_token), expected);
-}
-
-fn builtinFromName(name: []const u8) ?primitives.BuiltinType {
-    return primitives.builtinTypeNamed(name);
 }
 
 test "abstract relation lowering owns both concrete and parameterized forms" {

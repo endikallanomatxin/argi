@@ -196,7 +196,7 @@ pub const GlobalSemanticGraph = struct {
         }
     };
 
-
+    target: @import("../../1_base/target.zig").Config = .{},
     modules: std.ArrayList(Module) = .empty,
     module_aliases: std.ArrayList(ModuleAlias) = .empty,
     files: std.ArrayList(File) = .empty,
@@ -238,7 +238,6 @@ pub const GlobalSemanticGraph = struct {
 
     strings: std.ArrayList(u8) = .empty,
     roots: std.ArrayList(GlobalNodeId) = .empty,
-
 
     // Transient lookup state used while building/querying GlobalSema. The
     // append-only semantic pools remain the source of truth; these indexes are
@@ -289,17 +288,16 @@ pub const GlobalSemanticGraph = struct {
         self.lookup.deinit(allocator);
         self.construction.deinit(allocator);
         inline for (.{
-            &self.modules,            &self.module_aliases,          &self.files,                 &self.declarations,
-            &self.symbols,            &self.symbol_declarations,     &self.types,                 &self.generic_instances,
-            &self.functions,          &self.function_operators,      &self.generic_function_instances,
-            &self.bindings,           &self.nodes,                   &self.blocks,
-            &self.fields,             &self.variants,                &self.generic_arguments,     &self.value_fields,
-            &self.switch_cases,       &self.switches,                &self.auto_deinit_fields,    &self.auto_deinits,
-            &self.virtual_registries, &self.virtualizes,             &self.virtual_calls,         &self.reach_segments,
-            &self.reach_alternatives, &self.reaches,                 &self.nullable_unwraps,      &self.testing_expect_errors,
-            &self.error_propagations, &self.error_contexts,          &self.node_refs,             &self.type_refs,
-            &self.binding_refs,       &self.function_refs,           &self.virtual_registry_refs, &self.strings,
-            &self.roots,
+            &self.modules,               &self.module_aliases,        &self.files,                      &self.declarations,
+            &self.symbols,               &self.symbol_declarations,   &self.types,                      &self.generic_instances,
+            &self.functions,             &self.function_operators,    &self.generic_function_instances, &self.bindings,
+            &self.nodes,                 &self.blocks,                &self.fields,                     &self.variants,
+            &self.generic_arguments,     &self.value_fields,          &self.switch_cases,               &self.switches,
+            &self.auto_deinit_fields,    &self.auto_deinits,          &self.virtual_registries,         &self.virtualizes,
+            &self.virtual_calls,         &self.reach_segments,        &self.reach_alternatives,         &self.reaches,
+            &self.nullable_unwraps,      &self.testing_expect_errors, &self.error_propagations,         &self.error_contexts,
+            &self.node_refs,             &self.type_refs,             &self.binding_refs,               &self.function_refs,
+            &self.virtual_registry_refs, &self.strings,               &self.roots,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }

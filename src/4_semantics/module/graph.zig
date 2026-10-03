@@ -89,6 +89,7 @@ pub const Symbol = struct {
 /// and source offsets in construction tables are provenance only. Durable
 /// bodies and semantic identities live in `semantic` using Module* IDs.
 pub const ModuleSemanticGraph = struct {
+    target: @import("../../1_base/target.zig").Config = .{},
     module_dir: []const u8 = "",
     is_bundled_core: bool = false,
     declarations: std.ArrayList(Declaration) = .empty,
@@ -268,8 +269,13 @@ pub const ModuleSemanticGraphBuilder = struct {
 /// performs discovery file by file, but writes every durable result directly
 /// into module-owned tables; there is no intermediate file semantic artifact.
 pub fn build(allocator: std.mem.Allocator, module_dir: []const u8, files: []const FileInput) !ModuleSemanticGraph {
+    return buildForTarget(allocator, module_dir, files, .{});
+}
+
+pub fn buildForTarget(allocator: std.mem.Allocator, module_dir: []const u8, files: []const FileInput, target: @import("../../1_base/target.zig").Config) !ModuleSemanticGraph {
     var builder = try ModuleSemanticGraphBuilder.init(allocator, module_dir);
     errdefer builder.deinit();
+    builder.graph.target = target;
     return builder.build(files);
 }
 
@@ -298,7 +304,7 @@ fn buildSymbolIndex(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph) !
 fn resolveModuleTypeReferences(graph: *ModuleSemanticGraph) void {
     for (graph.type_references.items) |*reference| {
         if (reference.qualifier != null) continue;
-        if (builtinFromName(graph.text(reference.name))) |builtin| {
+        if (builtinFromName(graph, graph.text(reference.name))) |builtin| {
             reference.resolution = .{ .builtin = builtin };
             continue;
         }
@@ -451,7 +457,7 @@ fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *c
         .name => |name| blk: {
             if (name.qualifier_token != null) break :blk null;
             const spelling = tree.tokenTextFromSource(source, name.name_token);
-            if (builtinFromName(spelling)) |builtin| break :blk try appendType(allocator, graph, .{ .builtin = builtin });
+            if (builtinFromName(graph, spelling)) |builtin| break :blk try appendType(allocator, graph, .{ .builtin = builtin });
             const reference = findTypeReference(graph, module_file_index, tree.tokenLocation(name.name_token).offset) orelse break :blk null;
             break :blk switch (reference.resolution) {
                 .builtin => |builtin| try appendType(allocator, graph, .{ .builtin = builtin }),
@@ -763,8 +769,8 @@ fn findTypeReference(graph: *const ModuleSemanticGraph, module_file_index: u32, 
     return null;
 }
 
-fn builtinFromName(name: []const u8) ?BuiltinType {
-    return primitives.builtinTypeNamed(name);
+fn builtinFromName(graph: *const ModuleSemanticGraph, name: []const u8) ?BuiltinType {
+    return primitives.builtinTypeNamedForTarget(name, graph.target.stdTarget());
 }
 
 fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input: FileInput, module_file_index: u32) !void {

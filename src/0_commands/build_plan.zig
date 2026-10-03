@@ -2,11 +2,15 @@ const std = @import("std");
 const link = @import("../5_codegen/link.zig");
 
 pub const BuildFlags = struct {
+    target: @import("../1_base/target.zig").Config = .{},
     show_cascade: bool = false,
     show_syntax_tree: bool = false,
     show_semantic_graph: bool = false,
     stats: bool = false,
     use_cache: bool = true,
+    cc: ?[]const u8 = null,
+    cc_args: []const []const u8 = &.{},
+    c_sysroot: ?[]const u8 = null,
     native_inputs: []const link.NativeInput = &.{},
     output_path: ?[]const u8 = null,
     llvm_ir_path: ?[]const u8 = null,
@@ -48,6 +52,8 @@ const ModuleManifest = struct {
 };
 
 pub fn parseBuildArgs(allocator: std.mem.Allocator, args: []const []const u8) !ParsedBuildArgs {
+    var driver_args: std.ArrayList([]const u8) = .empty;
+    errdefer driver_args.deinit(allocator);
     var inputs: std.ArrayList(link.NativeInput) = .empty;
     errdefer inputs.deinit(allocator);
     var parsed: ParsedBuildArgs = .{};
@@ -86,6 +92,17 @@ pub fn parseBuildArgs(allocator: std.mem.Allocator, args: []const []const u8) !P
             else
                 .{ .file = value };
             try inputs.append(allocator, input);
+        } else if (std.mem.eql(u8, arg, "--cc") or std.mem.eql(u8, arg, "--cc-arg") or std.mem.eql(u8, arg, "--c-sysroot")) {
+            idx += 1;
+            if (idx >= args.len or args[idx].len == 0) return error.MissingFlagValue;
+            if (std.mem.eql(u8, arg, "--cc")) parsed.flags.cc = args[idx] else if (std.mem.eql(u8, arg, "--c-sysroot")) parsed.flags.c_sysroot = args[idx] else try driver_args.append(allocator, args[idx]);
+        } else if (std.mem.eql(u8, arg, "--target")) {
+            idx += 1;
+            if (idx >= args.len) return error.MissingFlagValue;
+            parsed.flags.target = @import("../1_base/target.zig").Config.parse(args[idx]) catch |err| {
+                std.debug.print("Error: invalid or unsupported target '{s}'; use native or Linux x86_64/aarch64 with gnu ABI.\n", .{args[idx]});
+                return err;
+            };
         } else if (std.mem.eql(u8, arg, "--release")) {
             parsed.flags.optimization_mode = .release;
         } else if (std.mem.eql(u8, arg, "--output")) {
@@ -122,6 +139,7 @@ pub fn parseBuildArgs(allocator: std.mem.Allocator, args: []const []const u8) !P
     }
     if (parsed.flags.object_path != null and parsed.flags.just_object_path != null)
         return error.ConflictingObjectEmissionModes;
+    parsed.flags.cc_args = try driver_args.toOwnedSlice(allocator);
     parsed.flags.native_inputs = try inputs.toOwnedSlice(allocator);
     return parsed;
 }
@@ -515,4 +533,15 @@ test "native library modes are explicit in CLI and manifests" {
     try std.testing.expectEqualStrings("two", manifest.native_inputs.items[1].shared_library);
     try std.testing.expectError(error.InvalidNativeLinkInput, parseManifest(allocator, ".", "[[native]]\nlibrary = \"one\"\nstatic_library = \"one\""));
     try std.testing.expectError(error.MissingFlagValue, parseBuildArgs(allocator, &.{"--link-shared-library"}));
+}
+
+test "build flags keep target C driver arguments separate from Argi sysroot" {
+    const allocator = std.testing.allocator;
+    const parsed = try parseBuildArgs(allocator, &.{ "--target", "aarch64-linux-gnu", "--cc", "clang", "--cc-arg", "--target=aarch64-linux-gnu", "--c-sysroot", "/target", "--sysroot", "/argi" });
+    defer allocator.free(parsed.flags.native_inputs);
+    defer allocator.free(parsed.flags.cc_args);
+    try std.testing.expectEqualStrings("clang", parsed.flags.cc.?);
+    try std.testing.expectEqualStrings("--target=aarch64-linux-gnu", parsed.flags.cc_args[0]);
+    try std.testing.expectEqualStrings("/target", parsed.flags.c_sysroot.?);
+    try std.testing.expectEqualStrings("/argi", parsed.flags.sysroot_path.?);
 }
