@@ -1605,7 +1605,7 @@ test "definition responds with target location over protocol" {
 }
 
 fn pathToFileUri(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    return std.fmt.allocPrint(allocator, "file://{s}", .{path});
+    return @import("file_uri.zig").encode(allocator, path, @import("builtin").os.tag == .windows);
 }
 
 fn parsePosition(value: json.Value) ?service.Position {

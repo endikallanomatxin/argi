@@ -1136,31 +1136,7 @@ fn outlineNodes(work: std.mem.Allocator, file: *const editor_syntax.File, nodes:
 }
 
 pub fn decodeFileUri(allocator: std.mem.Allocator, uri: []const u8) !?[]u8 {
-    if (!std.mem.startsWith(u8, uri, "file://")) return null;
-    const encoded = uri["file://".len..];
-    var output = std.array_list.Managed(u8).init(allocator);
-    errdefer output.deinit();
-    var index: usize = 0;
-    while (index < encoded.len) {
-        if (encoded[index] == '%' and index + 2 < encoded.len) {
-            const high = std.fmt.charToDigit(encoded[index + 1], 16) catch {
-                try output.append(encoded[index]);
-                index += 1;
-                continue;
-            };
-            const low = std.fmt.charToDigit(encoded[index + 2], 16) catch {
-                try output.append(encoded[index]);
-                index += 1;
-                continue;
-            };
-            try output.append(@intCast(high * 16 + low));
-            index += 3;
-        } else {
-            try output.append(encoded[index]);
-            index += 1;
-        }
-    }
-    return try output.toOwnedSlice();
+    return @import("file_uri.zig").decode(allocator, uri, @import("builtin").os.tag == .windows);
 }
 
 test "indexed LSP service public positions stay zero based" {
