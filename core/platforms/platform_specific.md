@@ -18,3 +18,10 @@ Windows filesystem calls convert UTF-8 paths to UTF-16 within the native call
 and release conversion buffers before returning. Terminal streams use binary
 CRT mode so byte readers/writers do not translate newlines or treat Ctrl-Z as
 end of file.
+
+Argument and environment views use UTF-8 copies of Windows Unicode values.
+Those bootstrap buffers remain valid until the generated entrypoint returns,
+after language scope cleanup. Later environment queries retain earlier values
+instead of replacing their storage. Console code pages are switched to UTF-8
+only for console endpoints and restored at entry exit; redirected streams stay
+ordinary byte streams.

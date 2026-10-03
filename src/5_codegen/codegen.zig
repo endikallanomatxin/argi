@@ -325,6 +325,9 @@ pub const CodeGenerator = struct {
                 .{ "remove", "_argi_remove_utf8" },
                 .{ "rename", "_argi_rename_utf8" },
                 .{ "access", "_argi_access_utf8" },
+                .{ "getenv", "_argi_getenv_utf8" },
+                .{ "argi_runtime_argc", "_argi_runtime_argc" },
+                .{ "argi_runtime_argv", "_argi_runtime_argv" },
             };
             inline for (windows_aliases) |alias| if (std.mem.eql(u8, name, alias[0])) return alias[1];
         }
@@ -2440,6 +2443,7 @@ pub const CodeGenerator = struct {
         const input = c.LLVMConstNull(input_type);
         var args = [_]llvm.c.LLVMValueRef{input};
         const result = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 1, "argi.main");
+        try self.cleanupNativeProcess();
         const status = c.LLVMBuildExtractValue(self.builder, result, 0, "status");
         _ = c.LLVMBuildRet(self.builder, status);
     }
@@ -2458,6 +2462,7 @@ pub const CodeGenerator = struct {
         if (function.input.len != 0) return CodegenError.InvalidType;
         var args = [_]llvm.c.LLVMValueRef{c.LLVMConstNull(input_type)};
         const output = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 1, "test");
+        try self.cleanupNativeProcess();
         if (function.output.len != 1) return CodegenError.InvalidType;
         const result_ty = types.effectiveFieldType(self.graph.fields.items[function.output.start]);
         const error_variant = types.findVariant(self.graph, result_ty, "error") orelse return CodegenError.InvalidType;
@@ -2484,6 +2489,16 @@ pub const CodeGenerator = struct {
         _ = c.LLVMBuildRet(self.builder, exit_code);
     }
 
+    fn cleanupNativeProcess(self: *CodeGenerator) !void {
+        if (self.graph.target.os != .windows) return;
+        // Language scope cleanup has finished before bootstrap buffers are
+        // released. No argument/environment view may outlive the entry scope.
+        const ty = c.LLVMFunctionType(c.LLVMVoidType(), null, 0, 0);
+        const function = c.LLVMGetNamedFunction(self.module, "_argi_process_cleanup") orelse
+            c.LLVMAddFunction(self.module, "_argi_process_cleanup", ty);
+        _ = c.LLVMBuildCall2(self.builder, ty, function, null, 0, "");
+    }
+
     fn ensureRuntimeArgGlobals(self: *CodeGenerator) !void {
         if (self.runtime_argc_global == null) {
             self.runtime_argc_global = c.LLVMAddGlobal(self.module, c.LLVMInt32Type(), "argi.runtime.argc");
@@ -2497,6 +2512,9 @@ pub const CodeGenerator = struct {
     }
 
     fn ensureRuntimeArgFunctions(self: *CodeGenerator) !void {
+        // Windows obtains UTF-8 arguments from its wide CRT representation;
+        // their storage is retained by the native entry-scope adapter.
+        if (self.graph.target.os == .windows) return;
         const insertion_block = c.LLVMGetInsertBlock(self.builder) orelse return CodegenError.InvalidType;
         const native_ty = try self.nativeUIntType();
         const fn_type = c.LLVMFunctionType(native_ty, null, 0, 0);

@@ -80,7 +80,7 @@ jobs:
         shell: msys2 {0}
         run: |
           export PATH="$PWD/zig-out/bin:$PATH"
-          gcc -Wall -Wextra -Werror tests/native/windows/page_mapping.c core/platforms/windows/runtime.c -o windows-pages.exe
+          gcc -Wall -Wextra -Werror tests/native/windows/page_mapping.c core/platforms/windows/runtime.c -lshell32 -o windows-pages.exe
           ./windows-pages.exe
           for case in 30_page_allocator_baseline 32_page_allocator_via_allocator_abstract 37_c_allocator_alignment; do
             argi.exe build "tests/feature_tests/system/$case" --no-cache
@@ -101,7 +101,7 @@ jobs:
       - name: Validate UTF-8 filesystem paths
         shell: msys2 {0}
         run: |
-          gcc -Wall -Wextra -Werror tests/native/windows/utf8_files.c core/platforms/windows/runtime.c -o windows-files.exe
+          gcc -Wall -Wextra -Werror tests/native/windows/utf8_files.c core/platforms/windows/runtime.c -lshell32 -o windows-files.exe
           ./windows-files.exe
 
       - name: Validate Windows path roots and generated projects
@@ -119,3 +119,12 @@ jobs:
           source.write_text(text[:end] + '    print("Windows core works")\n' + text[end:])
           PY
           argi.exe run windows_smoke
+
+      - name: Validate UTF-8 process arguments and environment lifetimes
+        shell: msys2 {0}
+        run: |
+          gcc -Wall -Wextra -Werror tests/native/windows/utf8_process.c core/platforms/windows/runtime.c -lshell32 -o windows-process.exe
+          python - <<'PY'
+          import subprocess
+          subprocess.run(['./windows-process.exe', '\u00f1-\u6587', '*.tmp'], check=True)
+          PY
