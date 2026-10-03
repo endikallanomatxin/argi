@@ -345,8 +345,8 @@ fn compileResolvedPlan(
     else
         null;
     const object_only = flags.just_object_path != null;
-    if (!flags.target.isNative() and !object_only and !options.check_only) {
-        std.debug.print("Error: cross-target linking requires an explicit toolchain; use --just-emit-obj for object emission.\n", .{});
+    if (!flags.target.isNative() and !object_only and !options.check_only and flags.cc == null and (environ_map == null or environ_map.?.get("CC") == null)) {
+        std.debug.print("Error: cross-target linking requires an explicit toolchain; select --cc (or CC), or use --just-emit-obj for object emission.\n", .{});
         return error.CrossLinkToolchainRequired;
     }
     if (!options.check_only) {
@@ -436,7 +436,7 @@ fn compileResolvedPlan(
     if (object_only)
         try link.emitObjectFile(module, triple, temp_obj, flags.optimization_mode)
     else
-        try link.linkWithLibc(module, triple, temp_stem, &allocator, io, environ_map, flags.optimization_mode, native_inputs);
+        try link.linkWithLibc(module, triple, temp_stem, &allocator, io, environ_map, flags.optimization_mode, native_inputs, .{ .target = flags.target, .cc = flags.cc, .args = flags.cc_args, .sysroot = flags.c_sysroot });
     const link_ns = elapsedSince(io, link_start);
 
     if (temp_ir) |src| try replaceFile(io, src, final_ir.?);

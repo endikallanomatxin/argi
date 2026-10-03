@@ -55,6 +55,9 @@ fn printHelp() void {
     std.debug.print("  --link-file <path>                    Link a native object/archive/shared library (repeatable)\n", .{});
     std.debug.print("  --no-cache                             Rebuild modules without reading or writing the frontend cache\n", .{});
     std.debug.print("  --stats                                Print compilation timings and internal statistics\n", .{});
+    std.debug.print("  --cc <driver>                           Select the C linking driver (overrides CC)\n", .{});
+    std.debug.print("  --cc-arg <argument>                     Add one driver argument (repeatable)\n", .{});
+    std.debug.print("  --c-sysroot <path>                      Select the target C toolchain sysroot\n", .{});
     std.debug.print("  --target <arch-os-abi>                   Select native or Linux x86_64/aarch64 GNU target\n", .{});
     std.debug.print("  --release                              Optimize LLVM IR and generated machine code\n", .{});
     std.debug.print("\nTest flags:\n", .{});

@@ -159,6 +159,12 @@ feature first.
   module fingerprints include the target; bump the wire version when its stored
   representation changes. Cross-target object emission initializes LLVM target
   backends and uses the selected target data layout before IR optimization.
+  `--cc`, repeatable `--cc-arg`, and `--c-sysroot` configure C linking;
+  `--sysroot` remains the Argi installation prefix. Library queries use the
+  same driver arguments as final linking. Cross drivers must report a matching
+  `-dumpmachine` identity. Linux x86_64 CI executes ARM64 fixtures with QEMU;
+  local cross execution uses `ARGI_CROSS_CC`, `ARGI_CROSS_RUNNER`, and
+  `ARGI_CROSS_RUNTIME_ROOT`.
 
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases

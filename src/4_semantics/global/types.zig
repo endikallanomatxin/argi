@@ -2,9 +2,6 @@ const std = @import("std");
 const graph_mod = @import("graph.zig");
 const primitives = @import("../primitives/schema.zig");
 
-pub const pointer_size_bytes: u64 = @sizeOf(*usize);
-pub const pointer_alignment_bytes: u64 = pointer_size_bytes;
-
 pub const FieldHit = struct {
     index: u32,
     id: graph_mod.GlobalFieldId,

@@ -8416,3 +8416,71 @@ test "feature_tests/cross_compilation/01_aarch64_data_model" {
     try expectEqual(std.process.Child.Term{ .exited = 1 }, other.term);
     try expect(std.mem.indexOf(u8, other.stderr, "255") != null);
 }
+
+test "cross compilation rejects incompatible run targets" {
+    const target = if (@import("builtin").cpu.arch == .aarch64 and @import("builtin").os.tag == .linux) "x86_64-linux-gnu" else "aarch64-linux-gnu";
+    const result = try runArgiCommand(&.{ "run", "tests/feature_tests/basics/01_minimal_main", "--target", target });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "cannot execute an incompatible target") != null);
+}
+
+test "feature_tests/cross_compilation/02_aarch64_c_roundtrip" {
+    const allocator = std.testing.allocator;
+    var env_map = try std.testing.environ.createMap(allocator);
+    defer env_map.deinit();
+    const cc = env_map.get("ARGI_CROSS_CC") orelse return error.SkipZigTest;
+    const runner = env_map.get("ARGI_CROSS_RUNNER") orelse return error.SkipZigTest;
+    const runtime_root = env_map.get("ARGI_CROSS_RUNTIME_ROOT") orelse return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, "tests/feature_tests/cross_compilation/02_aarch64_c_roundtrip" });
+    defer allocator.free(fixture);
+    const native = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(native);
+    const compiled = try runChildInCwd(&.{ cc, "-c", native, "-o", "native.o" }, root);
+    defer allocator.free(compiled.stdout);
+    defer allocator.free(compiled.stderr);
+    if (compiled.term != .exited or compiled.term.exited != 0) std.debug.print("cross C fixture failed: {s}\n", .{compiled.stderr});
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, compiled.term);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    for ([_][]const u8{ "--stats", "--release" }) |mode| {
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--target", "aarch64-linux-gnu", "--cc", cc, "--link-file", "native.o", "--output", "app", mode }, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("cross build failed: {s}\n", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChildInCwd(&.{ runner, "-L", runtime_root, "./app" }, root);
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+    }
+}
+
+test "cross compilation requires an explicitly configured driver" {
+    const allocator = std.testing.allocator;
+    var env_map = try std.testing.environ.createMap(allocator);
+    defer env_map.deinit();
+    _ = env_map.swapRemove("CC");
+    const target = if (@import("builtin").cpu.arch == .aarch64 and @import("builtin").os.tag == .linux) "x86_64-linux-gnu" else "aarch64-linux-gnu";
+    const result = try runArgiCommandWithEnv(&.{ "build", "tests/feature_tests/basics/01_minimal_main", "--target", target }, &env_map);
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "requires an explicit toolchain") != null);
+}
+
+test "cross compilation rejects the host C driver" {
+    const target = if (@import("builtin").cpu.arch == .aarch64 and @import("builtin").os.tag == .linux) "x86_64-linux-gnu" else "aarch64-linux-gnu";
+    const result = try runArgiCommand(&.{ "build", "tests/feature_tests/basics/01_minimal_main", "--target", target, "--cc", "cc" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "incompatible with") != null);
+}
