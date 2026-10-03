@@ -21,6 +21,7 @@ alloca ( .size : UIntNative ) -> ( .pointer: $&Any ) : ExternFunction
 _malloc ( .size : UIntNative ) -> ( .address: UIntNative ) : ExternFunction
 _aligned_alloc ( .alignment : UIntNative, .size : UIntNative ) -> ( .address: UIntNative ) : ExternFunction
 _free ( .address: UIntNative ) -> () : ExternFunction
+_aligned_free ( .address: UIntNative ) -> () : ExternFunction
 memcpy ( .dst  : $&Any, .src : &Any, .n : UIntNative ) -> () : ExternFunction
 
 fread_into(
@@ -64,4 +65,9 @@ aligned_alloc(.alignment: UIntNative, .size: UIntNative, .ffi: $&ForeignFunction
 }
 free(.address: UIntNative, .ffi: $&ForeignFunctionInterface) -> () := {
     _free(.address = address)
+}
+
+-- Aligned CRT storage has its own release operation on Windows.
+aligned_free(.address: UIntNative, .ffi: $&ForeignFunctionInterface) -> () := {
+    _aligned_free(.address = address)
 }

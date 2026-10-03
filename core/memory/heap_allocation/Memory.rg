@@ -31,36 +31,12 @@ _memory_map_aligned(
         result = ..error(.reason = ..out_of_memory)
         return
     }
-    extra :: UIntNative = 0
-    if alignment > page_size { extra = alignment - page_size }
-    request_size ::= mapped_size + extra
-    if request_size < mapped_size {
+    address ::= _memory_acquire_aligned(.length = mapped_size, .alignment = alignment).address
+    if address + 1 == 0 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
-    mapped_address ::= _memory_map_anonymous(.length = request_size).address
-    if mapped_address + 1 == 0 {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-    if mapped_address + request_size < mapped_address { abort }
-    address :: UIntNative = mapped_address
-    if alignment > page_size {
-        remainder ::= mapped_address % alignment
-        if remainder != 0 {
-            padding ::= alignment - remainder
-            address = mapped_address + padding
-            if address < mapped_address { abort }
-            if _memory_munmap(.address = mapped_address, .length = padding).status != 0 { abort }
-        }
-        mapped_end ::= mapped_address + request_size
-        used_end ::= address + mapped_size
-        if used_end < mapped_end {
-            if _memory_munmap(.address = used_end, .length = mapped_end - used_end).status != 0 { abort }
-        }
-    }
-    certified ::= _trusted_acquisition_subaddress(.base = mapped_address, .address = address).result
-    result = ..ok (._address = certified, ._size = mapped_size, ._alignment = alignment)
+    result = ..ok (._address = address, ._size = mapped_size, ._alignment = alignment)
 }
 
 map_pages(.self: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
@@ -80,6 +56,6 @@ map_pages(.self: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (.resul
 deallocate(.self: $&Memory, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
     assume ffi := self&._ffi
     physical_size ::= page_allocator_round_up(.size = size, .alignment = self&._page_size).rounded
-    if _memory_munmap(.address = data.address, .length = physical_size).status != 0 { abort }
+    if _memory_release_aligned(.address = data.address, .length = physical_size).status != 0 { abort }
 }
 Memory implements Deallocator

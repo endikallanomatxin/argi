@@ -60,7 +60,7 @@ allocate(.self: $&CAllocator, .size: UIntNative, .alignment: UIntNative) -> (.re
 }
 
 deallocate(.self: $&CAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
-    free(.address = data.address, .ffi = self&.ffi)
+    aligned_free(.address = data.address, .ffi = self&.ffi)
 }
 
 CAllocator implements Allocator

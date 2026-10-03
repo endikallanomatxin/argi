@@ -6,12 +6,16 @@ name: Windows port validation
     branches: [windows-support]
     paths:
       - 'src/**'
+      - 'core/**'
+      - 'tests/native/windows/**'
       - 'build.zig'
       - '.github/workflows/windows.yml'
   pull_request:
     branches: [develop]
     paths:
       - 'src/**'
+      - 'core/**'
+      - 'tests/native/windows/**'
       - 'build.zig'
       - '.github/workflows/windows.yml'
 
@@ -67,3 +71,25 @@ jobs:
           argi.exe build tests/feature_tests/basics/01_minimal_main --no-cache
           tests/feature_tests/basics/01_minimal_main/build/output.exe
           argi.exe run tests/feature_tests/basics/01_minimal_main
+
+      - name: Validate Windows page reservations and core allocators
+        shell: msys2 {0}
+        run: |
+          export PATH="$PWD/zig-out/bin:$PATH"
+          gcc -Wall -Wextra -Werror tests/native/windows/page_mapping.c core/platforms/windows/runtime.c -o windows-pages.exe
+          ./windows-pages.exe
+          for case in 30_page_allocator_baseline 32_page_allocator_via_allocator_abstract 37_c_allocator_alignment; do
+            argi.exe build "tests/feature_tests/system/$case" --no-cache
+            "tests/feature_tests/system/$case/build/output.exe"
+          done
+
+      - name: Validate native C imports and exports
+        shell: msys2 {0}
+        run: |
+          export PATH="$PWD/zig-out/bin:$PATH"
+          for case in 26_c_scalar_aliases 33_narrow_scalar_abi 34_integer_record_abi 37_numeric_record_abi 38_numeric_union_abi 40_raw_pointer_record_abi; do
+            fixture="tests/feature_tests/c_interop/$case"
+            gcc -c "$fixture/native.c" -o windows-interop.o
+            argi.exe build "$fixture" --no-cache --link-file windows-interop.o
+            "$fixture/build/output.exe"
+          done

@@ -26,6 +26,7 @@ pub const CoreResolutionOptions = struct {
     explicit_sysroot: ?[]const u8 = null,
     environ_map: ?*const std.process.Environ.Map = null,
     fallback_core_dir: []const u8 = "core",
+    target: @import("target.zig").Config = .{},
     /// Editor/session buffers participate in discovery, cycle checks, and loading.
     /// Origin is assigned by the loader, never by the supplied override.
     source_overrides: []const SourceFile = &.{},
@@ -191,6 +192,7 @@ fn collectRgFilesRecursively(
     dir_path: []const u8,
     seen_files: *DirSet,
     overrides: []const SourceFile,
+    target: @import("target.zig").Config,
 ) !void {
     var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch |e| {
         std.debug.print("failed to open source directory '{s}': {any}\n", .{ dir_path, e });
@@ -210,6 +212,7 @@ fn collectRgFilesRecursively(
     while (try walker.next(io)) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.path, ".rg")) continue;
+        if (!platformSourceMatches(entry.path, target.os)) continue;
 
         const full_path = try std.fs.path.join(alloc.*, &.{ dir_path, entry.path });
         errdefer alloc.free(full_path);
@@ -760,7 +763,7 @@ pub fn collectModuleWithOptions(
     }
 
     const core_start = list.items.len;
-    try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files, options.source_overrides);
+    try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files, options.source_overrides, options.target);
     markBundledCore(list.items[core_start..]);
 
     try validateModuleGraphAcyclic(
@@ -855,7 +858,7 @@ pub fn collectWithEntrySourceWithOptions(
 
     // ─── core/ ────────────────────────────────────────────────────────────
     const core_start = list.items.len;
-    try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files, options.source_overrides);
+    try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files, options.source_overrides, options.target);
     markBundledCore(list.items[core_start..]);
 
     // ─── user entry-point directory and explicit imports ────────────────
@@ -916,4 +919,23 @@ pub fn freeList(
         alloc.free(f.code);
     }
     list.deinit();
+}
+
+// Platform selection applies only to bundled core. User modules retain ordinary
+// folder namespaces; selected source sets participate in target-keyed snapshots.
+fn platformSourceMatches(path: []const u8, os: std.Target.Os.Tag) bool {
+    var components = std.mem.tokenizeAny(u8, path, "/\\");
+    if (!std.mem.eql(u8, components.next() orelse return true, "platforms")) return true;
+    const platform = components.next() orelse return true;
+    if (std.mem.eql(u8, platform, "windows")) return os == .windows;
+    if (std.mem.eql(u8, platform, "posix")) return os != .windows;
+    return true;
+}
+
+test "bundled platform sources follow the compilation target" {
+    try std.testing.expect(platformSourceMatches("platforms/windows/page_mapping.rg", .windows));
+    try std.testing.expect(!platformSourceMatches("platforms/windows/page_mapping.rg", .linux));
+    try std.testing.expect(!platformSourceMatches("platforms\\posix\\page_mapping.rg", .windows));
+    try std.testing.expect(platformSourceMatches("platforms/posix/page_mapping.rg", .macos));
+    try std.testing.expect(platformSourceMatches("memory/heap_allocation/Memory.rg", .windows));
 }

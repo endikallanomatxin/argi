@@ -313,6 +313,18 @@ pub const CodeGenerator = struct {
         if (source.file_index >= self.graph.files.items.len) return name;
         const file = self.graph.files.items[source.file_index];
         if (!self.graph.modules.items[@intFromEnum(file.module)].is_bundled_core) return name;
+        if (self.graph.target.os == .windows) {
+            const windows_aliases = .{
+                .{ "_memory_getpagesize", "_argi_page_size" },
+                .{ "_memory_acquire_aligned", "_argi_page_acquire" },
+                .{ "_memory_release_aligned", "_argi_page_release" },
+                .{ "_aligned_alloc", "_argi_aligned_alloc" },
+                .{ "_aligned_free", "_aligned_free" },
+                .{ "fdopen", "_fdopen" },
+                .{ "access", "_access" },
+            };
+            inline for (windows_aliases) |alias| if (std.mem.eql(u8, name, alias[0])) return alias[1];
+        }
         const aliases = .{
             .{ "_memory_mmap", "mmap" },
             .{ "_memory_munmap", "munmap" },
@@ -320,6 +332,7 @@ pub const CodeGenerator = struct {
             .{ "_malloc", "malloc" },
             .{ "_aligned_alloc", "aligned_alloc" },
             .{ "_free", "free" },
+            .{ "_aligned_free", "free" },
         };
         inline for (aliases) |alias| if (std.mem.eql(u8, name, alias[0])) return alias[1];
         return name;
