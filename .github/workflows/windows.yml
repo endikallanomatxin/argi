@@ -1,0 +1,69 @@
+name: Windows port validation
+
+"on":
+  workflow_dispatch:
+  push:
+    branches: [windows-support]
+    paths:
+      - 'src/**'
+      - 'build.zig'
+      - '.github/workflows/windows.yml'
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'src/**'
+      - 'build.zig'
+      - '.github/workflows/windows.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  compiler:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          install: mingw-w64-ucrt-x86_64-gcc
+
+      - name: Install LLVM 21 development distribution
+        shell: pwsh
+        run: |
+          $name = 'clang+llvm-21.1.8-x86_64-pc-windows-msvc'
+          $archive = Join-Path $env:RUNNER_TEMP 'llvm.tar.xz'
+          $destination = Join-Path $env:RUNNER_TEMP 'llvm-sdk'
+          New-Item -ItemType Directory -Force $destination | Out-Null
+          Invoke-WebRequest "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/$name.tar.xz" -OutFile $archive
+          tar -xf $archive -C $destination "$name/include" "$name/lib/LLVM-C.lib" "$name/bin/LLVM-C.dll"
+          if ($LASTEXITCODE -ne 0) { throw 'LLVM extraction failed' }
+          $root = Join-Path $destination $name
+          "LLVM_INCLUDE_DIR=$root/include" >> $env:GITHUB_ENV
+          "LLVM_LIB_DIR=$root/lib" >> $env:GITHUB_ENV
+          'LLVM_LIBS=LLVM-C.lib' >> $env:GITHUB_ENV
+          "LLVM_RUNTIME_DLL=$root/bin/LLVM-C.dll" >> $env:GITHUB_ENV
+
+      - name: Build compiler and run platform boundary tests
+        shell: msys2 {0}
+        run: |
+          zig build -j1 --summary all
+          cp "$(cygpath -u "$LLVM_RUNTIME_DLL")" zig-out/bin/LLVM-C.dll
+          # Put the DLL on PATH for test binaries outside the installation.
+          export PATH="$PWD/zig-out/bin:$PATH"
+          zig build -j1 test-internal -Dtest-filter='Windows' -Dtest-filter='file URIs' -Dtest-filter='LLVM triples' --summary all
+
+      - name: Compile and execute a native program
+        shell: msys2 {0}
+        run: |
+          export PATH="$PWD/zig-out/bin:$PATH"
+          argi.exe --help
+          argi.exe check tests/feature_tests/basics/01_minimal_main
+          argi.exe build tests/feature_tests/basics/01_minimal_main --no-cache
+          tests/feature_tests/basics/01_minimal_main/build/output.exe
+          argi.exe run tests/feature_tests/basics/01_minimal_main

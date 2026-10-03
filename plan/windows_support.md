@@ -8,8 +8,10 @@ WSL is Linux support, not validation of this port.
 
 ## Work to do
 
-- [ ] Establish a native runner and compatible Zig/LLVM development toolchain.
-- [ ] Adapt LLVM discovery, linker arguments, ABI boundaries, and executable names.
+- [ ] Validate the native Windows job with Zig 0.16, LLVM 21 C API, and the
+  MSYS2 UCRT64 GCC driver. Extend it from compiler smoke tests to core coverage.
+- [ ] Validate native C imports/exports against GCC fixtures, including scalar
+  aliases and indirect record arguments, and exercise library resolution.
 - [ ] Add Windows page acquisition/release and matching aligned allocation/free.
 - [ ] Adapt streams, filesystem, paths, arguments, and environment encoding.
 - [ ] Make installation, LSP URIs, temporary paths, and test fixtures portable.
@@ -17,7 +19,13 @@ WSL is Linux support, not validation of this port.
 
 ## Platform considerations
 
-Current compiler/linker and core adapters assume Unix/POSIX in several places.
+Use one UCRT-based MinGW toolchain for Argi and generated programs. LLVM's C
+API DLL may come from its official MSVC development distribution: the emitted
+target must come from Argi's target identity rather than the DLL's build host.
+Only supported X86 and AArch64 backends need initialization. The standalone
+LLVM installer lacks most C API headers; use the development archive instead.
+
+Core adapters still assume Unix/POSIX in several places.
 Windows page release needs the original reservation: `VirtualFree(MEM_RELEASE)`
 releases it as a whole, unlike prefix/suffix unmapping. Keep any needed metadata
 private and preserve allocation receipts and alignment guarantees.
