@@ -1782,8 +1782,17 @@ fn diagnoseUnresolvedQualifiedTypes(
                 error.UnknownModuleReference, error.AmbiguousModuleReference => continue,
                 else => return err,
             };
-            if (@intFromEnum(target) == module_index) continue;
             const name = module.text(reference.name);
+            if (!declarationNameExistsInModule(graph, target, name, &.{ .type, .abstract_type })) {
+                try diagnostics.add(
+                    diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], reference.source)),
+                    .semantic,
+                    "module '{s}' has no type named '{s}'",
+                    .{ module.text(reference.module_path.?), name },
+                );
+                return true;
+            }
+            if (@intFromEnum(target) == module_index) continue;
             if (!std.mem.startsWith(u8, name, "_")) continue;
             if (!declarationNameExistsInModule(graph, target, name, &.{ .type, .abstract_type })) continue;
             try diagnostics.add(
