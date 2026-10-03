@@ -1792,11 +1792,12 @@ pub const Infer = struct {
     ) !void {
         for (summary.input_post_states) |post_state| {
             if (post_state.target.input_index >= arguments.len) continue;
-            const targets = try self.substituteRequiredInputPath(
+            const targets = try self.substituteInputPath(
                 function_id,
                 post_state.target,
                 arguments,
                 override,
+                .place,
             );
             if (post_state.opaque_ownership != .none) {
                 const storage = if (post_state.opaque_storage) |opaque_storage| blk: {
@@ -3023,6 +3024,17 @@ pub const Infer = struct {
         arguments: []const graph_mod.ValueField,
         override: ?SymbolicInputOverride,
     ) ![]const facts.InputPath {
+        return self.substituteInputPath(function_id, path, arguments, override, .validity);
+    }
+
+    fn substituteInputPath(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        path: facts.InputPath,
+        arguments: []const graph_mod.ValueField,
+        override: ?SymbolicInputOverride,
+        purpose: enum { validity, place },
+    ) ![]const facts.InputPath {
         if (path.input_index >= arguments.len) return &.{};
         if (override) |symbolic| if (symbolic.input_index == path.input_index) {
             if (path.projections.len == 0) return &.{};
@@ -3036,6 +3048,15 @@ pub const Infer = struct {
         if (direct.len != 0) {
             for (path.projections) |projection| direct = try self.projectInputPaths(direct, projection);
             return direct;
+        }
+
+        // A local by-value argument has its own place. Its borrowed lifetime
+        // dependencies can require caller inputs to remain live, but cannot
+        // identify caller places changed or consumed by the callee. Pointer
+        // arguments may still carry the provenance of a caller's place.
+        if (purpose == .place) {
+            const ty = self.graph.node(argument).ty orelse return &.{};
+            if (self.graph.semanticType(ty) != .pointer) return &.{};
         }
 
         var effect = try self.inferExpression(function_id, argument);

@@ -8641,3 +8641,13 @@ test "feature_tests/basics/59X_empty_expression_grouping" {
 test "feature_tests/basics/60X_multiple_expression_grouping" {
     try buildExpectFail("tests/feature_tests/basics/60X_multiple_expression_grouping", "expected ']' after grouped expression");
 }
+
+test "feature_tests/ownership/300_opaque_scalar_borrow_cleanup" {
+    const path = "tests/feature_tests/ownership/300_opaque_scalar_borrow_cleanup";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/ownership/301X_opaque_scalar_borrow_element_moved" {
+    try buildExpectFail("tests/feature_tests/ownership/301X_opaque_scalar_borrow_element_moved", "place rooted at 'element' is moved and cannot be used");
+}
