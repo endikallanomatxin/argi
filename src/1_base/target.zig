@@ -35,6 +35,15 @@ pub const Config = struct {
         return target;
     }
 
+    // LLVM's build host is not the application's ABI. In particular, an MSVC
+    // LLVM DLL can emit MinGW objects for a compiler built against the GNU CRT.
+    pub fn llvmTriple(self: Config, allocator: std.mem.Allocator) ![:0]u8 {
+        const arch = if (self.arch == .x86) "i386" else @tagName(self.arch);
+        if (self.os.isDarwin()) return std.fmt.allocPrintSentinel(allocator, "{s}-apple-darwin", .{arch}, 0);
+        const vendor = if (self.os == .windows) "pc" else "unknown";
+        return std.fmt.allocPrintSentinel(allocator, "{s}-{s}-{s}-{s}", .{ arch, vendor, @tagName(self.os), @tagName(self.abi) }, 0);
+    }
+
     pub fn pointerBytes(self: Config) u64 {
         return self.stdTarget().ptrBitWidth() / 8;
     }
@@ -46,4 +55,19 @@ test "target configuration selects the C data model independently of the host" {
     try std.testing.expectEqual(@as(u64, 8), target.pointerBytes());
     try std.testing.expectError(error.UnsupportedTarget, Config.parse("wasm32-freestanding-none"));
     try std.testing.expectError(error.InvalidTarget, Config.parse("aarch64-linux-gnu-extra"));
+}
+
+test "LLVM triples derive from the application target rather than LLVM's host" {
+    const allocator = std.testing.allocator;
+    const cases = [_]struct { target: Config, triple: []const u8 }{
+        .{ .target = .{ .arch = .x86_64, .os = .windows, .abi = .gnu }, .triple = "x86_64-pc-windows-gnu" },
+        .{ .target = .{ .arch = .x86_64, .os = .windows, .abi = .msvc }, .triple = "x86_64-pc-windows-msvc" },
+        .{ .target = .{ .arch = .aarch64, .os = .linux, .abi = .gnu }, .triple = "aarch64-unknown-linux-gnu" },
+        .{ .target = .{ .arch = .aarch64, .os = .macos, .abi = .none }, .triple = "aarch64-apple-darwin" },
+    };
+    for (cases) |case| {
+        const triple = try case.target.llvmTriple(allocator);
+        defer allocator.free(triple);
+        try std.testing.expectEqualStrings(case.triple, triple);
+    }
 }

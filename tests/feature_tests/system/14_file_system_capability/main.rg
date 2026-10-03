@@ -2,7 +2,11 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    path ::= from_literal(.data = "/dev/null")
+    #if target_os("windows") {
+        path ::= from_literal(.data = "NUL")
+    } #else {
+        path ::= from_literal(.data = "/dev/null")
+    }
 
     read_file_result ::= open_read(.self = system.file_sys, .path = path)
     if is(.value = read_file_result, .variant = ..ok) {

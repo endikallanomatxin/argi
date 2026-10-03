@@ -313,6 +313,24 @@ pub const CodeGenerator = struct {
         if (source.file_index >= self.graph.files.items.len) return name;
         const file = self.graph.files.items[source.file_index];
         if (!self.graph.modules.items[@intFromEnum(file.module)].is_bundled_core) return name;
+        if (self.graph.target.os == .windows) {
+            const windows_aliases = .{
+                .{ "_memory_getpagesize", "_argi_page_size" },
+                .{ "_memory_acquire_aligned", "_argi_page_acquire" },
+                .{ "_memory_release_aligned", "_argi_page_release" },
+                .{ "_aligned_alloc", "_argi_aligned_alloc" },
+                .{ "_aligned_free", "_aligned_free" },
+                .{ "fdopen", "_argi_fdopen" },
+                .{ "fopen", "_argi_fopen_utf8" },
+                .{ "remove", "_argi_remove_utf8" },
+                .{ "rename", "_argi_rename_utf8" },
+                .{ "access", "_argi_access_utf8" },
+                .{ "getenv", "_argi_getenv_utf8" },
+                .{ "argi_runtime_argc", "_argi_runtime_argc" },
+                .{ "argi_runtime_argv", "_argi_runtime_argv" },
+            };
+            inline for (windows_aliases) |alias| if (std.mem.eql(u8, name, alias[0])) return alias[1];
+        }
         const aliases = .{
             .{ "_memory_mmap", "mmap" },
             .{ "_memory_munmap", "munmap" },
@@ -320,6 +338,7 @@ pub const CodeGenerator = struct {
             .{ "_malloc", "malloc" },
             .{ "_aligned_alloc", "aligned_alloc" },
             .{ "_free", "free" },
+            .{ "_aligned_free", "free" },
         };
         inline for (aliases) |alias| if (std.mem.eql(u8, name, alias[0])) return alias[1];
         return name;
@@ -450,7 +469,10 @@ pub const CodeGenerator = struct {
     fn cRecordStorage(self: *CodeGenerator, plan: c_abi.ValuePlan) !c.LLVMValueRef {
         const bytes = std.mem.alignForward(u64, plan.size, 8);
         const buffer_ty = c.LLVMArrayType2(c.LLVMInt8Type(), bytes);
-        const storage = try self.cTemporary(buffer_ty, @max(8, plan.alignment), "c.record.storage");
+        // The Windows x64 ABI requires caller-owned indirect argument copies
+        // to be 16-byte aligned, even when the record itself has lesser alignment.
+        const copy_alignment: u32 = if (self.graph.target.os == .windows and plan.kind == .record_indirect) 16 else 8;
+        const storage = try self.cTemporary(buffer_ty, @max(copy_alignment, plan.alignment), "c.record.storage");
         _ = c.LLVMBuildStore(self.builder, c.LLVMConstNull(buffer_ty), storage);
         return storage;
     }
@@ -2421,6 +2443,7 @@ pub const CodeGenerator = struct {
         const input = c.LLVMConstNull(input_type);
         var args = [_]llvm.c.LLVMValueRef{input};
         const result = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 1, "argi.main");
+        try self.cleanupNativeProcess();
         const status = c.LLVMBuildExtractValue(self.builder, result, 0, "status");
         _ = c.LLVMBuildRet(self.builder, status);
     }
@@ -2439,6 +2462,7 @@ pub const CodeGenerator = struct {
         if (function.input.len != 0) return CodegenError.InvalidType;
         var args = [_]llvm.c.LLVMValueRef{c.LLVMConstNull(input_type)};
         const output = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 1, "test");
+        try self.cleanupNativeProcess();
         if (function.output.len != 1) return CodegenError.InvalidType;
         const result_ty = types.effectiveFieldType(self.graph.fields.items[function.output.start]);
         const error_variant = types.findVariant(self.graph, result_ty, "error") orelse return CodegenError.InvalidType;
@@ -2465,6 +2489,16 @@ pub const CodeGenerator = struct {
         _ = c.LLVMBuildRet(self.builder, exit_code);
     }
 
+    fn cleanupNativeProcess(self: *CodeGenerator) !void {
+        if (self.graph.target.os != .windows) return;
+        // Language scope cleanup has finished before bootstrap buffers are
+        // released. No argument/environment view may outlive the entry scope.
+        const ty = c.LLVMFunctionType(c.LLVMVoidType(), null, 0, 0);
+        const function = c.LLVMGetNamedFunction(self.module, "_argi_process_cleanup") orelse
+            c.LLVMAddFunction(self.module, "_argi_process_cleanup", ty);
+        _ = c.LLVMBuildCall2(self.builder, ty, function, null, 0, "");
+    }
+
     fn ensureRuntimeArgGlobals(self: *CodeGenerator) !void {
         if (self.runtime_argc_global == null) {
             self.runtime_argc_global = c.LLVMAddGlobal(self.module, c.LLVMInt32Type(), "argi.runtime.argc");
@@ -2478,6 +2512,9 @@ pub const CodeGenerator = struct {
     }
 
     fn ensureRuntimeArgFunctions(self: *CodeGenerator) !void {
+        // Windows obtains UTF-8 arguments from its wide CRT representation;
+        // their storage is retained by the native entry-scope adapter.
+        if (self.graph.target.os == .windows) return;
         const insertion_block = c.LLVMGetInsertBlock(self.builder) orelse return CodegenError.InvalidType;
         const native_ty = try self.nativeUIntType();
         const fn_type = c.LLVMFunctionType(native_ty, null, 0, 0);

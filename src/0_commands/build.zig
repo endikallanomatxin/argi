@@ -358,6 +358,7 @@ fn compileResolvedPlan(
     const files = try sf.collectModuleWithOptions(&allocator, io, .{
         .explicit_sysroot = flags.sysroot_path,
         .environ_map = environ_map,
+        .target = flags.target,
     }, plan.module_dir);
     var diagnostics = diag.Diagnostics.init(&allocator, files.items);
     var frontend_options = options.frontend_options;
@@ -399,9 +400,7 @@ fn compileResolvedPlan(
         if (!diagnostics.hasErrors()) std.debug.print("indexed codegen failed without a diagnostic: {s}\n", .{@errorName(err)});
         return error.CompilationFailed;
     };
-    const triple_message = c.LLVMGetDefaultTargetTriple();
-    defer c.LLVMDisposeMessage(triple_message);
-    const triple = if (flags.target.isNative()) std.mem.span(triple_message) else try allocator.dupeZ(u8, if (flags.target.arch == .aarch64) "aarch64-unknown-linux-gnu" else "x86_64-unknown-linux-gnu");
+    const triple = try flags.target.llvmTriple(allocator);
     try link.prepareModule(module, triple, flags.optimization_mode);
     const codegen_ns = elapsedSince(io, codegen_start);
 
@@ -411,7 +410,7 @@ fn compileResolvedPlan(
     }
 
     const stem_base = if (object_only) final_obj.? else final_output;
-    const temp_stem = try std.fmt.allocPrint(allocator, "{s}.tmp.{d}", .{ stem_base, nowNs(io) });
+    const temp_stem = try std.fmt.allocPrint(allocator, "{s}.tmp.{d}{s}", .{ stem_base, nowNs(io), if (!object_only and flags.target.os == .windows) ".exe" else "" });
     const temp_ir = if (final_ir != null) try std.fmt.allocPrint(allocator, "{s}.ll", .{temp_stem}) else null;
     const temp_obj = try std.fmt.allocPrint(allocator, "{s}.o", .{temp_stem});
     try ensureParentDir(io, temp_stem);
@@ -429,9 +428,16 @@ fn compileResolvedPlan(
 
     // Manifest paths are resolved from the package root; CLI paths retain the
     // invoking directory. Keep both lists ordered for archive dependencies.
-    const native_inputs = try allocator.alloc(link.NativeInput, plan.native_inputs.len + flags.native_inputs.len);
+    const needs_windows_runtime = flags.target.os == .windows;
+    const extra: usize = if (needs_windows_runtime) 2 else 0;
+    const native_inputs = try allocator.alloc(link.NativeInput, plan.native_inputs.len + flags.native_inputs.len + extra);
     @memcpy(native_inputs[0..plan.native_inputs.len], plan.native_inputs);
-    @memcpy(native_inputs[plan.native_inputs.len..], flags.native_inputs);
+    @memcpy(native_inputs[plan.native_inputs.len..][0..flags.native_inputs.len], flags.native_inputs);
+    if (needs_windows_runtime) {
+        const core_dir = try sf.resolveToolCoreDir(&allocator, io, .{ .explicit_sysroot = flags.sysroot_path, .environ_map = environ_map });
+        native_inputs[native_inputs.len - 2] = .{ .file = try std.fs.path.join(allocator, &.{ core_dir, "platforms", "windows", "runtime.c" }) };
+        native_inputs[native_inputs.len - 1] = .{ .library = "shell32" };
+    }
     const link_start = nowNs(io);
     if (object_only)
         try link.emitObjectFile(module, triple, temp_obj, flags.optimization_mode)

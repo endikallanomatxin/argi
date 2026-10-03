@@ -97,7 +97,10 @@ pub fn resolveImportPathFromDirs(
 }
 
 test "import path resolver matches relative and suffix module directories" {
-    const dirs = [_][]const u8{ "/project/app", "/project/more/math", "/other/math" };
+    const inputs = [_][]const u8{ "/project/app", "/project/more/math", "/other/math" };
+    var dirs: [inputs.len][]u8 = undefined;
+    for (inputs, &dirs) |input, *dir| dir.* = try std.fs.path.resolve(std.testing.allocator, &.{input});
+    defer for (dirs) |dir| std.testing.allocator.free(dir);
     try std.testing.expectEqual(@as(usize, 1), try resolveImportPathFromDirs(std.testing.allocator, &dirs, 0, "../more/math"));
     try std.testing.expectEqual(@as(usize, 1), try resolveImportPathFromDirs(std.testing.allocator, &dirs, 0, ".../more/math"));
     try std.testing.expectError(error.AmbiguousModuleReference, resolveImportPathFromDirs(std.testing.allocator, &dirs, 0, "math"));
@@ -105,7 +108,20 @@ test "import path resolver matches relative and suffix module directories" {
 
 fn pathEndsWith(path: []const u8, suffix: []const u8) bool {
     if (std.mem.eql(u8, path, suffix)) return true;
-    if (!std.mem.endsWith(u8, path, suffix) or path.len <= suffix.len) return false;
+    if (path.len < suffix.len) return false;
+    const tail = path[path.len - suffix.len ..];
+    for (tail, suffix) |actual, wanted| {
+        if (actual == wanted) continue;
+        if (@import("builtin").os.tag == .windows and std.fs.path.isSep(actual) and std.fs.path.isSep(wanted)) continue;
+        return false;
+    }
+    if (path.len == suffix.len) return true;
     const boundary = path[path.len - suffix.len - 1];
     return boundary == '/' or boundary == '\\';
+}
+
+test "import suffixes accept language separators on Windows" {
+    if (@import("builtin").os.tag != .windows) return error.SkipZigTest;
+    try std.testing.expect(pathEndsWith("C:\\project\\more\\math", "more/math"));
+    try std.testing.expect(!pathEndsWith("C:\\project\\notmore\\math", "more/math"));
 }

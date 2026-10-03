@@ -49,8 +49,9 @@ pub fn build(b: *std.Build) void {
     linkLlvmModule(exe_mod, llvm_lib_path, llvm_libs_raw);
 
     b.installArtifact(exe);
-    const installed_core_path = b.getInstallPath(.prefix, "lib/argi/core");
-    if (!std.mem.endsWith(u8, installed_core_path, "lib/argi/core")) {
+    const core_suffix = std.fs.path.join(b.allocator, &.{ "lib", "argi", "core" }) catch @panic("out of memory");
+    const installed_core_path = b.getInstallPath(.prefix, core_suffix);
+    if (!std.mem.endsWith(u8, installed_core_path, core_suffix)) {
         @panic("refusing to clean an unexpected core installation path");
     }
     const clean_installed_core = CleanInstalledCore.create(b, installed_core_path);
@@ -197,17 +198,18 @@ fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, 
             printMissingLlvmHelp(tried_llvm_configs);
             return error.LlvmNotFound;
         };
-        break :blk std.mem.trim(u8, b.run(&.{ llvm_config, "--libs" }), "\n");
+        break :blk std.mem.trim(u8, b.run(&.{ llvm_config, "--libs", "--system-libs" }), " \r\n\t");
     };
 
-    const llvm_include_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, include_dir_raw, " \n") };
-    const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, lib_dir_raw, " \n") };
+    const llvm_include_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, include_dir_raw, " \r\n\t") };
+    const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, lib_dir_raw, " \r\n\t") };
 
     return .{ llvm_include_path, llvm_lib_path, llvm_libs_raw };
 }
 
 const llvm_config_candidates = [_][]const u8{
     "llvm-config-21",
+    "llvm-config.exe",
     "llvm-config",
     "llvm-config-20",
     "llvm-config-19",
@@ -247,10 +249,19 @@ fn linkLlvmModule(module: *std.Build.Module, lib_path: std.Build.LazyPath, libs_
 }
 
 fn linkLlvm(module: *std.Build.Module, libs_str: []const u8) void {
-    var it = std.mem.tokenizeScalar(u8, libs_str, ' ');
+    // llvm-config uses -l names on Unix and .lib names on Windows. Explicit
+    // LLVM_LIBS accepts either form; preserve system dependencies for static
+    // LLVM installations as well as monolithic shared builds.
+    var it = std.mem.tokenizeAny(u8, libs_str, " \r\n\t");
     while (it.next()) |tok| {
         if (std.mem.startsWith(u8, tok, "-l")) {
             module.linkSystemLibrary(tok[2..], .{});
+        } else if (std.mem.endsWith(u8, tok, ".lib")) {
+            if (std.fs.path.isAbsolute(tok)) {
+                module.addObjectFile(.{ .cwd_relative = tok });
+            } else {
+                module.linkSystemLibrary(tok[0 .. tok.len - 4], .{});
+            }
         }
     }
 }

@@ -98,10 +98,16 @@ pub const FrontendPipeline = struct {
         self.syntax_files.clearRetainingCapacity();
 
         for (files, 0..) |source_file, index| {
+            var error_offset: usize = 0;
+            const selected = @import("../1_base/target_selection.zig").select(self.allocator, source_file.code, self.options.target, &error_offset) catch |err| {
+                try self.diagnostics.add(.{ .file = self.source_db.fileId(index), .offset = @intCast(error_offset) }, .syntax, "invalid target selection: {s}", .{@import("../1_base/target_selection.zig").errorMessage(err)});
+                return err;
+            };
+            defer self.allocator.free(selected);
             var tokenizer_ctx = tokenizer.Tokenizer.init(
                 self.allocator,
                 self.diagnostics,
-                source_file.code,
+                selected,
                 self.source_db.fileId(index),
             );
             defer tokenizer_ctx.deinit();

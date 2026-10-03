@@ -3,7 +3,7 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualStrings = std.testing.expectEqualStrings;
 
-const argi_bin = "zig-out/bin/argi";
+const argi_bin = if (@import("builtin").os.tag == .windows) "zig-out/bin/argi.exe" else "zig-out/bin/argi";
 
 fn compilerRoot() []const u8 {
     const this_file = @src().file;
@@ -12,11 +12,7 @@ fn compilerRoot() []const u8 {
 }
 
 fn outputPathFor(name: []const u8) ![]u8 {
-    return std.fmt.allocPrint(
-        std.testing.allocator,
-        "{s}/build/output",
-        .{name},
-    );
+    return std.fmt.allocPrint(std.testing.allocator, "{s}/build/output{s}", .{ name, if (@import("builtin").os.tag == .windows) ".exe" else "" });
 }
 
 fn irPathFor(name: []const u8) ![]u8 {
@@ -147,7 +143,7 @@ fn runChildInCwdWithEnv(
 fn normalizeRunResult(result: std.process.RunResult) !std.process.RunResult {
     const root = try repoRootPrefix();
     defer std.testing.allocator.free(root);
-    const root_with_sep = try std.fmt.allocPrint(std.testing.allocator, "{s}/", .{root});
+    const root_with_sep = try std.fmt.allocPrint(std.testing.allocator, "{s}{c}", .{ root, std.fs.path.sep });
     defer std.testing.allocator.free(root_with_sep);
 
     var normalized = result;
@@ -158,8 +154,37 @@ fn normalizeRunResult(result: std.process.RunResult) !std.process.RunResult {
     const stderr = normalized.stderr;
     normalized.stderr = try std.mem.replaceOwned(u8, std.testing.allocator, stderr, root_with_sep, "");
     std.testing.allocator.free(stderr);
+    if (@import("builtin").os.tag == .windows) normalizeDiagnosticPaths(normalized.stderr);
 
     return normalized;
+}
+
+// Normalize source-location headers only; code excerpts and program output may
+// contain literal backslashes whose spelling is part of the asserted behavior.
+fn normalizeDiagnosticPaths(bytes: []u8) void {
+    var start: usize = 0;
+    while (start < bytes.len) {
+        const end = std.mem.indexOfScalarPos(u8, bytes, start, '\n') orelse bytes.len;
+        const line = bytes[start..end];
+        if (line.len > 0 and !std.ascii.isWhitespace(line[0])) {
+            normalizeSourceLocation(line);
+            if (std.mem.indexOf(u8, line, "first use at ")) |first_use|
+                normalizeSourceLocation(line[first_use + "first use at ".len ..]);
+        } else {
+            const trimmed = std.mem.trimStart(u8, line, " \t");
+            if (std.mem.startsWith(u8, trimmed, "file: "))
+                normalizeSourceLocation(line[line.len - trimmed.len + "file: ".len ..]);
+        }
+        start = end + 1;
+    }
+}
+
+fn normalizeSourceLocation(bytes: []u8) void {
+    if (std.mem.indexOf(u8, bytes, ".rg:")) |path_end| {
+        for (bytes[0 .. path_end + 3]) |*byte| if (byte.* == '\\') {
+            byte.* = '/';
+        };
+    }
 }
 
 fn repoRootPrefix() ![]u8 {
@@ -8517,4 +8542,33 @@ test "feature_tests/io/34_print_terminator" {
     const path = "tests/feature_tests/io/34_print_terminator";
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
+}
+
+test "feature_tests/system/48_windows_path_roots" {
+    if (@import("builtin").os.tag != .windows) return error.SkipZigTest;
+    const test_path = "tests/feature_tests/system/48_windows_path_roots";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "diagnostic path normalization preserves code excerpt spelling" {
+    var bytes = "tests\\feature_tests\\case\\main.rg:2:5: error: invalid value\n    path := \"C:\\file.rg:test\"\n".*;
+    normalizeDiagnosticPaths(&bytes);
+    try expectEqualStrings("tests/feature_tests/case/main.rg:2:5: error: invalid value\n    path := \"C:\\file.rg:test\"\n", &bytes);
+}
+
+test "diagnostic path normalization handles related source locations" {
+    var bytes = "tests\\case\\main.rg:2:5: error: already used (first use at tests\\case\\main.rg:1:1)\n      file: tests\\case\\other.rg:7:1\n".*;
+    normalizeDiagnosticPaths(&bytes);
+    try expectEqualStrings("tests/case/main.rg:2:5: error: already used (first use at tests/case/main.rg:1:1)\n      file: tests/case/other.rg:7:1\n", &bytes);
+}
+
+test "feature_tests/system/49_target_selection" {
+    const test_path = "tests/feature_tests/system/49_target_selection";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/system/50X_target_condition" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/system/50X_target_condition", "unknown OS, architecture, or ABI name", "failed without a diagnostic");
 }

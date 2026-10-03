@@ -518,6 +518,8 @@ const Context = struct {
     fn lowerCall(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const call = self.tree.functionCall(node).?;
         const name_text = self.tree.tokenTextFromSource(self.source, call.callee_token);
+        if (try @import("../target_predicate.zig").evaluate(self.allocator, self.tree, self.source, node, self.graph.target, self.diagnostics)) |matched|
+            return self.resolved(node, try self.builtin(.Bool), .{ .bool_literal = matched });
         const previous_suppression = self.suppress_implicit_copies;
         if (std.mem.eql(u8, name_text, "is") or std.mem.eql(u8, name_text, "type_of"))
             self.suppress_implicit_copies = true;

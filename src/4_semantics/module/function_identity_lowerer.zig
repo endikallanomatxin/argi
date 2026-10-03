@@ -58,6 +58,7 @@ fn validateBundledPrimitives(
     for (files, 0..) |file, file_index| {
         if (!file.is_bundled_core) continue;
         for (registry.specs) |spec| {
+            if (spec.operating_systems.len != 0 and std.mem.indexOfScalar(std.Target.Os.Tag, spec.operating_systems, graph.target.os) == null) continue;
             if (!registry.matchesPath(spec, file.path)) continue;
             var found = false;
             for (graph.declarations.items) |declaration| {

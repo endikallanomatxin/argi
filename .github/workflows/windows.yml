@@ -1,0 +1,154 @@
+name: Windows port validation
+
+"on":
+  workflow_dispatch:
+  push:
+    branches: [windows-support]
+    paths:
+      - 'src/**'
+      - 'core/**'
+      - 'tests/**'
+      - '.github/scripts/smoke_windows.py'
+      - 'build.zig'
+      - '.github/workflows/windows.yml'
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'src/**'
+      - 'core/**'
+      - 'tests/**'
+      - '.github/scripts/smoke_windows.py'
+      - 'build.zig'
+      - '.github/workflows/windows.yml'
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compiler:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          install: mingw-w64-ucrt-x86_64-gcc
+
+      - uses: actions/cache@v4
+        id: llvm-sdk
+        with:
+          path: ${{ runner.temp }}/llvm-sdk
+          key: llvm-21.1.8-windows-x64-c-api
+
+      - name: Install LLVM 21 development distribution
+        shell: pwsh
+        run: |
+          $name = 'clang+llvm-21.1.8-x86_64-pc-windows-msvc'
+          $archive = Join-Path $env:RUNNER_TEMP 'llvm.tar.xz'
+          $destination = Join-Path $env:RUNNER_TEMP 'llvm-sdk'
+          New-Item -ItemType Directory -Force $destination | Out-Null
+          if ('${{ steps.llvm-sdk.outputs.cache-hit }}' -ne 'true') {
+            Invoke-WebRequest "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/$name.tar.xz" -OutFile $archive
+            tar -xf $archive -C $destination "$name/include" "$name/lib/LLVM-C.lib" "$name/bin/LLVM-C.dll"
+            if ($LASTEXITCODE -ne 0) { throw 'LLVM extraction failed' }
+          }
+          $root = Join-Path $destination $name
+          "LLVM_INCLUDE_DIR=$root/include" >> $env:GITHUB_ENV
+          "LLVM_LIB_DIR=$root/lib" >> $env:GITHUB_ENV
+          'LLVM_LIBS=LLVM-C.lib' >> $env:GITHUB_ENV
+          "LLVM_RUNTIME_DLL=$root/bin/LLVM-C.dll" >> $env:GITHUB_ENV
+
+      - name: Build compiler and run unit tests
+        shell: msys2 {0}
+        run: |
+          zig build -j1 --summary all
+          cp "$(cygpath -u "$LLVM_RUNTIME_DLL")" zig-out/bin/LLVM-C.dll
+          # Put the DLL on PATH for test binaries outside the installation.
+          export PATH="$PWD/zig-out/bin:$PATH"
+          zig build -j1 test-internal -Dtest-progress=true --summary all
+
+      - name: Compile and execute a native program
+        shell: msys2 {0}
+        run: |
+          export PATH="$PWD/zig-out/bin:$PATH"
+          argi.exe --help
+          argi.exe check tests/feature_tests/basics/01_minimal_main
+          argi.exe build tests/feature_tests/basics/01_minimal_main --no-cache
+          tests/feature_tests/basics/01_minimal_main/build/output.exe
+          argi.exe run tests/feature_tests/basics/01_minimal_main
+
+      - name: Validate Windows page reservations and core allocators
+        shell: msys2 {0}
+        run: |
+          export PATH="$PWD/zig-out/bin:$PATH"
+          gcc -Wall -Wextra -Werror tests/native/windows/page_mapping.c core/platforms/windows/runtime.c -lshell32 -o windows-pages.exe
+          ./windows-pages.exe
+          for case in 30_page_allocator_baseline 32_page_allocator_via_allocator_abstract 37_c_allocator_alignment; do
+            argi.exe build "tests/feature_tests/system/$case" --no-cache
+            "tests/feature_tests/system/$case/build/output.exe"
+          done
+
+      - name: Validate native C imports and exports
+        shell: msys2 {0}
+        run: |
+          export PATH="$PWD/zig-out/bin:$PATH"
+          for case in 26_c_scalar_aliases 33_narrow_scalar_abi 34_integer_record_abi 37_numeric_record_abi 38_numeric_union_abi 40_raw_pointer_record_abi; do
+            fixture="tests/feature_tests/c_interop/$case"
+            gcc -c "$fixture/native.c" -o windows-interop.o
+            argi.exe build "$fixture" --no-cache --link-file windows-interop.o
+            "$fixture/build/output.exe"
+          done
+
+      - name: Validate UTF-8 filesystem paths
+        shell: msys2 {0}
+        run: |
+          gcc -Wall -Wextra -Werror tests/native/windows/utf8_files.c core/platforms/windows/runtime.c -lshell32 -o windows-files.exe
+          ./windows-files.exe
+
+      - name: Validate Windows path roots and generated projects
+        shell: msys2 {0}
+        run: |
+          export PATH="$PWD/zig-out/bin:$PATH"
+          argi.exe build tests/feature_tests/system/48_windows_path_roots --no-cache
+          tests/feature_tests/system/48_windows_path_roots/build/output.exe
+          argi.exe init windows_smoke
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('windows_smoke/source/windows_smoke/main.rg')
+          text = source.read_text()
+          end = text.rindex('}')
+          source.write_text(text[:end] + '    print("Windows core works")\n' + text[end:])
+          PY
+          argi.exe run windows_smoke
+
+      - name: Validate UTF-8 process arguments and environment lifetimes
+        shell: msys2 {0}
+        run: |
+          gcc -Wall -Wextra -Werror tests/native/windows/utf8_process.c core/platforms/windows/runtime.c -lshell32 -o windows-process.exe
+          python - <<'PY'
+          import subprocess
+          subprocess.run(['./windows-process.exe', '\u00f1-\u6587', '*.tmp'], check=True)
+          PY
+
+      - name: Validate a separate compiler installation
+        shell: msys2 {0}
+        run: |
+          prefix="$RUNNER_TEMP/argi-installed"
+          zig build -j1 --prefix "$prefix"
+          cp "$(cygpath -u "$LLVM_RUNTIME_DLL")" "$(cygpath -u "$prefix")/bin/LLVM-C.dll"
+          python .github/scripts/smoke_windows.py "$prefix"
+
+      - name: Run compiler and core feature suites
+        shell: msys2 {0}
+        run: |
+          export PATH="$PWD/zig-out/bin:$PATH"
+          zig build -j1 test-programs -Dtest-progress=true -Dtest-filter='feature_tests/basics/' -Dtest-filter='feature_tests/collections/' -Dtest-filter='feature_tests/text/' -Dtest-filter='feature_tests/io/' -Dtest-filter='feature_tests/system/' --summary all

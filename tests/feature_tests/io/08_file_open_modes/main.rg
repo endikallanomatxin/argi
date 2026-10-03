@@ -1,6 +1,10 @@
 main(.system: System) -> (.status_code: Int32) := {
     assume ffi := system.ffi
-    path ::= from_literal(.data = "/dev/null")
+    #if target_os("windows") {
+        path ::= from_literal(.data = "NUL")
+    } #else {
+        path ::= from_literal(.data = "/dev/null")
+    }
 
     read_file ::= File(.stream_address = 0, .should_close = 0 == 1)
     read_result ::= open_read(.p = $&read_file, .path = path)

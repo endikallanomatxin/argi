@@ -35,10 +35,17 @@ fn createTargetMachine(
     triple: [:0]const u8,
     optimization_mode: OptimizationMode,
 ) !llvm.c.LLVMTargetMachineRef {
-    c.LLVMInitializeAllTargetInfos();
-    c.LLVMInitializeAllTargets();
-    c.LLVMInitializeAllTargetMCs();
-    c.LLVMInitializeAllAsmPrinters();
+    // Initialize the backends supported by target selection. The C headers of
+    // one LLVM installation can list more backends than a redistributable DLL
+    // contains, so the all-target helpers would require unrelated symbols.
+    c.LLVMInitializeX86TargetInfo();
+    c.LLVMInitializeX86Target();
+    c.LLVMInitializeX86TargetMC();
+    c.LLVMInitializeX86AsmPrinter();
+    c.LLVMInitializeAArch64TargetInfo();
+    c.LLVMInitializeAArch64Target();
+    c.LLVMInitializeAArch64TargetMC();
+    c.LLVMInitializeAArch64AsmPrinter();
 
     var err_ptr: [*c]u8 = null;
     var target_ref: llvm.c.LLVMTargetRef = null;
@@ -116,7 +123,7 @@ fn chooseLinkerCommand(cc_env: ?[]const u8) []const u8 {
     if (cc_env) |value| {
         if (value.len != 0) return value;
     }
-    return "cc";
+    return if (@import("builtin").os.tag == .windows) "gcc" else "cc";
 }
 
 /// Keep native inputs typed and ordered: archive resolution can depend on the
@@ -144,6 +151,7 @@ fn buildLinkArgv(
     output_path: []const u8,
     inputs: []const NativeInput,
     driver_args: []const []const u8,
+    target: @import("../1_base/target.zig").Config,
 ) ![]const []const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(allocator, linker);
@@ -159,7 +167,8 @@ fn buildLinkArgv(
         .file => |path| try argv.append(allocator, path),
         .static_library, .shared_library => unreachable,
     };
-    try argv.append(allocator, "-lc");
+    // MinGW selects its CRT through the driver; it has no Unix libc archive.
+    if (target.os != .windows) try argv.append(allocator, "-lc");
     return argv.toOwnedSlice(allocator);
 }
 
@@ -183,6 +192,8 @@ fn resolveNamedLibrary(
     }
     const suffixes: []const []const u8 = if (!shared)
         &.{".a"}
+    else if (target.os == .windows)
+        &.{ ".dll.a", ".dll" }
     else if (target.os.isDarwin())
         &.{ ".dylib", ".tbd" }
     else
@@ -323,11 +334,28 @@ pub fn linkWithLibc(
         .shared_library => |name| input.* = .{ .file = try resolveNamedLibrary(arena.allocator(), io, environ_map, linker, inputs, name, true, options.target, driver_args.items) },
         else => {},
     };
-    const argv = try buildLinkArgv(arena.allocator(), linker, obj_path, output_path, resolved, driver_args.items);
+    // MinGW binutils may interpret Unicode command-line paths through the ANSI
+    // code page. Let process creation select the Unicode output directory and
+    // give the linker local artifact names instead. Resolve other paths before
+    // changing the child directory so relative native inputs keep their meaning.
+    const windows = options.target.os == .windows;
+    const invocation_dir = try std.process.currentPathAlloc(io, arena.allocator());
+    const link_dir = if (windows) try std.fs.path.resolve(arena.allocator(), &.{ invocation_dir, std.fs.path.dirname(output_path) orelse "." }) else null;
+    if (windows) for (resolved) |*input| switch (input.*) {
+        .file => |path| input.* = .{ .file = try std.fs.path.resolve(arena.allocator(), &.{ invocation_dir, path }) },
+        .search_path => |path| input.* = .{ .search_path = try std.fs.path.resolve(arena.allocator(), &.{ invocation_dir, path }) },
+        else => {},
+    };
+    const driver = if (windows and (std.mem.indexOfAny(u8, linker, "/\\") != null))
+        try std.fs.path.resolve(arena.allocator(), &.{linker})
+    else
+        linker;
+    const argv = try buildLinkArgv(arena.allocator(), driver, if (windows) std.fs.path.basename(obj_path) else obj_path, if (windows) std.fs.path.basename(output_path) else output_path, resolved, driver_args.items, options.target);
 
     const result = std.process.run(allocator.*, io, .{
         .argv = argv,
         .environ_map = environ_map,
+        .cwd = if (link_dir) |dir| .{ .path = dir } else .inherit,
     }) catch |err| {
         printLinkerFailure(linker, argv, null, err);
         return error.LinkFailed;
@@ -348,13 +376,13 @@ pub fn linkWithLibc(
 }
 
 test "chooseLinkerCommand prefers CC when provided" {
-    try std.testing.expectEqualStrings("cc", chooseLinkerCommand(null));
-    try std.testing.expectEqualStrings("cc", chooseLinkerCommand(""));
+    try std.testing.expectEqualStrings(if (@import("builtin").os.tag == .windows) "gcc" else "cc", chooseLinkerCommand(null));
+    try std.testing.expectEqualStrings(if (@import("builtin").os.tag == .windows) "gcc" else "cc", chooseLinkerCommand(""));
     try std.testing.expectEqualStrings("clang", chooseLinkerCommand("clang"));
 }
 
 test "buildLinkArgv keeps linker object output and libc order" {
-    const argv = try buildLinkArgv(std.testing.allocator, "clang", "/tmp/input.o", "/tmp/output", &.{}, &.{});
+    const argv = try buildLinkArgv(std.testing.allocator, "clang", "/tmp/input.o", "/tmp/output", &.{}, &.{}, .{ .arch = .x86_64, .os = .linux, .abi = .gnu });
     defer std.testing.allocator.free(argv);
     try std.testing.expectEqualStrings("clang", argv[0]);
     try std.testing.expectEqualStrings("/tmp/input.o", argv[1]);
@@ -368,4 +396,11 @@ test "optimization modes select machine code optimization levels" {
     try std.testing.expectEqual(@as(c.LLVMCodeGenOptLevel, c.LLVMCodeGenLevelDefault), OptimizationMode.release.llvmCodeGenLevel());
     try std.testing.expectEqualStrings("none", OptimizationMode.development.llvmCodeGenLevelName());
     try std.testing.expectEqualStrings("default", OptimizationMode.release.llvmCodeGenLevelName());
+}
+
+test "Windows link commands let the MinGW driver select its CRT" {
+    const argv = try buildLinkArgv(std.testing.allocator, "gcc", "input.o", "output.exe", &.{}, &.{}, .{ .arch = .x86_64, .os = .windows, .abi = .gnu });
+    defer std.testing.allocator.free(argv);
+    try std.testing.expectEqual(@as(usize, 4), argv.len);
+    try std.testing.expectEqualStrings("output.exe", argv[3]);
 }

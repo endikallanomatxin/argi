@@ -894,6 +894,8 @@ pub const Context = struct {
             return id;
         }
         if (self.tree.functionCall(node)) |call| {
+            if (try @import("../../target_predicate.zig").evaluate(self.allocator, self.tree, self.source, node, self.graph.target, self.diagnostics)) |matched|
+                return self.addResolvedNode(node, try self.parameterizedBuiltin(.Bool), .{ .bool_literal = matched });
             const input = try self.lowerBodyNode(call.input);
             try self.captureAssumedFields(node, input);
             var arguments: std.ArrayList(ir.GenericArgument) = .empty;

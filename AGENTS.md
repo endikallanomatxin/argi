@@ -166,6 +166,26 @@ feature first.
   local cross execution uses `ARGI_CROSS_CC`, `ARGI_CROSS_RUNNER`, and
   `ARGI_CROSS_RUNTIME_ROOT`.
 
+- Native Windows development uses Zig 0.16, the official LLVM 21 development
+  archive's C API DLL/import library, and MSYS2 UCRT64 GCC for generated programs.
+  The standalone LLVM installer does not provide the complete C headers. Set
+  `LLVM_INCLUDE_DIR`, `LLVM_LIB_DIR`, and `LLVM_LIBS=LLVM-C.lib`; put `LLVM-C.dll`
+  on PATH or next to `argi.exe`. LLVM target triples come from Argi's target
+  identity, including the CRT ABI, rather than the LLVM DLL's build host.
+  Bundled core selects its POSIX or Windows adapters from that same target.
+  Windows page reservations keep private release metadata outside the exposed
+  range; never implement their cleanup with partial `VirtualFree` operations.
+  Aligned CRT acquisitions must use `aligned_free`, not ordinary `free`.
+
+- Target `#if` selection is shared by import discovery and frontend tokenizing
+  through `src/1_base/target_selection.zig`. It blanks discarded bytes while
+  preserving original offsets and line endings. Keep source buffers intact
+  for diagnostics, cache fingerprints, and editor positions. Private platform
+  adapters select their own declarations; do not filter source by folder names.
+  Target predicates use ModuleSG's target, including during cross compilation.
+  Bundled primitive requirements may be target-specific, but selected trusted
+  declarations must still satisfy their origin, canonical path, and signature.
+
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases
   - avoid introducing synonyms such as `parsing`, `analysis`, or `semantic` as the primary names for those phases in new APIs, diagnostics, timing output, or docs

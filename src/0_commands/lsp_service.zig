@@ -1136,31 +1136,7 @@ fn outlineNodes(work: std.mem.Allocator, file: *const editor_syntax.File, nodes:
 }
 
 pub fn decodeFileUri(allocator: std.mem.Allocator, uri: []const u8) !?[]u8 {
-    if (!std.mem.startsWith(u8, uri, "file://")) return null;
-    const encoded = uri["file://".len..];
-    var output = std.array_list.Managed(u8).init(allocator);
-    errdefer output.deinit();
-    var index: usize = 0;
-    while (index < encoded.len) {
-        if (encoded[index] == '%' and index + 2 < encoded.len) {
-            const high = std.fmt.charToDigit(encoded[index + 1], 16) catch {
-                try output.append(encoded[index]);
-                index += 1;
-                continue;
-            };
-            const low = std.fmt.charToDigit(encoded[index + 2], 16) catch {
-                try output.append(encoded[index]);
-                index += 1;
-                continue;
-            };
-            try output.append(@intCast(high * 16 + low));
-            index += 3;
-        } else {
-            try output.append(encoded[index]);
-            index += 1;
-        }
-    }
-    return try output.toOwnedSlice();
+    return @import("file_uri.zig").decode(allocator, uri, @import("builtin").os.tag == .windows);
 }
 
 test "indexed LSP service public positions stay zero based" {
@@ -1276,12 +1252,12 @@ test "LSP navigation and hovers use written symbols and source declarations" {
     try std.testing.expectEqual(@as(u32, 0), identity.range.start.character);
     const specialized = (try service.definition(uri, .{ .line = 6, .character = 4 })).?;
     defer specialized.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.endsWith(u8, specialized.path, "/system/terminal.rg"));
+    try std.testing.expect(std.mem.endsWith(u8, specialized.path, if (@import("builtin").os.tag == .windows) "\\system\\terminal.rg" else "/system/terminal.rg"));
     try std.testing.expectEqual(@as(u32, 0), specialized.range.start.character);
     try std.testing.expectEqual(@as(u32, 5), specialized.range.end.character);
     const terminal = (try service.definition(uri, .{ .line = 3, .character = 30 })).?;
     defer terminal.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.endsWith(u8, terminal.path, "/system/system.rg"));
+    try std.testing.expect(std.mem.endsWith(u8, terminal.path, if (@import("builtin").os.tag == .windows) "\\system\\system.rg" else "/system/system.rg"));
     try std.testing.expectEqual(@as(u32, 8), terminal.range.end.character - terminal.range.start.character);
 }
 
@@ -1374,10 +1350,10 @@ test "LSP definitions remain available with unresolved matrix initializers" {
     try service.documents.append(try Document.init(std.testing.allocator, uri, path, 1, code));
     const system = (try service.definition(uri, .{ .line = 1, .character = 14 })).?;
     defer system.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.endsWith(u8, system.path, "/system/system.rg"));
+    try std.testing.expect(std.mem.endsWith(u8, system.path, if (@import("builtin").os.tag == .windows) "\\system\\system.rg" else "/system/system.rg"));
     const print = (try service.definition(uri, .{ .line = 5, .character = 4 })).?;
     defer print.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.endsWith(u8, print.path, "/system/terminal.rg"));
+    try std.testing.expect(std.mem.endsWith(u8, print.path, if (@import("builtin").os.tag == .windows) "\\system\\terminal.rg" else "/system/terminal.rg"));
     const matrix = (try service.definition(uri, .{ .line = 4, .character = 9 })).?;
     defer matrix.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings(path, matrix.path);
@@ -1585,4 +1561,30 @@ test "LSP diagnoses array shapes before codegen" {
         try std.testing.expectEqualStrings(case.message, diagnostics.items[0].message);
         try std.testing.expect(diagnostics.items[0].range.start.line > 0);
     }
+}
+
+test "LSP target selection preserves definition positions and ignores inactive imports" {
+    const code =
+        "#if target_arch(\"aarch64\") and target_arch(\"x86_64\") {\n" ++
+        "bad := import(\"./absent\")\n" ++
+        "unknown(.value: MissingType) := {}\n" ++
+        "} #else {\n" ++
+        "answer() -> (.value: Int32 = 7) := {}\n" ++
+        "}\n" ++
+        "main() -> (.status_code: Int32) := { status_code = answer() }\n";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///selection.rg";
+    const diagnostics = try service.openDocument(uri, path, 1, code);
+    defer diagnostics.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
+    const definition = (try service.definition(uri, .{ .line = 6, .character = 51 })).?;
+    defer definition.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(path, definition.path);
+    try std.testing.expectEqual(@as(u32, 4), definition.range.start.line);
 }
