@@ -8971,3 +8971,23 @@ test "feature_tests/system/70_process_argument_lifetime" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/semver/01_parse_compare" {
+    const path = "tests/feature_tests/semver/01_parse_compare";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/semver/02_format" {
+    const path = "tests/feature_tests/semver/02_format";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/semver/03X_private_state" {
+    try buildExpectFail("tests/feature_tests/semver/03X_private_state", "field '_text' is private to its module");
+}
+
+test "feature_tests/semver/04X_view_lifetime" {
+    try buildExpectFail("tests/feature_tests/semver/04X_view_lifetime", "reference depends on a root that has ended");
+}
