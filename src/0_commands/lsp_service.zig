@@ -1562,3 +1562,29 @@ test "LSP diagnoses array shapes before codegen" {
         try std.testing.expect(diagnostics.items[0].range.start.line > 0);
     }
 }
+
+test "LSP target selection preserves definition positions and ignores inactive imports" {
+    const code =
+        "#if target_arch(\"aarch64\") and target_arch(\"x86_64\") {\n" ++
+        "bad := import(\"./absent\")\n" ++
+        "unknown(.value: MissingType) := {}\n" ++
+        "} #else {\n" ++
+        "answer() -> (.value: Int32 = 7) := {}\n" ++
+        "}\n" ++
+        "main() -> (.status_code: Int32) := { status_code = answer() }\n";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///selection.rg";
+    const diagnostics = try service.openDocument(uri, path, 1, code);
+    defer diagnostics.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
+    const definition = (try service.definition(uri, .{ .line = 6, .character = 51 })).?;
+    defer definition.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(path, definition.path);
+    try std.testing.expectEqual(@as(u32, 4), definition.range.start.line);
+}

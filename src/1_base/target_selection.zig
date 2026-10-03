@@ -227,3 +227,15 @@ test "target selection diagnoses invalid conditions and unmatched branches" {
     try std.testing.expectError(error.UnterminatedTargetBranch, select(std.testing.allocator, "#if target_os(\"linux\") {", .{}, &offset));
     try std.testing.expectError(error.UnmatchedTargetElse, select(std.testing.allocator, "#else {}", .{}, &offset));
 }
+
+test "target selection preserves CRLF and braces inside literals" {
+    const source = "#if target_os(\"windows\") {\r\nkeep := \"}\\\"{\" -- }\r\n} #else {\r\ndiscard := 1\r\n}\r\n";
+    var offset: usize = 0;
+    const selected = try select(std.testing.allocator, source, .{ .os = .windows }, &offset);
+    defer std.testing.allocator.free(selected);
+    for (source, selected) |original, chosen| {
+        if (original == '\r' or original == '\n') try std.testing.expectEqual(original, chosen);
+    }
+    try std.testing.expect(std.mem.indexOf(u8, selected, "keep") != null);
+    try std.testing.expect(std.mem.indexOf(u8, selected, "discard") == null);
+}
