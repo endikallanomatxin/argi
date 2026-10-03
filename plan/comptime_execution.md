@@ -1,8 +1,5 @@
 # Interactive execution and compile-time machinery
 
-Scheduling: [0.4](0.4.md), after the first Python bridge. Further VM/JIT and
-shared compile-time work can move to [0.6](0.6.md) according to the experiment.
-
 ## Direction
 
 Build on module reuse to shorten edit/evaluate cycles. Prototype with the

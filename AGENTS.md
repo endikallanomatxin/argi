@@ -227,6 +227,11 @@ faster.
 - Keep implementation scheduling, milestones, and work tracking in `plan/`;
   do not duplicate the language specification there.
 
+- Keep release scheduling and development order in `plan/<version>.md`.
+  Topic-specific planning notes should describe the mental model, architecture,
+  technical dependencies, and remaining work without assigning releases or
+  duplicating the release roadmap.
+
 - Treat `plan/*.md` as active planning documents. If you notice they are
   outdated while doing relevant work, update them so they remain useful as
   development references.

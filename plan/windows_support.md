@@ -1,7 +1,5 @@
 # Native Windows support
 
-Scheduling: [0.3](0.3.md), independently of cross-compilation.
-
 ## Direction
 
 Port the compiler, installed CLI, and implemented core to native Windows x64

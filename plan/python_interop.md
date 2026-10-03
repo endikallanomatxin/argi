@@ -1,8 +1,5 @@
 # Python interoperability
 
-Scheduling: [0.4](0.4.md), before interactive execution and after C-callable
-exports are available through [C interop](c_interop.md).
-
 ## Direction
 
 Let Python call ahead-of-time compiled Argi libraries. Start with a small
