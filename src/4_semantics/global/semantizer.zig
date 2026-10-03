@@ -688,6 +688,9 @@ pub fn semantizeWithOptions(
         return error.ConflictingAbstractFieldStorage;
     }
 
+    if (try diagnoseArrayAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
+        return error.Reported;
+
     if (options.diagnostics) |diagnostics| {
         if (try diagnoseUnresolvedPropagatedReach(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
             return error.Reported;
@@ -1020,6 +1023,97 @@ fn diagnoseUnresolvedArithmetic(
             }
             return true;
         }
+    }
+    return false;
+}
+
+const ArrayMismatch = struct {
+    value: global_sg.GlobalNodeId,
+    expected: global_sg.GlobalTypeId,
+    length: ?usize = null,
+};
+
+fn arrayMismatch(graph: *const global_sg.GlobalSemanticGraph, value: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) ?ArrayMismatch {
+    if (@intFromEnum(expected) >= graph.types.items.len or graph.isTypeUnresolved(expected)) return null;
+    const node = graph.node(value);
+    if (global_types.arrayElement(graph, expected)) |element| {
+        const elements = switch (node.content) {
+            .list_literal => |literal| literal.elements,
+            .array_literal => |literal| literal.elements,
+            else => null,
+        };
+        if (elements) |items| {
+            if (items.len != global_types.arrayLength(graph, expected).?)
+                return .{ .value = value, .expected = expected, .length = items.len };
+            for (graph.node_refs.items[items.start..][0..items.len]) |child|
+                if (arrayMismatch(graph, child, element)) |mismatch| return mismatch;
+        } else if (node.ty) |actual| {
+            if (!graph.isTypeUnresolved(actual) and global_types.arrayElement(graph, actual) != null and !global_types.equal(graph, actual, expected))
+                return .{ .value = value, .expected = expected };
+        }
+    } else if (graph.semanticType(expected) == .pointer) {
+        const pointer = graph.semanticType(expected).pointer;
+        if (global_types.arrayElement(graph, pointer.child) != null) {
+            const actual = node.ty orelse return null;
+            if (graph.isTypeUnresolved(actual)) return null;
+            if (graph.semanticType(actual) == .pointer and !global_types.equal(graph, graph.semanticType(actual).pointer.child, pointer.child))
+                return .{ .value = value, .expected = expected };
+        }
+    }
+    if (node.content == .struct_value_literal) {
+        const fields = global_types.fields(graph, expected) orelse return null;
+        for (graph.value_fields.items[node.content.struct_value_literal.fields.start..][0..node.content.struct_value_literal.fields.len], 0..) |field, index| {
+            const target = if (graph.text(field.name).len != 0)
+                if (global_types.findField(graph, expected, graph.text(field.name))) |hit| hit.field.ty else continue
+            else if (index < fields.len)
+                graph.fields.items[fields.start + index].ty
+            else
+                continue;
+            if (arrayMismatch(graph, field.value, target)) |mismatch| return mismatch;
+        }
+    }
+    return null;
+}
+
+// Contextual types are destinations, not proof that aggregate elements or
+// referenced storage have that shape. Validate before safety and codegen,
+// including when a rejected literal has no inferred type at all.
+fn diagnoseArrayAssignments(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    reachable: ?*const reachability_mod.FunctionSet,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
+) !bool {
+    for (graph.nodes.items, 0..) |node, raw| {
+        const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
+        if (reachable) |set| if (!set.containsNode(id)) continue;
+        const value, const expected = switch (node.content) {
+            .binding_declaration => |binding| .{ graph.binding(binding).initialization orelse continue, graph.binding(binding).ty },
+            .assignment => |assignment| .{ assignment.value, graph.binding(assignment.binding).ty },
+            .pointer_assignment => |assignment| blk: {
+                const ty = graph.node(assignment.pointer).ty orelse continue;
+                if (graph.isTypeUnresolved(ty) or graph.semanticType(ty) != .pointer) continue;
+                break :blk .{ assignment.value, graph.semanticType(ty).pointer.child };
+            },
+            .struct_value_literal, .array_literal => .{ id, node.ty orelse continue },
+            else => continue,
+        };
+        const mismatch = arrayMismatch(graph, value, expected) orelse continue;
+        if (diagnostics) |sink| {
+            const location = diagnosticLocation(graph, sink, graph.node(mismatch.value).source);
+            if (mismatch.length) |length| {
+                try sink.add(location, .semantic, "array initializer has {d} elements; expected {d}", .{ length, global_types.arrayLength(graph, mismatch.expected).? });
+            } else {
+                var actual_name = std.array_list.Managed(u8).init(allocator);
+                defer actual_name.deinit();
+                var expected_name = std.array_list.Managed(u8).init(allocator);
+                defer expected_name.deinit();
+                try appendTypeName(&actual_name, graph, graph.node(mismatch.value).ty.?);
+                try appendTypeName(&expected_name, graph, mismatch.expected);
+                try sink.add(location, .semantic, "array value has type '{s}'; expected '{s}'", .{ actual_name.items, expected_name.items });
+            }
+        }
+        return true;
     }
     return false;
 }

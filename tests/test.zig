@@ -8493,3 +8493,15 @@ test "feature_tests/basics/50X_undeclared_assignment" {
         \\
     );
 }
+
+test "feature_tests/basics/51X_array_outer_length" {
+    try buildExpectFail("tests/feature_tests/basics/51X_array_outer_length", "array initializer has 2 elements; expected 3");
+}
+
+test "feature_tests/basics/52X_array_inner_length" {
+    try buildExpectFail("tests/feature_tests/basics/52X_array_inner_length", "array initializer has 2 elements; expected 3");
+}
+
+test "feature_tests/basics/53X_array_reference_shape" {
+    try buildExpectFail("tests/feature_tests/basics/53X_array_reference_shape", "array value has type '&[3][3]Int32'; expected '&[2][2]Int32'");
+}

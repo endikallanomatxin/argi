@@ -1561,3 +1561,28 @@ test "LSP reports assignment without a previous declaration" {
     defer corrected.deinit();
     try std.testing.expectEqual(@as(usize, 0), corrected.items.len);
 }
+
+test "LSP diagnoses array shapes before codegen" {
+    const cases = [_]struct { text: []const u8, message: []const u8 }{
+        .{ .text = "main() -> (.status_code: Int32 = 0) := {\n    data : [3][3]Int32 = ((1,2), (3,4))\n}\n", .message = "array initializer has 2 elements; expected 3" },
+        .{ .text = "main() -> (.status_code: Int32 = 0) := {\n    data : [2][3]Int32 = ((1,2), (3,4))\n}\n", .message = "array initializer has 2 elements; expected 3" },
+        .{ .text = "MatrixView : Type = (.data_p: &[2][2]Int32)\nmain() -> (.status_code: Int32 = 0) := {\n    data : [3][3]Int32 = ((1,2,3), (4,5,6), (7,8,9))\n    matrix : MatrixView = (.data_p = &data)\n}\n", .message = "array value has type '&[3][3]Int32'; expected '&[2][2]Int32'" },
+    };
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = "" });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    for (cases, 0..) |case, index| {
+        const diagnostics = if (index == 0)
+            try service.openDocument("file:///matrix.rg", path, @intCast(index), case.text)
+        else
+            try service.changeDocument("file:///matrix.rg", path, @intCast(index), case.text);
+        defer diagnostics.deinit();
+        try std.testing.expect(diagnostics.items.len > 0);
+        try std.testing.expectEqualStrings(case.message, diagnostics.items[0].message);
+        try std.testing.expect(diagnostics.items[0].range.start.line > 0);
+    }
+}

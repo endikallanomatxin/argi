@@ -917,6 +917,11 @@ pub const CodeGenerator = struct {
             values[index] = (try self.visitNode(node)) orelse return CodegenError.ValueNotFound;
             llvm_fields[index] = values[index].type_ref;
         }
+        if (ty) |resolved_ty| if (types.arrayElement(self.graph, resolved_ty)) |element| {
+            if (elements.len != types.arrayLength(self.graph, resolved_ty).?) return CodegenError.InvalidType;
+            const element_ref = try self.toLLVMType(element);
+            for (values) |value| if (value.type_ref != element_ref) return CodegenError.InvalidType;
+        };
         const type_ref = if (ty) |resolved_ty|
             if (types.arrayLength(self.graph, resolved_ty) != null)
                 try self.toLLVMType(resolved_ty)
@@ -1017,6 +1022,7 @@ pub const CodeGenerator = struct {
     }
 
     fn arrayLiteral(self: *CodeGenerator, literal: anytype) !TypedValue {
+        if (literal.elements.len != literal.length) return CodegenError.InvalidType;
         const element_ref = try self.toLLVMType(literal.element_type);
         const type_ref = c.LLVMArrayType(element_ref, literal.length);
         const values = try self.allocator.alloc(c.LLVMValueRef, literal.elements.len);
@@ -1024,6 +1030,7 @@ pub const CodeGenerator = struct {
         var all_constant = true;
         for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len], 0..) |node, index| {
             const value = (try self.visitNode(node)) orelse return CodegenError.ValueNotFound;
+            if (value.type_ref != element_ref) return CodegenError.InvalidType;
             values[index] = value.value_ref;
             all_constant = all_constant and c.LLVMIsConstant(value.value_ref) != 0;
         }

@@ -23,6 +23,10 @@ element an `Int64` context. Inference does not widen heterogeneous elements
 or turn rows of different lengths into a common array type. Empty literals,
 including empty rows in nested literals, require an expected element type.
 
+Array initializers must match every declared dimension exactly. An annotation
+does not pad missing elements or reshape nested literals. References preserve
+the source array's shape: `&[3][3]Int32` cannot be used as `&[2][2]Int32`.
+
 `[N]T` is the native fixed array type. Native bracket types represent fixed
 arrays only; slices and views are library abstractions, not native array types.
 Library collection access uses named operations rather than overload sets.

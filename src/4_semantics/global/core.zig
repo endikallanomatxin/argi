@@ -1492,7 +1492,7 @@ pub const Resolver = struct {
         for (0..expected_fields.len) |offset| {
             const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(offset))];
             const node = self.callArgument(literal, offset, expected.name) orelse expected.default_value orelse return false;
-            _ = self.coerceContextualLiteral(node, expected.ty);
+            _ = self.coerceContextualValue(node, expected.ty);
             try self.graph.value_fields.append(self.allocator, .{ .name = expected.name, .value = node });
         }
         const ty = try self.structType(expected_fields);
@@ -1560,7 +1560,7 @@ pub const Resolver = struct {
                     );
             }
             const value = node orelse return false;
-            _ = self.coerceContextualLiteral(value, expected.ty);
+            _ = self.coerceContextualValue(value, expected.ty);
             try self.graph.value_fields.append(self.allocator, .{ .name = expected.name, .value = value });
         }
         const ty = try self.structType(expected_fields);
@@ -1908,7 +1908,10 @@ pub const Resolver = struct {
     }
 
     pub fn coerceContextualValue(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
-        if (self.graph.node(node).content == .list_literal and self.contextualListLiteralFits(self.graph.node(node).content.list_literal, target)) {
+        if (self.graph.node(node).content == .list_literal) {
+            // A contextual type does not establish a literal's shape. Keep
+            // incompatible lists untyped so diagnostics can inspect their elements.
+            if (!self.contextualListLiteralFits(self.graph.node(node).content.list_literal, target)) return false;
             const literal = self.graph.node(node).content.list_literal;
             const element = types.arrayElement(self.graph, target) orelse return false;
             for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |item|
