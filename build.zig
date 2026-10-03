@@ -49,8 +49,9 @@ pub fn build(b: *std.Build) void {
     linkLlvmModule(exe_mod, llvm_lib_path, llvm_libs_raw);
 
     b.installArtifact(exe);
-    const installed_core_path = b.getInstallPath(.prefix, "lib/argi/core");
-    if (!std.mem.endsWith(u8, installed_core_path, "lib/argi/core")) {
+    const core_suffix = std.fs.path.join(b.allocator, &.{ "lib", "argi", "core" }) catch @panic("out of memory");
+    const installed_core_path = b.getInstallPath(.prefix, core_suffix);
+    if (!std.mem.endsWith(u8, installed_core_path, core_suffix)) {
         @panic("refusing to clean an unexpected core installation path");
     }
     const clean_installed_core = CleanInstalledCore.create(b, installed_core_path);
