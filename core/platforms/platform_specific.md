@@ -27,3 +27,18 @@ after language scope cleanup. Later environment queries retain earlier values
 instead of replacing their storage. Console code pages are switched to UTF-8
 only for console endpoints and restored at entry exit; redirected streams stay
 ordinary byte streams.
+
+Clock adapters return integral seconds and normalized nanosecond fractions.
+POSIX bindings use the target's C `long` layout for `timespec`; Linux and macOS
+select their native clock IDs. A failed `nanosleep` retries only `EINTR` with
+its returned remainder. Long intervals use finite day-sized chunks to avoid
+truncation by a kernel's signed nanosecond deadline representation. Its `errno`
+pointer borrows the FFI capability as a root for live thread-local storage,
+without claiming storage acquisition.
+
+The Windows native adapter includes `time.c` after the Win32 declarations.
+QPC ticks are converted with bounded integer division, avoiding both a wide
+product and floating-point rounding. FILETIME values normalize negative Unix
+seconds with a nonnegative fractional component. Sleep uses finite DWORD
+chunks with upward rounding, then checks QPC again to handle early wakeups;
+it never passes the `INFINITE` sentinel to the operating system.

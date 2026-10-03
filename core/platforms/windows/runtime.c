@@ -1,3 +1,6 @@
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0602
+#endif
 #include <windows.h>
 #include <shellapi.h>
 #include <malloc.h>
@@ -9,6 +12,7 @@
 #include <string.h>
 #include <io.h>
 #include <fcntl.h>
+#include "time.c"
 
 uintptr_t _argi_page_size(void) {
     SYSTEM_INFO info;

@@ -8831,3 +8831,40 @@ test "feature_tests/numbers/01_pcg32" {
 test "feature_tests/numbers/02X_pcg32_private_state" {
     try buildExpectFail("tests/feature_tests/numbers/02X_pcg32_private_state", "field '_state' is private to its module");
 }
+
+test "feature_tests/numbers/03_duration" {
+    const path = "tests/feature_tests/numbers/03_duration";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/numbers/04X_duration_private_state" {
+    try buildExpectFail("tests/feature_tests/numbers/04X_duration_private_state", "field '_nanoseconds' is private to its module");
+}
+
+test "feature_tests/system/54_clock" {
+    const path = "tests/feature_tests/system/54_clock";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/system/55_posix_clock_contract" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    try checkNativeCFixture("tests/feature_tests/system/55_posix_clock_contract", &.{ "@clock_gettime", "@nanosleep" });
+}
+
+test "feature_tests/system/56_windows_clock_adapter" {
+    try checkNativeCFixture("tests/feature_tests/system/56_windows_clock_adapter", &.{"@argi_windows_clock_probe"});
+}
+
+test "feature_tests/system/57X_clock_missing_capability" {
+    try buildExpectFail("tests/feature_tests/system/57X_clock_missing_capability", ".self uses reach [clock] expected as '&Clock'");
+}
+
+test "feature_tests/system/58X_clock_missing_ffi" {
+    try buildExpectFail("tests/feature_tests/system/58X_clock_missing_ffi", "failed to initialize type 'Clock'");
+}
+
+test "feature_tests/system/59X_clock_domains" {
+    try buildExpectFail("tests/feature_tests/system/59X_clock_domains", "no overload of 'elapsed' accepts arguments (.start: UnixTimestamp, .end: MonotonicInstant)");
+}

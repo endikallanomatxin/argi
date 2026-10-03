@@ -30,8 +30,10 @@ I/O, process arguments and environment, files, networking, processes, time,
 randomness, and foreign calls.
 
 > [!IMPLEMENTATION]
-> `Network`, `ProcessManager`, `Clock`, and `RandomNumberGenerator` are
+> `Network`, `ProcessManager`, and `RandomNumberGenerator` are
 > currently capability placeholders without general operations.
+
+`Clock` provides [monotonic time, civil time, and blocking sleep](164_time.md).
 
 Functions receive the capabilities they use through ordinary inputs. They
 may be passed explicitly or supplied through lexical `assume` or a declared

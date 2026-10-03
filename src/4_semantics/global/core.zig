@@ -2082,6 +2082,8 @@ pub const Resolver = struct {
         left: global_sg.GlobalTypeId,
         right: global_sg.GlobalTypeId,
     ) bool {
+        // TODO: Diagnose unsupported choice-value comparisons explicitly;
+        // comparisons against bare variant tags are resolved separately.
         return self.isBuiltinComparable(left, right) or
             ((operator == .equal or operator == .not_equal) and
                 (self.isCEnumPair(left, right) or
