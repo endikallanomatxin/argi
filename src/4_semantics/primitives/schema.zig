@@ -70,10 +70,6 @@ fn cIntegerType(bits: u16, signed: bool) ?BuiltinType {
     };
 }
 
-pub fn builtinTypeNamed(name: []const u8) ?BuiltinType {
-    return builtinTypeNamedForTarget(name, @import("builtin").target);
-}
-
 test "C scalar aliases follow the target data model" {
     var target = @import("builtin").target;
     target.cpu.arch = .x86_64;

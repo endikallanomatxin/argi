@@ -2993,7 +2993,7 @@ pub const Resolver = struct {
         }
 
         fn resolveEmptyTypeInitializer(self: *InstanceContext, name: []const u8, source: primitives.SourceRef) !?global_sg.Node {
-            if (primitives.builtinTypeNamed(name)) |builtin_type| {
+            if (primitives.builtinTypeNamedForTarget(name, self.resolver.graph.target.stdTarget())) |builtin_type| {
                 const ty = try self.resolver.generics.internType(.{ .builtin = builtin_type });
                 return self.emptyValue(ty, source);
             }
