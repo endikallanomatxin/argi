@@ -141,6 +141,24 @@ pub const InlayHintsResult = struct {
     }
 };
 
+pub const DocumentSymbol = struct {
+    name: []const u8,
+    kind: u32,
+    range: Range,
+    selectionRange: Range,
+    children: []const DocumentSymbol = &.{},
+};
+
+pub const DocumentSymbolsResult = struct {
+    arena: std.heap.ArenaAllocator,
+    items: []const DocumentSymbol,
+
+    pub fn deinit(self: DocumentSymbolsResult) void {
+        var arena = self.arena;
+        arena.deinit();
+    }
+};
+
 const Document = struct {
     uri: []u8,
     path: []u8,
@@ -245,6 +263,18 @@ pub const LanguageService = struct {
     pub fn document_text(self: *LanguageService, uri: []const u8) ?[]const u8 {
         const index = self.findDocument(uri) orelse return null;
         return self.documents.items[index].text;
+    }
+
+    pub fn documentSymbols(self: *LanguageService, uri: []const u8) !DocumentSymbolsResult {
+        const doc = try self.getDoc(uri);
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        errdefer arena.deinit();
+        const work = arena.allocator();
+        // An outline must remain available independently of module resolution.
+        const sources = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
+        const files = try editor_syntax.load_files(work, &sources);
+        const items = try outlineNodes(work, &files[0], files[0].tree.roots);
+        return .{ .arena = arena, .items = items };
     }
 
     pub fn completions(self: *LanguageService, uri: []const u8, position: Position) !completion.Result {
@@ -1012,6 +1042,99 @@ fn sortLocations(items: []Location) void {
     }.lessThan);
 }
 
+fn outlinePosition(code: []const u8, offset: usize) Position {
+    const prefix = code[0..@min(offset, code.len)];
+    const start = if (std.mem.lastIndexOfScalar(u8, prefix, '\n')) |index| index + 1 else 0;
+    return .{ .line = @intCast(std.mem.count(u8, prefix, "\n")), .character = @intCast(prefix.len - start) };
+}
+
+fn outlineNodes(work: std.mem.Allocator, file: *const editor_syntax.File, nodes: []const st.NodeIndex) anyerror![]const DocumentSymbol {
+    var items: std.ArrayList(DocumentSymbol) = .empty;
+    for (nodes) |node| {
+        var name_token: st.TokenIndex = undefined;
+        var kind: u32 = undefined;
+        var children: []const st.NodeIndex = &.{};
+        if (file.tree.functionDeclaration(node)) |decl| {
+            name_token = decl.name_token;
+            kind = if (decl.c_function_pointer) 5 else 12;
+            if (decl.body) |body| if (file.tree.codeBlock(body)) |block| {
+                children = block.statements;
+            };
+        } else if (file.tree.typeDeclaration(node)) |decl| {
+            name_token = decl.name_token;
+            kind = 5;
+            if (file.tree.structTypeLiteral(decl.value)) |value| {
+                kind = 23;
+                children = value.fields;
+            }
+            if (file.tree.choiceTypeLiteral(decl.value)) |value| {
+                kind = 10;
+                children = value.variants;
+            }
+        } else if (file.tree.cEnumDeclaration(node)) |decl| {
+            name_token = decl.name_token;
+            kind = 10;
+            if (file.tree.choiceTypeLiteral(decl.value)) |value| children = value.variants;
+        } else if (file.tree.cUnionDeclaration(node)) |decl| {
+            name_token = decl.name_token;
+            kind = 23;
+            if (file.tree.structTypeLiteral(decl.value)) |value| children = value.fields;
+        } else if (file.tree.abstractDeclaration(node)) |decl| {
+            name_token = decl.name_token;
+            kind = 11;
+            children = decl.requires_functions;
+        } else if (file.tree.abstractFunctionRequirement(node)) |decl| {
+            name_token = decl.name_token;
+            kind = 6;
+        } else if (file.tree.symbolDeclaration(node)) |decl| {
+            name_token = decl.name_token;
+            kind = if (decl.mutability == .constant) 14 else 13;
+            if (decl.value) |value| if (file.tree.importStatement(value) != null) {
+                kind = 2;
+            };
+        } else if (file.tree.structTypeField(node)) |decl| {
+            name_token = decl.name_token;
+            kind = 8;
+        } else if (file.tree.choiceTypeVariant(node)) |decl| {
+            name_token = decl.name_token;
+            kind = 22;
+        } else if (file.tree.choiceOptionDeclaration(node)) |decl| {
+            name_token = decl.name_token;
+            kind = 22;
+        } else continue;
+        const name = file.tree.tokenTextFromSource(file.source.code, name_token);
+        const start = file.tree.tokenLocation(name_token).offset;
+        var end: usize = start + name.len;
+        var depth: usize = 0;
+        // Tokenizing keeps strings and comments opaque, so their punctuation
+        // cannot terminate a declaration or change its delimiter depth.
+        for (@intFromEnum(name_token)..file.tokens.len) |index| {
+            const content = file.tokens.contents[index];
+            if (content == .eof or (content == .new_line and depth == 0)) break;
+            switch (content) {
+                .open_parenthesis, .open_bracket, .open_brace => depth += 1,
+                .close_parenthesis, .close_bracket, .close_brace => {
+                    if (depth == 0) break;
+                    depth -= 1;
+                },
+                else => {},
+            }
+            if (content != .comment and content != .new_line) {
+                const text = file.tree.tokenTextFromSource(file.source.code, @enumFromInt(@as(u32, @intCast(index))));
+                end = file.tokens.locations[index].offset + text.len;
+            }
+        }
+        try items.append(work, .{
+            .name = try work.dupe(u8, name),
+            .kind = kind,
+            .range = .{ .start = outlinePosition(file.source.code, start), .end = outlinePosition(file.source.code, end) },
+            .selectionRange = .{ .start = outlinePosition(file.source.code, start), .end = outlinePosition(file.source.code, start + name.len) },
+            .children = try outlineNodes(work, file, children),
+        });
+    }
+    return items.toOwnedSlice(work);
+}
+
 pub fn decodeFileUri(allocator: std.mem.Allocator, uri: []const u8) !?[]u8 {
     if (!std.mem.startsWith(u8, uri, "file://")) return null;
     const encoded = uri["file://".len..];
@@ -1385,6 +1508,39 @@ test "LSP module reuse discovers unsaved transitive imports and cycles" {
     const reverted = (try service.definition(uri, .{ .line = 2, .character = 23 })).?;
     defer reverted.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u32, 0), reverted.range.start.line);
+}
+
+test "LSP document symbols preserve hierarchy and unsaved syntax" {
+    const code =
+        \\Point : Type = (
+        \\    .x: Int32
+        \\    .y: Int32
+        \\)
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value ::= missing()
+        \\}
+    ;
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    try service.documents.append(try Document.init(std.testing.allocator, "file:///outline.rg", "/not-on-disk/outline.rg", 1, code));
+    const result = try service.documentSymbols("file:///outline.rg");
+    defer result.deinit();
+    try std.testing.expectEqual(@as(usize, 2), result.items.len);
+    const point = result.items[0];
+    try std.testing.expectEqualStrings("Point", point.name);
+    try std.testing.expectEqual(@as(u32, 23), point.kind);
+    try std.testing.expectEqual(@as(u32, 3), point.range.end.line);
+    try std.testing.expectEqual(@as(u32, 1), point.range.end.character);
+    try std.testing.expectEqual(@as(usize, 2), point.children.len);
+    try std.testing.expectEqualStrings("x", point.children[0].name);
+    try std.testing.expectEqual(@as(u32, 8), point.children[0].kind);
+    try std.testing.expectEqual(@as(u32, 1), point.children[0].selectionRange.start.line);
+    const main = result.items[1];
+    try std.testing.expectEqualStrings("main", main.name);
+    try std.testing.expectEqual(@as(u32, 12), main.kind);
+    try std.testing.expectEqual(@as(u32, 6), main.range.end.line);
+    try std.testing.expectEqualStrings("value", main.children[0].name);
+    try std.testing.expectEqual(@as(u32, 13), main.children[0].kind);
 }
 
 test "LSP reports assignment without a previous declaration" {

@@ -138,6 +138,11 @@ const LanguageServer = struct {
                     log.err("completion failed: {s}", .{@errorName(err)});
                     self.respondInternalErrorOrLog(&writer, id, "completion failed");
                 };
+            } else if (std.mem.eql(u8, method, "textDocument/documentSymbol")) {
+                if (id_value) |id| self.handleDocumentSymbols(&writer, id, params_value) catch |err| {
+                    log.err("document symbols failed: {s}", .{@errorName(err)});
+                    self.respondInternalErrorOrLog(&writer, id, "document symbols failed");
+                };
             } else if (std.mem.eql(u8, method, "textDocument/hover")) {
                 if (id_value) |id| self.handleHover(&writer, id, params_value) catch |err| {
                     log.err("hover failed: {s}", .{@errorName(err)});
@@ -371,6 +376,8 @@ const LanguageServer = struct {
         try stream.objectField("resolveProvider");
         try stream.write(false);
         try stream.endObject();
+        try stream.objectField("documentSymbolProvider");
+        try stream.write(true);
         try stream.objectField("hoverProvider");
         try stream.write(true);
         try stream.objectField("definitionProvider");
@@ -603,6 +610,33 @@ const LanguageServer = struct {
             try stream.endObject();
             try self.sendMessage(writer, payload.writer.buffered());
         }
+    }
+
+    fn handleDocumentSymbols(self: *LanguageServer, writer: anytype, id_value: json.Value, params_value: ?json.Value) !void {
+        const params = params_value orelse return self.respondNullResult(writer, id_value);
+        if (params != .object) return self.respondNullResult(writer, id_value);
+        const document = getField(&params.object, "textDocument") orelse return self.respondNullResult(writer, id_value);
+        if (document != .object) return self.respondNullResult(writer, id_value);
+        const uri = getField(&document.object, "uri") orelse return self.respondNullResult(writer, id_value);
+        if (uri != .string) return self.respondNullResult(writer, id_value);
+        const svc = if (self.service) |*value| value else return self.respondNullResult(writer, id_value);
+        const result = svc.documentSymbols(uri.string) catch |err| switch (err) {
+            error.DocumentNotOpen => return self.respondNullResult(writer, id_value),
+            else => return err,
+        };
+        defer result.deinit();
+        var payload = std.Io.Writer.Allocating.init(self.allocator);
+        defer payload.deinit();
+        var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
+        try stream.beginObject();
+        try stream.objectField("jsonrpc");
+        try stream.write("2.0");
+        try stream.objectField("id");
+        try stream.write(id_value);
+        try stream.objectField("result");
+        try stream.write(result.items);
+        try stream.endObject();
+        try self.sendMessage(writer, payload.writer.buffered());
     }
 
     fn handle_completion(self: *LanguageServer, writer: anytype, id_value: json.Value, params_value: ?json.Value) !void {
@@ -1124,6 +1158,7 @@ test "initialize response is framed and flushed" {
     try std.testing.expectEqual(@as(i64, 1), response.value.object.get("id").?.integer);
     try std.testing.expect(response.value.object.get("result").? == .object);
     const capabilities = response.value.object.get("result").?.object.get("capabilities").?.object;
+    try std.testing.expect(capabilities.get("documentSymbolProvider").?.bool);
     try std.testing.expect(capabilities.get("hoverProvider").?.bool);
     try std.testing.expect(capabilities.get("inlayHintProvider").?.bool);
     const completion_provider = capabilities.get("completionProvider").?.object;
@@ -1164,6 +1199,7 @@ test "initialize response advertises hover definition references and rename" {
     try std.testing.expect(root.get("result").? == .object);
 
     const capabilities = root.get("result").?.object.get("capabilities").?.object;
+    try std.testing.expect(capabilities.get("documentSymbolProvider").?.bool);
     try std.testing.expect(capabilities.get("hoverProvider").?.bool);
     try std.testing.expect(capabilities.get("inlayHintProvider").?.bool);
     try std.testing.expect(capabilities.get("definitionProvider").?.bool);
@@ -1624,4 +1660,34 @@ test "LSP completion response uses standard kinds and a full identifier text edi
         try std.testing.expectEqual(@as(i64, 9), range.get("end").?.object.get("character").?.integer);
     }
     try std.testing.expect(found);
+}
+
+test "document symbols response uses standard LSP names and ranges" {
+    var server = LanguageServer.init(std.testing.allocator, std.testing.io);
+    defer server.deinit();
+    server.service = service.LanguageService.init(std.testing.allocator, std.testing.io);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const code = "main() -> (.status_code: Int32 = 0) := {}";
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    const diagnostics = try server.service.?.openDocument("file:///symbols.rg", path, 1, code);
+    defer diagnostics.deinit();
+    var params = try json.parseFromSlice(json.Value, std.testing.allocator, "{\"textDocument\":{\"uri\":\"file:///symbols.rg\"}}", .{});
+    defer params.deinit();
+    var out: CapturedResponseWriter = undefined;
+    out.init(std.testing.allocator);
+    defer out.deinit();
+    try server.handleDocumentSymbols(&out.writer, .{ .integer = 42 }, params.value);
+    var response = try json.parseFromSlice(json.Value, std.testing.allocator, try payloadFromLspMessage(out.buffered()), .{});
+    defer response.deinit();
+    try std.testing.expectEqual(@as(i64, 42), response.value.object.get("id").?.integer);
+    const symbols = response.value.object.get("result").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), symbols.len);
+    const symbol = symbols[0].object;
+    try std.testing.expectEqualStrings("main", symbol.get("name").?.string);
+    try std.testing.expectEqual(@as(i64, 12), symbol.get("kind").?.integer);
+    try std.testing.expectEqual(@as(i64, 4), symbol.get("selectionRange").?.object.get("end").?.object.get("character").?.integer);
+    try std.testing.expect(symbol.get("range") != null);
 }

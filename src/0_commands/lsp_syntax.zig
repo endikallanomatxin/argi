@@ -41,7 +41,7 @@ pub fn load_files(work: std.mem.Allocator, sources: []const sf.SourceFile) ![]Fi
             for (0..file.tree.nodes.len) |raw| {
                 const node: st.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
                 switch (file.tree.tag(node)) {
-                    .function_declaration, .function_declaration_once, .type_declaration, .abstract_declaration, .symbol_declaration_constant, .symbol_declaration_variable, .c_enum_declaration, .c_union_declaration, .c_struct_declaration, .c_incomplete_declaration, .choice_option_declaration => {
+                    .function_declaration, .function_declaration_once, .c_function_pointer_declaration, .type_declaration, .abstract_declaration, .symbol_declaration_constant, .symbol_declaration_variable, .c_enum_declaration, .c_union_declaration, .c_struct_declaration, .c_incomplete_declaration, .choice_option_declaration => {
                         if (file.scope_start[@intFromEnum(file.tree.mainToken(node))] == 0)
                             try roots.append(work, node);
                     },

@@ -100,8 +100,8 @@ snapshots use `.argi-cache/`. Use `--no-cache` for a fresh frontend build and
 See [package configuration](description/02_modules.md) and
 [language-level testing](description/72_testing.md).
 
-The LSP provides diagnostics, semantic highlighting, hover, completion, and
-navigation to definitions.
+The LSP provides diagnostics, semantic highlighting, hover, completion,
+document symbols, and navigation to definitions.
 
 ## Installation
 
