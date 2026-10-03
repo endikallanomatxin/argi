@@ -209,3 +209,12 @@ print#(.t: Type: Int)(
     format_into(.out = writer, .value = value)!
     result = write(.self = writer, .text = terminator)
 }
+
+print#(.t: Type: Float)(
+    .value: t,
+    .writer: $&Writer = reach writer,
+    .terminator: StringView = "\n",
+) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    format_into(.out = writer, .value = value)!
+    result = write(.self = writer, .text = terminator)
+}

@@ -8803,3 +8803,21 @@ test "feature_tests/text/42_numeric_formatting_allocations" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/io/36_float_writer_formatting" {
+    const path = "tests/feature_tests/io/36_float_writer_formatting";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/text/43_float_formatting_allocations" {
+    const path = "tests/feature_tests/text/43_float_formatting_allocations";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/text/44_float16_formatting_roundtrip" {
+    const path = "tests/feature_tests/text/44_float16_formatting_roundtrip";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

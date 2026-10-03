@@ -1,93 +1,5 @@
--- Fixed base-65536 limbs keep decimal-to-binary rounding independent of the
--- host library, locale, and allocator. Only the initialized prefix is used.
-_FloatParseInteger: Type = (
-    .words : [256]UInt32 = (
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    )
-    .used : UIntNative = 1
-)
-
-_float_integer_multiply(.self: $&_FloatParseInteger, .factor: UInt32, .addend: UInt32 = 0) -> () := {
-    carry :: UInt32 = addend
-    index :: UIntNative = 0
-    while index < self&.used {
-        product ::= self&.words[index] * factor + carry
-        self&.words[index] = product % 65536
-        carry = product / 65536
-        index = index + 1
-    }
-    if carry != 0 {
-        if self&.used == 256 { abort }
-        self&.words[self&.used] = carry
-        self&.used = self&.used + 1
-    }
-}
-
-_float_integer_compare(.left: &_FloatParseInteger, .right: &_FloatParseInteger) -> (.order: Int32) := {
-    if left&.used < right&.used { order = -1 return }
-    if left&.used > right&.used { order = 1 return }
-    index :: UIntNative = left&.used
-    while index > 0 {
-        index = index - 1
-        if left&.words[index] < right&.words[index] { order = -1 return }
-        if left&.words[index] > right&.words[index] { order = 1 return }
-    }
-    order = 0
-}
-
-_float_integer_subtract(.self: $&_FloatParseInteger, .other: &_FloatParseInteger) -> () := {
-    borrow :: UInt32 = 0
-    index :: UIntNative = 0
-    while index < self&.used {
-        digit :: UInt32 = borrow
-        if index < other&.used { digit = digit + other&.words[index] }
-        current ::= self&.words[index]
-        if current < digit {
-            self&.words[index] = current + 65536 - digit
-            borrow = 1
-        } else {
-            self&.words[index] = current - digit
-            borrow = 0
-        }
-        index = index + 1
-    }
-    if borrow != 0 { abort }
-    while self&.used > 1 and self&.words[self&.used - 1] == 0 {
-        self&.used = self&.used - 1
-    }
-}
-
-_float_integer_halve(.self: $&_FloatParseInteger) -> () := {
-    index :: UIntNative = self&.used
-    carry :: UInt32 = 0
-    while index > 0 {
-        index = index - 1
-        current ::= self&.words[index]
-        self&.words[index] = current / 2 + carry * 32768
-        carry = current % 2
-    }
-    if self&.used > 1 and self&.words[self&.used - 1] == 0 { self&.used = self&.used - 1 }
-}
-
-_float_integer_nonzero(.self: &_FloatParseInteger) -> (.value: Bool) := {
-    value = self&.used != 1 or self&.words[0] != 0
-}
-
+-- Decimal inputs are rounded from exact rational integers, without an
+-- intermediate floating-point format or a dependency on the host library.
 _float_parse#(.t: Type: Float)(
     .text             : StringView,
     .precision        : Int32,
@@ -102,8 +14,8 @@ _float_parse#(.t: Type: Float)(
         negative = first == 45
         index = index + 1
     }
-    numerator ::= _FloatParseInteger()
-    denominator ::= _FloatParseInteger()
+    numerator ::= _FloatDecimalInteger()
+    denominator ::= _FloatDecimalInteger()
     denominator.words[0] = 1
     has_digit :: Bool = false
     point :: Bool = false

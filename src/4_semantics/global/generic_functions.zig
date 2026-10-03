@@ -1337,6 +1337,8 @@ pub const Resolver = struct {
         }
         failures.clearRetainingCapacity();
         self.constraint_diagnostics = failures;
+        // TODO: Preserve selected-body instantiation failures separately from
+        // selection failures, so rejected bounds do not hide a nested error.
         const selected = selection: {
             if (reference.generic_arguments) |arguments| {
                 const relocated = try self.generics.relocateModuleArguments(current_module, arguments);

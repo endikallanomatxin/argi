@@ -306,3 +306,27 @@ preserve `stream_write_failed` and `stream_flush_failed`, stop at the first
 failed byte, and leave the successfully written prefix in the destination.
 A value failure prevents writing the terminator. They request no implicit
 flush; a writer may flush internally while accepting bytes.
+
+## Floating-point formatting
+
+The same `format`, `format_into`, `write`, and `print` inputs accept `Float16`,
+`Float32`, and `Float64`. Each finite value uses the shortest decimal
+significand that reads back as exactly that value at its original width under
+round-to-nearest, ties-to-even. Among equally short candidates, formatting
+chooses the closest decimal value; an exact tie chooses an even decimal
+significand. Formatting does not widen the float before choosing its text.
+
+All widths use fixed notation when the decimal exponent of the leading digit
+is between -4 and 15, inclusive, and scientific notation otherwise. Fixed
+integral values retain `.0`. Scientific notation uses a lowercase `e`, no
+positive exponent sign, and no exponent padding. Examples include `0.1`,
+`1.0`, `0.0001`, `1e-5`, and `1e16`. Zero preserves its sign as `0.0` or
+`-0.0`. Positive and negative infinity use `inf` and `-inf`; every NaN uses
+`nan`, without preserving its sign or payload. The finite decimal parser
+continues to reject these special-value spellings.
+
+Formatting uses bounded local storage, independent of locale and the host C
+library. Writer formatting needs no allocator, requests no implicit flush,
+and follows the integer formatter's prefix and error propagation contract.
+An owning string requires one allocation for the resulting bytes and their
+zero terminator; appending to a string allocates only when its capacity grows.

@@ -131,3 +131,17 @@ format#(.t: Type: Int)(
     view ::= _decimal_view(.self = &encoded).view
     result = format(.value = view, .allocator = allocator)
 }
+
+format_into#(.t: Type: Float)(.out: $&String, .value: t, .allocator: $&Allocator) -> (.result: Errable#(.t: Void,
+
+        .reasons : (..out_of_memory))) := {
+    encoded ::= _float_encode(.value = value)
+    result = push_view(.self = out, .view = _float_text_view(.self = &encoded).view,
+        .allocator = allocator)
+}
+format#(.t: Type: Float)(.value: t, .allocator: $&Allocator) -> (.result: Errable#(.t: String,
+        .reasons : (..out_of_memory))) := {
+    assume allocator
+    encoded ::= _float_encode(.value = value)
+    result = format(.value = _float_text_view(.self = &encoded).view, .allocator = allocator)
+}

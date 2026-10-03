@@ -14,3 +14,13 @@ write#(.t: Type: Int)(
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     result = format_into(.out = self, .value = value)
 }
+
+format_into#(.t: Type: Float)(.out: $&Writer, .value: t) -> (.result: Errable#(.t: Void,
+        .reasons : (..stream_write_failed, ..stream_flush_failed))) := {
+    encoded ::= _float_encode(.value = value)
+    result = write(.self = out, .text = _float_text_view(.self = &encoded).view)
+}
+write#(.t: Type: Float)(.self: $&Writer, .value: t) -> (.result: Errable#(.t: Void,
+        .reasons : (..stream_write_failed, ..stream_flush_failed))) := {
+    result = format_into(.out = self, .value = value)
+}
