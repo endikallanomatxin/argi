@@ -8991,3 +8991,9 @@ test "feature_tests/semver/03X_private_state" {
 test "feature_tests/semver/04X_view_lifetime" {
     try buildExpectFail("tests/feature_tests/semver/04X_view_lifetime", "reference depends on a root that has ended");
 }
+
+test "feature_tests/basics/71_large_numeric_array_branches" {
+    const path = "tests/feature_tests/basics/71_large_numeric_array_branches";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

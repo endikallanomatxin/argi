@@ -82,6 +82,25 @@ pub const ValueFacts = struct {
     }
 };
 
+/// Only a wholly empty value may omit its element records. In a mixed
+/// aggregate, explicit empty children prevent projection from inheriting
+/// a sibling's dependency or ownership facts from the aggregate envelope.
+pub fn isEmptyValue(value: anytype) bool {
+    inline for (@typeInfo(@TypeOf(value)).@"struct".fields) |field| {
+        const item = @field(value, field.name);
+        switch (@typeInfo(field.type)) {
+            .bool => if (item) return false,
+            .optional => if (item != null) return false,
+            .pointer => if (item.len != 0) return false,
+            else => @compileError("Update empty safety value detection for the new field kind"),
+        }
+    }
+    return true;
+}
+
+pub const empty_value_facts: ValueFacts = .{};
+pub const empty_value_effect: ValueEffect = .{};
+
 pub const FieldFacts = struct {
     index: u32,
     value: *const ValueFacts,
@@ -194,4 +213,17 @@ test "reference copies preserve virtual dispatch identity" {
     const method: graph.GlobalFunctionId = @enumFromInt(9);
     const copied = (ValueFacts{ .virtual_methods = &.{method} }).referenceCopy();
     try std.testing.expectEqualSlices(graph.GlobalFunctionId, &.{method}, copied.virtual_methods);
+}
+
+test "empty safety values retain explicit scalar and structural facts" {
+    try std.testing.expect(isEmptyValue(ValueFacts{}));
+    try std.testing.expect(isEmptyValue(ValueEffect{}));
+    try std.testing.expect(!isEmptyValue(ValueFacts{ .foreign_storage = true }));
+    try std.testing.expect(!isEmptyValue(ValueFacts{ .explicit_dependency = true }));
+    try std.testing.expect(!isEmptyValue(ValueFacts{ .integer_address = true }));
+    try std.testing.expect(!isEmptyValue(ValueFacts{ .known_choice_variant = 0 }));
+    try std.testing.expect(!isEmptyValue(ValueFacts{ .fields = &.{.{ .index = 0, .value = &empty_value_facts }} }));
+    try std.testing.expect(!isEmptyValue(ValueEffect{ .input_places = &.{.{ .input_index = 0 }} }));
+    try std.testing.expect(!isEmptyValue(ValueEffect{ .input_storage_capabilities = &.{.{ .input_index = 0 }} }));
+    try std.testing.expect(!isEmptyValue(ValueEffect{ .fields = &.{.{ .index = 0, .value = &empty_value_effect }} }));
 }

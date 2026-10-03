@@ -2858,14 +2858,24 @@ pub const SafetyChecker = struct {
     }
 
     fn evaluateList(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, literal: anytype, state: *FunctionState) !facts.ValueFacts {
-        var fields = try self.allocator.alloc(facts.FieldFacts, literal.elements.len);
+        // Evaluate every element even when its safety metadata is empty.
+        // Defer the dense projection table until a nonempty child needs it.
+        var fields: ?[]facts.FieldFacts = null;
         for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len], 0..) |node, index| {
             const value = try self.evaluate(function, node, state);
+            if (facts.isEmptyValue(value)) {
+                if (fields) |stored| stored[index] = .{ .index = @intCast(index), .value = &facts.empty_value_facts };
+                continue;
+            }
+            if (fields == null) {
+                fields = try self.allocator.alloc(facts.FieldFacts, literal.elements.len);
+                for (fields.?[0..index], 0..) |*field, prior| field.* = .{ .index = @intCast(prior), .value = &facts.empty_value_facts };
+            }
             const owned = try self.allocator.create(facts.ValueFacts);
             owned.* = value;
-            fields[index] = .{ .index = @intCast(index), .value = owned };
+            fields.?[index] = .{ .index = @intCast(index), .value = owned };
         }
-        return .{ .fields = fields };
+        return .{ .fields = fields orelse &.{} };
     }
 
     fn evaluateArray(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, literal: anytype, state: *FunctionState) !facts.ValueFacts {
@@ -5746,4 +5756,22 @@ test "array concrete projections select and merge element facts" {
     try std.testing.expectEqual(@as(usize, 0), dynamic.storage_capabilities.len);
     const uniform = facts.ValueFacts{ .foreign_storage = true, .fields = &.{.{ .index = 1, .value = &local }} };
     try std.testing.expect((try checker.projectValueFacts(uniform, &.{.dynamic_index})).foreign_storage);
+}
+
+test "large numeric literals keep no per-element safety records" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.nodes.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .int_literal = 0 } });
+    try graph.node_refs.resize(allocator, 65536);
+    @memset(graph.node_refs.items, @enumFromInt(0));
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const value = try checker.evaluateArray(@enumFromInt(0), .{ .elements = graph_mod.NodeRange{ .start = 0, .len = 65536 } }, &state);
+    try std.testing.expect(facts.isEmptyValue(value));
+    try std.testing.expect(facts.isEmptyValue(try checker.mergeValueFacts(value, value)));
 }

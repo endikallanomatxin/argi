@@ -3396,16 +3396,27 @@ pub const Infer = struct {
 
     fn inferElements(self: *Infer, function_id: graph_mod.GlobalFunctionId, range: graph_mod.NodeRange) !facts.ValueEffect {
         var result: facts.ValueEffect = .{};
-        const output_fields = try self.allocator.alloc(facts.OutputFieldEffect, range.len);
+        // Share the checker's empty aggregate representation. A single
+        // nonempty child restores all projections, including empty neighbors.
+        var output_fields: ?[]facts.OutputFieldEffect = null;
         for (self.graph.node_refs.items[range.start..][0..range.len], 0..) |element, index| {
+            const effect = try self.inferExpression(function_id, element);
+            if (facts.isEmptyValue(effect)) {
+                if (output_fields) |stored| stored[index] = .{ .index = @intCast(index), .value = &facts.empty_value_effect };
+                continue;
+            }
+            if (output_fields == null) {
+                output_fields = try self.allocator.alloc(facts.OutputFieldEffect, range.len);
+                for (output_fields.?[0..index], 0..) |*field, prior| field.* = .{ .index = @intCast(prior), .value = &facts.empty_value_effect };
+            }
             const value = try self.allocator.create(facts.ValueEffect);
-            value.* = try self.inferExpression(function_id, element);
-            output_fields[index] = .{ .index = @intCast(index), .value = value };
+            value.* = effect;
+            output_fields.?[index] = .{ .index = @intCast(index), .value = value };
             result = try self.mergeValueEffects(result, value.*);
             result.variants = &.{};
             result.known_choice_variant = null;
         }
-        result.fields = output_fields;
+        result.fields = output_fields orelse &.{};
         return result;
     }
 
@@ -4668,4 +4679,22 @@ test "array summary projections select and merge element effects" {
     const uniform = facts.ValueEffect{ .foreign_storage = true, .fields = &.{.{ .index = 1, .value = &local }} };
     try std.testing.expect((try inference.projectValueEffect(uniform, .dynamic_index)).foreign_storage);
     try std.testing.expect((try inference.projectValueEffect(.{ .foreign_storage = true }, .{ .static_index = 5 })).foreign_storage);
+}
+
+test "large numeric literals keep no per-element summary records" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.nodes.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .int_literal = 0 } });
+    try graph.node_refs.resize(allocator, 65536);
+    @memset(graph.node_refs.items, @enumFromInt(0));
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = Infer.init(allocator, &graph, &engine);
+    defer inference.deinit();
+    const value = try inference.inferElements(@enumFromInt(0), .{ .start = 0, .len = 65536 });
+    try std.testing.expect(facts.isEmptyValue(value));
+    try std.testing.expect(facts.isEmptyValue(try inference.mergeValueEffects(value, value)));
 }
