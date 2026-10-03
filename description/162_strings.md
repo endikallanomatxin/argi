@@ -110,6 +110,12 @@ allocating, and `concat("prefix", &text)` returns a fallible owning `String`.
 These entrypoints share the view-based implementation; they do not require
 implicit borrowing or conversions in ordinary call resolution.
 
+`print` is a line-oriented convenience API: `.terminator: StringView` defaults
+to `"\n"`. Pass `.terminator = ""` for no suffix or another view for a custom
+suffix. Writing the value and terminator preserves the writer's error reasons;
+`print` does not request a flush. Use `write(.self = writer, .text = text)` for
+exact text output without a terminator, and explicit `flush` when needed.
+
 Text equality follows the same rule: the byte-wise comparison primitive and
 `==` / `!=` overloads work on `StringView` values. Callers with owning `String`
 or raw `&Char` values should convert them explicitly instead of relying on

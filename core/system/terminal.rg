@@ -143,27 +143,10 @@ read_line(
 print(
     .value: StringView,
     .writer: $&Writer,
+    .terminator: StringView = "\n",
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    assume writer
-
-    i :: UIntNative = 0
-    while i < value.length {
-        wrote ::= write_byte(.self = writer, .byte = bytes_get(.view = &value, .index = i).byte)
-        match wrote {
-            ..ok _ {
-            }
-            ..error & err {
-                if is(.value = err&.reason, .variant = ..stream_write_failed) {
-                    result = ..error(.reason = ..stream_write_failed)
-                } else {
-                    result = ..error(.reason = ..stream_flush_failed)
-                }
-                return
-            }
-        }
-        i = i + 1
-    }
-    result = flush(.self = writer)
+    write(.self = writer, .text = value)!
+    result = write(.self = writer, .text = terminator)
 }
 
 flush(
@@ -212,7 +195,8 @@ flush_error(
 print(
     .value: &String,
     .writer: $&Writer,
+    .terminator: StringView = "\n",
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     assume writer
-    result = print(as_view(value))
+    result = print(as_view(value), .terminator = terminator)
 }

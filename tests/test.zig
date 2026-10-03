@@ -773,7 +773,7 @@ test "argi init executable package can print from generated main" {
     const generated = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, source_path, std.testing.allocator, .limited(1024 * 1024));
     defer std.testing.allocator.free(generated);
     const closing_brace = std.mem.lastIndexOfScalar(u8, generated, '}') orelse return error.TestUnexpectedResult;
-    const runnable = try std.fmt.allocPrint(std.testing.allocator, "{s}    print(\"Hello, World!\\n\")\n{s}", .{ generated[0..closing_brace], generated[closing_brace..] });
+    const runnable = try std.fmt.allocPrint(std.testing.allocator, "{s}    print(\"Hello, World!\")\n{s}", .{ generated[0..closing_brace], generated[closing_brace..] });
     defer std.testing.allocator.free(runnable);
     try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = source_path, .data = runnable });
 
@@ -2739,8 +2739,8 @@ test "feature_tests/io/25_positional_text_helpers" {
 test "feature_tests/io/26X_print_without_system" {
     try buildExpectFailExact("tests/feature_tests/io/26X_print_without_system",
         \\tests/feature_tests/io/26X_print_without_system/main.rg:2:10: error: no overload of 'print' accepts arguments (.: StringView). Available signatures:
-        \\  - print (.value: StringView, .writer: $&Writer) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
-        \\  - print (.value: &String, .writer: $&Writer) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
+        \\  - print (.value: StringView, .writer: $&Writer, .terminator: StringView) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
+        \\  - print (.value: &String, .writer: $&Writer, .terminator: StringView) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
         \\      print("Hello, World!\n")
         \\           ^
         \\
@@ -2855,13 +2855,13 @@ test "feature_tests/io/14_file_stream_error_reasons" {
 test "feature_tests/io/09_print_string_literal" {
     const test_path = "tests/feature_tests/io/09_print_string_literal";
     try expectSuccessfulBuild(test_path);
-    try runExpectStdout(test_path, 0, "literal output");
+    try runExpectStdout(test_path, 0, "literal output\n");
 }
 
 test "feature_tests/io/16_print_string_view" {
     const test_path = "tests/feature_tests/io/16_print_string_view";
     try expectSuccessfulBuild(test_path);
-    try runExpectStdout(test_path, 0, "string view output");
+    try runExpectStdout(test_path, 0, "string view output\n");
 }
 
 test "feature_tests/io/17_print_error_string_view" {
@@ -2873,7 +2873,7 @@ test "feature_tests/io/17_print_error_string_view" {
 test "feature_tests/io/18_print_borrowed_string_view" {
     const test_path = "tests/feature_tests/io/18_print_borrowed_string_view";
     try expectSuccessfulBuild(test_path);
-    try runExpectStdout(test_path, 0, "borrowed view");
+    try runExpectStdout(test_path, 0, "borrowed view\n");
 }
 
 test "feature_tests/io/19_print_error_borrowed_string_view" {
@@ -7613,7 +7613,7 @@ test "argi run inherits stdin stdout and stderr" {
         \\        }
         \\        ..end { status_code = 9 return }
         \\    }
-        \\    print(.value = "stdout marker\n", .writer = $&system.terminal&.stdout)
+        \\    print(.value = "stdout marker", .writer = $&system.terminal&.stdout)
         \\    print_error(.value = "stderr marker\n", .writer = $&system.terminal&.stderr)
         \\}
         ,
@@ -8510,5 +8510,11 @@ test "feature_tests/basics/53X_array_reference_shape" {
 test "feature_tests/io/33_print_owned_text" {
     const path = "tests/feature_tests/io/33_print_owned_text";
     try expectSuccessfulBuild(path);
-    try runExpectStdout(path, 0, "Hello world 123\n123!\n123123\nleftright\ninline 123");
+    try runExpectStdout(path, 0, "Hello world 123\n123!\n123123\nleftright\ninline 123\n");
+}
+
+test "feature_tests/io/34_print_terminator" {
+    const path = "tests/feature_tests/io/34_print_terminator";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
 }

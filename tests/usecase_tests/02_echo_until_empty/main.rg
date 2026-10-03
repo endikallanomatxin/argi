@@ -23,7 +23,6 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                             return
                         } else {
                             print(.value = line_text)
-                            print(.value = "\n")
                         }
                     }
                 }

@@ -42,7 +42,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     unwrap_or_abort(.value = write_byte(.self = writer, .byte = 68))
     if base.byte_calls != 4 or base.received != 4 or base.last_byte != 68 { status_code = 2 return }
     if buffered.length != 0 or base.flush_calls != 1 { status_code = 3 return }
-    unwrap_or_abort(.value = print("E"))
+    unwrap_or_abort(.value = print("E", .terminator = ""))
+    if base.byte_calls != 4 or base.flush_calls != 1 or buffered.length != 1 { status_code = 13 return }
+    unwrap_or_abort(.value = flush(.self = writer))
     if base.byte_calls != 5 or base.received != 5 or base.last_byte != 69 or base.flush_calls != 2 { status_code = 4 return }
     base.fail_write = true
     unwrap_or_abort(.value = write_byte(.self = writer, .byte = 70))

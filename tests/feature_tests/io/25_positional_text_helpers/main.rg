@@ -70,12 +70,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         flush_error()
     }
 
-    if stdout_storage.write_count != 1 {
+    if stdout_storage.write_count != 2 {
         status_code = 1
         return
     }
 
-    if stdout_storage.flush_count != 2 {
+    if stdout_storage.flush_count != 1 {
         status_code = 2
         return
     }
