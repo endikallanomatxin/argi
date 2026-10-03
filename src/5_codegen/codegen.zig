@@ -450,7 +450,10 @@ pub const CodeGenerator = struct {
     fn cRecordStorage(self: *CodeGenerator, plan: c_abi.ValuePlan) !c.LLVMValueRef {
         const bytes = std.mem.alignForward(u64, plan.size, 8);
         const buffer_ty = c.LLVMArrayType2(c.LLVMInt8Type(), bytes);
-        const storage = try self.cTemporary(buffer_ty, @max(8, plan.alignment), "c.record.storage");
+        // The Windows x64 ABI requires caller-owned indirect argument copies
+        // to be 16-byte aligned, even when the record itself has lesser alignment.
+        const copy_alignment: u32 = if (self.graph.target.os == .windows and plan.kind == .record_indirect) 16 else 8;
+        const storage = try self.cTemporary(buffer_ty, @max(copy_alignment, plan.alignment), "c.record.storage");
         _ = c.LLVMBuildStore(self.builder, c.LLVMConstNull(buffer_ty), storage);
         return storage;
     }

@@ -268,8 +268,12 @@ fn isSysVX64(target: std.Target) bool {
     return target.cpu.arch == .x86_64 and (target.os.tag == .linux or target.os.tag.isDarwin());
 }
 
+fn isWindowsX64(target: std.Target) bool {
+    return target.cpu.arch == .x86_64 and target.os.tag == .windows;
+}
+
 fn supportsRecordTarget(target: std.Target) bool {
-    return target.ptrBitWidth() == 64 and (isSysVX64(target) or (target.cpu.arch == .aarch64 and (target.os.tag == .linux or target.os.tag.isDarwin())));
+    return target.ptrBitWidth() == 64 and (isSysVX64(target) or isWindowsX64(target) or (target.cpu.arch == .aarch64 and (target.os.tag == .linux or target.os.tag.isDarwin())));
 }
 
 /// RawPointer leaves are addresses, including inside arrays and unions.
@@ -449,6 +453,17 @@ fn classifyValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
     const layout = types.layoutOf(graph, ty) catch return null;
     if (layout.size == 0 or layout.size > std.math.maxInt(i64) or layout.alignment > 8) return null;
     var plan: ValuePlan = .{ .ty = ty, .size = layout.size, .alignment = @intCast(layout.alignment), .kind = .record_indirect };
+    // Windows x64 uses a single integer carrier for 1/2/4/8-byte records,
+    // regardless of their fields. Every other size passes a caller-owned copy;
+    // floating-point record fields do not acquire the scalar SSE convention.
+    if (isWindowsX64(target)) {
+        if (layout.size == 1 or layout.size == 2 or layout.size == 4 or layout.size == 8) {
+            plan.kind = .record_words;
+            plan.words = 1;
+            plan.word_bits[0] = @intCast(layout.size * 8);
+        }
+        return plan;
+    }
     // Four doubles are the largest supported HFA. Larger records
     // always use memory, so avoid expanding nested arrays just to classify them.
     if (layout.size > 32) {
@@ -736,4 +751,36 @@ test "callback signatures reject safe references through materialized aliases" {
     try graph.generic_instances.append(allocator, .{ .type_id = @enumFromInt(2), .shape = .{ .alias = @enumFromInt(1) } });
     try std.testing.expect(isSafeReferenceValue(&graph, @enumFromInt(2)));
     try std.testing.expect(!isSafeReferenceValue(&graph, @enumFromInt(0)));
+}
+
+test "Windows x64 records use integer carriers or indirect copies" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Float32 },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 }, .layout = .c_struct } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 2 }, .layout = .c_struct } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 3 }, .layout = .c_struct } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 4 }, .layout = .c_struct } },
+    });
+    const field: graph_mod.Field = .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = .{ .file_index = 0, .offset = 0 } };
+    try graph.fields.appendNTimes(allocator, field, 4);
+    var target = @import("builtin").target;
+    target.cpu.arch = .x86_64;
+    target.os.tag = .windows;
+    for (1..5) |index| {
+        for ([_]bool{ false, true }) |result| {
+            const plan = classifyValue(&graph, @enumFromInt(index), target, result).?;
+            try std.testing.expect(!plan.byval);
+            if (index <= 2) {
+                try std.testing.expectEqual(ValueKind.record_words, plan.kind);
+                try std.testing.expectEqual(WordClass.integer, plan.word_classes[0]);
+                try std.testing.expectEqual(@as(u16, @intCast(index * 32)), plan.word_bits[0]);
+                try std.testing.expectEqual(@as(u32, 1), plan.parameterCount());
+            } else {
+                try std.testing.expectEqual(ValueKind.record_indirect, plan.kind);
+            }
+        }
+    }
 }
