@@ -14,9 +14,15 @@ def main():
            if not key.startswith(("ARGI_", "LLVM_"))}
     with tempfile.TemporaryDirectory(prefix="argi consumer \u00f1 ") as directory:
         def run(*args):
-            return subprocess.check_output([str(executable), *args], cwd=directory,
-                                           env=env, text=True, encoding="utf-8",
-                                           stderr=subprocess.STDOUT)
+            result = subprocess.run([str(executable), *args], cwd=directory,
+                                    env=env, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT)
+            # Native linker diagnostics may use the Windows ANSI code page.
+            # Preserve their content instead of hiding failures behind decoding.
+            output = result.stdout.decode("utf-8", errors="backslashreplace")
+            if result.returncode:
+                raise RuntimeError(f"Command failed ({result.returncode}): {args}\n{output}")
+            return output
 
         print(run("--version").strip())
         run("init", "hello")
