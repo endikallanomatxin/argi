@@ -1091,6 +1091,7 @@ fn diagnoseArrayAssignments(
         const value, const expected = switch (node.content) {
             .binding_declaration => |binding| .{ graph.binding(binding).initialization orelse continue, graph.binding(binding).ty },
             .assignment => |assignment| .{ assignment.value, graph.binding(assignment.binding).ty },
+            .array_store => |store| .{ store.value, store.element_type },
             .pointer_assignment => |assignment| blk: {
                 const ty = graph.node(assignment.pointer).ty orelse continue;
                 if (graph.isTypeUnresolved(ty) or graph.semanticType(ty) != .pointer) continue;
@@ -1138,6 +1139,7 @@ fn diagnoseInvalidNumericAssignments(
             },
             .struct_value_literal, .array_literal => findAggregateNumericMismatch(graph, id) orelse continue,
             .assignment => |assignment| .{ assignment.value, graph.binding(assignment.binding).ty },
+            .array_store => |store| .{ store.value, store.element_type },
             .pointer_assignment => |assignment| blk: {
                 const pointer_ty = graph.node(assignment.pointer).ty orelse continue;
                 const pointer = switch (graph.semanticType(pointer_ty)) {

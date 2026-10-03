@@ -1148,6 +1148,8 @@ pub const Resolver = struct {
 
         const collection_ty = self.graph.nodes.items[@intFromEnum(collection)].ty orelse return .deferred;
         if (types.arrayElement(self.graph, collection_ty)) |element_ty| {
+            if (value.store_value) |local_store|
+                self.contextualizeArrayStore(globalizer.globalNode(o, local_store), element_ty);
             const target = globalizer.globalNode(o, value.node);
             self.graph.nodes.items[@intFromEnum(target)] = if (value.store_value) |local_store| .{
                 .source = self.graph.nodes.items[@intFromEnum(collection)].source,
@@ -1946,6 +1948,18 @@ pub const Resolver = struct {
         if (!self.contextualLiteralFits(node, target)) return false;
         self.graph.nodes.items[@intFromEnum(node)].ty = target;
         return true;
+    }
+
+    pub fn contextualizeArrayStore(self: *Resolver, value: global_sg.GlobalNodeId, element: global_sg.GlobalTypeId) void {
+        _ = self.coerceContextualValue(value, element);
+        // Even an out-of-range integer literal carries its destination type
+        // into Safety, which diagnoses the range before codegen can emit it.
+        if (self.graph.node(value).content == .int_literal) switch (self.graph.semanticType(element)) {
+            .builtin => |kind| if (primitives.integerRange(kind, self.graph.target.stdTarget()) != null) {
+                self.graph.nodes.items[@intFromEnum(value)].ty = element;
+            },
+            else => {},
+        };
     }
 
     pub fn coerceContextualValue(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {

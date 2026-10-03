@@ -3270,6 +3270,10 @@ pub const Resolver = struct {
             if (operands.len != (if (store) @as(usize, 3) else 2)) return error.InvalidParameterizedIndex;
             const collection_ty = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedIndexUntyped;
             if (global_types.arrayElement(self.resolver.graph, collection_ty)) |element| {
+                // Store operands take the array element's context before
+                // codegen, so a narrow element never receives a default-width
+                // literal store that overwrites adjacent elements.
+                if (store) self.resolver.core.contextualizeArrayStore(operands[2], element);
                 return if (store) .{
                     .source = self.resolver.sourceFor(self.module_index, source),
                     .ty = element,

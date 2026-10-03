@@ -8777,3 +8777,17 @@ test "feature_tests/polymorphism/65_contextual_choice_arguments" {
 test "feature_tests/polymorphism/66X_contextual_choice_ambiguous" {
     try buildExpectFail("tests/feature_tests/polymorphism/66X_contextual_choice_ambiguous", "ambiguous call to 'select'");
 }
+
+test "feature_tests/basics/68_contextual_array_stores" {
+    const path = "tests/feature_tests/basics/68_contextual_array_stores";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/69X_typed_array_store" {
+    try buildExpectFail("tests/feature_tests/basics/69X_typed_array_store", "implicit numeric conversion is not supported");
+}
+
+test "feature_tests/basics/70X_array_store_range" {
+    try buildExpectFail("tests/feature_tests/basics/70X_array_store_range", "integer literal 256 does not fit in 'UInt8'");
+}
