@@ -8538,6 +8538,12 @@ test "feature_tests/basics/54_generic_numeric_zero" {
     try runExpect(path, 0);
 }
 
+test "feature_tests/basics/55_large_aggregate_returns" {
+    const path = "tests/feature_tests/basics/55_large_aggregate_returns";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
 test "feature_tests/io/33_print_owned_text" {
     const path = "tests/feature_tests/io/33_print_owned_text";
     try expectSuccessfulBuild(path);
