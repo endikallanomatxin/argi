@@ -99,11 +99,16 @@ Avoid adding overloads only to accept every adjacent representation
 carry genuinely different semantics. Too many convenience overloads make
 multiple dispatch encode API adapter noise instead of domain meaning.
 
-For example, terminal text helpers such as `print` / `print_error` and
-formatting helpers such as `format` / `format_into` accept `StringView` for
-text. Callers with an owning `String` should call `as_view(...)` explicitly, and
-raw `&Char` values should cross through the C-string conversion helpers before
-reaching high-level text APIs.
+Text algorithms and formatting helpers such as `format` / `format_into`
+accept `StringView` for borrowed text. Raw `&Char` values cross through the
+C-string conversion helpers before reaching high-level text APIs.
+
+The display and concatenation entrypoints also accept explicit borrows of
+`String`, keeping conversion inside the library: `print(&text)` borrows without
+allocating, and `concat("prefix", &text)` returns a fallible owning `String`.
+`concat` accepts views by value and owning strings by reference on either side.
+These entrypoints share the view-based implementation; they do not require
+implicit borrowing or conversions in ordinary call resolution.
 
 Text equality follows the same rule: the byte-wise comparison primitive and
 `==` / `!=` overloads work on `StringView` values. Callers with owning `String`

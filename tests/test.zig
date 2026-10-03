@@ -2740,6 +2740,7 @@ test "feature_tests/io/26X_print_without_system" {
     try buildExpectFailExact("tests/feature_tests/io/26X_print_without_system",
         \\tests/feature_tests/io/26X_print_without_system/main.rg:2:10: error: no overload of 'print' accepts arguments (.: StringView). Available signatures:
         \\  - print (.value: StringView, .writer: $&Writer) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
+        \\  - print (.value: &String, .writer: $&Writer) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
         \\      print("Hello, World!\n")
         \\           ^
         \\
@@ -8504,4 +8505,10 @@ test "feature_tests/basics/52X_array_inner_length" {
 
 test "feature_tests/basics/53X_array_reference_shape" {
     try buildExpectFail("tests/feature_tests/basics/53X_array_reference_shape", "array value has type '&[3][3]Int32'; expected '&[2][2]Int32'");
+}
+
+test "feature_tests/io/33_print_owned_text" {
+    const path = "tests/feature_tests/io/33_print_owned_text";
+    try expectSuccessfulBuild(path);
+    try runExpectStdout(path, 0, "Hello world 123\n123!\n123123\nleftright\ninline 123");
 }

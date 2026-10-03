@@ -547,3 +547,43 @@ operator +(
     right_view ::= as_view(.self = right)
     result = concat_views(.left = left, .right = &right_view)
 }
+
+concat(
+    .left: StringView,
+    .right: &String,
+    .allocator: $&Allocator,
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+    right_view := as_view(right)
+    result = concat_views(&left, &right_view)
+}
+
+concat(
+    .left: StringView,
+    .right: StringView,
+    .allocator: $&Allocator,
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+    result = concat_views(&left, &right)
+}
+
+concat(
+    .left: &String,
+    .right: StringView,
+    .allocator: $&Allocator,
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+    left_view := as_view(left)
+    result = concat_views(&left_view, &right)
+}
+
+concat(
+    .left: &String,
+    .right: &String,
+    .allocator: $&Allocator,
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    assume allocator
+    left_view := as_view(left)
+    right_view := as_view(right)
+    result = concat_views(&left_view, &right_view)
+}

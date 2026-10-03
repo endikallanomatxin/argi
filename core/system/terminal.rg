@@ -208,3 +208,11 @@ flush_error(
 
     result = flush(.self = writer)
 }
+
+print(
+    .value: &String,
+    .writer: $&Writer,
+) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    assume writer
+    result = print(as_view(value))
+}
