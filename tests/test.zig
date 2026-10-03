@@ -8681,3 +8681,21 @@ test "feature_tests/basics/65_integer_conversion_error_trace" {
 test "feature_tests/modules/34X_missing_imported_type" {
     try buildExpectFailWithoutNoise("tests/feature_tests/modules/34X_missing_imported_type", "module 'dep' has no type named 'Missing'", "no matching function");
 }
+
+test "runtime safety diagnostics include cause and source location" {
+    const cases = .{
+        .{ "tests/feature_tests/basics/66X_runtime_abort_diagnostic", "main.rg:2:5: runtime error: explicit abort" },
+        .{ "tests/feature_tests/collections/38X_fixed_array_index_out_of_bounds", "runtime error: array index is out of bounds" },
+        .{ "tests/feature_tests/c_interop/83X_callback_invocation_null", "runtime error: cannot call a null C function pointer" },
+    };
+    inline for (cases) |case| {
+        try expectSuccessfulBuild(case[0]);
+        const path = try outputPathFor(case[0]);
+        defer std.testing.allocator.free(path);
+        const result = try runChild(&.{path});
+        defer std.testing.allocator.free(result.stdout);
+        defer std.testing.allocator.free(result.stderr);
+        try expect(result.term != .exited or result.term.exited != 0);
+        try expect(std.mem.indexOf(u8, result.stderr, case[1]) != null);
+    }
+}

@@ -9,6 +9,12 @@ construction, and dependencies hidden inside opaque storage. These rules do
 not promise exclusive mutable references, absence of mutable aliasing,
 data-race freedom, or concurrency safety.
 
+Runtime failures report their cause to standard error before stopping the
+program. Array bounds failures, null C callback invocation, and explicit
+`abort` include the source file, line, and column of the failing operation.
+Reporting does not require a writer capability and does not run ordinary
+cleanup after the failure.
+
 ## Fundamental entities
 
 ### Place

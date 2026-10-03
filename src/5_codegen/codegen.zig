@@ -91,6 +91,7 @@ pub const CodeGenerator = struct {
     runtime_argc_global: ?llvm.c.LLVMValueRef = null,
     runtime_argv_global: ?llvm.c.LLVMValueRef = null,
     pruned_function_bodies: usize = 0,
+    active_source: ?primitives.SourceRef = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -893,12 +894,48 @@ pub const CodeGenerator = struct {
     }
 
     fn visitNode(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) anyerror!?TypedValue {
+        const previous_source = self.active_source;
+        self.active_source = self.graph.node(node_id).source;
+        defer self.active_source = previous_source;
         return self.visitNodeInner(node_id) catch |err| {
             if (err == CodegenError.Reported or err == error.OutOfMemory) return err;
             const node = self.graph.node(node_id);
             try self.report(node.source, "cannot generate {s}: {s}", .{ @tagName(node.content), @errorName(err) });
             return CodegenError.Reported;
         };
+    }
+
+    /// Runtime checks are compiler-owned operations. Write their immutable
+    /// message directly to stderr, without adding language capability inputs
+    /// or relying on buffered streams that a trap would leave unflushed.
+    fn runtimeFailure(self: *CodeGenerator, message: []const u8) !void {
+        var text = message;
+        var allocated: ?[]u8 = null;
+        defer if (allocated) |value| self.allocator.free(value);
+        if (self.active_source) |source| {
+            const metadata = try self.traceMetadata(source);
+            const file = self.graph.files.items[source.file_index];
+            const owner = self.graph.modules.items[@intFromEnum(file.module)];
+            allocated = try std.fmt.allocPrint(self.allocator, "{s}/{s}:{d}:{d}: runtime error: {s}\n", .{ self.graph.text(owner.dir), self.graph.text(file.path), metadata.line, metadata.column, message });
+            text = allocated.?;
+        } else {
+            allocated = try std.fmt.allocPrint(self.allocator, "runtime error: {s}\n", .{message});
+            text = allocated.?;
+        }
+        const terminated = try self.dupZ(text);
+        defer self.allocator.free(terminated);
+        const windows = self.graph.target.stdTarget().os.tag == .windows;
+        const count_type = if (windows) c.LLVMInt32Type() else try self.nativeUIntType();
+        var parameter_types = [_]c.LLVMTypeRef{ c.LLVMInt32Type(), c.LLVMPointerType(c.LLVMInt8Type(), 0), count_type };
+        const write_type = c.LLVMFunctionType(count_type, &parameter_types, 3, 0);
+        const name: [:0]const u8 = if (windows) "_write" else "write";
+        const write = c.LLVMGetNamedFunction(self.module, name) orelse c.LLVMAddFunction(self.module, name, write_type);
+        var arguments = [_]c.LLVMValueRef{ c.LLVMConstInt(c.LLVMInt32Type(), 2, 0), c.LLVMBuildGlobalStringPtr(self.builder, terminated.ptr, "runtime.message"), c.LLVMConstInt(count_type, text.len, 0) };
+        _ = c.LLVMBuildCall2(self.builder, write_type, write, &arguments, 3, "runtime.write");
+        const trap_type = c.LLVMFunctionType(c.LLVMVoidType(), null, 0, 0);
+        const trap = c.LLVMGetNamedFunction(self.module, "llvm.trap") orelse c.LLVMAddFunction(self.module, "llvm.trap", trap_type);
+        _ = c.LLVMBuildCall2(self.builder, trap_type, trap, null, 0, "");
+        _ = c.LLVMBuildUnreachable(self.builder);
     }
 
     fn visitNodeInner(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) anyerror!?TypedValue {
@@ -1001,10 +1038,7 @@ pub const CodeGenerator = struct {
                 break :blk null;
             },
             .abort_statement => blk: {
-                const trap_type = c.LLVMFunctionType(c.LLVMVoidType(), null, 0, 0);
-                const trap = c.LLVMGetNamedFunction(self.module, "llvm.trap") orelse c.LLVMAddFunction(self.module, "llvm.trap", trap_type);
-                _ = c.LLVMBuildCall2(self.builder, trap_type, trap, null, 0, "");
-                _ = c.LLVMBuildUnreachable(self.builder);
+                try self.runtimeFailure("explicit abort");
                 break :blk null;
             },
             .address_of => |target| try self.addressOf(node_id, target),
@@ -1241,10 +1275,7 @@ pub const CodeGenerator = struct {
         const invalid_block = c.LLVMAppendBasicBlock(function, "array.index.invalid");
         _ = c.LLVMBuildCondBr(self.builder, inside, valid_block, invalid_block);
         c.LLVMPositionBuilderAtEnd(self.builder, invalid_block);
-        const trap_type = c.LLVMFunctionType(c.LLVMVoidType(), null, 0, 0);
-        const trap = c.LLVMGetNamedFunction(self.module, "llvm.trap") orelse c.LLVMAddFunction(self.module, "llvm.trap", trap_type);
-        _ = c.LLVMBuildCall2(self.builder, trap_type, trap, null, 0, "");
-        _ = c.LLVMBuildUnreachable(self.builder);
+        try self.runtimeFailure("array index is out of bounds");
         c.LLVMPositionBuilderAtEnd(self.builder, valid_block);
         const native = try self.nativeUIntType();
         const zero = c.LLVMConstInt(native, 0, 0);
@@ -1800,10 +1831,7 @@ pub const CodeGenerator = struct {
             _ = c.LLVMBuildRet(self.builder, output);
         }
         c.LLVMPositionBuilderAtEnd(self.builder, invalid);
-        const trap_type = c.LLVMFunctionType(c.LLVMVoidType(), null, 0, 0);
-        const trap = c.LLVMGetNamedFunction(self.module, "llvm.trap") orelse c.LLVMAddFunction(self.module, "llvm.trap", trap_type);
-        _ = c.LLVMBuildCall2(self.builder, trap_type, trap, null, 0, "");
-        _ = c.LLVMBuildUnreachable(self.builder);
+        try self.runtimeFailure("invalid source location ID");
     }
 
     const TraceMetadata = struct { source_file: c.LLVMValueRef, source_line: c.LLVMValueRef, line: u32, column: u32 };
@@ -2183,10 +2211,7 @@ pub const CodeGenerator = struct {
         const invalid = c.LLVMAppendBasicBlock(function, "callback.null");
         _ = c.LLVMBuildCondBr(self.builder, non_null, valid, invalid);
         c.LLVMPositionBuilderAtEnd(self.builder, invalid);
-        const trap_type = c.LLVMFunctionType(c.LLVMVoidType(), null, 0, 0);
-        const trap = c.LLVMGetNamedFunction(self.module, "llvm.trap") orelse c.LLVMAddFunction(self.module, "llvm.trap", trap_type);
-        _ = c.LLVMBuildCall2(self.builder, trap_type, trap, null, 0, "");
-        _ = c.LLVMBuildUnreachable(self.builder);
+        try self.runtimeFailure("cannot call a null C function pointer");
         c.LLVMPositionBuilderAtEnd(self.builder, valid);
     }
 
