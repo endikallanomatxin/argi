@@ -72,7 +72,15 @@ pub fn findBundled(name: []const u8, path: []const u8) ?Spec {
 }
 
 pub fn matchesPath(spec: Spec, path: []const u8) bool {
-    return std.mem.endsWith(u8, path, spec.path);
+    if (path.len < spec.path.len) return false;
+    const start = path.len - spec.path.len;
+    if (start > 0 and path[start - 1] != '/' and path[start - 1] != '\\') return false;
+    for (path[start..], spec.path) |actual, expected| {
+        if (actual == expected) continue;
+        if (expected == '/' and actual == '\\') continue;
+        return false;
+    }
+    return true;
 }
 
 pub fn signatureMatches(spec: Spec, tree: *const syntax.FileSyntaxTree, source: []const u8, function: syntax.FunctionDeclaration) bool {
@@ -252,4 +260,12 @@ pub fn opaqueMoveOperands(argument_count: usize) ?OpaqueMoveOperands {
         3 => .{ .owner = 2, .storage = 0 },
         else => null,
     };
+}
+
+test "trusted primitive paths accept native separators without weakening identity" {
+    const name = "trusted_reinterpret_reference";
+    try std.testing.expect(findBundled(name, "C:\\argi\\lib\\argi\\core\\memory\\heap_allocation\\RawPointer.rg") != null);
+    try std.testing.expect(findBundled(name, "/opt/argi/core/memory/heap_allocation/RawPointer.rg") != null);
+    try std.testing.expect(findBundled(name, "/opt/argi/othercore/memory/heap_allocation/RawPointer.rg") == null);
+    try std.testing.expect(findBundled(name, "C:\\argi\\core\\memory\\RawPointer.rg") == null);
 }
