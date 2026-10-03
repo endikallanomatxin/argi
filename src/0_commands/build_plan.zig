@@ -165,12 +165,16 @@ pub fn resolveBuildModuleDir(allocator: std.mem.Allocator, io: std.Io, path: []c
     return std.fs.path.resolve(allocator, &.{ cwd_path, dir });
 }
 
+fn executableSuffix() []const u8 {
+    return if (@import("builtin").os.tag == .windows) ".exe" else "";
+}
+
 pub fn defaultOutputPathForModuleDir(allocator: std.mem.Allocator, module_dir: []const u8) ![]u8 {
-    return std.fmt.allocPrint(allocator, "{s}/build/output", .{module_dir});
+    return std.fmt.allocPrint(allocator, "{s}/build/output{s}", .{ module_dir, executableSuffix() });
 }
 
 fn defaultOutputPathForExecutable(allocator: std.mem.Allocator, module_root: []const u8, executable_name: []const u8) ![]u8 {
-    return std.fmt.allocPrint(allocator, "{s}/build/debug/{s}", .{ module_root, executable_name });
+    return std.fmt.allocPrint(allocator, "{s}/build/debug/{s}{s}", .{ module_root, executable_name, executableSuffix() });
 }
 
 fn manifestPath(allocator: std.mem.Allocator, module_root: []const u8) ![]u8 {

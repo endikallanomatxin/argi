@@ -123,7 +123,7 @@ fn chooseLinkerCommand(cc_env: ?[]const u8) []const u8 {
     if (cc_env) |value| {
         if (value.len != 0) return value;
     }
-    return "cc";
+    return if (@import("builtin").os.tag == .windows) "gcc" else "cc";
 }
 
 /// Keep native inputs typed and ordered: archive resolution can depend on the
@@ -151,6 +151,7 @@ fn buildLinkArgv(
     output_path: []const u8,
     inputs: []const NativeInput,
     driver_args: []const []const u8,
+    target: @import("../1_base/target.zig").Config,
 ) ![]const []const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(allocator, linker);
@@ -166,7 +167,8 @@ fn buildLinkArgv(
         .file => |path| try argv.append(allocator, path),
         .static_library, .shared_library => unreachable,
     };
-    try argv.append(allocator, "-lc");
+    // MinGW selects its CRT through the driver; it has no Unix libc archive.
+    if (target.os != .windows) try argv.append(allocator, "-lc");
     return argv.toOwnedSlice(allocator);
 }
 
@@ -190,6 +192,8 @@ fn resolveNamedLibrary(
     }
     const suffixes: []const []const u8 = if (!shared)
         &.{".a"}
+    else if (target.os == .windows)
+        &.{ ".dll.a", ".dll" }
     else if (target.os.isDarwin())
         &.{ ".dylib", ".tbd" }
     else
@@ -330,7 +334,7 @@ pub fn linkWithLibc(
         .shared_library => |name| input.* = .{ .file = try resolveNamedLibrary(arena.allocator(), io, environ_map, linker, inputs, name, true, options.target, driver_args.items) },
         else => {},
     };
-    const argv = try buildLinkArgv(arena.allocator(), linker, obj_path, output_path, resolved, driver_args.items);
+    const argv = try buildLinkArgv(arena.allocator(), linker, obj_path, output_path, resolved, driver_args.items, options.target);
 
     const result = std.process.run(allocator.*, io, .{
         .argv = argv,
@@ -355,13 +359,13 @@ pub fn linkWithLibc(
 }
 
 test "chooseLinkerCommand prefers CC when provided" {
-    try std.testing.expectEqualStrings("cc", chooseLinkerCommand(null));
-    try std.testing.expectEqualStrings("cc", chooseLinkerCommand(""));
+    try std.testing.expectEqualStrings(if (@import("builtin").os.tag == .windows) "gcc" else "cc", chooseLinkerCommand(null));
+    try std.testing.expectEqualStrings(if (@import("builtin").os.tag == .windows) "gcc" else "cc", chooseLinkerCommand(""));
     try std.testing.expectEqualStrings("clang", chooseLinkerCommand("clang"));
 }
 
 test "buildLinkArgv keeps linker object output and libc order" {
-    const argv = try buildLinkArgv(std.testing.allocator, "clang", "/tmp/input.o", "/tmp/output", &.{}, &.{});
+    const argv = try buildLinkArgv(std.testing.allocator, "clang", "/tmp/input.o", "/tmp/output", &.{}, &.{}, .{ .arch = .x86_64, .os = .linux, .abi = .gnu });
     defer std.testing.allocator.free(argv);
     try std.testing.expectEqualStrings("clang", argv[0]);
     try std.testing.expectEqualStrings("/tmp/input.o", argv[1]);
@@ -375,4 +379,11 @@ test "optimization modes select machine code optimization levels" {
     try std.testing.expectEqual(@as(c.LLVMCodeGenOptLevel, c.LLVMCodeGenLevelDefault), OptimizationMode.release.llvmCodeGenLevel());
     try std.testing.expectEqualStrings("none", OptimizationMode.development.llvmCodeGenLevelName());
     try std.testing.expectEqualStrings("default", OptimizationMode.release.llvmCodeGenLevelName());
+}
+
+test "Windows link commands let the MinGW driver select its CRT" {
+    const argv = try buildLinkArgv(std.testing.allocator, "gcc", "input.o", "output.exe", &.{}, &.{}, .{ .arch = .x86_64, .os = .windows, .abi = .gnu });
+    defer std.testing.allocator.free(argv);
+    try std.testing.expectEqual(@as(usize, 4), argv.len);
+    try std.testing.expectEqualStrings("output.exe", argv[3]);
 }

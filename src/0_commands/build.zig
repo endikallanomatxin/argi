@@ -409,7 +409,7 @@ fn compileResolvedPlan(
     }
 
     const stem_base = if (object_only) final_obj.? else final_output;
-    const temp_stem = try std.fmt.allocPrint(allocator, "{s}.tmp.{d}", .{ stem_base, nowNs(io) });
+    const temp_stem = try std.fmt.allocPrint(allocator, "{s}.tmp.{d}{s}", .{ stem_base, nowNs(io), if (!object_only and flags.target.os == .windows) ".exe" else "" });
     const temp_ir = if (final_ir != null) try std.fmt.allocPrint(allocator, "{s}.ll", .{temp_stem}) else null;
     const temp_obj = try std.fmt.allocPrint(allocator, "{s}.o", .{temp_stem});
     try ensureParentDir(io, temp_stem);
