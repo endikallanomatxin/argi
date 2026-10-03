@@ -339,10 +339,11 @@ pub fn linkWithLibc(
     // give the linker local artifact names instead. Resolve other paths before
     // changing the child directory so relative native inputs keep their meaning.
     const windows = options.target.os == .windows;
-    const link_dir = if (windows) try std.fs.path.resolve(arena.allocator(), &.{std.fs.path.dirname(output_path) orelse "."}) else null;
+    const invocation_dir = try std.process.currentPathAlloc(io, arena.allocator());
+    const link_dir = if (windows) try std.fs.path.resolve(arena.allocator(), &.{ invocation_dir, std.fs.path.dirname(output_path) orelse "." }) else null;
     if (windows) for (resolved) |*input| switch (input.*) {
-        .file => |path| input.* = .{ .file = try std.fs.path.resolve(arena.allocator(), &.{path}) },
-        .search_path => |path| input.* = .{ .search_path = try std.fs.path.resolve(arena.allocator(), &.{path}) },
+        .file => |path| input.* = .{ .file = try std.fs.path.resolve(arena.allocator(), &.{ invocation_dir, path }) },
+        .search_path => |path| input.* = .{ .search_path = try std.fs.path.resolve(arena.allocator(), &.{ invocation_dir, path }) },
         else => {},
     };
     const driver = if (windows and (std.mem.indexOfAny(u8, linker, "/\\") != null))
