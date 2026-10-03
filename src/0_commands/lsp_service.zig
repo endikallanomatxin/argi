@@ -1174,6 +1174,11 @@ fn expectSemanticToken(data: []const u32, source: []const u8, needle: []const u8
 test "LSP semantic tokens distinguish resolved names without synthetic recoloring" {
     const code =
         \\Point : Type = (.x: Int32)
+        \\Point init(.x: Int32) -> (.result: Point) := { result = (.x = x) }
+        \\Point deinit(.self: $&Point) -> () := {}
+        \\Box#(.t: Type) : Type = (.value: t)
+        \\Box init#(.t: Type)(.value: t) -> (.result: Box#(.t: t)) := { result = (.value = value) }
+        \\Box deinit#(.t: Type)(.self: $&Box#(.t: t)) -> () := {}
         \\identity(.value: Int32) -> (.result: Int32) := { result = value }
         \\main(.system: System) -> (.status_code: Int32 = 0) := {
         \\    assume writer := $&system.terminal&.stdout
@@ -1194,6 +1199,12 @@ test "LSP semantic tokens distinguish resolved names without synthetic recolorin
     var data = try service.semanticTokensFull("file:///colors.rg");
     defer data.deinit();
     try expectSemanticToken(data.items, code, "Point :", TOKEN_INDEX.type_, 1);
+    try expectSemanticToken(data.items, code, "Point init", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Point deinit", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Box init", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Box deinit", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "init(.x:", TOKEN_INDEX.function, 1);
+    try expectSemanticToken(data.items, code, "deinit(.self:", TOKEN_INDEX.function, 1);
     try expectSemanticToken(data.items, code, "identity(.value:", TOKEN_INDEX.function, 1);
     try expectSemanticToken(data.items, code, "value: Int32", TOKEN_INDEX.parameter, 3);
     try expectSemanticToken(data.items, code, "value }", TOKEN_INDEX.parameter, 2);
