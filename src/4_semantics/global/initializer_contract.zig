@@ -3,8 +3,8 @@ const graph_mod = @import("graph.zig");
 const types = @import("types.zig");
 const generics_mod = @import("generics.zig");
 
-/// The result of `init` reports completion of its destination. A constructed
-/// value never appears as a second, independent function result.
+/// Constructors return their value directly; fallible construction places it
+/// in the ordinary Errable success payload instead of refining an input place.
 pub const Result = union(enum) {
     infallible,
     fallible: struct {
@@ -16,7 +16,6 @@ pub const Result = union(enum) {
 
 pub fn classify(graph: *const graph_mod.GlobalSemanticGraph, function_id: graph_mod.GlobalFunctionId) Result {
     const function = graph.function(function_id);
-    if (function.output.len == 0) return .infallible;
     if (function.output.len != 1) return .invalid;
     const result_type = graph.fields.items[function.output.start].ty;
     const semantic = graph.resolvedSemanticType(result_type) orelse return .invalid;
@@ -30,13 +29,23 @@ pub fn classify(graph: *const graph_mod.GlobalSemanticGraph, function_id: graph_
         .inferred_choice => |choice| choice.kind == .errable,
         else => false,
     };
-    if (!is_errable) return .invalid;
+    if (!is_errable) return if (matchesAssociation(graph, function.declaration, result_type)) .infallible else .invalid;
     const ok = types.findVariant(graph, result_type, "ok") orelse return .invalid;
-    if (ok.variant.payload_type == null or !types.isBuiltin(graph, ok.variant.payload_type.?, .Void)) return .invalid;
+    if (ok.variant.payload_type == null or types.isBuiltin(graph, ok.variant.payload_type.?, .Void)) return .invalid;
+    if (!matchesAssociation(graph, function.declaration, ok.variant.payload_type.?)) return .invalid;
     const err = types.findVariant(graph, result_type, "error") orelse return .invalid;
     const payload = err.variant.payload_type orelse return .invalid;
     const reason = types.findField(graph, payload, "reason") orelse return .invalid;
     return .{ .fallible = .{ .errable_type = result_type, .reasons_type = reason.field.ty } };
+}
+
+pub fn valueType(graph: *const graph_mod.GlobalSemanticGraph, function_id: graph_mod.GlobalFunctionId) ?graph_mod.GlobalTypeId {
+    const function = graph.function(function_id);
+    return switch (classify(graph, function_id)) {
+        .infallible => graph.fields.items[function.output.start].ty,
+        .fallible => |result| (types.findVariant(graph, result.errable_type, "ok") orelse return null).variant.payload_type,
+        .invalid => null,
+    };
 }
 
 pub fn constructedType(
@@ -46,38 +55,24 @@ pub fn constructedType(
     target: graph_mod.GlobalTypeId,
     result: Result,
 ) !graph_mod.GlobalTypeId {
-    const fallible = switch (result) {
-        .infallible => return target,
-        .fallible => |value| value,
-        .invalid => return error.InvalidInitializerResult,
-    };
-    const source = graph.semanticType(fallible.errable_type);
-    const base = switch (source) {
-        .generic => |identity| identity.base,
-        .inferred_choice => blk: {
-            for (graph.declarations.items, 0..) |declaration, raw| {
-                if (declaration.kind != .type or !std.mem.eql(u8, graph.text(declaration.name), "Errable")) continue;
-                const id: graph_mod.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
-                const owner = graph.moduleForDeclaration(id) orelse continue;
-                if (graph.modules.items[@intFromEnum(owner)].is_bundled_core) break :blk id;
-            }
-            return error.MissingErrableType;
+    _ = allocator;
+    _ = generics;
+    return switch (result) {
+        .infallible => target,
+        .fallible => |value| blk: {
+            const ok = types.findVariant(graph, value.errable_type, "ok") orelse return error.InvalidInitializerResult;
+            if (!types.equal(graph, ok.variant.payload_type orelse return error.InvalidInitializerResult, target)) return error.InvalidInitializerResult;
+            break :blk value.errable_type;
         },
-        else => unreachable,
+        .invalid => error.InvalidInitializerResult,
     };
-    const start: u32 = @intCast(graph.generic_arguments.items.len);
-    try graph.generic_arguments.append(allocator, .{
-        .name = try graph.addString(allocator, "t"),
-        .value = .{ .type = target },
-    });
-    try graph.generic_arguments.append(allocator, .{
-        .name = try graph.addString(allocator, "reasons"),
-        .value = .{ .type = fallible.reasons_type },
-    });
-    const ty = try generics.internType(.{ .generic = .{
-        .base = base,
-        .arguments = .{ .start = start, .len = 2 },
-    } });
-    _ = try generics.ensureGenericInstance(ty);
-    return ty;
+}
+
+fn matchesAssociation(graph: *const graph_mod.GlobalSemanticGraph, declaration: graph_mod.GlobalDeclId, ty: graph_mod.GlobalTypeId) bool {
+    const associated = graph.declaration(declaration).constructor_type orelse return false;
+    return switch (graph.resolvedSemanticType(ty) orelse return false) {
+        .declared => |id| id == associated,
+        .generic => |identity| identity.base == associated,
+        else => false,
+    };
 }

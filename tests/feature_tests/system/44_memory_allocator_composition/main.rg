@@ -37,9 +37,12 @@ main(.system: System) -> (.status_code: Int32) := {
     if tracker.allocations == 0 or tracker.allocations != tracker.deallocations { status_code = 2
         return }
     arena :: ArenaAllocator
-    initialized ::= init(.p = $&arena, .allocator = $&allocator_storage, .block_size = 64)
-    if is(.value = initialized, .variant = ..error) { status_code = 3
+    initialized ::= ArenaAllocator(.allocator = $&allocator_storage, .block_size = 64)
+    match initialized {
+        ..ok ~constructed_value { arena = ~constructed_value }
+        ..error _ { status_code = 3
         return }
+    }
     previous ::= tracker.allocations
     reserved ::= allocate(.self = $&arena, .size = 48, .alignment = 32)
     match reserved {

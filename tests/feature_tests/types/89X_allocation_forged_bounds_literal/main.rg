@@ -1,6 +1,6 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator :: CAllocator
-    init(.p = $&allocator, .ffi = system.ffi)
+    allocator = CAllocator(.ffi = system.ffi)
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = $&allocator)
     allocation :: Allocation = (
         .data = raw_pointer#(.t: UInt8)(.address = 1).raw,

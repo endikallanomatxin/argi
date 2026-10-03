@@ -1,6 +1,8 @@
 Resource : Type = ()
 
-init(.self: $&Resource) -> () := {}
+Resource init() -> (.result: Resource) := {
+    result = ()
+}
 deinit(.self: $&Resource) -> () := {}
 
 main() -> (.status_code: Int32) := {

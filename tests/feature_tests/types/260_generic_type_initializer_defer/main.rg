@@ -6,10 +6,10 @@ discard(.value: Int32) -> () := {
     _ ::= value
 }
 
-init#(.t: Type)(.p: $&Token#(.t: t), .sample: t) -> () := {
+Token init#(.t: Type)(.sample: t) -> (.result: Token#(.t: t)) := {
     #defer discard(.value = 0)
     _ ::= sample
-    p& = (
+    result = (
         .tag = 1
     )
 }

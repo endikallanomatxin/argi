@@ -91,9 +91,9 @@ _error_trace_stride() -> (.size: UIntNative) := {
 }
 -- The buffer is initialized caller-owned storage, not an allocation owned by
 -- the tracer. Trailing bytes that do not fit a complete slot are unused.
-init(.p: $&FixedSizeErrorTracer, .buffer: ArrayView#(.t: UInt8)) -> () := {
+FixedSizeErrorTracer init(.buffer: ArrayView#(.t: UInt8)) -> (.result: FixedSizeErrorTracer) := {
     capacity ::= length(.self = &buffer).count / _error_trace_stride().size
-    p& = (
+    result = (
         ._buffer = buffer,
         ._capacity = capacity,
         ._length = 0,

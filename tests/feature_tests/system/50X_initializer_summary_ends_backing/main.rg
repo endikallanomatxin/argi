@@ -14,8 +14,8 @@ EndBacking : Type = (
     .marker: Bool
 )
 
-init(.p: $&EndBacking, .backing: $&BackingAllocator) -> () := {
-    p& = (.marker = false)
+EndBacking init(.backing: $&BackingAllocator) -> (.result: EndBacking) := {
+    result = (.marker = false)
     deinit(.self = backing)
 }
 

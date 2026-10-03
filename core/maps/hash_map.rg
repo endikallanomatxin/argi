@@ -26,12 +26,14 @@ _hash_map_slots#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyabl
     result = ..ok ~slots
 }
 
-init#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key))(.p: $&HashMap#(.key: key, .value: value, .policy: policy), .policy: policy, .allocator: $&Allocator, .capacity: UIntNative = 8) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+HashMap init#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key))(.policy: policy, .allocator: $&Allocator, .capacity: UIntNative = 8) -> (.result: Errable#(.t: HashMap#(.key: key, .value: value, .policy: policy), .reasons: (..out_of_memory))) := {
+    constructed :: HashMap#(.key: key, .value: value, .policy: policy)
+
     count ::= capacity
     if count < 8 { count = 8 }
     slots ::= _hash_map_slots#(.key: key, .value: value)(.capacity = count, .allocator = allocator)!
-    p& = (._slots = ~slots, ._length = 0, ._policy = ~policy)
-    result = ..ok Void()
+    constructed = (._slots = ~slots, ._length = 0, ._policy = ~policy)
+    result = ..ok ~constructed
 }
 
 length#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key))(.self: &HashMap#(.key: key, .value: value, .policy: policy)) -> (.count: UIntNative) := { count = self&._length }

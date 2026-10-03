@@ -6,7 +6,9 @@ dummy_status :: Int32 = 0
 global_counter_ptr :: $&Int32 = $&dummy_counter
 global_status_ptr :: $&Int32 = $&dummy_status
 
-init(.p: $&Resource, .counter: $&Int32, .status: $&Int32) -> () := {
+Resource init(.counter: $&Int32, .status: $&Int32) -> (.result: Resource) := {
+    result = ()
+
     puts(.string="Initializing resource\n")
     global_counter_ptr = counter
     global_status_ptr = status

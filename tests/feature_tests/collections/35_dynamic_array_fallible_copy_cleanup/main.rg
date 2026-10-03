@@ -5,11 +5,11 @@ FailFourthAllocator : Type = (
     .backing_freed_after_elements: Bool
 )
 
-init(.p: $&FailFourthAllocator, .ffi: $&ForeignFunctionInterface) -> () := {
-    p&.ffi = ffi
-    p&.allocation_attempts = 0
-    p&.deallocations = 0
-    p&.backing_freed_after_elements = false
+FailFourthAllocator init(.ffi: $&ForeignFunctionInterface) -> (.result: FailFourthAllocator) := {
+    result.ffi = ffi
+    result.allocation_attempts = 0
+    result.deallocations = 0
+    result.backing_freed_after_elements = false
 }
 
 allocate(.self: $&FailFourthAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {

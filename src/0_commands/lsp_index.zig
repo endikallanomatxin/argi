@@ -114,14 +114,7 @@ pub const Index = struct {
                     .target = target,
                 });
             },
-            .type_initializer => |initializer| {
-                const declaration = graph.declarations.items[@intFromEnum(initializer.type_decl)];
-                try result.add(allocator, .{
-                    .source = node.source,
-                    .len = @intCast(graph.text(declaration.name).len),
-                    .target = .{ .declaration = initializer.type_decl },
-                });
-            },
+
             .struct_field_access => |access| {
                 const owner_ty = graph.nodes.items[@intFromEnum(access.value)].ty orelse continue;
                 const fields = types.fields(graph, owner_ty) orelse continue;

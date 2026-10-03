@@ -1,6 +1,8 @@
 Token : Type = ()
 
-once init(.p: $&Token) -> () := {
+once Token init() -> (.result: Token) := {
+    result = ()
+
 }
 
 main() -> (.status_code: Int32) := {

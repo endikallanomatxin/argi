@@ -27,7 +27,9 @@ run(.system: System) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory)
 -- conversion, independently of the infallible fixed-buffer tracer.
 FailTracer : Type = (.marker: UInt8)
 FailTracer implements ErrorTracer
-init(.p: $&FailTracer) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+FailTracer init() -> (.result: Errable#(.t: FailTracer, .reasons: (..out_of_memory))) := {
+    constructed :: FailTracer
+
     result = ..error(.reason = ..out_of_memory)
 }
 add_context(.self: $&FailTracer, .location: SourceLocationId, .context: StringView) -> () := {}

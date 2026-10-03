@@ -1,7 +1,6 @@
 Widget : Type = (.value: Int32)
 
-init(.p: $&Widget) -> (.value: Int32) := {
-    p& = (.value = 1)
+Widget init() -> (.value: Int32) := {
     value = 1
 }
 

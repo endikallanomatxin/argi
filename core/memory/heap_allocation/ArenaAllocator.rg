@@ -7,7 +7,7 @@ _ArenaBlock : Type = (
 -- Replacing the complete domain establishes a new storage generation after
 -- reset. Updating only the marker would leave the former generation ended.
 ArenaDomain : Type = (.marker: Bool)
-init(.p: $&ArenaDomain) -> () := { p& = (.marker = false) }
+ArenaDomain init() -> (.result: ArenaDomain) := { result = (.marker = false) }
 deinit(.self: $&ArenaDomain) -> () := {}
 
 -- Backing receipts live in block headers. No metadata or storage is acquired
@@ -21,15 +21,20 @@ ArenaAllocator : Type = (
     ._current_block_offset: UIntNative
 )
 
-init(.p: $&ArenaAllocator, .allocator: $&Allocator, .block_size: UIntNative = 4096) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    p&._backing_allocator = to_virtual#(.abstract: Allocator)(.value = allocator)
-    init(.p = $&p&.domain)
-    p&._block_head = 0
-    p&.block_count = 0
-    p&.block_size = block_size
-    if p&.block_size == 0 { p&.block_size = 1 }
-    p&._current_block_offset = 0
-    result = ..ok Void()
+ArenaAllocator init(.allocator: $&Allocator, .block_size: UIntNative = 4096) -> (.result: Errable#(.t: ArenaAllocator, .reasons: (..out_of_memory))) := {
+    constructed :: ArenaAllocator
+
+    actual_block_size ::= block_size
+    if actual_block_size == 0 { actual_block_size = 1 }
+    constructed = (
+        ._backing_allocator = to_virtual#(.abstract: Allocator)(.value = allocator),
+        .domain = ArenaDomain(),
+        ._block_head = 0,
+        .block_count = 0,
+        .block_size = actual_block_size,
+        ._current_block_offset = 0,
+    )
+    result = ..ok ~constructed
 }
 
 _trusted_arena_block(.address: UIntNative, .owner: $&ArenaAllocator) -> (.block: $&_ArenaBlock) := {
@@ -52,7 +57,7 @@ arena_free_blocks(.self: $&ArenaAllocator) -> () := {
 reset(.self: $&ArenaAllocator) -> () := {
     arena_free_blocks(.self = self)
     deinit(.self = $&self&.domain)
-    init(.p = $&self&.domain)
+    self&.domain = ArenaDomain()
 }
 
 deinit(.self: $&ArenaAllocator) -> () := {

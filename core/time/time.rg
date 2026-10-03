@@ -2,7 +2,9 @@
 
 Clock : Type = ()
 
-once init(.p: $&Clock) -> () := {
+once Clock init() -> (.result: Clock) := {
+    result = ()
+
 }
 -- getCurrentTime :: IO UTCTime
 -- Gets the current time in UTC.

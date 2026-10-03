@@ -2,13 +2,11 @@ DummyWriter : Type = (
     .bytes : String
 )
 
-init(
-    .p: $&DummyWriter,
-    .allocator: $&Allocator,
-) -> () := {
+DummyWriter init(.allocator: $&Allocator,
+) -> (.result: DummyWriter) := {
     assume allocator
 
-    p&.bytes = unwrap_or_abort(.value = String(.allocator = allocator, .capacity = 16))
+    result.bytes = unwrap_or_abort(.value = String(.allocator = allocator, .capacity = 16))
 }
 
 deinit(

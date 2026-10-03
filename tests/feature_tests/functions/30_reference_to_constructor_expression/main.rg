@@ -1,9 +1,9 @@
 Box : Type = (.counter: $&Int32, .created: $&Int32)
 NumberBox : Type = (.value: Int32)
 
-init(.p: $&Box, .counter: $&Int32, .created: $&Int32) -> () := {
-    p&.counter = counter
-    p&.created = created
+Box init(.counter: $&Int32, .created: $&Int32) -> (.result: Box) := {
+    result.counter = counter
+    result.created = created
     created& = created& + 1
 }
 

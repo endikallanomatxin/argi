@@ -238,63 +238,15 @@ pub const SafetyChecker = struct {
     }
 
     fn validateInitializerContracts(self: *SafetyChecker, engine: *summary_engine.Engine) !void {
+        _ = engine;
         for (self.graph.functions.items, 0..) |function, raw| {
-            if (function.input.len == 0 or function.body == null) continue;
+            if (function.body == null) continue;
             const declaration = self.graph.declaration(function.declaration);
-            if (!std.mem.eql(u8, self.graph.text(declaration.name), "init")) continue;
-            const pointer = self.graph.semanticType(self.graph.fields.items[function.input.start].ty);
-            if (pointer != .pointer or pointer.pointer.mutability != .read_write) continue;
+            if (declaration.constructor_type == null) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            switch (initializer_contract.classify(self.graph, id)) {
-                .infallible => {},
-                .invalid => try self.report(declaration.source, "initializer must return () or one Errable<Void, R> result", .{}),
-                .fallible => |fallible| {
-                    const summary = engine.summaryFor(id) orelse continue;
-                    const ok = types.findVariant(self.graph, fallible.errable_type, "ok") orelse continue;
-                    const err = types.findVariant(self.graph, fallible.errable_type, "error") orelse continue;
-                    for (summary.outcome_post_states) |outcome| {
-                        if (outcome.variant_index == ok.index and
-                            !self.inputPathCompletelyInitialized(outcome.input_post_states, .{ .input_index = 0 }, pointer.pointer.child))
-                            try self.report(declaration.source, "initializer returns ..ok without fully initializing its destination", .{});
-                        if (outcome.variant_index == err.index and self.inputPathHasLiveValue(outcome.input_post_states, .{ .input_index = 0 }))
-                            try self.report(declaration.source, "initializer returns ..error with a live value in its destination", .{});
-                    }
-                },
-            }
+            if (initializer_contract.classify(self.graph, id) == .invalid)
+                try self.report(declaration.source, "initializer must return its constructed type or one Errable of that type", .{});
         }
-    }
-
-    fn inputPathCompletelyInitialized(
-        self: *SafetyChecker,
-        states: []const facts.PlacePostState,
-        path: facts.InputPath,
-        ty: graph_mod.GlobalTypeId,
-    ) bool {
-        const exact = self.findInputPostState(states, path);
-        if (exact) |state| if (state.initializedness == .moved or state.initializedness == .maybe_initialized) return false;
-        const fields = types.fields(self.graph, ty) orelse return exact != null and exact.?.initializedness == .initialized;
-        if (fields.len == 0) return exact != null and exact.?.initializedness == .initialized;
-        for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
-            const child = self.appendInputProjection(path, .{ .field = @intCast(index) }) catch return false;
-            if (self.findInputPostState(states, child) != null) {
-                if (!self.inputPathCompletelyInitialized(states, child, types.effectiveFieldType(field))) return false;
-            } else if (exact == null or exact.?.initializedness != .initialized) return false;
-        }
-        return true;
-    }
-
-    fn inputPathHasLiveValue(self: *SafetyChecker, states: []const facts.PlacePostState, path: facts.InputPath) bool {
-        _ = self;
-        for (states) |state| {
-            if (state.target.input_index != path.input_index or state.target.projections.len < path.projections.len) continue;
-            var prefix = true;
-            for (path.projections, state.target.projections[0..path.projections.len]) |left, right| if (!left.eql(right)) {
-                prefix = false;
-                break;
-            };
-            if (prefix and state.initializedness != .deinitialized and state.initializedness != .moved) return true;
-        }
-        return false;
     }
 
     fn findInputPostState(self: *SafetyChecker, states: []const facts.PlacePostState, path: facts.InputPath) ?facts.PlacePostState {
@@ -424,10 +376,6 @@ pub const SafetyChecker = struct {
                     try self.beginLexicalStorage(state, storage);
                     const value = if (!record.deferred_initialization) if (record.initialization) |initialization| blk: {
                         try self.validateContextualIntegerLiteral(initialization, record.ty);
-                        const expression = self.graph.node(initialization);
-                        if (expression.content == .type_initializer and
-                            self.graph.function(expression.content.type_initializer.init_fn).output.len == 0)
-                            break :blk try self.evaluateTypeInitializer(function, expression.source, expression.content.type_initializer, record.ty, storage, state);
                         break :blk try self.evaluate(function, initialization, state);
                     } else facts.ValueFacts{} else facts.ValueFacts{};
                     try self.setPlace(state, .{ .root = binding }, if (record.initialization != null and !record.deferred_initialization) .initialized else .deinitialized, value);
@@ -811,7 +759,7 @@ pub const SafetyChecker = struct {
                 const input = expect.test_fail_input orelse break :blk .{};
                 break :blk try self.evaluateCall(function, node_id, .{ .callee = expect.test_fail_function, .input = input }, state);
             },
-            .type_initializer => |initializer| try self.evaluateTypeInitializer(function, node.source, initializer, node.ty orelse return error.InvalidInitializerType, null, state),
+
             .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .reach_directive, .break_statement, .continue_statement, .abort_statement => .{},
             else => .{},
         };
@@ -829,79 +777,10 @@ pub const SafetyChecker = struct {
     ) !facts.ValueFacts {
         const ty = self.graph.node(errable).ty orelse return .{};
         const index = variantIndex(self.graph, ty, ok_variant) orelse return .{};
-        if (value.pending_initialization) |pending| try self.resolvePendingInitialization(state, pending, index);
         var success = try self.projectValueFacts(value, &.{.{ .variant = index }});
         if (value_field) |field| success = try self.projectValueFacts(success, &.{.{ .field = field }});
         try self.activate_conditional_resources(state, success);
         return success;
-    }
-
-    fn evaluateTypeInitializer(
-        self: *SafetyChecker,
-        caller: graph_mod.GlobalFunctionId,
-        source: primitives.SourceRef,
-        initializer: anytype,
-        ty: graph_mod.GlobalTypeId,
-        destination: ?facts.Place,
-        state: *FunctionState,
-    ) anyerror!facts.ValueFacts {
-        const input = self.graph.node(initializer.args);
-        if (input.content != .struct_value_literal) return error.InvalidInitializerArguments;
-        const range = input.content.struct_value_literal.fields;
-        const fields = self.globalValueFieldIds(range);
-        const arguments = try self.allocator.alloc(facts.ValueFacts, fields.len + 1);
-        // The hidden destination has storage identity but no initialized
-        // contents. Explicit references to it acquire their generation via
-        // input_places; value reads must not inherit a fictitious old value.
-        arguments[0] = if (destination) |place| .{
-            .referenced_place = place,
-        } else .{};
-        for (fields, 0..) |field_id, index|
-            arguments[index + 1] = try self.evaluate(caller, self.graph.value_fields.items[@intFromEnum(field_id)].value, state);
-        const engine = self.active_summaries orelse return .{};
-        const summary = engine.summaryFor(initializer.init_fn) orelse return .{};
-        var call_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
-        defer call_capabilities.deinit();
-        const previous_capabilities = self.active_fresh_capabilities;
-        self.active_fresh_capabilities = &call_capabilities;
-        defer self.active_fresh_capabilities = previous_capabilities;
-        if (!try self.validateSummaryRequiredLive(source, summary, arguments, state)) return .{};
-        if (destination) |place| {
-            // The constructor's hidden destination is the final binding,
-            // matching codegen's construction into that binding's storage.
-            const argument_ids = try self.allocator.alloc(graph_mod.GlobalValueFieldId, fields.len + 1);
-            argument_ids[0] = if (fields.len != 0) fields[0] else @enumFromInt(0);
-            @memcpy(argument_ids[1..], fields);
-            try self.applySummaryEffects(source, summary, argument_ids, arguments, state);
-            return self.initializedValueAtPlace(state, place, ty);
-        }
-        const inference = self.active_summary_inference orelse return .{};
-        const effect = try inference.constructorResultEffect(initializer.init_fn, ty);
-        const value = try self.instantiateOutput(effect, arguments, state);
-        // An expression temporary has no named destination Place, but init
-        // still consumes or modifies its explicit arguments. Snapshot the
-        // constructed value before committing those external post-states.
-        var external_summary = summary;
-        var post_states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
-        defer post_states.deinit();
-        for (summary.input_post_states) |post_state|
-            if (post_state.target.input_index != 0) try post_states.append(post_state);
-        var opaque_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
-        defer opaque_effects.deinit();
-        for (summary.opaque_storage_effects) |opaque_effect|
-            if (opaque_effect.storage.input_index != 0) try opaque_effects.append(opaque_effect);
-        var empties = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        defer empties.deinit();
-        for (summary.opaque_storage_empties) |empty|
-            if (empty.input_index != 0) try empties.append(empty);
-        external_summary.input_post_states = post_states.items;
-        external_summary.opaque_storage_effects = opaque_effects.items;
-        external_summary.opaque_storage_empties = empties.items;
-        const argument_ids = try self.allocator.alloc(graph_mod.GlobalValueFieldId, fields.len + 1);
-        argument_ids[0] = if (fields.len != 0) fields[0] else @enumFromInt(0);
-        @memcpy(argument_ids[1..], fields);
-        try self.applySummaryEffects(source, external_summary, argument_ids, arguments, state);
-        return value;
     }
 
     fn initializedValueAtPlace(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, ty: graph_mod.GlobalTypeId) anyerror!facts.ValueFacts {
@@ -1000,79 +879,8 @@ pub const SafetyChecker = struct {
         defer self.active_fresh_capabilities = previous_capabilities;
         if (!try self.validateSummaryRequiredLive(source, summary, values, state)) return facts.ValueFacts{};
         if (call_node) |node| self.recordFunctionCallAutoDeinit(node, summary, argument_nodes);
-        const initializer_result = if (@intFromEnum(callee) < self.graph.functions.items.len)
-            initializer_contract.classify(self.graph, callee)
-        else
-            initializer_contract.Result.invalid;
-        const is_fallible_initializer = initializer_result == .fallible and
-            self.graph.function(callee).input.len != 0 and
-            std.mem.eql(u8, self.graph.text(self.graph.declaration(self.graph.function(callee).declaration).name), "init");
-        if (is_fallible_initializer and summary.outcome_post_states.len == 0) {
-            try self.report(source, "fallible initializer outcome could not be verified", .{});
-            return .{};
-        }
-        if (!is_fallible_initializer) {
-            try self.applySummaryEffects(source, summary, argument_nodes, values, state);
-            return try self.instantiateSummaryOutputs(summary.outputs, values, state);
-        }
-
-        var external = summary;
-        var post_states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
-        defer post_states.deinit();
-        for (summary.input_post_states) |post_state|
-            if (post_state.target.input_index != 0) try post_states.append(post_state);
-        external.input_post_states = post_states.items;
-        var opaque_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
-        defer opaque_effects.deinit();
-        for (summary.opaque_storage_effects) |effect|
-            if (effect.storage.input_index != 0) try opaque_effects.append(effect);
-        external.opaque_storage_effects = opaque_effects.items;
-        var empties = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        defer empties.deinit();
-        for (summary.opaque_storage_empties) |empty|
-            if (empty.input_index != 0) try empties.append(empty);
-        external.opaque_storage_empties = empties.items;
-        try self.applySummaryEffects(source, external, argument_nodes, values, state);
-        var result = try self.instantiateSummaryOutputs(summary.outputs, values, state);
-        if (values.len == 0 or values[0].referenced_place == null) {
-            // Input pointers currently have no caller-local Place for their
-            // pointee. Their result cannot safely refine that storage here.
-            try self.report(source, "fallible initializer requires a destination place visible to safety", .{});
-            return result;
-        }
-        const destination = values[0].referenced_place.?;
-        if (self.initializednessAtPlace(state, destination) == .initialized)
-            try self.report(source, "initializer destination must be uninitialized", .{});
-        const pending = try self.allocator.create(facts.PendingInitialization);
-        const source_ty = self.graph.fields.items[self.graph.function(callee).output.start].ty;
-        const ok = types.findVariant(self.graph, source_ty, "ok") orelse return result;
-        pending.* = .{
-            .destination = destination,
-            .success_effect = try self.active_summary_inference.?.initializerResultEffect(callee),
-            .arguments = try self.allocator.dupe(facts.ValueFacts, values),
-            .ok_variant = ok.index,
-        };
-        try self.setPlace(state, destination, .maybe_initialized, .{});
-        self.getPlace(state, destination).?.pending_initialization = pending;
-        result.pending_initialization = pending;
-        if (result.known_choice_variant) |variant| try self.resolvePendingInitialization(state, pending, variant);
-        return result;
-    }
-
-    fn resolvePendingInitialization(
-        self: *SafetyChecker,
-        state: *FunctionState,
-        pending: *const facts.PendingInitialization,
-        variant: u32,
-    ) !void {
-        const place = self.getPlace(state, pending.destination) orelse return;
-        if (place.pending_initialization != pending) return;
-        if (variant == pending.ok_variant) {
-            const value = try self.instantiateOutput(pending.success_effect, pending.arguments, state);
-            try self.setPlace(state, pending.destination, .initialized, value);
-        } else {
-            try self.setPlace(state, pending.destination, .deinitialized, .{});
-        }
+        try self.applySummaryEffects(source, summary, argument_nodes, values, state);
+        return try self.instantiateSummaryOutputs(summary.outputs, values, state);
     }
 
     fn recordFunctionCallAutoDeinit(
@@ -2222,7 +2030,6 @@ pub const SafetyChecker = struct {
             .referenced_place = if (left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?)) left.referenced_place else null,
             .opaque_provenance = try opaque_provenance.toOwnedSlice(),
             .virtual_methods = if (std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods)) left.virtual_methods else &.{},
-            .pending_initialization = if (left.pending_initialization == right.pending_initialization) left.pending_initialization else null,
         };
     }
 
@@ -3352,12 +3159,7 @@ pub const SafetyChecker = struct {
                         try self.applyAutoDeinit(function, cleanup_node.content.auto_deinit_binding, state);
                 }
                 try self.refreshStorageGenerationChecked(source, state, place);
-                const initialized = self.graph.node(assignment.value);
-                const value = if (initialized.content == .type_initializer and
-                    self.graph.function(initialized.content.type_initializer.init_fn).output.len == 0)
-                    try self.evaluateTypeInitializer(function, initialized.source, initialized.content.type_initializer, binding.ty, place, state)
-                else
-                    try self.evaluate(function, assignment.value, state);
+                const value = try self.evaluate(function, assignment.value, state);
                 try self.setPlace(state, place, .initialized, value);
             }
         }
@@ -3492,7 +3294,6 @@ pub const SafetyChecker = struct {
             entry.initializedness = initializedness;
             if (initializedness != .moved) entry.moved_at = null;
             entry.value = value;
-            entry.pending_initialization = null;
             stored = true;
             break;
         };
@@ -3713,10 +3514,7 @@ pub const SafetyChecker = struct {
             else
                 null;
             merged.value = try self.mergeValueFacts(left_place.value, right_place.value);
-            merged.pending_initialization = if (left_place.pending_initialization == right_place.pending_initialization)
-                left_place.pending_initialization
-            else
-                null;
+
             try joined.places.append(merged);
         }
         for (right.places.items) |right_place| {
@@ -3729,10 +3527,7 @@ pub const SafetyChecker = struct {
                 else
                     null;
                 merged.value = try self.mergeValueFacts(left_place.value, right_place.value);
-                merged.pending_initialization = if (left_place.pending_initialization == right_place.pending_initialization)
-                    left_place.pending_initialization
-                else
-                    null;
+
                 try joined.places.append(merged);
             }
         }
@@ -4252,8 +4047,6 @@ pub const SafetyChecker = struct {
         }
         const target = storage.?;
         if (active) {
-            if (self.valueAtPlace(state, target)) |value| if (value.pending_initialization) |pending|
-                try self.resolvePendingInitialization(state, pending, index);
             if (self.valueAtPlace(state, target)) |value|
                 for (value.variants) |payload| if (payload.index == index) {
                     try self.activate_conditional_resources(state, payload.value.*);
@@ -4279,8 +4072,6 @@ pub const SafetyChecker = struct {
             remaining = candidate;
         }
         if (remaining) |only| {
-            if (self.valueAtPlace(state, target)) |value| if (value.pending_initialization) |pending|
-                try self.resolvePendingInitialization(state, pending, only);
             self.setActiveVariant(state, target, only);
         }
     }

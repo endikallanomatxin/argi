@@ -45,6 +45,7 @@ pub fn declaration(comptime Ids: type, value: primitives.Declaration(Ids), bound
     try require(verify.sourceFits(value.source, bounds.files));
     try require(verify.optionalIdFits(value.type_id, bounds.types));
     try require(verify.optionalIdFits(value.function_id, bounds.functions));
+    try require(verify.optionalIdFits(value.constructor_type, bounds.declarations));
     if (value.struct_fields) |range| try require(verify.rangeFits(range, bounds.fields));
     if (value.choice_variants) |range| try require(verify.rangeFits(range, bounds.variants));
 }
@@ -346,11 +347,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
             try require(verify.idFits(item.pointer, bounds.nodes));
             try require(verify.idFits(item.value, bounds.nodes));
         },
-        .type_initializer => |item| {
-            try require(verify.idFits(item.type_decl, bounds.declarations));
-            try require(verify.idFits(item.init_fn, bounds.functions));
-            try require(verify.idFits(item.args, bounds.nodes));
-        },
+
         .type_literal => |id| try require(verify.idFits(id, bounds.types)),
         .denied_implicit_copy => |id| try require(verify.idFits(id, bounds.nodes)),
         .explicit_cast => |item| {

@@ -43,8 +43,8 @@ CAllocator : Type = (
     .ffi: $&ForeignFunctionInterface
 )
 
-init(.p: $&CAllocator, .ffi: $&ForeignFunctionInterface) -> () := {
-    p&.ffi = ffi
+CAllocator init(.ffi: $&ForeignFunctionInterface) -> (.result: CAllocator) := {
+    result.ffi = ffi
 }
 
 allocate(.self: $&CAllocator, .size: UIntNative, .alignment: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {

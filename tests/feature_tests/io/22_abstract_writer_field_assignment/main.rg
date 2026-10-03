@@ -20,11 +20,9 @@ Holder : Type = (
     .writer: $&Writer
 )
 
-init(
-    .p: $&Holder,
-    .writer: $&DummyWriter,
-) -> () := {
-    p&.writer = writer
+Holder init(.writer: $&DummyWriter,
+) -> (.result: Holder) := {
+    result.writer = writer
 }
 
 main() -> (.status_code: Int32) := {
@@ -33,7 +31,7 @@ main() -> (.status_code: Int32) := {
     )
     holder :: Holder
 
-    init(.p = $&holder, .writer = $&writer)
+    holder = Holder(.writer = $&writer)
 
     writer_address :: UIntNative = UIntNative(.value = $&writer)
     stored_address :: UIntNative = UIntNative(.value = holder.writer)

@@ -58,7 +58,7 @@ are constructed and changed outside that module.
 
 ## Construction
 
-A type may define `init` with a mutable destination and explicit inputs:
+A type may associate `init` constructors with its nominal declaration:
 
 ```rg
 Point : Type = (
@@ -66,23 +66,20 @@ Point : Type = (
     .y: Int32
 )
 
-init(.p: $&Point, .x: Int32, .y: Int32) -> () := {
-    p& = (.x = x, .y = y)
+Point init(.x: Int32, .y: Int32) -> (.result: Point) := {
+    result = (.x = x, .y = y)
 }
 
 point := Point(.x = 20, .y = 22)
 ```
 
-`Point(...)` selects a visible initializer for `Point`; the destination type
-is already known from the constructor name. Selection is based on the input
-types, not on a function's output type. An initializer must leave a complete
-value on success. When a visible `init` exists, callers construct through
-that operation rather than bypassing it with a field initializer.
-
-An initializer that can fail returns one `Errable#(.t: Void, .reasons: R)`.
-Then `Point(...)` returns `Errable#(.t: Point, .reasons: R)`, and `..ok`
-contains the constructed point. The initializer must leave its destination
-complete on success and empty on error.
+`Point(...)` selects a visible constructor associated with `Point`, based on
+input types. The result must be `Point`, or `Errable#(.t: Point, .reasons: R)`
+when construction can fail. The return type does not select the overload.
+When visible constructors exist, callers use them rather than bypassing the
+operation through automatic field-wise construction. See
+[Initialization and deinitialization](30_initialization_and_deinitialization.md)
+for generic constructors and cleanup on failure.
 
 ## Structs and behavior
 

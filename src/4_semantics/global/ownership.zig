@@ -344,7 +344,7 @@ pub const Resolver = struct {
                 try self.finalizeExpressionCleanup(assignment.value, active, defers);
             },
             .explicit_cast => |cast| try self.finalizeExpressionCleanup(cast.value, active, defers),
-            .type_initializer => |initializer| try self.finalizeExpressionCleanup(initializer.args, active, defers),
+
             .testing_expect_error => |expect_id| {
                 const expect = self.graph.testing_expect_errors.items[@intFromEnum(expect_id)];
                 try self.finalizeExpressionCleanup(expect.expected_reason, active, defers);

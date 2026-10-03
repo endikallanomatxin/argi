@@ -3,8 +3,8 @@ Point : Type = (
     .y: Int32,
 )
 
-init(.p: $&Point, .x: Int32, .y: Int32) -> () := {
-    p& = (.x = x, .y = y)
+Point init(.x: Int32, .y: Int32) -> (.result: Point) := {
+    result = (.x = x, .y = y)
 }
 
 main() -> (.status_code: Int32) := {

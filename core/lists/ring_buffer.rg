@@ -12,11 +12,11 @@ RingBuffer#(.t: Type) : Type = (
     ._shape: _RingBufferShape
 )
 
-init#(.t: Type)(
-    .p: $&RingBuffer#(.t: t),
-    .capacity: UIntNative,
+RingBuffer init#(.t: Type)(.capacity: UIntNative,
     .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..invalid_capacity, ..out_of_memory))) := {
+) -> (.result: Errable#(.t: RingBuffer#(.t: t), .reasons: (..invalid_capacity, ..out_of_memory))) := {
+    constructed :: RingBuffer#(.t: t)
+
     if capacity == 0 {
         result = ..error(.reason = ..invalid_capacity)
         return
@@ -28,8 +28,8 @@ init#(.t: Type)(
         return
     }
     allocation ::= allocate#(.t: t)(.self = allocator, .count = capacity)!
-    p& = (._allocation = ~allocation, ._capacity = capacity, ._head = 0, ._length = 0, ._shape = (.marker = 0))
-    result = ..ok Void()
+    constructed = (._allocation = ~allocation, ._capacity = capacity, ._head = 0, ._length = 0, ._shape = (.marker = 0))
+    result = ..ok ~constructed
 }
 
 length#(.t: Type)(.self: &RingBuffer#(.t: t)) -> (.count: UIntNative) := { count = self&._length }

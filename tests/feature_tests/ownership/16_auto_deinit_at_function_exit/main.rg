@@ -3,7 +3,9 @@ Resource : Type = ()
 dummy_counter :: Int32 = 0
 global_counter_ptr :: $&Int32 = $&dummy_counter
 
-init(.p: $&Resource, .counter: $&Int32) -> () := {
+Resource init(.counter: $&Int32) -> (.result: Resource) := {
+    result = ()
+
     global_counter_ptr = counter
 }
 

@@ -2,8 +2,8 @@ Counter : Type = (
     .value: Int32
 )
 
-init(.p: $&Counter) -> () := {
-    p& = (
+Counter init() -> (.result: Counter) := {
+    result = (
         .value = 7
     )
 }

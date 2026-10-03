@@ -3,9 +3,8 @@ PageAllocator : Type = (
     .page_size: UIntNative
 )
 
-init(.p: $&PageAllocator, .memory: $&Memory) -> () := {
-    p&.memory = memory
-    p&.page_size = memory&._page_size
+PageAllocator init(.memory: $&Memory) -> (.result: PageAllocator) := {
+    result = (.memory = memory, .page_size = memory&._page_size)
 }
 
 page_allocator_page_size(.self: $&PageAllocator) -> (.size: UIntNative) := {

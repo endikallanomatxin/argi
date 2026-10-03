@@ -3,7 +3,9 @@ Resource : Type = ()
 ..cleanup_error
 
 dummy_counter :: Int32 = 0
-init(.p: $&Resource) -> () := {
+Resource init() -> (.result: Resource) := {
+    result = ()
+
 }
 
 deinit(.res: $&Resource) -> () := {

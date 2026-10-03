@@ -7,12 +7,10 @@ BufferedWriter#(.base_type: Type: Writer) : Type = (
     .length: UIntNative
 )
 
-init#(.base_type: Type: Writer)(
-    .p: $&BufferedWriter#(.base_type: base_type),
-    .base: $&base_type,
+BufferedWriter init#(.base_type: Type: Writer)(.base: $&base_type,
     .buffer: ArrayView#(.t: UInt8),
-) -> () := {
-    p& = (.base = base, .buffer = buffer, .length = 0)
+) -> (.result: BufferedWriter#(.base_type: base_type)) := {
+    result = (.base = base, .buffer = buffer, .length = 0)
 }
 
 deinit#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> () := {

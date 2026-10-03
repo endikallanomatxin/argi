@@ -13,7 +13,7 @@ Something more similar to Google's pipe syntax: https://cloud.google.com/bigquer
 
 Example:
 
-my_db : SQLDB = init(_, ...)
+my_db : SQLDB = SQLDB(...)
 
 result = my_db
          | from(&_, "produce")

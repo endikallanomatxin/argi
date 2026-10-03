@@ -7,7 +7,6 @@ const facts = @import("facts.zig");
 const summaries = @import("summaries.zig");
 const value_state = @import("value_state.zig");
 const primitive_transfer = @import("../primitives/registry.zig");
-const initializer_contract = @import("../global/initializer_contract.zig");
 
 /// Symbolic SafetySummary inference over the compact GlobalSG.
 ///
@@ -670,10 +669,7 @@ pub const Infer = struct {
 
         profile.accumulate(self.profile_io, start, &self.post_state_ns);
         start = profile.timestamp(self.profile_io);
-        const outcome_post_states = if (self.isFallibleInitializer(function_id))
-            try self.inferInitializerOutcomePostStates(function_id, function.body.?)
-        else
-            &.{};
+        const outcome_post_states: []const facts.OutcomePostStates = &.{};
 
         profile.accumulate(self.profile_io, start, &self.outcome_ns);
         start = profile.timestamp(self.profile_io);
@@ -788,6 +784,16 @@ pub const Infer = struct {
                         try self.bindings.put(assignment.binding, effect);
                         try self.place_bindings.put(assignment.binding, try self.inferInputPaths(function_id, assignment.value));
                     }
+                },
+                .struct_field_store => |store| {
+                    const targets = try self.localAddressTargets(store.struct_ptr);
+                    if (targets.len != 0) for (targets) |target| {
+                        try self.storeOutputProjection(function_id, target, &.{.{ .field = store.field_index }}, store.value, outputs);
+                    } else try self.storeOutputProjection(function_id, store.struct_ptr, &.{.{ .field = store.field_index }}, store.value, outputs);
+                },
+                .pointer_assignment => |store| {
+                    for (try self.localAddressTargets(store.pointer)) |target|
+                        try self.storeOutputProjection(function_id, target, &.{}, store.value, outputs);
                 },
                 .if_statement => |statement| {
                     try self.inferBlock(function_id, statement.then_block, outputs);
@@ -1123,7 +1129,7 @@ pub const Infer = struct {
 
     fn infer_capability_node(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, flow: *CapabilityFlow, exits: *?CapabilityFlow) anyerror!void {
         const content = self.graph.node(node).content;
-        if (content == .function_call or content == .virtual_call or content == .type_initializer) {
+        if (content == .function_call or content == .virtual_call) {
             // Block result expressions can reference an already evaluated call
             // node. Codegen caches that value; do not consume it a second time.
             if (flow.calls.contains(node)) return;
@@ -1154,10 +1160,7 @@ pub const Infer = struct {
                 const summary = try self.virtualSummary(call.safety_methods) orelse return;
                 if (self.structArguments(call.input)) |arguments| try self.substitute_capability_uses(function, summary, arguments, flow);
             },
-            .type_initializer => |initializer| {
-                try self.infer_capability_node(function, initializer.args, flow, exits);
-                try self.infer_capability_call(function, initializer.init_fn, try self.initializerArguments(initializer.args), flow);
-            },
+
             .if_statement => |branch| {
                 try self.infer_capability_node(function, branch.condition, flow, exits);
                 var left = try flow.clone(self.allocator);
@@ -1405,181 +1408,6 @@ pub const Infer = struct {
             return .{ .states = states, .reachable = self.reachable, .outcome_variant = self.outcome_variant };
         }
     };
-
-    const OutcomeFlowSet = struct {
-        flows: std.array_list.Managed(InputPostStateFlow),
-
-        fn init(allocator: std.mem.Allocator) OutcomeFlowSet {
-            return .{ .flows = std.array_list.Managed(InputPostStateFlow).init(allocator) };
-        }
-
-        fn deinit(self: *OutcomeFlowSet) void {
-            for (self.flows.items) |*flow| flow.deinit();
-            self.flows.deinit();
-        }
-    };
-
-    fn isFallibleInitializer(self: *Infer, function_id: graph_mod.GlobalFunctionId) bool {
-        const function = self.graph.function(function_id);
-        if (function.input.len == 0 or function.output.len != 1) return false;
-        if (!std.mem.eql(u8, self.graph.text(self.graph.declaration(function.declaration).name), "init")) return false;
-        const destination = self.graph.semanticType(self.graph.fields.items[function.input.start].ty);
-        if (destination != .pointer or destination.pointer.mutability != .read_write) return false;
-        return initializer_contract.classify(self.graph, function_id) == .fallible;
-    }
-
-    fn inferInitializerOutcomePostStates(
-        self: *Infer,
-        function_id: graph_mod.GlobalFunctionId,
-        body: graph_mod.GlobalBlockId,
-    ) ![]const facts.OutcomePostStates {
-        const function = self.graph.function(function_id);
-        const result_ty = self.graph.fields.items[function.output.start].ty;
-        const ok = types.findVariant(self.graph, result_ty, "ok") orelse return error.InvalidInitializerResult;
-        const failure = types.findVariant(self.graph, result_ty, "error") orelse return error.InvalidInitializerResult;
-        const output_binding = self.graph.binding_refs.items[function.output_bindings.start];
-        var initial = InputPostStateFlow.init(self.allocator);
-        defer initial.deinit();
-        try initial.states.append(.{ .target = .{ .input_index = 0 }, .initializedness = .deinitialized });
-        var exits = [_]?std.array_list.Managed(facts.PlacePostState){ null, null };
-        defer for (&exits) |*entry| if (entry.*) |*states| states.deinit();
-        var remaining = try self.inferOutcomeBlock(function_id, body, output_binding, initial, .{ ok.index, failure.index }, &exits);
-        defer remaining.deinit();
-        for (remaining.flows.items) |*flow|
-            try self.recordOutcomeExit(flow, .{ ok.index, failure.index }, &exits);
-        var results = std.array_list.Managed(facts.OutcomePostStates).init(self.allocator);
-        for (exits, 0..) |entry, index| if (entry) |states| {
-            try results.append(.{
-                .variant_index = if (index == 0) ok.index else failure.index,
-                .input_post_states = try self.allocator.dupe(facts.PlacePostState, states.items),
-            });
-        };
-        return results.toOwnedSlice();
-    }
-
-    fn recordOutcomeExit(
-        self: *Infer,
-        flow: *const InputPostStateFlow,
-        variants: [2]u32,
-        exits: *[2]?std.array_list.Managed(facts.PlacePostState),
-    ) !void {
-        if (!flow.reachable) return;
-        for (variants, 0..) |variant, index| {
-            if (flow.outcome_variant != null and flow.outcome_variant.? != variant) continue;
-            try self.recordInputPostStateExit(&exits[index], &flow.states);
-        }
-    }
-
-    fn appendOutcomeFlow(self: *Infer, set: *OutcomeFlowSet, source: *const InputPostStateFlow) !void {
-        if (!source.reachable) return;
-        for (set.flows.items) |*existing| if (existing.outcome_variant == source.outcome_variant) {
-            var merged = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
-            defer merged.deinit();
-            try self.joinInputPostStates(&merged, &existing.states, &source.states);
-            existing.states.clearRetainingCapacity();
-            try existing.states.appendSlice(merged.items);
-            return;
-        };
-        try set.flows.append(try source.clone(self.allocator));
-    }
-
-    fn inferOutcomeBlock(
-        self: *Infer,
-        function_id: graph_mod.GlobalFunctionId,
-        block_id: graph_mod.GlobalBlockId,
-        output_binding: graph_mod.GlobalBindingId,
-        initial: InputPostStateFlow,
-        variants: [2]u32,
-        exits: *[2]?std.array_list.Managed(facts.PlacePostState),
-    ) anyerror!OutcomeFlowSet {
-        var active = OutcomeFlowSet.init(self.allocator);
-        try self.appendOutcomeFlow(&active, &initial);
-        const block = self.graph.blocks.items[@intFromEnum(block_id)];
-        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
-            var next = OutcomeFlowSet.init(self.allocator);
-            errdefer next.deinit();
-            const node = self.graph.node(node_id);
-            for (active.flows.items) |*flow| {
-                var branch = try flow.clone(self.allocator);
-                defer branch.deinit();
-                var early_exits: ?std.array_list.Managed(facts.PlacePostState) = null;
-                defer if (early_exits) |*states| states.deinit();
-                switch (node.content) {
-                    .if_statement => |statement| {
-                        try self.inferInputPostStatesExpression(function_id, statement.condition, &branch.states, &early_exits);
-                        var then_flows = try self.inferOutcomeBlock(function_id, statement.then_block, output_binding, branch, variants, exits);
-                        defer then_flows.deinit();
-                        for (then_flows.flows.items) |*child| try self.appendOutcomeFlow(&next, child);
-                        if (statement.else_block) |else_block| {
-                            var else_flows = try self.inferOutcomeBlock(function_id, else_block, output_binding, branch, variants, exits);
-                            defer else_flows.deinit();
-                            for (else_flows.flows.items) |*child| try self.appendOutcomeFlow(&next, child);
-                        } else try self.appendOutcomeFlow(&next, &branch);
-                    },
-                    .switch_statement => |switch_id| {
-                        const statement = self.graph.switches.items[@intFromEnum(switch_id)];
-                        try self.inferInputPostStatesExpression(function_id, statement.expression, &branch.states, &early_exits);
-                        for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| {
-                            var child_flows = try self.inferOutcomeBlock(function_id, case.body, output_binding, branch, variants, exits);
-                            defer child_flows.deinit();
-                            for (child_flows.flows.items) |*child| try self.appendOutcomeFlow(&next, child);
-                        }
-                        if (statement.default_block) |default_block| {
-                            var child_flows = try self.inferOutcomeBlock(function_id, default_block, output_binding, branch, variants, exits);
-                            defer child_flows.deinit();
-                            for (child_flows.flows.items) |*child| try self.appendOutcomeFlow(&next, child);
-                        } else if (!statement.exhaustive) try self.appendOutcomeFlow(&next, &branch);
-                    },
-                    .code_block => |child| {
-                        var children = try self.inferOutcomeBlock(function_id, child, output_binding, branch, variants, exits);
-                        defer children.deinit();
-                        for (children.flows.items) |*child_flow| try self.appendOutcomeFlow(&next, child_flow);
-                    },
-                    .return_statement => |statement| {
-                        if (statement.expression) |expression| {
-                            try self.inferInputPostStatesExpression(function_id, expression, &branch.states, &early_exits);
-                            branch.outcome_variant = (try self.inferExpression(function_id, expression)).known_choice_variant;
-                        }
-                        try self.inferInputPostStatesRange(function_id, statement.cleanup, &branch, &early_exits);
-                        try self.recordOutcomeExit(&branch, variants, exits);
-                    },
-                    else => {
-                        try self.inferInputPostStatesNode(function_id, node_id, &branch, &early_exits);
-                        // The ordinary loop transfer joins iterations without
-                        // retaining which result variant each iteration chose.
-                        // Both outcomes must therefore satisfy the contract.
-                        if (node.content == .while_statement or node.content == .for_statement)
-                            branch.outcome_variant = null;
-                        if (node.content == .assignment and node.content.assignment.binding == output_binding)
-                            branch.outcome_variant = (try self.inferExpression(function_id, node.content.assignment.value)).known_choice_variant;
-                        try self.appendOutcomeFlow(&next, &branch);
-                    },
-                }
-                if (early_exits) |states| {
-                    var early = InputPostStateFlow.init(self.allocator);
-                    defer early.deinit();
-                    try early.states.appendSlice(states.items);
-                    early.outcome_variant = variants[1];
-                    try self.recordOutcomeExit(&early, variants, exits);
-                }
-            }
-            active.deinit();
-            active = next;
-        }
-        if (block.ret_val) |value| for (active.flows.items) |*flow| {
-            var early_exits: ?std.array_list.Managed(facts.PlacePostState) = null;
-            defer if (early_exits) |*states| states.deinit();
-            try self.inferInputPostStatesExpression(function_id, value, &flow.states, &early_exits);
-            if (early_exits) |states| {
-                var early = InputPostStateFlow.init(self.allocator);
-                defer early.deinit();
-                try early.states.appendSlice(states.items);
-                early.outcome_variant = variants[1];
-                try self.recordOutcomeExit(&early, variants, exits);
-            }
-        };
-        return active;
-    }
 
     const OpaqueEmptyState = struct {
         emptied: std.array_list.Managed(facts.InputPath),
@@ -1872,11 +1700,7 @@ pub const Infer = struct {
                 states,
                 exits,
             ),
-            .type_initializer => |initializer| {
-                try self.inferInputPostStatesExpression(function_id, initializer.args, states, exits);
-                const summary = self.engine.summaryFor(initializer.init_fn) orelse return;
-                try self.applyInputPostStatesFromArguments(function_id, summary, try self.initializerArguments(initializer.args), states, .{ .input_index = 0, .effect = .{} });
-            },
+
             else => {},
         }
     }
@@ -2615,11 +2439,7 @@ pub const Infer = struct {
                 state,
                 exits,
             ),
-            .type_initializer => |initializer| {
-                try self.inferOpaqueEmptyExpression(function_id, initializer.args, effects, state, exits);
-                const summary = self.engine.summaryFor(initializer.init_fn) orelse return;
-                try self.applyOpaqueEmptySummaryArguments(function_id, summary, try self.initializerArguments(initializer.args), effects, state, .{ .input_index = 0, .effect = .{} });
-            },
+
             else => {},
         }
     }
@@ -3107,15 +2927,7 @@ pub const Infer = struct {
                 try self.inferRequiredLiveInputsRange(function_id, statement.cleanup, required);
             },
             .code_block => |child| try self.inferRequiredLiveInputsBlock(function_id, child, required),
-            .type_initializer => |initializer| {
-                try self.inferRequiredLiveInputsNode(function_id, initializer.args, required);
-                const summary = self.engine.summaryFor(initializer.init_fn) orelse return;
-                const arguments = try self.initializerArguments(initializer.args);
-                for (summary.required_live_inputs) |path| {
-                    const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, .{ .input_index = 0, .effect = .{} });
-                    for (mapped) |candidate| try appendInputPath(required, candidate);
-                }
-            },
+
             .auto_deinit_binding => |auto_id| try self.inferAutoDeinitRequiredLiveInputs(function_id, auto_id, required),
             else => {},
         }
@@ -3343,12 +3155,7 @@ pub const Infer = struct {
                 try self.inferExpression(function_id, cast.value)
             else
                 .{},
-            .type_initializer => |initializer| blk: {
-                const arguments = try self.initializerArguments(initializer.args);
-                const effect = try self.constructorResultEffect(initializer.init_fn, node.ty orelse return error.InvalidInitializerType);
-                const substituted = try self.substituteOutputWithOverride(function_id, effect, arguments, .{ .input_index = 0, .effect = .{} });
-                break :blk try self.rebaseFreshSources(substituted, node_id);
-            },
+
             .testing_expect_error => |id| blk: {
                 const expect = self.graph.testing_expect_errors.items[@intFromEnum(id)];
                 const input = expect.test_fail_input orelse break :blk .{};
@@ -3429,65 +3236,38 @@ pub const Infer = struct {
         return self.rebaseFreshSources(aggregate, call_node);
     }
 
-    fn initializerArguments(self: *Infer, input: graph_mod.GlobalNodeId) ![]const graph_mod.ValueField {
-        const explicit = self.structArguments(input) orelse return error.InvalidInitializerArguments;
-        const arguments = try self.allocator.alloc(graph_mod.ValueField, explicit.len + 1);
-        // The implicit destination has no caller-input identity. Substitution
-        // always overrides this placeholder with its symbolic value.
-        arguments[0] = .{ .name = .{ .start = 0, .len = 0 }, .value = input };
-        @memcpy(arguments[1..], explicit);
-        return arguments;
-    }
-
-    /// Constructors publish the value established by init's destination
-    /// post-state, rather than an ordinary function output. Parameter indices
-    /// remain those of init, including destination input zero.
-    pub fn initializerResultEffect(self: *Infer, init_fn: graph_mod.GlobalFunctionId) !facts.ValueEffect {
-        const summary = self.engine.summaryFor(init_fn) orelse return .{};
-        const function = self.graph.function(init_fn);
-        var post_states = summary.input_post_states;
-        if (function.output.len == 1) {
-            post_states = &.{};
-            const result_ty = self.graph.fields.items[function.output.start].ty;
-            const ok = types.findVariant(self.graph, result_ty, "ok") orelse return error.InvalidInitializerResult;
-            for (summary.outcome_post_states) |outcome| if (outcome.variant_index == ok.index) {
-                post_states = outcome.input_post_states;
-                break;
-            };
+    // Field-wise construction is ordinary output construction. Preserve the
+    // dependencies of projected writes just as whole-binding assignments do.
+    fn storeOutputProjection(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, path: []const facts.Projection, value: graph_mod.GlobalNodeId, outputs: []facts.ValueEffect) anyerror!void {
+        switch (self.graph.node(target).content) {
+            .binding_use => |binding| {
+                // Input-pointer writes belong to input post-states. Updating
+                // the pointer binding here would replace its reference effect
+                // with the pointee's fields and lose the caller's root identity.
+                if (self.inputIndex(function, binding) != null) return;
+                const ty = self.graph.resolvedSemanticType(self.graph.binding(binding).ty) orelse return;
+                if (ty == .pointer) return;
+                if (self.outputIndex(function, binding)) |index| {
+                    // TODO: Unify ordinary projected output writes with the
+                    // existing input post-state flow before broadening this
+                    // path. Replaying their RHS can duplicate opaque effects.
+                    if (self.graph.declaration(self.graph.function(function).declaration).constructor_type == null) return;
+                    outputs[index] = try self.storeEffectProjection(outputs[index], path, try self.inferExpression(function, value));
+                }
+            },
+            .struct_field_access => |field| {
+                const nested = try self.allocator.alloc(facts.Projection, path.len + 1);
+                nested[0] = .{ .field = field.field_index };
+                @memcpy(nested[1..], path);
+                try self.storeOutputProjection(function, field.value, nested, value, outputs);
+            },
+            .dereference => |read| {
+                for (try self.localAddressTargets(read.pointer)) |place|
+                    try self.storeOutputProjection(function, place, path, value, outputs);
+            },
+            .address_of => |place| try self.storeOutputProjection(function, place, path, value, outputs),
+            else => {},
         }
-        var result: facts.ValueEffect = .{};
-        for (post_states) |state| {
-            if (state.target.input_index != 0 or state.initializedness != .initialized) continue;
-            result = try self.storeEffectProjection(result, state.target.projections, state.value);
-        }
-        return result;
-    }
-
-    pub fn constructorResultEffect(
-        self: *Infer,
-        init_fn: graph_mod.GlobalFunctionId,
-        result_ty: graph_mod.GlobalTypeId,
-    ) !facts.ValueEffect {
-        const success = try self.initializerResultEffect(init_fn);
-        const function = self.graph.function(init_fn);
-        if (function.output.len == 0) return success;
-        const summary = self.engine.summaryFor(init_fn) orelse return .{};
-        const source_ty = self.graph.fields.items[function.output.start].ty;
-        const source_error = types.findVariant(self.graph, source_ty, "error") orelse return error.InvalidInitializerResult;
-        const target_ok = types.findVariant(self.graph, result_ty, "ok") orelse return error.InvalidInitializerResult;
-        const target_error = types.findVariant(self.graph, result_ty, "error") orelse return error.InvalidInitializerResult;
-        const error_effect = if (summary.outputs.len == 1)
-            try self.projectValueEffect(summary.outputs[0], .{ .variant = source_error.index })
-        else
-            facts.ValueEffect{};
-        const ok_value = try self.allocator.create(facts.ValueEffect);
-        ok_value.* = success;
-        const err_value = try self.allocator.create(facts.ValueEffect);
-        err_value.* = error_effect;
-        const variants = try self.allocator.alloc(facts.OutputVariantEffect, 2);
-        variants[0] = .{ .index = target_ok.index, .value = ok_value };
-        variants[1] = .{ .index = target_error.index, .value = err_value };
-        return .{ .variants = variants };
     }
 
     fn storeEffectProjection(self: *Infer, previous: facts.ValueEffect, projections: []const facts.Projection, value: facts.ValueEffect) anyerror!facts.ValueEffect {
@@ -3514,8 +3294,12 @@ pub const Infer = struct {
             child.* = try self.storeEffectProjection(.{}, projections[1..], value);
             try fields.append(.{ .index = index, .value = child });
         }
-        var result = previous;
-        for (fields.items) |field| result = try self.mergeValueEffects(result, field.value.*);
+        var result: facts.ValueEffect = .{};
+        for (fields.items) |field| {
+            result = try self.mergeValueEffects(result, field.value.*);
+            result.variants = &.{};
+            result.known_choice_variant = null;
+        }
         result.fields = try fields.toOwnedSlice();
         return result;
     }

@@ -4,8 +4,8 @@ FailSecondAllocator : Type = (
     .deallocations: Int32
 )
 
-init(.p: $&FailSecondAllocator, .ffi: $&ForeignFunctionInterface) -> () := {
-    p& = (.ffi = ffi, .allocations = 0, .deallocations = 0)
+FailSecondAllocator init(.ffi: $&ForeignFunctionInterface) -> (.result: FailSecondAllocator) := {
+    result = (.ffi = ffi, .allocations = 0, .deallocations = 0)
 }
 
 allocate(.self: $&FailSecondAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {

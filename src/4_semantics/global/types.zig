@@ -402,7 +402,9 @@ pub fn genericArgumentsEqual(graph: *const graph_mod.GlobalSemanticGraph, a: any
     for (0..a.len) |index| {
         const left = graph.generic_arguments.items[a.start + @as(u32, @intCast(index))];
         const right = graph.generic_arguments.items[b.start + @as(u32, @intCast(index))];
-        if (!std.mem.eql(u8, graph.text(left.name), graph.text(right.name))) return false;
+        // Positional arguments and their named spelling identify the same
+        // specialization when their declaration-order values agree.
+        if (left.name.len != 0 and right.name.len != 0 and !std.mem.eql(u8, graph.text(left.name), graph.text(right.name))) return false;
         switch (left.value) {
             .type => |left_ty| switch (right.value) {
                 .type => |right_ty| if (!identityEqual(graph, left_ty, right_ty)) return false,

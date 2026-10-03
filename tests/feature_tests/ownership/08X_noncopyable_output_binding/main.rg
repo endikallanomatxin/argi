@@ -1,6 +1,8 @@
 Resource : Type = ()
 
-init(.res: $&Resource) -> () := {}
+Resource init() -> (.result: Resource) := {
+    result = ()
+}
 
 deinit(.res: $&Resource) -> () := {}
 

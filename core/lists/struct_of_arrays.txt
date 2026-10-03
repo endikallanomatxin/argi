@@ -15,7 +15,7 @@ StructOfArrays#(.t: Type) : Type = (
     ...
 )
 
-init#(.t: Type)(.p: $&StructOfArrays#(.t: t), .source) -> () := {
+StructOfArrays init#(.t: Type)(.source) -> (.result: StructOfArrays#(.t: t)) := {
     ...
 }
 

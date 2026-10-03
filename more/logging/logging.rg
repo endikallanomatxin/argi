@@ -9,8 +9,8 @@ FileLogger : Type = (
     .file: $&Writer
 )
 
-init(.t: Type = FileLogger, .file: $&Writer) -> (.out: FileLogger) := {
-    return FileLogger(.file = file)
+FileLogger init(.file: $&Writer) -> (.out: FileLogger) := {
+    out = (.file = file)
 }
 
 StdLogger : Type = (
@@ -18,9 +18,8 @@ StdLogger : Type = (
     .error_writer: $&Writer
 )
 
-init(.t: Type = StdLogger, .writer: $&Writer, .error_writer: $&Writer) -> (.out: StdLogger) := {
-    -- TODO: Consider how to declare this with the convenient init syntax.
-    return StdLogger(.writer = writer, .error_writer = error_writer)
+StdLogger init(.writer: $&Writer, .error_writer: $&Writer) -> (.out: StdLogger) := {
+    out = (.writer = writer, .error_writer = error_writer)
 }
 
 LoggerMultiplexer : Type = (

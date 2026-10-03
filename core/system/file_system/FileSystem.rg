@@ -3,8 +3,8 @@ FileSystem : Type = (._ffi: $&ForeignFunctionInterface)
 ..path_remove_failed
 ..path_rename_failed
 
-once init(.p: $&FileSystem, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
-    p&._ffi = ffi
+once FileSystem init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: FileSystem) := {
+    result._ffi = ffi
 }
 
 exists(

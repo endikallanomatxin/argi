@@ -339,6 +339,7 @@ pub const FrontendPipeline = struct {
             try groups.items[group_index.?].files.append(self.allocator, .{
                 .path = source.path,
                 .tree = file,
+                .diagnostics = self.diagnostics,
                 .source = source.source,
                 .is_bundled_core = source.origin == .bundled_core,
                 .is_entry = file.file_id == self.entry_file,

@@ -146,7 +146,6 @@ pub const PendingExpressionKind = enum(u8) {
     unwrap_or_do,
     nullable_test,
     generic_call,
-    type_initializer,
     explicit_cast,
     choice_literal,
     field_access,

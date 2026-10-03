@@ -466,6 +466,14 @@ pub const Syntaxer = struct {
 
         while (!self.tokenIs(.close_parenthesis)) {
             var name = try self.parseName();
+            var constructor_type: ?syn.TokenIndex = null;
+            if (self.currentContent() == .identifier and self.tokenText(self.currentContent().identifier).len == 4 and
+                std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "init"))
+            {
+                constructor_type = name.token;
+                name = try self.parseName();
+            }
+
             if (std.mem.eql(u8, name.text, "operator")) {
                 name = try self.parseOperatorName(name.token);
             }
@@ -1575,6 +1583,7 @@ pub const Syntaxer = struct {
         is_once: bool,
         generic_params: syn.NodeRange,
         generic_params_struct: ?syn.NodeIndex,
+        constructor_type: ?syn.TokenIndex,
     ) SyntaxerError!syn.NodeIndex {
         const input = try self.parseStructTypeLiteral();
 
@@ -1601,6 +1610,7 @@ pub const Syntaxer = struct {
                     }
                     const extra = try self.addExtra(syn.FunctionExtra{
                         .name_token = name.token,
+                        .constructor_type = syn.OptionalTokenIndex.init(constructor_type),
                         .generic_params_start = generic_params.start,
                         .generic_params_end = generic_params.end,
                         .generic_params_struct = .none,
@@ -1630,6 +1640,7 @@ pub const Syntaxer = struct {
                     } else .none;
                     const extra = try self.addExtra(syn.FunctionExtra{
                         .name_token = name.token,
+                        .constructor_type = syn.OptionalTokenIndex.init(constructor_type),
                         .generic_params_start = generic_params.start,
                         .generic_params_end = generic_params.end,
                         .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
@@ -1651,6 +1662,7 @@ pub const Syntaxer = struct {
 
         const extra = try self.addExtra(syn.FunctionExtra{
             .name_token = name.token,
+            .constructor_type = syn.OptionalTokenIndex.init(constructor_type),
             .generic_params_start = generic_params.start,
             .generic_params_end = generic_params.end,
             .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
@@ -1670,7 +1682,7 @@ pub const Syntaxer = struct {
         const name = try self.parseName();
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
 
-        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, try self.addNodeRange(&.{}), null);
+        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, try self.addNodeRange(&.{}), null, null);
         const function = self.file.functionDeclaration(decl_node).?;
 
         if (function.body == null) {
@@ -1778,6 +1790,18 @@ pub const Syntaxer = struct {
         const id_loc = self.tokenLocation();
         var name = try self.parseName();
 
+        var constructor_type: ?syn.TokenIndex = null;
+        if (self.currentContent() == .identifier and self.tokenText(self.currentContent().identifier).len == 4 and
+            std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "init"))
+        {
+            constructor_type = name.token;
+            _ = try self.addNode(.type_name, name.token, .{ .token_and_optional_token = .{
+                .token = name.token,
+                .optional = .none,
+            } });
+            name = try self.parseName();
+        }
+
         if (std.mem.eql(u8, name.text, "operator")) {
             name = try self.parseOperatorName(name.token);
         }
@@ -1825,12 +1849,14 @@ pub const Syntaxer = struct {
 
         if (self.tokenIs(.open_parenthesis)) {
             if (self.looksLikeFunctionDeclarationInput(self.index)) {
-                return try self.parseNamedFunctionLikeDeclaration(
+                const declaration = try self.parseNamedFunctionLikeDeclaration(
                     name,
                     is_once,
                     generic_params,
                     generic_params_struct,
+                    constructor_type,
                 );
+                return declaration;
             } else {
                 if (is_once) {
                     try self.diags.add(id_loc, .syntax, "once can only be used on function declarations", .{});

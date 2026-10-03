@@ -1778,7 +1778,7 @@ test "feature_tests/ownership/04_noncopyable_temporary_values" {
 
 test "feature_tests/ownership/05X_noncopyable_assignment" {
     try buildExpectFailExact("tests/feature_tests/ownership/05X_noncopyable_assignment",
-        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:9:15: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:11:15: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      second := first
         \\                ^
         \\
@@ -1787,7 +1787,7 @@ test "feature_tests/ownership/05X_noncopyable_assignment" {
 
 test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/06X_noncopyable_argument_by_value",
-        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:13:34: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:15:34: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      status_code = consume(.res = handle)
         \\                                   ^
         \\
@@ -1796,7 +1796,7 @@ test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
 
 test "feature_tests/ownership/07X_noncopyable_struct_field" {
     try buildExpectFailExact("tests/feature_tests/ownership/07X_noncopyable_struct_field",
-        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:13:33: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:15:33: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      wrapped : Wrapper = (.res = handle)
         \\                                  ^
         \\
@@ -1805,7 +1805,7 @@ test "feature_tests/ownership/07X_noncopyable_struct_field" {
 
 test "feature_tests/ownership/08X_noncopyable_output_binding" {
     try buildExpectFailExact("tests/feature_tests/ownership/08X_noncopyable_output_binding",
-        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:8:11: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:10:11: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      out = res
         \\            ^
         \\
@@ -1838,7 +1838,7 @@ test "feature_tests/ownership/13_move_operator" {
 
 test "feature_tests/ownership/14X_use_after_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/14X_use_after_move",
-        \\tests/feature_tests/ownership/14X_use_after_move/main.rg:14:34: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:13:34)
+        \\tests/feature_tests/ownership/14X_use_after_move/main.rg:16:34: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:15:34)
         \\      status_code = consume(.res = handle)
         \\                                   ^
         \\
@@ -1847,7 +1847,7 @@ test "feature_tests/ownership/14X_use_after_move" {
 
 test "feature_tests/ownership/15X_reassign_after_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/15X_reassign_after_move",
-        \\tests/feature_tests/ownership/15X_reassign_after_move/main.rg:14:5: error: binding 'handle' was moved and cannot be reassigned (moved at tests/feature_tests/ownership/15X_reassign_after_move/main.rg:13:34)
+        \\tests/feature_tests/ownership/15X_reassign_after_move/main.rg:16:5: error: binding 'handle' was moved and cannot be reassigned (moved at tests/feature_tests/ownership/15X_reassign_after_move/main.rg:15:34)
         \\      handle = Resource()
         \\      ^
         \\
@@ -2229,7 +2229,7 @@ test "feature_tests/types/20_struct_initializer_without_init" {
 test "feature_tests/types/21X_struct_initializer_must_use_visible_init" {
     try buildExpectFailExact("tests/feature_tests/types/21X_struct_initializer_must_use_visible_init",
         \\tests/feature_tests/types/21X_struct_initializer_must_use_visible_init/main.rg:14:19: error: failed to initialize type 'Point': no visible 'init' overload accepts arguments (.x: Int32, .y: Int32). Available overloads:
-        \\  - init (.p: $&Point, .sum: Int32) -> ()
+        \\  - Point init (.sum: Int32) -> (.result: Point)
         \\      point := Point(.x = 1, .y = 2)
         \\                    ^
         \\
@@ -2742,7 +2742,7 @@ test "feature_tests/io/22_abstract_writer_field_assignment" {
 
 test "feature_tests/io/23X_abstract_writer_field_conflicting_assignment" {
     try buildExpectFailExact("tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment",
-        \\tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment/main.rg:46:17: error: field '.writer' already stores '$&FirstWriter' for abstract type '$&Writer', so it cannot also store '$&SecondWriter'
+        \\tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment/main.rg:50:17: error: field '.writer' already stores '$&FirstWriter' for abstract type '$&Writer', so it cannot also store '$&SecondWriter'
         \\      p&.writer = writer
         \\                  ^
         \\
@@ -3008,7 +3008,7 @@ test "feature_tests/ownership/35_system_move_by_value" {
 
 test "feature_tests/ownership/36X_double_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/36X_double_move",
-        \\tests/feature_tests/ownership/36X_double_move/main.rg:14:35: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/36X_double_move/main.rg:13:34)
+        \\tests/feature_tests/ownership/36X_double_move/main.rg:16:35: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/36X_double_move/main.rg:15:34)
         \\      status_code = consume(.res = ~handle)
         \\                                    ^
         \\
@@ -3054,7 +3054,7 @@ test "feature_tests/system/19X_once_duplicate_branches" {
 
 test "feature_tests/system/20X_once_duplicate_init" {
     try buildExpectFailExact("tests/feature_tests/system/20X_once_duplicate_init",
-        \\tests/feature_tests/system/20X_once_duplicate_init/main.rg:8:15: error: once function 'init' is consumed more than once from the reachable entrypoint graph (first use at tests/feature_tests/system/20X_once_duplicate_init/main.rg:7:14 via 'main')
+        \\tests/feature_tests/system/20X_once_duplicate_init/main.rg:10:15: error: once function 'init' is consumed more than once from the reachable entrypoint graph (first use at tests/feature_tests/system/20X_once_duplicate_init/main.rg:9:14 via 'main')
         \\      second := Token()
         \\                ^
         \\
@@ -4426,7 +4426,7 @@ test "feature_tests/ownership/31_array_of_pointers_is_copyable" {
 
 test "feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable" {
     try buildExpectFailExact("tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable",
-        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:9:15: error: type '[2]Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:11:15: error: type '[2]Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      copied := resources
         \\                ^
         \\
@@ -6430,21 +6430,20 @@ test "feature_tests/text/20_fallible_string_constructor" {
 test "feature_tests/types/262X_fallible_init_success_without_value" {
     try buildExpectFail(
         "tests/feature_tests/types/262X_fallible_init_success_without_value",
-        "initializer returns ..ok without fully initializing its destination",
+        "value was deinitialized",
     );
 }
 
-test "feature_tests/types/263X_fallible_init_error_with_value" {
-    try buildExpectFail(
-        "tests/feature_tests/types/263X_fallible_init_error_with_value",
-        "initializer returns ..error with a live value in its destination",
-    );
+test "feature_tests/types/263_fallible_constructor_error_cleanup" {
+    const path = "tests/feature_tests/types/263_fallible_constructor_error_cleanup";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
 }
 
 test "feature_tests/types/264X_fallible_init_requires_outcome" {
     try buildExpectFail(
         "tests/feature_tests/types/264X_fallible_init_requires_outcome",
-        "is maybe_initialized and cannot be used",
+        "value was deinitialized",
     );
 }
 
@@ -6465,7 +6464,7 @@ test "feature_tests/ownership/294X_fallible_constructor_preserves_root" {
 test "feature_tests/types/267X_initializer_wrong_result" {
     try buildExpectFail(
         "tests/feature_tests/types/267X_initializer_wrong_result",
-        "initializer must return () or one Errable<Void, R> result",
+        "initializer must return its constructed type or one Errable of that type",
     );
 }
 
@@ -8595,4 +8594,22 @@ test "feature_tests/system/49_target_selection" {
 
 test "feature_tests/system/50X_target_condition" {
     try buildExpectFailWithoutNoise("tests/feature_tests/system/50X_target_condition", "unknown OS, architecture, or ABI name", "failed without a diagnostic");
+}
+
+test "feature_tests/types/273_associated_constructor_dispatch" {
+    const test_path = "tests/feature_tests/types/273_associated_constructor_dispatch";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/types/274X_constructor_wrong_association" {
+    try buildExpectFail("tests/feature_tests/types/274X_constructor_wrong_association", "initializer must return its constructed type");
+}
+
+test "feature_tests/types/275X_constructor_return_only_overloads" {
+    try buildExpectFail("tests/feature_tests/types/275X_constructor_return_only_overloads", "ambiguous constructor call");
+}
+
+test "feature_tests/types/276X_constructor_unknown_type" {
+    try buildExpectFail("tests/feature_tests/types/276X_constructor_unknown_type", "constructor type 'Missing' must name a type declared in this module");
 }

@@ -32,11 +32,13 @@ GeneralPurposeAllocator : Type = (
     ._large_head: UIntNative
 )
 
-init(.p: $&GeneralPurposeAllocator, .allocator: $&Allocator) -> () := {
-    p&._backing_allocator = to_virtual#(.abstract: Allocator)(.value = allocator)
-    p&._bucket_size = 4096
-    p&._bucket_head = 0
-    p&._large_head = 0
+GeneralPurposeAllocator init(.allocator: $&Allocator) -> (.result: GeneralPurposeAllocator) := {
+    result = (
+        ._backing_allocator = to_virtual#(.abstract: Allocator)(.value = allocator),
+        ._bucket_size = 4096,
+        ._bucket_head = 0,
+        ._large_head = 0,
+    )
 }
 
 -- Only bundled core may turn the allocator's live metadata address into a

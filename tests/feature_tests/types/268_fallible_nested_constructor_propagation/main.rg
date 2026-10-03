@@ -1,18 +1,22 @@
 Widget : Type = (.value: Int32)
 Wrapper : Type = (.widget: Widget)
 
-init(.p: $&Widget, .fail: Bool) -> (.result: Errable#(.t: Void, .reasons: (..rejected))) := {
+Widget init(.fail: Bool) -> (.result: Errable#(.t: Widget, .reasons: (..rejected))) := {
+    constructed :: Widget
+
     if fail {
         result = ..error(.reason = ..rejected)
         return
     }
-    p& = (.value = 42)
-    result = ..ok Void()
+    constructed = (.value = 42)
+    result = ..ok ~constructed
 }
 
-init(.p: $&Wrapper, .fail: Bool) -> (.result: Errable#(.t: Void, .reasons: (..rejected))) := {
-    p& = (.widget = Widget(.fail = fail)!)
-    result = ..ok Void()
+Wrapper init(.fail: Bool) -> (.result: Errable#(.t: Wrapper, .reasons: (..rejected))) := {
+    constructed :: Wrapper
+
+    constructed = (.widget = Widget(.fail = fail)!)
+    result = ..ok ~constructed
 }
 
 main() -> (.status_code: Int32 = 0) := {

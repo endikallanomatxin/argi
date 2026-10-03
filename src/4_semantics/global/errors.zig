@@ -171,7 +171,7 @@ pub const Resolver = struct {
                 try self.collectNode(function, value.pointer, out);
                 try self.collectNode(function, value.value, out);
             },
-            .type_initializer => |value| try self.collectNode(function, value.args, out),
+
             .denied_implicit_copy => |value| try self.collectNode(function, value, out),
             .explicit_cast => |value| try self.collectNode(function, value.value, out),
             else => {},
@@ -345,6 +345,37 @@ pub const Resolver = struct {
             return @enumFromInt(@as(u32, @intCast(raw)));
         }
         return null;
+    }
+
+    /// Contextual literal typing can finish a nominal payload after propagation
+    /// first resolves. Keep transparent result unwrapping tied to the final
+    /// payload identity rather than retaining its provisional structural shape.
+    pub fn refreshPropagationResults(self: *Resolver) bool {
+        var changed = false;
+        for (self.graph.nodes.items) |*node| {
+            switch (node.content) {
+                .error_propagation => |id| {
+                    const propagation = &self.graph.error_propagations.items[@intFromEnum(id)];
+                    const index = singleFieldIndex(self.graph, propagation.ok_payload_type);
+                    if (index != propagation.ok_value_field_index) {
+                        propagation.ok_value_field_index = index;
+                        node.ty = unwrapSingleField(self.graph, propagation.ok_payload_type) orelse propagation.ok_payload_type;
+                        changed = true;
+                    }
+                },
+                .error_context => |id| {
+                    const propagation = &self.graph.error_contexts.items[@intFromEnum(id)];
+                    const index = singleFieldIndex(self.graph, propagation.ok_payload_type);
+                    if (index != propagation.ok_value_field_index) {
+                        propagation.ok_value_field_index = index;
+                        node.ty = unwrapSingleField(self.graph, propagation.ok_payload_type) orelse propagation.ok_payload_type;
+                        changed = true;
+                    }
+                },
+                else => {},
+            }
+        }
+        return changed;
     }
 
     fn resolve(self: *Resolver, o: globalizer.Offsets, value: anytype) !bool {
@@ -584,7 +615,7 @@ pub const Resolver = struct {
             },
             .dereference => |value| self.nodeContains(value.pointer, target),
             .pointer_assignment => |value| self.nodeContains(value.pointer, target) or self.nodeContains(value.value, target),
-            .type_initializer => |value| self.nodeContains(value.args, target),
+
             .denied_implicit_copy => |value| self.nodeContains(value, target),
             .explicit_cast => |value| self.nodeContains(value.value, target),
             else => false,

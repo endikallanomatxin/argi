@@ -6,10 +6,12 @@ HashSet#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key)) 
     ._map: HashMap#(.key: key, .value: _HashSetValue, .policy: policy)
 )
 
-init#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key))(.p: $&HashSet#(.key: key, .policy: policy), .policy: policy, .allocator: $&Allocator, .capacity: UIntNative = 8) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+HashSet init#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key))(.policy: policy, .allocator: $&Allocator, .capacity: UIntNative = 8) -> (.result: Errable#(.t: HashSet#(.key: key, .policy: policy), .reasons: (..out_of_memory))) := {
+    constructed :: HashSet#(.key: key, .policy: policy)
+
     map ::= HashMap#(.key: key, .value: _HashSetValue, .policy: policy)(.policy = ~policy, .allocator = allocator, .capacity = capacity)!
-    p& = (._map = ~map)
-    result = ..ok Void()
+    constructed = (._map = ~map)
+    result = ..ok ~constructed
 }
 
 insert#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key))(.self: $&HashSet#(.key: key, .policy: policy), .key: key, .allocator: $&Allocator) -> (.result: Errable#(.t: Bool, .reasons: (..out_of_memory))) := {

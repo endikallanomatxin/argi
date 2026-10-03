@@ -108,11 +108,9 @@ string_hash_map_prepare_buckets(
     }
 }
 
-init#(.value: Type) (
-    .p: $&StringHashMap#(.value: value),
-    .allocator: $&Allocator,
+StringHashMap init#(.value: Type) (.allocator: $&Allocator,
     .capacity: UIntNative = 8,
-) -> () := {
+) -> (.result: StringHashMap#(.value: value)) := {
     assume allocator
 
     bucket_capacity ::= capacity
@@ -120,8 +118,8 @@ init#(.value: Type) (
         bucket_capacity = 1
     }
 
-    p&.entries = unwrap_or_abort(.value = DynamicArray#(.t: StringHashMapEntry#(.value: value))(.allocator = allocator, .capacity = bucket_capacity))
-    string_hash_map_prepare_buckets(.allocator = allocator, .buckets = $&p&.buckets, .capacity = bucket_capacity)
+    result.entries = unwrap_or_abort(.value = DynamicArray#(.t: StringHashMapEntry#(.value: value))(.allocator = allocator, .capacity = bucket_capacity))
+    string_hash_map_prepare_buckets(.allocator = allocator, .buckets = $&result.buckets, .capacity = bucket_capacity)
 }
 
 deinit#(.value: Type) (

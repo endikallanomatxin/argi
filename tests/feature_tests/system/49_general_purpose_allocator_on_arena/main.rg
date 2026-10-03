@@ -1,6 +1,6 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
     arena :: ArenaAllocator
-    unwrap_or_abort(.value = init(.p = $&arena, .allocator = system.page_allocator, .block_size = 16384))
+    arena = unwrap_or_abort(.value = ArenaAllocator(.allocator = system.page_allocator, .block_size = 16384))
     gpa ::= GeneralPurposeAllocator(.allocator = $&arena)
 
     small ::= unwrap_or_abort(.value = allocate(.self = $&gpa, .size = 32, .alignment = 16))

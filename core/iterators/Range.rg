@@ -13,40 +13,32 @@ RangeIterator#(.t: Type) : Type = (
 Range#(.t: Type) implements Iterable#(.t: t)
 RangeIterator#(.t: Type) implements Iterator#(.t: t)
 
-init#(.t: Type)(
-    .p: $&Range#(.t: t),
-    .end: t,
-) -> () := {
+Range init#(.t: Type)(.end: t,
+) -> (.result: Range#(.t: t)) := {
     zero : t = 0
     one : t = 1
-    init#(.t: t)(.p = p, .start = zero, .end = end, .step = one)
+    result = Range#(.t: t)(.start = zero, .end = end, .step = one)
 }
 
-init#(.t: Type)(
-    .p: $&Range#(.t: t),
-    .end: t,
+Range init#(.t: Type)(.end: t,
     .step: t,
-) -> () := {
+) -> (.result: Range#(.t: t)) := {
     zero : t = 0
-    init#(.t: t)(.p = p, .start = zero, .end = end, .step = step)
+    result = Range#(.t: t)(.start = zero, .end = end, .step = step)
 }
 
-init#(.t: Type)(
-    .p: $&Range#(.t: t),
-    .start: t,
+Range init#(.t: Type)(.start: t,
     .end: t,
-) -> () := {
+) -> (.result: Range#(.t: t)) := {
     one : t = 1
-    init#(.t: t)(.p = p, .start = start, .end = end, .step = one)
+    result = Range#(.t: t)(.start = start, .end = end, .step = one)
 }
 
-init#(.t: Type)(
-    .p: $&Range#(.t: t),
-    .start: t,
+Range init#(.t: Type)(.start: t,
     .end: t,
     .step: t,
-) -> () := {
-    p& = (
+) -> (.result: Range#(.t: t)) := {
+    result = (
         .start = start,
         .end = end,
         .step = step,

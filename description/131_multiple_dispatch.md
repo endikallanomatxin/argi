@@ -57,3 +57,13 @@ If all variants mean the same operation, pick one canonical input shape (for
 example `StringView` for read-only text) and make conversions explicit at the
 callsite. This keeps dispatch meaningful instead of turning it into adapter
 noise.
+
+## Constructors
+
+`T init#(...)(...)` associates a constructor with the nominal type family `T`.
+A call to `T(...)` considers only constructors associated with that family;
+ordinary input-type dispatch then selects the overload. The association is
+part of constructor identity, not a predicate over compile-time values.
+Compile-time parameters and return types still do not distinguish overloads
+within one family. Constructors do not participate in ordinary `init(...)`
+function calls.

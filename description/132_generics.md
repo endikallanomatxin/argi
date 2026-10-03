@@ -167,6 +167,15 @@ In short:
 * The same signature cannot be duplicated with or without `#(...)` (redefinition).
 
 
+## Constructor parameters
+
+`Box init#(.t: Type)(.value: t) -> (.result: Box#(.t: t))` declares `t` on
+`init`, not on `Box`. All names used by that constructor must be explicitly
+declared in its own scope. The associated type name narrows constructor
+lookup without adding equality predicates or value-based dispatch. The
+requested type's arguments can supply bindings; inputs infer remaining
+parameters and the ordinary constraints validate those bindings.
+
 ## Interaction with Virtual types
 
 * **Generics do not go in the vtable.** Vtable methods must be **monomorphic** after type erasure.

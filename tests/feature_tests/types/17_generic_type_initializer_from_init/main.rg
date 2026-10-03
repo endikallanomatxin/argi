@@ -2,9 +2,9 @@ Token#(.t: Type) : Type = (
     .tag: Int32
 )
 
-init#(.t: Type)(.p: $&Token#(.t: t), .sample: t) -> () := {
+Token init#(.t: Type)(.sample: t) -> (.result: Token#(.t: t)) := {
     _ ::= sample
-    p& = (
+    result = (
         .tag = 1
     )
 }

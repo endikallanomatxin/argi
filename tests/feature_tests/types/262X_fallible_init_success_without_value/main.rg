@@ -1,7 +1,9 @@
 Widget : Type = (.value: Int32)
 
-init(.p: $&Widget) -> (.result: Errable#(.t: Void, .reasons: (..rejected))) := {
-    result = ..ok Void()
+Widget init() -> (.result: Errable#(.t: Widget, .reasons: (..rejected))) := {
+    constructed :: Widget
+
+    result = ..ok ~constructed
 }
 
 main() -> (.status_code: Int32) := {

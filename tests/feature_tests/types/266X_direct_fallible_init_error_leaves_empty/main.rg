@@ -1,12 +1,14 @@
 Widget : Type = (.value: Int32)
 
-init(.p: $&Widget) -> (.result: Errable#(.t: Void, .reasons: (..rejected))) := {
+Widget init() -> (.result: Errable#(.t: Widget, .reasons: (..rejected))) := {
+    constructed :: Widget
+
     result = ..error(.reason = ..rejected)
 }
 
 main() -> (.status_code: Int32) := {
     widget :: Widget
-    outcome ::= init(.p = $&widget)
+    outcome ::= Widget()
     match outcome {
         ..ok _ { status_code = 0 }
         ..error _ { status_code = widget.value }

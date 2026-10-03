@@ -33,8 +33,8 @@ BackingAllocator : Type = (
 backing_deallocations :: Int32 = 0
 backing_freed_after_elements :: Bool = false
 
-init(.p: $&BackingAllocator, .ffi: $&ForeignFunctionInterface) -> () := {
-    p&.ffi = ffi
+BackingAllocator init(.ffi: $&ForeignFunctionInterface) -> (.result: BackingAllocator) := {
+    result.ffi = ffi
 }
 
 allocate(.self: $&BackingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {

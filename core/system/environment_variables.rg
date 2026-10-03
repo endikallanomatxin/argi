@@ -1,7 +1,7 @@
 EnvironmentVariables : Type = (._ffi: $&ForeignFunctionInterface)
 
-once init(.p: $&EnvironmentVariables, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
-    p&._ffi = ffi
+once EnvironmentVariables init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: EnvironmentVariables) := {
+    result._ffi = ffi
 }
 
 environment_variables_get_c_string(

@@ -2,8 +2,8 @@ Payload : Type = (
     .value: Int32,
 )
 
-init(.payload: $&Payload, .value: Int32) -> () := {
-    payload& = (.value = value)
+Payload init(.value: Int32) -> (.result: Payload) := {
+    result = (.value = value)
 }
 
 deinit(.payload: $&Payload) -> () := {}

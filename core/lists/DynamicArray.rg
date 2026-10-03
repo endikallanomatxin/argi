@@ -40,11 +40,11 @@ _trusted_dynamic_array_mark_empty #(.t: Type)(.self: $&DynamicArray#(.t: t)) -> 
     trusted_opaque_mark_empty(.storage = $&self&._allocation)
 }
 
-init #(.t: Type) (
-    .p: $&DynamicArray#(.t: t),
-    .allocator: $&Allocator,
+DynamicArray init #(.t: Type) (.allocator: $&Allocator,
     .capacity: UIntNative,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: DynamicArray#(.t: t), .reasons: (..out_of_memory))) := {
+    constructed :: DynamicArray#(.t: t)
+
     assume allocator
 
     element_size :: UIntNative = size_of(.type = t)
@@ -62,13 +62,13 @@ init #(.t: Type) (
     allocated ::= allocate#(.t: t)(.self = allocator, .count = actual_capacity)
     match allocated {
         ..ok ~ payload {
-            p& = (
+            constructed = (
                 ._allocation = ~payload,
                 ._length = 0,
                 ._capacity = actual_capacity,
                 ._shape = (.marker = 0),
             )
-            result = ..ok Void()
+            result = ..ok ~constructed
         }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
@@ -104,10 +104,13 @@ copy #(.t: Type: InfalliblyCopyable) (
     -- Copying an owning element still requires an explicit element copy
     -- operation; a plain slot read is insufficient for owning `t`.
     out :: DynamicArray#(.t: t)
-    initialized ::= init#(.t: t)(.p = $&out, .allocator = allocator, .capacity = self&._length)
-    if is(.value = initialized, .variant = ..error) {
+    initialized ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = self&._length)
+    match initialized {
+        ..ok ~constructed_value { out = ~constructed_value }
+        ..error _ {
         result = ..error(.reason = ..out_of_memory)
         return
+    }
     }
 
     i :: UIntNative = 0
@@ -140,10 +143,13 @@ copy #(
     assume allocator
 
     out :: DynamicArray#(.t: t)
-    initialized ::= init#(.t: t)(.p = $&out, .allocator = allocator, .capacity = self&._length)
-    if is(.value = initialized, .variant = ..error) {
+    initialized ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = self&._length)
+    match initialized {
+        ..ok ~constructed_value { out = ~constructed_value }
+        ..error _ {
         result = ..error(.reason = ..out_of_memory)
         return
+    }
     }
 
     i :: UIntNative = 0

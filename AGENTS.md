@@ -137,6 +137,11 @@ feature first.
   CIncomplete declarations keep nominal identities without runtime fields or
   layout. Only RawPointer handles may carry them across C boundaries; never
   synthesize an empty-record layout or construct safe references to them.
+  Constructors use `TypeName init#(...)(...)` and return the constructed value
+  or an Errable containing it. Their explicit association is a nominal
+  declaration ID, persisted in ModuleSG and relocated into GlobalSG. Keep
+  constructor lookup indexed by that family, independently of output types;
+  speculative specializations must roll back their index entries.
   Imported nominal constructors consult public initializers in the type's
   defining module. Automatic cleanup falls back to that module when caller
   lookup finds no destructor; reached arguments retain the caller's context.

@@ -166,6 +166,8 @@ pub const GlobalSemanticGraph = struct {
     const LookupState = struct {
         function_names: std.StringHashMapUnmanaged(std.ArrayList(GlobalFunctionId)) = .empty,
         indexed_functions: usize = 0,
+        constructors: std.AutoHashMapUnmanaged(GlobalDeclId, std.ArrayList(GlobalFunctionId)) = .empty,
+        parameterized_constructors: std.AutoHashMapUnmanaged(GlobalDeclId, std.ArrayList(ParameterizedFunctionCandidate)) = .empty,
         declaration_names: std.StringHashMapUnmanaged(std.ArrayList(GlobalDeclId)) = .empty,
         indexed_declarations: usize = 0,
         parameterized_function_names: std.StringHashMapUnmanaged(std.ArrayList(ParameterizedFunctionCandidate)) = .empty,
@@ -178,6 +180,12 @@ pub const GlobalSemanticGraph = struct {
                 entry.value_ptr.deinit(allocator);
             }
             self.function_names.deinit(allocator);
+            var constructors = self.constructors.valueIterator();
+            while (constructors.next()) |list| list.deinit(allocator);
+            self.constructors.deinit(allocator);
+            var templates = self.parameterized_constructors.valueIterator();
+            while (templates.next()) |list| list.deinit(allocator);
+            self.parameterized_constructors.deinit(allocator);
 
             var declarations = self.declaration_names.iterator();
             while (declarations.next()) |entry| {
@@ -319,9 +327,27 @@ pub const GlobalSemanticGraph = struct {
                 };
             }
             try self.lookup.function_names.getPtr(spelling).?.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
+            if (decl.constructor_type) |owner| {
+                const entry = try self.lookup.constructors.getOrPut(allocator, owner);
+                if (!entry.found_existing) entry.value_ptr.* = .empty;
+                try entry.value_ptr.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
+            }
             self.lookup.indexed_functions += 1;
         }
         return if (self.lookup.function_names.get(name)) |matches| matches.items else &.{};
+    }
+
+    /// Constructors are indexed by nominal family, so unrelated init signatures
+    /// never enter compatibility checks. Specializations share rollback with the
+    /// ordinary function index; module templates remain fixed during resolution.
+    pub fn constructorsFor(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, owner: GlobalDeclId) ![]const GlobalFunctionId {
+        _ = try self.functionsNamed(allocator, "init");
+        return if (self.lookup.constructors.get(owner)) |list| list.items else &.{};
+    }
+
+    pub fn parameterizedConstructorsFor(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, owner: GlobalDeclId) ![]const ParameterizedFunctionCandidate {
+        _ = try self.parameterizedFunctionsNamed(allocator, modules, "init");
+        return if (self.lookup.parameterized_constructors.get(owner)) |list| list.items else &.{};
     }
 
     pub fn declarationsNamed(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, name: []const u8) ![]const GlobalDeclId {
@@ -349,6 +375,8 @@ pub const GlobalSemanticGraph = struct {
             const entry = self.functions.items[self.lookup.indexed_functions];
             const name = self.text(self.declarations.items[@intFromEnum(entry.declaration)].name);
             _ = self.lookup.function_names.getPtr(name).?.pop();
+            if (self.declaration(entry.declaration).constructor_type) |owner|
+                _ = self.lookup.constructors.getPtr(owner).?.pop();
         }
         while (self.lookup.indexed_declarations > declaration_count) {
             self.lookup.indexed_declarations -= 1;
@@ -375,6 +403,12 @@ pub const GlobalSemanticGraph = struct {
                             allocator.free(owned);
                             return err;
                         };
+                    }
+                    if (module.declarations.items[@intFromEnum(candidate.declaration)].constructor_type) |local_owner| {
+                        const owner: GlobalDeclId = @enumFromInt(self.modules.items[module_index].declarations.start + @intFromEnum(local_owner));
+                        const entry = try self.lookup.parameterized_constructors.getOrPut(allocator, owner);
+                        if (!entry.found_existing) entry.value_ptr.* = .empty;
+                        try entry.value_ptr.append(allocator, .{ .module_index = @intCast(module_index), .function_index = @intCast(function_index) });
                     }
                     try self.lookup.parameterized_function_names.getPtr(spelling).?.append(allocator, .{
                         .module_index = @intCast(module_index),

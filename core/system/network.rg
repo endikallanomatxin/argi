@@ -1,6 +1,8 @@
 Network : Type = ()
 
-once init(.p: $&Network) -> () := {
+once Network init() -> (.result: Network) := {
+    result = ()
+
 }
 
 -- Consider whether all network protocols belong here too.

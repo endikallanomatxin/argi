@@ -8,7 +8,7 @@ read_window(.view: &ArrayView#(.t: UIntNative)) -> (.value: UIntNative) := {
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume ffi := system.ffi
     arena :: ArenaAllocator
-    unwrap_or_abort(.value = init(.p = $&arena, .allocator = system.page_allocator))
+    arena = unwrap_or_abort(.value = ArenaAllocator(.allocator = system.page_allocator))
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: UIntNative)(.allocator = $&arena, .capacity = 2))
     push_assume_capacity#(.t: UIntNative)(.self = $&array, .value = 7)
     view ::= window(.array = $&array).view

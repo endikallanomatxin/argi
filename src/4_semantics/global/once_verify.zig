@@ -227,10 +227,7 @@ const State = struct {
                 try self.walkNode(assignment.pointer);
                 try self.walkNode(assignment.value);
             },
-            .type_initializer => |initializer| {
-                try self.walkNode(initializer.args);
-                try self.walkCall(node_id, initializer.init_fn);
-            },
+
             .explicit_cast => |cast| try self.walkNode(cast.value),
         }
     }

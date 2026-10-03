@@ -46,24 +46,22 @@ string_view_slice(
     )
 }
 
-init(
-    .p: $&Path,
-    .text: String,
-) -> () := {
-    p& = (
+Path init(.text: String,
+) -> (.result: Path) := {
+    result = (
         .text = ~text,
     )
 }
 
-init(
-    .p: $&Path,
-    .view: StringView,
+Path init(.view: StringView,
     .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
+    constructed :: Path
+
     assume allocator
 
-    p& = path_with_view(.view = view, .allocator = allocator)!
-    result = ..ok Void()
+    constructed = path_with_view(.view = view, .allocator = allocator)!
+    result = ..ok ~constructed
 }
 
 path_with_view(

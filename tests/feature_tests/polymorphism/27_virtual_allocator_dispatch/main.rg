@@ -1,6 +1,8 @@
 NoopDeallocator : Type = ()
 
-init(.p: $&NoopDeallocator) -> () := {
+NoopDeallocator init() -> (.result: NoopDeallocator) := {
+    result = ()
+
 }
 
 deallocate(.self: $&NoopDeallocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {

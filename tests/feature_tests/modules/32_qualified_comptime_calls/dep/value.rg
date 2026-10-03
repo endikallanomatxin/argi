@@ -4,6 +4,6 @@ identity#(.t: Type)(.value: t) -> (.result: t) := {
 
 Box#(.t: Type) : Type = (.value: t)
 
-init#(.t: Type)(.p: $&Box#(.t: t), .value: t) -> () := {
-    p& = (.value = value)
+Box init#(.t: Type)(.value: t) -> (.result: Box#(.t: t)) := {
+    result = (.value = value)
 }

@@ -2,10 +2,13 @@ unsafe_allocation := import("../../_support/unsafe_allocation")
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     arena :: ArenaAllocator
-    initialized ::= init(.p = $&arena, .allocator = $&allocator_storage, .block_size = 32)
-    if is(.value = initialized, .variant = ..error) {
+    initialized ::= ArenaAllocator(.allocator = $&allocator_storage, .block_size = 32)
+    match initialized {
+        ..ok ~constructed_value { arena = ~constructed_value }
+        ..error _ {
         status_code = 2
         return
+    }
     }
     result ::= allocate(.self = $&arena, .size = 8)
     match result {

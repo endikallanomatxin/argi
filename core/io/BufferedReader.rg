@@ -15,12 +15,12 @@ BufferedReader#(.base_type: Type: Reader) : Type = (
     .end      : UIntNative
 )
 
-init#(.base_type: Type: Reader)(
-    .p: $&BufferedReader#(.base_type: base_type),
-    .allocator: $&Allocator,
+BufferedReader init#(.base_type: Type: Reader)(.allocator: $&Allocator,
     .base: $&base_type,
     .capacity: UIntNative,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: BufferedReader#(.base_type: base_type), .reasons: (..out_of_memory))) := {
+    constructed :: BufferedReader#(.base_type: base_type)
+
     assume allocator
 
     actual_capacity ::= capacity
@@ -31,14 +31,14 @@ init#(.base_type: Type: Reader)(
     }
 
     buffer ::= allocate(.self = allocator, .size = actual_capacity)!
-    p& = (
+    constructed = (
         .base = base,
         .buffer = ~buffer,
         .capacity = actual_capacity,
         .start = 0,
         .end = 0,
     )
-    result = ..ok Void()
+    result = ..ok ~constructed
 }
 
 deinit#(.base_type: Type: Reader)(

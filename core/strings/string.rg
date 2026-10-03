@@ -73,11 +73,11 @@ string_with_capacity(
     result = ..ok ~out
 }
 
-init (
-    .p: $&String,
-    .allocator: $&Allocator,
+String init (.allocator: $&Allocator,
     .length: UIntNative,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    constructed :: String
+
     assume allocator
 
     if length > _string_max_result_length().length {
@@ -86,21 +86,21 @@ init (
     }
     allocation_size ::= length + 1
     allocation ::= allocate(.self = allocator, .size = allocation_size)!
-    p& = (.allocation = ~allocation, .length = length)
+    constructed = (.allocation = ~allocation, .length = length)
     i :: UIntNative = 0
     while i < length {
-        bytes_set(.string = p, .index = i, .value = 0)
+        bytes_set(.string = $&constructed, .index = i, .value = 0)
         i = i + 1
     }
-    bytes_set(.string = p, .index = length, .value = 0)
-    result = ..ok Void()
+    bytes_set(.string = $&constructed, .index = length, .value = 0)
+    result = ..ok ~constructed
 }
 
-init (
-    .p: $&String,
-    .allocator: $&Allocator,
+String init (.allocator: $&Allocator,
     .capacity: UIntNative,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    constructed :: String
+
     assume allocator
 
     actual_capacity ::= capacity
@@ -116,9 +116,9 @@ init (
     }
     allocation_size ::= actual_capacity + 1
     allocation ::= allocate(.self = allocator, .size = allocation_size)!
-    p& = (.allocation = ~allocation, .length = 0)
-    bytes_set(.string = p, .index = 0, .value = 0)
-    result = ..ok Void()
+    constructed = (.allocation = ~allocation, .length = 0)
+    bytes_set(.string = $&constructed, .index = 0, .value = 0)
+    result = ..ok ~constructed
 }
 
 deinit (

@@ -5,26 +5,42 @@ contains a value, and raw allocated bytes do not yet contain a `T`. A value
 becomes live only after it has been fully initialized. Reading it beforehand
 is an error.
 
-`init` constructs a value in a destination place. A type may define an `init`
-operation to establish its invariants; types that need no custom constructor
-can be initialized directly. The destination may be uninitialized when `init`
-begins, but it must contain a complete value on every successful exit. A
-failed initialization must leave no live partial value or leaked resource.
-An infallible `init` returns `()`. A fallible one returns one
-`Errable#(.t: Void, .reasons: R)` result: `..ok` means the destination now
-contains a complete value, and `..error` means it remains empty. The caller
-must inspect that result before using the destination. The compiler checks
-these conditions for each outcome.
+A constructor is declared as `T init(...)` and returns one complete `T`, or
+one `Errable#(.t: T, .reasons: R)` when construction can fail. Calling `T(...)`
+invokes that constructor. No uninitialized destination is passed into `init`;
+the successful value is returned directly or transferred into `..ok`. An error
+carries no constructed value. Ordinary ownership and automatic cleanup rules
+apply to intermediate values on every exit.
 
-Calling `T(...)` uses the same initializer with a temporary destination. It
-produces `T` for an infallible initializer or
-`Errable#(.t: T, .reasons: R)` for a fallible one. The successful value is
-transferred from the destination into `..ok`; an error carries no `T`.
+```rg
+Point init(.x: Int32, .y: Int32) -> (.result: Point) := {
+    result = (.x = x, .y = y)
+}
+```
 
-> [!IMPLEMENTATION]
-> A direct call to a fallible `init` currently needs a local destination
-> place that the safety checker can identify. Destinations reached only
-> through another function's pointer parameter are not yet supported.
+The type before `init` names the nominal type declaration in the same module.
+It associates the constructor with that type, independently of its output.
+The association narrows the candidate set; input types select an overload
+within it. Output types do not distinguish overloads. A visible constructor
+owns construction even when its inputs do not match a particular call;
+callers cannot bypass it through automatic field-wise construction. Types
+without custom constructors can be initialized directly.
+
+Constructors declare their own compile-time parameters after `init`, exactly
+as ordinary functions do. The associated name identifies a type family;
+the returned type expresses its concrete generic arguments:
+
+```rg
+Box init#(.t: Type)(.value: t) -> (.result: Box#(.t: t)) := {
+    result = (.value = value)
+}
+```
+
+Parameters can be inferred from inputs or from an explicitly requested type
+such as `Box#(.t: Int32)(...)`. The requested type can bind constructor
+parameters but cannot select overloads distinguished only by return type.
+Additional constructor parameters follow ordinary inference and default rules;
+no parameters are implicitly introduced into the constructor's scope.
 
 `deinit` ends a live value and releases the resources it is responsible for.
 A type may define this operation when cleanup is needed. Types without one do

@@ -2,10 +2,10 @@ Holder : Type = (
     .buffer: String
 )
 
-init(.p: $&Holder, .allocator: $&Allocator) -> () := {
+Holder init(.allocator: $&Allocator) -> (.result: Holder) := {
     assume allocator
 
-    p&.buffer = unwrap_or_abort(.value = String(.allocator = allocator, .capacity = 1))
+    result.buffer = unwrap_or_abort(.value = String(.allocator = allocator, .capacity = 1))
 }
 
 deinit(.self: $&Holder, .allocator: $&Allocator) -> () := {

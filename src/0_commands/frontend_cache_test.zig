@@ -236,7 +236,7 @@ test "frontend module cache reruns safety on cached ownership effects" {
     var session = ModuleCache.init(std.testing.allocator, .{});
     defer session.deinit();
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "Resource : Type = ()\n" ++
-        "init(.res: $&Resource) -> () := {}\n" ++
+        "Resource init() -> (.result: Resource) := { result = () }\n" ++
         "deinit(.res: $&Resource) -> () := {}\n" ++
         "consume(.res: Resource) -> (.result: Int32 = 0) := {}\n" ++
         "main() -> (.status_code: Int32) := {\n" ++

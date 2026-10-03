@@ -1,6 +1,6 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator :: CAllocator
-    init(.p = $&allocator, .ffi = system.ffi)
+    allocator = CAllocator(.ffi = system.ffi)
     zero :: UIntNative = 0
     too_large ::= zero - 1
     failed ::= acquire_heap_storage(.size = too_large, .alignment = 8, .ffi = system.ffi)

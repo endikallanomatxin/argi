@@ -1,6 +1,8 @@
 FirstWriter : Type = ()
 
-init(.p: $&FirstWriter) -> () := {}
+FirstWriter init() -> (.result: FirstWriter) := {
+    result = ()
+}
 
 write_byte(.self: $&FirstWriter, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     _ ::= byte
@@ -15,7 +17,9 @@ FirstWriter implements Writer
 
 SecondWriter : Type = ()
 
-init(.p: $&SecondWriter) -> () := {}
+SecondWriter init() -> (.result: SecondWriter) := {
+    result = ()
+}
 
 write_byte(.self: $&SecondWriter, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     _ ::= byte

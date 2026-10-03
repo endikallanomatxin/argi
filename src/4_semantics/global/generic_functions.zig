@@ -575,6 +575,7 @@ pub const Resolver = struct {
         var saw_deferred = false;
         var best_was_materialized = false;
         for (try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, name)) |candidate| {
+            if (self.modules[candidate.module_index].declarations.items[@intFromEnum(self.modules[candidate.module_index].semantic.parameterized_storage.parameterized_functions.items[candidate.function_index].declaration)].constructor_type != null) continue;
             if (self.profile_io != null) self.selection_profile.explicit_candidates += 1;
             var phase_start = self.profileTimestamp();
             var prefilter_active = true;
@@ -832,62 +833,69 @@ pub const Resolver = struct {
         context: ReachInferenceContext,
         bindings: *generic_mod.Resolver.Bindings,
     ) !bool {
-        if (!try self.inferBindingsFromInputFields(
-            module_index,
-            pattern,
-            input,
-            bindings,
-            1,
-            true,
-        )) return false;
-
-        return self.inferBindingsFromReachDefaultFields(
-            module_index,
-            pattern,
-            input,
-            bindings,
-            context,
-            1,
-        );
+        if (!try self.inferBindingsFromInputFields(module_index, pattern, input, bindings, 0, true)) return false;
+        return self.inferBindingsFromReachDefaultFields(module_index, pattern, input, bindings, context, 0);
     }
 
     pub fn inferInitializerBindings(
         self: *Resolver,
         module_index: usize,
         pattern: ir.ParameterizedTypeId,
-        destination_type: global_sg.GlobalTypeId,
+        output: ir.ParameterizedTypeId,
+        constructed_type: global_sg.GlobalTypeId,
         input: global_sg.GlobalNodeId,
         context: ReachInferenceContext,
         bindings: *generic_mod.Resolver.Bindings,
     ) !bool {
-        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
-        const shape = switch (storage.types.items[@intFromEnum(pattern)]) {
-            .resolved => |resolved| switch (resolved) {
-                .structural => |value| value,
-                else => return false,
+        const result_pattern = initializerValuePattern(&self.modules[module_index], output) orelse return false;
+        try self.bindConstructorTypeParameters(module_index, result_pattern, constructed_type, bindings);
+        return self.inferInitializerInputBindings(module_index, pattern, input, context, bindings);
+    }
+
+    // The requested type supplies generic bindings, not an output-based filter.
+    // Fixed output leaves are validated after input dispatch selects a callee.
+    fn bindConstructorTypeParameters(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, actual: global_sg.GlobalTypeId, bindings: *generic_mod.Resolver.Bindings) anyerror!void {
+        const module = &self.modules[module_index];
+        const storage = &module.semantic.parameterized_storage.ir;
+        switch (storage.types.items[@intFromEnum(pattern)]) {
+            .parameter => {
+                _ = try self.inferInputType(module_index, pattern, actual, bindings);
             },
-            else => return false,
-        };
-        if (shape.fields.len == 0) return false;
-
-        const destination_pointer = try self.generics.internType(.{ .pointer = .{
-            .child = destination_type,
-            .mutability = .read_write,
-        } });
-        if (!try self.inferInputType(
-            module_index,
-            storage.fields.items[shape.fields.start].ty,
-            destination_pointer,
-            bindings,
-        )) return false;
-
-        return self.inferInitializerInputBindings(
-            module_index,
-            pattern,
-            input,
-            context,
-            bindings,
-        );
+            .array => |array| {
+                const concrete = self.graph.resolvedSemanticType(actual) orelse return;
+                if (concrete != .array) return;
+                if (storage.int_expressions.items[@intFromEnum(array.length)] == .parameter)
+                    _ = try self.inferIntExpression(module_index, array.length, @intCast(concrete.array.length), bindings);
+                try self.bindConstructorTypeParameters(module_index, array.element, concrete.array.element, bindings);
+            },
+            .resolved => |resolved| switch (resolved) {
+                .generic => |generic| {
+                    const concrete = self.graph.resolvedSemanticType(actual) orelse return;
+                    if (concrete != .generic) return;
+                    for (storage.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len], 0..) |argument, position| {
+                        for (self.graph.generic_arguments.items[concrete.generic.arguments.start..][0..concrete.generic.arguments.len], 0..) |value, actual_position| {
+                            if (value.name.len == 0) {
+                                if (position != actual_position) continue;
+                            } else if (!std.mem.eql(u8, module.text(argument.name), self.graph.text(value.name))) continue;
+                            switch (argument.value) {
+                                .type => |ty| if (value.value == .type) {
+                                    try self.bindConstructorTypeParameters(module_index, ty, value.value.type, bindings);
+                                },
+                                .comptime_int => |expression| if (value.value == .comptime_int and storage.int_expressions.items[@intFromEnum(expression)] == .parameter) {
+                                    _ = try self.inferIntExpression(module_index, expression, value.value.comptime_int, bindings);
+                                },
+                            }
+                        }
+                    }
+                },
+                .pointer => |pointer| {
+                    const concrete = self.graph.resolvedSemanticType(actual) orelse return;
+                    if (concrete == .pointer) try self.bindConstructorTypeParameters(module_index, pointer.child, concrete.pointer.child, bindings);
+                },
+                else => {},
+            },
+            else => {},
+        }
     }
 
     fn inferAndValidateConstraints(
@@ -1056,6 +1064,7 @@ pub const Resolver = struct {
         var binding_ints: std.ArrayList(?i64) = .empty;
         defer binding_ints.deinit(self.allocator);
         for (try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, name)) |candidate| {
+            if (self.modules[candidate.module_index].declarations.items[@intFromEnum(self.modules[candidate.module_index].semantic.parameterized_storage.parameterized_functions.items[candidate.function_index].declaration)].constructor_type != null) continue;
             if (self.profile_io != null) self.selection_profile.implicit_candidates += 1;
             var phase_start = self.profileTimestamp();
             var prefilter_active = true;
@@ -1376,7 +1385,7 @@ pub const Resolver = struct {
         return false;
     }
 
-    const ParameterizedSpecificity = struct {
+    pub const ParameterizedSpecificity = struct {
         /// Exact nominal/builtin leaves. Exactness also satisfies the weaker
         /// "bounded" dimension so a concrete type dominates an abstract bound.
         exact: u32 = 0,
@@ -1403,7 +1412,7 @@ pub const Resolver = struct {
         return .incomparable;
     }
 
-    fn compareCandidates(
+    pub fn compareCandidates(
         candidate_specificity: ParameterizedSpecificity,
         candidate_score: u32,
         best_specificity: ParameterizedSpecificity,
@@ -1428,7 +1437,7 @@ pub const Resolver = struct {
         return .{ .exact = 1, .bounded = 1 };
     }
 
-    fn parameterizedInputSpecificity(
+    pub fn parameterizedInputSpecificity(
         self: *Resolver,
         module_index: usize,
         pattern: ir.ParameterizedTypeId,
@@ -1921,8 +1930,8 @@ pub const Resolver = struct {
     }
 
     /// Materialize a constructor initializer through the same generic
-    /// inference used by every other generic call. Field 0 is the compiler
-    /// supplied destination; source arguments and reach defaults start at 1.
+    /// inference used by every other generic call. The type callee supplies
+    /// the constructed type; runtime inputs contain only source arguments.
     pub fn instantiateInitializer(
         self: *Resolver,
         declaration: global_sg.GlobalDeclId,
@@ -1940,6 +1949,7 @@ pub const Resolver = struct {
         if (!try self.inferInitializerBindings(
             located.module_index,
             located.parameterized.input,
+            located.parameterized.output,
             destination_type,
             input,
             context,
@@ -2575,7 +2585,6 @@ pub const Resolver = struct {
                 .for_each,
                 .match_case,
                 .defer_value,
-                .type_initializer,
                 .explicit_cast,
                 .other,
                 => error.ParameterizedExpressionRequiresGlobalResolver,
@@ -3008,14 +3017,6 @@ pub const Resolver = struct {
                 };
                 return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = ty, .content = content };
             }
-            for (try self.resolver.graph.declarationsNamed(self.resolver.allocator, name)) |id| {
-                const declaration = self.resolver.graph.declarations.items[@intFromEnum(id)];
-                if (declaration.kind != .type) continue;
-                if (!self.resolver.core.declarationVisible(self.module_index, id, null)) continue;
-                const ty = declaration.type_id orelse continue;
-                const fields = global_types.fields(self.resolver.graph, ty) orelse continue;
-                if (fields.len == 0) return self.emptyValue(ty, source);
-            }
             return null;
         }
 
@@ -3293,4 +3294,38 @@ test "generic inference binds comptime integer expressions" {
     try std.testing.expect(try resolver.inferIntExpression(0, @enumFromInt(0), 7, &bindings));
     try std.testing.expectEqual(@as(?i64, 7), bindings.ints[0]);
     try std.testing.expectError(error.ConflictingGenericArgument, resolver.inferIntExpression(0, @enumFromInt(0), 8, &bindings));
+}
+
+/// Constructor selection knows the nominal type from its callee. Only this
+/// lookup may use a result pattern to infer compile-time type parameters.
+pub fn initializerValuePattern(module: *const module_sg.ModuleSemanticGraph, output: ir.ParameterizedTypeId) ?ir.ParameterizedTypeId {
+    const storage = &module.semantic.parameterized_storage.ir;
+    const shape = switch (storage.types.items[@intFromEnum(output)]) {
+        .resolved => |ty| switch (ty) {
+            .structural => |value| value,
+            else => return null,
+        },
+        else => return null,
+    };
+    if (shape.fields.len != 1) return null;
+    const result = storage.fields.items[shape.fields.start].ty;
+    switch (storage.types.items[@intFromEnum(result)]) {
+        .resolved => |ty| switch (ty) {
+            .generic => |generic| {
+                const name = switch (storage.declarations.items[@intFromEnum(generic.base)].target) {
+                    .external => |id| module.semantic.external_refs.items[@intFromEnum(id)].name,
+                    .module => |id| module.declarations.items[@intFromEnum(id)].name,
+                };
+                if (std.mem.eql(u8, module.text(name), "Errable")) {
+                    for (storage.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| {
+                        if (std.mem.eql(u8, module.text(argument.name), "t") and argument.value == .type) return argument.value.type;
+                    }
+                    return null;
+                }
+            },
+            else => {},
+        },
+        else => {},
+    }
+    return result;
 }

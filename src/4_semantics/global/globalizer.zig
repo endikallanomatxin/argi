@@ -198,6 +198,7 @@ fn appendDeclarations(allocator: std.mem.Allocator, result: *global_sg.GlobalSem
             .struct_fields = if (value.struct_fields) |range| relocateEntityRange(global_sg.GlobalFieldId, o.field_base, range) else null,
             .choice_variants = if (value.choice_variants) |range| relocateEntityRange(global_sg.GlobalVariantId, o.variant_base, range) else null,
             .generic_parameter_count = value.generic_parameter_count,
+            .constructor_type = if (value.constructor_type) |id| globalDecl(o, id) else null,
             .struct_layout = value.struct_layout,
             .choice_layout = value.choice_layout,
         });
@@ -607,11 +608,7 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
                 .pointer_type = globalType(o, value.pointer_type),
             } },
             .pointer_assignment => |value| .{ .pointer_assignment = .{ .pointer = globalNode(o, value.pointer), .value = globalNode(o, value.value) } },
-            .type_initializer => |value| .{ .type_initializer = .{
-                .type_decl = globalDecl(o, value.type_decl),
-                .init_fn = globalFunction(o, value.init_fn),
-                .args = globalNode(o, value.args),
-            } },
+
             .type_literal => |id| .{ .type_literal = globalType(o, id) },
             .explicit_cast => |value| .{ .explicit_cast = .{ .value = globalNode(o, value.value), .target_type = globalType(o, value.target_type) } },
         },

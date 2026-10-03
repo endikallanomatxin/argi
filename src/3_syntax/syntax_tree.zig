@@ -184,6 +184,7 @@ pub const PointerMutability = enum(u32) { read_only, read_write };
 
 pub const FunctionExtra = struct {
     name_token: TokenIndex,
+    constructor_type: OptionalTokenIndex = .none,
     generic_params_start: ExtraIndex,
     generic_params_end: ExtraIndex,
     generic_params_struct: OptionalNodeIndex,
@@ -222,6 +223,7 @@ pub const MatchCaseExtra = struct { payload_name: OptionalTokenIndex, body: Node
 
 pub const FunctionDeclaration = struct {
     name_token: TokenIndex,
+    constructor_type: ?TokenIndex = null,
     generic_params: []const NodeIndex,
     generic_params_struct: ?NodeIndex,
     input: NodeIndex,
@@ -481,6 +483,7 @@ pub const FileSyntaxTree = struct {
         const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
         return .{
             .name_token = extra.name_token,
+            .constructor_type = extra.constructor_type.unwrap(),
             .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }),
             .generic_params_struct = extra.generic_params_struct.unwrap(),
             .input = extra.input,
@@ -498,6 +501,7 @@ pub const FileSyntaxTree = struct {
         const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
         return .{ .function = .{
             .name_token = extra.name_token,
+            .constructor_type = extra.constructor_type.unwrap(),
             .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }),
             .generic_params_struct = extra.generic_params_struct.unwrap(),
             .input = extra.input,

@@ -4,10 +4,14 @@ Beta : Type = ()
 Alpha implements ImplicitlyCopyable
 Beta implements ImplicitlyCopyable
 
-init(.p: $&Alpha) -> () := {
+Alpha init() -> (.result: Alpha) := {
+    result = ()
+
 }
 
-init(.p: $&Beta) -> () := {
+Beta init() -> (.result: Beta) := {
+    result = ()
+
 }
 
 main() -> (.status_code: Int32) := {

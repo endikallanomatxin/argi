@@ -1,6 +1,8 @@
 Owned : Type = (.allocation: Allocation)
 
-init(.p: $&Owned, .allocator: $&Allocator, .fail: Bool) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+Owned init(.allocator: $&Allocator, .fail: Bool) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := {
+    constructed :: Owned
+
     allocated ::= allocate(.self = allocator, .size = 1)
     match allocated {
         ..error _ {
@@ -12,8 +14,8 @@ init(.p: $&Owned, .allocator: $&Allocator, .fail: Bool) -> (.result: Errable#(.t
                 result = ..error(.reason = ..out_of_memory)
                 return
             }
-            p& = (.allocation = ~payload)
-            result = ..ok Void()
+            constructed = (.allocation = ~payload)
+            result = ..ok ~constructed
         }
     }
 }

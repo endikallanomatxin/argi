@@ -15,8 +15,8 @@ ArgumentsIterator : Type = (
 ArgumentsIterator implements Iterator#(.t: StringView)
 Arguments implements Iterable#(.t: StringView)
 
-once init(.p: $&Arguments, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
-    p& = (
+once Arguments init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Arguments) := {
+    result = (
         ._ffi = ffi,
         .count = argi_runtime_argc().count,
         .address = argi_runtime_argv().address,

@@ -17,14 +17,16 @@ violations() -> (.count: CInt) : CFunction(.symbol = "argi_c_owned_violations")
 -- The C binding transfers one handle on success; a null result acquires
 -- nothing. The wrapper keeps it private, provides no copy operation, and
 -- retains the caller's capability for every access and release.
-init(.p: $&OwnedHandle, .value: CInt, .fail: Bool = false, .ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Errable#(.t: Void, .reasons: (..handle_creation_failed))) := {
+OwnedHandle init(.value: CInt, .fail: Bool = false, .ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Errable#(.t: OwnedHandle, .reasons: (..handle_creation_failed))) := {
+    constructed :: OwnedHandle
+
     handle := _create(.value = value, .fail = fail, .ffi = ffi)
     if handle.address == 0 {
         result = ..error(.reason = ..handle_creation_failed)
         return
     }
-    p& = (._handle = handle, ._ffi = ffi)
-    result = ..ok Void()
+    constructed = (._handle = handle, ._ffi = ffi)
+    result = ..ok ~constructed
 }
 
 read(.self: &OwnedHandle) -> (.value: CInt) := {
@@ -41,14 +43,16 @@ GenericHandle#(.t: Type) : Type = (
     .tag: t
 )
 
-init#(.t: Type)(.p: $&GenericHandle#(.t: t), .tag: t, .ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Errable#(.t: Void, .reasons: (..handle_creation_failed))) := {
+GenericHandle init#(.t: Type)(.tag: t, .ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Errable#(.t: GenericHandle#(.t: t), .reasons: (..handle_creation_failed))) := {
+    constructed :: GenericHandle#(.t: t)
+
     handle := _create(.value = 31, .fail = false, .ffi = ffi)
     if handle.address == 0 {
         result = ..error(.reason = ..handle_creation_failed)
         return
     }
-    p& = (._handle = handle, ._ffi = ffi, .tag = tag)
-    result = ..ok Void()
+    constructed = (._handle = handle, ._ffi = ffi, .tag = tag)
+    result = ..ok ~constructed
 }
 
 deinit#(.t: Type)(.self: $&GenericHandle#(.t: t)) -> () := {

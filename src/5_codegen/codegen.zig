@@ -4,7 +4,6 @@ const c = llvm.c;
 const graph_mod = @import("../4_semantics/global/graph.zig");
 const types = @import("../4_semantics/global/types.zig");
 const c_abi = @import("../4_semantics/global/c_abi.zig");
-const initializer_contract = @import("../4_semantics/global/initializer_contract.zig");
 const primitives = @import("../4_semantics/primitives/schema.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 const tok = @import("../2_tokens/token.zig");
@@ -1014,7 +1013,7 @@ pub const CodeGenerator = struct {
                 try self.pointerAssignment(assignment);
                 break :blk null;
             },
-            .type_initializer => |initializer| try self.typeInitializer(initializer, node.ty),
+
             .explicit_cast => |cast| try self.explicitCast(cast),
         };
     }
@@ -1259,14 +1258,8 @@ pub const CodeGenerator = struct {
             var lowerer = self.typeLowerer();
             break :blk try lowerer.buildUnionFieldPointer(self.builder, pointer.value_ref, store.field_type, "union.field.ptr");
         } else c.LLVMBuildStructGEP2(self.builder, try self.toLLVMType(store.struct_type), pointer.value_ref, store.field_index, "field.ptr");
-        if (self.graph.nodes.items[@intFromEnum(store.value)].content == .type_initializer and
-            self.graph.function(self.graph.nodes.items[@intFromEnum(store.value)].content.type_initializer.init_fn).output.len == 0)
-        {
-            try self.typeInitializerInto(self.graph.nodes.items[@intFromEnum(store.value)].content.type_initializer, field_ptr);
-        } else {
-            const value = (try self.visitNode(store.value)) orelse return CodegenError.ValueNotFound;
-            _ = c.LLVMBuildStore(self.builder, value.value_ref, field_ptr);
-        }
+        const value = (try self.visitNode(store.value)) orelse return CodegenError.ValueNotFound;
+        _ = c.LLVMBuildStore(self.builder, value.value_ref, field_ptr);
         if (self.dropStateForNode(store.struct_ptr)) |parent| if (store.field_index < parent.fields.len) self.storeDropState(&parent.fields[store.field_index], true);
     }
 
@@ -1605,12 +1598,7 @@ pub const CodeGenerator = struct {
 
     fn pointerAssignment(self: *CodeGenerator, assignment: anytype) !void {
         const pointer = (try self.visitNode(assignment.pointer)) orelse return CodegenError.ValueNotFound;
-        if (self.graph.nodes.items[@intFromEnum(assignment.value)].content == .type_initializer and
-            self.graph.function(self.graph.nodes.items[@intFromEnum(assignment.value)].content.type_initializer.init_fn).output.len == 0)
-        {
-            try self.typeInitializerInto(self.graph.nodes.items[@intFromEnum(assignment.value)].content.type_initializer, pointer.value_ref);
-            return;
-        }
+
         const value = (try self.visitNode(assignment.value)) orelse return CodegenError.ValueNotFound;
         _ = c.LLVMBuildStore(self.builder, value.value_ref, pointer.value_ref);
     }
@@ -1697,7 +1685,7 @@ pub const CodeGenerator = struct {
         const return_type = self.current_return_type orelse return CodegenError.InvalidType;
         var return_value = c.LLVMGetUndef(return_type);
         return_value = c.LLVMBuildInsertValue(self.builder, return_value, propagated, 0, "error.return");
-        _ = c.LLVMBuildRet(self.builder, return_value);
+        try self.returnArgi(return_value);
 
         c.LLVMPositionBuilderAtEnd(self.builder, ok_block);
         const ok_payload = c.LLVMBuildExtractValue(self.builder, value.value_ref, (try self.variantIndex(source_errable_type, propagation.ok_variant)) + 1, "error.ok.payload");
@@ -2286,89 +2274,6 @@ pub const CodeGenerator = struct {
         return CodegenError.InvalidType;
     }
 
-    fn typeInitializer(self: *CodeGenerator, initializer: anytype, maybe_ty: ?graph_mod.GlobalTypeId) !TypedValue {
-        const ty = maybe_ty orelse return CodegenError.InvalidType;
-        const function = self.graph.function(initializer.init_fn);
-        if (function.input.len == 0) return CodegenError.InvalidType;
-        const destination_type = self.graph.semanticType(self.graph.fields.items[function.input.start].ty);
-        if (destination_type != .pointer) return CodegenError.InvalidType;
-        const value_ty = destination_type.pointer.child;
-        if (function.output.len != 0) return self.fallibleTypeInitializer(initializer, ty, value_ty);
-        const type_ref = try self.toLLVMType(ty);
-        const storage = c.LLVMBuildAlloca(self.builder, type_ref, "type.init.tmp");
-        try self.typeInitializerInto(initializer, storage);
-        return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, storage, "type.init"), .type_ref = type_ref, .ty = ty };
-    }
-
-    fn fallibleTypeInitializer(self: *CodeGenerator, initializer: anytype, result_ty: graph_mod.GlobalTypeId, value_ty: graph_mod.GlobalTypeId) !TypedValue {
-        const function = self.graph.function(initializer.init_fn);
-        if (function.output.len != 1) return CodegenError.InvalidType;
-        const status_ty = self.graph.fields.items[function.output.start].ty;
-        const status_ok = types.findVariant(self.graph, status_ty, "ok") orelse return CodegenError.InvalidType;
-        const status_error = types.findVariant(self.graph, status_ty, "error") orelse return CodegenError.InvalidType;
-        const result_ok = types.findVariant(self.graph, result_ty, "ok") orelse return CodegenError.InvalidType;
-        const result_error = types.findVariant(self.graph, result_ty, "error") orelse return CodegenError.InvalidType;
-        if (!types.equal(self.graph, result_ok.variant.payload_type orelse return CodegenError.InvalidType, value_ty) or
-            !types.equal(self.graph, status_error.variant.payload_type orelse return CodegenError.InvalidType, result_error.variant.payload_type orelse return CodegenError.InvalidType)) return CodegenError.InvalidType;
-
-        const value_type_ref = try self.toLLVMType(value_ty);
-        const result_type_ref = try self.toLLVMType(result_ty);
-        const storage = c.LLVMBuildAlloca(self.builder, value_type_ref, "type.init.tmp");
-        const raw_status = try self.callTypeInitializer(initializer, storage);
-        const status = c.LLVMBuildExtractValue(self.builder, raw_status, 0, "type.init.status");
-        const tag = c.LLVMBuildExtractValue(self.builder, status, 0, "type.init.status.tag");
-        const succeeded = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, tag, c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(status_ty, status_ok.id)), 0), "type.init.succeeded");
-        const current = c.LLVMGetInsertBlock(self.builder) orelse return CodegenError.InvalidType;
-        const parent = c.LLVMGetBasicBlockParent(current);
-        const ok_block = c.LLVMAppendBasicBlock(parent, "type.init.ok");
-        const error_block = c.LLVMAppendBasicBlock(parent, "type.init.error");
-        const merge_block = c.LLVMAppendBasicBlock(parent, "type.init.merge");
-        _ = c.LLVMBuildCondBr(self.builder, succeeded, ok_block, error_block);
-
-        c.LLVMPositionBuilderAtEnd(self.builder, ok_block);
-        var ok_value = c.LLVMGetUndef(result_type_ref);
-        ok_value = c.LLVMBuildInsertValue(self.builder, ok_value, c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(result_ty, result_ok.id)), 0), 0, "type.init.ok.tag");
-        ok_value = c.LLVMBuildInsertValue(self.builder, ok_value, c.LLVMBuildLoad2(self.builder, value_type_ref, storage, "type.init.value"), result_ok.index + 1, "type.init.ok.payload");
-        _ = c.LLVMBuildBr(self.builder, merge_block);
-        const ok_end = c.LLVMGetInsertBlock(self.builder);
-
-        c.LLVMPositionBuilderAtEnd(self.builder, error_block);
-        var error_value = c.LLVMGetUndef(result_type_ref);
-        error_value = c.LLVMBuildInsertValue(self.builder, error_value, c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(result_ty, result_error.id)), 0), 0, "type.init.error.tag");
-        error_value = c.LLVMBuildInsertValue(self.builder, error_value, c.LLVMBuildExtractValue(self.builder, status, status_error.index + 1, "type.init.error.payload"), result_error.index + 1, "type.init.error.value");
-        _ = c.LLVMBuildBr(self.builder, merge_block);
-        const error_end = c.LLVMGetInsertBlock(self.builder);
-
-        c.LLVMPositionBuilderAtEnd(self.builder, merge_block);
-        const phi = c.LLVMBuildPhi(self.builder, result_type_ref, "type.init.result");
-        var values = [_]llvm.c.LLVMValueRef{ ok_value, error_value };
-        var blocks = [_]llvm.c.LLVMBasicBlockRef{ ok_end, error_end };
-        c.LLVMAddIncoming(phi, &values, &blocks, 2);
-        return .{ .value_ref = phi, .type_ref = result_type_ref, .ty = result_ty };
-    }
-
-    fn typeInitializerInto(self: *CodeGenerator, initializer: anytype, storage: llvm.c.LLVMValueRef) !void {
-        _ = try self.callTypeInitializer(initializer, storage);
-    }
-
-    fn callTypeInitializer(self: *CodeGenerator, initializer: anytype, storage: llvm.c.LLVMValueRef) !llvm.c.LLVMValueRef {
-        const function = self.graph.functions.items[@intFromEnum(initializer.init_fn)];
-        if (function.input.len == 0) return CodegenError.InvalidType;
-        const input_type = try self.fieldsLLVMType(function.input);
-        var aggregate = c.LLVMGetUndef(input_type);
-        aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, storage, 0, "ctor.self");
-        if (function.input.len > 1) {
-            const args = (try self.visitNode(initializer.args)) orelse return CodegenError.ValueNotFound;
-            var index: u32 = 1;
-            while (index < function.input.len) : (index += 1) {
-                const value = c.LLVMBuildExtractValue(self.builder, args.value_ref, index - 1, "ctor.arg");
-                aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value, index, "ctor.arg.insert");
-            }
-        }
-        const symbol = self.functions.get(initializer.init_fn) orelse return CodegenError.SymbolNotFound;
-        return self.callArgi(symbol, aggregate, "type.init.call");
-    }
-
     fn buildDropState(self: *CodeGenerator, ty: graph_mod.GlobalTypeId, entry_builder: llvm.c.LLVMBuilderRef) !*DropState {
         const state = try self.allocator.create(DropState);
         state.* = .{ .flag_ref = c.LLVMBuildAlloca(entry_builder, c.LLVMInt1Type(), "needs.deinit") };
@@ -2408,20 +2313,9 @@ pub const CodeGenerator = struct {
 
     fn markCallDropState(self: *CodeGenerator, call: anytype, result: llvm.c.LLVMValueRef, is_extern: bool) !void {
         if (call.consumes_auto_deinit) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
-        if (call.initializes_auto_deinit) |node| if (self.dropStateForNode(node)) |drop| {
-            const function = self.graph.function(call.callee);
-            if (initializer_contract.classify(self.graph, call.callee) == .fallible and
-                function.input.len != 0 and
-                std.mem.eql(u8, self.graph.text(self.graph.declaration(function.declaration).name), "init"))
-            {
-                const status_ty = self.graph.fields.items[function.output.start].ty;
-                const ok = types.findVariant(self.graph, status_ty, "ok") orelse return CodegenError.InvalidType;
-                const status = if (is_extern) result else c.LLVMBuildExtractValue(self.builder, result, 0, "init.status");
-                const tag = c.LLVMBuildExtractValue(self.builder, status, 0, "init.status.tag");
-                const succeeded = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, tag, c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(status_ty, ok.id)), 0), "init.status.ok");
-                self.storeDropStateValue(drop, succeeded);
-            } else self.storeDropState(drop, true);
-        };
+        _ = result;
+        _ = is_extern;
+        if (call.initializes_auto_deinit) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
     }
 
     fn genAutoDeinit(self: *CodeGenerator, auto_id: graph_mod.GlobalAutoDeinitId) !void {

@@ -13,17 +13,15 @@ File : Type = (
     .should_close   : Bool = 0 == 1
 )
 
-once init(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
-    p& = (._ffi = ffi, .stream_address = 0, .should_close = false)
+once File init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: File) := {
+    result = (._ffi = ffi, .stream_address = 0, .should_close = false)
 }
 
-init(
-    .p: $&File,
-    .ffi: $&ForeignFunctionInterface = reach ffi,
+File init(.ffi: $&ForeignFunctionInterface = reach ffi,
     .stream_address: UIntNative,
     .should_close: Bool,
-) -> () := {
-    p& = (
+) -> (.result: File) := {
+    result = (
         ._ffi = ffi,
         .stream_address = stream_address,
         .should_close = should_close,

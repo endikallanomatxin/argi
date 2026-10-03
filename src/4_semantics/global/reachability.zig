@@ -300,10 +300,7 @@ const State = struct {
                 try self.walkNode(value.pointer);
                 try self.walkNode(value.value);
             },
-            .type_initializer => |value| {
-                try self.walkNode(value.args);
-                try self.includeFunction(value.init_fn);
-            },
+
             .explicit_cast => |value| try self.walkNode(value.value),
         }
     }

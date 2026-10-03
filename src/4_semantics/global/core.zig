@@ -93,7 +93,7 @@ pub const Resolver = struct {
     pub fn trackResolvedReachedCall(self: *Resolver, node: global_sg.Node, context: reach_context.Context) !void {
         switch (node.content) {
             .function_call => |call| try self.trackReachedCall(call.callee, call.input, context, false),
-            .type_initializer => |call| try self.trackReachedCall(call.init_fn, call.args, context, true),
+
             else => {},
         }
     }
@@ -446,6 +446,7 @@ pub const Resolver = struct {
         for (try self.graph.functionsNamed(self.allocator, name)) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
             if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
+            if (self.graph.declaration(function.declaration).constructor_type != null) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
             const score = switch (try self.matchCallInputWithReach(function.input, input_node, context)) {
                 .no_match => continue,
@@ -483,6 +484,7 @@ pub const Resolver = struct {
         for (try self.graph.functionsNamed(self.allocator, name)) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
             if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
+            if (self.graph.declaration(function.declaration).constructor_type != null) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
             const score = switch (self.matchCallInput(function.input, input_node)) {
                 .no_match => continue,
