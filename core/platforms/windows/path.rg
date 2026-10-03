@@ -30,7 +30,9 @@ _platform_path_root_length(.view: &StringView) -> (.length: UIntNative = 0) := {
         return
     }
     if view&.length < 3 { return }
-    letter ::= (first >= 65 and first <= 90) or (first >= 97 and first <= 122)
+    uppercase ::= first >= 65 and first <= 90
+    lowercase ::= first >= 97 and first <= 122
+    letter ::= uppercase or lowercase
     if letter and bytes_get(.view = view, .index = 1).byte == 58 {
         if _platform_path_is_separator(.byte = bytes_get(.view = view, .index = 2).byte).ok { length = 3 }
     }
