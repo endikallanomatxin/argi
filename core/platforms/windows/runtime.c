@@ -13,6 +13,7 @@
 #include <io.h>
 #include <fcntl.h>
 #include "time.c"
+#include "processes.c"
 
 uintptr_t _argi_page_size(void) {
     SYSTEM_INFO info;

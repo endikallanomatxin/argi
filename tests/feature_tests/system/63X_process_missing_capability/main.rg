@@ -1,0 +1,1 @@
+main() -> () := { spawn(.executable = "test") }

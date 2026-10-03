@@ -41,6 +41,11 @@ data#(.t: Type)(.self: &ArrayViewRO#(.t: t)) -> (.pointer: &t) := {
     }
 }
 
+-- Empty views need no backing reference and remain independent of storage.
+array_view_ro#(.t: Type)() -> (.array: ArrayViewRO#(.t: t)) := {
+    array = (._data = ..none, ._length = 0)
+}
+
 array_view_ro#(.t: Type)(.data: &t) -> (.array: ArrayViewRO#(.t: t)) := {
     array = (._data = ..some(.value = data), ._length = 1)
 }

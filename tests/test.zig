@@ -8868,3 +8868,56 @@ test "feature_tests/system/58X_clock_missing_ffi" {
 test "feature_tests/system/59X_clock_domains" {
     try buildExpectFail("tests/feature_tests/system/59X_clock_domains", "no overload of 'elapsed' accepts arguments (.start: UnixTimestamp, .end: MonotonicInstant)");
 }
+
+test "feature_tests/system/60_processes" {
+    const path = "tests/feature_tests/system/60_processes";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/system/61_process_errors" {
+    const path = "tests/feature_tests/system/61_process_errors";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/system/62_process_termination" {
+    const path = "tests/feature_tests/system/62_process_termination";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/system/63X_process_missing_capability" {
+    try buildExpectFail("tests/feature_tests/system/63X_process_missing_capability", ".self uses reach [proc_man] expected as '&ProcessManager'");
+}
+
+test "feature_tests/system/64X_process_private_handle" {
+    try buildExpectFail("tests/feature_tests/system/64X_process_private_handle", "field '_handle' is private to its module");
+}
+
+test "feature_tests/system/65X_process_stream_lifetime" {
+    try buildExpectFail("tests/feature_tests/system/65X_process_stream_lifetime", "reference depends on a root that has ended");
+}
+
+test "feature_tests/system/66_windows_process_quoting" {
+    try checkNativeCFixture("tests/feature_tests/system/66_windows_process_quoting", &.{"@argi_windows_process_quote_probe"});
+}
+
+test "feature_tests/system/67_posix_process_contract" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    try checkNativeCFixture("tests/feature_tests/system/67_posix_process_contract", &.{"@argi_posix_process_probe"});
+}
+
+test "feature_tests/system/68X_process_missing_ffi" {
+    try buildExpectFail("tests/feature_tests/system/68X_process_missing_ffi", "failed to initialize type 'ProcessManager'");
+}
+
+test "feature_tests/system/69X_process_copy" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/system/69X_process_copy", "cannot be copied implicitly", "failed without a diagnostic");
+}
+
+test "feature_tests/system/70_process_argument_lifetime" {
+    const path = "tests/feature_tests/system/70_process_argument_lifetime";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

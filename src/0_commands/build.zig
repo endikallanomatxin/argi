@@ -428,8 +428,12 @@ fn compileResolvedPlan(
 
     // Manifest paths are resolved from the package root; CLI paths retain the
     // invoking directory. Keep both lists ordered for archive dependencies.
+    // Native process adapters keep OS launch structures outside the language
+    // ABI. Bundle the selected adapter with the same driver and target flags
+    // as user C inputs, including installed and cross-target builds.
     const needs_windows_runtime = flags.target.os == .windows;
-    const extra: usize = if (needs_windows_runtime) 2 else 0;
+    const needs_posix_runtime = flags.target.os == .linux or flags.target.os == .macos;
+    const extra: usize = if (needs_windows_runtime) 2 else if (needs_posix_runtime) 1 else 0;
     const native_inputs = try allocator.alloc(link.NativeInput, plan.native_inputs.len + flags.native_inputs.len + extra);
     @memcpy(native_inputs[0..plan.native_inputs.len], plan.native_inputs);
     @memcpy(native_inputs[plan.native_inputs.len..][0..flags.native_inputs.len], flags.native_inputs);
@@ -437,6 +441,9 @@ fn compileResolvedPlan(
         const core_dir = try sf.resolveToolCoreDir(&allocator, io, .{ .explicit_sysroot = flags.sysroot_path, .environ_map = environ_map });
         native_inputs[native_inputs.len - 2] = .{ .file = try std.fs.path.join(allocator, &.{ core_dir, "platforms", "windows", "runtime.c" }) };
         native_inputs[native_inputs.len - 1] = .{ .library = "shell32" };
+    } else if (needs_posix_runtime) {
+        const core_dir = try sf.resolveToolCoreDir(&allocator, io, .{ .explicit_sysroot = flags.sysroot_path, .environ_map = environ_map });
+        native_inputs[native_inputs.len - 1] = .{ .file = try std.fs.path.join(allocator, &.{ core_dir, "platforms", "posix", "processes.c" }) };
     }
     const link_start = nowNs(io);
     if (object_only)

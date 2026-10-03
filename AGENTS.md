@@ -187,6 +187,14 @@ feature first.
   range; never implement their cleanup with partial `VirtualFree` operations.
   Aligned CRT acquisitions must use `aligned_free`, not ordinary `free`.
 
+- CLI linking bundles `core/platforms/posix/processes.c` for POSIX targets and
+  `core/platforms/windows/runtime.c` for Windows using the selected C driver
+  and target flags. Process adapters share temporary argument storage through
+  `core/platforms/shared/process_arguments.h`; keep these headers in installed
+  core distributions. Process and pipe addresses are private native handles,
+  not safe references or allocation receipts. The owning process closes its
+  endpoints and terminates/reaps a remaining direct child during cleanup.
+
 - Target `#if` selection is shared by import discovery and frontend tokenizing
   through `src/1_base/target_selection.zig`. It blanks discarded bytes while
   preserving original offsets and line endings. Keep source buffers intact

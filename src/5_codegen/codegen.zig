@@ -2050,6 +2050,8 @@ pub const CodeGenerator = struct {
     }
 
     fn genVirtualCall(self: *CodeGenerator, call_id: graph_mod.GlobalVirtualCallId, destination: ?c.LLVMValueRef) !?TypedValue {
+        // TODO: Normalize abstract-reference local bindings for virtual calls;
+        // direct invocation through such a local can fail with InvalidType.
         const call = self.graph.virtual_calls.items[@intFromEnum(call_id)];
         const handle_ptr = (try self.visitNode(call.handle)) orelse return CodegenError.ValueNotFound;
         const handle_ty = self.graph.nodes.items[@intFromEnum(call.handle)].ty orelse return CodegenError.InvalidType;

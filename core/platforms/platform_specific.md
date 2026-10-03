@@ -42,3 +42,20 @@ product and floating-point rounding. FILETIME values normalize negative Unix
 seconds with a nonnegative fractional component. Sleep uses finite DWORD
 chunks with upward rounding, then checks QPC again to handle early wakeups;
 it never passes the `INFINITE` sentinel to the operating system.
+
+Process launch adapters use opaque private addresses rather than safe-reference
+claims. The temporary builder validates UTF-8 and copies each non-NUL argument.
+The selected native adapter is included by CLI linking using the same target
+and driver arguments as user C inputs. POSIX uses `posix_spawnp`, close-on-exec
+pipe endpoints, and descriptors moved above standard streams before dup actions;
+Windows uses an explicit executable path, CRT-compatible UTF-16 argv quoting,
+and an explicit `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`. Parent endpoints are never
+inherited by the child. The process record retains cached wait status until
+owner cleanup. A POSIX `ECHILD` permanently invalidates its pid for signalling.
+
+POSIX pipe writes block SIGPIPE temporarily and consume only a newly generated
+instance on EPIPE. The previous mask and any already pending SIGPIPE survive.
+Endpoints are unbuffered and have independent close operations; process cleanup
+closes them before terminating and reaping a remaining direct child. Windows
+uses raw pipe handles with ReadFile/WriteFile and maps ERROR_BROKEN_PIPE to EOF
+for reading. Launch failure paths release builder, launch, and endpoint resources.

@@ -301,6 +301,8 @@ const Context = struct {
     }
 
     fn lowerNode(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) anyerror!Lowered {
+        // TODO: Support contextual choice literals in parameter defaults;
+        // callers can express these defaults through a value-returning helper.
         if (self.expression_mode == .initializer) switch (self.tree.tag(node)) {
             .literal,
             .identifier,
