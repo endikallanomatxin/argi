@@ -116,8 +116,8 @@ core, and LLVM runtime. Extract the package and add its `bin` directory to
 You need a system C compiler/linker to build Argi programs, but no Zig or
 separate LLVM installation. See the
 [binary installation guide](.github/scripts/binary_installation.md) for supported
-OS versions, checksum verification, and platform setup. Windows support is
-planned.
+OS versions, checksum verification, and platform setup. Windows binaries are
+not published; see the [Windows source-build guide](.github/scripts/windows_development.md).
 
 ### From source
 
@@ -131,7 +131,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 LLVM is located through `llvm-config-21` or `llvm-config`; override paths with
 `LLVM_INCLUDE_DIR`, `LLVM_LIB_DIR`, and `LLVM_LIBS` when needed. Argi uses `cc`
-to link programs; set `CC` to select another compiler. `--sysroot` or
+(`gcc` on Windows) to link programs; set `CC` to select another compiler. `--sysroot` or
 `ARGI_SYSROOT` can select another Argi installation prefix.
 
 ## Compiler tests

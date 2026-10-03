@@ -7,7 +7,8 @@ name: Windows port validation
     paths:
       - 'src/**'
       - 'core/**'
-      - 'tests/native/windows/**'
+      - 'tests/**'
+      - '.github/scripts/smoke_windows.py'
       - 'build.zig'
       - '.github/workflows/windows.yml'
   pull_request:
@@ -15,7 +16,8 @@ name: Windows port validation
     paths:
       - 'src/**'
       - 'core/**'
-      - 'tests/native/windows/**'
+      - 'tests/**'
+      - '.github/scripts/smoke_windows.py'
       - 'build.zig'
       - '.github/workflows/windows.yml'
 
@@ -41,6 +43,12 @@ jobs:
           path-type: inherit
           install: mingw-w64-ucrt-x86_64-gcc
 
+      - uses: actions/cache@v4
+        id: llvm-sdk
+        with:
+          path: ${{ runner.temp }}/llvm-sdk
+          key: llvm-21.1.8-windows-x64-c-api
+
       - name: Install LLVM 21 development distribution
         shell: pwsh
         run: |
@@ -48,23 +56,25 @@ jobs:
           $archive = Join-Path $env:RUNNER_TEMP 'llvm.tar.xz'
           $destination = Join-Path $env:RUNNER_TEMP 'llvm-sdk'
           New-Item -ItemType Directory -Force $destination | Out-Null
-          Invoke-WebRequest "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/$name.tar.xz" -OutFile $archive
-          tar -xf $archive -C $destination "$name/include" "$name/lib/LLVM-C.lib" "$name/bin/LLVM-C.dll"
-          if ($LASTEXITCODE -ne 0) { throw 'LLVM extraction failed' }
+          if ('${{ steps.llvm-sdk.outputs.cache-hit }}' -ne 'true') {
+            Invoke-WebRequest "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/$name.tar.xz" -OutFile $archive
+            tar -xf $archive -C $destination "$name/include" "$name/lib/LLVM-C.lib" "$name/bin/LLVM-C.dll"
+            if ($LASTEXITCODE -ne 0) { throw 'LLVM extraction failed' }
+          }
           $root = Join-Path $destination $name
           "LLVM_INCLUDE_DIR=$root/include" >> $env:GITHUB_ENV
           "LLVM_LIB_DIR=$root/lib" >> $env:GITHUB_ENV
           'LLVM_LIBS=LLVM-C.lib' >> $env:GITHUB_ENV
           "LLVM_RUNTIME_DLL=$root/bin/LLVM-C.dll" >> $env:GITHUB_ENV
 
-      - name: Build compiler and run platform boundary tests
+      - name: Build compiler and run unit tests
         shell: msys2 {0}
         run: |
           zig build -j1 --summary all
           cp "$(cygpath -u "$LLVM_RUNTIME_DLL")" zig-out/bin/LLVM-C.dll
           # Put the DLL on PATH for test binaries outside the installation.
           export PATH="$PWD/zig-out/bin:$PATH"
-          zig build -j1 test-internal -Dtest-filter='Windows' -Dtest-filter='file URIs' -Dtest-filter='LLVM triples' -Dtest-filter='LSP' --summary all
+          zig build -j1 test-internal -Dtest-progress=true --summary all
 
       - name: Compile and execute a native program
         shell: msys2 {0}
@@ -128,6 +138,14 @@ jobs:
           import subprocess
           subprocess.run(['./windows-process.exe', '\u00f1-\u6587', '*.tmp'], check=True)
           PY
+
+      - name: Validate a separate compiler installation
+        shell: msys2 {0}
+        run: |
+          prefix="$RUNNER_TEMP/argi-installed"
+          zig build -j1 --prefix "$prefix"
+          cp "$(cygpath -u "$LLVM_RUNTIME_DLL")" "$(cygpath -u "$prefix")/bin/LLVM-C.dll"
+          python .github/scripts/smoke_windows.py "$prefix"
 
       - name: Run compiler and core feature suites
         shell: msys2 {0}
