@@ -281,3 +281,28 @@ representable rounded finite values are accepted even when the exact input
 is slightly outside their range. Exact zero accepts any exponent and preserves
 its sign, including negative zero. The decimal-to-binary conversion never
 passes through a wider floating-point type, avoiding double rounding.
+
+## Integer formatting
+
+`format(.value: T, .allocator: $&Allocator)` returns an owning `String` for
+`Int8`, `Int16`, `Int32`, `Int64`, `UInt8`, `UInt16`, `UInt32`, `UInt64`, and
+`UIntNative`. Decimal output uses ASCII digits, no separators, and a leading
+minus sign only for negative values. Zero is `"0"`; signed minima and unsigned
+maxima retain their full range. The result uses one allocation sized for the
+text and its zero terminator.
+
+`format_into(.out: $&String, .value: T, .allocator: $&Allocator)` appends the
+same representation. Decimal conversion uses fixed local storage; only growth
+of the destination string can allocate. A failed reservation leaves the
+existing string unchanged. String formatting returns `out_of_memory` on an
+allocation failure.
+
+`format_into(.out: $&Writer, .value: T)` and
+`write(.self: $&Writer, .value: T)` send the same decimal bytes to a writer
+without an allocator or an intermediate owning string. `print(.value: T,
+.writer: $&Writer, .terminator: StringView = "\n")` adds the usual terminator;
+a locally assumed writer can satisfy its writer input. These operations
+preserve `stream_write_failed` and `stream_flush_failed`, stop at the first
+failed byte, and leave the successfully written prefix in the destination.
+A value failure prevents writing the terminator. They request no implicit
+flush; a writer may flush internally while accepting bytes.

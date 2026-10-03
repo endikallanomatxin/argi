@@ -20,6 +20,7 @@ UInt8 implements Int
 UInt16 implements Int
 UInt32 implements Int
 UInt64 implements Int
+UIntNative implements Int
 
 
 UInt : Abstract = ()
@@ -27,6 +28,7 @@ UInt8 implements UInt
 UInt16 implements UInt
 UInt32 implements UInt
 UInt64 implements UInt
+UIntNative implements UInt
 
 
 

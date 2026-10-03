@@ -8791,3 +8791,15 @@ test "feature_tests/basics/69X_typed_array_store" {
 test "feature_tests/basics/70X_array_store_range" {
     try buildExpectFail("tests/feature_tests/basics/70X_array_store_range", "integer literal 256 does not fit in 'UInt8'");
 }
+
+test "feature_tests/io/35_numeric_writer_formatting" {
+    const path = "tests/feature_tests/io/35_numeric_writer_formatting";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/text/42_numeric_formatting_allocations" {
+    const path = "tests/feature_tests/text/42_numeric_formatting_allocations";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

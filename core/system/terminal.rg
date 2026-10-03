@@ -200,3 +200,12 @@ print(
     assume writer
     result = print(as_view(value), .terminator = terminator)
 }
+
+print#(.t: Type: Int)(
+    .value      : t,
+    .writer     : $&Writer   = reach writer,
+    .terminator : StringView = "\n",
+) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    format_into(.out = writer, .value = value)!
+    result = write(.self = writer, .text = terminator)
+}
