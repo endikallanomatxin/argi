@@ -394,6 +394,10 @@ fn compileResolvedPlan(
         if (!diagnostics.hasErrors()) std.debug.print("indexed codegen failed without a diagnostic: {s}\n", .{@errorName(err)});
         return error.CompilationFailed;
     };
+    const triple_message = c.LLVMGetDefaultTargetTriple();
+    defer c.LLVMDisposeMessage(triple_message);
+    const triple = std.mem.span(triple_message);
+    try link.prepareModule(module, triple, flags.optimization_mode);
     const codegen_ns = elapsedSince(io, codegen_start);
 
     if (!object_only and options.codegen_options.selected_test_name == null and !hasExecutableMain(graph)) {
@@ -418,9 +422,6 @@ fn compileResolvedPlan(
         }
     }
 
-    const triple_message = c.LLVMGetDefaultTargetTriple();
-    defer c.LLVMDisposeMessage(triple_message);
-    const triple = std.mem.span(triple_message);
     // Manifest paths are resolved from the package root; CLI paths retain the
     // invoking directory. Keep both lists ordered for archive dependencies.
     const native_inputs = try allocator.alloc(link.NativeInput, plan.native_inputs.len + flags.native_inputs.len);

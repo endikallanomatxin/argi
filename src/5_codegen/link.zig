@@ -9,8 +9,8 @@ const LinkError = error{
     LinkFailed,
 };
 
-// This selects LLVM's machine-code pipeline only. Argi does not yet run an
-// LLVM IR optimization pipeline; release mode can add that independently.
+// Development preserves generated IR; release runs the target-aware O2
+// pipeline before machine-code generation.
 pub const OptimizationMode = enum {
     development,
     release,
@@ -60,7 +60,27 @@ fn createTargetMachine(
     ) orelse return error.TargetMachineFailed;
 
     c.LLVMSetTarget(module, triple);
+    const layout = c.LLVMCreateTargetDataLayout(tm);
+    defer c.LLVMDisposeTargetData(layout);
+    c.LLVMSetModuleDataLayout(module, layout);
     return tm;
+}
+
+/// Prepare IR before publishing it or emitting machine code. Both outputs must
+/// describe the same optimized module, using the target's actual data layout.
+pub fn prepareModule(module: c.LLVMModuleRef, triple: [:0]const u8, mode: OptimizationMode) !void {
+    const machine = try createTargetMachine(module, triple, mode);
+    defer c.LLVMDisposeTargetMachine(machine);
+    if (mode != .release) return;
+    const options = c.LLVMCreatePassBuilderOptions();
+    defer c.LLVMDisposePassBuilderOptions(options);
+    c.LLVMPassBuilderOptionsSetVerifyEach(options, 1);
+    if (c.LLVMRunPasses(module, "default<O2>", machine, options)) |failure| {
+        const message = c.LLVMGetErrorMessage(failure);
+        defer c.LLVMDisposeErrorMessage(message);
+        std.debug.print("LLVM IR optimization failed: {s}\n", .{message});
+        return error.OptimizationFailed;
+    }
 }
 
 pub fn emitObjectFile(

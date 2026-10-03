@@ -55,7 +55,7 @@ fn printHelp() void {
     std.debug.print("  --link-file <path>                    Link a native object/archive/shared library (repeatable)\n", .{});
     std.debug.print("  --no-cache                             Rebuild modules without reading or writing the frontend cache\n", .{});
     std.debug.print("  --stats                                Print compilation timings and internal statistics\n", .{});
-    std.debug.print("  --release                              Use the optimized machine-code backend\n", .{});
+    std.debug.print("  --release                              Optimize LLVM IR and generated machine code\n", .{});
     std.debug.print("\nTest flags:\n", .{});
     std.debug.print("  --filter <name>                        Run only tests whose name contains this text\n", .{});
     std.debug.print("\nBuild diagnostic flags:\n", .{});
