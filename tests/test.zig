@@ -8762,6 +8762,12 @@ test "formatter prepares all files before changing any source" {
     try expectEqualStrings(source, after);
 }
 
+test "feature_tests/text/41_float_parsing" {
+    const path = "tests/feature_tests/text/41_float_parsing";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
 test "feature_tests/polymorphism/65_contextual_choice_arguments" {
     const path = "tests/feature_tests/polymorphism/65_contextual_choice_arguments";
     try expectSuccessfulBuild(path);

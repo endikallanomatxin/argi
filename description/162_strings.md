@@ -258,3 +258,26 @@ returning the first encountered invalid digit or range failure. Every
 multiply/add or subtract is checked against the target range before execution.
 Signed minima and the full unsigned maximum are representable without first
 converting their magnitude to a signed intermediate.
+
+## Floating-point parsing
+
+`parse_float16`, `parse_float32`, and `parse_float64` accept `.text: StringView`
+and return an `Errable` containing the named target type. Parsing consumes
+exactly the recorded byte extent, uses no allocator, and is independent of
+locale. Supported input is ASCII decimal notation: an optional leading sign,
+at least one digit before or after an optional decimal point, and an optional
+`e` or `E` exponent with an optional sign and at least one digit. Examples
+include `12`, `-0.5`, `.5`, `5.`, and `+3.25e-2`.
+
+Whitespace, separators, radix prefixes, embedded zero bytes, trailing bytes,
+and special spellings such as `nan` and `inf` produce `invalid_input`. The
+complete input grammar is checked before determining range, so a malformed
+suffix remains `invalid_input` even after an enormous exponent.
+
+Valid decimal inputs round directly to the target's IEEE binary format using
+round-to-nearest, ties-to-even. Finite subnormal results are accepted. A
+nonzero input that rounds to zero or infinity produces `out_of_range`;
+representable rounded finite values are accepted even when the exact input
+is slightly outside their range. Exact zero accepts any exponent and preserves
+its sign, including negative zero. The decimal-to-binary conversion never
+passes through a wider floating-point type, avoiding double rounding.
