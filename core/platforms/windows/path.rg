@@ -1,3 +1,4 @@
+#if target_os("windows") {
 _platform_path_is_separator(.byte: UInt8) -> (.ok: Bool) := {
     ok = byte == 47 or byte == 92
 }
@@ -36,4 +37,6 @@ _platform_path_root_length(.view: &StringView) -> (.length: UIntNative = 0) := {
     if letter and bytes_get(.view = view, .index = 1).byte == 58 {
         if _platform_path_is_separator(.byte = bytes_get(.view = view, .index = 2).byte).ok { length = 3 }
     }
+}
+
 }

@@ -25,8 +25,39 @@ branch is compiled. This differs from running an ordinary `if` inside
 `#run`; the latter executes the conditional during compile-time evaluation.
 
 > [!IMPLEMENTATION]
-> `#run` and `#if` are part of the intended language design but are not yet
-> supported by the compiler.
+> `#run` and general compile-time conditions are not supported yet.
+> `#if` currently accepts the target predicates described below, combined
+> with `not`, `and`, `or`, and parentheses.
+
+## Compilation target
+
+`target_os("windows")`, `target_arch("aarch64")`, and `target_abi("gnu")`
+are Boolean compile-time predicates. They describe the program's compilation
+target, including during cross compilation, rather than the compiler host.
+Names identify concrete OS, architecture, or ABI tags; unknown names are errors.
+These compiler operations require one positional literal string argument and
+have no runtime effects or capability inputs.
+
+Use `#if` to select declarations, imports, or statements:
+
+```rg
+#if target_os("windows") {
+    platform := import("./windows")
+} #else {
+    platform := import("./posix")
+}
+```
+
+Only the selected branch contributes declarations or dependencies. Imports,
+types, and foreign symbols in the discarded branch do not need to exist.
+Nested selections are allowed. Conditions are checked even in discarded
+branches, and branch delimiters must remain balanced. `#if` is a declaration
+or statement selection, not a value-producing expression. An ordinary `if`
+does not provide these dependency-selection guarantees.
+
+Target information is not a runtime OS capability and need not become a type
+parameter on every resource. Libraries concentrate platform selection in
+private adapters behind ordinary public resource contracts.
 
 ## Open questions
 

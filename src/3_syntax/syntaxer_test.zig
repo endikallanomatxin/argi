@@ -15,7 +15,9 @@ fn parseTestFile(path: []const u8) !syntax_tree.FileSyntaxTree {
     var diagnostics = diagnostic.Diagnostics.init(&allocator, &files);
     defer diagnostics.deinit();
 
-    var tokenizer_context = tokenizer.Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
+    var error_offset: usize = 0;
+    const selected = try @import("../1_base/target_selection.zig").select(allocator, source, .{}, &error_offset);
+    var tokenizer_context = tokenizer.Tokenizer.init(allocator, &diagnostics, selected, diagnostics.source_db.fileId(0));
     _ = try tokenizer_context.tokenize();
     const tokens = tokenizer_context.takeTokens();
 

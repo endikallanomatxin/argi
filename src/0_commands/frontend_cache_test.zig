@@ -21,6 +21,10 @@ const Result = struct {
 };
 
 fn compile(files: []const sf.SourceFile, session: ?*ModuleCache, options: frontend.FrontendPipeline.SemantizingOptions) !Result {
+    return compileForTarget(files, session, options, .{});
+}
+
+fn compileForTarget(files: []const sf.SourceFile, session: ?*ModuleCache, options: frontend.FrontendPipeline.SemantizingOptions, target: @import("../1_base/target.zig").Config) !Result {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -29,6 +33,7 @@ fn compile(files: []const sf.SourceFile, session: ?*ModuleCache, options: fronte
     var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{
         .module_cache = session,
         .semantizing = options,
+        .target = target,
     });
     defer pipeline.deinit();
     var failure: ?anyerror = null;
@@ -361,4 +366,46 @@ test "frontend module cache treats unwritable cache paths as optional" {
     defer result.deinit();
     try std.testing.expect(result.failure == null);
     try std.testing.expectEqual(@as(usize, 1), session.disk_write_failures);
+}
+
+test "frontend module cache preserves target selection and discarded source edits" {
+    var session = ModuleCache.init(std.testing.allocator, .{});
+    defer session.deinit();
+    var files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "#if target_arch(\"aarch64\") and target_arch(\"x86_64\") {\n" ++
+        "bad := import(\"./missing\")\n" ++
+        "} #else {\nmain() -> (.status_code: Int32 = 0) := {}\n}\n" }};
+    const first = try expectCleanEquivalent(&files, &session);
+    defer first.deinit();
+    try std.testing.expect(first.failure == null);
+    const reused = try expectCleanEquivalent(&files, &session);
+    defer reused.deinit();
+    try std.testing.expectEqual(@as(usize, 1), reused.hits);
+    files[0].code = "#if target_arch(\"aarch64\") and target_arch(\"x86_64\") {\n" ++
+        "bad := import(\"./another_missing\")\n" ++
+        "} #else {\nmain() -> (.status_code: Int32 = 0) := {}\n}\n";
+    const changed = try expectCleanEquivalent(&files, &session);
+    defer changed.deinit();
+    try std.testing.expect(changed.failure == null);
+    try std.testing.expectEqual(@as(usize, 1), changed.misses);
+}
+
+test "frontend module cache separates platform branches by compilation target" {
+    var session = ModuleCache.init(std.testing.allocator, .{});
+    defer session.deinit();
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "#if target_os(\"windows\") {\n" ++
+        "main() -> (.status_code: Int32 = 11) := {}\n" ++
+        "} #else {\nmain() -> (.status_code: Int32 = 22) := {}\n}\n" }};
+    const linux = try compileForTarget(&files, &session, .{}, .{ .arch = .x86_64, .os = .linux, .abi = .gnu });
+    defer linux.deinit();
+    const windows = try compileForTarget(&files, &session, .{}, .{ .arch = .x86_64, .os = .windows, .abi = .gnu });
+    defer windows.deinit();
+    try std.testing.expect(linux.failure == null);
+    try std.testing.expect(windows.failure == null);
+    try std.testing.expectEqual(@as(usize, 1), windows.misses);
+    try std.testing.expect(!std.mem.eql(u8, linux.ir, windows.ir));
+    const reused = try compileForTarget(&files, &session, .{}, .{ .arch = .x86_64, .os = .windows, .abi = .gnu });
+    defer reused.deinit();
+    try std.testing.expect(reused.failure == null);
+    try std.testing.expectEqual(@as(usize, 1), reused.hits);
+    try std.testing.expectEqualStrings(windows.ir, reused.ir);
 }

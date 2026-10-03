@@ -15,12 +15,11 @@ WSL is Linux support, not validation of this port.
 ## Library boundary
 
 Keep `Memory`, `FileSystem`, and `Terminal` independent of their OS adapters.
-The compilation target selects private implementations; it is static information,
-not another runtime capability. A future compile-time target query should expose
-OS, architecture, and ABI so libraries can select implementations themselves.
-It must describe the application target, including during cross compilation,
-rather than the machine running the compiler. Concentrate selection at adapter
-boundaries instead of scattering OS checks throughout public core APIs.
+Target predicates and `#if` select private implementations before dependency
+discovery and tokenizing. This is static information, not another runtime
+capability. Concentrate selection at adapter boundaries instead of scattering
+OS checks throughout public core APIs. See the
+[compile-time target model](../description/50_comptime.md#compilation-target).
 
 ## Platform considerations
 

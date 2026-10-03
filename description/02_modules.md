@@ -48,7 +48,9 @@ type's defining module if no match exists. Reached arguments still come from
 the caller's lexical context. These lifecycle lookups do not expose unrelated
 functions from the imported module to unqualified calls.
 
-Import paths must resolve at compile time.
+Import paths must resolve at compile time. Imports in discarded target
+`#if` branches are not discovered or resolved; see
+[compile-time computation](50_comptime.md#compilation-target).
 
 > [!IMPLEMENTATION]
 > The compiler currently accepts only literal import paths.

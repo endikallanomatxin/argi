@@ -177,6 +177,15 @@ feature first.
   range; never implement their cleanup with partial `VirtualFree` operations.
   Aligned CRT acquisitions must use `aligned_free`, not ordinary `free`.
 
+- Target `#if` selection is shared by import discovery and frontend tokenizing
+  through `src/1_base/target_selection.zig`. It blanks discarded bytes while
+  preserving original offsets and line endings. Keep source buffers intact
+  for diagnostics, cache fingerprints, and editor positions. Private platform
+  adapters select their own declarations; do not filter source by folder names.
+  Target predicates use ModuleSG's target, including during cross compilation.
+  Bundled primitive requirements may be target-specific, but selected trusted
+  declarations must still satisfy their origin, canonical path, and signature.
+
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases
   - avoid introducing synonyms such as `parsing`, `analysis`, or `semantic` as the primary names for those phases in new APIs, diagnostics, timing output, or docs

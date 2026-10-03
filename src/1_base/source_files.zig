@@ -192,7 +192,6 @@ fn collectRgFilesRecursively(
     dir_path: []const u8,
     seen_files: *DirSet,
     overrides: []const SourceFile,
-    target: @import("target.zig").Config,
 ) !void {
     var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch |e| {
         std.debug.print("failed to open source directory '{s}': {any}\n", .{ dir_path, e });
@@ -212,7 +211,6 @@ fn collectRgFilesRecursively(
     while (try walker.next(io)) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.path, ".rg")) continue;
-        if (!platformSourceMatches(entry.path, target.os)) continue;
 
         const full_path = try std.fs.path.join(alloc.*, &.{ dir_path, entry.path });
         errdefer alloc.free(full_path);
@@ -309,10 +307,25 @@ fn collectImportDirsFromSource(
     source_path: []const u8,
     source_code: []const u8,
     imports: *ImportList,
+    target: @import("target.zig").Config,
 ) !void {
+    var error_offset: usize = 0;
+    const selected = @import("target_selection.zig").select(alloc.*, source_code, target, &error_offset) catch |err| {
+        var line: usize = 1;
+        var column: usize = 1;
+        for (source_code[0..@min(error_offset, source_code.len)]) |byte| {
+            if (byte == '\n') {
+                line += 1;
+                column = 1;
+            } else column += 1;
+        }
+        std.debug.print("{s}:{d}:{d}: error: invalid target selection: {s}\n", .{ source_path, line, column, @import("target_selection.zig").errorMessage(err) });
+        return err;
+    };
+    defer alloc.free(selected);
     var offset: usize = 0;
     while (offset < source_code.len) {
-        const parsed = nextImportDirective(source_code, &offset) orelse break;
+        const parsed = nextImportDirective(selected, &offset) orelse break;
         offset = parsed.next_offset;
 
         const resolved = try resolveImportDir(alloc, io, source_path, parsed.path);
@@ -489,11 +502,12 @@ fn scanImports(
     io: std.Io,
     source: SourceFile,
     module_dirs: *DirSet,
+    target: @import("target.zig").Config,
 ) !void {
     var imports = ImportList.init(alloc.*);
     defer freeImportList(alloc, &imports);
 
-    try collectImportDirsFromSource(alloc, io, source.path, source.code, &imports);
+    try collectImportDirsFromSource(alloc, io, source.path, source.code, &imports, target);
     for (imports.items) |entry| {
         try ensureImportDirExists(io, entry);
         if (module_dirs.contains(entry.resolved_dir)) continue;
@@ -519,6 +533,7 @@ test "import scanner ignores comments strings and chars" {
         \\spaced := import ( "./spaced_dep" )
     ,
         &imports,
+        .{},
     );
 
     try std.testing.expectEqual(@as(usize, 2), imports.items.len);
@@ -536,6 +551,7 @@ test "import scanner ignores unterminated strings" {
         "tests/feature_tests/modules/example/main.rg",
         "message := \"import(\\\"./string_dep\\\")",
         &imports,
+        .{},
     );
 
     try std.testing.expectEqual(@as(usize, 0), imports.items.len);
@@ -577,6 +593,7 @@ fn validateModuleGraphAcyclic(
     overrides: []const SourceFile,
     visited_dirs: *DirSet,
     stack: *std.array_list.Managed([]const u8),
+    target: @import("target.zig").Config,
 ) !void {
     for (stack.items) |active_dir| {
         if (std.mem.eql(u8, active_dir, dir_path)) {
@@ -610,12 +627,12 @@ fn validateModuleGraphAcyclic(
     defer freeImportList(alloc, &imports);
 
     for (module_files.items) |source| {
-        try collectImportDirsFromSource(alloc, io, source.path, source.code, &imports);
+        try collectImportDirsFromSource(alloc, io, source.path, source.code, &imports, target);
     }
 
     for (imports.items) |entry| {
         try ensureImportDirExists(io, entry);
-        try validateModuleGraphAcyclic(alloc, io, entry.resolved_dir, null, null, overrides, visited_dirs, stack);
+        try validateModuleGraphAcyclic(alloc, io, entry.resolved_dir, null, null, overrides, visited_dirs, stack, target);
     }
 
     try visited_dirs.put(try alloc.dupe(u8, dir_path), {});
@@ -630,6 +647,7 @@ fn collectModuleOrder(
     overrides: []const SourceFile,
     visited_dirs: *DirSet,
     ordered_dirs: *std.array_list.Managed([]const u8),
+    target: @import("target.zig").Config,
 ) !void {
     if (visited_dirs.contains(dir_path)) return;
 
@@ -654,12 +672,12 @@ fn collectModuleOrder(
     defer freeImportList(alloc, &imports);
 
     for (module_files.items) |source| {
-        try collectImportDirsFromSource(alloc, io, source.path, source.code, &imports);
+        try collectImportDirsFromSource(alloc, io, source.path, source.code, &imports, target);
     }
 
     for (imports.items) |entry| {
         try ensureImportDirExists(io, entry);
-        try collectModuleOrder(alloc, io, entry.resolved_dir, null, null, overrides, visited_dirs, ordered_dirs);
+        try collectModuleOrder(alloc, io, entry.resolved_dir, null, null, overrides, visited_dirs, ordered_dirs, target);
     }
 
     try visited_dirs.put(try alloc.dupe(u8, dir_path), {});
@@ -763,7 +781,7 @@ pub fn collectModuleWithOptions(
     }
 
     const core_start = list.items.len;
-    try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files, options.source_overrides, options.target);
+    try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files, options.source_overrides);
     markBundledCore(list.items[core_start..]);
 
     try validateModuleGraphAcyclic(
@@ -775,6 +793,7 @@ pub fn collectModuleWithOptions(
         options.source_overrides,
         &acyclic_dirs,
         &stack,
+        options.target,
     );
     try collectModuleOrder(
         alloc,
@@ -785,6 +804,7 @@ pub fn collectModuleWithOptions(
         options.source_overrides,
         &ordered_seen,
         &ordered_dirs,
+        options.target,
     );
 
     for (ordered_dirs.items) |dir_path| {
@@ -858,7 +878,7 @@ pub fn collectWithEntrySourceWithOptions(
 
     // ─── core/ ────────────────────────────────────────────────────────────
     const core_start = list.items.len;
-    try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files, options.source_overrides, options.target);
+    try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files, options.source_overrides);
     markBundledCore(list.items[core_start..]);
 
     // ─── user entry-point directory and explicit imports ────────────────
@@ -874,6 +894,7 @@ pub fn collectWithEntrySourceWithOptions(
         options.source_overrides,
         &acyclic_dirs,
         &stack,
+        options.target,
     );
     try collectModuleOrder(
         alloc,
@@ -884,6 +905,7 @@ pub fn collectWithEntrySourceWithOptions(
         options.source_overrides,
         &ordered_seen,
         &ordered_dirs,
+        options.target,
     );
 
     for (ordered_dirs.items) |dir_path| {
@@ -919,23 +941,4 @@ pub fn freeList(
         alloc.free(f.code);
     }
     list.deinit();
-}
-
-// Platform selection applies only to bundled core. User modules retain ordinary
-// folder namespaces; selected source sets participate in target-keyed snapshots.
-fn platformSourceMatches(path: []const u8, os: std.Target.Os.Tag) bool {
-    var components = std.mem.tokenizeAny(u8, path, "/\\");
-    if (!std.mem.eql(u8, components.next() orelse return true, "platforms")) return true;
-    const platform = components.next() orelse return true;
-    if (std.mem.eql(u8, platform, "windows")) return os == .windows;
-    if (std.mem.eql(u8, platform, "posix")) return os != .windows;
-    return true;
-}
-
-test "bundled platform sources follow the compilation target" {
-    try std.testing.expect(platformSourceMatches("platforms/windows/page_mapping.rg", .windows));
-    try std.testing.expect(!platformSourceMatches("platforms/windows/page_mapping.rg", .linux));
-    try std.testing.expect(!platformSourceMatches("platforms\\posix\\page_mapping.rg", .windows));
-    try std.testing.expect(platformSourceMatches("platforms/posix/page_mapping.rg", .macos));
-    try std.testing.expect(platformSourceMatches("memory/heap_allocation/Memory.rg", .windows));
 }

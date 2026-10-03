@@ -1,8 +1,10 @@
 # Native platform adapters
 
-Bundled core selects `platforms/windows/` or `platforms/posix/` from the
-compilation target. These private adapters implement existing capabilities;
-user modules keep ordinary folder namespaces.
+Private adapters use `#if target_os(...)` to select their declarations from
+the compilation target. The compiler does not assign special meaning to their
+folder names. Public `Memory`, `FileSystem`, and `Terminal` contracts remain
+independent of these adapters; ordinary libraries can use the same selection
+mechanism. Linux and macOS mapping flags are selected before compilation.
 
 Page acquisition returns an aligned range and page release consumes that range.
 POSIX can unmap alignment padding separately. Windows stores the original

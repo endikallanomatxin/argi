@@ -8546,3 +8546,13 @@ test "diagnostic path normalization preserves code excerpt spelling" {
     normalizeDiagnosticPaths(&bytes);
     try expectEqualStrings("tests/feature_tests/case/main.rg:2:5: error: invalid value\n    path := \"C:\\file.rg:test\"\n", &bytes);
 }
+
+test "feature_tests/system/49_target_selection" {
+    const test_path = "tests/feature_tests/system/49_target_selection";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/system/50X_target_condition" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/system/50X_target_condition", "unknown OS, architecture, or ABI name", "failed without a diagnostic");
+}
