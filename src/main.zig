@@ -1,6 +1,7 @@
 const std = @import("std");
 const build_cmd = @import("0_commands/build.zig");
 const init_cmd = @import("0_commands/init.zig");
+const format_cmd = @import("0_commands/format.zig");
 const lsp_cmd = @import("0_commands/lsp.zig");
 const run_cmd = @import("0_commands/run.zig");
 const test_cmd = @import("0_commands/test.zig");
@@ -39,6 +40,8 @@ fn printHelp() void {
     std.debug.print("  init [name]                            Create an executable package\n", .{});
     std.debug.print("  init --lib [name]                      Create a library package\n", .{});
     std.debug.print("  lsp                                    Start the language server\n", .{});
+    std.debug.print("  fmt [paths...] [--check]               Format .rg files or directories recursively\n", .{});
+    std.debug.print("  fmt <file.rg> --stdout                 Print formatted source without writing\n", .{});
     std.debug.print("  version                                Show the Argi version\n", .{});
     std.debug.print("  help                                   Show this help\n", .{});
     std.debug.print("\nBuild flags:\n", .{});
@@ -108,6 +111,10 @@ pub fn main(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, command, "init")) {
         init_cmd.run(io, args[2..]) catch |err| {
             exitCommandError("Init error", err);
+        };
+    } else if (std.mem.eql(u8, command, "fmt")) {
+        format_cmd.run(io, args[2..]) catch |err| {
+            exitCommandError("Format error", err);
         };
     } else if (std.mem.eql(u8, command, "lsp")) {
         lsp_cmd.start(io) catch |err| {

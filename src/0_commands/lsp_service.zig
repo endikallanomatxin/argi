@@ -265,6 +265,28 @@ pub const LanguageService = struct {
         return self.documents.items[index].text;
     }
 
+    pub fn formatting(self: *LanguageService, uri: []const u8) !TextEditsResult {
+        const doc = try self.getDoc(uri);
+        const formatted = @import("../3_syntax/formatter.zig").format(self.allocator, doc.text) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return TextEditsResult.empty(self.allocator),
+        };
+        if (std.mem.eql(u8, formatted, doc.text)) {
+            self.allocator.free(formatted);
+            return TextEditsResult.empty(self.allocator);
+        }
+        errdefer self.allocator.free(formatted);
+        const path = try self.allocator.dupe(u8, doc.path);
+        errdefer self.allocator.free(path);
+        const items = try self.allocator.alloc(TextEdit, 1);
+        errdefer self.allocator.free(items);
+        var end = outlinePosition(doc.text, doc.text.len);
+        const last_line = if (std.mem.lastIndexOfScalar(u8, doc.text, '\n')) |index| doc.text[index + 1 ..] else doc.text;
+        end.character = @intCast(try std.unicode.calcUtf16LeLen(last_line));
+        items[0] = .{ .path = path, .range = .{ .start = .{ .line = 0, .character = 0 }, .end = end }, .new_text = formatted };
+        return .{ .allocator = self.allocator, .items = items, .owned = true };
+    }
+
     pub fn documentSymbols(self: *LanguageService, uri: []const u8) !DocumentSymbolsResult {
         const doc = try self.getDoc(uri);
         var arena = std.heap.ArenaAllocator.init(self.allocator);
@@ -1598,4 +1620,19 @@ test "LSP target selection preserves definition positions and ignores inactive i
     defer definition.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings(path, definition.path);
     try std.testing.expectEqual(@as(u32, 4), definition.range.start.line);
+}
+
+test "LSP formatting uses unsaved text and UTF16 document ranges" {
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer svc.deinit();
+    const uri = "file:///tmp/argi-format/main.rg";
+    const path = try std.fs.path.resolve(std.testing.allocator, &.{"tests/feature_tests/basics/67_formatter_layout/main.rg"});
+    defer std.testing.allocator.free(path);
+    var diagnostics = try svc.openDocument(uri, path, 1, "x:=\"😀\"");
+    defer diagnostics.deinit();
+    var edits = try svc.formatting(uri);
+    defer edits.deinit();
+    try std.testing.expectEqual(@as(usize, 1), edits.items.len);
+    try std.testing.expectEqual(@as(u32, 7), edits.items[0].range.end.character);
+    try std.testing.expectEqualStrings("x := \"😀\"\n", edits.items[0].new_text);
 }

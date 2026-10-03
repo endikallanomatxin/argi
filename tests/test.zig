@@ -5737,7 +5737,7 @@ test "feature_tests/testing/15_named_optional_view_return" {
     );
 }
 
-test "argi help lists supported 0.1 commands" {
+test "argi help lists supported commands" {
     const result = try runArgiCommand(&.{"help"});
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
@@ -5754,7 +5754,8 @@ test "argi help lists supported 0.1 commands" {
     try expect(std.mem.indexOf(u8, result.stderr, "init --lib [name]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "lsp") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "version") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "format") == null);
+    try expect(std.mem.indexOf(u8, result.stderr, "fmt [paths...] [--check]") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "fmt <file.rg> --stdout") != null);
 }
 
 test "argi version reports current release" {
@@ -8698,4 +8699,65 @@ test "runtime safety diagnostics include cause and source location" {
         try expect(result.term != .exited or result.term.exited != 0);
         try expect(std.mem.indexOf(u8, result.stderr, case[1]) != null);
     }
+}
+
+test "formatter CLI checks prints and atomically updates source" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ root, "main.rg" });
+    defer std.testing.allocator.free(path);
+    const source = "main()->(.status_code:Int32=0):={ status_code=0 }\n";
+    const expected = "main() -> (.status_code: Int32 = 0) := { status_code = 0 }\n";
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = source });
+    const printed = try runArgiCommand(&.{ "fmt", path, "--stdout" });
+    defer std.testing.allocator.free(printed.stdout);
+    defer std.testing.allocator.free(printed.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, printed.term);
+    try expectEqualStrings(expected, printed.stdout);
+    const checked = try runArgiCommand(&.{ "fmt", root, "--check" });
+    defer std.testing.allocator.free(checked.stdout);
+    defer std.testing.allocator.free(checked.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, checked.term);
+    const untouched = try tmp.dir.readFileAlloc(std.testing.io, "main.rg", std.testing.allocator, .limited(4096));
+    defer std.testing.allocator.free(untouched);
+    try expectEqualStrings(source, untouched);
+    const written = try runArgiCommand(&.{ "fmt", root });
+    defer std.testing.allocator.free(written.stdout);
+    defer std.testing.allocator.free(written.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, written.term);
+    const contents = try tmp.dir.readFileAlloc(std.testing.io, "main.rg", std.testing.allocator, .limited(4096));
+    defer std.testing.allocator.free(contents);
+    try expectEqualStrings(expected, contents);
+    const clean_check = try runArgiCommand(&.{ "fmt", root, "--check" });
+    defer std.testing.allocator.free(clean_check.stdout);
+    defer std.testing.allocator.free(clean_check.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, clean_check.term);
+    const app = try std.fs.path.join(std.testing.allocator, &.{ root, "app" });
+    defer std.testing.allocator.free(app);
+    try expectArgiBuildSuccess(&.{ "build", root, "--output", app });
+}
+
+test "feature_tests/basics/67_formatter_layout" {
+    const path = "tests/feature_tests/basics/67_formatter_layout";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "formatter prepares all files before changing any source" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    const source = "main()->(.status_code:Int32=0):={}\n";
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "a.rg", .data = source });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "b.rg", .data = "main(]" });
+    const result = try runArgiCommand(&.{ "fmt", root });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    const after = try tmp.dir.readFileAlloc(std.testing.io, "a.rg", std.testing.allocator, .limited(4096));
+    defer std.testing.allocator.free(after);
+    try expectEqualStrings(source, after);
 }

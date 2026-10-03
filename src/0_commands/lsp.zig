@@ -101,6 +101,10 @@ const LanguageServer = struct {
                 }
             } else if (std.mem.eql(u8, method, "initialized")) {
                 // No-op
+            } else if (std.mem.eql(u8, method, "textDocument/formatting")) {
+                if (id_value) |id| self.handleFormatting(&writer, id, params_value) catch {
+                    self.respondInternalErrorOrLog(&writer, id, "formatting failed");
+                };
             } else if (std.mem.eql(u8, method, "textDocument/didOpen")) {
                 self.handleDidOpen(&writer, params_value) catch |err| {
                     log.err("didOpen failed: {s}", .{@errorName(err)});
@@ -379,6 +383,8 @@ const LanguageServer = struct {
         try stream.write(false);
         try stream.endObject();
         try stream.objectField("documentSymbolProvider");
+        try stream.write(true);
+        try stream.objectField("documentFormattingProvider");
         try stream.write(true);
         try stream.objectField("hoverProvider");
         try stream.write(true);
@@ -868,6 +874,38 @@ const LanguageServer = struct {
 
             try self.sendMessage(writer, payload.writer.buffered());
         }
+    }
+
+    fn handleFormatting(self: *LanguageServer, writer: anytype, id: json.Value, params_value: ?json.Value) !void {
+        const params = params_value orelse return error.InvalidParams;
+        if (params != .object) return error.InvalidParams;
+        const document = getField(&params.object, "textDocument") orelse return error.InvalidParams;
+        if (document != .object) return error.InvalidParams;
+        const uri = getField(&document.object, "uri") orelse return error.InvalidParams;
+        if (uri != .string) return error.InvalidParams;
+        var edits = if (self.service) |*svc| try svc.formatting(uri.string) else service.TextEditsResult.empty(self.allocator);
+        defer edits.deinit();
+        var payload = std.Io.Writer.Allocating.init(self.allocator);
+        defer payload.deinit();
+        var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
+        try stream.beginObject();
+        try stream.objectField("jsonrpc");
+        try stream.write("2.0");
+        try stream.objectField("id");
+        try stream.write(id);
+        try stream.objectField("result");
+        try stream.beginArray();
+        for (edits.items) |edit| {
+            try stream.beginObject();
+            try stream.objectField("range");
+            try writeRange(&stream, edit.range);
+            try stream.objectField("newText");
+            try stream.write(edit.new_text);
+            try stream.endObject();
+        }
+        try stream.endArray();
+        try stream.endObject();
+        try self.sendMessage(writer, payload.writer.buffered());
     }
 
     fn handleRename(

@@ -7,6 +7,7 @@ const tokenizer = @import("2_tokens/tokenizer.zig");
 const syntax_tree = @import("3_syntax/syntax_tree.zig");
 const syntaxer = @import("3_syntax/syntaxer.zig");
 const syntaxer_test = @import("3_syntax/syntaxer_test.zig");
+const formatter = @import("3_syntax/formatter.zig");
 const module_semantic_graph_test = @import("4_semantics/module/graph_test.zig");
 
 const semantic_primitives = @import("4_semantics/primitives/schema.zig");
@@ -74,6 +75,7 @@ test {
     _ = syntax_tree;
     _ = syntaxer;
     _ = syntaxer_test;
+    _ = formatter;
     _ = module_semantic_graph_test;
 
     _ = semantic_primitives;
