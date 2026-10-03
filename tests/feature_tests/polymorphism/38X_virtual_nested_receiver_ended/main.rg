@@ -3,7 +3,7 @@ View : Abstract = (
 )
 
 Cell : Type = (.value: Int32)
-deinit(.self: $&Cell) -> () := {}
+Cell deinit(.self: $&Cell) -> () := {}
 
 Holder : Type = (.cell: Cell)
 Other : Type = (.cell: Cell)

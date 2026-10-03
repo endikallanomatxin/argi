@@ -1,6 +1,6 @@
 Holder : Type = (.allocation: Allocation)
 
-deinit(.self: $&Holder) -> () := {
+Holder deinit(.self: $&Holder) -> () := {
     deinit(.self = $&self&.allocation)
 }
 

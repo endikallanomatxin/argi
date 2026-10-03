@@ -466,11 +466,11 @@ pub const Syntaxer = struct {
 
         while (!self.tokenIs(.close_parenthesis)) {
             var name = try self.parseName();
-            var constructor_type: ?syn.TokenIndex = null;
-            if (self.currentContent() == .identifier and self.tokenText(self.currentContent().identifier).len == 4 and
-                std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "init"))
+            var lifecycle_type: ?syn.TokenIndex = null;
+            if (self.currentContent() == .identifier and (std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "init") or
+                std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "deinit")))
             {
-                constructor_type = name.token;
+                lifecycle_type = name.token;
                 name = try self.parseName();
             }
 
@@ -1583,7 +1583,7 @@ pub const Syntaxer = struct {
         is_once: bool,
         generic_params: syn.NodeRange,
         generic_params_struct: ?syn.NodeIndex,
-        constructor_type: ?syn.TokenIndex,
+        lifecycle_type: ?syn.TokenIndex,
     ) SyntaxerError!syn.NodeIndex {
         const input = try self.parseStructTypeLiteral();
 
@@ -1610,7 +1610,8 @@ pub const Syntaxer = struct {
                     }
                     const extra = try self.addExtra(syn.FunctionExtra{
                         .name_token = name.token,
-                        .constructor_type = syn.OptionalTokenIndex.init(constructor_type),
+                        .constructor_type = syn.OptionalTokenIndex.init(if (std.mem.eql(u8, name.text, "init")) lifecycle_type else null),
+                        .destructor_type = syn.OptionalTokenIndex.init(if (std.mem.eql(u8, name.text, "deinit")) lifecycle_type else null),
                         .generic_params_start = generic_params.start,
                         .generic_params_end = generic_params.end,
                         .generic_params_struct = .none,
@@ -1640,7 +1641,8 @@ pub const Syntaxer = struct {
                     } else .none;
                     const extra = try self.addExtra(syn.FunctionExtra{
                         .name_token = name.token,
-                        .constructor_type = syn.OptionalTokenIndex.init(constructor_type),
+                        .constructor_type = syn.OptionalTokenIndex.init(if (std.mem.eql(u8, name.text, "init")) lifecycle_type else null),
+                        .destructor_type = syn.OptionalTokenIndex.init(if (std.mem.eql(u8, name.text, "deinit")) lifecycle_type else null),
                         .generic_params_start = generic_params.start,
                         .generic_params_end = generic_params.end,
                         .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
@@ -1662,7 +1664,8 @@ pub const Syntaxer = struct {
 
         const extra = try self.addExtra(syn.FunctionExtra{
             .name_token = name.token,
-            .constructor_type = syn.OptionalTokenIndex.init(constructor_type),
+            .constructor_type = syn.OptionalTokenIndex.init(if (std.mem.eql(u8, name.text, "init")) lifecycle_type else null),
+            .destructor_type = syn.OptionalTokenIndex.init(if (std.mem.eql(u8, name.text, "deinit")) lifecycle_type else null),
             .generic_params_start = generic_params.start,
             .generic_params_end = generic_params.end,
             .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
@@ -1790,11 +1793,11 @@ pub const Syntaxer = struct {
         const id_loc = self.tokenLocation();
         var name = try self.parseName();
 
-        var constructor_type: ?syn.TokenIndex = null;
-        if (self.currentContent() == .identifier and self.tokenText(self.currentContent().identifier).len == 4 and
-            std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "init"))
+        var lifecycle_type: ?syn.TokenIndex = null;
+        if (self.currentContent() == .identifier and (std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "init") or
+            std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "deinit")))
         {
-            constructor_type = name.token;
+            lifecycle_type = name.token;
             _ = try self.addNode(.type_name, name.token, .{ .token_and_optional_token = .{
                 .token = name.token,
                 .optional = .none,
@@ -1854,7 +1857,7 @@ pub const Syntaxer = struct {
                     is_once,
                     generic_params,
                     generic_params_struct,
-                    constructor_type,
+                    lifecycle_type,
                 );
                 return declaration;
             } else {

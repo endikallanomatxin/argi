@@ -150,7 +150,7 @@ establish_allocation(
     allocation._storage_alignment = storage._alignment
 }
 
-deinit(
+Allocation deinit(
     .self: $&Allocation,
 ) -> () := {
     -- Cleanup may touch backing metadata; an ended region cannot be released.

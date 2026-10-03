@@ -8,7 +8,7 @@ Holder init(.allocator: $&Allocator) -> (.result: Holder) := {
     result.buffer = unwrap_or_abort(.value = String(.allocator = allocator, .capacity = 1))
 }
 
-deinit(.self: $&Holder, .allocator: $&Allocator) -> () := {
+Holder deinit(.self: $&Holder, .allocator: $&Allocator) -> () := {
     assume allocator
 
     deinit(.self = $&self&.buffer, .allocator = allocator)

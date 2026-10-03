@@ -242,6 +242,24 @@ pub const SafetyChecker = struct {
         for (self.graph.functions.items, 0..) |function, raw| {
             if (function.body == null) continue;
             const declaration = self.graph.declaration(function.declaration);
+            if (declaration.destructor_type) |owner| {
+                var has_receiver = false;
+                for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field| {
+                    const pointer = switch (self.graph.resolvedSemanticType(field.ty) orelse continue) {
+                        .pointer => |value| value,
+                        else => continue,
+                    };
+                    if (pointer.mutability != .read_write) continue;
+                    const receiver_owner = switch (self.graph.resolvedSemanticType(pointer.child) orelse continue) {
+                        .declared => |id| id,
+                        .generic => |identity| identity.base,
+                        else => continue,
+                    };
+                    if (receiver_owner == owner) has_receiver = true;
+                }
+                if (!has_receiver or function.output.len != 0)
+                    try self.report(declaration.source, "destructor must receive a mutable reference to its associated type and return no values", .{});
+            }
             if (declaration.constructor_type == null) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
             if (initializer_contract.classify(self.graph, id) == .invalid)

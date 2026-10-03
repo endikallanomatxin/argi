@@ -71,6 +71,7 @@ pub const Declaration = struct {
     choice_variants: ?FieldRange = null,
     generic_parameter_count: ?u32 = null,
     constructor_type: ?ModuleDeclId = null,
+    destructor_type: ?ModuleDeclId = null,
 };
 
 pub const FileOffsets = struct {
@@ -255,7 +256,7 @@ pub const ModuleSemanticGraphBuilder = struct {
                 .type_reference_count = @intCast(self.graph.type_references.items.len - type_reference_base),
             });
         }
-        try associateConstructors(&self.graph, files);
+        try associateLifecycleFunctions(&self.graph, files);
         try buildSymbolIndex(self.allocator, &self.graph);
         try predeclareTypes(self.allocator, &self.graph);
         resolveModuleTypeReferences(&self.graph);
@@ -324,24 +325,28 @@ fn resolveModuleTypeReferences(graph: *ModuleSemanticGraph) void {
     }
 }
 
-// A constructor belongs to a nominal declaration, independently of its output.
+// Lifecycle functions belong to nominal declarations independently of their outputs.
 // Its compile-time parameters remain local to its own function signature.
-fn associateConstructors(graph: *ModuleSemanticGraph, files: []const FileInput) !void {
+fn associateLifecycleFunctions(graph: *ModuleSemanticGraph, files: []const FileInput) !void {
     for (graph.declarations.items) |*declaration| {
         if (declaration.kind != .function) continue;
         const node = declarationSyntaxNode(files, declaration.*) orelse continue;
         const file = files[declaration.module_file_index];
         const function = file.tree.functionDeclaration(node) orelse continue;
-        const token = function.constructor_type orelse continue;
+        const token = function.constructor_type orelse function.destructor_type orelse continue;
+        const is_destructor = function.destructor_type != null;
         const name = file.tree.tokenTextFromSource(file.source, token);
         for (graph.declarations.items, 0..) |candidate, raw| {
             if (candidate.kind != .type or !std.mem.eql(u8, graph.text(candidate.name), name)) continue;
-            declaration.constructor_type = @enumFromInt(@as(u32, @intCast(raw)));
+            if (is_destructor)
+                declaration.destructor_type = @enumFromInt(@as(u32, @intCast(raw)))
+            else
+                declaration.constructor_type = @enumFromInt(@as(u32, @intCast(raw)));
             break;
         }
-        if (declaration.constructor_type == null) {
+        if (declaration.constructor_type == null and declaration.destructor_type == null) {
             if (file.diagnostics) |diagnostics| {
-                try diagnostics.add(file.tree.tokenLocation(token), .semantic, "constructor type '{s}' must name a type declared in this module", .{name});
+                try diagnostics.add(file.tree.tokenLocation(token), .semantic, "{s} type '{s}' must name a type declared in this module", .{ if (is_destructor) "destructor" else "constructor", name });
                 return error.Reported;
             }
             return error.UnknownConstructorType;

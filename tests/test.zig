@@ -8613,3 +8613,17 @@ test "feature_tests/types/275X_constructor_return_only_overloads" {
 test "feature_tests/types/276X_constructor_unknown_type" {
     try buildExpectFail("tests/feature_tests/types/276X_constructor_unknown_type", "constructor type 'Missing' must name a type declared in this module");
 }
+
+test "feature_tests/types/277_associated_destructor_dispatch" {
+    const test_path = "tests/feature_tests/types/277_associated_destructor_dispatch";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/278X_destructor_wrong_association" {
+    try buildExpectFail("tests/feature_tests/types/278X_destructor_wrong_association", "destructor must receive a mutable reference to its associated type");
+}
+
+test "feature_tests/types/279X_destructor_unknown_type" {
+    try buildExpectFail("tests/feature_tests/types/279X_destructor_unknown_type", "destructor type 'Missing' must name a type declared in this module");
+}

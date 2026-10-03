@@ -15,7 +15,7 @@ Consuming : Type = (.marker: UInt8)
 Keeping implements OpaqueStorer
 Consuming implements OpaqueStorer
 
-deinit(.self: $&Borrowing) -> () := {}
+Borrowing deinit(.self: $&Borrowing) -> () := {}
 
 store(
     .self: $&Keeping,

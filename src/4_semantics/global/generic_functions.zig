@@ -574,7 +574,11 @@ pub const Resolver = struct {
         var tied = false;
         var saw_deferred = false;
         var best_was_materialized = false;
-        for (try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, name)) |candidate| {
+        const function_candidates = if (std.mem.eql(u8, name, "deinit") and self.core.destructor_owner != null)
+            try self.graph.parameterizedDestructorsFor(self.allocator, self.modules, self.core.destructor_owner.?)
+        else
+            try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, name);
+        for (function_candidates) |candidate| {
             if (self.modules[candidate.module_index].declarations.items[@intFromEnum(self.modules[candidate.module_index].semantic.parameterized_storage.parameterized_functions.items[candidate.function_index].declaration)].constructor_type != null) continue;
             if (self.profile_io != null) self.selection_profile.explicit_candidates += 1;
             var phase_start = self.profileTimestamp();
@@ -1063,7 +1067,11 @@ pub const Resolver = struct {
         defer binding_types.deinit(self.allocator);
         var binding_ints: std.ArrayList(?i64) = .empty;
         defer binding_ints.deinit(self.allocator);
-        for (try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, name)) |candidate| {
+        const function_candidates = if (std.mem.eql(u8, name, "deinit") and self.core.destructor_owner != null)
+            try self.graph.parameterizedDestructorsFor(self.allocator, self.modules, self.core.destructor_owner.?)
+        else
+            try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, name);
+        for (function_candidates) |candidate| {
             if (self.modules[candidate.module_index].declarations.items[@intFromEnum(self.modules[candidate.module_index].semantic.parameterized_storage.parameterized_functions.items[candidate.function_index].declaration)].constructor_type != null) continue;
             if (self.profile_io != null) self.selection_profile.implicit_candidates += 1;
             var phase_start = self.profileTimestamp();
@@ -1970,6 +1978,11 @@ pub const Resolver = struct {
         declaration: global_sg.GlobalDeclId,
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
     ) !global_sg.GlobalFunctionId {
+        // The cleanup family restricts selection, not calls inside the chosen
+        // body. Nested cleanup establishes its own family when needed.
+        const previous_destructor_owner = self.core.destructor_owner;
+        self.core.destructor_owner = null;
+        defer self.core.destructor_owner = previous_destructor_owner;
         const profile_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
         defer if (self.profile_io) |io| {
             self.profile_instantiate_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - profile_started;

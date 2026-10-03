@@ -5,7 +5,7 @@ Borrowing : Type = (
 
 external :: UInt8 = 7
 
-deinit(.self: $&Borrowing) -> () := {
+Borrowing deinit(.self: $&Borrowing) -> () := {
 }
 
 release_then_store(

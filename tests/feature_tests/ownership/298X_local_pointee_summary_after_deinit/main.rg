@@ -1,5 +1,5 @@
 Owner : Type = (.value: Int32)
-deinit(.self: $&Owner) -> () := {}
+Owner deinit(.self: $&Owner) -> () := {}
 Holder : Type = (.reference: ?&Int32)
 Holder implements ImplicitlyCopyable
 extract(.holder: &Holder) -> (.reference: &Int32) := {

@@ -41,6 +41,7 @@ pub fn declarationView(graph: *const graph_mod.ModuleSemanticGraph, id: entities
         .choice_variants = if (declaration.choice_variants) |range| .{ .start = range.start, .len = range.len } else null,
         .generic_parameter_count = declaration.generic_parameter_count,
         .constructor_type = declaration.constructor_type,
+        .destructor_type = declaration.destructor_type,
         .struct_layout = if (semantic) |value| value.struct_layout else .regular,
         .choice_layout = if (semantic) |value| value.choice_layout else .regular,
     };

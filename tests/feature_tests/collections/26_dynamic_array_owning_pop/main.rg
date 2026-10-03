@@ -5,7 +5,7 @@ Tracked : Type = (
 
 drops :: Int32 = 0
 
-deinit(.self: $&Tracked) -> () := {
+Tracked deinit(.self: $&Tracked) -> () := {
     drops = drops + 1
     deinit(.self = $&self&.allocation)
 }

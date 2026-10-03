@@ -102,7 +102,7 @@ FixedSizeErrorTracer init(.buffer: ArrayView#(.t: UInt8)) -> (.result: FixedSize
     )
 }
 -- Ending the tracer invalidates its handles without releasing caller storage.
-deinit(.self: $&FixedSizeErrorTracer) -> () := {}
+FixedSizeErrorTracer deinit(.self: $&FixedSizeErrorTracer) -> () := {}
 reset_context(.self: $&FixedSizeErrorTracer) -> () := {
     self&._length = 0
     self&._next = self&._capacity / 2

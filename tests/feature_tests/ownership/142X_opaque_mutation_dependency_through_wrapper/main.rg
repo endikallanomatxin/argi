@@ -3,7 +3,7 @@ AddressSensitive : Type = (
     .reference: Nullable#(.t: $&UInt8)
 )
 
-deinit(.self: $&AddressSensitive) -> () := {
+AddressSensitive deinit(.self: $&AddressSensitive) -> () := {
 }
 
 set_reference(.slot: $&AddressSensitive, .target: $&UInt8) -> () := {

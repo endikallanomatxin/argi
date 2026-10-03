@@ -5,7 +5,7 @@ Borrowing : Type = (
 
 external :: Int32 = 7
 
-deinit(.self: $&Borrowing) -> () := {
+Borrowing deinit(.self: $&Borrowing) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {

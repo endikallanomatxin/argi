@@ -190,7 +190,7 @@ remove#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable, .polic
     }
 }
 
-deinit#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key))(.self: $&HashMap#(.key: key, .value: value, .policy: policy), .allocator: $&Allocator) -> () := {
+HashMap deinit#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key))(.self: $&HashMap#(.key: key, .value: value, .policy: policy), .allocator: $&Allocator) -> () := {
     deinit(.self = $&self&._slots, .allocator = allocator)
     trusted_opaque_drop(.slot = $&self&._policy, .allocator = allocator)
 }

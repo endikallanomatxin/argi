@@ -1,6 +1,6 @@
 unsafe_allocation := import("../../_support/unsafe_allocation")
 BorrowingOwner : Type = (.allocation: Allocation, .borrowed: $&UInt8)
-deinit(.self: $&BorrowingOwner) -> () := { deinit(.self = $&self&.allocation) }
+BorrowingOwner deinit(.self: $&BorrowingOwner) -> () := { deinit(.self = $&self&.allocation) }
 
 inner(.storage: $&Allocation, .slot: $&BorrowingOwner, .value: BorrowingOwner) -> () := {
     trusted_opaque_move_in#(.t: BorrowingOwner, .storage_type: Allocation)(.storage = storage, .destination = slot, .source = ~value)

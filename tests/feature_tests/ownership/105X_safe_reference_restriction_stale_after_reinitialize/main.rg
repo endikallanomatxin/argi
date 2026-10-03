@@ -2,7 +2,7 @@ Value : Type = (
     .number: UInt8
 )
 
-deinit(.self: $&Value) -> () := {
+Value deinit(.self: $&Value) -> () := {
 }
 
 main() -> (.status_code: Int32) := {

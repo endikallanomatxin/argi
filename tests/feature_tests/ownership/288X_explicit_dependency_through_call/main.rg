@@ -2,7 +2,7 @@ Owner : Type = (
     .number: Int32
 )
 
-deinit(.self: $&Owner) -> () := {
+Owner deinit(.self: $&Owner) -> () := {
 }
 
 identity(.value: Int32) -> (.result: Int32) := {

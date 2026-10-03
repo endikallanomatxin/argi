@@ -143,12 +143,19 @@ pub fn deinitFunction(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod
     if (graph.semanticType(ty) == .pointer) return null;
     for (graph.functions.items, 0..) |function, raw| {
         if (!function.flags.is_deinit or function.input.len == 0) continue;
-        const self_ty = graph.fields.items[function.input.start].ty;
-        const child = switch (graph.semanticType(self_ty)) {
-            .pointer => |pointer| pointer.child,
-            else => self_ty,
-        };
-        if (equal(graph, child, ty)) return @enumFromInt(@as(u32, @intCast(raw)));
+        if (graph.declaration(function.declaration).destructor_type) |owner| {
+            if (nominalFamily(graph, ty) != owner) continue;
+        }
+        // Capability inputs may precede the receiver; ownership belongs to
+        // the associated family rather than the first field in the signature.
+        for (graph.fields.items[function.input.start..][0..function.input.len]) |field| {
+            const pointer = switch (graph.semanticType(field.ty)) {
+                .pointer => |value| value,
+                else => continue,
+            };
+            if (pointer.mutability == .read_write and equal(graph, pointer.child, ty))
+                return @enumFromInt(@as(u32, @intCast(raw)));
+        }
     }
     return null;
 }
@@ -159,16 +166,19 @@ pub fn deinitFunctionForInput(graph: *const graph_mod.GlobalSemanticGraph, value
     var found: ?graph_mod.GlobalFunctionId = null;
     for (graph.functions.items, 0..) |function, raw| {
         if (!function.flags.is_deinit) continue;
+        if (graph.declaration(function.declaration).destructor_type) |owner| {
+            if (nominalFamily(graph, value_type) != owner) continue;
+        }
         var self_matches = false;
         var arguments_match = true;
         for (graph.fields.items[function.input.start..][0..function.input.len]) |expected| {
             const name = graph.text(expected.name);
-            if (std.mem.eql(u8, name, "self")) {
-                const child = switch (graph.semanticType(expected.ty)) {
-                    .pointer => |pointer| pointer.child,
-                    else => expected.ty,
-                };
-                self_matches = equal(graph, child, value_type);
+            const is_receiver = switch (graph.semanticType(expected.ty)) {
+                .pointer => |pointer| pointer.mutability == .read_write and equal(graph, pointer.child, value_type),
+                else => false,
+            };
+            if (is_receiver) {
+                self_matches = true;
                 continue;
             }
             var provided = false;
@@ -186,6 +196,14 @@ pub fn deinitFunctionForInput(graph: *const graph_mod.GlobalSemanticGraph, value
         found = @enumFromInt(@as(u32, @intCast(raw)));
     }
     return found;
+}
+
+fn nominalFamily(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalDeclId {
+    return switch (graph.resolvedSemanticType(ty) orelse return null) {
+        .declared => |id| id,
+        .generic => |identity| identity.base,
+        else => null,
+    };
 }
 
 pub fn genericInstance(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GenericInstance {

@@ -9,11 +9,11 @@ Second : Type = (.value: Int32)
 First implements Closable
 Second implements Closable
 
-deinit(.self: $&First) -> () := {
+First deinit(.self: $&First) -> () := {
     drops = drops + 1
 }
 
-deinit(.self: $&Second) -> () := {
+Second deinit(.self: $&Second) -> () := {
     drops = drops + 1
 }
 

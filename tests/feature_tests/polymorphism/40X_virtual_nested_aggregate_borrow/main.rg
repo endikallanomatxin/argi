@@ -4,7 +4,7 @@ View : Abstract = (
 
 RefResult : Type = (.reference: &Int32)
 Cell : Type = (.value: Int32)
-deinit(.self: $&Cell) -> () := {}
+Cell deinit(.self: $&Cell) -> () := {}
 Holder : Type = (.cell: Cell)
 Other : Type = (.cell: Cell)
 Holder implements View

@@ -8,7 +8,7 @@ Container : Type = (
     .second: Allocation
 )
 
-deinit(.self: $&Borrowing) -> () := {
+Borrowing deinit(.self: $&Borrowing) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {

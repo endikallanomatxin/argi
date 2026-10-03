@@ -1,5 +1,5 @@
 Cell : Type = (.value: Int32)
-deinit(.self: $&Cell) -> () := {}
+Cell deinit(.self: $&Cell) -> () := {}
 Holder : Type = (.cell: Cell)
 View : Abstract = (get(.other: &Holder, .self: &Self) -> (.value: &Int32))
 Holder implements View

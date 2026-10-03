@@ -6,7 +6,7 @@ Container : Type = (
     .pointer: $&Thing
 )
 
-deinit(.self: $&Thing) -> () := {
+Thing deinit(.self: $&Thing) -> () := {
 }
 
 write_nested(.container: $&Container) -> () := {

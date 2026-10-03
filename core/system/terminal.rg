@@ -12,7 +12,7 @@ once Terminal init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Te
     init_stderr(.p = $&result.stderr)
 }
 
-deinit(.self: $&Terminal) -> () := {
+Terminal deinit(.self: $&Terminal) -> () := {
     assume error_tracer ::= $&noop_error_tracer
     close(.self = $&self&.stdin)
     close(.self = $&self&.stdout)

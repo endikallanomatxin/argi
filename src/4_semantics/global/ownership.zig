@@ -645,8 +645,15 @@ pub const Resolver = struct {
 
         var receiver_names = std.StringHashMap(void).init(self.allocator);
         defer receiver_names.deinit();
-        try self.collectDestructorReceiverNames(module_index, &receiver_names);
+        try self.collectDestructorReceiverNames(module_index, target_ty, &receiver_names);
 
+        const previous_owner = self.core.destructor_owner;
+        self.core.destructor_owner = switch (self.graph.semanticType(target_ty)) {
+            .declared => |id| id,
+            .generic => |identity| identity.base,
+            else => null,
+        };
+        defer self.core.destructor_owner = previous_owner;
         var selected: ?ResolvedDestructor = null;
         var names = receiver_names.keyIterator();
         while (names.next()) |name_ptr| {
@@ -684,9 +691,17 @@ pub const Resolver = struct {
     fn collectDestructorReceiverNames(
         self: *Resolver,
         module_index: usize,
+        target_ty: global_sg.GlobalTypeId,
         names: *std.StringHashMap(void),
     ) !void {
-        for (try self.graph.functionsNamed(self.allocator, "deinit")) |function_id| {
+        // Cleanup consults the nominal family before testing input compatibility.
+        // Receiver names are signature-local; the association does not invent self.
+        const owner = switch (self.graph.semanticType(target_ty)) {
+            .declared => |id| id,
+            .generic => |identity| identity.base,
+            else => return,
+        };
+        for (try self.graph.destructorsFor(self.allocator, owner)) |function_id| {
             const function = self.graph.functions.items[@intFromEnum(function_id)];
             if (!function.flags.is_deinit) continue;
             if (!self.core.declarationVisible(module_index, function.declaration, null)) continue;
@@ -700,7 +715,7 @@ pub const Resolver = struct {
             }
         }
 
-        for (try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, "deinit")) |candidate| {
+        for (try self.graph.parameterizedDestructorsFor(self.allocator, self.modules, owner)) |candidate| {
             const candidate_index: usize = @intCast(candidate.module_index);
             const candidate_module = &self.modules[candidate_index];
             const storage = &candidate_module.semantic.parameterized_storage;

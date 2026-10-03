@@ -4,7 +4,7 @@ BorrowingOwner : Type = (
     .borrowed: $&UInt8
 )
 
-deinit(.self: $&BorrowingOwner) -> () := {
+BorrowingOwner deinit(.self: $&BorrowingOwner) -> () := {
     deinit(.self = $&self&.allocation)
 }
 

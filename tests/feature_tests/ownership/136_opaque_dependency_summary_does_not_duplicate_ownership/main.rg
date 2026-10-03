@@ -7,7 +7,7 @@ TrackedBorrowing : Type = (
 external :: UInt8 = 9
 drops :: Int32 = 0
 
-deinit(.self: $&TrackedBorrowing) -> () := {
+TrackedBorrowing deinit(.self: $&TrackedBorrowing) -> () := {
     drops = drops + 1
 }
 

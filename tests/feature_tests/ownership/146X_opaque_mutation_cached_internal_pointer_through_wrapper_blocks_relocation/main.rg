@@ -3,7 +3,7 @@ AddressSensitive : Type = (
     .next: Nullable#(.t: $&UInt8)
 )
 
-deinit(.self: $&AddressSensitive) -> () := {
+AddressSensitive deinit(.self: $&AddressSensitive) -> () := {
 }
 
 set_next(.slot: $&AddressSensitive, .target: $&UInt8) -> () := {

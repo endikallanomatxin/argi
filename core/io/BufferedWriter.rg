@@ -13,7 +13,7 @@ BufferedWriter init#(.base_type: Type: Writer)(.base: $&base_type,
     result = (.base = base, .buffer = buffer, .length = 0)
 }
 
-deinit#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> () := {
+BufferedWriter deinit#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> () := {
     buffered_writer_flush(.self = self)
 }
 

@@ -3,7 +3,7 @@ OwningChoice : Type = (
     ..none
 )
 
-deinit(.self: $&OwningChoice) -> () := {
+OwningChoice deinit(.self: $&OwningChoice) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {

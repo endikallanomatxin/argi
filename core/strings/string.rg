@@ -121,7 +121,7 @@ String init (.allocator: $&Allocator,
     result = ..ok ~constructed
 }
 
-deinit (
+String deinit (
     .allocator: $&Allocator,
     .self: $&String,
 ) -> () := {

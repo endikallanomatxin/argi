@@ -166,7 +166,9 @@ pub const GlobalSemanticGraph = struct {
     const LookupState = struct {
         function_names: std.StringHashMapUnmanaged(std.ArrayList(GlobalFunctionId)) = .empty,
         indexed_functions: usize = 0,
+        destructors: std.AutoHashMapUnmanaged(GlobalDeclId, std.ArrayList(GlobalFunctionId)) = .empty,
         constructors: std.AutoHashMapUnmanaged(GlobalDeclId, std.ArrayList(GlobalFunctionId)) = .empty,
+        parameterized_destructors: std.AutoHashMapUnmanaged(GlobalDeclId, std.ArrayList(ParameterizedFunctionCandidate)) = .empty,
         parameterized_constructors: std.AutoHashMapUnmanaged(GlobalDeclId, std.ArrayList(ParameterizedFunctionCandidate)) = .empty,
         declaration_names: std.StringHashMapUnmanaged(std.ArrayList(GlobalDeclId)) = .empty,
         indexed_declarations: usize = 0,
@@ -186,6 +188,12 @@ pub const GlobalSemanticGraph = struct {
             var templates = self.parameterized_constructors.valueIterator();
             while (templates.next()) |list| list.deinit(allocator);
             self.parameterized_constructors.deinit(allocator);
+            var destructors = self.destructors.valueIterator();
+            while (destructors.next()) |list| list.deinit(allocator);
+            self.destructors.deinit(allocator);
+            var destructor_templates = self.parameterized_destructors.valueIterator();
+            while (destructor_templates.next()) |list| list.deinit(allocator);
+            self.parameterized_destructors.deinit(allocator);
 
             var declarations = self.declaration_names.iterator();
             while (declarations.next()) |entry| {
@@ -332,6 +340,11 @@ pub const GlobalSemanticGraph = struct {
                 if (!entry.found_existing) entry.value_ptr.* = .empty;
                 try entry.value_ptr.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
             }
+            if (decl.destructor_type) |owner| {
+                const entry = try self.lookup.destructors.getOrPut(allocator, owner);
+                if (!entry.found_existing) entry.value_ptr.* = .empty;
+                try entry.value_ptr.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
+            }
             self.lookup.indexed_functions += 1;
         }
         return if (self.lookup.function_names.get(name)) |matches| matches.items else &.{};
@@ -348,6 +361,16 @@ pub const GlobalSemanticGraph = struct {
     pub fn parameterizedConstructorsFor(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, owner: GlobalDeclId) ![]const ParameterizedFunctionCandidate {
         _ = try self.parameterizedFunctionsNamed(allocator, modules, "init");
         return if (self.lookup.parameterized_constructors.get(owner)) |list| list.items else &.{};
+    }
+
+    pub fn destructorsFor(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, owner: GlobalDeclId) ![]const GlobalFunctionId {
+        _ = try self.functionsNamed(allocator, "deinit");
+        return if (self.lookup.destructors.get(owner)) |list| list.items else &.{};
+    }
+
+    pub fn parameterizedDestructorsFor(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, owner: GlobalDeclId) ![]const ParameterizedFunctionCandidate {
+        _ = try self.parameterizedFunctionsNamed(allocator, modules, "deinit");
+        return if (self.lookup.parameterized_destructors.get(owner)) |list| list.items else &.{};
     }
 
     pub fn declarationsNamed(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, name: []const u8) ![]const GlobalDeclId {
@@ -377,6 +400,8 @@ pub const GlobalSemanticGraph = struct {
             _ = self.lookup.function_names.getPtr(name).?.pop();
             if (self.declaration(entry.declaration).constructor_type) |owner|
                 _ = self.lookup.constructors.getPtr(owner).?.pop();
+            if (self.declaration(entry.declaration).destructor_type) |owner|
+                _ = self.lookup.destructors.getPtr(owner).?.pop();
         }
         while (self.lookup.indexed_declarations > declaration_count) {
             self.lookup.indexed_declarations -= 1;
@@ -407,6 +432,12 @@ pub const GlobalSemanticGraph = struct {
                     if (module.declarations.items[@intFromEnum(candidate.declaration)].constructor_type) |local_owner| {
                         const owner: GlobalDeclId = @enumFromInt(self.modules.items[module_index].declarations.start + @intFromEnum(local_owner));
                         const entry = try self.lookup.parameterized_constructors.getOrPut(allocator, owner);
+                        if (!entry.found_existing) entry.value_ptr.* = .empty;
+                        try entry.value_ptr.append(allocator, .{ .module_index = @intCast(module_index), .function_index = @intCast(function_index) });
+                    }
+                    if (module.declarations.items[@intFromEnum(candidate.declaration)].destructor_type) |local_owner| {
+                        const owner: GlobalDeclId = @enumFromInt(self.modules.items[module_index].declarations.start + @intFromEnum(local_owner));
+                        const entry = try self.lookup.parameterized_destructors.getOrPut(allocator, owner);
                         if (!entry.found_existing) entry.value_ptr.* = .empty;
                         try entry.value_ptr.append(allocator, .{ .module_index = @intCast(module_index), .function_index = @intCast(function_index) });
                     }
@@ -769,4 +800,41 @@ test "unresolved global type slots are construction state, not Any" {
     try std.testing.expect(!graph.hasUnresolvedTypes());
     try graph.finishTypeResolution(allocator);
     try std.testing.expect(graph.constructionStateEmpty());
+}
+
+test "destructor family indexes discard speculative specializations" {
+    const allocator = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const name = try graph.addString(allocator, "deinit");
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.declarations.appendSlice(allocator, &.{
+        .{ .kind = .type, .name = name, .source = source },
+        .{ .kind = .type, .name = name, .source = source },
+        .{ .kind = .function, .name = name, .source = source, .destructor_type = @enumFromInt(0) },
+        .{ .kind = .function, .name = name, .source = source, .destructor_type = @enumFromInt(1) },
+    });
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(2),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+    });
+    try std.testing.expectEqual(@as(usize, 1), (try graph.destructorsFor(allocator, @enumFromInt(0))).len);
+    try std.testing.expectEqual(@as(usize, 0), (try graph.constructorsFor(allocator, @enumFromInt(0))).len);
+    const saved = graph.checkpoint();
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(3),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+    });
+    try std.testing.expectEqual(@as(usize, 1), (try graph.destructorsFor(allocator, @enumFromInt(1))).len);
+    graph.rollback(saved);
+    try std.testing.expectEqual(@as(usize, 0), (try graph.destructorsFor(allocator, @enumFromInt(1))).len);
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(2),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+    });
+    try std.testing.expectEqual(@as(usize, 2), (try graph.destructorsFor(allocator, @enumFromInt(0))).len);
+    try std.testing.expectEqual(@as(usize, 0), (try graph.destructorsFor(allocator, @enumFromInt(1))).len);
 }

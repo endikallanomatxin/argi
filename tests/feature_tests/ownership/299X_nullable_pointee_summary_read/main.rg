@@ -1,5 +1,5 @@
 Owner : Type = (.value: Int32)
-deinit(.self: $&Owner) -> () := {}
+Owner deinit(.self: $&Owner) -> () := {}
 Holder : Type = (.reference: ?&Int32)
 read(.holder: &Holder) -> (.value: Int32) := {
     match holder&.reference {

@@ -10,7 +10,7 @@ AcquiredStorage : Type = (
 -- The receipt owns establishment authority, not physical cleanup. Dropping it
 -- requires explicit move semantics and does not release the acquired bytes;
 -- the low-level caller must establish an owner or arrange trusted cleanup.
-deinit(.self: $&AcquiredStorage) -> () := {}
+AcquiredStorage deinit(.self: $&AcquiredStorage) -> () := {}
 
 -- This attaches acquired bytes to an existing temporal domain. The caller
 -- arranges physical cleanup with that domain; no initialized T is created.

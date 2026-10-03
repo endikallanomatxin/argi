@@ -1,6 +1,6 @@
 StorageSlot : Type = (.address: Int32)
 
-deinit(.self: $&StorageSlot) -> () := {
+StorageSlot deinit(.self: $&StorageSlot) -> () := {
 }
 
 main() -> (.status_code: Int32) := {

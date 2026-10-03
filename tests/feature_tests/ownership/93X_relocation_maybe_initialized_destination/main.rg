@@ -1,6 +1,6 @@
 Marker : Type = (.value: Int32)
 
-deinit(.self: $&Marker) -> () := {
+Marker deinit(.self: $&Marker) -> () := {
 }
 
 main(.condition: Bool = false) -> (.status_code: Int32) := {

@@ -2,7 +2,7 @@ Thing : Type = (
     .value: Int32
 )
 
-deinit(.self: $&Thing) -> () := {
+Thing deinit(.self: $&Thing) -> () := {
 }
 
 write(.p: $&Thing) -> () := {

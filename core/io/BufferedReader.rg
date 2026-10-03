@@ -41,7 +41,7 @@ BufferedReader init#(.base_type: Type: Reader)(.allocator: $&Allocator,
     result = ..ok ~constructed
 }
 
-deinit#(.base_type: Type: Reader)(
+BufferedReader deinit#(.base_type: Type: Reader)(
     .self: $&BufferedReader#(.base_type: base_type),
     .allocator: $&Allocator,
 ) -> () := {

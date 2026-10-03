@@ -2,7 +2,7 @@ Value : Type = (
     .items: [2]Int32
 )
 
-deinit(.self: $&Value) -> () := {
+Value deinit(.self: $&Value) -> () := {
 }
 
 read_first(.p: $&[2]Int32) -> (.result: Int32) := {

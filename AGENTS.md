@@ -142,6 +142,11 @@ feature first.
   declaration ID, persisted in ModuleSG and relocated into GlobalSG. Keep
   constructor lookup indexed by that family, independently of output types;
   speculative specializations must roll back their index entries.
+  Destructors use `TypeName deinit#(...)(...)`, receive a mutable reference to
+  their associated nominal family, and return no values. Their declaration ID
+  and lookup indexes follow the same persistence and rollback rules as init.
+  Explicit deinit calls retain ordinary input dispatch; automatic cleanup
+  collects receiver names only from the target family's indexed destructors.
   Imported nominal constructors consult public initializers in the type's
   defining module. Automatic cleanup falls back to that module when caller
   lookup finds no destructor; reached arguments retain the caller's context.

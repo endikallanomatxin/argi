@@ -5,7 +5,7 @@ Observer : Type = (
     .new_reference: $&UInt8
 )
 
-deinit(.self: $&Observer) -> () := {
+Observer deinit(.self: $&Observer) -> () := {
     self&.target&.reference = self&.new_reference
 }
 

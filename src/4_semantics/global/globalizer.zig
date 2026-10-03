@@ -199,6 +199,7 @@ fn appendDeclarations(allocator: std.mem.Allocator, result: *global_sg.GlobalSem
             .choice_variants = if (value.choice_variants) |range| relocateEntityRange(global_sg.GlobalVariantId, o.variant_base, range) else null,
             .generic_parameter_count = value.generic_parameter_count,
             .constructor_type = if (value.constructor_type) |id| globalDecl(o, id) else null,
+            .destructor_type = if (value.destructor_type) |id| globalDecl(o, id) else null,
             .struct_layout = value.struct_layout,
             .choice_layout = value.choice_layout,
         });

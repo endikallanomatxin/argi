@@ -4,7 +4,7 @@ Resource init() -> (.result: Resource) := {
     result = ()
 }
 
-deinit(.res: $&Resource) -> () := {}
+Resource deinit(.res: $&Resource) -> () := {}
 
 copy(.self: &Resource) -> (.value: Resource) := {
     value = Resource()

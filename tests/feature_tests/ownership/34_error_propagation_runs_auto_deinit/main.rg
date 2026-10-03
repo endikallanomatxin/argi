@@ -8,7 +8,7 @@ Resource init() -> (.result: Resource) := {
 
 }
 
-deinit(.res: $&Resource) -> () := {
+Resource deinit(.res: $&Resource) -> () := {
     dummy_counter = dummy_counter + 1
 }
 

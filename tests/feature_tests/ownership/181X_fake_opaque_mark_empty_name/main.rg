@@ -3,7 +3,7 @@ Borrowing : Type = (
     .reference: $&UInt8
 )
 
-deinit(.self: $&Borrowing) -> () := {
+Borrowing deinit(.self: $&Borrowing) -> () := {
 }
 
 -- Only the bundled-core declaration is trusted. This similarly named user

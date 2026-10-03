@@ -32,6 +32,9 @@ pub const Resolver = struct {
     offsets: []const globalizer.Offsets,
     profile_io: ?std.Io = null,
     stats: Stats = .{},
+    // Automatic cleanup supplies its nominal family; explicit calls continue
+    // to use ordinary input dispatch. Restore this around nested resolution.
+    destructor_owner: ?global_sg.GlobalDeclId = null,
 
     // Instantiated bodies and cleanup calls have no module pending operation
     // to revisit when a callee gains a transitive reached input. Retain their
@@ -443,7 +446,11 @@ pub const Resolver = struct {
         var best_score: u32 = 0;
         var tied = false;
         var saw_deferred = false;
-        for (try self.graph.functionsNamed(self.allocator, name)) |id| {
+        const candidates = if (std.mem.eql(u8, name, "deinit") and self.destructor_owner != null)
+            try self.graph.destructorsFor(self.allocator, self.destructor_owner.?)
+        else
+            try self.graph.functionsNamed(self.allocator, name);
+        for (candidates) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
             if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
             if (self.graph.declaration(function.declaration).constructor_type != null) continue;
@@ -481,7 +488,11 @@ pub const Resolver = struct {
         var best_score: u32 = 0;
         var tied = false;
         var saw_deferred = false;
-        for (try self.graph.functionsNamed(self.allocator, name)) |id| {
+        const candidates = if (std.mem.eql(u8, name, "deinit") and self.destructor_owner != null)
+            try self.graph.destructorsFor(self.allocator, self.destructor_owner.?)
+        else
+            try self.graph.functionsNamed(self.allocator, name);
+        for (candidates) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
             if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
             if (self.graph.declaration(function.declaration).constructor_type != null) continue;
@@ -2224,7 +2235,7 @@ test "address type materializes after its child resolves" {
 test "global core resolver is graph-only" {
     try std.testing.expect(!@hasField(Resolver, "abstract_context"));
     try std.testing.expect(!@hasField(Resolver, "abstract_compatible"));
-    try std.testing.expect(@sizeOf(Resolver) <= 184);
+    try std.testing.expect(@sizeOf(Resolver) <= 192);
 }
 
 test "qualified lookup follows linked module alias" {

@@ -3,9 +3,9 @@ Borrowing : Type = (.reference: $&UInt8)
 Domain : Type = (.marker: UInt8)
 Wrapper : Type = (.domain: Domain)
 
-deinit(.self: $&Borrowing) -> () := {}
+Borrowing deinit(.self: $&Borrowing) -> () := {}
 
-deinit(.self: $&Domain) -> () := {
+Domain deinit(.self: $&Domain) -> () := {
     trusted_opaque_mark_empty(.storage = self)
 }
 

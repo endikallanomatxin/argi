@@ -34,6 +34,6 @@ remove#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key))(.
 length#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key))(.self: &HashSet#(.key: key, .policy: policy)) -> (.count: UIntNative) := { count = length(.self = &self&._map).count }
 capacity#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key))(.self: &HashSet#(.key: key, .policy: policy)) -> (.count: UIntNative) := { count = capacity(.self = &self&._map).count }
 
-deinit#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key))(.self: $&HashSet#(.key: key, .policy: policy), .allocator: $&Allocator) -> () := {
+HashSet deinit#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key))(.self: $&HashSet#(.key: key, .policy: policy), .allocator: $&Allocator) -> () := {
     deinit(.self = $&self&._map, .allocator = allocator)
 }

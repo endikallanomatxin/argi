@@ -2,7 +2,7 @@ Tracked : Type = (
     .allocation: Allocation
 )
 
-deinit(.self: $&Tracked) -> () := {
+Tracked deinit(.self: $&Tracked) -> () := {
     deinit(.self = $&self&.allocation)
 }
 

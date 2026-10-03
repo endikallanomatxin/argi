@@ -5,7 +5,7 @@ AddressSensitive : Type = (
 
 external :: UInt8 = 9
 
-deinit(.self: $&AddressSensitive) -> () := {
+AddressSensitive deinit(.self: $&AddressSensitive) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {

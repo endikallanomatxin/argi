@@ -8,7 +8,7 @@ _ArenaBlock : Type = (
 -- reset. Updating only the marker would leave the former generation ended.
 ArenaDomain : Type = (.marker: Bool)
 ArenaDomain init() -> (.result: ArenaDomain) := { result = (.marker = false) }
-deinit(.self: $&ArenaDomain) -> () := {}
+ArenaDomain deinit(.self: $&ArenaDomain) -> () := {}
 
 -- Backing receipts live in block headers. No metadata or storage is acquired
 -- until the first allocation; all blocks come from the chosen backing policy.
@@ -60,7 +60,7 @@ reset(.self: $&ArenaAllocator) -> () := {
     self&.domain = ArenaDomain()
 }
 
-deinit(.self: $&ArenaAllocator) -> () := {
+ArenaAllocator deinit(.self: $&ArenaAllocator) -> () := {
     arena_free_blocks(.self = self)
     deinit(.self = $&self&.domain)
 }

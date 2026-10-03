@@ -4,7 +4,7 @@ Pair : Type = (
     .stable: String
 )
 
-deinit(.self: $&Pair, .allocator: $&Allocator) -> () := {
+Pair deinit(.self: $&Pair, .allocator: $&Allocator) -> () := {
     assume allocator
 
     deinit(.self = $&self&.changing, .allocator = allocator)

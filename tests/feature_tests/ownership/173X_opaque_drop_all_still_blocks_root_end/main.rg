@@ -3,7 +3,7 @@ Borrowing : Type = (
     .reference: $&UInt8
 )
 
-deinit(.self: $&Borrowing) -> () := {
+Borrowing deinit(.self: $&Borrowing) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {

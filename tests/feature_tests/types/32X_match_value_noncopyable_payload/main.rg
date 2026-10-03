@@ -2,7 +2,7 @@ Token : Type = (
     .value: Int32,
 )
 
-deinit(.self: $&Token) -> () := {
+Token deinit(.self: $&Token) -> () := {
 }
 
 Result : Type = (

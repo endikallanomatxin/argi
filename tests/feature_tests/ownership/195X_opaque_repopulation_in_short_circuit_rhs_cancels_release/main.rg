@@ -1,7 +1,7 @@
 unsafe_allocation := import("../../_support/unsafe_allocation")
 Borrowing : Type = (.reference: $&UInt8)
 
-deinit(.self: $&Borrowing) -> () := {}
+Borrowing deinit(.self: $&Borrowing) -> () := {}
 
 store_and_return(.slot: $&Borrowing, .reference: $&UInt8) -> (.result: Bool) := {
     slot&.reference = reference

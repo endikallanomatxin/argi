@@ -75,7 +75,7 @@ path_with_view(
     result = ..ok (.text = ~text)
 }
 
-deinit(
+Path deinit(
     .self: $&Path,
     .allocator: $&Allocator,
 ) -> () := {

@@ -42,6 +42,24 @@ parameters but cannot select overloads distinguished only by return type.
 Additional constructor parameters follow ordinary inference and default rules;
 no parameters are implicitly introduced into the constructor's scope.
 
+A destructor is declared as `T deinit(...)`. Like constructors, destructors
+belong to a nominal type declared in the same module and declare their own
+compile-time parameters. They receive a mutable reference to that type and
+return no values. The receiver name remains an ordinary input name; additional
+inputs follow ordinary call resolution, including assumed capabilities.
+
+```rg
+Point deinit(.self: $&Point) -> () := {}
+```
+
+Explicit calls use `deinit(.self = $&point)`. Automatic cleanup searches the
+associated type family before matching the receiver and any additional inputs.
+A generic destructor expresses its concrete receiver in the input type:
+
+```rg
+Box deinit#(.t: Type)(.self: $&Box#(.t: t)) -> () := {}
+```
+
 `deinit` ends a live value and releases the resources it is responsible for.
 A type may define this operation when cleanup is needed. Types without one do
 not need a dummy `deinit`. After deinitialization, the place still exists, but

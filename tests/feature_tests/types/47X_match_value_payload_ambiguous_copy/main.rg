@@ -6,7 +6,7 @@ Payload init(.value: Int32) -> (.result: Payload) := {
     result = (.value = value)
 }
 
-deinit(.payload: $&Payload) -> () := {}
+Payload deinit(.payload: $&Payload) -> () := {}
 
 
 copy(.self: &Payload, .tag: Int32 = 1) -> (.value: Payload) := {

@@ -1,7 +1,7 @@
 unsafe_allocation := import("../../_support/unsafe_allocation")
 Borrowing : Type = (.reference: $&UInt8)
 
-deinit(.self: $&Borrowing) -> () := {}
+Borrowing deinit(.self: $&Borrowing) -> () := {}
 
 release_and_return(.storage: $&Allocation) -> (.result: Bool) := {
     trusted_opaque_mark_empty(.storage = storage)

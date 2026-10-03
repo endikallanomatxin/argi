@@ -4,7 +4,7 @@ Resource init() -> (.result: Resource) := {
     result = ()
 }
 
-deinit(.res: $&Resource) -> () := {}
+Resource deinit(.res: $&Resource) -> () := {}
 
 consume_ptr(.ptr: &Resource) -> (.status_code: Int32) := {
     status_code = 0

@@ -2,7 +2,7 @@ unsafe_allocation := import("../../_support/unsafe_allocation")
 Observer : Type = (.reference: $&UInt8)
 Wrapper : Type = (.observer: Observer)
 
-deinit(.self: $&Observer) -> () := {
+Observer deinit(.self: $&Observer) -> () := {
     observed ::= self&.reference&
 }
 

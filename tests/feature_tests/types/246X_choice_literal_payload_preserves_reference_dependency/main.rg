@@ -17,7 +17,7 @@ copy(.self: &Borrowing) -> (.value: Borrowing) := {
 
 Borrowing implements InfalliblyCopyable
 
-deinit(.self: $&Target) -> () := {}
+Target deinit(.self: $&Target) -> () := {}
 
 read(.pointer: $&UInt8) -> (.value: UInt8) := {
     value = pointer&

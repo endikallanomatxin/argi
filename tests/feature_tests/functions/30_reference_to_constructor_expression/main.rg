@@ -7,7 +7,7 @@ Box init(.counter: $&Int32, .created: $&Int32) -> (.result: Box) := {
     created& = created& + 1
 }
 
-deinit(.self: $&Box) -> () := {
+Box deinit(.self: $&Box) -> () := {
     self&.counter& = self&.counter& + 1
 }
 

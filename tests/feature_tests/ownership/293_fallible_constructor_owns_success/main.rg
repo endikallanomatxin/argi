@@ -20,7 +20,7 @@ Owned init(.allocator: $&Allocator, .fail: Bool) -> (.result: Errable#(.t: Owned
     }
 }
 
-deinit(.self: $&Owned) -> () := {
+Owned deinit(.self: $&Owned) -> () := {
     deinit(.self = $&self&.allocation)
 }
 

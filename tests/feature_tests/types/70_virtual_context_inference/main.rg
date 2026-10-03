@@ -4,7 +4,7 @@ Probe : Type = (.counter: $&UIntNative)
 Probe implements Counter
 Probe implements Other
 bump(.self: $&Probe) -> () := { self&.counter& = self&.counter& + 10 }
-deinit(.self: $&Probe) -> () := { self&.counter& = self&.counter& + 1 }
+Probe deinit(.self: $&Probe) -> () := { self&.counter& = self&.counter& + 1 }
 
 record#(.t: Type)(.value: t, .counter: $&UIntNative) -> () := {
     counter& = counter& + 1

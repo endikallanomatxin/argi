@@ -5,7 +5,7 @@ Borrowing : Type = (
 
 old_root :: UInt8 = 7
 
-deinit(.self: $&Borrowing) -> () := {}
+Borrowing deinit(.self: $&Borrowing) -> () := {}
 
 store_and_return(.slot: $&Borrowing, .reference: $&UInt8) -> (.result: UInt8) := {
     slot&.reference = reference

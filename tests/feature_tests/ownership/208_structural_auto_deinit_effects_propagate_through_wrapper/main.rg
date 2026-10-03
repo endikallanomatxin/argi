@@ -4,9 +4,9 @@ Container : Type = (.marker: UInt8)
 Domain : Type = (.storage: $&Container)
 Wrapper : Type = (.domain: Domain)
 
-deinit(.self: $&Borrowing) -> () := {}
+Borrowing deinit(.self: $&Borrowing) -> () := {}
 
-deinit(.self: $&Domain) -> () := {
+Domain deinit(.self: $&Domain) -> () := {
     trusted_opaque_mark_empty(.storage = self&.storage)
 }
 

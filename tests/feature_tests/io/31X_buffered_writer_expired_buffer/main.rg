@@ -1,5 +1,5 @@
 Buffer : Type = (.bytes: [4]UInt8)
-deinit(.self: $&Buffer) -> () := {}
+Buffer deinit(.self: $&Buffer) -> () := {}
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     buffer ::= Buffer(.bytes = zeroed#(.t: [4]UInt8)())

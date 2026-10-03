@@ -6,7 +6,7 @@ allocate(.self: $&BackingAllocator, .size: UIntNative, .alignment: UIntNative) -
     result = allocate(.self = self&.page, .size = size, .alignment = alignment)
 }
 
-deinit(.self: $&BackingAllocator) -> () := {}
+BackingAllocator deinit(.self: $&BackingAllocator) -> () := {}
 
 BackingAllocator implements Allocator
 

@@ -9,7 +9,7 @@ DummyWriter init(.allocator: $&Allocator,
     result.bytes = unwrap_or_abort(.value = String(.allocator = allocator, .capacity = 16))
 }
 
-deinit(
+DummyWriter deinit(
     .self: $&DummyWriter,
     .allocator: $&Allocator,
 ) -> () := {

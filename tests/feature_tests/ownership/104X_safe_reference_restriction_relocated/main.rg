@@ -6,10 +6,10 @@ Holder : Type = (
     .reference: &UInt8
 )
 
-deinit(.self: $&Value) -> () := {
+Value deinit(.self: $&Value) -> () := {
 }
 
-deinit(.self: $&Holder) -> () := {
+Holder deinit(.self: $&Holder) -> () := {
 }
 
 main() -> (.status_code: Int32) := {

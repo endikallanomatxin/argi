@@ -1,5 +1,5 @@
 _RingBufferShape : Type = (.marker: UInt8)
-deinit(.self: $&_RingBufferShape) -> () := {}
+_RingBufferShape deinit(.self: $&_RingBufferShape) -> () := {}
 
 -- The live interval has _length slots starting at _head, modulo _capacity.
 -- All other slots are vacant. Only this owner changes occupancy; raw slot
@@ -107,7 +107,7 @@ pop#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> (.result: Errable#(.t: t, .reason
     result = ..ok ~value
 }
 
-deinit#(.t: Type)(.self: $&RingBuffer#(.t: t), .allocator: $&Allocator) -> () := {
+RingBuffer deinit#(.t: Type)(.self: $&RingBuffer#(.t: t), .allocator: $&Allocator) -> () := {
     index :: UIntNative = 0
     while index < self&._length {
         occupied ::= _ring_buffer_occupied_pointer(.self = self, .index = index).pointer

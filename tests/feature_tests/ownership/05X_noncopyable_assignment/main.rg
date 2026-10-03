@@ -4,7 +4,7 @@ Resource init() -> (.result: Resource) := {
     result = ()
 }
 
-deinit(.res: $&Resource) -> () := {}
+Resource deinit(.res: $&Resource) -> () := {}
 
 main() -> (.status_code: Int32) := {
     first := Resource()

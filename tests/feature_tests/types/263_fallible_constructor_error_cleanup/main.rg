@@ -1,5 +1,5 @@
 Widget : Type = (.cleanups: $&Int32)
-deinit(.self: $&Widget) -> () := { self&.cleanups& = self&.cleanups& + 1 }
+Widget deinit(.self: $&Widget) -> () := { self&.cleanups& = self&.cleanups& + 1 }
 
 Widget init(.cleanups: $&Int32) -> (.result: Errable#(.t: Widget, .reasons: (..rejected))) := {
     constructed :: Widget = (.cleanups = cleanups)

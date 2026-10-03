@@ -4,7 +4,7 @@ Router : Type = (
     .route: $&Int32
 )
 
-deinit(.self: $&Router) -> () := {
+Router deinit(.self: $&Router) -> () := {
     deinit(.self = $&self&.allocation)
 }
 

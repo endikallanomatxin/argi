@@ -3,7 +3,7 @@ Borrowing : Type = (
     .reference: $&UInt8
 )
 
-deinit(.self: $&Borrowing) -> () := {
+Borrowing deinit(.self: $&Borrowing) -> () := {
 }
 
 release_one(.storage: $&Allocation, .release: Bool) -> () := {

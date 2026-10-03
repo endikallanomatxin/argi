@@ -144,7 +144,11 @@ fn matchFunctionNamed(
     var best_score: u32 = 0;
     var tied = false;
     var saw_deferred = false;
-    for (try compatibility.core.graph.functionsNamed(compatibility.core.allocator, name)) |id| {
+    const function_candidates = if (std.mem.eql(u8, name, "deinit") and compatibility.core.destructor_owner != null)
+        try compatibility.core.graph.destructorsFor(compatibility.core.allocator, compatibility.core.destructor_owner.?)
+    else
+        try compatibility.core.graph.functionsNamed(compatibility.core.allocator, name);
+    for (function_candidates) |id| {
         const function = compatibility.core.graph.functions.items[@intFromEnum(id)];
         if (function.flags.is_abstract_dispatch) continue;
         if (!compatibility.core.declarationVisible(current_module, function.declaration, module_filter)) continue;

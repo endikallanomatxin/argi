@@ -2258,9 +2258,15 @@ pub const CodeGenerator = struct {
         };
         const destructor = (try types.deinitFunctionForInput(self.graph, child, primitive.input)) orelse return null;
         const self_field = self.graph.functions.items[@intFromEnum(destructor)].input;
-        var self_index: u32 = 0;
+        var self_index: ?u32 = null;
+        // The associated value identifies the receiver even when a capability
+        // precedes it or the signature uses a name other than self.
         for (self.graph.fields.items[self_field.start..][0..self_field.len], 0..) |field, index| {
-            if (std.mem.eql(u8, self.graph.text(field.name), "self")) {
+            const pointer = switch (self.graph.semanticType(field.ty)) {
+                .pointer => |value| value,
+                else => continue,
+            };
+            if (pointer.mutability == .read_write and types.equal(self.graph, pointer.child, child)) {
                 self_index = @intCast(index);
                 break;
             }
@@ -2268,7 +2274,7 @@ pub const CodeGenerator = struct {
         for (self.graph.value_fields.items[input.fields.start..][0..input.fields.len]) |field| {
             if (!std.mem.eql(u8, self.graph.text(field.name), "slot")) continue;
             const slot = (try self.visitNode(field.value)) orelse return CodegenError.ValueNotFound;
-            try self.callDeinit(destructor, input_id, self_index, slot.value_ref);
+            try self.callDeinit(destructor, input_id, self_index orelse return CodegenError.InvalidType, slot.value_ref);
             return null;
         }
         return CodegenError.InvalidType;

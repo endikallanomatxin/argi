@@ -2,7 +2,7 @@
 -- boundary independent of allocation roots. Structural changes renew it;
 -- replacing an element's value without changing shape does not.
 _DynamicArrayShape : Type = (.marker: UInt8)
-deinit(.self: $&_DynamicArrayShape) -> () := {}
+_DynamicArrayShape deinit(.self: $&_DynamicArrayShape) -> () := {}
 
 DynamicArray #(.t: Type) : Type = (
     --
@@ -76,7 +76,7 @@ DynamicArray init #(.t: Type) (.allocator: $&Allocator,
     }
 }
 
-deinit #(.t: Type) (
+DynamicArray deinit #(.t: Type) (
     .allocator: $&Allocator,
     .self: $&DynamicArray#(.t: t)
 ) -> () := {

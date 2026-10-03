@@ -3,9 +3,9 @@ Borrowing : Type = (.reference: $&UInt8)
 
 Container : Type = (.marker: UInt8)
 
-deinit(.self: $&Borrowing) -> () := {}
+Borrowing deinit(.self: $&Borrowing) -> () := {}
 
-deinit(.self: $&Container) -> () := {
+Container deinit(.self: $&Container) -> () := {
     trusted_opaque_mark_empty(.storage = self)
 }
 

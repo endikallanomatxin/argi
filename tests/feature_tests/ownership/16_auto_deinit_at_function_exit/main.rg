@@ -9,7 +9,7 @@ Resource init(.counter: $&Int32) -> (.result: Resource) := {
     global_counter_ptr = counter
 }
 
-deinit(.res: $&Resource) -> () := {
+Resource deinit(.res: $&Resource) -> () := {
     global_counter_ptr& = global_counter_ptr& + 1
 }
 

@@ -122,7 +122,7 @@ StringHashMap init#(.value: Type) (.allocator: $&Allocator,
     string_hash_map_prepare_buckets(.allocator = allocator, .buckets = $&result.buckets, .capacity = bucket_capacity)
 }
 
-deinit#(.value: Type) (
+StringHashMap deinit#(.value: Type) (
     .allocator: $&Allocator,
     .self: $&StringHashMap#(.value: value),
 ) -> () := {

@@ -33,7 +33,7 @@ read(.self: &OwnedHandle) -> (.value: CInt) := {
     value = _read(.handle = self&._handle, .ffi = self&._ffi)
 }
 
-deinit(.self: $&OwnedHandle) -> () := {
+OwnedHandle deinit(.self: $&OwnedHandle) -> () := {
     _destroy(.handle = self&._handle, .ffi = self&._ffi)
 }
 
@@ -55,6 +55,6 @@ GenericHandle init#(.t: Type)(.tag: t, .ffi: $&ForeignFunctionInterface = reach 
     result = ..ok ~constructed
 }
 
-deinit#(.t: Type)(.self: $&GenericHandle#(.t: t)) -> () := {
+GenericHandle deinit#(.t: Type)(.self: $&GenericHandle#(.t: t)) -> () := {
     _destroy(.handle = self&._handle, .ffi = self&._ffi)
 }

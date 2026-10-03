@@ -15,7 +15,7 @@ Owned init(.allocator: $&Allocator) -> (.result: Errable#(.t: Owned, .reasons: (
     }
 }
 
-deinit(.self: $&Owned) -> () := {
+Owned deinit(.self: $&Owned) -> () := {
     deinit(.self = $&self&.allocation)
 }
 

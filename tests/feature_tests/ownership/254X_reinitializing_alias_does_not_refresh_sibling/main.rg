@@ -2,7 +2,7 @@ Value : Type = (
     .number: Int32
 )
 
-deinit(.self: $&Value) -> () := {}
+Value deinit(.self: $&Value) -> () := {}
 
 main() -> (.status_code: Int32 = 0) := {
     source :: Value = (.number = 7)

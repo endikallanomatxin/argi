@@ -14,7 +14,7 @@ Resource init(.counter: $&Int32, .status: $&Int32) -> (.result: Resource) := {
     global_status_ptr = status
 }
 
-deinit(.res: $&Resource) -> () := {
+Resource deinit(.res: $&Resource) -> () := {
     puts(.string="Deinitializing resource\n")
     global_counter_ptr& = global_counter_ptr& + 1
     global_status_ptr& = 0

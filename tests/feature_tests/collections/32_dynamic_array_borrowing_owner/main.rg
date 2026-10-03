@@ -8,7 +8,7 @@ BorrowingOwner : Type = (
 first_drops :: Int32 = 0
 second_drops :: Int32 = 0
 
-deinit(.self: $&BorrowingOwner) -> () := {
+BorrowingOwner deinit(.self: $&BorrowingOwner) -> () := {
     if self&.id == 1 { first_drops = first_drops + 1 }
     if self&.id == 2 { second_drops = second_drops + 1 }
     deinit(.self = $&self&.allocation)

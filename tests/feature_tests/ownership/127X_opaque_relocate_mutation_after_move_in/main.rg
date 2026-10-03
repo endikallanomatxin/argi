@@ -4,7 +4,7 @@ AddressSensitive : Type = (
     .reference: Nullable#(.t: $&UInt8)
 )
 
-deinit(.self: $&AddressSensitive) -> () := {
+AddressSensitive deinit(.self: $&AddressSensitive) -> () := {
 }
 
 main(.system: System) -> (.status_code: Int32) := {

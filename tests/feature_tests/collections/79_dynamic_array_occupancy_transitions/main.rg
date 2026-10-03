@@ -1,6 +1,6 @@
 Tracked : Type = (.id: Int32)
 drops :: Int32 = 0
-deinit(.self: $&Tracked) -> () := { drops = drops + 1 }
+Tracked deinit(.self: $&Tracked) -> () := { drops = drops + 1 }
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= system.page_allocator
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: Tracked)(.capacity = 4))

@@ -6,7 +6,7 @@ initialize_container(.p: $&Container, .inner: Allocation) -> () := {
     p& = (.inner = ~inner)
 }
 
-deinit(.self: $&Container) -> () := {
+Container deinit(.self: $&Container) -> () := {
     deinit(.self = $&self&.inner)
 }
 
