@@ -93,7 +93,9 @@ pub const Diagnostics = struct {
                 );
 
                 if (position.line - 1 < lines.items.len) {
-                    const code = lines.items[position.line - 1];
+                    // CRLF is one line ending; do not emit its carriage return
+                    // as part of the source excerpt or caret width.
+                    const code = std.mem.trimEnd(u8, lines.items[position.line - 1], "\r");
                     std.debug.print("  {s}\n", .{code});
                     const indent_len = @min(code.len, position.column - 1);
                     std.debug.print("  ", .{});
