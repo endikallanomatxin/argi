@@ -167,13 +167,23 @@ fn normalizeDiagnosticPaths(bytes: []u8) void {
         const end = std.mem.indexOfScalarPos(u8, bytes, start, '\n') orelse bytes.len;
         const line = bytes[start..end];
         if (line.len > 0 and !std.ascii.isWhitespace(line[0])) {
-            if (std.mem.indexOf(u8, line, ".rg:")) |path_end| {
-                for (line[0 .. path_end + 3]) |*byte| if (byte.* == '\\') {
-                    byte.* = '/';
-                };
-            }
+            normalizeSourceLocation(line);
+            if (std.mem.indexOf(u8, line, "first use at ")) |first_use|
+                normalizeSourceLocation(line[first_use + "first use at ".len ..]);
+        } else {
+            const trimmed = std.mem.trimStart(u8, line, " \t");
+            if (std.mem.startsWith(u8, trimmed, "file: "))
+                normalizeSourceLocation(line[line.len - trimmed.len + "file: ".len ..]);
         }
         start = end + 1;
+    }
+}
+
+fn normalizeSourceLocation(bytes: []u8) void {
+    if (std.mem.indexOf(u8, bytes, ".rg:")) |path_end| {
+        for (bytes[0 .. path_end + 3]) |*byte| if (byte.* == '\\') {
+            byte.* = '/';
+        };
     }
 }
 
@@ -8545,6 +8555,12 @@ test "diagnostic path normalization preserves code excerpt spelling" {
     var bytes = "tests\\feature_tests\\case\\main.rg:2:5: error: invalid value\n    path := \"C:\\file.rg:test\"\n".*;
     normalizeDiagnosticPaths(&bytes);
     try expectEqualStrings("tests/feature_tests/case/main.rg:2:5: error: invalid value\n    path := \"C:\\file.rg:test\"\n", &bytes);
+}
+
+test "diagnostic path normalization handles related source locations" {
+    var bytes = "tests\\case\\main.rg:2:5: error: already used (first use at tests\\case\\main.rg:1:1)\n      file: tests\\case\\other.rg:7:1\n".*;
+    normalizeDiagnosticPaths(&bytes);
+    try expectEqualStrings("tests/case/main.rg:2:5: error: already used (first use at tests/case/main.rg:1:1)\n      file: tests/case/other.rg:7:1\n", &bytes);
 }
 
 test "feature_tests/system/49_target_selection" {

@@ -16,7 +16,7 @@ const ReadMessageError = error{
 const UriError = error{UnsupportedUri};
 
 fn repoRootPrefix() ![]u8 {
-    return std.fs.path.resolve(std.testing.allocator, &.{"."});
+    return std.process.currentPathAlloc(std.testing.io, std.testing.allocator);
 }
 
 pub fn start(io: std.Io) !void {
