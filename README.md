@@ -33,9 +33,9 @@ It’s an early work-in-progress.
   `more`. Some modules remain design sketches; consult their implementations
   for supported APIs.
 - 🛠️ Tooling for building, exhaustive checking, testing, scaffolding, formatting,
-  and LSP. Use `argi fmt [paths...]` to format files or directories,
-  `argi fmt --check [paths...]` to check without writing, and
-  `argi fmt file.rg --stdout` to preview a file. Editors can request document
+  and LSP. Use `argi format [paths...]` to format files or directories,
+  `argi format --check [paths...]` to check without writing, and
+  `argi format file.rg --stdout` to preview a file. Editors can request document
   formatting through the LSP.
 
 

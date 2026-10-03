@@ -5754,8 +5754,8 @@ test "argi help lists supported commands" {
     try expect(std.mem.indexOf(u8, result.stderr, "init --lib [name]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "lsp") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "version") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "fmt [paths...] [--check]") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "fmt <file.rg> --stdout") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "format [paths...] [--check]") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "format <file.rg> --stdout") != null);
 }
 
 test "argi version reports current release" {
@@ -5768,12 +5768,12 @@ test "argi version reports current release" {
 }
 
 test "argi unknown command exits with help" {
-    const result = try runArgiCommand(&.{"format"});
+    const result = try runArgiCommand(&.{"unknown-command"});
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
-    try expect(std.mem.indexOf(u8, result.stderr, "Error: unknown command 'format'\n") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "Error: unknown command 'unknown-command'\n") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "Usage: argi <command> [arguments] [options]\n") != null);
 }
 
@@ -8711,26 +8711,26 @@ test "formatter CLI checks prints and atomically updates source" {
     const source = "main()->(.status_code:Int32=0):={ status_code=0 }\n";
     const expected = "main() -> (.status_code: Int32 = 0) := { status_code = 0 }\n";
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = source });
-    const printed = try runArgiCommand(&.{ "fmt", path, "--stdout" });
+    const printed = try runArgiCommand(&.{ "format", path, "--stdout" });
     defer std.testing.allocator.free(printed.stdout);
     defer std.testing.allocator.free(printed.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 0 }, printed.term);
     try expectEqualStrings(expected, printed.stdout);
-    const checked = try runArgiCommand(&.{ "fmt", root, "--check" });
+    const checked = try runArgiCommand(&.{ "format", root, "--check" });
     defer std.testing.allocator.free(checked.stdout);
     defer std.testing.allocator.free(checked.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 1 }, checked.term);
     const untouched = try tmp.dir.readFileAlloc(std.testing.io, "main.rg", std.testing.allocator, .limited(4096));
     defer std.testing.allocator.free(untouched);
     try expectEqualStrings(source, untouched);
-    const written = try runArgiCommand(&.{ "fmt", root });
+    const written = try runArgiCommand(&.{ "format", root });
     defer std.testing.allocator.free(written.stdout);
     defer std.testing.allocator.free(written.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 0 }, written.term);
     const contents = try tmp.dir.readFileAlloc(std.testing.io, "main.rg", std.testing.allocator, .limited(4096));
     defer std.testing.allocator.free(contents);
     try expectEqualStrings(expected, contents);
-    const clean_check = try runArgiCommand(&.{ "fmt", root, "--check" });
+    const clean_check = try runArgiCommand(&.{ "format", root, "--check" });
     defer std.testing.allocator.free(clean_check.stdout);
     defer std.testing.allocator.free(clean_check.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 0 }, clean_check.term);
@@ -8753,7 +8753,7 @@ test "formatter prepares all files before changing any source" {
     const source = "main()->(.status_code:Int32=0):={}\n";
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "a.rg", .data = source });
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "b.rg", .data = "main(]" });
-    const result = try runArgiCommand(&.{ "fmt", root });
+    const result = try runArgiCommand(&.{ "format", root });
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);

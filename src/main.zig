@@ -40,8 +40,8 @@ fn printHelp() void {
     std.debug.print("  init [name]                            Create an executable package\n", .{});
     std.debug.print("  init --lib [name]                      Create a library package\n", .{});
     std.debug.print("  lsp                                    Start the language server\n", .{});
-    std.debug.print("  fmt [paths...] [--check]               Format .rg files or directories recursively\n", .{});
-    std.debug.print("  fmt <file.rg> --stdout                 Print formatted source without writing\n", .{});
+    std.debug.print("  format [paths...] [--check]              Format .rg files or directories recursively\n", .{});
+    std.debug.print("  format <file.rg> --stdout                Print formatted source without writing\n", .{});
     std.debug.print("  version                                Show the Argi version\n", .{});
     std.debug.print("  help                                   Show this help\n", .{});
     std.debug.print("\nBuild flags:\n", .{});
@@ -112,7 +112,7 @@ pub fn main(init: std.process.Init) !void {
         init_cmd.run(io, args[2..]) catch |err| {
             exitCommandError("Init error", err);
         };
-    } else if (std.mem.eql(u8, command, "fmt")) {
+    } else if (std.mem.eql(u8, command, "format")) {
         format_cmd.run(io, args[2..]) catch |err| {
             exitCommandError("Format error", err);
         };

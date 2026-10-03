@@ -20,7 +20,7 @@ are preserved. Blank-line runs become at most one blank line, leading and
 trailing blank lines are removed, and nonempty files end with a newline.
 Formatting is idempotent.
 
-`argi fmt` accepts `.rg` files and directories, defaulting to the current
+`argi format` accepts `.rg` files and directories, defaulting to the current
 directory. Directories are searched recursively, excluding hidden entries,
 `zig-out`, `references`, and `node_modules`. `--check` reports files requiring
 formatting and exits unsuccessfully without changing them. `--stdout` accepts
