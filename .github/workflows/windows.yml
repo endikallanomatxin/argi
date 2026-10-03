@@ -29,7 +29,7 @@ permissions:
 jobs:
   compiler:
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
@@ -64,7 +64,7 @@ jobs:
           cp "$(cygpath -u "$LLVM_RUNTIME_DLL")" zig-out/bin/LLVM-C.dll
           # Put the DLL on PATH for test binaries outside the installation.
           export PATH="$PWD/zig-out/bin:$PATH"
-          zig build -j1 test-internal -Dtest-filter='Windows' -Dtest-filter='file URIs' -Dtest-filter='LLVM triples' --summary all
+          zig build -j1 test-internal -Dtest-filter='Windows' -Dtest-filter='file URIs' -Dtest-filter='LLVM triples' -Dtest-filter='LSP' --summary all
 
       - name: Compile and execute a native program
         shell: msys2 {0}
@@ -128,3 +128,9 @@ jobs:
           import subprocess
           subprocess.run(['./windows-process.exe', '\u00f1-\u6587', '*.tmp'], check=True)
           PY
+
+      - name: Run compiler and core feature suites
+        shell: msys2 {0}
+        run: |
+          export PATH="$PWD/zig-out/bin:$PATH"
+          zig build -j1 test-programs -Dtest-progress=true -Dtest-filter='feature_tests/basics/' -Dtest-filter='feature_tests/collections/' -Dtest-filter='feature_tests/text/' -Dtest-filter='feature_tests/io/' -Dtest-filter='feature_tests/system/' --summary all

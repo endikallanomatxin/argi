@@ -8,14 +8,19 @@ WSL is Linux support, not validation of this port.
 
 ## Work to do
 
-- [ ] Validate the native Windows job with Zig 0.16, LLVM 21 C API, and the
-  MSYS2 UCRT64 GCC driver. Extend it from compiler smoke tests to core coverage.
-- [ ] Validate native C imports/exports against GCC fixtures, including scalar
-  aliases and indirect record arguments, and exercise library resolution.
-- [ ] Add Windows page acquisition/release and matching aligned allocation/free.
-- [ ] Adapt streams, filesystem, paths, arguments, and environment encoding.
-- [ ] Make installation, LSP URIs, temporary paths, and test fixtures portable.
-- [ ] Exercise compiler/core and installed projects natively; add Windows CI.
+- [ ] Broaden Windows coverage to the compiler and core feature suites; make
+  remaining Unix-specific fixtures portable and check library resolution.
+- [ ] Document installation and exercise the installed CLI/LSP outside the repo.
+
+## Library boundary
+
+Keep `Memory`, `FileSystem`, and `Terminal` independent of their OS adapters.
+The compilation target selects private implementations; it is static information,
+not another runtime capability. A future compile-time target query should expose
+OS, architecture, and ABI so libraries can select implementations themselves.
+It must describe the application target, including during cross compilation,
+rather than the machine running the compiler. Concentrate selection at adapter
+boundaries instead of scattering OS checks throughout public core APIs.
 
 ## Platform considerations
 
@@ -25,7 +30,6 @@ target must come from Argi's target identity rather than the DLL's build host.
 Only supported X86 and AArch64 backends need initialization. The standalone
 LLVM installer lacks most C API headers; use the development archive instead.
 
-Core adapters still assume Unix/POSIX in several places.
 Windows page release needs the original reservation: `VirtualFree(MEM_RELEASE)`
 releases it as a whole, unlike prefix/suffix unmapping. Keep any needed metadata
 private and preserve allocation receipts and alignment guarantees.
