@@ -50,14 +50,23 @@ left to right. Thus `index * stride + header_size` adds the header after
 multiplying the index, and `total - used - reserved` subtracts both amounts.
 Arithmetic binds more tightly than comparisons.
 
-Parenthesized values use the struct/value syntax; a single parenthesized
-expression is not currently a scalar grouping construct. Use intermediate
-bindings when a calculation needs a different grouping.
+Square brackets group exactly one expression: `[total + extra] * scale`
+evaluates the addition before multiplication. Grouping creates neither a value
+container nor a lexical scope. It preserves the expression's type, contextual
+literal typing, ownership, and place identity, so `$&[value]` borrows the same
+place as `$&value`.
+
+An opening bracket at the start of an expression groups it; a bracket after an
+expression indexes it. For example, `values[[index + 1] * stride]` groups part
+of an index, while `[values][index]` indexes a grouped array. Empty brackets
+and comma-separated expressions are not grouping constructs.
+
+Parentheses retain their struct, list, array, and input syntax. Braces retain
+lexical blocks and do not gain an implicit result from grouping.
 
 > [!QUESTION]
-> Define scalar grouping syntax without making single-field values ambiguous.
-> The relationship between richer pipe expressions and arithmetic also needs
-> to remain explicit as the pipe model grows.
+> The relationship between richer pipe expressions and arithmetic needs to
+> remain explicit as the pipe model grows.
 
 ## Types and values
 

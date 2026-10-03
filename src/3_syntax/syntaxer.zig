@@ -128,6 +128,7 @@ pub const Syntaxer = struct {
         return switch (self.currentContent()) {
             .literal,
             .open_parenthesis,
+            .open_bracket,
             .open_brace,
             .double_dot,
             .ampersand,
@@ -1052,6 +1053,10 @@ pub const Syntaxer = struct {
 
     // ────────────────────────── postfix “.field” chain ───────────────────────
     fn parsePostfix(self: *Syntaxer, mut: syn.NodeIndex) !syn.NodeIndex {
+        return self.parsePostfixWithCalls(mut, false);
+    }
+
+    fn parsePostfixWithCalls(self: *Syntaxer, mut: syn.NodeIndex, allow_identifier_calls: bool) !syn.NodeIndex {
         var node = mut;
         while (true) {
             if (self.tokenIs(.dot)) {
@@ -1071,9 +1076,14 @@ pub const Syntaxer = struct {
             }
 
             if (self.tokenIs(.open_parenthesis) or self.tokenIs(.hash)) {
-                if (self.file.tag(node) == .struct_field_access) {
-                    const sfa = self.file.data(node).token_and_node;
-                    if (self.file.tag(sfa.node) != .identifier) break;
+                if (self.file.tag(node) == .struct_field_access or (allow_identifier_calls and self.file.tag(node) == .identifier)) {
+                    var qualifier: ?syn.TokenIndex = null;
+                    const callee_token = if (self.file.tag(node) == .struct_field_access) blk: {
+                        const sfa = self.file.data(node).token_and_node;
+                        if (self.file.tag(sfa.node) != .identifier) break;
+                        qualifier = self.file.mainToken(sfa.node);
+                        break :blk sfa.token;
+                    } else self.file.mainToken(node);
                     var type_args = try self.addNodeRange(&.{});
                     var type_args_struct: ?syn.NodeIndex = null;
                     if (self.tokenIs(.hash)) {
@@ -1087,13 +1097,13 @@ pub const Syntaxer = struct {
                     if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
                     const struct_value_literal = try self.parseCollectionLiteral(true);
                     const extra = try self.addExtra(syn.CallExtra{
-                        .module_qualifier = syn.OptionalTokenIndex.init(self.file.mainToken(sfa.node)),
+                        .module_qualifier = syn.OptionalTokenIndex.init(qualifier),
                         .type_arguments_start = type_args.start,
                         .type_arguments_end = type_args.end,
                         .type_arguments_struct = syn.OptionalNodeIndex.init(type_args_struct),
                         .input = struct_value_literal,
                     });
-                    node = try self.addNode(.function_call, sfa.token, .{ .extra = extra });
+                    node = try self.addNode(.function_call, callee_token, .{ .extra = extra });
                     continue;
                 }
             }
@@ -1366,6 +1376,7 @@ pub const Syntaxer = struct {
             return SyntaxerError.ExpectedDeclarationOrAssignment;
         }
 
+        const grouped = self.tokenIs(.open_bracket);
         const base: syn.NodeIndex = switch (content) {
             .double_dot => blk: {
                 const dots_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
@@ -1427,14 +1438,35 @@ pub const Syntaxer = struct {
                 break :blk try self.parseCollectionLiteral(false);
             },
 
+            // Grouping is transparent to later phases: retain the enclosed
+            // node so contextual typing and place identity stay unchanged.
+            .open_bracket => blk: {
+                const open_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+                if (self.tokenIs(.close_bracket)) {
+                    try self.diags.add(self.file.tokenLocation(open_token), .syntax, "expression grouping requires exactly one expression", .{});
+                    return SyntaxerError.ExpectedDeclarationOrAssignment;
+                }
+                const expression = try self.parseExpression();
+                self.skipNewLinesAndComments();
+                if (!self.tokenIs(.close_bracket)) {
+                    try self.diags.add(self.tokenLocation(), .syntax, "expected ']' after grouped expression", .{});
+                    return SyntaxerError.ExpectedRightBracket;
+                }
+                self.advanceOne();
+                break :blk expression;
+            },
+
             // ─── embedded `{}` block ───────────────────────────────────────
             .open_brace => try self.parseCodeBlock(),
 
             else => return SyntaxerError.ExpectedIntLiteral,
         };
 
-        // Apply “.field” chains.
-        return try self.parsePostfix(base);
+        // A grouped name can still be a callee. Declaration syntaxing uses
+        // the restricted postfix form so it can recognize function signatures.
+        return try self.parsePostfixWithCalls(base, grouped);
     }
 
     fn parsePipeExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
@@ -1786,7 +1818,25 @@ pub const Syntaxer = struct {
         }
 
         if (self.currentContent() != .identifier and self.currentCanStartBareExpressionStatement()) {
+            const grouped = self.tokenIs(.open_bracket);
             const expr = try self.parseExpression();
+            if (grouped and self.tokenIs(.equal)) {
+                const tag: syn.Node.Tag = switch (self.file.tag(expr)) {
+                    .identifier => .assignment,
+                    .index_access => .index_assignment,
+                    .struct_field_access, .dereference => .pointer_assignment,
+                    else => {
+                        try self.diags.add(self.tokenLocation(), .syntax, "grouped assignment target must name a mutable place", .{});
+                        return SyntaxerError.ExpectedDeclarationOrAssignment;
+                    },
+                };
+                self.advanceOne();
+                const value = try self.parseExpression();
+                return try self.addNode(tag, self.file.mainToken(expr), if (tag == .assignment)
+                    .{ .node = value }
+                else
+                    .{ .node_and_node = .{ .first = expr, .second = value } });
+            }
             return try self.addNode(.expression_statement, self.file.mainToken(expr), .{ .node = expr });
         }
 

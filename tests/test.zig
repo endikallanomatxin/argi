@@ -8627,3 +8627,17 @@ test "feature_tests/types/278X_destructor_wrong_association" {
 test "feature_tests/types/279X_destructor_unknown_type" {
     try buildExpectFail("tests/feature_tests/types/279X_destructor_unknown_type", "destructor type 'Missing' must name a type declared in this module");
 }
+
+test "feature_tests/basics/58_bracket_expression_grouping" {
+    const path = "tests/feature_tests/basics/58_bracket_expression_grouping";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/59X_empty_expression_grouping" {
+    try buildExpectFail("tests/feature_tests/basics/59X_empty_expression_grouping", "expression grouping requires exactly one expression");
+}
+
+test "feature_tests/basics/60X_multiple_expression_grouping" {
+    try buildExpectFail("tests/feature_tests/basics/60X_multiple_expression_grouping", "expected ']' after grouped expression");
+}
