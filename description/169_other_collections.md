@@ -224,3 +224,9 @@ It shares the checked `length`, `contains`, `set` and `count_set` operations
 with borrowed bit sets. `as_view(.self: $&BitSet)` borrows a mutable `BitSetView`
 without clearing any bits. Cleanup releases the underlying dynamic array and
 invalidates its borrowed views; owners cannot be implicitly copied.
+
+`union_with`, `intersect_with` and `difference_with` update an owning bit set
+from a readonly `.other` owner without allocating. Both bit counts must match;
+`bit_set_size_mismatch` leaves the destination unchanged. Using the same owner
+for both operands is valid. Unused high bits remain zero. Union and intersection
+with self preserve the set, and difference with self clears it.
