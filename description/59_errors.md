@@ -103,6 +103,25 @@ load_file() -> !Int32 := {
 returning `T`. In this special form, the compiler infers the reasons from the
 body and closes the return `Errable` after semantic analysis.
 
+The shorthand can declare an explicit default for its `result` binding:
+
+```rg
+work() -> !Void = ..ok Void() := {
+    perform_step()!
+}
+```
+
+The default initializes the output before the body executes. Reaching the end
+or using a bare `return` retains that value unless the body replaces it;
+propagation with `!` or `!!` replaces it with the error. Defaults participate in
+reason inference, and this syntax also applies to non-`Void` and generic
+functions. `-> !Void` alone does not declare a success default.
+
+> [!IMPLEMENTATION]
+> An error-producing output default currently needs an explicit `.trace`;
+> automatic creation from the function's reached tracer is not available in
+> output initializers. Success defaults such as `..ok Void()` need no tracer.
+
 The same inference path is also available when the output is written
 explicitly as `Errable#(.t: T)` and omits `.reasons`:
 

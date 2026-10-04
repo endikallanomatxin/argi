@@ -9151,3 +9151,63 @@ test "feature_tests/basics/73X_multiline_operation_missing_operand" {
 test "feature_tests/basics/74X_leading_operator_requires_group" {
     try buildExpectFail("tests/feature_tests/basics/74X_leading_operator_requires_group", "a leading operator requires scalar grouping");
 }
+
+test "feature_tests/basics/75_fallible_main_success" {
+    const path = "tests/feature_tests/basics/75_fallible_main_success";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/76_fallible_main_trace" {
+    const path = "tests/feature_tests/basics/76_fallible_main_trace";
+    try expectSuccessfulBuild(path);
+    const output = try outputPathFor(path);
+    defer std.testing.allocator.free(output);
+    const result = try runChild(&.{output});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expectEqualStrings("", result.stdout);
+    try expect(std.mem.indexOf(u8, result.stderr, "error: unhandled error in main") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "starting application") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "76_fallible_main_trace/main.rg:3:") != null);
+}
+
+test "feature_tests/basics/77_fallible_main_system" {
+    const path = "tests/feature_tests/basics/77_fallible_main_system";
+    try expectSuccessfulBuild(path);
+    try runExpectStdoutWithArgs(path, &.{}, 0, "ready\n");
+}
+
+test "feature_tests/basics/78X_fallible_main_non_void" {
+    try buildExpectFail("tests/feature_tests/basics/78X_fallible_main_non_void", "Expected main() -> (.status_code: Int32) or main() -> !Void.");
+}
+
+test "feature_tests/basics/79_fallible_main_custom_tracer" {
+    const path = "tests/feature_tests/basics/79_fallible_main_custom_tracer";
+    try expectSuccessfulBuild(path);
+    const output = try outputPathFor(path);
+    defer std.testing.allocator.free(output);
+    const result = try runChild(&.{output});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expectEqualStrings("error: unhandled error in main\ncustom trace\n", result.stderr);
+}
+
+test "feature_tests/basics/80_fallible_output_defaults" {
+    const path = "tests/feature_tests/basics/80_fallible_output_defaults";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/81X_fallible_output_default_missing_value" {
+    try buildExpectFail("tests/feature_tests/basics/81X_fallible_output_default_missing_value", "expected a default expression");
+}
+
+test "feature_tests/basics/82_fallible_main_explicit" {
+    const path = "tests/feature_tests/basics/82_fallible_main_explicit";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

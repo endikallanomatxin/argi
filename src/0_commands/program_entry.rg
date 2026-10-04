@@ -3,7 +3,7 @@
 -- the user call, and cleanup pass through semantizing and safety together;
 -- codegen supplies the host ABI adapter rather than an unchecked entry lifetime.
 __argi_entry() -> __ARGI_OUTPUT__ := {
-    assume error_tracer ::= $&noop_error_tracer
+    __ARGI_TRACER_SETUP__
     ffi_storage ::= ForeignFunctionInterface()
     assume ffi ::= $&ffi_storage
     memory_storage ::= Memory()
@@ -32,5 +32,5 @@ __argi_entry() -> __ARGI_OUTPUT__ := {
         .rand_gen = $&rand_gen_storage,
         .ffi = $&ffi_storage,
     )
-    __ARGI_RESULT__ = __ARGI_TARGET__(.system = system)
+    __ARGI_CALL__
 }

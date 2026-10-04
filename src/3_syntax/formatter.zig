@@ -528,6 +528,8 @@ fn operandEnd(tag: Tag) bool {
 
 fn needsSpace(left: Tag, right: Tag, tokens: tok.View, index: usize) bool {
     if (right == .comment) return true;
+    if (left == .arrow and right == .bang) return true;
+    if (left == .bang and index >= 2 and tokens.contents[index - 2] == .arrow) return false;
     if (right == .comma or right == .close_parenthesis or right == .close_bracket) return false;
     if (left == .comma) return true;
     if (right == .dot or right == .hash or right == .bang or right == .double_bang) return false;
@@ -852,5 +854,12 @@ test "formatter retains inline struct commas and nested inline separators" {
     try expectFormat(
         "value := (\n.outer = (.first = 1, .second = 2), -- outer comment\n.other = 3,\n)\n",
         "value := (\n    .outer = (.first = 1, .second = 2) -- outer comment\n    .other = 3\n)\n",
+    );
+}
+
+test "formatter preserves inferred fallible output defaults" {
+    try expectFormat(
+        "main()->!Void=..ok Void():={work()!}\n",
+        "main() -> !Void = ..ok Void() := { work()! }\n",
     );
 }
