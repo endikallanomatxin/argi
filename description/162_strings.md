@@ -386,3 +386,10 @@ and `ascii_is_whitespace`. Whitespace includes space and bytes 9 through 13.
 they do not perform Unicode case folding. Trimming uses the same whitespace
 classification. `find_last(.self, .pattern)` returns the last matching byte
 offset; the empty pattern matches at the end of the view.
+
+`split_whitespace(.self)` returns a borrowed `StringWhitespaceIterator`.
+Use `has_next` and `next` to consume nonempty tokens separated by ASCII
+whitespace. Leading, repeated and trailing whitespace is skipped. Empty or
+all-whitespace input has no tokens. Returned tokens retain their source
+lifetime and remain valid when the iterator advances. Unicode whitespace is
+not a separator; UTF-8 bytes and embedded NULs otherwise remain unchanged.

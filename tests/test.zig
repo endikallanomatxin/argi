@@ -9745,3 +9745,12 @@ test "feature_tests/text/45_ascii_foundations" {
     try expectSuccessfulBuild("tests/feature_tests/text/45_ascii_foundations");
     try runExpect("tests/feature_tests/text/45_ascii_foundations", 0);
 }
+
+test "feature_tests/text/46_whitespace_tokens" {
+    try expectSuccessfulBuild("tests/feature_tests/text/46_whitespace_tokens");
+    try runExpect("tests/feature_tests/text/46_whitespace_tokens", 0);
+}
+
+test "feature_tests/text/47X_whitespace_source_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/47X_whitespace_source_after_cleanup", "root that has ended");
+}
