@@ -26,5 +26,36 @@ implementation must return a count within the supplied view's extent.
   before reading another byte; zero capacity performs no read. Full buffers
   therefore need another call to discover a following delimiter or EOF.
 
-Helpers borrow streams and buffers. They allocate no storage. Generic failures
-retain stream reasons; TCP's direct socket operations retain socket reasons.
+These helpers borrow streams and buffers and allocate no storage. Generic
+failures retain stream reasons; TCP's direct socket operations retain socket
+reasons.
+
+## Bounded consumption
+
+`copy_stream_limited(.reader, .writer, .buffer, .limit)` copies at most `limit`
+bytes with initialized caller scratch. Its `StreamCopyResult` contains `.count`
+and `.termination: StreamCopyEnd` (`end` or `limit`). Every read request fits
+both scratch and the remaining limit. Reaching the limit performs no lookahead;
+exact EOF at that boundary is therefore reported as `limit`. A zero limit
+performs no stream operations and accepts empty scratch. Nonzero limits require
+nonempty scratch or return `invalid_stream_buffer`. Partial reads and writes
+are retried. Read/write errors may follow consumed or written prefixes; the
+helper neither closes nor flushes endpoints.
+
+`read_all_limited(.self, .buffer, .limit, .allocator)` reads a complete stream
+into an owning `String`, preserving arbitrary bytes, including embedded NULs.
+It imposes no UTF-8 validation. Scratch must be initialized and nonempty,
+including at limit zero. A source ending within the limit returns the owner.
+After accumulating exactly the limit, it reads one byte into scratch to check
+EOF. An extra byte returns `size_limit_exceeded` and is consumed; no remaining
+excess is read. A zero limit accepts only an already exhausted source.
+
+The owner's capacity stays within `max(1, limit)`, plus String's trailing NUL
+byte. Growth can temporarily retain both old and new allocations, so peak
+storage is at most two such allocations plus caller scratch and allocator
+bookkeeping. Growth reserves the next requested chunk before consuming it.
+A limit that cannot leave room for the trailing NUL reports `size_overflow`
+before allocation or reading. `out_of_memory`, `stream_read_failed`, and limit
+errors release accumulated ownership; they return no partial owner and do not
+rewind the stream. Static and virtual block readers support both operations.
+

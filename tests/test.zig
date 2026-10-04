@@ -9655,3 +9655,18 @@ test "feature_tests/collections/143X_owned_hash_value_after_move" {
 test "feature_tests/collections/144X_owned_hash_key_mutation" {
     try buildExpectFail("tests/feature_tests/collections/144X_owned_hash_key_mutation", "read-only");
 }
+
+test "feature_tests/io/39_bounded_streams" {
+    try expectSuccessfulBuild("tests/feature_tests/io/39_bounded_streams");
+    try runExpect("tests/feature_tests/io/39_bounded_streams", 0);
+}
+
+test "feature_tests/io/40_bounded_stream_failures" {
+    try expectSuccessfulBuild("tests/feature_tests/io/40_bounded_stream_failures");
+    try runExpect("tests/feature_tests/io/40_bounded_stream_failures", 0);
+}
+
+test "feature_tests/io/41_bounded_stream_allocation_failure" {
+    try expectSuccessfulBuild("tests/feature_tests/io/41_bounded_stream_allocation_failure");
+    try runExpect("tests/feature_tests/io/41_bounded_stream_allocation_failure", 0);
+}
