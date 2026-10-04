@@ -128,4 +128,27 @@ main(.system: System) -> !Void = ..ok Void() := {
     deinit(.self = $&target, .allocator = allocator)
     if drops != 19 { abort }
 
+    wrapped ::= Deque#(.t: Int32)(.allocator = allocator, .capacity = 3)!
+    push_back(.self = $&wrapped, .value = 1, .allocator = allocator)!
+    push_back(.self = $&wrapped, .value = 2, .allocator = allocator)!
+    removed ::= pop_front(.self = $&wrapped)!
+    if removed != 1 { abort }
+    push_back(.self = $&wrapped, .value = 3, .allocator = allocator)!
+    push_back(.self = $&wrapped, .value = 4, .allocator = allocator)!
+    expected = 2
+    for ~item in wrapped {
+        if item != expected { abort }
+        expected = expected + 1
+    }
+    if expected != 5 { abort }
+    outer ::= DynamicArray#(.t: DynamicArray#(.t: Tracked))(.allocator = allocator, .capacity = 1)!
+    inner ::= DynamicArray#(.t: Tracked)(.allocator = allocator, .capacity = 2)!
+    push(.self = $&inner, .value = Tracked(.id = 20), .allocator = allocator)!
+    push(.self = $&inner, .value = Tracked(.id = 21), .allocator = allocator)!
+    push(.self = $&outer, .value = ~inner, .allocator = allocator)!
+    for ~group in outer {
+        for ~item in group { break }
+        if drops != 21 { abort }
+    }
+
 }
