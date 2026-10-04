@@ -1,4 +1,4 @@
-FileOpenMode : Type = (
+FileOpenMode: Type = (
     ..read
     ..write
     ..append
@@ -7,24 +7,27 @@ FileOpenMode : Type = (
 FileOpenMode implements ImplicitlyCopyable
 ..file_open_failed
 
-File : Type = (
-    ._ffi: $&ForeignFunctionInterface
-    .stream_address : UIntNative = 0
-    .should_close   : Bool = 0 == 1
+File: Type = (
+    ._ffi           : $&ForeignFunctionInterface
+    .stream_address : UIntNative                 = 0
+    .should_close   : Bool                       = 0 == 1
 )
 
 once File init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: File) := {
     result = (._ffi = ffi, .stream_address = 0, .should_close = false)
 }
 
-File init(.ffi: $&ForeignFunctionInterface = reach ffi,
-    .stream_address: UIntNative,
-    .should_close: Bool,
-) -> (.result: File) := {
+File init(
+        .ffi            : $&ForeignFunctionInterface = reach ffi,
+        .stream_address : UIntNative,
+        .should_close   : Bool,
+    ) -> (
+        .result : File
+    ) := {
     result = (
-        ._ffi = ffi,
-        .stream_address = stream_address,
-        .should_close = should_close,
+        ._ffi           = ffi
+        .stream_address = stream_address
+        .should_close   = should_close
     )
 }
 
@@ -33,8 +36,10 @@ is_open(.self: &File) -> (.ok: Bool) := {
 }
 
 file_open_mode_c_string(
-    .mode: FileOpenMode,
-) -> (.text: &Char) := {
+        .mode : FileOpenMode,
+    ) -> (
+        .text : &Char
+    ) := {
     if is(.value = mode, .variant = ..read) {
         text = "rb"
         return
@@ -51,24 +56,26 @@ file_open_mode_c_string(
 file_stream_pointer(.self: &File) -> (.stream: &Any) := {
     raw ::= raw_pointer#(.t: Any)(.address = self&.stream_address)
     mutable_stream ::= trusted_establish_inherited_reference#(.t: Any)(
-        .raw = raw,
-        .root = erase_reference#(.t: File)(.base = self).reference,
+        .raw  = raw
+        .root = erase_reference#(.t: File)(.base = self).reference
     )
     stream = read_reference#(.t: Any)(.base = mutable_stream)
 }
 
 open(
-    .p: $&File,
-    .ffi: $&ForeignFunctionInterface = reach ffi,
-    .path: &Char,
-    .mode: FileOpenMode,
-) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) := {
+        .p    : $&File,
+        .ffi  : $&ForeignFunctionInterface = reach ffi,
+        .path : &Char,
+        .mode : FileOpenMode,
+    ) -> (
+        .result : Errable#(.t: Bool, .reasons: (..file_open_failed))
+    ) := {
     mode_text ::= file_open_mode_c_string(.mode = mode)
-    opened : &Any = fopen(.path = path, .mode = mode_text)
-    p& = (
-        ._ffi = ffi,
-        .stream_address = UIntNative(.value = opened),
-        .should_close = 1 == 1,
+    opened: &Any = fopen(.path = path, .mode = mode_text)
+    p&= (
+        ._ffi           = ffi
+        .stream_address = UIntNative(.value = opened)
+        .should_close   = 1                           == 1
     )
     if p&.stream_address == 0 {
         result = ..error(.reason = ..file_open_failed)
@@ -78,56 +85,62 @@ open(
 }
 
 open_read(
-    .p: $&File,
-    .ffi: $&ForeignFunctionInterface = reach ffi,
-    .path: &Char,
-) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) := {
+        .p    : $&File,
+        .ffi  : $&ForeignFunctionInterface = reach ffi,
+        .path : &Char,
+    ) -> (
+        .result : Errable#(.t: Bool, .reasons: (..file_open_failed))
+    ) := {
     result = open(.p = p, .path = path, .mode = ..read)
 }
 
 open_write(
-    .p: $&File,
-    .ffi: $&ForeignFunctionInterface = reach ffi,
-    .path: &Char,
-) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) := {
+        .p    : $&File,
+        .ffi  : $&ForeignFunctionInterface = reach ffi,
+        .path : &Char,
+    ) -> (
+        .result : Errable#(.t: Bool, .reasons: (..file_open_failed))
+    ) := {
     result = open(.p = p, .path = path, .mode = ..write)
 }
 
 open_append(
-    .p: $&File,
-    .ffi: $&ForeignFunctionInterface = reach ffi,
-    .path: &Char,
-) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) := {
+        .p    : $&File,
+        .ffi  : $&ForeignFunctionInterface = reach ffi,
+        .path : &Char,
+    ) -> (
+        .result : Errable#(.t: Bool, .reasons: (..file_open_failed))
+    ) := {
     result = open(.p = p, .path = path, .mode = ..append)
 }
 
 init_stdin(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
     mode_text ::= file_open_mode_c_string(.mode = ..read)
-    stream : &Any = fdopen(.fd = 0, .mode = mode_text)
-    p& = (
-        ._ffi = ffi,
-        .stream_address = UIntNative(.value = stream),
-        .should_close = 0 == 1,
+    stream: &Any = fdopen(.fd = 0, .mode = mode_text)
+    p&= (
+        ._ffi           = ffi
+        .stream_address = UIntNative(.value = stream)
+        .should_close   = 0                           == 1
     )
 }
 
 init_stdout(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
     mode_text ::= file_open_mode_c_string(.mode = ..write)
-    stream : &Any = fdopen(.fd = 1, .mode = mode_text)
-    p& = (
-        ._ffi = ffi,
-        .stream_address = UIntNative(.value = stream),
-        .should_close = 0 == 1,
+    stream: &Any = fdopen(.fd = 1, .mode = mode_text)
+    p&= (
+        ._ffi           = ffi
+        .stream_address = UIntNative(.value = stream)
+        .should_close   = 0                           == 1
     )
 }
 
 init_stderr(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
     mode_text ::= file_open_mode_c_string(.mode = ..write)
-    stream : &Any = fdopen(.fd = 2, .mode = mode_text)
-    p& = (
-        ._ffi = ffi,
-        .stream_address = UIntNative(.value = stream),
-        .should_close = 0 == 1,
+    stream: &Any = fdopen(.fd = 2, .mode = mode_text)
+    p&= (
+        ._ffi           = ffi
+        .stream_address = UIntNative(.value = stream)
+        .should_close   = 0                           == 1
     )
 }
 
@@ -145,10 +158,10 @@ close(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_close_f
         close_failed = close_status != 0
     }
 
-    self& = (
-        ._ffi = self&._ffi,
-        .stream_address = 0,
-        .should_close = 0 == 1,
+    self&= (
+        ._ffi           = self&._ffi
+        .stream_address = 0
+        .should_close   = 0          == 1
     )
 
     if close_failed {
@@ -159,7 +172,11 @@ close(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_close_f
     result = ..ok Void()
 }
 
-flush(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+flush(
+        .self : $&File
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
     assume ffi := self&._ffi
     if self&.stream_address == 0 {
         result = ..error(.reason = ..stream_flush_failed)
@@ -184,8 +201,8 @@ read_byte(.self: $&File) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream
     byte :: UInt8 = 0
     byte_view ::= array_view#(.t: UInt8)(.data = $&byte)
     read_count ::= fread_into(
-        .buffer = byte_view,
-        .stream = file_stream_pointer(.self = self).stream,
+        .buffer = byte_view
+        .stream = file_stream_pointer(.self = self).stream
     ).count
 
     if read_count == 0 {
@@ -207,7 +224,12 @@ read_byte(.self: $&File) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream
     result = ..ok ..ok byte
 }
 
-write_byte(.self: $&File, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+write_byte(
+        .self : $&File,
+        .byte : UInt8
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
     assume ffi := self&._ffi
     if self&.stream_address == 0 {
         result = ..error(.reason = ..stream_write_failed)
@@ -217,8 +239,8 @@ write_byte(.self: $&File, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons
     single_byte :: UInt8 = byte
     byte_view ::= array_view#(.t: UInt8)(.data = $&single_byte)
     wrote ::= fwrite_from(
-        .buffer = byte_view,
-        .stream = file_stream_pointer(.self = self).stream,
+        .buffer = byte_view
+        .stream = file_stream_pointer(.self = self).stream
     ).count
 
     if wrote != 1 {
@@ -230,9 +252,11 @@ write_byte(.self: $&File, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons
 }
 
 read(
-    .self: $&File,
-    .buffer: ArrayView#(.t: UInt8),
-) -> (.result: Errable#(.t: UIntNative, .reasons: (..stream_read_failed))) := {
+        .self   : $&File,
+        .buffer : ArrayView#(.t: UInt8),
+    ) -> (
+        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+    ) := {
     assume ffi := self&._ffi
     if self&.stream_address == 0 {
         result = ..error(.reason = ..stream_read_failed)
@@ -253,9 +277,11 @@ read(
 }
 
 write(
-    .self: $&File,
-    .buffer: ArrayView#(.t: UInt8),
-) -> (.result: Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+        .self   : $&File,
+        .buffer : ArrayView#(.t: UInt8),
+    ) -> (
+        .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
     assume ffi := self&._ffi
     if self&.stream_address == 0 {
         result = ..error(.reason = ..stream_write_failed)
@@ -277,3 +303,25 @@ write(
 
 File implements Reader
 File implements Writer
+
+write_block(
+        .self   : $&File,
+        .buffer : ArrayViewRO#(.t: UInt8)
+    ) -> (
+        .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
+    assume ffi := self&._ffi
+    if self&.stream_address == 0 {
+        result = ..error(.reason = ..stream_write_failed)
+        return
+    }
+    stream ::= file_stream_pointer(.self = self).stream
+    count ::= fwrite_from(.buffer = buffer, .stream = stream).count
+    if count < length(.self = &buffer).count {
+        if ferror(.stream = stream).status != 0 {
+            result = ..error(.reason = ..stream_write_failed)
+            return
+        }
+    }
+    result = ..ok count
+}

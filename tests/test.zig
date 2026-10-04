@@ -9467,3 +9467,13 @@ test "feature_tests/collections/124_deque_iteration" {
 test "feature_tests/collections/125X_deque_iterator_after_mutation" {
     try buildExpectFail("tests/feature_tests/collections/125X_deque_iterator_after_mutation", "root that has ended");
 }
+
+test "feature_tests/io/37_block_streams" {
+    try expectSuccessfulBuild("tests/feature_tests/io/37_block_streams");
+    try runExpect("tests/feature_tests/io/37_block_streams", 0);
+}
+
+test "feature_tests/io/38_buffered_block_refill" {
+    try expectSuccessfulBuild("tests/feature_tests/io/38_buffered_block_refill");
+    try runExpect("tests/feature_tests/io/38_buffered_block_refill", 0);
+}

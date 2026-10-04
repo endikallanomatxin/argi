@@ -651,3 +651,27 @@ flush(
     }
     result = ..ok Void()
 }
+
+read_block(
+        .self   : $&TcpConnection,
+        .buffer : ArrayView#(.t: UInt8)
+    ) -> (
+        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+    ) := {
+    match read(.self = self, .buffer = buffer) {
+        ..ok count { result = ..ok count }
+        ..error _ { result = ..error(.reason = ..stream_read_failed) }
+    }
+}
+
+write_block(
+        .self   : $&TcpConnection,
+        .buffer : ArrayViewRO#(.t: UInt8)
+    ) -> (
+        .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
+    match write(.self = self, .buffer = buffer) {
+        ..ok count { result = ..ok count }
+        ..error _ { result = ..error(.reason = ..stream_write_failed) }
+    }
+}
