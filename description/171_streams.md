@@ -58,3 +58,16 @@ A limit that cannot leave room for the trailing NUL reports `size_overflow`
 before allocation or reading. `out_of_memory`, `stream_read_failed`, and limit
 errors release accumulated ownership; they return no partial owner and do not
 rewind the stream. Static and virtual block readers support both operations.
+
+## Memory streams
+
+`ByteReader` implements `Reader` and `BlockReader`; `ByteWriter` implements
+`Writer` and `BlockWriter`. They compose with exact operations and bounded
+stream copies while retaining their borrowed initialized byte storage.
+
+Reader exhaustion reports byte EOF or a block count of zero. Block operations
+transfer the smaller of the requested extent and remaining storage. A writer
+with no capacity reports `stream_write_failed` for nonempty writes; writing an
+empty block succeeds with zero. Failed byte writes preserve position and
+storage. `flush` succeeds without side effects. Binary and stream operations
+share the same cursor position and require no allocator or FFI capability.

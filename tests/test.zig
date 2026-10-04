@@ -9783,3 +9783,8 @@ test "feature_tests/collections/147_bit_set_view" {
     try expectSuccessfulBuild("tests/feature_tests/collections/147_bit_set_view");
     try runExpect("tests/feature_tests/collections/147_bit_set_view", 0);
 }
+
+test "feature_tests/io/42_memory_streams" {
+    try expectSuccessfulBuild("tests/feature_tests/io/42_memory_streams");
+    try runExpect("tests/feature_tests/io/42_memory_streams", 0);
+}

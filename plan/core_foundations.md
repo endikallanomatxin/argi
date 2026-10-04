@@ -6,7 +6,7 @@ allocation, capabilities, ownership and nominal errors throughout.
 ## Development order
 
 1. Collections: owning bitsets, bit-set algebra, priority queues, and owner-aware algorithms.
-2. Streams: memory adapters, composable limits and bounded LF/CRLF lines.
+2. Streams: composable limits and bounded LF/CRLF lines.
 3. Filesystem/tools: harden existing path operations, walking and CLI options.
 4. More: hex/Base64, JSON/CSV, then compression/archive consumers.
 5. Services/runtime: logging, HTTP, selected hashes/crypto, then concurrency
