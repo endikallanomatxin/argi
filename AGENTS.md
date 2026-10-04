@@ -179,6 +179,14 @@ feature first.
   Py_buffer must be released. Exception snapshots own native text independently
   of interpreter lifetime. Do not reintroduce hidden Python/core dependencies.
 
+- Pipes preserve one evaluation of computed operands and retain lvalue storage.
+  Concrete and parameterized body lowering both reserve private deferred
+  bindings in the enclosing lexical scope. Compiler-generated `value_sequence`
+  blocks have an explicit result and do not give source blocks implicit returns.
+  Traverse their ordered effects in reachability, cleanup, capability and storage
+  summaries; return the result's lifetime facts in Safety. Persistent frontend
+  snapshots include these nodes, so changes require a codec version bump.
+
 - Compilation target identity lives in `src/1_base/target.zig` and is carried
   by ModuleSG and GlobalSG. Resolve C aliases, layouts, safety checks, and C ABI
   classification from that identity rather than the compiler host. Persistent

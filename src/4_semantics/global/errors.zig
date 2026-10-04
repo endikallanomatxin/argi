@@ -111,7 +111,7 @@ pub const Resolver = struct {
                 try self.collectNode(function, call.handle, out);
                 try self.collectNode(function, call.input, out);
             },
-            .code_block => |block| try self.collectBlock(function, block, out),
+            .code_block, .value_sequence => |block| try self.collectBlock(function, block, out),
             .list_literal => |literal| {
                 for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |child| try self.collectNode(function, child, out);
             },
@@ -569,7 +569,7 @@ pub const Resolver = struct {
                 break :blk self.nodeContains(call.handle, target) or self.nodeContains(call.input, target);
             },
             .virtualize => |id| self.nodeContains(self.graph.virtualizes.items[@intFromEnum(id)].value, target),
-            .code_block => |child| self.blockContains(child, target),
+            .code_block, .value_sequence => |child| self.blockContains(child, target),
             .list_literal => |literal| self.nodeRangeContains(literal.elements, target),
             .array_literal => |literal| self.nodeRangeContains(literal.elements, target),
             .struct_value_literal => |literal| blk: {

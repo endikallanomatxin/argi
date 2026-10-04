@@ -815,7 +815,7 @@ pub const Infer = struct {
                     }
                     if (statement.default_block) |child| try self.inferBlock(function_id, child, outputs);
                 },
-                .code_block => |child| try self.inferBlock(function_id, child, outputs),
+                .code_block, .value_sequence => |child| try self.inferBlock(function_id, child, outputs),
                 else => {},
             }
         }
@@ -948,6 +948,10 @@ pub const Infer = struct {
     fn capability_address_targets(self: *Infer, node: graph_mod.GlobalNodeId, flow: *CapabilityFlow) ![]const graph_mod.GlobalNodeId {
         return switch (self.graph.node(node).content) {
             .address_of => |value| self.allocator.dupe(graph_mod.GlobalNodeId, &.{value}),
+            .value_sequence => |block| blk: {
+                const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk &.{};
+                break :blk try self.capability_address_targets(value, flow);
+            },
             .binding_use => |binding| flow.addresses.get(binding) orelse &.{},
             .move_value, .denied_implicit_copy => |value| self.capability_address_targets(value, flow),
             else => &.{},
@@ -997,6 +1001,10 @@ pub const Infer = struct {
             return current;
         }
         return switch (self.graph.node(node).content) {
+            .value_sequence => |block| blk: {
+                const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk .{};
+                break :blk try self.capability_value(function, value, flow);
+            },
             .binding_use => |binding| if (flow.bindings.get(binding)) |value| value else self.inferExpression(function, node),
             .dereference => |read| blk: {
                 const local = try self.capability_address_targets(read.pointer, flow);
@@ -1321,7 +1329,7 @@ pub const Infer = struct {
                 flow.reachable = false;
                 flow.breaks_loop = true;
             },
-            .code_block => |block| try self.infer_capability_block(function, block, flow, exits),
+            .code_block, .value_sequence => |block| try self.infer_capability_block(function, block, flow, exits),
             .move_value, .denied_implicit_copy, .address_of => |value| try self.infer_capability_node(function, value, flow, exits),
             .dereference => |read| try self.infer_capability_node(function, read.pointer, flow, exits),
             .struct_field_access => |field| try self.infer_capability_node(function, field.value, flow, exits),
@@ -1580,7 +1588,7 @@ pub const Infer = struct {
                 if (flow.reachable) try self.recordInputPostStateExit(exits, states);
                 flow.reachable = false;
             },
-            .code_block => |child| try self.inferInputPostStates(function_id, child, flow, exits),
+            .code_block, .value_sequence => |child| try self.inferInputPostStates(function_id, child, flow, exits),
             .break_statement, .continue_statement, .abort_statement => flow.reachable = false,
             .auto_deinit_binding => |auto_id| try self.applyAutoDeinitInputPostStates(function_id, auto_id, states),
             else => try self.inferInputPostStatesExpression(function_id, node_id, states, exits),
@@ -1609,6 +1617,11 @@ pub const Infer = struct {
     ) anyerror!void {
         const node = self.graph.node(node_id);
         switch (node.content) {
+            .value_sequence => |block| {
+                var flow: InputPostStateFlow = .{ .states = states.* };
+                defer states.* = flow.states;
+                try self.inferInputPostStates(function_id, block, &flow, exits);
+            },
             .move_value, .denied_implicit_copy, .address_of => |value| try self.inferInputPostStatesExpression(function_id, value, states, exits),
             .dereference => |value| try self.inferInputPostStatesExpression(function_id, value.pointer, states, exits),
             .struct_value_literal => |literal| {
@@ -2276,7 +2289,7 @@ pub const Infer = struct {
                 try self.inferOpaqueEmptyExpression(function_id, assignment.value, effects, state, exits);
                 state.emptied.clearRetainingCapacity();
             },
-            .code_block => |child| try self.inferOpaqueEmptyBlock(function_id, child, effects, state, exits),
+            .code_block, .value_sequence => |child| try self.inferOpaqueEmptyBlock(function_id, child, effects, state, exits),
             .break_statement, .continue_statement, .abort_statement => state.reachable = false,
             .auto_deinit_binding => |auto_id| try self.applyAutoDeinitOpaqueEffects(function_id, auto_id, effects, state),
             else => try self.inferOpaqueEmptyExpression(function_id, node_id, effects, state, exits),
@@ -2356,6 +2369,7 @@ pub const Infer = struct {
     ) anyerror!void {
         const node = self.graph.node(node_id);
         switch (node.content) {
+            .value_sequence => |block| try self.inferOpaqueEmptyBlock(function_id, block, effects, state, exits),
             .move_value, .denied_implicit_copy, .address_of => |value| try self.inferOpaqueEmptyExpression(function_id, value, effects, state, exits),
             .dereference => |value| try self.inferOpaqueEmptyExpression(function_id, value.pointer, effects, state, exits),
             .struct_value_literal => |literal| {
@@ -2927,7 +2941,7 @@ pub const Infer = struct {
                 if (statement.expression) |expression| try self.inferRequiredLiveInputsNode(function_id, expression, required);
                 try self.inferRequiredLiveInputsRange(function_id, statement.cleanup, required);
             },
-            .code_block => |child| try self.inferRequiredLiveInputsBlock(function_id, child, required),
+            .code_block, .value_sequence => |child| try self.inferRequiredLiveInputsBlock(function_id, child, required),
 
             .auto_deinit_binding => |auto_id| try self.inferAutoDeinitRequiredLiveInputs(function_id, auto_id, required),
             else => {},
@@ -3002,6 +3016,10 @@ pub const Infer = struct {
                 const targets = try self.allocator.alloc(graph_mod.GlobalNodeId, 1);
                 targets[0] = value;
                 break :blk targets;
+            },
+            .value_sequence => |block| blk: {
+                const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk &.{};
+                break :blk try self.localAddressTargets(value);
             },
             .binding_use => |binding| self.local_address_bindings.get(binding) orelse &.{},
             .move_value, .denied_implicit_copy => |value| self.localAddressTargets(value),
@@ -3122,6 +3140,10 @@ pub const Infer = struct {
     ) anyerror!facts.ValueEffect {
         const node = self.graph.node(node_id);
         return switch (node.content) {
+            .value_sequence => |block| blk: {
+                const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk .{};
+                break :blk try self.inferExpression(function_id, value);
+            },
             .binding_use => |binding| if (self.inputIndex(function_id, binding)) |index|
                 try self.inputValueEffect(index, &.{})
             else
@@ -3465,6 +3487,10 @@ pub const Infer = struct {
 
     fn inferInputPaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId) anyerror![]const facts.InputPath {
         return switch (self.graph.node(node_id).content) {
+            .value_sequence => |block| blk: {
+                const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk &.{};
+                break :blk try self.inferInputPaths(function_id, value);
+            },
             .binding_use => |binding| if (self.inputIndex(function_id, binding)) |index|
                 try self.oneInputPath(index, &.{})
             else

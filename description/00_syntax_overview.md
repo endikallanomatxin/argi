@@ -64,9 +64,9 @@ and comma-separated expressions are not grouping constructs.
 Parentheses retain their struct, list, array, and input syntax. Braces retain
 lexical blocks and do not gain an implicit result from grouping.
 
-> [!QUESTION]
-> The relationship between richer pipe expressions and arithmetic needs to
-> remain explicit as the pipe model grows.
+Pipes retain call/postfix precedence above multiplication and addition. Group
+whole calculations or right-hand arithmetic with square brackets; see
+[pipe evaluation](40_functions.md#pipe-evaluation-and-placeholder-scope).
 
 ## Types and values
 

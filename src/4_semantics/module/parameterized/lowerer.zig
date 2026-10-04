@@ -179,6 +179,8 @@ fn linkedAbstractMatches(
     return false;
 }
 
+const PipeOperandOverride = struct { syntax: syn.NodeIndex, value: ir.ParameterizedNodeId };
+
 pub const Context = struct {
     diagnostics: ?*@import("../../../1_base/diagnostic.zig").Diagnostics = null,
     allocator: std.mem.Allocator,
@@ -193,6 +195,8 @@ pub const Context = struct {
     tree: *const syn.FileSyntaxTree = undefined,
     source: []const u8 = &.{},
     temporary_declarations: ?*std.ArrayList(ir.ParameterizedNodeId) = null,
+    pipe_value: ?ir.ParameterizedNodeId = null,
+    pipe_operand_overrides: []const PipeOperandOverride = &.{},
 
     fn lowerDeclarations(self: *Context) !Stats {
         var stats: Stats = .{};
@@ -853,6 +857,9 @@ pub const Context = struct {
     }
 
     fn lowerBodyNode(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedNodeId {
+        for (self.pipe_operand_overrides) |entry| if (entry.syntax == node) return entry.value;
+        if (self.tree.tag(node) == .pipe_placeholder) return self.pipe_value orelse error.PipePlaceholderOutsidePipe;
+        if (self.tree.tag(node) == .pipe_expression) return self.lowerPipe(node);
         if (self.tree.tag(node) == .expression_statement)
             return self.lowerBodyNode(self.tree.unaryOperand(node).?);
         if (self.tree.tag(node) == .reach_directive) return self.lowerReach(node);
@@ -1071,6 +1078,9 @@ pub const Context = struct {
             return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .abort_statement);
 
         if (self.tree.addressOf(node)) |address| {
+            if (self.tree.tag(address.value) == .pipe_placeholder) {
+                return self.addPending(node, .address_of, &.{try self.lowerBodyNode(address.value)}, null, null, .{ .pipe_pointer_mutability = if (address.mutability == .read_write) .read_write else .read_only });
+            }
             if (self.temporary_declarations) |temporaries| {
                 if (!self.syntaxIsAddressable(address.value)) {
                     // Keep the reservation in the enclosing block and the
@@ -1103,8 +1113,6 @@ pub const Context = struct {
         var operands = std.array_list.Managed(ir.ParameterizedNodeId).init(self.allocator);
         defer operands.deinit();
         try self.collectBodyOperands(node, &operands);
-        // TODO: Parameter-dependent pipe bodies need placeholder substitution
-        // and contextual propagation through borrowed intermediate results.
         const kind = parameterizedKindForTag(self.tree.tag(node));
         const name = switch (self.tree.tag(node)) {
             .function_call => if (self.tree.functionCall(node)) |call| try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)) else null,
@@ -1126,6 +1134,80 @@ pub const Context = struct {
         return result;
     }
 
+    fn lowerPipe(self: *Context, node: syn.NodeIndex) !ir.ParameterizedNodeId {
+        const op = self.tree.binaryOperation(node).?;
+        var evaluations: std.ArrayList(ir.ParameterizedNodeId) = .empty;
+        defer evaluations.deinit(self.allocator);
+        const lhs = try self.lowerPipeOperand(op.lhs, &evaluations);
+        const previous = self.pipe_value;
+        self.pipe_value = lhs;
+        defer self.pipe_value = previous;
+        const rhs = try self.lowerBodyNode(op.rhs);
+        if (evaluations.items.len == 0) return rhs;
+        try evaluations.append(self.allocator, rhs);
+        const storage = &self.graph.semantic.parameterized_storage.ir;
+        const start: u32 = @intCast(storage.node_refs.items.len);
+        try storage.node_refs.appendSlice(self.allocator, evaluations.items);
+        const block: ir.ParameterizedBlockId = @enumFromInt(@as(u32, @intCast(storage.blocks.items.len)));
+        try storage.blocks.append(self.allocator, .{ .nodes = .{ .start = start, .len = @intCast(evaluations.items.len) }, .ret_val = rhs });
+        return self.addResolvedNode(node, null, .{ .value_sequence = block });
+    }
+
+    // Retain the same storage/evaluation split as concrete body lowering;
+    // specialization supplies types without changing placeholder identity.
+    fn lowerPipeOperand(self: *Context, node: syn.NodeIndex, evaluations: *std.ArrayList(ir.ParameterizedNodeId)) anyerror!ir.ParameterizedNodeId {
+        switch (self.tree.tag(node)) {
+            .identifier, .pipe_placeholder, .literal => return self.lowerBodyNode(node),
+            .struct_field_access, .choice_payload_access, .dereference, .index_access => {
+                const base_node = switch (self.tree.tag(node)) {
+                    .struct_field_access => self.tree.structFieldAccess(node).?.value,
+                    .choice_payload_access => self.tree.choicePayloadAccess(node).?.value,
+                    .dereference => self.tree.unaryOperand(node).?,
+                    .index_access => self.tree.binaryOperation(node).?.lhs,
+                    else => unreachable,
+                };
+                const base = try self.lowerPipeOperand(base_node, evaluations);
+                var entries: [2]PipeOperandOverride = undefined;
+                entries[0] = .{ .syntax = base_node, .value = base };
+                var count: usize = 1;
+                if (self.tree.tag(node) == .index_access) {
+                    const index_node = self.tree.binaryOperation(node).?.rhs;
+                    entries[1] = .{ .syntax = index_node, .value = try self.cachePipeValue(index_node, try self.lowerBodyNode(index_node), evaluations) };
+                    count = 2;
+                }
+                const previous = self.pipe_operand_overrides;
+                self.pipe_operand_overrides = entries[0..count];
+                defer self.pipe_operand_overrides = previous;
+                return self.lowerBodyNode(node);
+            },
+            else => return self.cachePipeValue(node, try self.lowerBodyNode(node), evaluations),
+        }
+    }
+
+    fn cachePipeValue(self: *Context, node: syn.NodeIndex, value: ir.ParameterizedNodeId, evaluations: *std.ArrayList(ir.ParameterizedNodeId)) !ir.ParameterizedNodeId {
+        if (self.tree.tag(node) == .literal) return value;
+        const temporaries = self.temporary_declarations orelse return value;
+        const storage = &self.graph.semantic.parameterized_storage.ir;
+        const ty: ?ir.ParameterizedTypeId = switch (storage.nodes.items[@intFromEnum(value)]) {
+            .resolved => |item| item.ty,
+            .pending => null,
+        };
+        const binding: ir.ParameterizedBindingId = @enumFromInt(@as(u32, @intCast(storage.bindings.items.len)));
+        try storage.bindings.append(self.allocator, .{
+            .name = try self.writer.addString("#pipe_temporary"),
+            .source = self.sourceRef(node),
+            .ty = ty orelse ir.unresolved_binding_type_poison,
+            .initialization = value,
+            .deferred_initialization = true,
+            .mutability = .variable,
+        });
+        if (ty == null) try storage.unresolved_binding_types.append(self.allocator, binding);
+        try self.captureBindingCleanup(node, binding);
+        try temporaries.append(self.allocator, try self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .{ .binding_declaration = binding }));
+        try evaluations.append(self.allocator, try self.addResolvedNode(node, ty, .{ .assignment = .{ .binding = binding, .value = value } }));
+        return self.addResolvedNode(node, ty, .{ .binding_use = binding });
+    }
+
     fn syntheticErrorCall(self: *Context, node: syn.NodeIndex, name: []const u8, location: ?ir.ParameterizedNodeId) !ir.ParameterizedNodeId {
         const storage = &self.graph.semantic.parameterized_storage.ir;
         const start: u32 = @intCast(storage.value_fields.items.len);
@@ -1137,7 +1219,7 @@ pub const Context = struct {
 
     fn syntaxIsAddressable(self: *const Context, node: syn.NodeIndex) bool {
         return switch (self.tree.tag(node)) {
-            .identifier, .dereference => true,
+            .identifier, .pipe_placeholder, .dereference => true,
             .struct_field_access => self.syntaxIsAddressable(self.tree.structFieldAccess(node).?.value),
             .choice_payload_access => self.syntaxIsAddressable(self.tree.choicePayloadAccess(node).?.value),
             .index_access => self.syntaxIsAddressable(self.tree.indexAccess(node).?.value),

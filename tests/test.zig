@@ -1474,13 +1474,10 @@ test "feature_tests/functions/06X_pipe_requires_placeholder" {
     );
 }
 
-test "feature_tests/functions/07X_pipe_expression_placeholder_not_supported" {
-    try buildExpectFailExact("tests/feature_tests/functions/07X_pipe_expression_placeholder_not_supported",
-        \\tests/feature_tests/functions/07X_pipe_expression_placeholder_not_supported/main.rg:6:34: error: pipe placeholders are only supported as '_', '&_', '$&_', '_.field', or '..variant' payload access for now
-        \\      status_code = 41 | add_one(_ + 1)
-        \\                                   ^
-        \\
-    );
+test "feature_tests/functions/07_pipe_expression_placeholder" {
+    const path = "tests/feature_tests/functions/07_pipe_expression_placeholder";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
 }
 
 test "feature_tests/functions/08_pipe_chain" {
@@ -9115,4 +9112,28 @@ test "feature_tests/more/03X_matrix_dimensions" {
 
 test "feature_tests/functions/33X_generic_conflict_diagnostic" {
     try buildExpectFailWithoutNoise("tests/feature_tests/functions/33X_generic_conflict_diagnostic", "conflicting inferred generic parameters", "failed without a diagnostic");
+}
+
+test "feature_tests/functions/34_pipe_value_expressions" {
+    const path = "tests/feature_tests/functions/34_pipe_value_expressions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/functions/35X_nested_pipe_requires_outer_placeholder" {
+    try buildExpectFail("tests/feature_tests/functions/35X_nested_pipe_requires_outer_placeholder", "pipe right-hand side must use at least one argument placeholder");
+}
+
+test "feature_tests/functions/36X_generic_pipe_temporary_escape" {
+    try buildExpectFail(
+        "tests/feature_tests/functions/36X_generic_pipe_temporary_escape",
+        "function output cannot depend on a local storage generation that ends before return",
+    );
+}
+
+test "feature_tests/functions/37X_pipe_temporary_consumed_twice" {
+    try buildExpectFail(
+        "tests/feature_tests/functions/37X_pipe_temporary_consumed_twice",
+        "was moved and cannot be used again",
+    );
 }

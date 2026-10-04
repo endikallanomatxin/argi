@@ -241,6 +241,13 @@ pub const Resolver = struct {
                 node.ty = inferred;
                 changed = true;
             },
+            .value_sequence => |block| {
+                const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse continue;
+                const inferred = self.graph.node(value).ty orelse continue;
+                if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
+                node.ty = inferred;
+                changed = true;
+            },
             .move_value => |value| {
                 const inferred = self.graph.nodes.items[@intFromEnum(value)].ty orelse continue;
                 if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
@@ -617,6 +624,14 @@ pub const Resolver = struct {
     pub fn isUnpackedOutputField(self: *const Resolver, node: global_sg.GlobalNodeId, name: []const u8) bool {
         const function_id = switch (self.graph.nodes.items[@intFromEnum(node)].content) {
             .function_call => |call| call.callee,
+            .value_sequence => |block| return self.isUnpackedOutputField(self.graph.blocks.items[@intFromEnum(block)].ret_val orelse return false, name),
+            .binding_use => |id| blk: {
+                const binding = self.graph.binding(id);
+                // Internal pipe storage preserves single-output labels while
+                // ordinary user bindings keep their scalar value semantics.
+                if (!std.mem.eql(u8, self.graph.text(binding.name), "#pipe_temporary")) break :blk null;
+                return self.isUnpackedOutputField(binding.initialization orelse return false, name);
+            } orelse return false,
             else => return false,
         };
         const output = self.graph.functions.items[@intFromEnum(function_id)].output;

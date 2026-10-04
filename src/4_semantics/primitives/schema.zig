@@ -522,6 +522,9 @@ pub fn Node(comptime Ids: type) type {
             virtualize: Ids.VirtualizeId,
             virtual_call: Ids.VirtualCallId,
             code_block: Ids.BlockId,
+            // Compiler-generated ordered expressions have an explicit result,
+            // unlike source blocks. Their storage belongs to the outer scope.
+            value_sequence: Ids.BlockId,
             int_literal: i128,
             float_literal: f64,
             char_literal: u8,

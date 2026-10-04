@@ -180,6 +180,7 @@ pub const PendingExpressionDetail = union(enum(u8)) {
     comparison: primitives.ComparisonOperator,
     logical: primitives.LogicalOperator,
     pointer_mutability: primitives.PointerMutability,
+    pipe_pointer_mutability: primitives.PointerMutability,
 };
 
 pub const PendingExpression = struct {
