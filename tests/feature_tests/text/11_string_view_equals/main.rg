@@ -24,13 +24,13 @@ main(.system: System) -> (.status_code: Int32) := {
     bytes_set(.string = $&text, .index = five, .value = bang)
 
     view ::= as_view(.self = &text)
-    hello : StringView = (
-        .data = view.data,
-        .length = 5,
+    hello: StringView = (
+        .data   = view.data
+        .length = 5
     )
-    hello_again : StringView = (
-        .data = view.data,
-        .length = 5,
+    hello_again: StringView = (
+        .data   = view.data
+        .length = 5
     )
 
     if equals(.left = hello, .right = hello_again).ok {

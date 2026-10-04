@@ -4,6 +4,7 @@ expect_position(.text: StringView, .pattern: StringView, .expected: UIntNative) 
         ..some payload { if payload.value != expected { abort } }
     }
 }
+
 main() -> (.status_code: Int32 = 0) := {
     expect_position(.text = "", .pattern = "", .expected = 0)
     expect_position(.text = "abc", .pattern = "", .expected = 0)
@@ -24,7 +25,7 @@ main() -> (.status_code: Int32 = 0) := {
     if ends_with(.self = "abc", .pattern = "ab").ok { abort }
     if starts_with(.self = "ab", .pattern = "abc").ok { abort }
     if ends_with(.self = "ab", .pattern = "abc").ok { abort }
-    bytes : [3]UInt8 = (97, 0, 98)
+    bytes: [3]UInt8 = (97, 0, 98)
     text :: StringView = (.data = &bytes[0], .length = 3)
     zero :: StringView = (.data = &bytes[1], .length = 1)
     expect_position(.text = text, .pattern = zero, .expected = 1)

@@ -8,31 +8,31 @@ main(.system: System) -> (.status_code: Int32) := {
 
     copied_result ::= copy(.self = &original)
     match copied_result {
-    ..error _ { status_code = 4 }
-    ..ok ~ copied_payload {
-    copied ::= ~copied_payload
-    bytes_set(.string = $&copied, .index = 0, .value = 66)
+        ..error _ { status_code = 4 }
+        ..ok ~copied_payload {
+            copied ::= ~copied_payload
+            bytes_set(.string = $&copied, .index = 0, .value = 66)
 
-    original_first ::= bytes_get(.string = &original, .index = 0).byte
-    copied_first ::= bytes_get(.string = &copied, .index = 0).byte
-    copied_nul ::= bytes_get(.string = &copied, .index = 3).byte
+            original_first ::= bytes_get(.string = &original, .index = 0).byte
+            copied_first ::= bytes_get(.string = &copied, .index = 0).byte
+            copied_nul ::= bytes_get(.string = &copied, .index = 3).byte
 
-    if original_first != 65 {
-        status_code = 1
-        return
-    }
+            if original_first != 65 {
+                status_code = 1
+                return
+            }
 
-    if copied_first != 66 {
-        status_code = 2
-        return
-    }
+            if copied_first != 66 {
+                status_code = 2
+                return
+            }
 
-    if copied_nul != 0 {
-        status_code = 3
-        return
-    }
+            if copied_nul != 0 {
+                status_code = 3
+                return
+            }
 
-    status_code = 0
-    }
+            status_code = 0
+        }
     }
 }

@@ -3,10 +3,12 @@ expect_segment(.iterator: $&Iterator#(.t: StringView), .expected: StringView) ->
     segment ::= next(.self = iterator).value
     if segment != expected { abort }
 }
+
 first_segment(.text: StringView) -> (.view: StringView) := {
     iterator ::= unwrap_or_abort(.value = split(.self = text, .separator = ","))
     view = next(.self = $&iterator).value
 }
+
 main() -> (.status_code: Int32 = 0) := {
     if is(.value = split(.self = "abc", .separator = ""), .variant = ..ok) { abort }
     empty ::= unwrap_or_abort(.value = split(.self = "", .separator = ","))
@@ -33,7 +35,7 @@ main() -> (.status_code: Int32 = 0) := {
     longer ::= unwrap_or_abort(.value = split(.self = "a", .separator = "ab"))
     expect_segment(.iterator = $&longer, .expected = "a")
     if first_segment(.text = "first,second").view != "first" { abort }
-    bytes : [3]UInt8 = (97, 0, 98)
+    bytes: [3]UInt8 = (97, 0, 98)
     binary :: StringView = (.data = &bytes[0], .length = 3)
     separator :: StringView = (.data = &bytes[1], .length = 1)
     zero ::= unwrap_or_abort(.value = split(.self = binary, .separator = separator))

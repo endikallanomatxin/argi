@@ -8,14 +8,27 @@ main(.system: System) -> (.status_code: Int32) := {
             status_code = 1
             return
         }
-        ..ok ~ output_payload {
+        ..ok ~output_payload {
             out ::= ~output_payload
 
-            step_1 ::= format_into(.out = $&out, .value = "answer=", .allocator = $&allocator_storage)
+            step_1 ::= format_into(
+                .out       = $&out
+                .value     = "answer="
+                .allocator = $&allocator_storage
+            )
             step_2 ::= format_into(.out = $&out, .value = 42, .allocator = $&allocator_storage)
-            step_3 ::= format_into(.out = $&out, .value = ", ok=", .allocator = $&allocator_storage)
+            step_3 ::= format_into(
+                .out       = $&out
+                .value     = ", ok="
+                .allocator = $&allocator_storage
+            )
             step_4 ::= format_into(.out = $&out, .value = true, .allocator = $&allocator_storage)
-            if is(.value = step_1, .variant = ..ok) and is(.value = step_2, .variant = ..ok) and is(.value = step_3, .variant = ..ok) and is(.value = step_4, .variant = ..ok) {
+            if [
+                is(.value = step_1, .variant = ..ok)
+                and is(.value = step_2, .variant = ..ok)
+                and is(.value = step_3, .variant = ..ok)
+                and is(.value = step_4, .variant = ..ok)
+            ] {
             } else {
                 deinit(.self = $&out, .allocator = $&allocator_storage)
                 status_code = 7
@@ -40,7 +53,7 @@ main(.system: System) -> (.status_code: Int32) := {
             status_code = 3
             return
         }
-        ..ok ~ number_payload {
+        ..ok ~number_payload {
             text ::= ~number_payload
             text_view ::= as_view(.self = &text)
             if text_view == "-105" {
@@ -60,7 +73,7 @@ main(.system: System) -> (.status_code: Int32) := {
             status_code = 5
             return
         }
-        ..ok ~ bool_payload {
+        ..ok ~bool_payload {
             text ::= ~bool_payload
             text_view ::= as_view(.self = &text)
             if text_view == "demo" {

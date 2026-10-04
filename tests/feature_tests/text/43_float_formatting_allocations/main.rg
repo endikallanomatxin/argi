@@ -5,39 +5,72 @@ RecordingAllocator: Type = (
     .last_size     : UIntNative                 = 0
     .fail          : Bool                       = false
 )
-allocate(.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation,
 
-        .reasons : (..out_of_memory))) := {
+allocate(
+        .self      : $&RecordingAllocator,
+        .size      : UIntNative,
+        .alignment : UIntNative            = 1
+    ) -> (
+        .result : Errable#(
+            .t : Allocation,
+
+            .reasons : (..out_of_memory)
+        )
+    ) := {
     self&.allocations = self&.allocations + 1
     self&.last_size = size
-    if self&.fail { result = ..error(.reason = ..out_of_memory) return }
+    if self&.fail {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     storage ::= malloc(.size = size, .ffi = self&.ffi)
     if UIntNative(.value = storage) == 0 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
-    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation ::= trusted_establish_allocation(.storage = storage, .size = size,
-        .alignment = alignment, .deallocator = deallocator)
+    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
+        .value = self
+    )
+    allocation ::= trusted_establish_allocation(
+        .storage     = storage
+        .size        = size
+        .alignment   = alignment
+        .deallocator = deallocator
+    )
     result = ..ok ~allocation
 }
-deallocate(.self: $&RecordingAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative,
-    .alignment : UIntNative) -> () := {
+
+deallocate(
+        .self      : $&RecordingAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> () := {
     self&.deallocations = self&.deallocations + 1
     free(.address = data.address, .ffi = self&.ffi)
 }
+
 RecordingAllocator implements Allocator
 RecordingAllocator implements Deallocator
-expect_formatted#(.t: Type: Float)(.allocator: $&RecordingAllocator, .value: t,
-    .expected : StringView) -> () := {
+
+expect_formatted#(
+        .t : Type: Float
+    )(
+        .allocator : $&RecordingAllocator,
+        .value     : t,
+        .expected  : StringView
+    ) -> () := {
     before ::= allocator&.allocations
     freed ::= allocator&.deallocations
     output ::= unwrap_or_abort(.value = format(.value = value, .allocator = allocator))
     if as_view(.self = &output).view != expected { abort }
-    if allocator&.allocations != before + 1 or allocator&.last_size != expected.length + 1 { abort }
+    if allocator&.allocations != before + 1 or allocator&.last_size != expected.length + 1 {
+        abort
+    }
     deinit(.self = $&output, .allocator = allocator)
     if allocator&.deallocations != freed + 1 { abort }
 }
+
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume system
     allocator ::= RecordingAllocator(.ffi = system.ffi)
@@ -50,8 +83,11 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     value32 = 1.401298464324817e-45
     expect_formatted(.allocator = $&allocator, .value = value32, .expected = "1e-45")
     value64 :: Float64 = 1.7976931348623157e308
-    expect_formatted(.allocator = $&allocator, .value = value64,
-        .expected = "1.7976931348623157e308")
+    expect_formatted(
+        .allocator = $&allocator
+        .value     = value64
+        .expected  = "1.7976931348623157e308"
+    )
     value64 = -5e-324
     expect_formatted(.allocator = $&allocator, .value = value64, .expected = "-5e-324")
     value64 = -0.0
@@ -67,9 +103,13 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     before ::= allocator.allocations
     allocator.fail = true
     value64 = 1.7976931348623157e308
-    unwrap_or_abort(.value = format_into(.out = $&output, .value = value64, .allocator = $&allocator))
+    unwrap_or_abort(
+        .value = format_into(.out = $&output, .value = value64, .allocator = $&allocator)
+    )
     value64 = -5e-324
-    unwrap_or_abort(.value = format_into(.out = $&output, .value = value64, .allocator = $&allocator))
+    unwrap_or_abort(
+        .value = format_into(.out = $&output, .value = value64, .allocator = $&allocator)
+    )
     if as_view(.self = &output).view != "1.7976931348623157e308-5e-324" { abort }
     if allocator.allocations != before { abort }
     deinit(.self = $&output, .allocator = $&allocator)

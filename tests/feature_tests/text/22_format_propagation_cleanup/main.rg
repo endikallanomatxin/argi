@@ -1,26 +1,44 @@
-FailFirstAllocator : Type = (
-    .ffi: $&ForeignFunctionInterface
-    .allocations: Int32
-    .deallocations: Int32
+FailFirstAllocator: Type = (
+    .ffi           : $&ForeignFunctionInterface
+    .allocations   : Int32
+    .deallocations : Int32
 )
 
 FailFirstAllocator init(.ffi: $&ForeignFunctionInterface) -> (.result: FailFirstAllocator) := {
     result = (.ffi = ffi, .allocations = 0, .deallocations = 0)
 }
 
-allocate(.self: $&FailFirstAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+allocate(
+        .self      : $&FailFirstAllocator,
+        .size      : UIntNative,
+        .alignment : UIntNative            = 1
+    ) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) := {
     self&.allocations = self&.allocations + 1
     if self&.allocations > 0 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
     storage ::= malloc(.size = size, .ffi = self&.ffi)
-    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation ::= trusted_establish_allocation(.storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator)
+    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
+        .value = self
+    )
+    allocation ::= trusted_establish_allocation(
+        .storage     = storage
+        .size        = size
+        .alignment   = alignment
+        .deallocator = deallocator
+    )
     result = ..ok ~allocation
 }
 
-deallocate(.self: $&FailFirstAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {
+deallocate(
+        .self      : $&FailFirstAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> () := {
     self&.deallocations = self&.deallocations + 1
     free(.address = data.address, .ffi = self&.ffi)
 }

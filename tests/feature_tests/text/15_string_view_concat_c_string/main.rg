@@ -2,7 +2,9 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    left :: String = unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .length = 5))
+    left :: String = unwrap_or_abort(
+        .value = String(.allocator = $&allocator_storage, .length = 5)
+    )
     bytes_set(.string = $&left, .index = 0, .value = 104)
     bytes_set(.string = $&left, .index = 1, .value = 101)
     bytes_set(.string = $&left, .index = 2, .value = 108)
@@ -12,16 +14,16 @@ main(.system: System) -> (.status_code: Int32) := {
     left_view ::= as_view(.self = &left)
     combined_result ::= &left_view + "\n"
     match combined_result {
-    ..error _ { status_code = 2 }
-    ..ok ~ combined {
+        ..error _ { status_code = 2 }
+        ..ok ~combined {
 
-    combined_view ::= as_view(.self = &combined)
+            combined_view ::= as_view(.self = &combined)
 
-    if combined_view == "hello\n" {
-        status_code = 0
-    } else {
-        status_code = 1
-    }
-    }
+            if combined_view == "hello\n" {
+                status_code = 0
+            } else {
+                status_code = 1
+            }
+        }
     }
 }

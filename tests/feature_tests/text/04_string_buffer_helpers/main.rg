@@ -1,24 +1,33 @@
-DummyWriter : Type = (
+DummyWriter: Type = (
     .bytes : String
 )
 
-DummyWriter init(.allocator: $&Allocator,
-) -> (.result: DummyWriter) := {
+DummyWriter init(
+        .allocator : $&Allocator,
+    ) -> (
+        .result : DummyWriter
+    ) := {
     assume allocator
 
     result.bytes = unwrap_or_abort(.value = String(.allocator = allocator, .capacity = 16))
 }
 
 DummyWriter deinit(
-    .self: $&DummyWriter,
-    .allocator: $&Allocator,
-) -> () := {
+        .self      : $&DummyWriter,
+        .allocator : $&Allocator,
+    ) -> () := {
     assume allocator
 
     deinit(.self = $&self&.bytes, .allocator = allocator)
 }
 
-write_byte(.self: $&DummyWriter, .byte: UInt8, .allocator: $&Allocator) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+write_byte(
+        .self      : $&DummyWriter,
+        .byte      : UInt8,
+        .allocator : $&Allocator
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
     assume allocator
 
     pushed ::= push_byte(.self = $&self&.bytes, .byte = byte, .allocator = allocator)
@@ -29,7 +38,11 @@ write_byte(.self: $&DummyWriter, .byte: UInt8, .allocator: $&Allocator) -> (.res
     result = ..ok(.value = Void())
 }
 
-flush(.self: $&DummyWriter) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+flush(
+        .self : $&DummyWriter
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
     result = ..ok(.value = Void())
 }
 
@@ -55,7 +68,11 @@ main(.system: System) -> (.status_code: Int32) := {
     writer ::= DummyWriter(.allocator = $&allocator_storage)
     i :: UIntNative = 0
     while i < buffer.length {
-        write_byte(.self = $&writer, .byte = bytes_get(.string = &buffer, .index = i).byte, .allocator = $&allocator_storage)
+        write_byte(
+            .self      = $&writer
+            .byte      = bytes_get(.string = &buffer, .index = i).byte
+            .allocator = $&allocator_storage
+        )
         i = i + 1
     }
     write_byte(.self = $&writer, .byte = 10, .allocator = $&allocator_storage)
