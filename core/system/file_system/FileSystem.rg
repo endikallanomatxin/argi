@@ -1,4 +1,5 @@
-FileSystem : Type = (._ffi: $&ForeignFunctionInterface)
+FileSystem: Type = (._ffi: $&ForeignFunctionInterface)
+
 ..path_open_failed
 ..path_remove_failed
 ..path_rename_failed
@@ -8,49 +9,59 @@ once FileSystem init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: 
 }
 
 exists(
-    .self: &FileSystem,
-    .path: &Char,
-) -> (.ok: Bool) := {
+        .self : &FileSystem,
+        .path : &Char,
+    ) -> (
+        .ok : Bool
+    ) := {
     assume ffi := self&._ffi
     ok = access(.path = path, .mode = 0).status == 0
 }
 
 exists(
-    .self: &FileSystem,
-    .path: &String,
-) -> (.ok: Bool) := {
+        .self : &FileSystem,
+        .path : &String,
+    ) -> (
+        .ok : Bool
+    ) := {
     assume ffi := self&._ffi
     c_path ::= as_c_string(.self = path)
     ok = exists(.self = self, .path = c_path).ok
 }
 
 exists(
-    .self: &FileSystem,
-    .path: StringView,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Bool, .reasons: (..out_of_memory))) := {
+        .self      : &FileSystem,
+        .path      : StringView,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: Bool, .reasons: (..out_of_memory))
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
     converted ::= as_c_string(.self = path, .allocator = allocator)
     match converted {
-        ..ok ~ payload { result = ..ok exists(.self = self, .path = payload.text).ok }
+        ..ok ~payload { result = ..ok exists(.self = self, .path = payload.text).ok }
         ..error _ { result = ..error(.reason = ..out_of_memory) }
     }
 }
 
 exists(
-    .self: &FileSystem,
-    .path: &Path,
-) -> (.ok: Bool) := {
+        .self : &FileSystem,
+        .path : &Path,
+    ) -> (
+        .ok : Bool
+    ) := {
     assume ffi := self&._ffi
     ok = exists(.self = self, .path = &path&.text).ok
 }
 
 remove(
-    .self: &FileSystem,
-    .path: &Char,
-) -> (.result: Errable#(.t: Bool, .reasons: (..path_remove_failed))) := {
+        .self : &FileSystem,
+        .path : &Char,
+    ) -> (
+        .result : Errable#(.t: Bool, .reasons: (..path_remove_failed))
+    ) := {
     assume ffi := self&._ffi
     if remove(.path = path).status != 0 {
         result = ..error(.reason = ..path_remove_failed)
@@ -60,34 +71,45 @@ remove(
 }
 
 remove(
-    .self: &FileSystem,
-    .path: &String,
-) -> (.result: Errable#(.t: Bool, .reasons: (..path_remove_failed))) := {
+        .self : &FileSystem,
+        .path : &String,
+    ) -> (
+        .result : Errable#(.t: Bool, .reasons: (..path_remove_failed))
+    ) := {
     assume ffi := self&._ffi
     c_path ::= as_c_string(.self = path)
     result = remove(.self = self, .path = c_path)
 }
 
 remove(
-    .self: &FileSystem,
-    .path: StringView,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Bool, .reasons: (..path_remove_failed, ..out_of_memory))) := {
+        .self      : &FileSystem,
+        .path      : StringView,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: Bool, .reasons: (..path_remove_failed, ..out_of_memory))
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
     converted ::= as_c_string(.self = path, .allocator = allocator)
     match converted {
-        ..ok ~ payload { result = remove(.self = self, .path = payload.text) }
+        ..ok ~payload {
+            match remove(.self = self, .path = payload.text) {
+                ..ok removed { result = ..ok removed }
+                ..error _ { result = ..error(.reason = ..path_remove_failed) }
+            }
+        }
         ..error _ { result = ..error(.reason = ..out_of_memory) }
     }
 }
 
 remove(
-    .self: &FileSystem,
-    .path: &Path,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Bool, .reasons: (..path_remove_failed))) := {
+        .self      : &FileSystem,
+        .path      : &Path,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: Bool, .reasons: (..path_remove_failed))
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
@@ -95,10 +117,12 @@ remove(
 }
 
 rename(
-    .self: &FileSystem,
-    .from: &Char,
-    .to: &Char,
-) -> (.result: Errable#(.t: Bool, .reasons: (..path_rename_failed))) := {
+        .self : &FileSystem,
+        .from : &Char,
+        .to   : &Char,
+    ) -> (
+        .result : Errable#(.t: Bool, .reasons: (..path_rename_failed))
+    ) := {
     assume ffi := self&._ffi
     if rename(.old_path = from, .new_path = to).status != 0 {
         result = ..error(.reason = ..path_rename_failed)
@@ -108,10 +132,12 @@ rename(
 }
 
 rename(
-    .self: &FileSystem,
-    .from: &String,
-    .to: &String,
-) -> (.result: Errable#(.t: Bool, .reasons: (..path_rename_failed))) := {
+        .self : &FileSystem,
+        .from : &String,
+        .to   : &String,
+    ) -> (
+        .result : Errable#(.t: Bool, .reasons: (..path_rename_failed))
+    ) := {
     assume ffi := self&._ffi
     c_from ::= as_c_string(.self = from)
     c_to ::= as_c_string(.self = to)
@@ -119,21 +145,25 @@ rename(
 }
 
 rename(
-    .self: &FileSystem,
-    .from: StringView,
-    .to: StringView,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Bool, .reasons: (..path_rename_failed, ..out_of_memory))) := {
+        .self      : &FileSystem,
+        .from      : StringView,
+        .to        : StringView,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: Bool, .reasons: (..path_rename_failed, ..out_of_memory))
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
     converted_from ::= as_c_string(.self = from, .allocator = allocator)
     match converted_from {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
-        ..ok ~ from_payload {
+        ..ok ~from_payload {
             converted_to ::= as_c_string(.self = to, .allocator = allocator)
             match converted_to {
-                ..ok ~ to_payload { result = rename(.self = self, .from = from_payload.text, .to = to_payload.text) }
+                ..ok ~to_payload {
+                    result = rename(.self = self, .from = from_payload.text, .to = to_payload.text)
+                }
                 ..error _ { result = ..error(.reason = ..out_of_memory) }
             }
         }
@@ -141,22 +171,25 @@ rename(
 }
 
 rename(
-    .self: &FileSystem,
-    .from: &Path,
-    .to: &Path,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Bool, .reasons: (..path_rename_failed))) := {
+        .self      : &FileSystem,
+        .from      : &Path,
+        .to        : &Path,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: Bool, .reasons: (..path_rename_failed))
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
     result = rename(.self = self, .from = &from&.text, .to = &to&.text)
 }
 
-
 open_read(
-    .self: &FileSystem,
-    .path: &Char,
-) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+        .self : &FileSystem,
+        .path : &Char,
+    ) -> (
+        .result : Errable#(.t: File, .reasons: (..path_open_failed))
+    ) := {
     assume ffi := self&._ffi
     file :: File = File(.stream_address = 0, .should_close = 0 == 1)
     opened ::= open_read(.p = $&file, .path = path)
@@ -168,34 +201,45 @@ open_read(
 }
 
 open_read(
-    .self: &FileSystem,
-    .path: &String,
-) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+        .self : &FileSystem,
+        .path : &String,
+    ) -> (
+        .result : Errable#(.t: File, .reasons: (..path_open_failed))
+    ) := {
     assume ffi := self&._ffi
     c_path ::= as_c_string(.self = path)
     result = open_read(.self = self, .path = c_path)
 }
 
 open_read(
-    .self: &FileSystem,
-    .path: StringView,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed, ..out_of_memory))) := {
+        .self      : &FileSystem,
+        .path      : StringView,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: File, .reasons: (..path_open_failed, ..out_of_memory))
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
     converted ::= as_c_string(.self = path, .allocator = allocator)
     match converted {
-        ..ok ~ payload { result = open_read(.self = self, .path = payload.text) }
+        ..ok ~payload {
+            match open_read(.self = self, .path = payload.text) {
+                ..ok ~file { result = ..ok ~file }
+                ..error _ { result = ..error(.reason = ..path_open_failed) }
+            }
+        }
         ..error _ { result = ..error(.reason = ..out_of_memory) }
     }
 }
 
 open_read(
-    .self: &FileSystem,
-    .path: &Path,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+        .self      : &FileSystem,
+        .path      : &Path,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: File, .reasons: (..path_open_failed))
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
@@ -203,9 +247,11 @@ open_read(
 }
 
 open_write(
-    .self: &FileSystem,
-    .path: &Char,
-) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+        .self : &FileSystem,
+        .path : &Char,
+    ) -> (
+        .result : Errable#(.t: File, .reasons: (..path_open_failed))
+    ) := {
     assume ffi := self&._ffi
     file :: File = File(.stream_address = 0, .should_close = 0 == 1)
     opened ::= open_write(.p = $&file, .path = path)
@@ -217,34 +263,45 @@ open_write(
 }
 
 open_write(
-    .self: &FileSystem,
-    .path: &String,
-) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+        .self : &FileSystem,
+        .path : &String,
+    ) -> (
+        .result : Errable#(.t: File, .reasons: (..path_open_failed))
+    ) := {
     assume ffi := self&._ffi
     c_path ::= as_c_string(.self = path)
     result = open_write(.self = self, .path = c_path)
 }
 
 open_write(
-    .self: &FileSystem,
-    .path: StringView,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed, ..out_of_memory))) := {
+        .self      : &FileSystem,
+        .path      : StringView,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: File, .reasons: (..path_open_failed, ..out_of_memory))
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
     converted ::= as_c_string(.self = path, .allocator = allocator)
     match converted {
-        ..ok ~ payload { result = open_write(.self = self, .path = payload.text) }
+        ..ok ~payload {
+            match open_write(.self = self, .path = payload.text) {
+                ..ok ~file { result = ..ok ~file }
+                ..error _ { result = ..error(.reason = ..path_open_failed) }
+            }
+        }
         ..error _ { result = ..error(.reason = ..out_of_memory) }
     }
 }
 
 open_write(
-    .self: &FileSystem,
-    .path: &Path,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+        .self      : &FileSystem,
+        .path      : &Path,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: File, .reasons: (..path_open_failed))
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
@@ -252,9 +309,11 @@ open_write(
 }
 
 open_append(
-    .self: &FileSystem,
-    .path: &Char,
-) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+        .self : &FileSystem,
+        .path : &Char,
+    ) -> (
+        .result : Errable#(.t: File, .reasons: (..path_open_failed))
+    ) := {
     assume ffi := self&._ffi
     file :: File = File(.stream_address = 0, .should_close = 0 == 1)
     opened ::= open_append(.p = $&file, .path = path)
@@ -266,34 +325,45 @@ open_append(
 }
 
 open_append(
-    .self: &FileSystem,
-    .path: &String,
-) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+        .self : &FileSystem,
+        .path : &String,
+    ) -> (
+        .result : Errable#(.t: File, .reasons: (..path_open_failed))
+    ) := {
     assume ffi := self&._ffi
     c_path ::= as_c_string(.self = path)
     result = open_append(.self = self, .path = c_path)
 }
 
 open_append(
-    .self: &FileSystem,
-    .path: StringView,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed, ..out_of_memory))) := {
+        .self      : &FileSystem,
+        .path      : StringView,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: File, .reasons: (..path_open_failed, ..out_of_memory))
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
     converted ::= as_c_string(.self = path, .allocator = allocator)
     match converted {
-        ..ok ~ payload { result = open_append(.self = self, .path = payload.text) }
+        ..ok ~payload {
+            match open_append(.self = self, .path = payload.text) {
+                ..ok ~file { result = ..ok ~file }
+                ..error _ { result = ..error(.reason = ..path_open_failed) }
+            }
+        }
         ..error _ { result = ..error(.reason = ..out_of_memory) }
     }
 }
 
 open_append(
-    .self: &FileSystem,
-    .path: &Path,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+        .self      : &FileSystem,
+        .path      : &Path,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: File, .reasons: (..path_open_failed))
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
@@ -301,17 +371,27 @@ open_append(
 }
 
 read_file(
-    .self: &FileSystem,
-    .path: &Char,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory))) := {
+        .self      : &FileSystem,
+        .path      : &Char,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(
+            .t       : String,
+            .reasons : (
+                ..path_open_failed,
+                ..stream_read_failed,
+                ..stream_close_failed,
+                ..out_of_memory
+            )
+        )
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
     open_result ::= open_read(.self = self, .path = path)
     file :: File
     match open_result {
-        ..ok ~ payload { file = ~payload }
+        ..ok ~payload { file = ~payload }
         ..error _ {
             result = ..error(.reason = ..path_open_failed)
             return
@@ -321,7 +401,7 @@ read_file(
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 16)
     text :: String
     match create_result {
-        ..ok ~ payload { text = ~payload }
+        ..ok ~payload { text = ~payload }
         ..error _ {
             _ ::= close(.self = $&file)
             result = ..error(.reason = ..out_of_memory)
@@ -338,12 +418,12 @@ read_file(
             return
         }
 
-        next_value ::= next..ok
+        next_value ::= next ..ok
         if is(.value = next_value, .variant = ..end) {
             break
         }
 
-        payload ::= next_value..ok
+        payload ::= next_value ..ok
         grew ::= push_byte(.self = $&text, .byte = payload, .allocator = allocator)
         match grew {
             ..ok _ {
@@ -367,10 +447,20 @@ read_file(
 }
 
 read_file(
-    .self: &FileSystem,
-    .path: &String,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory))) := {
+        .self      : &FileSystem,
+        .path      : &String,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(
+            .t       : String,
+            .reasons : (
+                ..path_open_failed,
+                ..stream_read_failed,
+                ..stream_close_failed,
+                ..out_of_memory
+            )
+        )
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
@@ -379,25 +469,47 @@ read_file(
 }
 
 read_file(
-    .self: &FileSystem,
-    .path: StringView,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory))) := {
+        .self      : &FileSystem,
+        .path      : StringView,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(
+            .t       : String,
+            .reasons : (
+                ..path_open_failed,
+                ..stream_read_failed,
+                ..stream_close_failed,
+                ..out_of_memory
+            )
+        )
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
     converted ::= as_c_string(.self = path, .allocator = allocator)
     match converted {
-        ..ok ~ payload { result = read_file(.self = self, .path = payload.text, .allocator = allocator) }
+        ..ok ~payload {
+            result = read_file(.self = self, .path = payload.text, .allocator = allocator)
+        }
         ..error _ { result = ..error(.reason = ..out_of_memory) }
     }
 }
 
 read_file(
-    .self: &FileSystem,
-    .path: &Path,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory))) := {
+        .self      : &FileSystem,
+        .path      : &Path,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(
+            .t       : String,
+            .reasons : (
+                ..path_open_failed,
+                ..stream_read_failed,
+                ..stream_close_failed,
+                ..out_of_memory
+            )
+        )
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
@@ -405,15 +517,25 @@ read_file(
 }
 
 write_file(
-    .self: &FileSystem,
-    .path: &Char,
-    .text: &String,
-) -> (.result: Errable#(.t: Void, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed))) := {
+        .self : &FileSystem,
+        .path : &Char,
+        .text : &String,
+    ) -> (
+        .result : Errable#(
+            .t       : Void,
+            .reasons : (
+                ..path_open_failed,
+                ..stream_write_failed,
+                ..stream_flush_failed,
+                ..stream_close_failed
+            )
+        )
+    ) := {
     assume ffi := self&._ffi
     open_result ::= open_write(.self = self, .path = path)
     file :: File
     match open_result {
-        ..ok ~ payload { file = ~payload }
+        ..ok ~payload { file = ~payload }
         ..error _ {
             result = ..error(.reason = ..path_open_failed)
             return
@@ -424,7 +546,7 @@ write_file(
     match wrote {
         ..ok _ {
         }
-        ..error & err {
+        ..error&err {
             _ ::= close(.self = $&file)
             if is(.value = err&.reason, .variant = ..stream_write_failed) {
                 result = ..error(.reason = ..stream_write_failed)
@@ -439,7 +561,7 @@ write_file(
     match flushed {
         ..ok _ {
         }
-        ..error & err {
+        ..error&err {
             _ ::= close(.self = $&file)
             if is(.value = err&.reason, .variant = ..stream_write_failed) {
                 result = ..error(.reason = ..stream_write_failed)
@@ -460,37 +582,68 @@ write_file(
 }
 
 write_file(
-    .self: &FileSystem,
-    .path: &String,
-    .text: &String,
-) -> (.result: Errable#(.t: Void, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed))) := {
+        .self : &FileSystem,
+        .path : &String,
+        .text : &String,
+    ) -> (
+        .result : Errable#(
+            .t       : Void,
+            .reasons : (
+                ..path_open_failed,
+                ..stream_write_failed,
+                ..stream_flush_failed,
+                ..stream_close_failed
+            )
+        )
+    ) := {
     assume ffi := self&._ffi
     c_path ::= as_c_string(.self = path)
     result = write_file(.self = self, .path = c_path, .text = text)
 }
 
 write_file(
-    .self: &FileSystem,
-    .path: StringView,
-    .text: &String,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed, ..out_of_memory))) := {
+        .self      : &FileSystem,
+        .path      : StringView,
+        .text      : &String,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(
+            .t       : Void,
+            .reasons : (
+                ..path_open_failed,
+                ..stream_write_failed,
+                ..stream_flush_failed,
+                ..stream_close_failed,
+                ..out_of_memory
+            )
+        )
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 
     converted ::= as_c_string(.self = path, .allocator = allocator)
     match converted {
-        ..ok ~ payload { result = write_file(.self = self, .path = payload.text, .text = text) }
+        ..ok ~payload { result = write_file(.self = self, .path = payload.text, .text = text) }
         ..error _ { result = ..error(.reason = ..out_of_memory) }
     }
 }
 
 write_file(
-    .self: &FileSystem,
-    .path: &Path,
-    .text: &String,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed))) := {
+        .self      : &FileSystem,
+        .path      : &Path,
+        .text      : &String,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(
+            .t       : Void,
+            .reasons : (
+                ..path_open_failed,
+                ..stream_write_failed,
+                ..stream_flush_failed,
+                ..stream_close_failed
+            )
+        )
+    ) := {
     assume ffi := self&._ffi
     assume allocator
 

@@ -9477,3 +9477,29 @@ test "feature_tests/io/38_buffered_block_refill" {
     try expectSuccessfulBuild("tests/feature_tests/io/38_buffered_block_refill");
     try runExpect("tests/feature_tests/io/38_buffered_block_refill", 0);
 }
+
+test "feature_tests/system/80_filesystem_operations" {
+    try expectSuccessfulBuild("tests/feature_tests/system/80_filesystem_operations");
+    try runExpect("tests/feature_tests/system/80_filesystem_operations", 0);
+}
+
+test "feature_tests/system/81_temporary_directories" {
+    try expectSuccessfulBuild("tests/feature_tests/system/81_temporary_directories");
+    try runExpect("tests/feature_tests/system/81_temporary_directories", 0);
+}
+
+test "feature_tests/system/82X_directory_copy" {
+    try buildExpectFail("tests/feature_tests/system/82X_directory_copy", "cannot be copied implicitly");
+}
+
+test "feature_tests/system/83X_directory_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/system/83X_directory_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/system/84X_temporary_directory_private" {
+    try buildExpectFail("tests/feature_tests/system/84X_temporary_directory_private", "field '_handle' is private");
+}
+
+test "feature_tests/system/85_filesystem_native" {
+    try checkNativeCFixture("tests/feature_tests/system/85_filesystem_native", &.{"declare i32 @argi_filesystem_probe()"});
+}

@@ -239,3 +239,4 @@ void _argi_process_cleanup(void) {
         environment_values = next;
     }
 }
+#include "../shared/filesystem.c"
