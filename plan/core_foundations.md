@@ -5,7 +5,7 @@ allocation, capabilities, ownership and nominal errors throughout.
 
 ## Development order
 
-2. Numeric foundations: floating-point classification and rounding.
+2. Numeric foundations: floating-point rounding.
 4. Collections: borrowed StringView lookup/update for owning keys, bitsets,
    priority queues, and owner-aware algorithms.
 5. Streams: memory adapters, composable limits and bounded LF/CRLF lines.

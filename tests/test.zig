@@ -9759,3 +9759,8 @@ test "feature_tests/text/48_checked_string_slice" {
     try expectSuccessfulBuild("tests/feature_tests/text/48_checked_string_slice");
     try runExpect("tests/feature_tests/text/48_checked_string_slice", 0);
 }
+
+test "feature_tests/numbers/11_float_classification" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/11_float_classification");
+    try runExpect("tests/feature_tests/numbers/11_float_classification", 0);
+}
