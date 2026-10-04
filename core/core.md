@@ -9,7 +9,9 @@ The implemented foundations include:
 - Memory: raw storage, allocations, temporal dependencies, opaque ownership,
   and allocator composition.
 - Collections and text: arrays, array views, dynamic arrays, Deque with value
-  and borrowed iteration, hash maps and sets, strings, and collection operations.
+  and borrowed iteration, hash maps and sets with iteration, strings, and
+  collection operations. Strict UTF-8 operations provide checked scalars,
+  bounded encoding, decoding cursors, and validated borrowed text iteration.
 - Binary data: checked unsigned endian reads and writes, and borrowed byte
   cursors whose positions advance only after successful operations.
 - System and I/O: program capabilities, files, filesystem operations, terminal
@@ -18,6 +20,8 @@ The implemented foundations include:
   and truncation, and temporary directory owners. Stream helpers support exact
   reads, complete writes, bounded delimiter reads, and copying with caller buffers.
 - Errors: nominal reasons, `Errable`, explicit propagation, and tracing policies.
+- Testing: bounded equality diagnostics for numeric values, strings, bytes,
+  and readonly views, with error traces for failed or skipped test roots.
 - Interoperability: explicit foreign-function capability and libc declarations.
 
 A directory's presence does not imply that its module is complete. Consult

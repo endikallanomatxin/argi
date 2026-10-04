@@ -19,7 +19,8 @@ Collections and values
 
 - Treaps and other ordered collections whose use cases justify an extra type.
 - Owning generic hash maps and sets beyond the current copyable element contracts.
-- Unicode decoding and validated text views beyond byte-oriented strings.
+- Unicode normalization, case folding, and grapheme segmentation beyond strict
+  UTF-8 scalar decoding and validated text views.
 - Numeric utilities such as checked arithmetic and reusable rounding contracts.
 - Value canonicalization/interning facilities, inspired by the earlier unique
   entry, only if their ownership and lifetime semantics are useful and clear.

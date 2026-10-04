@@ -205,6 +205,16 @@ feature first.
   allocation before exposing a native refill view. Deque iterators retain its
   shape dependency, including in returned borrowed elements.
 
+- Hash map iteration never exposes mutable keys. Borrowed entry iterators retain
+  a direct table shape anchor in addition to their owner loan; return references
+  must preserve that anchor explicitly. Value edits through borrowed references
+  preserve iteration, while successful put/remove and table growth invalidate it.
+  UTF-8 views validate borrowed bytes without freezing them; callers must preserve
+  the validated contents. Checked decoding cursors advance only on success.
+  Test entry wrappers report bounded traces before cleanup, then replace their
+  trace handle with the program-lifetime noop tracer while preserving the reason
+  used by the C wrapper for failure/skip status.
+
 - Local `Errable` handling (`handle value, error { ... }`) lowers to a match
   inside an explicit `value_sequence`. Its result storage is deferred in the
   enclosing scope, while match payloads and handler locals belong to branches.
