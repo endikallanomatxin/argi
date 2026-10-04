@@ -42,6 +42,7 @@ pub const Syntaxer = struct {
     tokens: tok.View,
     diags: *diagnostic.Diagnostics,
     parsing_pipe_rhs: bool,
+    allow_operator_newlines: bool,
     scratch: std.ArrayList(syn.NodeIndex),
 
     pub fn init(alloc: std.mem.Allocator, toks: tok.View, source: []const u8, diags: *diagnostic.Diagnostics) !Syntaxer {
@@ -50,7 +51,7 @@ pub const Syntaxer = struct {
 
     pub fn initFile(alloc: std.mem.Allocator, file: syn.FileSyntaxTree, source: []const u8, diags: *diagnostic.Diagnostics) Syntaxer {
         const tokens = tok.View.init(&file.tokens);
-        return .{ .source = source, .index = 0, .allocator = alloc, .file = file, .tokens = tokens, .diags = diags, .parsing_pipe_rhs = false, .scratch = .empty };
+        return .{ .source = source, .index = 0, .allocator = alloc, .file = file, .tokens = tokens, .diags = diags, .parsing_pipe_rhs = false, .allow_operator_newlines = false, .scratch = .empty };
     }
 
     pub fn nodeCount(self: *const Syntaxer) usize {
@@ -203,6 +204,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
+        const literal_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         const literal = switch (self.currentContent()) {
             .literal => |lit| lit,
             else => {
@@ -220,7 +222,7 @@ pub const Syntaxer = struct {
         }
 
         self.advanceOne();
-        return try self.addNode(.literal, minus_token, .{ .token = @enumFromInt(@intFromEnum(minus_token) + 1) });
+        return try self.addNode(.literal, minus_token, .{ .token = literal_token });
     }
 
     // ───────────────────────────────  atoms ──────────────────────────────────
@@ -987,6 +989,9 @@ pub const Syntaxer = struct {
     }
 
     fn parseCollectionLiteral(self: *Syntaxer, force_struct: bool) SyntaxerError!syn.NodeIndex {
+        const previous_operator_newlines = self.allow_operator_newlines;
+        self.allow_operator_newlines = false;
+        defer self.allow_operator_newlines = previous_operator_newlines;
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         const start_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
@@ -1340,6 +1345,9 @@ pub const Syntaxer = struct {
             // Grouping is transparent to later phases: retain the enclosed
             // node so contextual typing and place identity stay unchanged.
             .open_bracket => blk: {
+                const previous_operator_newlines = self.allow_operator_newlines;
+                self.allow_operator_newlines = true;
+                defer self.allow_operator_newlines = previous_operator_newlines;
                 const open_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
                 self.skipNewLinesAndComments();
@@ -1368,10 +1376,41 @@ pub const Syntaxer = struct {
         return try self.parsePostfixWithCalls(base, grouped);
     }
 
+    // Only an explicit scalar grouping permits a completed left operand to
+    // continue on another line. Calls and source blocks reset this permission
+    // so newline-separated collection fields and statements remain distinct.
+    fn skipGroupedOperatorNewlines(self: *Syntaxer) void {
+        if (!self.allow_operator_newlines) return;
+        var cursor = self.index;
+        while (self.contentAt(cursor) == .new_line or self.contentAt(cursor) == .comment) cursor += 1;
+        const next = self.contentAt(cursor);
+        const continuation = switch (next) {
+            .binary_operator, .comparison_operator, .keyword_and, .keyword_or, .pipe => true,
+            .identifier => |name| std.mem.eql(u8, self.tokenText(name), "unwrap_or") or std.mem.eql(u8, self.tokenText(name), "unwrap_or_do"),
+            else => false,
+        };
+        if (continuation) self.index = cursor;
+    }
+
+    fn advanceExpressionOperator(self: *Syntaxer) SyntaxerError!void {
+        const operator = self.index;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+        switch (self.currentContent()) {
+            .close_bracket, .close_parenthesis, .close_brace, .eof => {
+                try self.diags.add(self.tokens.locations[operator], .syntax, "expected an expression after operator '{s}'", .{self.file.tokenTextFromSource(self.source, @enumFromInt(@as(u32, @intCast(operator))))});
+                return SyntaxerError.ExpectedIntLiteral;
+            },
+            else => {},
+        }
+    }
+
     fn parsePipeExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parsePrimary();
 
-        while (self.tokenIs(.pipe)) {
+        while (true) {
+            self.skipGroupedOperatorNewlines();
+            if (!self.tokenIs(.pipe)) break;
             const pipe_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
             self.skipNewLinesAndComments();
@@ -1393,7 +1432,9 @@ pub const Syntaxer = struct {
     // division tighter than addition is essential for byte-offset expressions.
     fn parseBinaryExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parseMultiplicativeExpr();
-        while (self.currentContent() == .binary_operator) {
+        while (true) {
+            self.skipGroupedOperatorNewlines();
+            if (self.currentContent() != .binary_operator) break;
             const op = self.currentContent().binary_operator;
             const tag: syn.Node.Tag = switch (op) {
                 .addition => .binary_add,
@@ -1401,7 +1442,7 @@ pub const Syntaxer = struct {
                 else => break,
             };
             const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            self.advanceOne();
+            try self.advanceExpressionOperator();
             const rhs = try self.parseMultiplicativeExpr();
             lhs = try self.addNode(tag, op_token, .{ .node_and_node = .{ .first = lhs, .second = rhs } });
         }
@@ -1410,7 +1451,9 @@ pub const Syntaxer = struct {
 
     fn parseMultiplicativeExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parsePipeExpr();
-        while (self.currentContent() == .binary_operator) {
+        while (true) {
+            self.skipGroupedOperatorNewlines();
+            if (self.currentContent() != .binary_operator) break;
             const op = self.currentContent().binary_operator;
             const tag: syn.Node.Tag = switch (op) {
                 .multiplication => .binary_multiply,
@@ -1419,7 +1462,7 @@ pub const Syntaxer = struct {
                 else => break,
             };
             const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            self.advanceOne();
+            try self.advanceExpressionOperator();
             const rhs = try self.parsePipeExpr();
             lhs = try self.addNode(tag, op_token, .{ .node_and_node = .{ .first = lhs, .second = rhs } });
         }
@@ -1429,7 +1472,9 @@ pub const Syntaxer = struct {
     fn parseComparisonExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parseBinaryExpr();
 
-        while (self.currentContent() == .comparison_operator) {
+        while (true) {
+            self.skipGroupedOperatorNewlines();
+            if (self.currentContent() != .comparison_operator) break;
             const op_content = self.currentContent();
             const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             var op: tok.ComparisonOperator = undefined;
@@ -1437,7 +1482,7 @@ pub const Syntaxer = struct {
                 .comparison_operator => |c| op = c,
                 else => unreachable,
             }
-            self.advanceOne();
+            try self.advanceExpressionOperator();
             const rhs = try self.parseBinaryExpr();
             const tag: syn.Node.Tag = switch (op) {
                 .equal => .compare_equal,
@@ -1455,9 +1500,11 @@ pub const Syntaxer = struct {
     fn parseAndExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parseComparisonExpr();
 
-        while (self.tokenIs(.keyword_and)) {
+        while (true) {
+            self.skipGroupedOperatorNewlines();
+            if (!self.tokenIs(.keyword_and)) break;
             const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            self.advanceOne();
+            try self.advanceExpressionOperator();
             const rhs = try self.parseComparisonExpr();
             lhs = try self.addNode(.logical_and, op_token, .{ .node_and_node = .{ .first = lhs, .second = rhs } });
         }
@@ -1468,9 +1515,11 @@ pub const Syntaxer = struct {
     fn parseOrExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parseAndExpr();
 
-        while (self.tokenIs(.keyword_or)) {
+        while (true) {
+            self.skipGroupedOperatorNewlines();
+            if (!self.tokenIs(.keyword_or)) break;
             const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            self.advanceOne();
+            try self.advanceExpressionOperator();
             const rhs = try self.parseAndExpr();
             lhs = try self.addNode(.logical_or, op_token, .{ .node_and_node = .{ .first = lhs, .second = rhs } });
         }
@@ -1481,10 +1530,12 @@ pub const Syntaxer = struct {
     fn parseUnwrapExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parseOrExpr();
 
-        while (self.currentIdentifierEquals("unwrap_or") or self.currentIdentifierEquals("unwrap_or_do")) {
+        while (true) {
+            self.skipGroupedOperatorNewlines();
+            if (!self.currentIdentifierEquals("unwrap_or") and !self.currentIdentifierEquals("unwrap_or_do")) break;
             const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             const is_do = self.currentIdentifierEquals("unwrap_or_do");
-            self.advanceOne();
+            try self.advanceExpressionOperator();
             const rhs = if (is_do)
                 try self.parsePrimary()
             else
@@ -1627,6 +1678,11 @@ pub const Syntaxer = struct {
     fn parseStatement(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         const start_index = self.index;
         self.skipNewLinesAndComments();
+
+        if (self.currentContent() == .binary_operator and self.currentContent().binary_operator != .subtraction) {
+            try self.diags.add(self.tokenLocation(), .syntax, "a leading operator requires scalar grouping with '[...]'", .{});
+            return SyntaxerError.ExpectedDeclarationOrAssignment;
+        }
 
         switch (self.currentContent()) {
             .keyword_abort => {
@@ -1953,6 +2009,9 @@ pub const Syntaxer = struct {
     }
 
     fn parseCodeBlock(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const previous_operator_newlines = self.allow_operator_newlines;
+        self.allow_operator_newlines = false;
+        defer self.allow_operator_newlines = previous_operator_newlines;
         if (!self.tokenIs(.open_brace)) return SyntaxerError.ExpectedLeftBrace;
         const open_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();

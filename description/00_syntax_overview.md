@@ -61,6 +61,26 @@ expression indexes it. For example, `values[[index + 1] * stride]` groups part
 of an index, while `[values][index]` indexes a grouped array. Empty brackets
 and comma-separated expressions are not grouping constructs.
 
+Inside scalar grouping brackets, expressions may continue with an infix
+operator at the start of the next line. The operator can be arithmetic, a
+comparison, `and`, `or`, a pipe, or `unwrap_or`. Precedence, associativity, and
+short-circuit evaluation are unchanged:
+
+```rg
+total = [
+    base
+    + supplements
+    - discounts
+]
+```
+
+A break after an infix operator also continues the expression, with or without
+outer grouping brackets. Outside scalar grouping, a completed expression ends
+at its newline; a leading operator on the next line does not continue it.
+Newline-separated fields in calls and collections retain their own boundaries,
+even inside an outer grouping. An individual multiline field expression uses
+its own scalar brackets. Lexical blocks also retain statement boundaries.
+
 Parentheses retain their struct, list, array, and input syntax. Braces retain
 lexical blocks and do not gain an implicit result from grouping.
 

@@ -9137,3 +9137,17 @@ test "feature_tests/functions/37X_pipe_temporary_consumed_twice" {
         "was moved and cannot be used again",
     );
 }
+
+test "feature_tests/basics/72_multiline_operations" {
+    const path = "tests/feature_tests/basics/72_multiline_operations";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/73X_multiline_operation_missing_operand" {
+    try buildExpectFail("tests/feature_tests/basics/73X_multiline_operation_missing_operand", "expected an expression after operator '+'");
+}
+
+test "feature_tests/basics/74X_leading_operator_requires_group" {
+    try buildExpectFail("tests/feature_tests/basics/74X_leading_operator_requires_group", "a leading operator requires scalar grouping");
+}
