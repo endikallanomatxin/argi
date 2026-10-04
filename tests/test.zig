@@ -9549,3 +9549,21 @@ test "feature_tests/collections/134X_hash_rw_entry_after_put" {
 test "feature_tests/collections/135X_hash_key_after_growth" {
     try buildExpectFail("tests/feature_tests/collections/135X_hash_key_after_growth", "root that has ended");
 }
+
+test "feature_tests/text/34_utf8_scalars" {
+    try expectSuccessfulBuild("tests/feature_tests/text/34_utf8_scalars");
+    try runExpect("tests/feature_tests/text/34_utf8_scalars", 0);
+}
+
+test "feature_tests/text/35_utf8_invalid" {
+    try expectSuccessfulBuild("tests/feature_tests/text/35_utf8_invalid");
+    try runExpect("tests/feature_tests/text/35_utf8_invalid", 0);
+}
+
+test "feature_tests/text/36X_utf8_after_storage" {
+    try buildExpectFail("tests/feature_tests/text/36X_utf8_after_storage", "root that has ended");
+}
+
+test "feature_tests/text/37X_unicode_scalar_private" {
+    try buildExpectFail("tests/feature_tests/text/37X_unicode_scalar_private", "field '_value' is private");
+}

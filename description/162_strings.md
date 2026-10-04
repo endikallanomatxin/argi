@@ -14,7 +14,7 @@ A string should be explicitly viewable in several forms:
 - `graphemes`: visual units perceived by the user.
 
 `String` should not be directly indexable by default. This mixes two
-preguntas distintas:
+distinct questions:
 
 - byte access,
 - text-unit access.
@@ -330,3 +330,46 @@ library. Writer formatting needs no allocator, requests no implicit flush,
 and follows the integer formatter's prefix and error propagation contract.
 An owning string requires one allocation for the resulting bytes and their
 zero terminator; appending to a string allocates only when its capacity grows.
+
+## Strict UTF-8 operations
+
+Byte-oriented `String` and `StringView` operations do not establish valid UTF-8.
+Text decoding is explicit and accepts bounded views, including embedded NULs.
+
+`UnicodeScalar(.value: UInt32)` checks the Unicode scalar range: zero through
+U+10FFFF, excluding U+D800 through U+DFFF. Invalid input reports
+`invalid_codepoint`; `scalar_value(.self)` returns the checked UInt32 value.
+The scalar representation is private and implicitly copyable.
+
+`utf8_decode(.text, .offset = 0)` returns `Utf8Decoded` with `.scalar` and the
+consumed `.width` in bytes. An offset at or beyond the end reports
+`out_of_bounds`. Invalid leading or continuation bytes, truncated sequences,
+overlong encodings, surrogate encodings, and values above U+10FFFF report
+`invalid_utf8`. Decoding does not replace invalid bytes or skip them.
+
+`validate_utf8(.text)` checks the complete view and returns its scalar count.
+Empty text is valid and has count zero. `utf8_encoded_length(.scalar)` returns
+one through four. `utf8_encode(.scalar, .buffer, .offset = 0)` writes the shortest
+UTF-8 encoding to initialized mutable byte storage and returns its width. It
+checks the whole destination first; `out_of_bounds` leaves every byte unchanged,
+including for oversized offsets. These operations allocate no storage.
+
+`Utf8Decoder(.text)` borrows a byte view and starts at offset zero.
+`next_codepoint(.self)` returns an errable optional scalar: none at end,
+`invalid_utf8` on malformed input, or a scalar and an advanced byte position on
+success. `position(.self)` reports that byte position. Failure preserves the
+position; end remains stable. This checked cursor can handle unvalidated input
+without pretending that fallible decoding is an infallible iterator operation.
+
+`Utf8View(.text)` or `codepoints(.text)` validates all bytes once and returns a
+borrowed, implicitly copyable text view. `length(.self)` counts scalars, and
+`utf8_bytes(.self)` retrieves the original byte view. `for scalar in view`
+iterates `UnicodeScalar` values without allocation. Iterators retain backing
+storage lifetimes; copied scalars are independent values. `next` requires a
+successful `has_next` and aborts at end.
+
+Validation does not freeze backing storage. Keep its bytes unchanged while
+using a validated view or iterator. Iteration rechecks each encoding and aborts
+if that obligation is violated by malformed content. UTF-8 decoding performs no
+normalization, case folding, grapheme segmentation, or display-width calculation;
+a scalar count is not a count of user-perceived characters.
