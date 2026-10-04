@@ -85,7 +85,8 @@ replaces it. Exception formatting falls back to a simple exception description
 if traceback formatting fails. Errors are returned without printing the captured
 exception to stderr; Python code itself can still write output.
 
-Initialization failures return their reason without a context to query.
+Initialization failures return their reason; `initialization_error(.ffi)`
+captures their details without needing a Python context.
 Finalization cannot return an error through automatic cleanup.
 
 `program_name` selects the Python executable used to discover the runtime and
@@ -145,3 +146,44 @@ not implement core's Iterator abstract, whose next operation is infallible.
 The iterator keeps its Python source alive and borrows only its interpreter.
 An exhausted iterator may be queried again; exhaustion does not replace the
 most recent exception text.
+
+## Retaining individual failures
+
+`snapshot_error(.self: &Python)` returns an owning `Exception` containing
+immutable native copies of the last failure's type name, message, and traceback.
+Take the snapshot before executing another operation that might fail. A snapshot
+survives subsequent failures and interpreter finalization; it retains the
+ordinary FFI capability, with no borrowed Python objects or buffers.
+
+`exception_type`, `exception_message`, and `exception_traceback` accept
+`.self: &Exception` and `.allocator: $&Allocator` and return owning Strings in
+an `Errable<String, out_of_memory>`. `clone(.self: &Exception)` acquires another
+snapshot reference. Exceptions are not implicitly copyable and clean up normally.
+Native allocation exhaustion uses an immutable MemoryError fallback rather than
+silently retaining details from an earlier failure.
+
+`capture(.self: &Python, .value: Errable<T, python_error>)` returns
+`Outcome<T>`, an ordinary module-defined choice of `ok T` or `error Exception`.
+Wrap an operation immediately, for example:
+
+```rg
+outcome ::= python.capture(.self = &interpreter,
+    .value = python.import_module(.self = &interpreter, .name = "package")).result
+match outcome {
+    ..ok ~ module {
+        -- Use the imported module here.
+    }
+    ..error ~ exception {
+        -- Retain or inspect this particular failure.
+    }
+}
+```
+
+Passing an older Errable after running another failing Python operation captures
+the newer context error; `capture` does not recover discarded history. Existing
+operations continue to return core Errable, so ordinary propagation stays intact.
+
+`initialization_error(.ffi: $&ForeignFunctionInterface)` similarly snapshots the
+latest failed initialization. Its message covers invalid paths/names, duplicate
+initialization, and CPython configuration failures, including the PyStatus error
+message. Before any failure, snapshot fields are empty.

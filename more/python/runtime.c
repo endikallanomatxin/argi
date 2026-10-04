@@ -12,23 +12,19 @@
 #error "more/python requires the standard GIL-enabled CPython build"
 #endif
 
+#include "errors.h"
+
 struct argi_python {
     unsigned long thread;
-    char *error;
-    size_t error_length;
+    struct argi_python_error *error;
 };
 static struct argi_python *active_python;
 static int python_started;
 
 static void native_error(struct argi_python *context, const char *text) {
     if (!context) return;
-    size_t length = strlen(text);
-    char *copy = malloc(length + 1);
-    if (!copy) return;
-    memcpy(copy, text, length + 1);
-    free(context->error);
-    context->error = copy;
-    context->error_length = length;
+    replace_error(&context->error, make_error("BridgeError", sizeof("BridgeError") - 1,
+        text, strlen(text), text, strlen(text)));
 }
 static int guard(struct argi_python *context) {
     if (!context || context != active_python || !Py_IsInitialized()) return 0;
@@ -39,10 +35,13 @@ static int guard(struct argi_python *context) {
     return 1;
 }
 static void capture_error(struct argi_python *context) {
-    /* Preserve the original exception while traceback formatting may itself
-       fail. No Python error indicator escapes back to the Argi caller. */
+    /* Formatting can execute Python and fail itself. Capture native copies of
+       all details before releasing the exception and clear secondary errors. */
     PyObject *exception = PyErr_GetRaisedException();
     if (!exception) { native_error(context, "Python operation failed without an exception"); return; }
+    const char *type = Py_TYPE(exception)->tp_name;
+    PyObject *message = PyObject_Str(exception);
+    if (!message) { PyErr_Clear(); message = PyUnicode_FromString("<exception message unavailable>"); }
     PyObject *traceback = PyImport_ImportModule("traceback"), *lines = NULL, *formatted = NULL;
     if (traceback) {
         lines = PyObject_CallMethod(traceback, "format_exception", "O", exception);
@@ -53,27 +52,16 @@ static void capture_error(struct argi_python *context) {
     }
     if (!formatted) {
         PyErr_Clear();
-        PyObject *value = PyObject_Str(exception);
-        if (value) {
-            formatted = PyUnicode_FromFormat("%s: %U", Py_TYPE(exception)->tp_name, value);
-            Py_DECREF(value);
-        }
+        if (message) formatted = PyUnicode_FromFormat("%s: %U", type, message);
     }
-    if (formatted) {
-        Py_ssize_t length;
-        const char *bytes = PyUnicode_AsUTF8AndSize(formatted, &length);
-        if (bytes) {
-            char *copy = malloc((size_t)length + 1);
-            if (copy) {
-                memcpy(copy, bytes, (size_t)length);
-                copy[length] = 0;
-                free(context->error);
-                context->error = copy;
-                context->error_length = (size_t)length;
-            } else native_error(context, "Cannot allocate Python exception text");
-        } else native_error(context, "Cannot encode Python exception text");
-    } else native_error(context, "Cannot format Python exception");
-    Py_XDECREF(formatted); Py_XDECREF(lines); Py_XDECREF(traceback); Py_DECREF(exception);
+    Py_ssize_t message_length = 0, traceback_length = 0;
+    const char *message_text = message ? PyUnicode_AsUTF8AndSize(message, &message_length) : NULL;
+    const char *traceback_text = formatted ? PyUnicode_AsUTF8AndSize(formatted, &traceback_length) : NULL;
+    if (message_text && traceback_text) {
+        replace_error(&context->error, make_error(type, strlen(type), message_text, (size_t)message_length,
+            traceback_text, (size_t)traceback_length));
+    } else native_error(context, "Cannot encode Python exception details");
+    Py_XDECREF(message); Py_XDECREF(formatted); Py_XDECREF(lines); Py_XDECREF(traceback); Py_DECREF(exception);
     PyErr_Clear();
 }
 static char *c_text(struct argi_python *context, const uint8_t *bytes, uintptr_t length) {
@@ -90,11 +78,15 @@ uintptr_t _argi_python_start(const uint8_t *program, uintptr_t program_length,
                              const uint8_t *home, uintptr_t home_length) {
     /* Restart is deliberately unsupported: native extension modules can keep
        process-global state that is not safely reset by Py_FinalizeEx. */
-    if (python_started || active_python || Py_IsInitialized()) return 0;
+    if (python_started || active_python || Py_IsInitialized()) {
+        set_initialization_error("An interpreter already exists or initialization has already been attempted");
+        return 0;
+    }
     struct argi_python *context = calloc(1, sizeof(*context));
-    if (!context) return 0;
+    if (!context) { replace_error(&initialization_failure, &memory_error); return 0; }
     char *program_text = c_text(context, program, program_length);
     char *home_text = c_text(context, home, home_length);
+    if (!program_length) native_error(context, "Python program name must not be empty");
     if (!program_text || !home_text || !program_length) goto failed;
     PyConfig config;
     PyConfig_InitPythonConfig(&config);
@@ -110,11 +102,14 @@ uintptr_t _argi_python_start(const uint8_t *program, uintptr_t program_length,
         python_started = 1;
         status = Py_InitializeFromConfig(&config);
     }
+    if (PyStatus_Exception(status)) {
+        set_initialization_error(status.err_msg ? status.err_msg : "Python initialization requested exit");
+    }
     PyConfig_Clear(&config);
     free(program_text); free(home_text);
     if (PyStatus_Exception(status)) {
         if (Py_IsInitialized()) { python_started = 1; Py_FinalizeEx(); }
-        free(context->error); free(context);
+        release_error(context->error); free(context);
         return 0;
     }
     python_started = 1;
@@ -122,7 +117,8 @@ uintptr_t _argi_python_start(const uint8_t *program, uintptr_t program_length,
     active_python = context;
     return (uintptr_t)context;
 failed:
-    free(program_text); free(home_text); free(context->error); free(context);
+    replace_error(&initialization_failure, retain_error(context->error));
+    free(program_text); free(home_text); release_error(context->error); free(context);
     return 0;
 }
 int32_t _argi_python_stop(uintptr_t address) {
@@ -130,7 +126,7 @@ int32_t _argi_python_stop(uintptr_t address) {
     if (!guard(context)) return -1;
     int status = Py_FinalizeEx();
     active_python = NULL;
-    free(context->error); free(context);
+    release_error(context->error); free(context);
     return status;
 }
 void _argi_python_release(uintptr_t address, PyObject *object) {
@@ -316,12 +312,14 @@ int32_t _argi_python_text_copy(uintptr_t address, PyObject *object, int32_t kind
 uintptr_t _argi_python_error_size(uintptr_t address) {
     struct argi_python *context = (struct argi_python *)address;
     if (!guard(context)) return 0;
-    return context->error_length;
+    return context->error ? context->error->lengths[2] : 0;
 }
 int32_t _argi_python_error_copy(uintptr_t address, uint8_t *destination, uintptr_t length) {
     struct argi_python *context = (struct argi_python *)address;
-    if (!guard(context) || length < context->error_length) return -1;
-    if (context->error_length) memcpy(destination, context->error, context->error_length);
+    if (!guard(context)) return -1;
+    size_t size = context->error ? context->error->lengths[2] : 0;
+    if (length < size) return -1;
+    if (size) memcpy(destination, context->error->parts[2], size);
     return 0;
 }
 
@@ -363,4 +361,30 @@ PyObject *_argi_python_next(uintptr_t address, PyObject *object, int32_t *exhaus
         else *exhausted = 1;
     }
     return result;
+}
+
+uintptr_t _argi_python_error_snapshot(uintptr_t address) {
+    struct argi_python *context = (struct argi_python *)address;
+    if (!guard(context)) return (uintptr_t)&empty_error;
+    return (uintptr_t)retain_error(context->error);
+}
+uintptr_t _argi_python_initialization_snapshot(void) {
+    return (uintptr_t)retain_error(initialization_failure);
+}
+uintptr_t _argi_python_exception_clone(uintptr_t address) {
+    return (uintptr_t)retain_error((struct argi_python_error *)address);
+}
+void _argi_python_exception_release(uintptr_t address) {
+    release_error((struct argi_python_error *)address);
+}
+uintptr_t _argi_python_exception_size(uintptr_t address, int32_t part) {
+    struct argi_python_error *error = (struct argi_python_error *)address;
+    if (!error || part < 0 || part > 2) return 0;
+    return error->lengths[part];
+}
+int32_t _argi_python_exception_copy(uintptr_t address, int32_t part, uint8_t *destination, uintptr_t length) {
+    struct argi_python_error *error = (struct argi_python_error *)address;
+    if (!error || part < 0 || part > 2 || length < error->lengths[part]) return -1;
+    if (error->lengths[part]) memcpy(destination, error->parts[part], error->lengths[part]);
+    return 0;
 }

@@ -37,6 +37,8 @@ int main(void) {
     error[length] = 0;
     assert(strstr((char *)error, "UnicodeDecodeError"));
     free(error);
+    uintptr_t snapshot = _argi_python_error_snapshot(context);
+    assert(_argi_python_exception_size(snapshot, 0) == strlen("UnicodeDecodeError"));
     const uint8_t nul[] = {'a', 0, 'b'};
     assert(!_argi_python_import(context, nul, sizeof(nul)));
     PyObject *bytes = _argi_python_bytes(context, nul, sizeof(nul));
@@ -55,6 +57,15 @@ int main(void) {
 #endif
     assert(!_argi_python_stop(context));
     assert(!Py_IsInitialized());
+    uintptr_t snapshot_length = _argi_python_exception_size(snapshot, 1);
+    assert(snapshot_length);
+    uint8_t *snapshot_message = malloc(snapshot_length + 1);
+    assert(snapshot_message);
+    assert(!_argi_python_exception_copy(snapshot, 1, snapshot_message, snapshot_length));
+    snapshot_message[snapshot_length] = 0;
+    assert(strstr((char *)snapshot_message, "utf-8"));
+    free(snapshot_message);
+    _argi_python_exception_release(snapshot);
     assert(!_argi_python_start(program, sizeof(program) - 1, empty, 0));
     return 0;
 }

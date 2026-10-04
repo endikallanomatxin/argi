@@ -9066,3 +9066,7 @@ test "feature_tests/python/08_conversions" {
 test "feature_tests/python/09_methods_iteration" {
     try checkPythonFixture("tests/feature_tests/python/09_methods_iteration");
 }
+
+test "feature_tests/python/10_exceptions" {
+    try checkPythonFixture("tests/feature_tests/python/10_exceptions");
+}
