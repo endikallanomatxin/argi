@@ -9730,3 +9730,8 @@ test "usecase_tests/03_word_count" {
     try expectEqualStrings("", failure.stdout);
     try expect(std.mem.indexOf(u8, failure.stderr, "size_limit_exceeded") != null);
 }
+
+test "feature_tests/binary/04_byte_search" {
+    try expectSuccessfulBuild("tests/feature_tests/binary/04_byte_search");
+    try runExpect("tests/feature_tests/binary/04_byte_search", 0);
+}

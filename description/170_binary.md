@@ -20,3 +20,15 @@ bytes. Failure preserves position and, for writes, the destination.
 Cursors retain backing-storage lifetimes. They do not own the buffer or extend
 its lifetime. They intentionally expose no unchecked cursor construction or
 arbitrary native memory serialization.
+
+Readonly byte views support unsigned lexicographic `compare`, `equals`,
+`find(.pattern)` and `find(.byte)`, `find_last(.pattern)`, `contains`,
+`starts_with`, and `ends_with`. Searches return optional byte offsets. Empty
+patterns match at zero in forward search and at the view length in reverse
+search. Prefix and suffix checks accept an empty pattern. Searches allocate
+no storage and accept embedded NUL bytes; sequence search has worst-case work
+proportional to view length times pattern length.
+
+`slice(.self, .start, .count)` checks the entire requested subrange before
+forming a borrowed view. Empty slices at the end are valid; starts past the
+end and counts exceeding the remaining extent return `out_of_bounds`.
