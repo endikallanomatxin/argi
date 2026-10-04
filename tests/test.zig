@@ -9102,3 +9102,17 @@ test "feature_tests/more/01_uri" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/more/02_linear_algebra" {
+    const path = "tests/feature_tests/more/02_linear_algebra";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/more/03X_matrix_dimensions" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/more/03X_matrix_dimensions", "repeated generic dimensions must agree", "failed without a diagnostic");
+}
+
+test "feature_tests/functions/33X_generic_conflict_diagnostic" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/functions/33X_generic_conflict_diagnostic", "conflicting inferred generic parameters", "failed without a diagnostic");
+}

@@ -1117,6 +1117,12 @@ pub const Resolver = struct {
             var candidate_deferred = false;
             for (storage.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, position| {
                 if (self.core.callArgumentNamed(literal, position, candidate_module.text(field.name))) |supplied| {
+                    // Earlier typed inputs may determine a generic scalar.
+                    // A literal then supplies context-compatible data, rather
+                    // than conflicting evidence from its default numeric type.
+                    if (self.generics.instantiateParameterizedType(candidate_index, field.ty, &bindings, null)) |expected| {
+                        if (self.core.contextualLiteralFits(supplied, expected)) continue;
+                    } else |_| {}
                     const actual = self.staticInputType(supplied) orelse {
                         candidate_deferred = true;
                         matches = false;

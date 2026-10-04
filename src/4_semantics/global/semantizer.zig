@@ -567,6 +567,7 @@ pub fn semantizeWithOptions(
                     &pending_attempts,
                     if (options.profile_io != null) &pending_resolution_stats else null,
                     options.profile_io,
+                    options.diagnostics,
                 )) changed = true;
             }
             if (options.profile_io) |io| profile_pending_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - pending_start;
@@ -1544,6 +1545,7 @@ fn resolvePendingPhase(
     pending_attempts: *u64,
     detailed_stats: ?*PendingResolutionStats,
     profile_io: ?std.Io,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !bool {
     var changed = false;
     var write: usize = 0;
@@ -1579,7 +1581,17 @@ fn resolvePendingPhase(
             module,
             offsets[module_index],
             operation,
-        ) catch |err| return err;
+        ) catch |err| {
+            if (err == error.ConflictingGenericArgument and operation == .resolve_call) {
+                if (diagnostics) |bag| {
+                    const reference = module.semantic.external_refs.items[@intFromEnum(operation.resolve_call.callee)];
+                    const source = globalSource(offsets[module_index], reference.source);
+                    try bag.add(diagnosticLocation(core.graph, bag, source), .semantic, "conflicting inferred generic parameters in call to '{s}'; repeated types and dimensions must agree", .{module.text(reference.name)});
+                    return error.Reported;
+                }
+            }
+            return err;
+        };
         if (detailed_stats) |stats| {
             const elapsed = profileTimestamp(profile_io) - attempt_start;
             stats.attempt(operation, result, @intCast(@max(0, elapsed)));
@@ -2706,11 +2718,18 @@ fn diagnoseUnresolvedCall(
                         try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "zeroed requires a numeric type or a fixed array of numeric types; references and resource-bearing types cannot be zero-initialized", .{});
                         return true;
                     }
+                    var mismatch = std.array_list.Managed(u8).init(allocator);
+                    defer mismatch.deinit();
+                    try mismatch.appendSlice("no matching generic overload of '");
+                    try mismatch.appendSlice(name);
+                    try mismatch.appendSlice("' accepts arguments ");
+                    try appendValueShape(&mismatch, graph, input);
+                    try mismatch.appendSlice("; input types and repeated generic dimensions must agree");
                     try diagnostics.add(
                         if (reference.module_path != null) location else diagnosticLocation(graph, diagnostics, source),
                         .semantic,
-                        "no function named '{s}' exists",
-                        .{name},
+                        "{s}",
+                        .{mismatch.items},
                     );
                     return true;
                 }

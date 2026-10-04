@@ -1008,8 +1008,17 @@ pub const Resolver = struct {
         if (self.graph.nodes.items[@intFromEnum(right)].ty == null and
             self.contextualizeChoiceOperand(module_index, o, right, left_ty)) return false;
         var right_ty = self.graph.nodes.items[@intFromEnum(right)].ty orelse return false;
-        // TODO: Contextualize floating literals against the other operand and
-        // diagnose incompatible widths instead of leaving comparisons unresolved.
+        // Literal context can arrive after syntaxing when an imported generic
+        // supplies the other operand's type. Typed values retain their widths.
+        if (!types.equal(self.graph, left_ty, right_ty)) {
+            if (self.floatLiteralFits(right, left_ty)) {
+                self.graph.nodes.items[@intFromEnum(right)].ty = left_ty;
+                right_ty = left_ty;
+            } else if (self.floatLiteralFits(left, right_ty)) {
+                self.graph.nodes.items[@intFromEnum(left)].ty = right_ty;
+                left_ty = right_ty;
+            }
+        }
         self.coerceIntegerPair(left, &left_ty, right, &right_ty);
         const bool_ty = try self.builtin(.Bool);
         const target = globalizer.globalNode(o, value.node);
