@@ -308,6 +308,7 @@ pub const Resolver = struct {
         const source = globalizer.globalNode(o, value.value);
         const choice_ty = self.graph.nodes.items[@intFromEnum(source)].ty orelse return .deferred;
         if (self.graph.isTypeUnresolved(choice_ty)) return .deferred;
+        if (value.requires_errable and !types.isErrable(self.graph, choice_ty)) return .invalid;
         const name = module.text(value.option_name);
         const hit = types.findVariant(self.graph, choice_ty, name) orelse return .deferred;
         const payload_ty = hit.variant.payload_type orelse return .invalid;

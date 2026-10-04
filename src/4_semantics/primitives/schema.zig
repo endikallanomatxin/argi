@@ -303,7 +303,7 @@ pub fn Binding(comptime Ids: type) type {
         ty: Ids.TypeId,
         initialization: ?Ids.NodeId = null,
         /// The initializer supplies the inferred type; evaluation happens at
-        /// the address expression that materializes this temporary.
+        /// ordered expression effects that initialize this temporary.
         deferred_initialization: bool = false,
         reinitialize_cleanup: ?Ids.NodeId = null,
         /// Lexical argument candidates captured where this local is declared,

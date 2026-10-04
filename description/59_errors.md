@@ -351,10 +351,7 @@ This enables:
 
 `handle` provides a shorter form for handling an `Errable`:
 
-> [!IMPLEMENTATION]
-> The `handle` form is not implemented yet.
-
-```argi
+```rg
 my_thing := fallible() handle value, error {
     match error.reason {
         ..file_not_found {
@@ -369,16 +366,16 @@ my_thing := fallible() handle value, error {
 ```
 
 Expected semantics:
-- `handle` would be syntactic sugar specific to `Errable`.
+- `handle` is syntactic sugar specific to `Errable`.
 - The expression on the left must have type `Errable#(.t: T, ...)`.
-- `value` would be the shared result slot.
+- `value` is the shared result slot.
 - If the `Errable` is `..ok x`, then `value = x`.
 - If it is `..error(...)`, the block runs with `error` bound to the complete
   error payload.
 - Use regular `match` on `error.reason` inside the block.
 - The block does not return a value specially; it only assigns to `value`.
 - The complete construct produces `value`.
-- The compiler should require `value` to be assigned on every path through the
+- The compiler requires `value` to be assigned on every path through the
   error block.
 
 Motivation:
@@ -389,3 +386,12 @@ Motivation:
   locally and producing a final value.
 - It covers the common case where a function handles an `Errable` locally
   instead of propagating it.
+
+The operand is evaluated once. Success transfers its payload into the result;
+error handling binds the complete error payload only inside the handler. The
+result and error names must differ. Handler-local declarations and defers have
+ordinary block lifetimes, and `return`, `abort`, and propagation retain their
+ordinary meaning. Owning results are moved out of the construct; `handle` does
+not make them implicitly copyable. Generic function bodies support the same
+form. The result binding is private to the construct and cannot be used later
+by its handler name.

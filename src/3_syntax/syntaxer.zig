@@ -1557,7 +1557,20 @@ pub const Syntaxer = struct {
     }
 
     fn parseExpression(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
-        return self.parseUnwrapExpr();
+        var value = try self.parseUnwrapExpr();
+        if (self.currentIdentifierEquals("handle")) {
+            const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+            self.advanceOne();
+            const result_name = (try self.parseName()).token;
+            if (!self.tokenIs(.comma)) return SyntaxerError.ExpectedStructField;
+            self.advanceOne();
+            const error_name = (try self.parseName()).token;
+            self.skipNewLinesAndComments();
+            const body = try self.parseCodeBlock();
+            const extra = try self.addExtra(syn.HandleExtra{ .value = value, .result_name = result_name, .error_name = error_name, .body = body });
+            value = try self.addNode(.handle_expression, start, .{ .extra = extra });
+        }
+        return value;
     }
 
     fn parseNamedFunctionLikeDeclaration(

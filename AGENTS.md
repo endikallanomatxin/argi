@@ -179,6 +179,13 @@ feature first.
   Py_buffer must be released. Exception snapshots own native text independently
   of interpreter lifetime. Do not reintroduce hidden Python/core dependencies.
 
+- Local `Errable` handling (`handle value, error { ... }`) lowers to a match
+  inside an explicit `value_sequence`. Its result storage is deferred in the
+  enclosing scope, while match payloads and handler locals belong to branches.
+  Ownership must traverse value sequences nested in initializers, arguments,
+  assignments, conditions, and returns before finalizing cleanup. Codegen must
+  not retain binding-map entry pointers across recursive expression emission.
+
 - Pipes preserve one evaluation of computed operands and retain lvalue storage.
   Concrete and parameterized body lowering both reserve private deferred
   bindings in the enclosing lexical scope. Compiler-generated `value_sequence`

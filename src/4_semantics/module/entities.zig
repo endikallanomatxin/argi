@@ -236,6 +236,7 @@ pub const PendingOperation = union(enum) {
         expected_type: ?ModuleTypeId = null,
     },
     resolve_choice_payload: struct {
+        requires_errable: bool = false,
         node: ModuleNodeId,
         value: ModuleNodeId,
         option_name: primitives.StringRange,

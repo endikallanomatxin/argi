@@ -2232,7 +2232,13 @@ fn diagnoseUnresolvedChoice(
                 .resolve_choice_payload => |access| {
                     const value = graph.node(globalizer.globalNode(offsets[module_index], access.value));
                     const choice_ty = value.ty orelse continue;
-                    if (graph.isTypeUnresolved(choice_ty) or global_types.variants(graph, choice_ty) == null) continue;
+                    if (graph.isTypeUnresolved(choice_ty)) continue;
+                    if (access.requires_errable and !global_types.isErrable(graph, choice_ty)) {
+                        const source: @import("../primitives/schema.zig").SourceRef = .{ .file_index = offsets[module_index].file_base + access.source.file_index, .offset = access.source.offset };
+                        try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "handle expects an Errable value", .{});
+                        return true;
+                    }
+                    if (global_types.variants(graph, choice_ty) == null) continue;
                     const name = module.text(access.option_name);
                     const hit = global_types.findVariant(graph, choice_ty, name) orelse continue;
                     if (hit.variant.payload_type != null) continue;

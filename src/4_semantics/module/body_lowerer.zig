@@ -359,6 +359,7 @@ const Context = struct {
             .expression_statement => self.lowerNode(self.tree.unaryOperand(node).?, expected),
             .move_expression => self.wrapUnary(node, .move_value, expected),
             .pipe_expression => self.lowerPipe(node, expected),
+            .handle_expression => self.lowerHandle(node, expected),
             .unwrap_or, .unwrap_or_do => self.lowerUnwrap(node, expected),
             .function_call => self.lowerCall(node, expected),
             .code_block => self.lowerBlockNode(node),
@@ -570,6 +571,54 @@ const Context = struct {
         const assignment = try self.resolved(node, value.ty, .{ .assignment = .{ .binding = storage, .value = value.node } });
         try evaluations.append(assignment.node);
         return self.resolved(node, value.ty, .{ .binding_use = storage });
+    }
+
+    // The result storage belongs to the enclosing scope; only its assignment
+    // is conditional. Match payloads remain branch-local and are moved into
+    // that storage, so cleanup and definite initialization use ordinary flow.
+    fn lowerHandle(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const handle = self.tree.extraData(syn.HandleExtra, self.tree.data(node).extra);
+        const value = try self.lowerNode(handle.value, null);
+        const payload = try self.pending(node, .{ .resolve_choice_payload = .{
+            .requires_errable = true,
+            .node = self.nextNodeId(),
+            .value = value.node,
+            .option_name = try self.writer.addString("ok"),
+            .source = self.sourceRef(node),
+        } }, expected);
+        const result_name = self.tree.tokenTextFromSource(self.source, handle.result_name);
+        const error_name = self.tree.tokenTextFromSource(self.source, handle.error_name);
+        if (std.mem.eql(u8, result_name, error_name)) {
+            if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(handle.error_name), .semantic, "handle result and error bindings must have different names", .{});
+            return error.Reported;
+        }
+        const result = try self.writer.addUnresolvedBinding(try self.writer.addString(result_name), self.sourceRef(node), payload.node, .variable);
+        self.graph.semantic.bindings.items[@intFromEnum(result)].deferred_initialization = true;
+        try self.captureBindingCleanup(node, result);
+        const declaration = try self.resolved(node, expected, .{ .binding_declaration = result });
+        const temporaries = self.temporary_declarations orelse return error.HandleOutsideFunction;
+        try temporaries.append(declaration.node);
+        const success = try self.writer.addUnresolvedBinding(try self.writer.addString("#handle_success"), self.sourceRef(node), null, .constant);
+        const failure = try self.writer.addUnresolvedBinding(try self.writer.addString(error_name), self.sourceRef(node), null, .constant);
+        const success_use = try self.resolved(node, expected, .{ .binding_use = success });
+        const moved = try self.resolved(node, expected, .{ .move_value = success_use.node });
+        const assignment = try self.resolved(node, expected, .{ .assignment = .{ .binding = result, .value = moved.node } });
+        const success_body = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{assignment.node}), .ret_val = null });
+        try self.pushScope();
+        try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(result)].name, .id = result, .ty = expected });
+        try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(failure)].name, .id = failure, .ty = null });
+        const failure_body = try self.lowerBlock(handle.body);
+        self.popScope();
+        var cases: [2]entities.ModuleNodeId = undefined;
+        for ([_][]const u8{ "ok", "error" }, [_]entities.ModuleBindingId{ success, failure }, [_]entities.ModuleBlockId{ success_body, failure_body }, 0..) |name, binding, body, i| {
+            const option = try self.writer.addExternalRef(.{ .kind = .choice_option, .module_path = null, .name = try self.writer.addString(name), .source = self.sourceRef(node) });
+            cases[i] = (try self.pending(node, .{ .resolve_match_case = .{ .node = self.nextNodeId(), .option = option, .payload_binding = binding, .body = body, .mode = .move } }, null)).node;
+        }
+        const dispatch = try self.pending(node, .{ .resolve_match = .{ .node = self.nextNodeId(), .value = value.node, .cases = try self.writer.appendNodeRefs(&cases) } }, try self.builtin(.Void));
+        const result_use = try self.resolved(node, expected, .{ .binding_use = result });
+        const result_move = try self.resolved(node, expected, .{ .move_value = result_use.node });
+        const block = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{ dispatch.node, result_move.node }), .ret_val = result_move.node });
+        return self.resolved(node, expected, .{ .value_sequence = block });
     }
 
     fn lowerUnwrap(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {

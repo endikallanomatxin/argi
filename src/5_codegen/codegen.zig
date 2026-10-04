@@ -1180,18 +1180,21 @@ pub const CodeGenerator = struct {
                 const previous_owner = self.retained_owner;
                 self.retained_owner = assignment.binding;
                 defer self.retained_owner = previous_owner;
-                const storage = self.bindings.getPtr(assignment.binding) orelse return CodegenError.SymbolNotFound;
+                // Evaluating a value sequence may allocate branch-local
+                // bindings and rehash the map. Keep a storage copy across
+                // recursive emission, then reacquire the entry to publish it.
+                const storage = self.bindings.get(assignment.binding) orelse return CodegenError.SymbolNotFound;
                 if (self.graph.bindings.items[@intFromEnum(assignment.binding)].mutability == .constant and storage.initialized)
                     return CodegenError.ConstantReassignment;
                 if (try self.storeLargeNode(assignment.value, storage.ref)) {
-                    storage.initialized = true;
+                    self.bindings.getPtr(assignment.binding).?.initialized = true;
                     if (storage.drop_state) |drop| self.storeDropState(drop, true);
                     break :blk null;
                 }
                 const value = (try self.visitNode(assignment.value)) orelse return CodegenError.ValueNotFound;
                 if (value.type_ref != storage.type_ref) return CodegenError.InvalidType;
                 _ = c.LLVMBuildStore(self.builder, value.value_ref, storage.ref);
-                storage.initialized = true;
+                self.bindings.getPtr(assignment.binding).?.initialized = true;
                 if (storage.drop_state) |drop| self.storeDropState(drop, true);
                 break :blk value;
             },

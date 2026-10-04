@@ -9310,3 +9310,38 @@ test "feature_tests/ownership/336X_caller_storage_cleanup_borrow" {
 test "feature_tests/ownership/337X_caller_storage_cleanup_after_borrow" {
     try buildExpectFail("tests/feature_tests/ownership/337X_caller_storage_cleanup_after_borrow", "retained storage cleanup depends on a root that has ended");
 }
+
+test "feature_tests/errors/80_local_handle" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/80_local_handle");
+    try runExpect("tests/feature_tests/errors/80_local_handle", 0);
+}
+
+test "feature_tests/errors/81X_handle_unassigned" {
+    try buildExpectFail("tests/feature_tests/errors/81X_handle_unassigned", "cannot be used");
+}
+
+test "feature_tests/errors/82X_handle_duplicate_names" {
+    try buildExpectFail("tests/feature_tests/errors/82X_handle_duplicate_names", "must have different names");
+}
+
+test "feature_tests/errors/83_handle_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/83_handle_owner");
+    try runExpect("tests/feature_tests/errors/83_handle_owner", 0);
+}
+
+test "feature_tests/errors/84X_handle_non_errable" {
+    try buildExpectFail("tests/feature_tests/errors/84X_handle_non_errable", "handle expects an Errable value");
+}
+
+test "feature_tests/errors/85_handle_evaluation_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/85_handle_evaluation_cleanup");
+    try runExpect("tests/feature_tests/errors/85_handle_evaluation_cleanup", 0);
+}
+
+test "feature_tests/errors/86X_handle_local_borrow" {
+    try buildExpectFail("tests/feature_tests/errors/86X_handle_local_borrow", "root that has ended");
+}
+
+test "feature_tests/errors/87X_handle_arbitrary_choice" {
+    try buildExpectFail("tests/feature_tests/errors/87X_handle_arbitrary_choice", "handle expects an Errable value");
+}

@@ -25,6 +25,22 @@ pub const LayoutError = error{
     TypeHasNoRuntimeLayout,
 };
 
+/// Local handling accepts the bundled Errable family and the identity-bearing
+/// inferred form used by fallible output shorthand, never arbitrary choices
+/// that merely happen to spell their alternatives `ok` and `error`.
+pub fn isErrable(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    const semantic = graph.resolvedSemanticType(ty) orelse return false;
+    return switch (semantic) {
+        .inferred_choice => |choice| choice.kind == .errable,
+        .generic => |generic| blk: {
+            const owner = graph.moduleForDeclaration(generic.base) orelse break :blk false;
+            break :blk graph.modules.items[@intFromEnum(owner)].is_bundled_core and
+                std.mem.eql(u8, graph.text(graph.declaration(generic.base).name), "Errable");
+        },
+        else => false,
+    };
+}
+
 pub fn fields(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.FieldRange {
     const semantic = graph.resolvedSemanticType(ty) orelse return null;
     return switch (semantic) {

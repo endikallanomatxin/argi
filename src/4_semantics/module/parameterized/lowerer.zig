@@ -860,6 +860,7 @@ pub const Context = struct {
         for (self.pipe_operand_overrides) |entry| if (entry.syntax == node) return entry.value;
         if (self.tree.tag(node) == .pipe_placeholder) return self.pipe_value orelse error.PipePlaceholderOutsidePipe;
         if (self.tree.tag(node) == .pipe_expression) return self.lowerPipe(node);
+        if (self.tree.tag(node) == .handle_expression) return self.lowerHandle(node);
         if (self.tree.tag(node) == .expression_statement)
             return self.lowerBodyNode(self.tree.unaryOperand(node).?);
         if (self.tree.tag(node) == .reach_directive) return self.lowerReach(node);
@@ -1132,6 +1133,70 @@ pub const Context = struct {
         const pending_id = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(result)].pending;
         self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.assumed_arguments = assumed;
         return result;
+    }
+
+    fn handleBinding(self: *Context, node: syn.NodeIndex, name: []const u8, initialization: ?ir.ParameterizedNodeId) !ir.ParameterizedBindingId {
+        const storage = &self.graph.semantic.parameterized_storage.ir;
+        const id: ir.ParameterizedBindingId = @enumFromInt(@as(u32, @intCast(storage.bindings.items.len)));
+        try storage.bindings.append(self.allocator, .{
+            .name = try self.writer.addString(name),
+            .source = self.sourceRef(node),
+            .ty = ir.unresolved_binding_type_poison,
+            .initialization = initialization,
+            .deferred_initialization = initialization != null,
+            .mutability = .variable,
+        });
+        try storage.unresolved_binding_types.append(self.allocator, id);
+        try self.captureBindingCleanup(node, id);
+        return id;
+    }
+
+    fn handleBlock(self: *Context, nodes: []const ir.ParameterizedNodeId, result: ?ir.ParameterizedNodeId) !ir.ParameterizedBlockId {
+        const storage = &self.graph.semantic.parameterized_storage.ir;
+        const start: u32 = @intCast(storage.node_refs.items.len);
+        try storage.node_refs.appendSlice(self.allocator, nodes);
+        const id: ir.ParameterizedBlockId = @enumFromInt(@as(u32, @intCast(storage.blocks.items.len)));
+        try storage.blocks.append(self.allocator, .{ .nodes = .{ .start = start, .len = @intCast(nodes.len) }, .ret_val = result });
+        return id;
+    }
+
+    fn lowerHandle(self: *Context, node: syn.NodeIndex) !ir.ParameterizedNodeId {
+        const handle = self.tree.extraData(syn.HandleExtra, self.tree.data(node).extra);
+        const value = try self.lowerBodyNode(handle.value);
+        const payload = try self.addPending(node, .choice_payload, &.{value}, try self.writer.addString("ok"), null, .none);
+        const payload_pending = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(payload)].pending;
+        self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(payload_pending)].resolve_expression.requires_errable = true;
+        const result_name = self.tree.tokenTextFromSource(self.source, handle.result_name);
+        const error_name = self.tree.tokenTextFromSource(self.source, handle.error_name);
+        if (std.mem.eql(u8, result_name, error_name)) {
+            if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(handle.error_name), .semantic, "handle result and error bindings must have different names", .{});
+            return error.Reported;
+        }
+        const result = try self.handleBinding(node, result_name, payload);
+        const temporaries = self.temporary_declarations orelse return error.HandleOutsideFunction;
+        try temporaries.append(self.allocator, try self.addResolvedNode(node, null, .{ .binding_declaration = result }));
+        const success = try self.handleBinding(node, "#handle_success", null);
+        const failure = try self.handleBinding(node, error_name, null);
+        const success_use = try self.addResolvedNode(node, null, .{ .binding_use = success });
+        const moved = try self.addResolvedNode(node, null, .{ .move_value = success_use });
+        const assignment = try self.addResolvedNode(node, null, .{ .assignment = .{ .binding = result, .value = moved } });
+        const success_body = try self.handleBlock(&.{assignment}, null);
+        const mark = self.bindings.items.len;
+        try self.bindings.append(.{ .name = result_name, .id = result });
+        try self.bindings.append(.{ .name = error_name, .id = failure });
+        const failure_body = try self.lowerBlock(handle.body);
+        self.bindings.shrinkRetainingCapacity(mark);
+        const storage = &self.graph.semantic.parameterized_storage.ir;
+        const start: u32 = @intCast(storage.match_cases.items.len);
+        for ([_][]const u8{ "ok", "error" }, [_]ir.ParameterizedBindingId{ success, failure }, [_]ir.ParameterizedBlockId{ success_body, failure_body }) |name, binding, body| {
+            try storage.match_cases.append(self.allocator, .{ .name = try self.writer.addString(name), .payload_binding = binding, .body = body, .mode = .move, .source = self.sourceRef(node) });
+        }
+        const dispatch = try self.addPending(node, .match, &.{value}, null, null, .none);
+        const pending = storage.nodes.items[@intFromEnum(dispatch)].pending;
+        storage.pending.items[@intFromEnum(pending)].resolve_expression.match_cases = .{ .start = start, .len = 2 };
+        const use = try self.addResolvedNode(node, null, .{ .binding_use = result });
+        const result_move = try self.addResolvedNode(node, null, .{ .move_value = use });
+        return self.addResolvedNode(node, null, .{ .value_sequence = try self.handleBlock(&.{ dispatch, result_move }, result_move) });
     }
 
     fn lowerPipe(self: *Context, node: syn.NodeIndex) !ir.ParameterizedNodeId {

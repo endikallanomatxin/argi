@@ -272,98 +272,132 @@ pub const Resolver = struct {
         node_id: global_sg.GlobalNodeId,
         active: []const global_sg.GlobalBindingId,
         defers: []const global_sg.GlobalNodeId,
+        visible: []const global_sg.GlobalBindingId,
+        owner_function: global_sg.GlobalFunctionId,
+        module_index: usize,
     ) anyerror!void {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
+            .code_block, .value_sequence => |block| {
+                // Expressions may contain conditional statement effects. Give
+                // their blocks the same lexical cleanup context as source
+                // blocks, including early returns and branch-local owners.
+                var nested_active: std.ArrayList(global_sg.GlobalBindingId) = .empty;
+                defer nested_active.deinit(self.allocator);
+                try nested_active.appendSlice(self.allocator, active);
+                var nested_defers: std.ArrayList(global_sg.GlobalNodeId) = .empty;
+                defer nested_defers.deinit(self.allocator);
+                try nested_defers.appendSlice(self.allocator, defers);
+                var nested_visible: std.ArrayList(global_sg.GlobalBindingId) = .empty;
+                defer nested_visible.deinit(self.allocator);
+                try nested_visible.appendSlice(self.allocator, visible);
+                try self.finalizeBlock(block, &nested_active, &nested_defers, &nested_visible, &.{}, owner_function, module_index);
+            },
+            .return_statement => |ret| if (ret.expression) |value|
+                try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index),
+            .if_statement => |statement| try self.finalizeExpressionCleanup(statement.condition, active, defers, visible, owner_function, module_index),
+            .while_statement => |statement| try self.finalizeExpressionCleanup(statement.condition, active, defers, visible, owner_function, module_index),
+            .switch_statement => |id| try self.finalizeExpressionCleanup(self.graph.switches.items[@intFromEnum(id)].expression, active, defers, visible, owner_function, module_index),
             .binding_declaration => |binding| {
                 const record = self.graph.bindings.items[@intFromEnum(binding)];
                 if (!record.deferred_initialization) if (record.initialization) |initialization|
-                    try self.finalizeExpressionCleanup(initialization, active, defers);
+                    try self.finalizeExpressionCleanup(initialization, active, defers, visible, owner_function, module_index);
             },
             .error_propagation => |propagation_id| {
-                const propagation = &self.graph.error_propagations.items[@intFromEnum(propagation_id)];
-                try self.finalizeExpressionCleanup(propagation.errable_value, active, defers);
-                propagation.cleanup_nodes = try self.appendCleanup(active, defers);
+                const propagation = self.graph.error_propagations.items[@intFromEnum(propagation_id)];
+                try self.finalizeExpressionCleanup(propagation.errable_value, active, defers, visible, owner_function, module_index);
+                const cleanup = try self.appendCleanup(active, defers);
+                self.graph.error_propagations.items[@intFromEnum(propagation_id)].cleanup_nodes = cleanup;
             },
             .error_context => |context_id| {
-                const context = &self.graph.error_contexts.items[@intFromEnum(context_id)];
-                try self.finalizeExpressionCleanup(context.errable_value, active, defers);
-                try self.finalizeExpressionCleanup(context.context, active, defers);
-                context.cleanup_nodes = try self.appendCleanup(active, defers);
+                const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
+                try self.finalizeExpressionCleanup(context.errable_value, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(context.context, active, defers, visible, owner_function, module_index);
+                const cleanup = try self.appendCleanup(active, defers);
+                self.graph.error_contexts.items[@intFromEnum(context_id)].cleanup_nodes = cleanup;
             },
-            .move_value, .denied_implicit_copy, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers),
-            .assignment => |assignment| try self.finalizeExpressionCleanup(assignment.value, active, defers),
+            .move_value, .denied_implicit_copy, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers, visible, owner_function, module_index),
+            .assignment => |assignment| try self.finalizeExpressionCleanup(assignment.value, active, defers, visible, owner_function, module_index),
             .function_call => |call| {
-                if (call.callee_value) |value| try self.finalizeExpressionCleanup(value, active, defers);
-                try self.finalizeExpressionCleanup(call.input, active, defers);
+                if (call.callee_value) |value| try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(call.input, active, defers, visible, owner_function, module_index);
             },
             .virtualize => |virtualize_id| try self.finalizeExpressionCleanup(
                 self.graph.virtualizes.items[@intFromEnum(virtualize_id)].value,
                 active,
                 defers,
+                visible,
+                owner_function,
+                module_index,
             ),
             .virtual_call => |virtual_call_id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(virtual_call_id)];
-                try self.finalizeExpressionCleanup(call.handle, active, defers);
-                try self.finalizeExpressionCleanup(call.input, active, defers);
+                try self.finalizeExpressionCleanup(call.handle, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(call.input, active, defers, visible, owner_function, module_index);
             },
             .struct_value_literal => |literal| {
-                for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
-                    try self.finalizeExpressionCleanup(field.value, active, defers);
+                const fields = try self.allocator.dupe(global_sg.ValueField, self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]);
+                defer self.allocator.free(fields);
+                for (fields) |field|
+                    try self.finalizeExpressionCleanup(field.value, active, defers, visible, owner_function, module_index);
             },
             .list_literal => |literal| {
-                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |element|
-                    try self.finalizeExpressionCleanup(element, active, defers);
+                const elements = try self.allocator.dupe(global_sg.GlobalNodeId, self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]);
+                defer self.allocator.free(elements);
+                for (elements) |element|
+                    try self.finalizeExpressionCleanup(element, active, defers, visible, owner_function, module_index);
             },
             .array_literal => |literal| {
-                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |element|
-                    try self.finalizeExpressionCleanup(element, active, defers);
+                const elements = try self.allocator.dupe(global_sg.GlobalNodeId, self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]);
+                defer self.allocator.free(elements);
+                for (elements) |element|
+                    try self.finalizeExpressionCleanup(element, active, defers, visible, owner_function, module_index);
             },
             .choice_literal => |literal| if (literal.payload) |payload|
-                try self.finalizeExpressionCleanup(payload, active, defers),
-            .struct_field_access => |access| try self.finalizeExpressionCleanup(access.value, active, defers),
-            .choice_payload_access => |access| try self.finalizeExpressionCleanup(access.value, active, defers),
+                try self.finalizeExpressionCleanup(payload, active, defers, visible, owner_function, module_index),
+            .struct_field_access => |access| try self.finalizeExpressionCleanup(access.value, active, defers, visible, owner_function, module_index),
+            .choice_payload_access => |access| try self.finalizeExpressionCleanup(access.value, active, defers, visible, owner_function, module_index),
             .nullable_unwrap_or => |unwrap_id| {
                 const unwrap = self.graph.nullable_unwraps.items[@intFromEnum(unwrap_id)];
-                try self.finalizeExpressionCleanup(unwrap.nullable_value, active, defers);
-                try self.finalizeExpressionCleanup(unwrap.fallback_value, active, defers);
+                try self.finalizeExpressionCleanup(unwrap.nullable_value, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(unwrap.fallback_value, active, defers, visible, owner_function, module_index);
             },
             .array_index => |access| {
-                try self.finalizeExpressionCleanup(access.array_ptr, active, defers);
-                try self.finalizeExpressionCleanup(access.index, active, defers);
+                try self.finalizeExpressionCleanup(access.array_ptr, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(access.index, active, defers, visible, owner_function, module_index);
             },
             .array_store => |store| {
-                try self.finalizeExpressionCleanup(store.array_ptr, active, defers);
-                try self.finalizeExpressionCleanup(store.index, active, defers);
-                try self.finalizeExpressionCleanup(store.value, active, defers);
+                try self.finalizeExpressionCleanup(store.array_ptr, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(store.index, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(store.value, active, defers, visible, owner_function, module_index);
             },
             .struct_field_store => |store| {
-                try self.finalizeExpressionCleanup(store.struct_ptr, active, defers);
-                try self.finalizeExpressionCleanup(store.value, active, defers);
+                try self.finalizeExpressionCleanup(store.struct_ptr, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(store.value, active, defers, visible, owner_function, module_index);
             },
             .binary_operation => |operation| {
-                try self.finalizeExpressionCleanup(operation.left, active, defers);
-                try self.finalizeExpressionCleanup(operation.right, active, defers);
+                try self.finalizeExpressionCleanup(operation.left, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(operation.right, active, defers, visible, owner_function, module_index);
             },
             .comparison => |comparison| {
-                try self.finalizeExpressionCleanup(comparison.left, active, defers);
-                try self.finalizeExpressionCleanup(comparison.right, active, defers);
+                try self.finalizeExpressionCleanup(comparison.left, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(comparison.right, active, defers, visible, owner_function, module_index);
             },
             .logical_operation => |operation| {
-                try self.finalizeExpressionCleanup(operation.left, active, defers);
-                try self.finalizeExpressionCleanup(operation.right, active, defers);
+                try self.finalizeExpressionCleanup(operation.left, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(operation.right, active, defers, visible, owner_function, module_index);
             },
             .pointer_assignment => |assignment| {
-                try self.finalizeExpressionCleanup(assignment.pointer, active, defers);
-                try self.finalizeExpressionCleanup(assignment.value, active, defers);
+                try self.finalizeExpressionCleanup(assignment.pointer, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(assignment.value, active, defers, visible, owner_function, module_index);
             },
-            .explicit_cast => |cast| try self.finalizeExpressionCleanup(cast.value, active, defers),
+            .explicit_cast => |cast| try self.finalizeExpressionCleanup(cast.value, active, defers, visible, owner_function, module_index),
 
             .testing_expect_error => |expect_id| {
                 const expect = self.graph.testing_expect_errors.items[@intFromEnum(expect_id)];
-                try self.finalizeExpressionCleanup(expect.expected_reason, active, defers);
-                try self.finalizeExpressionCleanup(expect.actual_result, active, defers);
-                if (expect.test_fail_input) |input| try self.finalizeExpressionCleanup(input, active, defers);
+                try self.finalizeExpressionCleanup(expect.expected_reason, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(expect.actual_result, active, defers, visible, owner_function, module_index);
+                if (expect.test_fail_input) |input| try self.finalizeExpressionCleanup(input, active, defers, visible, owner_function, module_index);
             },
             else => {},
         }
@@ -409,7 +443,9 @@ pub const Resolver = struct {
         defer self.allocator.free(nodes);
         for (nodes) |node_id| {
             try rebuilt.append(self.allocator, node_id);
-            try self.finalizeExpressionCleanup(node_id, active.items, defers.items);
+            const content = self.graph.node(node_id).content;
+            if (content != .code_block and content != .value_sequence)
+                try self.finalizeExpressionCleanup(node_id, active.items, defers.items, visible.items, owner_function, module_index);
             const node = &self.graph.nodes.items[@intFromEnum(node_id)];
             if (self.deferValue(node_id)) |deferred_value| {
                 try defers.append(self.allocator, deferred_value);
@@ -436,7 +472,9 @@ pub const Resolver = struct {
                 .for_statement => |statement| try self.finalizeBlock(statement.body, &active, &defers, &visible, &.{}, owner_function, module_index),
                 .switch_statement => |switch_id| {
                     const sw = self.graph.switches.items[@intFromEnum(switch_id)];
-                    for (self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]) |case| {
+                    const cases = try self.allocator.dupe(global_sg.SwitchCase, self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]);
+                    defer self.allocator.free(cases);
+                    for (cases) |case| {
                         const bindings: []const global_sg.GlobalBindingId = if (case.payload_mode == .move)
                             if (case.payload_binding) |*binding| binding[0..1] else &.{}
                         else
@@ -990,7 +1028,7 @@ test "error propagation cleanup captures active lexical obligations" {
     };
     defer resolver.deinit();
 
-    try resolver.finalizeExpressionCleanup(assignment_node, &.{}, &.{deferred_node});
+    try resolver.finalizeExpressionCleanup(assignment_node, &.{}, &.{deferred_node}, &.{}, @enumFromInt(0), 0);
     const cleanup = graph.error_propagations.items[0].cleanup_nodes;
     try std.testing.expectEqual(@as(u32, 1), cleanup.len);
     try std.testing.expectEqual(deferred_node, graph.node_refs.items[cleanup.start]);

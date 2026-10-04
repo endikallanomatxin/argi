@@ -2661,7 +2661,13 @@ pub const Resolver = struct {
                 .index => self.resolveIndex(operands.items, value.source, false),
                 .index_store => self.resolveIndex(operands.items, value.source, true),
                 .field_access => if (value.name) |name| self.resolveField(operands.items[0], name, value.source) else error.InvalidParameterizedFieldAccess,
-                .choice_payload => if (value.name) |name| self.resolveChoicePayload(operands.items[0], name, value.source) else error.InvalidParameterizedChoicePayload,
+                .choice_payload => blk: {
+                    if (value.requires_errable) {
+                        const ty = self.resolver.graph.node(operands.items[0]).ty orelse return error.GenericHandleRequiresErrable;
+                        if (!global_types.isErrable(self.resolver.graph, ty)) return error.GenericHandleRequiresErrable;
+                    }
+                    break :blk if (value.name) |name| self.resolveChoicePayload(operands.items[0], name, value.source) else error.InvalidParameterizedChoicePayload;
+                },
                 .nullable_test => self.resolveNullableTest(operands.items, value.source),
                 .return_statement => self.resolveReturn(operands.items, value.source),
                 .if_statement => self.resolveIf(operands.items, value.source),

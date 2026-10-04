@@ -471,6 +471,7 @@ fn firstToken(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) usize {
     }
     const child: ?syn.NodeIndex = switch (tree.tag(node)) {
         .expression_statement, .error_propagation, .nullable_test, .dereference => tree.unaryOperand(node),
+        .handle_expression => tree.extraData(syn.HandleExtra, tree.data(node).extra).value,
         .struct_field_access => tree.structFieldAccess(node).?.value,
         .choice_payload_access => tree.choicePayloadAccess(node).?.value,
         .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo, .compare_equal, .compare_not_equal, .compare_less, .compare_greater, .compare_less_equal, .compare_greater_equal, .logical_and, .logical_or, .pipe_expression, .index_access, .index_assignment, .pointer_assignment, .error_context, .unwrap_or, .unwrap_or_do => tree.binaryOperation(node).?.lhs,
@@ -861,5 +862,12 @@ test "formatter preserves inferred fallible output defaults" {
     try expectFormat(
         "main()->!Void=..ok Void():={work()!}\n",
         "main() -> !Void = ..ok Void() := { work()! }\n",
+    );
+}
+
+test "formatter preserves local error handlers" {
+    try expectFormat(
+        "main()->():={value:=fallible() handle result,error{result=0}}\n",
+        "main() -> () := { value := fallible() handle result, error { result = 0 } }\n",
     );
 }

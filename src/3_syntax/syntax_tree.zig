@@ -94,6 +94,7 @@ pub const Node = struct {
         function_call,
         unwrap_or,
         unwrap_or_do,
+        handle_expression,
         pipe_expression,
         code_block,
         literal,
@@ -219,6 +220,8 @@ pub const CallExtra = struct {
     type_arguments_struct: OptionalNodeIndex,
     input: NodeIndex,
 };
+pub const HandleExtra = struct { value: NodeIndex, result_name: TokenIndex, error_name: TokenIndex, body: NodeIndex };
+
 pub const ForExtra = struct { name_token: TokenIndex, iterable: NodeIndex, body: NodeIndex };
 pub const MatchCaseExtra = struct { payload_name: OptionalTokenIndex, body: NodeIndex };
 
