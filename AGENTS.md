@@ -165,6 +165,15 @@ feature first.
   applies ABI attributes at the call site, and guards null addresses; prototypes
   must not create LLVM symbols. Generic callback invocation remains pending.
 
+- Optional CPython embedding lives entirely in `more/python`; ordinary builds
+  must not require Python headers or libraries. Consumers explicitly compile
+  `runtime.c` and link the matching CPython embedding library. Object owners
+  borrow their interpreter and carry private raw handles, never safe references
+  to Python buffers. Executable Python fixtures require absolute
+  `ARGI_PYTHON_RUNTIME_OBJECT` and `ARGI_PYTHON_LIBRARY` paths; without them those
+  fixtures skip, while negative ownership tests still run. The standalone
+  `tests/python_native.c` probe checks the native boundary with matching headers.
+
 - Compilation target identity lives in `src/1_base/target.zig` and is carried
   by ModuleSG and GlobalSG. Resolve C aliases, layouts, safety checks, and C ABI
   classification from that identity rather than the compiler host. Persistent
