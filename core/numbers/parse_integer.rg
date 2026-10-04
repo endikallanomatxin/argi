@@ -234,7 +234,7 @@ parse_uintnative(
         )
     ) := {
     zero :: UIntNative = 0
-    maximum ::= _integer_limits(.value = zero).maximum
+    maximum ::= integer_limits(.value = zero).maximum
     result = _integer_parse#(.t: UIntNative)(
         .text           = text
         .base           = base

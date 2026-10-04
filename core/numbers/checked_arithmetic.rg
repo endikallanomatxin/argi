@@ -1,45 +1,45 @@
 -- Bounds stay in the operand domain; no widening or signedness change is needed.
-_integer_limits(.value: Int8) -> (.minimum: Int8, .maximum: Int8) := {
+integer_limits(.value: Int8) -> (.minimum: Int8, .maximum: Int8) := {
     minimum = -128
     maximum = 127
 }
 
-_integer_limits(.value: Int16) -> (.minimum: Int16, .maximum: Int16) := {
+integer_limits(.value: Int16) -> (.minimum: Int16, .maximum: Int16) := {
     minimum = -32768
     maximum = 32767
 }
 
-_integer_limits(.value: Int32) -> (.minimum: Int32, .maximum: Int32) := {
+integer_limits(.value: Int32) -> (.minimum: Int32, .maximum: Int32) := {
     minimum = -2147483648
     maximum = 2147483647
 }
 
-_integer_limits(.value: Int64) -> (.minimum: Int64, .maximum: Int64) := {
+integer_limits(.value: Int64) -> (.minimum: Int64, .maximum: Int64) := {
     minimum = -9223372036854775808
     maximum = 9223372036854775807
 }
 
-_integer_limits(.value: UInt8) -> (.minimum: UInt8, .maximum: UInt8) := {
+integer_limits(.value: UInt8) -> (.minimum: UInt8, .maximum: UInt8) := {
     minimum = 0
     maximum = 255
 }
 
-_integer_limits(.value: UInt16) -> (.minimum: UInt16, .maximum: UInt16) := {
+integer_limits(.value: UInt16) -> (.minimum: UInt16, .maximum: UInt16) := {
     minimum = 0
     maximum = 65535
 }
 
-_integer_limits(.value: UInt32) -> (.minimum: UInt32, .maximum: UInt32) := {
+integer_limits(.value: UInt32) -> (.minimum: UInt32, .maximum: UInt32) := {
     minimum = 0
     maximum = 4294967295
 }
 
-_integer_limits(.value: UInt64) -> (.minimum: UInt64, .maximum: UInt64) := {
+integer_limits(.value: UInt64) -> (.minimum: UInt64, .maximum: UInt64) := {
     minimum = 0
     maximum = 18446744073709551615
 }
 
-_integer_limits(.value: UIntNative) -> (.minimum: UIntNative, .maximum: UIntNative) := {
+integer_limits(.value: UIntNative) -> (.minimum: UIntNative, .maximum: UIntNative) := {
     minimum = 0
     maximum = 0
     bytes ::= size_of(.type = UIntNative)
@@ -60,7 +60,7 @@ checked_add#(
     ) -> (
         .result : Errable#(.t: t, .reasons: (..out_of_range))
     ) := {
-    bounds ::= _integer_limits(.value = left)
+    bounds ::= integer_limits(.value = left)
     if right > 0 {
         if left > bounds.maximum - right {
             result = ..error(.reason = ..out_of_range)
@@ -83,7 +83,7 @@ checked_subtract#(
     ) -> (
         .result : Errable#(.t: t, .reasons: (..out_of_range))
     ) := {
-    bounds ::= _integer_limits(.value = left)
+    bounds ::= integer_limits(.value = left)
     if right > 0 {
         if left < bounds.minimum + right {
             result = ..error(.reason = ..out_of_range)
@@ -106,7 +106,7 @@ checked_multiply#(
     ) -> (
         .result : Errable#(.t: t, .reasons: (..out_of_range))
     ) := {
-    bounds ::= _integer_limits(.value = left)
+    bounds ::= integer_limits(.value = left)
     -- Divide a representable bound, never a potentially overflowing product.
     -- The negative pair uses maximum/right and avoids negating signed minima.
     if right > 0 {
@@ -145,7 +145,7 @@ checked_divide#(
         result = ..error(.reason = ..division_by_zero)
         return
     }
-    bounds ::= _integer_limits(.value = left)
+    bounds ::= integer_limits(.value = left)
     if bounds.minimum < 0 {
         -- Form -1 only in the signed domain, after the signedness check.
         negative_one :: t = 0

@@ -9735,3 +9735,8 @@ test "feature_tests/binary/04_byte_search" {
     try expectSuccessfulBuild("tests/feature_tests/binary/04_byte_search");
     try runExpect("tests/feature_tests/binary/04_byte_search", 0);
 }
+
+test "feature_tests/numbers/10_integer_foundations" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/10_integer_foundations");
+    try runExpect("tests/feature_tests/numbers/10_integer_foundations", 0);
+}
