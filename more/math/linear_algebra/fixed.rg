@@ -150,7 +150,10 @@ multiply#(
         while col < cols {
             k :: UIntNative = 0
             while k < inner {
-                result.values[row][col] = result.values[row][col] + left&.values[row][k] * right&.values[k][col]
+                result.values[row][col] = [
+                    result.values[row][col]
+                    + left&.values[row][k] * right&.values[k][col]
+                ]
                 k = k + 1
             }
             col = col + 1

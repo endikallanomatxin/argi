@@ -10,12 +10,15 @@ const Tag = std.meta.Tag(tok.Content);
 const List = std.array_list.Managed(u8);
 const Frame = struct { tag: Tag, multiline: bool, expand: bool = false, signature: bool = false };
 const line_width = 100;
+const InsertedToken = struct { ordinal: usize, tag: Tag };
 
 /// Formatting uses the complete token stream, including discarded target
 /// branches. Newlines are syntax in Argi, so existing breaks are retained and
 /// syntaxing identifies complete signature groups and statement boundaries.
 /// New breaks occur at collection fields and those boundaries. Token text
 /// stays verbatim: comments, escapes, and numeric spellings are never rebuilt.
+/// Added scalar grouping brackets are tracked explicitly and verified against
+/// the original syntax structure before an edit is returned.
 pub fn format(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     var current = try formatOnce(allocator, source);
     errdefer allocator.free(current);
@@ -46,6 +49,8 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     const layout = try Layout.init(temporary, tokens, source);
     var out = List.init(temporary);
     var stack = std.array_list.Managed(Frame).init(temporary);
+    var inserted = std.array_list.Managed(InsertedToken).init(temporary);
+    var emitted_tokens: usize = 0;
     var previous: ?Tag = null;
     var line_start: usize = 0;
     var pending_newlines: usize = 0;
@@ -54,8 +59,18 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
         const tag = std.meta.activeTag(tokens.contents[i]);
         if (tag == .eof) break;
         if (tag == .new_line) {
+            if (layout.suppress_newlines[i]) continue;
             source_newlines += 1;
             continue;
+        }
+        for (0..layout.wrap_before[i]) |_| {
+            if (previous) |left| if (needsSpace(left, .open_bracket, tokens, i)) try out.append(' ');
+            try inserted.append(.{ .ordinal = emitted_tokens, .tag = .open_bracket });
+            emitted_tokens += 1;
+            try out.append('[');
+            try stack.append(.{ .tag = .open_bracket, .multiline = true, .expand = true });
+            pending_newlines = @max(pending_newlines, 1);
+            previous = .open_bracket;
         }
         pending_newlines = @max(pending_newlines, @max(source_newlines, layout.breaks[i]));
         source_newlines = 0;
@@ -91,15 +106,16 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
                 indent += if (frame.signature) @as(usize, 8) else 4;
             };
             try out.appendNTimes(' ', indent);
-        } else if (needsSpace(previous.?, tag, tokens, i)) try out.append(' ');
+        } else if (needsSpace(previous.?, tag, tokens, i) or (previous.? == .binary_operator and i != 0 and layout.breaks[i - 1] != 0)) try out.append(' ');
         const start: usize = tokens.locations[i].offset;
         const end: usize = if (i + 1 < tokens.len) tokens.locations[i + 1].offset else source.len;
         const text = std.mem.trimEnd(u8, source[start..end], " \t\r\n");
         try out.appendSlice(text);
+        emitted_tokens += 1;
         previous = tag;
         if (tag == .open_parenthesis or tag == .open_bracket or tag == .open_brace) {
             const multiline = containsNewline(tokens, i);
-            const expand = layout.expand[i] or (tag == .open_parenthesis and multiline) or (tag != .open_bracket and
+            const expand = layout.expand[i] or ((tag == .open_parenthesis or (tag == .open_bracket and layout.scalar_groups[i])) and multiline) or (tag != .open_bracket and
                 layout.ends[i] > i + 1 and
                 out.items.len - line_start + flatLength(tokens, source, i, layout.ends[i] + 1) > line_width);
             try stack.append(.{ .tag = tag, .multiline = multiline or expand, .expand = expand, .signature = layout.signature[i] });
@@ -109,6 +125,22 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
         // the last argument onto a continuation line.
         if (tag == .comma and stack.items.len != 0 and stack.items[stack.items.len - 1].expand and stack.items[stack.items.len - 1].tag == .open_parenthesis)
             pending_newlines = @max(pending_newlines, 1);
+        for (0..layout.wrap_after[i]) |_| {
+            const frame = stack.pop().?;
+            std.debug.assert(frame.tag == .open_bracket);
+            trimSpaces(&out);
+            try out.append('\n');
+            line_start = out.items.len;
+            var indent: usize = 0;
+            for (stack.items) |enclosing| if (enclosing.multiline) {
+                indent += if (enclosing.signature) @as(usize, 8) else 4;
+            };
+            try out.appendNTimes(' ', indent);
+            try inserted.append(.{ .ordinal = emitted_tokens, .tag = .close_bracket });
+            emitted_tokens += 1;
+            try out.append(']');
+            previous = .close_bracket;
+        }
     }
     if (stack.items.len != 0) return error.UnbalancedDelimiters;
     trimSpaces(&out);
@@ -119,15 +151,23 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     var verification = tokenizer.Tokenizer.init(temporary, &diagnostics, result, diagnostics.source_db.fileId(0));
     const formatted_tokens = try verification.tokenize();
     var original_index: usize = 0;
+    var formatted_ordinal: usize = 0;
+    var inserted_index: usize = 0;
     for (0..formatted_tokens.len) |index| {
         if (formatted_tokens.contents[index] == .new_line) continue;
+        defer formatted_ordinal += 1;
+        if (inserted_index < inserted.items.len and inserted.items[inserted_index].ordinal == formatted_ordinal) {
+            if (std.meta.activeTag(formatted_tokens.contents[index]) != inserted.items[inserted_index].tag) return error.TokenSequenceChanged;
+            inserted_index += 1;
+            continue;
+        }
         while (original_index < tokens.len and tokens.contents[original_index] == .new_line) original_index += 1;
         if (original_index >= tokens.len or std.meta.activeTag(formatted_tokens.contents[index]) != std.meta.activeTag(tokens.contents[original_index])) return error.TokenSequenceChanged;
         if (!std.mem.eql(u8, tokenText(tokens, source, original_index), tokenText(formatted_tokens, result, index))) return error.TokenSequenceChanged;
         original_index += 1;
     }
     while (original_index < tokens.len and tokens.contents[original_index] == .new_line) original_index += 1;
-    if (original_index != tokens.len) return error.TokenSequenceChanged;
+    if (original_index != tokens.len or inserted_index != inserted.items.len) return error.TokenSequenceChanged;
     if (layout.syntax_tags) |tags| {
         // Token identity alone is insufficient: newlines can end expressions.
         // Refuse an edit that changes the syntax of an initially valid file.
@@ -152,6 +192,10 @@ const Layout = struct {
     breaks: []u8,
     expand: []bool,
     signature: []bool,
+    wrap_before: []u16,
+    wrap_after: []u16,
+    suppress_newlines: []bool,
+    scalar_groups: []bool,
     syntax_tags: ?[]const syn.Node.Tag = null,
     root_count: usize = 0,
 
@@ -161,11 +205,19 @@ const Layout = struct {
             .breaks = try allocator.alloc(u8, tokens.len),
             .expand = try allocator.alloc(bool, tokens.len),
             .signature = try allocator.alloc(bool, tokens.len),
+            .wrap_before = try allocator.alloc(u16, tokens.len),
+            .wrap_after = try allocator.alloc(u16, tokens.len),
+            .suppress_newlines = try allocator.alloc(bool, tokens.len),
+            .scalar_groups = try allocator.alloc(bool, tokens.len),
         };
         @memset(layout.ends, 0);
         @memset(layout.breaks, 0);
         @memset(layout.expand, false);
         @memset(layout.signature, false);
+        @memset(layout.wrap_before, 0);
+        @memset(layout.wrap_after, 0);
+        @memset(layout.suppress_newlines, false);
+        @memset(layout.scalar_groups, false);
         var opens = std.array_list.Managed(usize).init(allocator);
         for (tokens.contents, 0..) |content, i| switch (content) {
             .open_parenthesis, .open_bracket, .open_brace => try opens.append(i),
@@ -178,6 +230,7 @@ const Layout = struct {
                 };
                 if (std.meta.activeTag(tokens.contents[open]) != expected) return error.UnbalancedDelimiters;
                 layout.ends[open] = i;
+                layout.ends[i] = open;
             },
             else => {},
         };
@@ -198,6 +251,16 @@ const Layout = struct {
         defer tree.deinit(allocator);
         layout.syntax_tags = try allocator.dupe(syn.Node.Tag, tree.nodes.items(.tag));
         layout.root_count = tree.roots.len;
+        for (tokens.contents, 0..) |content, i| if (content == .open_bracket) {
+            layout.scalar_groups[i] = true;
+        };
+        for (0..tree.nodes.len) |raw| {
+            const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
+            if (tree.tag(node) == .index_access or tree.tag(node) == .array_type) {
+                const open = @intFromEnum(tree.mainToken(node));
+                if (tokens.contents[open] == .open_bracket) layout.scalar_groups[open] = false;
+            }
+        }
         for (tree.roots, 0..) |root, index| {
             if (index != 0 and (isGlobalDeclaration(tree.tag(root)) or isGlobalDeclaration(tree.tag(tree.roots[index - 1])))) {
                 var start = firstToken(&tree, root);
@@ -251,9 +314,125 @@ const Layout = struct {
                 }
             }
         }
+        const handled = try allocator.alloc(bool, tokens.len);
+        const enclosed = try allocator.alloc(bool, tokens.len);
+        @memset(handled, false);
+        @memset(enclosed, false);
+        // Visit parents before children. Break the weakest operator chain first;
+        // a nested stronger expression gets its own group only if still too wide.
+        var raw = tree.nodes.len;
+        while (raw != 0) {
+            raw -= 1;
+            const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
+            if (operationPriority(tree.tag(node)) == null) continue;
+            const operator = @intFromEnum(tree.mainToken(node));
+            if (handled[operator]) continue;
+            const span = expressionSpan(&tree, node, tokens, layout);
+            const offset = tokens.locations[span.first].offset;
+            const line_begin = if (std.mem.lastIndexOfScalar(u8, source[0..offset], '\n')) |newline| newline + 1 else 0;
+            var indent: usize = 0;
+            while (line_begin + indent < source.len and source[line_begin + indent] == ' ') indent += 1;
+            const prefix = if (enclosed[operator]) indent + 4 else offset - line_begin;
+            const manual = (operator != 0 and tokens.contents[operator - 1] == .new_line) or tokens.contents[operator + 1] == .new_line;
+            if (prefix + flatLength(tokens, source, span.first, span.last + 1) <= line_width and !manual) continue;
+            const grouped = layout.scalar_groups[span.first] and layout.ends[span.first] == span.last;
+            if (enclosed[operator] and !grouped and prefix + flatLength(tokens, source, span.first, span.last + 1) <= line_width) {
+                markOperatorChain(&tree, node, node, tokens, &layout, handled);
+                continue;
+            }
+            if (grouped) {
+                layout.expand[span.first] = true;
+            } else {
+                layout.wrap_before[span.first] += 1;
+                layout.wrap_after[span.last] += 1;
+            }
+            @memset(enclosed[span.first .. span.last + 1], true);
+            markOperatorChain(&tree, node, node, tokens, &layout, handled);
+        }
         return layout;
     }
 };
+
+const ExpressionSpan = struct { first: usize, last: usize };
+
+fn operationPriority(tag: syn.Node.Tag) ?u8 {
+    return switch (tag) {
+        .unwrap_or => 0,
+        .logical_or => 1,
+        .logical_and => 2,
+        .compare_equal, .compare_not_equal, .compare_less, .compare_greater, .compare_less_equal, .compare_greater_equal => 3,
+        .binary_add, .binary_subtract => 4,
+        .binary_multiply, .binary_divide, .binary_modulo => 5,
+        .pipe_expression => 6,
+        else => null,
+    };
+}
+
+fn expressionSpan(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex, tokens: tok.View, layout: Layout) ExpressionSpan {
+    var first = firstToken(tree, node);
+    var last: usize = @intFromEnum(tree.mainToken(node));
+    if (tree.literal(node)) |literal| {
+        last = @intFromEnum(literal.token);
+    } else if (tree.binaryOperation(node)) |binary| {
+        last = @max(last, expressionSpan(tree, binary.rhs, tokens, layout).last);
+        if (tree.tag(node) == .index_access) last = layout.ends[@intFromEnum(tree.mainToken(node))];
+    } else if (tree.unaryOperand(node)) |child| {
+        last = @max(last, expressionSpan(tree, child, tokens, layout).last);
+    } else if (tree.functionCall(node)) |call| {
+        last = layout.ends[@intFromEnum(tree.mainToken(call.input))];
+    } else if (tree.structFieldAccess(node)) |access| {
+        last = @intFromEnum(access.field_token);
+    } else if (tree.choicePayloadAccess(node)) |access| {
+        last = @intFromEnum(access.variant_token);
+    } else if (tree.choiceLiteral(node)) |choice| {
+        last = @intFromEnum(choice.name_token);
+        if (choice.payload) |payload| last = expressionSpan(tree, payload, tokens, layout).last;
+    } else if (tokens.contents[last] == .open_parenthesis or tokens.contents[last] == .open_brace or tokens.contents[last] == .open_bracket) {
+        last = layout.ends[last];
+    }
+    // Scalar brackets are transparent in the syntax tree, but their original
+    // boundaries still belong to the operand being laid out.
+    while (true) {
+        var cursor = first;
+        while (cursor != 0 and (tokens.contents[cursor - 1] == .new_line or tokens.contents[cursor - 1] == .comment)) cursor -= 1;
+        if (cursor == 0 or !layout.scalar_groups[cursor - 1]) break;
+        const close = layout.ends[cursor - 1];
+        if (close > last) {
+            var after = last + 1;
+            while (after < tokens.len and (tokens.contents[after] == .new_line or tokens.contents[after] == .comment)) after += 1;
+            if (after != close) break;
+            last = close;
+        }
+        first = cursor - 1;
+    }
+    while (true) {
+        var cursor = last + 1;
+        while (cursor < tokens.len and (tokens.contents[cursor] == .new_line or tokens.contents[cursor] == .comment)) cursor += 1;
+        if (cursor >= tokens.len or tokens.contents[cursor] != .close_bracket or layout.ends[cursor] < first or !layout.scalar_groups[layout.ends[cursor]]) break;
+        last = cursor;
+    }
+    return .{ .first = first, .last = last };
+}
+
+fn markOperatorChain(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex, root: syn.NodeIndex, tokens: tok.View, layout: *Layout, handled: []bool) void {
+    if (operationPriority(tree.tag(node)) != operationPriority(tree.tag(root))) return;
+    const span = expressionSpan(tree, node, tokens, layout.*);
+    if (node != root and layout.scalar_groups[span.first] and layout.ends[span.first] == span.last) return;
+    const operator = @intFromEnum(tree.mainToken(node));
+    handled[operator] = true;
+    layout.breaks[operator] = @max(layout.breaks[operator], 1);
+    // Move a plain trailing-operator break to the operator's leading side.
+    // A comment after the operator remains attached to that original line.
+    var cursor = operator + 1;
+    while (tokens.contents[cursor] == .new_line) cursor += 1;
+    if (tokens.contents[cursor] != .comment) {
+        for (operator + 1..cursor) |newline| layout.suppress_newlines[newline] = true;
+        if (cursor > operator + 2) layout.breaks[operator] = @max(layout.breaks[operator], 2);
+    }
+    const binary = tree.binaryOperation(node).?;
+    markOperatorChain(tree, binary.lhs, root, tokens, layout, handled);
+    markOperatorChain(tree, binary.rhs, root, tokens, layout, handled);
+}
 
 fn isGlobalDeclaration(tag: syn.Node.Tag) bool {
     return switch (tag) {
@@ -512,7 +691,10 @@ test "formatter is idempotent across core and feature sources" {
             defer allocator.free(source);
             const first = format(allocator, source) catch |err| switch (err) {
                 error.UnknownCharacter, error.InvalidSource, error.UnbalancedDelimiters => continue,
-                else => return err,
+                else => {
+                    std.debug.print("formatter failed for {s}/{s}: {s}\n", .{ root, entry.path, @errorName(err) });
+                    return err;
+                },
             };
             defer allocator.free(first);
             const second = try format(allocator, first);
@@ -606,4 +788,34 @@ test "formatter retains trailing comments when separating declarations" {
         "First:Type=() -- trailing\n-- second documentation\nSecond:Type=()\n",
         "First: Type = () -- trailing\n\n-- second documentation\nSecond: Type = ()\n",
     );
+}
+
+test "formatter wraps long operations with leading operators" {
+    try expectFormat(
+        "result:=base_amount+additional_service_charge+international_delivery_cost-loyalty_discount-promotional_discount\n",
+        "result := [\n    base_amount\n    + additional_service_charge\n    + international_delivery_cost\n    - loyalty_discount\n    - promotional_discount\n]\n",
+    );
+}
+
+test "formatter moves trailing operator breaks to their leading side" {
+    try expectFormat(
+        "result := [first +\nsecond -\nthird]\n",
+        "result := [\n    first\n    + second\n    - third\n]\n",
+    );
+}
+
+test "formatter keeps products compact when breaking an additive expression" {
+    try expectFormat(
+        "result:=first_long_operand*second_long_operand+third_long_operand*fourth_long_operand+fifth_long_operand\n",
+        "result := [\n    first_long_operand * second_long_operand\n    + third_long_operand * fourth_long_operand\n    + fifth_long_operand\n]\n",
+    );
+}
+
+test "formatter preserves signed literals in multiline conditions" {
+    const source = "condition:=first_record.nested_payload.repeated_field_name!=-42 or second_record.nested_payload.repeated_field_name!=-7\n";
+    const result = try format(std.testing.allocator, source);
+    defer std.testing.allocator.free(result);
+    try std.testing.expect(std.mem.indexOf(u8, result, "!= -42") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "!= -7") != null);
+    try expectSameSyntax(std.testing.allocator, source, result);
 }

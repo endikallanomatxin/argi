@@ -1659,3 +1659,19 @@ test "LSP formatting expands unsaved blocks and becomes a no-op after applying e
     defer repeated.deinit();
     try std.testing.expectEqual(@as(usize, 0), repeated.items.len);
 }
+
+test "LSP formatting introduces scalar grouping for long operations" {
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer svc.deinit();
+    const uri = "file:///tmp/argi-format-operation/main.rg";
+    const path = try std.fs.path.resolve(std.testing.allocator, &.{"tests/feature_tests/basics/72_multiline_operations/main.rg"});
+    defer std.testing.allocator.free(path);
+    const source = "result:=base_amount+additional_service_charge+international_delivery_cost-loyalty_discount-promotional_discount";
+    var diagnostics = try svc.openDocument(uri, path, 1, source);
+    defer diagnostics.deinit();
+    var edits = try svc.formatting(uri);
+    defer edits.deinit();
+    try std.testing.expectEqual(@as(usize, 1), edits.items.len);
+    try std.testing.expectEqual(@as(u32, @intCast(source.len)), edits.items[0].range.end.character);
+    try std.testing.expectEqualStrings("result := [\n    base_amount\n    + additional_service_charge\n    + international_delivery_cost\n    - loyalty_discount\n    - promotional_discount\n]\n", edits.items[0].new_text);
+}
