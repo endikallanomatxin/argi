@@ -21,4 +21,14 @@ main(.system: System) -> !Void = ..ok Void() := {
     put(.self = $&map, .key = ~empty, .value = 0, .allocator = allocator)!
     if contains(.self = &map, .key = "").ok == false { abort }
     if length(.self = &map).count != 2 { abort }
+    found :: ?&UIntNative = ..none
+    {
+        query ::= format(.value = "café", .allocator = allocator)!
+        found = get_ro_ref(.self = &map, .key = as_view(.self = &query).view).result
+    }
+    match found {
+        ..none { abort }
+        ..some borrowed { if borrowed.value&!= 42 { abort } }
+    }
+
 }
