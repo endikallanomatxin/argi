@@ -233,6 +233,14 @@ feature first.
   Bound virtual abstract identities include associated type/value arguments;
   safety implementation registries must keep those identities separate.
 
+- Moving `for ~ item in collection` loops consume through `OwningIterable`.
+  Global semantizing wraps the iterator declaration and loop in one lexical
+  block; synthetic iterator owners inherit the source item's captured cleanup
+  arguments. Loop transfers clean only scopes inside the current loop boundary,
+  retaining the iterator until loop exit. Consuming array iterators keep an
+  initialized interval over their private allocation; destroy undelivered
+  structural elements through lexical owners before marking storage empty.
+
 - Pipes preserve one evaluation of computed operands and retain lvalue storage.
   Concrete and parameterized body lowering both reserve private deferred
   bindings in the enclosing lexical scope. Compiler-generated `value_sequence`

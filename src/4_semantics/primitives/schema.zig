@@ -124,7 +124,7 @@ test "C scalar aliases follow the target data model" {
 
 pub const PointerMutability = enum(u8) { read_only, read_write };
 pub const Mutability = enum(u8) { constant, variable };
-pub const ForMode = enum(u8) { value, borrow, mut_borrow };
+pub const ForMode = enum(u8) { value, borrow, mut_borrow, move };
 pub const MatchCaseMode = enum(u8) { value, borrow, mut_borrow, move };
 pub const BinaryOperator = enum(u8) { addition, subtraction, multiplication, division, modulo };
 pub const ComparisonOperator = enum(u8) { equal, not_equal, less_than, greater_than, less_than_or_equal, greater_than_or_equal };

@@ -6,6 +6,7 @@ allocation, capabilities, ownership and nominal errors throughout.
 ## Development order
 
 1. Collections: priority queues for owning elements and owner-aware algorithms.
+   Generic function bodies still need for-loop lowering, including consuming loops.
 2. Streams: byte-level limited adapters and owning line iteration.
 3. Filesystem/tools: path normalization, directory walking and CLI options.
 4. More: hex/Base64, JSON/CSV, then compression/archive consumers.

@@ -213,6 +213,7 @@ pub fn mutabilityFromSyntax(value: syn.Mutability) primitives.Mutability {
 
 pub fn forModeFromSyntax(value: syn.ForMode) primitives.ForMode {
     return switch (value) {
+        .move => .move,
         .value => .value,
         .borrow => .borrow,
         .mut_borrow => .mut_borrow,

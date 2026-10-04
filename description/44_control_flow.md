@@ -79,14 +79,21 @@ mode selects the corresponding iterable contract:
 | `for item in value` | `Iterable#(.t: T)` | `T` |
 | `for & item in value` | `ROPointerIterable#(.t: T)` | `&T` |
 | `for $& item in value` | `RWPointerIterable#(.t: T)` | `$&T` |
+| `for ~ item in value` | `OwningIterable#(.t: T)` | owned `T` |
 
-> [!IDEA]
-> `for ~ item in value` could transfer each element out of a collection.
-> How it consumes the collection, including when iteration stops early,
-> remains open.
+`for ~ item in value` consumes the complete collection once through
+`to_owning_iterator(.value: Self)`. The source becomes moved, including for an
+empty collection. The iterator owns all undelivered elements; each `next`
+transfers one element to the body binding. The binding has ordinary lexical
+cleanup and may itself be moved elsewhere. `continue` cleans the current body,
+while `break`, `return`, and error propagation additionally destroy remaining
+iterator-owned elements and release its storage. Iterator cleanup happens before
+leaving the loop's scope. DynamicArray and Deque preserve logical element order.
+No backing allocation or element copy is needed for consuming traversal.
 
 Each contract creates an `Iterator#(.t: element_type)` through
-`to_iterator`, `to_ro_pointer_iterator`, or `to_rw_pointer_iterator`,
+`to_iterator`, `to_ro_pointer_iterator`, `to_rw_pointer_iterator`, or
+`to_owning_iterator`,
 respectively. A `for` loop accepts an iterable, rather than an iterator
 directly.
 

@@ -137,6 +137,7 @@ pub const Node = struct {
         for_value,
         for_borrow,
         for_mut_borrow,
+        for_move,
         while_statement,
         match_statement,
         match_case_value,
@@ -305,7 +306,7 @@ pub const MatchStatement = struct { value: NodeIndex, cases: []const NodeIndex }
 pub const MatchCase = struct { variant_token: TokenIndex, payload_name: ?TokenIndex, body: NodeIndex, mode: MatchCaseMode };
 pub const MatchCaseMode = enum { value, borrow, mut_borrow, move };
 pub const ForStatement = struct { name_token: TokenIndex, iterable: NodeIndex, body: NodeIndex, mode: ForMode };
-pub const ForMode = enum { value, borrow, mut_borrow };
+pub const ForMode = enum { value, borrow, mut_borrow, move };
 pub const WhileStatement = struct { condition: NodeIndex, body: NodeIndex };
 pub const StructFieldAccess = struct { value: NodeIndex, field_token: TokenIndex };
 pub const ChoicePayloadAccess = struct { value: NodeIndex, variant_token: TokenIndex };
@@ -747,6 +748,7 @@ pub const FileSyntaxTree = struct {
             .for_value => .value,
             .for_borrow => .borrow,
             .for_mut_borrow => .mut_borrow,
+            .for_move => .move,
             else => return null,
         };
         const extra = tree.extraData(ForExtra, tree.data(node).extra);

@@ -126,6 +126,7 @@ test "compact syntaxing preserves adversarial grammar distinctions" {
         .reach_directive,
         .reach_alternative,
     });
+    try expectTags("tests/feature_tests/control_flow/17_for_owning/main.rg", &.{.for_move});
     try expectTags("tests/feature_tests/control_flow/04_for_dynamic_array/main.rg", &.{.for_value});
     try expectTags("tests/feature_tests/control_flow/13_for_borrowed_array/main.rg", &.{.for_borrow});
     try expectTags("tests/feature_tests/control_flow/14_for_mut_borrowed_dynamic_array/main.rg", &.{.for_mut_borrow});
