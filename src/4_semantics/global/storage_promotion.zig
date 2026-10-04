@@ -183,6 +183,7 @@ const Pass = struct {
         defer self.receiving_binding = previous_receiver;
         if (content == .assignment) self.receiving_binding = content.assignment.binding;
         if (content == .struct_field_store) self.receiving_binding = self.root(content.struct_field_store.struct_ptr);
+        if (content == .array_store) self.receiving_binding = self.root(content.array_store.array_ptr);
         if (content == .pointer_assignment) self.receiving_binding = self.root(content.pointer_assignment.pointer);
         if (content == .function_call) self.graph.retained_call_owners.items[@intFromEnum(node)] = self.receiving_binding;
         if (content == .binding_declaration) {
@@ -242,6 +243,9 @@ const Pass = struct {
                 try self.depend(assignment.value);
             },
             .struct_field_store => |store| if (self.root(store.struct_ptr) == binding) {
+                try self.depend(store.value);
+            },
+            .array_store => |store| if (self.root(store.array_ptr) == binding) {
                 try self.depend(store.value);
             },
             .pointer_assignment => |store| if (self.root(store.pointer) == binding) {

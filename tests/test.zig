@@ -9196,6 +9196,30 @@ test "feature_tests/basics/82_fallible_main_explicit" {
     try runExpect(path, 0);
 }
 
+test "feature_tests/ownership/338X_caller_storage_overwritten_cleanup" {
+    try buildExpectFail("tests/feature_tests/ownership/338X_caller_storage_overwritten_cleanup", "retained storage cleanup depends on a root that has ended");
+}
+
+test "feature_tests/ownership/339X_caller_storage_field_cleanup_borrow" {
+    try buildExpectFail("tests/feature_tests/ownership/339X_caller_storage_field_cleanup_borrow", "retained storage cleanup depends on a root that has ended");
+}
+
+test "feature_tests/ownership/340_caller_storage_field_cleanup" {
+    const path = "tests/feature_tests/ownership/340_caller_storage_field_cleanup";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/ownership/341X_caller_storage_array_cleanup_borrow" {
+    try buildExpectFail("tests/feature_tests/ownership/341X_caller_storage_array_cleanup_borrow", "retained storage cleanup depends on a root that has ended");
+}
+
+test "feature_tests/ownership/342_caller_storage_array_cleanup" {
+    const path = "tests/feature_tests/ownership/342_caller_storage_array_cleanup";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
 test "feature_tests/ownership/321_caller_storage_cleanup" {
     try expectSuccessfulBuild("tests/feature_tests/ownership/321_caller_storage_cleanup");
     try runExpect("tests/feature_tests/ownership/321_caller_storage_cleanup", 0);

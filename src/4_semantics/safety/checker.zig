@@ -929,6 +929,11 @@ pub const SafetyChecker = struct {
     ) !?facts.ValueFacts {
         const engine = self.active_summaries orelse return null;
         const summary = engine.summaryFor(callee) orelse return null;
+        const previous_receiver = self.receiving_binding;
+        if (call_node) |node| if (self.graph.retained_call_owners.items[@intFromEnum(node)]) |owner| {
+            self.receiving_binding = owner;
+        };
+        defer self.receiving_binding = previous_receiver;
         const previous_retaining = self.retaining_call;
         self.retaining_call = false;
         if (call_node) |node| for (self.graph.retained_storage.items) |frame| {
@@ -3161,6 +3166,8 @@ pub const SafetyChecker = struct {
         if (self.graph.retainedCleanup(id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
         const storage = facts.Place{ .root = cleanup.binding };
+        // Overwriting a receiving value leaves earlier frames alive until its
+        // scope ends. Every frame keeps its own delayed-cleanup obligations.
         for (state.tracker.roots.items) |root| if (root.caller_frame_owner == @intFromEnum(cleanup.binding)) {
             const source = self.graph.binding(cleanup.binding).source;
             for (root.caller_frame_dependencies) |dependency| {
@@ -3173,7 +3180,6 @@ pub const SafetyChecker = struct {
             if (self.valueAtPlace(state, storage)) |value| {
                 if (valueDependsOnDeadRoot(value, state)) try self.report(source, "retained storage cleanup depends on a root that has ended", .{});
             }
-            break;
         };
         // Destroy the receiver before the frame so its destructor can still
         // inspect returned references. Borrowed copies do not extend this scope.

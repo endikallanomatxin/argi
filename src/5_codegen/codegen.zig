@@ -242,7 +242,8 @@ pub const CodeGenerator = struct {
         const active = c.LLVMBuildAlloca(builder, c.LLVMInt1Type(), "retained.call.active");
         _ = c.LLVMBuildStore(builder, c.LLVMConstInt(c.LLVMInt1Type(), 0, 0), active);
         _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), 1, 0), active);
-        try self.retained_calls.append(self.allocator, .{ .callee = id, .storage = storage, .active = active, .owner = self.retained_owner });
+        const owner = if (self.active_node) |node| self.graph.retained_call_owners.items[@intFromEnum(node)] orelse self.retained_owner else self.retained_owner;
+        try self.retained_calls.append(self.allocator, .{ .callee = id, .storage = storage, .active = active, .owner = owner });
         return storage;
     }
 
