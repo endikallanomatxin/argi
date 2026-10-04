@@ -9773,3 +9773,8 @@ test "feature_tests/collections/145_owned_string_view_lookup" {
 test "feature_tests/collections/146X_owned_view_after_put" {
     try buildExpectFail("tests/feature_tests/collections/146X_owned_view_after_put", "root that has ended");
 }
+
+test "feature_tests/numbers/12_float_rounding" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/12_float_rounding");
+    try runExpect("tests/feature_tests/numbers/12_float_rounding", 0);
+}

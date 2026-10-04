@@ -24,3 +24,10 @@ infinity or NaN. `float_sign_bit` reports the stored sign, including negative
 zero and signed NaNs. `is_finite`, `is_infinite` and `is_nan` provide Boolean
 queries. These functions inspect the IEEE representation of `Float16`,
 `Float32` and `Float64`, preserving distinctions that comparisons would lose.
+
+`truncate_float`, `floor_float`, and `ceil_float` take the same explicit `.t`
+and `.value`. Truncation removes the fractional part toward zero, floor rounds
+toward negative infinity, and ceil rounds toward positive infinity. They
+preserve nonfinite encodings and negative zero. Truncation of negative values
+between zero and minus one returns negative zero. Large integral values remain
+unchanged; conversion through an integer type is not required.
