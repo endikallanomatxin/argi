@@ -9017,13 +9017,16 @@ fn checkPythonFixture(path: []const u8) !void {
     defer allocator.free(repo);
     const fixture = try std.fs.path.join(allocator, &.{ repo, path });
     defer allocator.free(fixture);
+    const app = if (@import("builtin").os.tag == .windows) "app.exe" else "app";
+    const executable = try std.fs.path.join(allocator, &.{ root, app });
+    defer allocator.free(executable);
     for (0..2) |_| {
-        const built = try runChildInCwd(&.{ argi, "build", fixture, "--output", "app", "--link-file", runtime, "--link-file", library, "--emit-llvm", "app.ll" }, root);
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--output", app, "--link-file", runtime, "--link-file", library, "--emit-llvm", "app.ll" }, root);
         defer allocator.free(built.stdout);
         defer allocator.free(built.stderr);
         if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
         try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
-        const executed = try runChildInCwd(&.{"./app"}, root);
+        const executed = try runChildInCwd(&.{executable}, root);
         defer allocator.free(executed.stdout);
         defer allocator.free(executed.stderr);
         if (executed.term != .exited or executed.term.exited != 0) std.debug.print("{s}", .{executed.stderr});
@@ -9069,4 +9072,11 @@ test "feature_tests/python/09_methods_iteration" {
 
 test "feature_tests/python/10_exceptions" {
     try checkPythonFixture("tests/feature_tests/python/10_exceptions");
+}
+
+test "feature_tests/python/11_numeric_buffers" {
+    try checkPythonFixture("tests/feature_tests/python/11_numeric_buffers");
+}
+test "feature_tests/python/12X_numeric_readonly" {
+    try buildExpectFail("tests/feature_tests/python/12X_numeric_readonly", "no overload of 'copy_numeric' accepts arguments");
 }

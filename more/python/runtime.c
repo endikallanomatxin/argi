@@ -45,7 +45,10 @@ static void capture_error(struct argi_python *context) {
        all details before releasing the exception and clear secondary errors. */
     PyObject *exception = PyErr_GetRaisedException();
     if (!exception) { native_error(context, "Python operation failed without an exception"); return; }
-    const char *type = Py_TYPE(exception)->tp_name;
+    /* __str__ and traceback formatting can execute arbitrary Python. Keep the
+       original type alive even if that code changes the exception's class. */
+    PyObject *type_owner = Py_NewRef((PyObject *)Py_TYPE(exception));
+    const char *type = ((PyTypeObject *)type_owner)->tp_name;
     PyObject *message = PyObject_Str(exception);
     if (!message) { PyErr_Clear(); message = PyUnicode_FromString("<exception message unavailable>"); }
     PyObject *traceback = PyImport_ImportModule("traceback"), *lines = NULL, *formatted = NULL;
@@ -67,7 +70,7 @@ static void capture_error(struct argi_python *context) {
         replace_error(&context->error, make_error(type, strlen(type), message_text, (size_t)message_length,
             traceback_text, (size_t)traceback_length));
     } else native_error(context, "Cannot encode Python exception details");
-    Py_XDECREF(message); Py_XDECREF(formatted); Py_XDECREF(lines); Py_XDECREF(traceback); Py_DECREF(exception);
+    Py_XDECREF(message); Py_XDECREF(formatted); Py_XDECREF(lines); Py_XDECREF(traceback); Py_DECREF(exception); Py_DECREF(type_owner);
     PyErr_Clear();
 }
 static char *c_text(struct argi_python *context, const uint8_t *bytes, uintptr_t length) {
@@ -403,4 +406,75 @@ int32_t _argi_python_exception_copy(uintptr_t address, int32_t part, uint8_t *de
     if (!error || part < 0 || part > 2 || length < error->lengths[part]) return -1;
     if (error->lengths[part]) memcpy(destination, error->parts[part], error->lengths[part]);
     return 0;
+}
+
+PyObject *_argi_python_numeric_storage(uintptr_t address, const uint8_t *source, uintptr_t count, uintptr_t itemsize) {
+    struct argi_python *context = (struct argi_python *)address;
+    if (!guard(context)) return NULL;
+    if (!itemsize || itemsize > PY_SSIZE_T_MAX || count > PY_SSIZE_T_MAX / itemsize) {
+        PyErr_SetString(PyExc_OverflowError, "Numeric input is too large"); capture_error(context); return NULL;
+    }
+    if (count && !source) { PyErr_SetString(PyExc_ValueError, "Numeric source has no storage"); capture_error(context); return NULL; }
+    /* Python owns the copy; no exporter can retain an address in Argi storage. */
+    PyObject *result = PyByteArray_FromStringAndSize((const char *)source, (Py_ssize_t)(count * itemsize));
+    if (!result) capture_error(context);
+    return result;
+}
+static int numeric_format_matches(const char *format, int32_t kind) {
+    if (!format || !*format) return 0;
+    uint16_t marker = 1;
+    int little_endian = *(uint8_t *)&marker;
+    if (*format == '<' || *format == '>' || *format == '!') {
+        if ((*format == '<') != little_endian) return 0;
+        format++;
+    } else if (*format == '@' || *format == '=') format++;
+    if (!*format || format[1]) return 0;
+    if (kind == 0) return strchr("bhilqn", *format) != NULL;
+    if (kind == 1) return strchr("BHILQN", *format) != NULL;
+    if (kind == 2) return *format == 'f' || *format == 'd';
+    return 0;
+}
+int32_t _argi_python_buffer_copy(uintptr_t address, PyObject *object, uint8_t *destination,
+        uintptr_t capacity, uintptr_t itemsize, int32_t kind, uintptr_t *copied) {
+    struct argi_python *context = (struct argi_python *)address;
+    *copied = 0;
+    if (!guard(context)) return -1;
+    Py_buffer buffer;
+    if (PyObject_GetBuffer(object, &buffer, PyBUF_STRIDES | PyBUF_FORMAT)) { capture_error(context); return -1; }
+    int result = -1;
+    if (buffer.ndim != 1 || !buffer.shape || buffer.shape[0] < 0 ||
+        buffer.itemsize <= 0 || (uintptr_t)buffer.itemsize != itemsize ||
+        !numeric_format_matches(buffer.format, kind) ||
+        (buffer.suboffsets && buffer.suboffsets[0] >= 0)) {
+        PyErr_SetString(PyExc_TypeError, "Expected a one-dimensional buffer with the matching native numeric type");
+        goto finished;
+    }
+    Py_ssize_t count = buffer.shape[0];
+    if (count > PY_SSIZE_T_MAX / buffer.itemsize || buffer.len != count * buffer.itemsize) {
+        PyErr_SetString(PyExc_BufferError, "Invalid numeric buffer extent"); goto finished;
+    }
+    if ((uintptr_t)count > capacity) {
+        PyErr_SetString(PyExc_BufferError, "Numeric destination is too small"); goto finished;
+    }
+    Py_ssize_t stride = buffer.strides ? buffer.strides[0] : buffer.itemsize;
+    if (count > 1 && ((stride > 0 && stride > PY_SSIZE_T_MAX / (count - 1)) ||
+        (stride < 0 && stride < PY_SSIZE_T_MIN / (count - 1)))) {
+        PyErr_SetString(PyExc_BufferError, "Numeric buffer stride is too large"); goto finished;
+    }
+    if (count && !destination) { PyErr_SetString(PyExc_ValueError, "Numeric destination has no storage"); goto finished; }
+    if (count && !buffer.buf) { PyErr_SetString(PyExc_BufferError, "Numeric buffer has no storage"); goto finished; }
+    /* Metadata is fully checked before touching initialized destination slots.
+       Strided/reversed inputs follow the exporter's logical element order. */
+    if (count && stride == buffer.itemsize) {
+        memcpy(destination, buffer.buf, (size_t)buffer.len);
+    } else {
+        for (Py_ssize_t i = 0; i < count; i++)
+            memcpy(destination + (size_t)i * itemsize, (uint8_t *)buffer.buf + i * stride, itemsize);
+    }
+    *copied = (uintptr_t)count;
+    result = 0;
+finished:
+    if (result) capture_error(context);
+    PyBuffer_Release(&buffer);
+    return result;
 }

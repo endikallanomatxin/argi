@@ -197,3 +197,40 @@ Argi, or prints `[[native]]` manifest entries. Neither module imports nor the
 compiler perform implicit Python discovery. An adapter prepared this way uses
 the helper's Python executable as its default program name, including a virtual
 environment; explicit non-default program names continue to override it.
+
+## Numeric buffers and NumPy
+
+`numeric_buffer(.self: &Python, .values: ArrayViewRO<T> or ArrayView<T>)` copies
+initialized numeric elements into a Python-owned bytearray in one operation.
+It supports Int8/16/32/64, UInt8/16/32/64/Native, and Float32/64. Native byte order
+and representation are preserved. Empty inputs need no element address;
+byte-count overflow is rejected before reading memory.
+
+`numeric_array(.self, .values)` imports NumPy and calls `frombuffer` with the
+matching native dtype. The array keeps the copied Python bytearray alive and is
+writable. It has no dependency on the Argi input's lifetime. NumPy is an optional
+Python package, with no NumPy headers or compiler hooks required.
+
+`copy_numeric(.self: &Object, .destination: ArrayView<T>)` copies a Python buffer
+into an already-initialized writable Argi view and returns the copied element
+count in an Errable. It requires a one-dimensional scalar numeric buffer with
+matching signedness/type, width, and native byte order. Read-only Python buffers
+are accepted; strided and reversed buffers copy in logical element order.
+Insufficient capacity, incompatible formats, nonnative byte order, indirect
+buffers, and invalid extents fail before any destination slot is changed.
+Slots beyond the copied prefix remain unchanged. No implicit numeric conversion,
+flattening, byte swapping, or safe-reference construction occurs.
+
+These operations use the [CPython buffer protocol](https://docs.python.org/3/c-api/buffer.html).
+NumPy arrays retain their copied storage through
+[`frombuffer`](https://numpy.org/doc/stable/reference/generated/numpy.frombuffer.html).
+
+### Sharing Argi storage
+
+Borrowed buffers without copying require an additional foreign-lifetime design.
+Python can retain an exporter in globals, callbacks, or another object's state
+beyond the lifetime of an Argi handle. A lexical borrow on that handle alone
+cannot describe those hidden references. This API therefore keeps all exported
+storage owned by Python and imports data into existing Argi owners through
+checked copies. Transferring ownership of an allocation or safely sharing an
+owner remains a separate design decision.

@@ -80,8 +80,8 @@ path as `.program_name` and leave `.home` empty. Explicit `.home` is for selecti
 an installation root, not a virtual environment. `PYTHONPATH` and site settings
 retain their usual Python behavior.
 
-`examples/numpy` calls `numpy.arange`, converts the array with `tolist`, and
-reads its elements from Argi. Build it with the same native dependencies and
+`examples/numpy` copies an Argi numeric array into NumPy, calls an array method,
+and copies the result back in bulk. Build it with the same native dependencies and
 install NumPy in the selected Python environment first.
 
 ## Validation
@@ -120,3 +120,9 @@ python3 .github/scripts/python_smoke.py --argi zig-out/bin/argi --numpy
 
 Pass `--include-dir` and `--library` when the selected installation needs explicit
 headers or library paths. `--numpy` requires NumPy in that Python environment.
+
+`numeric_buffer` exposes the same Python-owned copy without requiring NumPy.
+`copy_numeric` accepts one-dimensional typed buffers, including strided inputs,
+and checks type/width/byte order and capacity before writing initialized Argi
+storage. For writable fixed-array destinations use
+`array_view(.array = $&owner).view`. The API never lends an Argi allocation to Python's object graph.
