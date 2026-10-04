@@ -10,10 +10,13 @@ The implemented foundations include:
   and allocator composition.
 - Collections and text: arrays, array views, dynamic arrays, Deque with value
   and borrowed iteration, copyable and owning hash maps and sets with iteration,
-  strings with shared ASCII helpers and borrowed whitespace tokenization, borrowed bit sets, minimum priority queues, and collection operations. Strict UTF-8 operations provide checked scalars,
+  strings with shared ASCII helpers and borrowed whitespace tokenization,
+  borrowed and owning bit sets with algebra, minimum priority queues, and
+  collection operations. Strict UTF-8 operations provide checked scalars,
   bounded encoding, decoding cursors, and validated borrowed text iteration.
 - Numbers: public integer limits, checked arithmetic and rounding, unsigned
-  bit utilities, IEEE float classification and rounding, and numeric parsing/formatting.
+  bit utilities, IEEE float classification and rounding, and numeric
+  parsing/formatting.
 - Binary data: checked unsigned endian reads and writes, and borrowed byte
   cursors whose positions advance only after successful operations, plus byte
   comparison/search and checked borrowed string/array subranges.
@@ -34,7 +37,8 @@ its `.rg` implementation and registered feature tests for the supported
 operations. Language contracts belong in `description/`; planned library
 extensions and implementation milestones belong in the
 [0.3 preparation](../plan/0.3.md) and
-[0.4 roadmap](../plan/0.4.md).
+[0.4 roadmap](../plan/0.4.md). The dependency order for library extensions
+is maintained in [the foundations plan](../plan/core_foundations.md).
 Exploratory possibilities that are not scheduled remain in
 [the library ideas inventory](library_ideas.txt), alongside existing module
 sketches.
