@@ -9086,3 +9086,13 @@ test "feature_tests/functions/32_generic_view_dispatch_order" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/system/71_system_entropy" {
+    const path = "tests/feature_tests/system/71_system_entropy";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/system/72X_entropy_readonly" {
+    try buildExpectFail("tests/feature_tests/system/72X_entropy_readonly", "no overload of 'fill_random_bytes' accepts arguments");
+}

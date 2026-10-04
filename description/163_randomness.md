@@ -55,5 +55,20 @@ consuming state. A rejection may consume further draws; the next operation
 continues after the successful attempt.
 
 `Pcg32` has no global default instance or implicit seed. The `System.rand_gen`
-capability placeholder remains separate from deterministic state; obtaining
+capability remains separate from deterministic state; obtaining
 operating-system entropy is an independent capability operation.
+
+## System entropy
+
+`fill_random_bytes(.self: $&RandomNumberGenerator, .destination: ArrayView<UInt8>)`
+uses `system.rand_gen` to fill initialized writable storage. It returns
+`Errable<Void, entropy_unavailable>`, performs no allocation, and never falls
+back to a deterministic generator. An empty view succeeds without an OS call.
+A failed request may have changed a prefix; discard the whole requested range.
+
+Linux and macOS use `getentropy` in at most 256-byte requests. Windows uses
+`BCryptGenRandom` with the system-preferred provider. The capability privately
+borrows FFI from entry initialization; callers need the entropy capability,
+not a separate foreign-call parameter. Requests may block while the OS source
+initializes. This operation produces bytes, not bounded distributions; use
+explicit algorithms for sampling or an explicit seed for deterministic PRNGs.
