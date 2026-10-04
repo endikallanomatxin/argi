@@ -9696,3 +9696,9 @@ test "feature_tests/numbers/09_parse_uintnative" {
     try expectSuccessfulBuild("tests/feature_tests/numbers/09_parse_uintnative");
     try runExpect("tests/feature_tests/numbers/09_parse_uintnative", 0);
 }
+
+test "feature_tests/system/86_word_count_consumer" {
+    try expectSuccessfulBuild("tests/feature_tests/system/86_word_count_consumer");
+    try runExpect("tests/feature_tests/system/86_word_count_consumer", 0);
+    try expectSuccessfulBuild("examples/word_count");
+}

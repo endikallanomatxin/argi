@@ -18,6 +18,8 @@ System and tooling
 Collections and values
 
 - Treaps and other ordered collections whose use cases justify an extra type.
+- Allocation-free StringView queries and updates for owning String hash keys.
+- Portable bounded path joining for directory consumers.
 - Unicode normalization, case folding, and grapheme segmentation beyond strict
   UTF-8 scalar decoding and validated text views.
 - Numeric utilities such as reusable rounding contracts.
