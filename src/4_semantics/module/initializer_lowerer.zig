@@ -274,6 +274,8 @@ const Context = struct {
     }
 
     fn lowerDeferredDefaults(self: *Context, range_start: u32, range_len: u32, struct_node: syn.NodeIndex, stats: *Stats) !void {
+        // TODO: Bind the function's reached capabilities for effectful output
+        // defaults; an error default currently needs an explicit trace field.
         const semantic_field_base = self.graph.fields.items.len + self.graph.structural_fields.items.len;
         const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;
         if (literal.fields.len != range_len) return error.InterfaceFieldCountMismatch;

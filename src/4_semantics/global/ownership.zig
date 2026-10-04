@@ -515,7 +515,14 @@ pub const Resolver = struct {
         if (record.cleanup_arguments) |input| {
             cleanup_context.global.assumed_fields = self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields;
         }
-        const descriptor = try self.buildAutoDeinit(binding, target, record.ty, cleanup_context, module_index);
+        // Pointer-bearing locals reserve a cleanup position even without a
+        // source destructor. A later caller-frame transformation can attach
+        // retained storage without disturbing lexical destruction order.
+        const descriptor = (try self.buildAutoDeinit(binding, target, record.ty, cleanup_context, module_index)) orelse
+            if (@import("storage_promotion.zig").hasPointers(self.graph, record.ty, 0))
+                global_sg.AutoDeinit{ .binding = binding, .deinit_fn = null }
+            else
+                null;
         var cleanup_node: ?global_sg.GlobalNodeId = null;
         if (descriptor) |resolved| {
             const auto_id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));

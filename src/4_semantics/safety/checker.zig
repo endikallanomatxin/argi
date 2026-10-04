@@ -150,6 +150,8 @@ pub const SafetyChecker = struct {
         }
     };
 
+    retaining_call: bool = false,
+    receiving_binding: ?graph_mod.GlobalBindingId = null,
     allocator: std.mem.Allocator,
     diagnostics: *diagnostics.Diagnostics,
     graph: *graph_mod.GlobalSemanticGraph,
@@ -198,6 +200,16 @@ pub const SafetyChecker = struct {
         var inference = summary_infer.Infer.init(inference_allocator, self.graph, &engine);
         defer inference.deinit();
         inference.profile_io = self.profile_io;
+        // Provisional summaries distinguish borrowing a caller value from
+        // retaining its slot. Discover bounded frames from those dependencies,
+        // then infer final summaries with the retained storage identities.
+        try inference.inferSafetySummariesFixedPoint();
+        try @import("../global/storage_promotion.zig").prepare(inference_allocator, self.graph, self.diagnostics, &engine, &inference);
+        inference.deinit();
+        inference = summary_infer.Infer.init(inference_allocator, self.graph, &engine);
+        inference.profile_io = self.profile_io;
+        engine.deinit();
+        engine = summary_engine.Engine.init(inference_allocator);
         const inference_start = profile.timestamp(self.profile_io);
         try inference.inferSafetySummariesFixedPoint();
         profile.accumulate(self.profile_io, inference_start, &self.stats.summary_inference_ns);
@@ -400,6 +412,9 @@ pub const SafetyChecker = struct {
             const node = self.graph.nodes.items[@intFromEnum(node_id)];
             switch (node.content) {
                 .binding_declaration => |binding| {
+                    const previous_receiver = self.receiving_binding;
+                    self.receiving_binding = binding;
+                    defer self.receiving_binding = previous_receiver;
                     const record = self.graph.bindings.items[@intFromEnum(binding)];
                     const storage = facts.Place{ .root = binding };
                     try self.beginLexicalStorage(state, storage);
@@ -410,6 +425,9 @@ pub const SafetyChecker = struct {
                     try self.setPlace(state, .{ .root = binding }, if (record.initialization != null and !record.deferred_initialization) .initialized else .deinitialized, value);
                 },
                 .assignment => |assignment| {
+                    const previous_receiver = self.receiving_binding;
+                    self.receiving_binding = assignment.binding;
+                    defer self.receiving_binding = previous_receiver;
                     const binding = self.graph.binding(assignment.binding);
                     const storage = facts.Place{ .root = assignment.binding };
                     const previous_state = self.initializednessAtPlace(state, storage);
@@ -911,6 +929,15 @@ pub const SafetyChecker = struct {
     ) !?facts.ValueFacts {
         const engine = self.active_summaries orelse return null;
         const summary = engine.summaryFor(callee) orelse return null;
+        const previous_retaining = self.retaining_call;
+        self.retaining_call = false;
+        if (call_node) |node| for (self.graph.retained_storage.items) |frame| {
+            if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, frame.calls, node) != null) {
+                self.retaining_call = true;
+                break;
+            }
+        };
+        defer self.retaining_call = previous_retaining;
         var call_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
         defer call_capabilities.deinit();
         const previous_capabilities = self.active_fresh_capabilities;
@@ -1393,6 +1420,22 @@ pub const SafetyChecker = struct {
                 for (path.projections) |projection| target = try self.project(target, projection);
                 if (self.valueAtPlace(state, target)) |stored| value = try self.reconstructPlaceValue(state, target, stored);
             };
+            for (path.projections) |projection| if (projection == .dereference) {
+                var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
+                defer provenances.deinit();
+                try self.collectOpaqueProvenancesCarriedBy(state, arguments[path.input_index], &provenances);
+                var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+                try dependencies.appendSlice(value.dependencies);
+                for (provenances.items) |provenance| for (state.opaque_storages.items) |domain| {
+                    if (!domain.storage.eql(provenance.storage)) continue;
+                    for (domain.hidden_dependencies) |dependency| {
+                        if (!self.opaqueDependencyIsInternalToStorage(state, domain.storage, dependency))
+                            try appendDependencyFact(&dependencies, .{ .root = dependency });
+                    }
+                };
+                value.dependencies = try dependencies.toOwnedSlice();
+                break;
+            };
             if (value.referenced_place) |storage| {
                 // A capability authorizes a call only while its value remains
                 // initialized. Unlike an output pointer, it is never merely a
@@ -1403,8 +1446,9 @@ pub const SafetyChecker = struct {
             // Summary paths select nested payloads, but ownership can live on
             // the containing choice. Keep that envelope when checking roots
             // that exist only on the selected success branch.
-            if (valueDependsOnDeadRootWithOwners(value, owners, state))
+            if (valueDependsOnDeadRootWithOwners(value, owners, state)) {
                 try self.report(source, "reference depends on a root that has ended", .{});
+            }
         }
         return self.diagnostics.list.items.len == before;
     }
@@ -1713,7 +1757,11 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !facts.ValueFacts {
         if (outputs.len == 0) return .{};
-        if (outputs.len == 1) return self.instantiateOutput(outputs[0], arguments, state);
+        if (outputs.len == 1) {
+            const value = try self.instantiateOutput(outputs[0], arguments, state);
+            try self.bindRetainedDependencies(value, state);
+            return value;
+        }
         var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator);
         defer fresh_roots.deinit();
         var fresh_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
@@ -1727,7 +1775,28 @@ pub const SafetyChecker = struct {
             aggregate = try self.mergeValueFacts(aggregate, value.*);
         }
         aggregate.fields = fields;
+        try self.bindRetainedDependencies(aggregate, state);
         return aggregate;
+    }
+
+    fn bindRetainedDependencies(self: *SafetyChecker, value: facts.ValueFacts, state: *FunctionState) !void {
+        const receiver = self.receiving_binding orelse return;
+        var dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer dependencies.deinit();
+        try collectDependencyRoots(value, &dependencies);
+        // Keep frame obligations independently of the receiving value. A move
+        // can clear that Place before its original scope runs frame cleanup.
+        for (dependencies.items) |id| {
+            const root = &state.tracker.roots.items[@intFromEnum(id)];
+            if (root.caller_frame_owner != @intFromEnum(receiver)) continue;
+            var external = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            try external.appendSlice(root.caller_frame_dependencies);
+            for (dependencies.items) |dependency| {
+                if (state.tracker.roots.items[@intFromEnum(dependency)].caller_frame_owner == @intFromEnum(receiver)) continue;
+                try appendRootFact(&external, dependency);
+            }
+            root.caller_frame_dependencies = try external.toOwnedSlice();
+        }
     }
 
     fn instantiateOutput(
@@ -1916,7 +1985,16 @@ pub const SafetyChecker = struct {
                         input_storage = true;
                         break;
                     };
-                    if (!input_storage) root.state = .conditional;
+                    // Caller frame storage exists independently of the selected payload.
+                    var retained_storage = false;
+                    var fresh_iterator = fresh_roots.iterator();
+                    while (fresh_iterator.next()) |entry| {
+                        if (entry.value_ptr.* == root.id and entry.key_ptr.* >= facts.caller_storage_source_bit) {
+                            retained_storage = true;
+                            break;
+                        }
+                    }
+                    if (!input_storage and !retained_storage) root.state = .conditional;
                 }
                 for (state.storage_capabilities.items[first_capability..]) |*capability| if (capability.* == .available) {
                     capability.* = .conditional;
@@ -1938,9 +2016,13 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         fresh: *std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId),
     ) !facts.ValidityRootId {
-        _ = self;
         if (fresh.get(source)) |root| return root;
         const root = try state.tracker.establish(.fresh);
+        if (source >= facts.caller_storage_source_bit and !self.retaining_call) {
+            try appendRootFact(&state.lexical_storage_generations, root);
+            if (self.receiving_binding) |binding|
+                state.tracker.roots.items[@intFromEnum(root)].caller_frame_owner = @intFromEnum(binding);
+        }
         try fresh.put(source, root);
         return root;
     }
@@ -2377,7 +2459,23 @@ pub const SafetyChecker = struct {
         var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
         defer provenances.deinit();
         try self.collectOpaqueProvenancesCarriedBy(state, pointer, &provenances);
-        return self.addOpaqueReadEnvelope(value, ty, provenances.items);
+        var stored = value;
+        if (ty) |value_type| if (self.typeContainsPointer(value_type)) {
+            var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+            try dependencies.appendSlice(value.dependencies);
+            // Reading a reference from an opaque slot borrows the references
+            // stored there, including dependencies that have already ended.
+            // Filtering to live roots would hide precisely the stale read.
+            for (provenances.items) |provenance| for (state.opaque_storages.items) |domain| {
+                if (!domain.storage.eql(provenance.storage)) continue;
+                for (domain.hidden_dependencies) |dependency| {
+                    if (!self.opaqueDependencyIsInternalToStorage(state, domain.storage, dependency))
+                        try appendDependencyFact(&dependencies, .{ .root = dependency });
+                }
+            };
+            stored.dependencies = try dependencies.toOwnedSlice();
+        };
+        return self.addOpaqueReadEnvelope(stored, ty, provenances.items);
     }
 
     fn addOpaqueReadEnvelope(
@@ -3060,8 +3158,28 @@ pub const SafetyChecker = struct {
         id: graph_mod.GlobalAutoDeinitId,
         state: *FunctionState,
     ) !void {
+        if (self.graph.retainedCleanup(id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
         const storage = facts.Place{ .root = cleanup.binding };
+        for (state.tracker.roots.items) |root| if (root.caller_frame_owner == @intFromEnum(cleanup.binding)) {
+            const source = self.graph.binding(cleanup.binding).source;
+            for (root.caller_frame_dependencies) |dependency| {
+                const required = state.tracker.roots.items[@intFromEnum(dependency)];
+                if (required.state == .dead or (required.state != .alive and !required.owned_resource)) {
+                    try self.report(source, "retained storage cleanup depends on a root that has ended", .{});
+                    break;
+                }
+            }
+            if (self.valueAtPlace(state, storage)) |value| {
+                if (valueDependsOnDeadRoot(value, state)) try self.report(source, "retained storage cleanup depends on a root that has ended", .{});
+            }
+            break;
+        };
+        // Destroy the receiver before the frame so its destructor can still
+        // inspect returned references. Borrowed copies do not extend this scope.
+        defer for (state.tracker.roots.items) |*root| {
+            if (root.caller_frame_owner == @intFromEnum(cleanup.binding)) root.state = .dead;
+        };
         switch (self.initializednessAtPlace(state, storage)) {
             .initialized => if (cleanup.deinit_fn != null) {
                 try self.evaluateResolvedAutoDeinit(function, cleanup, storage, state);
@@ -3475,6 +3593,7 @@ pub const SafetyChecker = struct {
         const outputs = self.graph.binding_refs.items[record.output_bindings.start..][0..record.output_bindings.len];
         for (state.storage_generations.items) |entry| {
             if (entry.generation != root) continue;
+            if (self.graph.retainedBinding(entry.storage.root)) return false;
             if (self.graph.isModuleBinding(entry.storage.root)) return false;
             for (inputs) |input| if (input == entry.storage.root) return false;
             // Function output bindings model caller-provided result storage.
@@ -3493,6 +3612,7 @@ pub const SafetyChecker = struct {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| switch (self.graph.nodes.items[@intFromEnum(node)].content) {
             .binding_declaration => |binding| {
+                if (self.graph.retainedBinding(binding)) continue;
                 var i: usize = 0;
                 while (i < state.storage_generations.items.len) {
                     const entry = state.storage_generations.items[i];
@@ -3535,10 +3655,18 @@ pub const SafetyChecker = struct {
                 .dead;
             const left_owned = index < left.tracker.roots.items.len and left.tracker.roots.items[index].owned_resource;
             const right_owned = index < right.tracker.roots.items.len and right.tracker.roots.items[index].owned_resource;
+            var frame_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            if (index < left.tracker.roots.items.len) for (left.tracker.roots.items[index].caller_frame_dependencies) |dependency| try appendRootFact(&frame_dependencies, dependency);
+            if (index < right.tracker.roots.items.len) for (right.tracker.roots.items[index].caller_frame_dependencies) |dependency| try appendRootFact(&frame_dependencies, dependency);
             try joined.tracker.roots.append(.{
                 .id = id,
                 .state = if (left_state == right_state) left_state else .maybe_alive,
                 .owned_resource = left_owned or right_owned,
+                .caller_frame_owner = if (index < left.tracker.roots.items.len)
+                    left.tracker.roots.items[index].caller_frame_owner
+                else
+                    right.tracker.roots.items[index].caller_frame_owner,
+                .caller_frame_dependencies = try frame_dependencies.toOwnedSlice(),
             });
         }
 
@@ -4541,8 +4669,10 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         left.choice_rejected.items.len != right.choice_rejected.items.len or
         left.choice_temporary_active.items.len != right.choice_temporary_active.items.len) return false;
 
-    for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
-        if (a.state != b.state or a.owned_resource != b.owned_resource) return false;
+    for (left.tracker.roots.items, right.tracker.roots.items) |a, b| {
+        if (a.state != b.state or a.owned_resource != b.owned_resource or a.caller_frame_owner != b.caller_frame_owner or a.caller_frame_dependencies.len != b.caller_frame_dependencies.len) return false;
+        for (a.caller_frame_dependencies) |dependency| if (!containsRoot(b.caller_frame_dependencies, dependency)) return false;
+    }
     for (left.storage_capabilities.items, right.storage_capabilities.items) |a, b|
         if (a != b) return false;
     for (left.lexical_storage_generations.items) |root|

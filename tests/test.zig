@@ -3311,13 +3311,9 @@ test "feature_tests/ownership/56_branch_ownership_cleanup_resolves" {
     try expectSuccessfulBuild("tests/feature_tests/ownership/56_branch_ownership_cleanup_resolves");
 }
 
-test "feature_tests/ownership/57X_return_reference_to_local" {
-    try buildExpectFailExact("tests/feature_tests/ownership/57X_return_reference_to_local",
-        \\tests/feature_tests/ownership/57X_return_reference_to_local/main.rg:1:12: error: function output cannot depend on a local storage generation that ends before return
-        \\  bad() -> (.result: &Int32) := {
-        \\             ^
-        \\
-    );
+test "feature_tests/ownership/57_return_reference_to_local" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/57_return_reference_to_local");
+    try runExpect("tests/feature_tests/ownership/57_return_reference_to_local", 3);
 }
 
 test "feature_tests/ownership/58X_null_safe_reference" {
@@ -3379,18 +3375,14 @@ test "feature_tests/ownership/65_allocation_stores_stateful_allocator" {
     try run(test_path);
 }
 
-test "feature_tests/ownership/66X_allocation_stateful_allocator_escape" {
-    try buildExpectFail(
-        "tests/feature_tests/ownership/66X_allocation_stateful_allocator_escape",
-        "function output cannot depend on a local storage generation that ends before return",
-    );
+test "feature_tests/ownership/66_allocation_stateful_allocator_escape" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/66_allocation_stateful_allocator_escape");
+    try runExpect("tests/feature_tests/ownership/66_allocation_stateful_allocator_escape", 0);
 }
 
-test "feature_tests/ownership/67X_local_binding_summary_dependency" {
-    try buildExpectFail(
-        "tests/feature_tests/ownership/67X_local_binding_summary_dependency",
-        "function output cannot depend on a local storage generation that ends before return",
-    );
+test "feature_tests/ownership/67_local_binding_summary_dependency" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/67_local_binding_summary_dependency");
+    try runExpect("tests/feature_tests/ownership/67_local_binding_summary_dependency", 7);
 }
 
 test "feature_tests/ownership/68_arena_child_deinit_preserves_sibling" {
@@ -4972,11 +4964,9 @@ test "feature_tests/ownership/269_loop_local_owning_cleanup" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/270X_return_local_storage" {
-    try buildExpectFail(
-        "tests/feature_tests/ownership/270X_return_local_storage",
-        "function output cannot depend on a local storage generation that ends before return",
-    );
+test "feature_tests/ownership/270_return_local_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/270_return_local_storage");
+    try runExpect("tests/feature_tests/ownership/270_return_local_storage", 1);
 }
 
 test "feature_tests/ownership/271X_opaque_external_dependency_direct" {
@@ -6372,11 +6362,9 @@ test "feature_tests/system/43X_general_purpose_large_double_free" {
     try runExpectFailure(test_path);
 }
 
-test "feature_tests/system/37X_system_local_resource_escape" {
-    try buildExpectFail(
-        "tests/feature_tests/system/37X_system_local_resource_escape",
-        "function output cannot depend on a local storage generation that ends before return",
-    );
+test "feature_tests/system/37_system_local_resource_escape" {
+    try expectSuccessfulBuild("tests/feature_tests/system/37_system_local_resource_escape");
+    try runExpect("tests/feature_tests/system/37_system_local_resource_escape", 0);
 }
 
 test "feature_tests/system/44_memory_allocator_composition" {
@@ -6534,11 +6522,9 @@ test "feature_tests/text/23_propagated_constructor_failure" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/135X_inherited_reference_escapes_root" {
-    try buildExpectFail(
-        "tests/feature_tests/ownership/135X_inherited_reference_escapes_root",
-        "function output cannot depend on a local storage generation that ends before return",
-    );
+test "feature_tests/ownership/135_inherited_reference_escapes_root" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/135_inherited_reference_escapes_root");
+    try runExpect("tests/feature_tests/ownership/135_inherited_reference_escapes_root", 7);
 }
 
 test "feature_tests/ownership/136X_duplicate_aligned_storage_establishment" {
@@ -6548,11 +6534,9 @@ test "feature_tests/ownership/136X_duplicate_aligned_storage_establishment" {
     );
 }
 
-test "feature_tests/ownership/137X_inherited_reference_wrapper_escapes_root" {
-    try buildExpectFail(
-        "tests/feature_tests/ownership/137X_inherited_reference_wrapper_escapes_root",
-        "function output cannot depend on a local storage generation that ends before return",
-    );
+test "feature_tests/ownership/137_inherited_reference_wrapper_escapes_root" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/137_inherited_reference_wrapper_escapes_root");
+    try runExpect("tests/feature_tests/ownership/137_inherited_reference_wrapper_escapes_root", 7);
 }
 
 test "feature_tests/types/65_error_tracer_capability" {
@@ -6576,8 +6560,9 @@ test "feature_tests/types/66_error_tracer_context_copy" {
     );
 }
 
-test "feature_tests/types/67X_error_tracer_escape" {
-    try buildExpectFail("tests/feature_tests/types/67X_error_tracer_escape", "local");
+test "feature_tests/types/67_error_tracer_escape" {
+    try expectSuccessfulBuild("tests/feature_tests/types/67_error_tracer_escape");
+    try runExpect("tests/feature_tests/types/67_error_tracer_escape", 0);
 }
 
 test "feature_tests/types/68_error_tracer_bounded_failures" {
@@ -6608,8 +6593,9 @@ test "feature_tests/types/70_virtual_context_inference" {
     try run(path);
 }
 
-test "feature_tests/types/71X_virtual_pipe_temporary_escape" {
-    try buildExpectFail("tests/feature_tests/types/71X_virtual_pipe_temporary_escape", "local storage generation");
+test "feature_tests/types/71_virtual_pipe_temporary_escape" {
+    try expectSuccessfulBuild("tests/feature_tests/types/71_virtual_pipe_temporary_escape");
+    try runExpect("tests/feature_tests/types/71_virtual_pipe_temporary_escape", 0);
 }
 
 test "feature_tests/types/72X_virtual_inference_missing_context" {
@@ -6757,7 +6743,7 @@ test "feature_tests/basics/27X_mixed_width_arithmetic" {
 
 test "feature_tests/basics/28X_unsupported_initializer_expression" {
     try buildExpectFailExact("tests/feature_tests/basics/28X_unsupported_initializer_expression",
-        \\tests/feature_tests/basics/28X_unsupported_initializer_expression/main.rg:3:19: error: this expression is not supported in an initializer
+        \\tests/feature_tests/basics/28X_unsupported_initializer_expression/main.rg:3:19: error: choice option '..first_reason' needs a concrete choice type
         \\  Wrong : Choice = (..first_reason, ..second_reason)
         \\                    ^
         \\
@@ -9055,8 +9041,8 @@ test "feature_tests/python/05X_object_copy" {
 test "feature_tests/python/06X_private_handle" {
     try buildExpectFail("tests/feature_tests/python/06X_private_handle", "field '_handle' is private to its module");
 }
-test "feature_tests/python/07X_object_escape" {
-    try buildExpectFail("tests/feature_tests/python/07X_object_escape", "function output cannot depend on a local storage generation");
+test "feature_tests/python/07_object_escape" {
+    try checkPythonFixture("tests/feature_tests/python/07_object_escape");
 }
 
 test "feature_tests/python/08_conversions" {
@@ -9124,11 +9110,9 @@ test "feature_tests/functions/35X_nested_pipe_requires_outer_placeholder" {
     try buildExpectFail("tests/feature_tests/functions/35X_nested_pipe_requires_outer_placeholder", "pipe right-hand side must use at least one argument placeholder");
 }
 
-test "feature_tests/functions/36X_generic_pipe_temporary_escape" {
-    try buildExpectFail(
-        "tests/feature_tests/functions/36X_generic_pipe_temporary_escape",
-        "function output cannot depend on a local storage generation that ends before return",
-    );
+test "feature_tests/functions/36_generic_pipe_temporary_escape" {
+    try expectSuccessfulBuild("tests/feature_tests/functions/36_generic_pipe_temporary_escape");
+    try runExpect("tests/feature_tests/functions/36_generic_pipe_temporary_escape", 0);
 }
 
 test "feature_tests/functions/37X_pipe_temporary_consumed_twice" {
@@ -9150,4 +9134,155 @@ test "feature_tests/basics/73X_multiline_operation_missing_operand" {
 
 test "feature_tests/basics/74X_leading_operator_requires_group" {
     try buildExpectFail("tests/feature_tests/basics/74X_leading_operator_requires_group", "a leading operator requires scalar grouping");
+}
+
+test "feature_tests/basics/75_fallible_main_success" {
+    const path = "tests/feature_tests/basics/75_fallible_main_success";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/76_fallible_main_trace" {
+    const path = "tests/feature_tests/basics/76_fallible_main_trace";
+    try expectSuccessfulBuild(path);
+    const output = try outputPathFor(path);
+    defer std.testing.allocator.free(output);
+    const result = try runChild(&.{output});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expectEqualStrings("", result.stdout);
+    try expect(std.mem.indexOf(u8, result.stderr, "error: unhandled error in main") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "starting application") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "76_fallible_main_trace/main.rg:3:") != null);
+}
+
+test "feature_tests/basics/77_fallible_main_system" {
+    const path = "tests/feature_tests/basics/77_fallible_main_system";
+    try expectSuccessfulBuild(path);
+    try runExpectStdoutWithArgs(path, &.{}, 0, "ready\n");
+}
+
+test "feature_tests/basics/78X_fallible_main_non_void" {
+    try buildExpectFail("tests/feature_tests/basics/78X_fallible_main_non_void", "Expected main() -> (.status_code: Int32) or main() -> !Void.");
+}
+
+test "feature_tests/basics/79_fallible_main_custom_tracer" {
+    const path = "tests/feature_tests/basics/79_fallible_main_custom_tracer";
+    try expectSuccessfulBuild(path);
+    const output = try outputPathFor(path);
+    defer std.testing.allocator.free(output);
+    const result = try runChild(&.{output});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expectEqualStrings("error: unhandled error in main\ncustom trace\n", result.stderr);
+}
+
+test "feature_tests/basics/80_fallible_output_defaults" {
+    const path = "tests/feature_tests/basics/80_fallible_output_defaults";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/81X_fallible_output_default_missing_value" {
+    try buildExpectFail("tests/feature_tests/basics/81X_fallible_output_default_missing_value", "expected a default expression");
+}
+
+test "feature_tests/basics/82_fallible_main_explicit" {
+    const path = "tests/feature_tests/basics/82_fallible_main_explicit";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/ownership/321_caller_storage_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/321_caller_storage_cleanup");
+    try runExpect("tests/feature_tests/ownership/321_caller_storage_cleanup", 0);
+}
+
+test "feature_tests/ownership/322_caller_storage_forwarding" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/322_caller_storage_forwarding");
+    try runExpect("tests/feature_tests/ownership/322_caller_storage_forwarding", 0);
+}
+
+test "feature_tests/ownership/323_caller_storage_branches" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/323_caller_storage_branches");
+    try runExpect("tests/feature_tests/ownership/323_caller_storage_branches", 0);
+}
+
+test "feature_tests/ownership/324X_caller_storage_loop" {
+    try buildExpectFail("tests/feature_tests/ownership/324X_caller_storage_loop", "use an explicit allocator");
+}
+
+test "feature_tests/ownership/325X_caller_storage_recursive" {
+    try buildExpectFail("tests/feature_tests/ownership/325X_caller_storage_recursive", "recursive retention is not supported");
+}
+
+test "feature_tests/ownership/326X_caller_storage_scope" {
+    try buildExpectFail("tests/feature_tests/ownership/326X_caller_storage_scope", "reference depends on a root that has ended");
+}
+
+test "feature_tests/basics/83_fallible_main_local_tracer" {
+    const path = "tests/feature_tests/basics/83_fallible_main_local_tracer";
+    try expectSuccessfulBuild(path);
+    const output = try outputPathFor(path);
+    defer std.testing.allocator.free(output);
+    const result = try runChild(&.{output});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expectEqualStrings("", result.stdout);
+    try expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "83_fallible_main_local_tracer/main.rg:8:") != null);
+}
+
+test "feature_tests/ownership/327_caller_storage_generic" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/327_caller_storage_generic");
+    try runExpect("tests/feature_tests/ownership/327_caller_storage_generic", 0);
+}
+
+test "feature_tests/ownership/328X_caller_storage_virtual" {
+    try buildExpectFail("tests/feature_tests/ownership/328X_caller_storage_virtual", "virtual methods cannot return local storage");
+}
+
+test "feature_tests/ownership/329X_caller_storage_dynamic_references" {
+    try buildExpectFail("tests/feature_tests/ownership/329X_caller_storage_dynamic_references", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/330X_caller_storage_dynamic_wrapper" {
+    try buildExpectFail("tests/feature_tests/ownership/330X_caller_storage_dynamic_wrapper", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/331_caller_storage_virtual_value" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/331_caller_storage_virtual_value");
+    try runExpect("tests/feature_tests/ownership/331_caller_storage_virtual_value", 0);
+}
+
+test "feature_tests/ownership/332_caller_storage_array" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/332_caller_storage_array");
+    try runExpect("tests/feature_tests/ownership/332_caller_storage_array", 0);
+}
+
+test "feature_tests/ownership/333_caller_storage_large_return" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/333_caller_storage_large_return");
+    try runExpect("tests/feature_tests/ownership/333_caller_storage_large_return", 0);
+}
+
+test "feature_tests/ownership/334_caller_storage_branch_initialization" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/334_caller_storage_branch_initialization");
+    try runExpect("tests/feature_tests/ownership/334_caller_storage_branch_initialization", 0);
+}
+
+test "feature_tests/ownership/335_caller_storage_cleanup_dependencies" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/335_caller_storage_cleanup_dependencies");
+    try runExpect("tests/feature_tests/ownership/335_caller_storage_cleanup_dependencies", 0);
+}
+
+test "feature_tests/ownership/336X_caller_storage_cleanup_borrow" {
+    try buildExpectFail("tests/feature_tests/ownership/336X_caller_storage_cleanup_borrow", "root that has ended");
+}
+
+test "feature_tests/ownership/337X_caller_storage_cleanup_after_borrow" {
+    try buildExpectFail("tests/feature_tests/ownership/337X_caller_storage_cleanup_after_borrow", "retained storage cleanup depends on a root that has ended");
 }

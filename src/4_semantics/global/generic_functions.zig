@@ -7,6 +7,7 @@ const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
 const reach_context_mod = @import("reach_context.zig");
 const errors_mod = @import("errors.zig");
+const control_mod = @import("control.zig");
 const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
@@ -2094,6 +2095,10 @@ pub const Resolver = struct {
         const output_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions, null);
         const input_shape = try self.interfaceFields(input_ty);
         const output_shape = try self.interfaceFields(output_ty);
+        var inferred_errors = false;
+        for (self.graph.fields.items[output_shape.start..][0..output_shape.len]) |field| {
+            inferred_errors = inferred_errors or self.graph.types.items[@intFromEnum(field.ty)] == .inferred_errable;
+        }
 
         const context_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
         var context = try InstanceContext.init(self, located.module_index, located.parameterized, &substitutions);
@@ -2117,6 +2122,7 @@ pub const Resolver = struct {
                 .is_deinit = located.parameterized.is_deinit,
                 .has_declared_body = located.parameterized.body != null,
                 .is_generic_instantiation = true,
+                .uses_inferred_error_reasons = inferred_errors,
                 // A contract template has no runtime ABI; its inferred
                 // instance does, once every abstract parameter is concrete.
                 .is_abstract_dispatch = false,
@@ -2284,8 +2290,8 @@ pub const Resolver = struct {
             }
             if (source_ty == null) try self.resolver.graph.markBindingTypeUnresolved(self.resolver.allocator, global);
             if (source.initialization) |node| {
-                const initialization = if (source_ty) |ty|
-                    try self.instantiateNodeAs(node, ty)
+                const initialization = if (source_ty != null)
+                    try self.instantiateNodeWithExpected(node, self.resolver.graph.bindings.items[@intFromEnum(global)].ty)
                 else
                     try self.instantiateNode(node);
                 self.resolver.graph.bindings.items[@intFromEnum(global)].initialization = initialization;
@@ -2795,6 +2801,18 @@ pub const Resolver = struct {
             const name_range = value.name orelse return error.ParameterizedChoiceLiteralWithoutName;
             const name = self.resolver.modules[self.module_index].text(name_range);
             _ = try self.resolver.generics.ensureGenericInstance(expected);
+            // Defaults can need their inferred Errable shape while the generic
+            // instance is being built, before the ordinary fixed-point pass.
+            if (self.resolver.graph.types.items[@intFromEnum(expected)] == .inferred_errable) {
+                const child = self.resolver.graph.types.items[@intFromEnum(expected)].inferred_errable;
+                var control = control_mod.Resolver{
+                    .allocator = self.resolver.allocator,
+                    .graph = self.resolver.graph,
+                    .modules = self.resolver.modules,
+                    .offsets = self.resolver.offsets,
+                };
+                try control.materializeInferredErrable(expected, child);
+            }
             const variant = global_types.findVariant(self.resolver.graph, expected, name) orelse return error.UnknownParameterizedChoiceVariant;
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             const payload = if (value.operands.len == 0)

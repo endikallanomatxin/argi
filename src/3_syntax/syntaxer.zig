@@ -614,7 +614,16 @@ pub const Syntaxer = struct {
             }
 
             const inferred = try self.addNode(.inferred_errable_type, bang_token, .{ .node = inner_ty_opt.? });
-            const field_extra = try self.addExtra(syn.FieldExtra{ .type_node = inferred.optional(), .default_value = .none });
+            var default_value: ?syn.NodeIndex = null;
+            if (self.tokenIs(.equal)) {
+                self.advanceOne();
+                if (self.tokenIs(.colon) or self.tokenIs(.eof)) {
+                    try self.diags.add(self.tokenLocation(), .syntax, "expected a default expression after '=' in the fallible output", .{});
+                    return SyntaxerError.ExpectedIntLiteral;
+                }
+                default_value = try self.parseExpression();
+            }
+            const field_extra = try self.addExtra(syn.FieldExtra{ .type_node = inferred.optional(), .default_value = syn.OptionalNodeIndex.init(default_value) });
             const field = try self.addNode(.inferred_result_field, bang_token, .{ .extra = field_extra });
             return try self.addNode(.struct_type_literal, bang_token, .{ .extra_range = try self.addNodeRange(&.{field}) });
         }

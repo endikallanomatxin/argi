@@ -51,6 +51,14 @@ pub const Resolver = struct {
         };
         var collected: std.ArrayList(global_sg.GlobalVariantId) = .empty;
         defer collected.deinit(self.allocator);
+        // Output defaults execute before the body and can supply its result
+        // unchanged. Include their reasons just like explicit assignments.
+        for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding| {
+            if (self.graph.binding(binding).initialization) |value| {
+                try self.markErrableNode(value, &collected);
+                try self.collectNode(function.*, value, &collected);
+            }
+        }
         try self.collectBlock(function.*, body, &collected);
 
         if (function.flags.uses_inferred_error_reasons) {

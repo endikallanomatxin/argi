@@ -117,7 +117,7 @@ pub const Resolver = struct {
         self.stats.nullable += 1;
     }
 
-    fn materializeInferredErrable(self: *Resolver, id: global_sg.GlobalTypeId, child: global_sg.GlobalTypeId) !void {
+    pub fn materializeInferredErrable(self: *Resolver, id: global_sg.GlobalTypeId, child: global_sg.GlobalTypeId) !void {
         const ok_name = try self.graph.addString(self.allocator, "ok");
         const error_name = try self.graph.addString(self.allocator, "error");
         const reason_name = try self.graph.addString(self.allocator, "reason");

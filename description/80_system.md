@@ -49,6 +49,34 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 The allocator created here belongs to `main`'s scope. Its reference may serve
 calls in that scope, but cannot escape after the allocator is cleaned up.
 
+## Program results
+
+`main` may return one `.status_code: Int32` output or one `.result` containing
+an `Errable<Void>`. The fallible shorthand infers its reasons:
+
+```rg
+main(.system: System) -> !Void = ..ok Void() := {
+    write(.self = $&system.terminal&.stdout, .text = "ready\n")!
+}
+```
+
+The explicit default makes successful completion return `..ok Void()` without
+assigning `result` in the body. It is an ordinary output default, not an
+implicit return of the last expression. The same contract works without a
+`System` input and with the explicit `Errable#(.t: Void)` output form.
+
+Success exits with status `0`. A returned error exits with status `1` and
+writes an unhandled-error heading followed by its trace to stderr. Reporting
+calls the `ErrorTracer` retained by that error through its ordinary interface.
+The default entry tracer retains bounded context in a 4096-byte stack buffer;
+its report marks context truncation when needed. A program may supply another
+tracer provided its lifetime covers the returned error and reporting.
+
+Reporting runs before entry-owned terminal, tracer, and other process
+resources are cleaned up. Reporting failures do not recursively report or
+change the failure exit status. The integer-returning contract continues to
+use the program's explicit status code.
+
 ## Stream capabilities
 
 `System.terminal` groups the process streams as `stdin`, `stdout`, and
@@ -99,3 +127,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 Streams may be redirected to files or pipes. A stream implementing `Reader`
 or `Writer` does not by itself promise terminal-specific operations such as
 querying screen dimensions.
+
+A fallible `main` may create a fixed-size tracer, its backing array, and its
+virtual interface locally. Returning an error retains that bounded storage
+in the entry wrapper, which reports the trace before running its cleanup.
+The error's existing tracer interface controls reporting; the wrapper does
+not replace it with the default tracer.

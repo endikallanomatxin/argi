@@ -52,7 +52,17 @@ const FunctionSymbol = struct {
     is_c_abi: bool = false,
     c_plan: ?*c_abi.FunctionPlan = null,
     indirect_return: bool = false,
+    function_id: ?graph_mod.GlobalFunctionId = null,
+    retained: bool = false,
 };
+
+// A hidden frame carries physical values, recursive drop flags and nested
+// direct-call frames. Source dispatch continues to see only declared inputs
+// and outputs; lexical cleanup anchors dispose receiving values before frames.
+const RetainedSlot = struct { binding: graph_mod.GlobalBindingId, value_index: u32, drop_index: u32 };
+const RetainedChild = struct { node: graph_mod.GlobalNodeId, callee: graph_mod.GlobalFunctionId, value_index: u32, active_index: u32, owner: ?graph_mod.GlobalBindingId };
+const RetainedLayout = struct { ty: c.LLVMTypeRef, slots: []const RetainedSlot, children: []const RetainedChild };
+const RetainedCall = struct { callee: graph_mod.GlobalFunctionId, storage: c.LLVMValueRef, active: c.LLVMValueRef, owner: ?graph_mod.GlobalBindingId = null };
 
 const GlobalInitState = enum { uninitialized, in_progress, done };
 const LoopContext = struct { break_block: llvm.c.LLVMBasicBlockRef, continue_block: llvm.c.LLVMBasicBlockRef };
@@ -68,6 +78,13 @@ pub const CodeGenerator = struct {
         instructions: usize = 0,
         ir_bytes: usize = 0,
     };
+
+    retained_layouts: std.AutoHashMapUnmanaged(graph_mod.GlobalFunctionId, RetainedLayout) = .empty,
+    retained_calls: std.ArrayList(RetainedCall) = .empty,
+    retained_owner: ?graph_mod.GlobalBindingId = null,
+    retained_parameter: ?c.LLVMValueRef = null,
+    emitting_retained_cleanup: bool = false,
+    active_node: ?graph_mod.GlobalNodeId = null,
 
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -132,6 +149,179 @@ pub const CodeGenerator = struct {
         self.global_bindings.deinit();
         self.loop_stack.deinit();
         self.trace_locations.deinit(self.allocator);
+        var frames = self.retained_layouts.valueIterator();
+        while (frames.next()) |frame| {
+            self.allocator.free(frame.slots);
+            self.allocator.free(frame.children);
+        }
+        self.retained_layouts.deinit(self.allocator);
+        self.retained_calls.deinit(self.allocator);
+    }
+
+    fn hasRetainedStorage(self: *CodeGenerator, id: graph_mod.GlobalFunctionId) bool {
+        return @intFromEnum(id) < self.graph.retained_storage.items.len and self.graph.retained_storage.items[@intFromEnum(id)].present();
+    }
+
+    fn retainedFlagCount(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) usize {
+        var count: usize = 1;
+        if (types.fields(self.graph, ty)) |range| for (self.graph.fields.items[range.start..][0..range.len]) |field| {
+            count += self.retainedFlagCount(field.ty);
+        };
+        return count;
+    }
+
+    fn retainedLayout(self: *CodeGenerator, id: graph_mod.GlobalFunctionId) anyerror!RetainedLayout {
+        if (self.retained_layouts.get(id)) |layout| return layout;
+        const frame = self.graph.retained_storage.items[@intFromEnum(id)];
+        var fields = std.array_list.Managed(c.LLVMTypeRef).init(self.allocator);
+        defer fields.deinit();
+        var slots = std.array_list.Managed(RetainedSlot).init(self.allocator);
+        defer slots.deinit();
+        var children = std.array_list.Managed(RetainedChild).init(self.allocator);
+        defer children.deinit();
+        for (frame.bindings) |binding| {
+            const ty = self.graph.binding(binding).ty;
+            const index: u32 = @intCast(fields.items.len);
+            try fields.append(try self.toLLVMType(ty));
+            try fields.append(c.LLVMArrayType(c.LLVMInt1Type(), @intCast(self.retainedFlagCount(ty))));
+            try slots.append(.{ .binding = binding, .value_index = index, .drop_index = index + 1 });
+        }
+        for (frame.calls) |node| {
+            const callee = self.graph.node(node).content.function_call.callee;
+            const child = try self.retainedLayout(callee);
+            const index: u32 = @intCast(fields.items.len);
+            try fields.append(child.ty);
+            try fields.append(c.LLVMInt1Type());
+            try children.append(.{ .node = node, .callee = callee, .value_index = index, .active_index = index + 1, .owner = self.graph.retained_call_owners.items[@intFromEnum(node)] });
+        }
+        const layout = RetainedLayout{
+            .ty = c.LLVMStructType(fields.items.ptr, @intCast(fields.items.len), 0),
+            .slots = try self.allocator.dupe(RetainedSlot, slots.items),
+            .children = try self.allocator.dupe(RetainedChild, children.items),
+        };
+        try self.retained_layouts.put(self.allocator, id, layout);
+        return layout;
+    }
+
+    fn retainedDropState(self: *CodeGenerator, ty: graph_mod.GlobalTypeId, flags: c.LLVMValueRef, index: *u32, builder: c.LLVMBuilderRef) anyerror!*DropState {
+        const state = try self.allocator.create(DropState);
+        var indices = [_]c.LLVMValueRef{c.LLVMConstInt(c.LLVMInt32Type(), index.*, 0)};
+        state.* = .{ .flag_ref = c.LLVMBuildGEP2(builder, c.LLVMInt1Type(), flags, &indices, 1, "retained.drop") };
+        index.* += 1;
+        if (types.fields(self.graph, ty)) |range| {
+            state.fields = try self.allocator.alloc(DropState, range.len);
+            for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, field_index| {
+                state.fields[field_index] = (try self.retainedDropState(field.ty, flags, index, builder)).*;
+            }
+        }
+        return state;
+    }
+
+    fn prepareRetainedCall(self: *CodeGenerator, id: graph_mod.GlobalFunctionId) anyerror!c.LLVMValueRef {
+        if (self.loop_stack.items.len != 0) {
+            try self.report(self.active_source orelse .{ .file_index = 0, .offset = 0 }, "calls retaining local storage inside loops are not supported yet", .{});
+            return CodegenError.Reported;
+        }
+        const layout = try self.retainedLayout(id);
+        if (self.retained_parameter) |frame| {
+            const parent = try self.retainedLayout(self.current_function.?);
+            for (parent.children) |child| if (self.active_node == child.node) {
+                const storage = c.LLVMBuildStructGEP2(self.builder, parent.ty, frame, child.value_index, "retained.forward");
+                const active = c.LLVMBuildStructGEP2(self.builder, parent.ty, frame, child.active_index, "retained.forward.active");
+                _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), 1, 0), active);
+                return storage;
+            };
+        }
+        const block = c.LLVMGetInsertBlock(self.builder);
+        const entry = c.LLVMGetEntryBasicBlock(c.LLVMGetBasicBlockParent(block));
+        const builder = c.LLVMCreateBuilder();
+        defer c.LLVMDisposeBuilder(builder);
+        if (c.LLVMGetFirstInstruction(entry)) |first| c.LLVMPositionBuilderBefore(builder, first) else c.LLVMPositionBuilderAtEnd(builder, entry);
+        const storage = c.LLVMBuildAlloca(builder, layout.ty, "retained.call.storage");
+        _ = c.LLVMBuildStore(builder, c.LLVMConstNull(layout.ty), storage);
+        const active = c.LLVMBuildAlloca(builder, c.LLVMInt1Type(), "retained.call.active");
+        _ = c.LLVMBuildStore(builder, c.LLVMConstInt(c.LLVMInt1Type(), 0, 0), active);
+        _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), 1, 0), active);
+        try self.retained_calls.append(self.allocator, .{ .callee = id, .storage = storage, .active = active, .owner = self.retained_owner });
+        return storage;
+    }
+
+    fn cleanupRetainedCalls(self: *CodeGenerator) anyerror!void {
+        const calls = try self.allocator.dupe(RetainedCall, self.retained_calls.items);
+        defer self.allocator.free(calls);
+        var index = calls.len;
+        while (index != 0) {
+            index -= 1;
+            try self.cleanupRetainedFrame(calls[index]);
+        }
+    }
+
+    fn cleanupRetainedFrame(self: *CodeGenerator, call: RetainedCall) anyerror!void {
+        const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
+        const run = c.LLVMAppendBasicBlock(function, "retained.cleanup");
+        const done = c.LLVMAppendBasicBlock(function, "retained.cleanup.done");
+        const enabled = c.LLVMBuildLoad2(self.builder, c.LLVMInt1Type(), call.active, "retained.active");
+        _ = c.LLVMBuildCondBr(self.builder, enabled, run, done);
+        c.LLVMPositionBuilderAtEnd(self.builder, run);
+        _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), 0, 0), call.active);
+        const layout = try self.retainedLayout(call.callee);
+        const previous_function = self.current_function;
+        const previous_frame = self.retained_parameter;
+        const previous_owner = self.retained_owner;
+        self.current_function = call.callee;
+        self.retained_parameter = call.storage;
+        self.retained_owner = null;
+        defer {
+            self.current_function = previous_function;
+            self.retained_parameter = previous_frame;
+            self.retained_owner = previous_owner;
+        }
+        const saved = try self.allocator.alloc(?BindingStorage, layout.slots.len);
+        defer self.allocator.free(saved);
+        for (layout.slots, 0..) |slot, index| {
+            saved[index] = self.bindings.get(slot.binding);
+            const record = self.graph.binding(slot.binding);
+            const storage = c.LLVMBuildStructGEP2(self.builder, layout.ty, call.storage, slot.value_index, "retained.cleanup.value");
+            const flags = c.LLVMBuildStructGEP2(self.builder, layout.ty, call.storage, slot.drop_index, "retained.cleanup.flags");
+            var flag_index: u32 = 0;
+            const drop = try self.retainedDropState(record.ty, flags, &flag_index, self.builder);
+            try self.bindings.put(slot.binding, .{ .ref = storage, .type_ref = try self.toLLVMType(record.ty), .ty = record.ty, .drop_state = drop, .initialized = true });
+        }
+        defer for (layout.slots, saved) |slot, original| {
+            if (original) |value| self.bindings.put(slot.binding, value) catch unreachable else _ = self.bindings.remove(slot.binding);
+        };
+        const previous = self.emitting_retained_cleanup;
+        self.emitting_retained_cleanup = true;
+        defer self.emitting_retained_cleanup = previous;
+        const cleanup = self.graph.retained_storage.items[@intFromEnum(call.callee)].cleanup;
+        // Children returned directly through an output have no local receiver
+        // cleanup anchor. Their output owner has already been destroyed by the
+        // caller; destroy these frames before captured local capabilities.
+        for (layout.children) |child| {
+            var anchored = false;
+            for (cleanup) |auto| if (child.owner == self.graph.auto_deinits.items[@intFromEnum(auto)].binding) {
+                anchored = true;
+                break;
+            };
+            if (!anchored) {
+                const storage = c.LLVMBuildStructGEP2(self.builder, layout.ty, call.storage, child.value_index, "retained.child");
+                const active = c.LLVMBuildStructGEP2(self.builder, layout.ty, call.storage, child.active_index, "retained.child.active");
+                try self.cleanupRetainedFrame(.{ .callee = child.callee, .storage = storage, .active = active });
+            }
+        }
+        var index = cleanup.len;
+        while (index != 0) {
+            index -= 1;
+            try self.genAutoDeinit(cleanup[index]);
+            const owner = self.graph.auto_deinits.items[@intFromEnum(cleanup[index])].binding;
+            for (layout.children) |child| if (child.owner == owner) {
+                const storage = c.LLVMBuildStructGEP2(self.builder, layout.ty, call.storage, child.value_index, "retained.child");
+                const active = c.LLVMBuildStructGEP2(self.builder, layout.ty, call.storage, child.active_index, "retained.child.active");
+                try self.cleanupRetainedFrame(.{ .callee = child.callee, .storage = storage, .active = active });
+            };
+        }
+        _ = c.LLVMBuildBr(self.builder, done);
+        c.LLVMPositionBuilderAtEnd(self.builder, done);
     }
 
     fn typeLowerer(self: *CodeGenerator) type_codegen.Lowerer {
@@ -283,17 +473,18 @@ pub const CodeGenerator = struct {
             const input_ty = try self.fieldsLLVMType(function.input);
             const output_ty = try self.fieldsLLVMType(function.output);
             const indirect = try self.indirectOutput(function.output);
-            var parameters = [_]llvm.c.LLVMTypeRef{ c.LLVMPointerType(output_ty, 0), input_ty };
+            const retained = self.hasRetainedStorage(id);
+            var parameters = [_]llvm.c.LLVMTypeRef{ c.LLVMPointerType(output_ty, 0), input_ty, c.LLVMPointerType(c.LLVMInt8Type(), 0) };
             const fn_ty = if (indirect)
-                c.LLVMFunctionType(c.LLVMVoidType(), &parameters, 2, 0)
+                c.LLVMFunctionType(c.LLVMVoidType(), &parameters, if (retained) 3 else 2, 0)
             else
-                c.LLVMFunctionType(output_ty, &parameters[1], 1, 0);
+                c.LLVMFunctionType(output_ty, &parameters[1], if (retained) 2 else 1, 0);
             var lowerer = self.typeLowerer();
             const mangled = try lowerer.mangledFunctionName(id);
             defer self.allocator.free(mangled);
             const name_z = try self.dupZ(mangled);
             const ref = c.LLVMAddFunction(self.module, name_z.ptr, fn_ty);
-            symbol = .{ .ref = ref, .type_ref = fn_ty, .return_type = output_ty, .is_extern = false, .indirect_return = indirect };
+            symbol = .{ .ref = ref, .type_ref = fn_ty, .return_type = output_ty, .is_extern = false, .indirect_return = indirect, .function_id = id, .retained = retained };
         }
         try self.functions.put(id, symbol);
         owned_plan = null;
@@ -324,18 +515,20 @@ pub const CodeGenerator = struct {
     }
 
     fn callArgi(self: *CodeGenerator, symbol: FunctionSymbol, input: c.LLVMValueRef, name: [:0]const u8) !c.LLVMValueRef {
+        const retained = if (symbol.retained) try self.prepareRetainedCall(symbol.function_id.?) else null;
         if (!symbol.indirect_return) {
-            var args = [_]c.LLVMValueRef{input};
-            return c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 1, name.ptr);
+            var args = [_]c.LLVMValueRef{ input, retained orelse input };
+            return c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, if (retained != null) 2 else 1, name.ptr);
         }
         const storage = c.LLVMBuildAlloca(self.builder, symbol.return_type, "call.return.storage");
-        var args = [_]c.LLVMValueRef{ storage, input };
-        _ = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 2, "");
+        var args = [_]c.LLVMValueRef{ storage, input, retained orelse input };
+        _ = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, if (retained != null) 3 else 2, "");
         return c.LLVMBuildLoad2(self.builder, symbol.return_type, storage, name.ptr);
     }
 
     fn returnArgi(self: *CodeGenerator, value: c.LLVMValueRef) !void {
         const symbol = self.functions.get(self.current_function.?) orelse return CodegenError.SymbolNotFound;
+        try self.cleanupRetainedCalls();
         if (symbol.indirect_return) {
             _ = c.LLVMBuildStore(self.builder, value, c.LLVMGetParam(symbol.ref, 0));
             _ = c.LLVMBuildRetVoid(self.builder);
@@ -351,7 +544,7 @@ pub const CodeGenerator = struct {
             .function_call => |call| {
                 const function = self.graph.function(call.callee);
                 const symbol = self.functions.get(call.callee) orelse return false;
-                if (!symbol.indirect_return or function.output.len == 0 or call.callee_value != null) return false;
+                if (!symbol.indirect_return or symbol.retained or function.output.len == 0 or call.callee_value != null) return false;
                 const previous_source = self.default_location_source;
                 self.default_location_source = node.source;
                 defer self.default_location_source = previous_source;
@@ -781,6 +974,8 @@ pub const CodeGenerator = struct {
             self.current_return_type = previous_return;
         }
 
+        self.retained_calls.clearRetainingCapacity();
+        self.retained_parameter = if (symbol.retained) c.LLVMGetParam(symbol.ref, if (symbol.indirect_return) 2 else 1) else null;
         const entry = c.LLVMAppendBasicBlock(symbol.ref, "entry");
         c.LLVMPositionBuilderAtEnd(self.builder, entry);
         const input_value = if (!symbol.is_c_abi) c.LLVMGetParam(symbol.ref, if (symbol.indirect_return) 1 else 0) else null;
@@ -855,6 +1050,9 @@ pub const CodeGenerator = struct {
     }
 
     fn allocateLocalBinding(self: *CodeGenerator, binding: graph_mod.GlobalBindingId, initialization: ?graph_mod.GlobalNodeId) !void {
+        const previous_owner = self.retained_owner;
+        self.retained_owner = binding;
+        defer self.retained_owner = previous_owner;
         if (self.bindings.contains(binding)) return;
         const record = self.graph.bindings.items[@intFromEnum(binding)];
         const type_ref = try self.toLLVMType(record.ty);
@@ -865,8 +1063,28 @@ pub const CodeGenerator = struct {
         defer c.LLVMDisposeBuilder(entry_builder);
         if (c.LLVMGetFirstInstruction(entry)) |first| c.LLVMPositionBuilderBefore(entry_builder, first) else c.LLVMPositionBuilderAtEnd(entry_builder, entry);
         const name_z = try self.dupZ(self.graph.text(record.name));
-        const storage = c.LLVMBuildAlloca(entry_builder, type_ref, name_z.ptr);
-        const drop = try self.buildDropState(record.ty, entry_builder);
+        var storage: c.LLVMValueRef = undefined;
+        var drop: *DropState = undefined;
+        if (self.retained_parameter) |frame| {
+            const layout = try self.retainedLayout(self.current_function.?);
+            var slot: ?RetainedSlot = null;
+            for (layout.slots) |candidate| if (candidate.binding == binding) {
+                slot = candidate;
+                break;
+            };
+            if (slot) |selected| {
+                storage = c.LLVMBuildStructGEP2(entry_builder, layout.ty, frame, selected.value_index, "retained.local");
+                const flags = c.LLVMBuildStructGEP2(entry_builder, layout.ty, frame, selected.drop_index, "retained.drop.flags");
+                var flag_index: u32 = 0;
+                drop = try self.retainedDropState(record.ty, flags, &flag_index, entry_builder);
+            } else {
+                storage = c.LLVMBuildAlloca(entry_builder, type_ref, name_z.ptr);
+                drop = try self.buildDropState(record.ty, entry_builder);
+            }
+        } else {
+            storage = c.LLVMBuildAlloca(entry_builder, type_ref, name_z.ptr);
+            drop = try self.buildDropState(record.ty, entry_builder);
+        }
         try self.bindings.put(binding, .{ .ref = storage, .type_ref = type_ref, .ty = record.ty, .drop_state = drop });
         self.storeDropState(drop, false);
         if (initialization) |node| {
@@ -895,8 +1113,13 @@ pub const CodeGenerator = struct {
 
     fn visitNode(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) anyerror!?TypedValue {
         const previous_source = self.active_source;
+        const previous_node = self.active_node;
+        self.active_node = node_id;
         self.active_source = self.graph.node(node_id).source;
-        defer self.active_source = previous_source;
+        defer {
+            self.active_source = previous_source;
+            self.active_node = previous_node;
+        }
         return self.visitNodeInner(node_id) catch |err| {
             if (err == CodegenError.Reported or err == error.OutOfMemory) return err;
             const node = self.graph.node(node_id);
@@ -953,6 +1176,9 @@ pub const CodeGenerator = struct {
             },
             .binding_use => |binding| try self.bindingValue(binding),
             .assignment => |assignment| blk: {
+                const previous_owner = self.retained_owner;
+                self.retained_owner = assignment.binding;
+                defer self.retained_owner = previous_owner;
                 const storage = self.bindings.getPtr(assignment.binding) orelse return CodegenError.SymbolNotFound;
                 if (self.graph.bindings.items[@intFromEnum(assignment.binding)].mutability == .constant and storage.initialized)
                     return CodegenError.ConstantReassignment;
@@ -1530,6 +1756,7 @@ pub const CodeGenerator = struct {
             return;
         }
         if (self.functions.get(self.current_function.?).?.indirect_return) {
+            try self.cleanupRetainedCalls();
             _ = c.LLVMBuildRetVoid(self.builder);
             return;
         }
@@ -2370,10 +2597,20 @@ pub const CodeGenerator = struct {
     }
 
     fn genAutoDeinit(self: *CodeGenerator, auto_id: graph_mod.GlobalAutoDeinitId) !void {
+        if (!self.emitting_retained_cleanup and self.graph.retainedCleanup(auto_id)) return;
         const auto = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const storage = self.bindings.get(auto.binding) orelse return;
         const drop = storage.drop_state orelse return;
         try self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, storage.ref, storage.ty, drop);
+        if (!self.emitting_retained_cleanup) {
+            const calls = try self.allocator.dupe(RetainedCall, self.retained_calls.items);
+            defer self.allocator.free(calls);
+            var index = calls.len;
+            while (index != 0) {
+                index -= 1;
+                if (calls[index].owner == auto.binding) try self.cleanupRetainedFrame(calls[index]);
+            }
+        }
     }
 
     fn genAutoDeinitStorage(
@@ -2535,6 +2772,9 @@ pub const CodeGenerator = struct {
     }
 
     fn generateCMainWrapper(self: *CodeGenerator, main: graph_mod.GlobalFunctionId) !void {
+        self.retained_parameter = null;
+        self.retained_owner = null;
+        self.retained_calls.clearRetainingCapacity();
         const symbol = self.functions.get(main) orelse return CodegenError.SymbolNotFound;
         const i32_ty = c.LLVMInt32Type();
         const i8ptr = c.LLVMPointerType(c.LLVMInt8Type(), 0);
@@ -2553,12 +2793,16 @@ pub const CodeGenerator = struct {
         if (function.input.len != 0) return CodegenError.InvalidType;
         const input = c.LLVMConstNull(input_type);
         const result = try self.callArgi(symbol, input, "argi.main");
+        try self.cleanupRetainedCalls();
         try self.cleanupNativeProcess();
         const status = c.LLVMBuildExtractValue(self.builder, result, 0, "status");
         _ = c.LLVMBuildRet(self.builder, status);
     }
 
     fn generateCTestWrapper(self: *CodeGenerator, test_function: graph_mod.GlobalFunctionId) !void {
+        self.retained_parameter = null;
+        self.retained_owner = null;
+        self.retained_calls.clearRetainingCapacity();
         const symbol = self.functions.get(test_function) orelse return CodegenError.SymbolNotFound;
         const i32_ty = c.LLVMInt32Type();
         const fn_type = c.LLVMFunctionType(i32_ty, null, 0, 0);
@@ -2571,6 +2815,7 @@ pub const CodeGenerator = struct {
         const input_type = try self.fieldsLLVMType(function.input);
         if (function.input.len != 0) return CodegenError.InvalidType;
         const output = try self.callArgi(symbol, c.LLVMConstNull(input_type), "test");
+        try self.cleanupRetainedCalls();
         try self.cleanupNativeProcess();
         if (function.output.len != 1) return CodegenError.InvalidType;
         const result_ty = types.effectiveFieldType(self.graph.fields.items[function.output.start]);

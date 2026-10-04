@@ -228,6 +228,20 @@ feature first.
   Bundled primitive requirements may be target-specific, but selected trusted
   declarations must still satisfy their origin, canonical path, and signature.
 
+- Returned references to bounded local storage use caller-owned frames in
+  GlobalSG. `global/storage_promotion.zig` runs after ownership cleanup
+  resolution, using provisional safety summaries to distinguish borrowed
+  values from borrowed slots; final summaries include retained storage roots.
+  Codegen passes frames through a hidden Argi ABI parameter without changing
+  dispatch inputs or outputs.
+  Retention includes backing storage and delayed-cleanup dependencies.
+  Pointer-bearing locals reserve lexical cleanup positions even without a
+  source destructor, so receiving values precede their frames in cleanup.
+  Caller-storage fresh effects preserve their temporal tag across summary
+  rebasing and grant no allocation receipts. Reject unsupported recursive,
+  repeated, or virtual retention rather than silently allocating on the heap.
+  These cold GlobalSG tables do not enter persistent ModuleSG snapshots.
+
 - Compiler phase naming is standardized and should stay consistent:
   - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases
   - avoid introducing synonyms such as `parsing`, `analysis`, or `semantic` as the primary names for those phases in new APIs, diagnostics, timing output, or docs

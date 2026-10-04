@@ -721,7 +721,7 @@ pub fn semantizeWithOptions(
                 return error.Reported;
             if (try diagnoseUnresolvedQualifiedNames(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
-            if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+            if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, false))
                 return error.Reported;
             if (try diagnoseUnresolvedIndex(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
@@ -744,6 +744,8 @@ pub fn semantizeWithOptions(
                 return error.Reported;
             }
             if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, &generic_functions, &abstracts, diagnostics))
+                return error.Reported;
+            if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, true))
                 return error.Reported;
         }
         dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
@@ -2166,6 +2168,7 @@ fn diagnoseUnresolvedChoice(
     reachable: ?*const reachability_mod.FunctionSet,
     offsets: []const globalizer.Offsets,
     diagnostics: *diagnostics_mod.Diagnostics,
+    missing_context: bool,
 ) !bool {
     var flat: usize = 0;
     for (modules, 0..) |*module, module_index| {
@@ -2185,7 +2188,15 @@ fn diagnoseUnresolvedChoice(
                     const choice_ty = if (choice.expected_type) |local_ty|
                         globalizer.globalType(offsets[module_index], local_ty)
                     else
-                        graph.node(target).ty orelse continue;
+                        graph.node(target).ty orelse {
+                            if (!missing_context) continue;
+                            const source: @import("../primitives/schema.zig").SourceRef = .{
+                                .file_index = offsets[module_index].file_base + reference.source.file_index,
+                                .offset = reference.source.offset,
+                            };
+                            try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "choice option '..{s}' needs a concrete choice type", .{name});
+                            return true;
+                        };
                     if (graph.isTypeUnresolved(choice_ty) or global_types.isBuiltin(graph, choice_ty, .Any)) continue;
                     // A known non-choice may still become meaningful through a
                     // different pending operation. Only classify operations for
