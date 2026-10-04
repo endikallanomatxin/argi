@@ -9778,3 +9778,8 @@ test "feature_tests/numbers/12_float_rounding" {
     try expectSuccessfulBuild("tests/feature_tests/numbers/12_float_rounding");
     try runExpect("tests/feature_tests/numbers/12_float_rounding", 0);
 }
+
+test "feature_tests/collections/147_bit_set_view" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/147_bit_set_view");
+    try runExpect("tests/feature_tests/collections/147_bit_set_view", 0);
+}

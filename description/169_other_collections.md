@@ -192,3 +192,17 @@ retain the map shape dependency and never expose mutable keys. Editing a value
 preserves table shape; insertion, removal, growth and cleanup invalidate its
 borrowed references. The query text is used only for the lookup and is not
 retained by the returned value reference.
+
+## Borrowed bit sets
+
+`BitSetView(.bytes, .count)` borrows initialized mutable byte storage for
+`.count` bits and clears the bytes required by that range. Bit zero is the
+low bit of the first byte. Insufficient storage reports `out_of_bounds`
+before writing anything; size calculation cannot overflow. Storage beyond
+the required bytes remains unchanged, and zero bits require no bytes.
+
+`length` reports bit capacity. Checked `contains(.self, .index)` queries a bit;
+`set(.self, .index, .value = true)` sets or clears it. Repeated writes are
+idempotent, and invalid indices leave storage unchanged. `count_set` counts
+only the recorded bit range, ignoring padding bits in the final byte. The
+view allocates nothing and retains the backing storage's lifetime.
