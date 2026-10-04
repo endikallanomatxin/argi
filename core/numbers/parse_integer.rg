@@ -223,3 +223,23 @@ parse_int64(
         .allow_negative = true
     ).result
 }
+
+parse_uintnative(
+        .text : StringView,
+        .base : UInt8       = 10
+    ) -> (
+        .result : Errable#(
+            .t       : UIntNative,
+            .reasons : (..invalid_base, ..invalid_input, ..out_of_range)
+        )
+    ) := {
+    zero :: UIntNative = 0
+    maximum ::= _integer_limits(.value = zero).maximum
+    result = _integer_parse#(.t: UIntNative)(
+        .text           = text
+        .base           = base
+        .minimum        = 0
+        .maximum        = maximum
+        .allow_negative = false
+    ).result
+}

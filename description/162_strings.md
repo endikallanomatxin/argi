@@ -373,3 +373,7 @@ using a validated view or iterator. Iteration rechecks each encoding and aborts
 if that obligation is violated by malformed content. UTF-8 decoding performs no
 normalization, case folding, grapheme segmentation, or display-width calculation;
 a scalar count is not a count of user-perceived characters.
+
+`parse_uintnative(.text, .base = 10)` reads an unsigned integer using the
+compilation target's pointer width. It has the same digit and error contracts
+as the fixed-width integer parsers; out-of-range values never truncate.

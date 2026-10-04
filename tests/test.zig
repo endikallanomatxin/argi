@@ -9691,3 +9691,8 @@ test "feature_tests/numbers/07X_checked_arithmetic_mixed_types" {
 test "feature_tests/numbers/08X_checked_arithmetic_float" {
     try buildExpectFail("tests/feature_tests/numbers/08X_checked_arithmetic_float", "does not satisfy abstract constraint 'Int'");
 }
+
+test "feature_tests/numbers/09_parse_uintnative" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/09_parse_uintnative");
+    try runExpect("tests/feature_tests/numbers/09_parse_uintnative", 0);
+}
