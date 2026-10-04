@@ -18,6 +18,7 @@ pub const InputPath = base.InputPath;
 pub const InputDependency = base.InputDependency;
 pub const OutputFieldEffect = base.OutputFieldEffect;
 pub const FreshEffectSource = base.FreshEffectSource;
+pub const caller_storage_source_bit = base.caller_storage_source_bit;
 pub const ValueEffect = base.ValueEffect;
 pub const receiverBorrowedPlaces = base.receiverBorrowedPlaces;
 pub const OutputVariantEffect = base.OutputVariantEffect;

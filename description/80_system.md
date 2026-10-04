@@ -127,3 +127,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 Streams may be redirected to files or pipes. A stream implementing `Reader`
 or `Writer` does not by itself promise terminal-specific operations such as
 querying screen dimensions.
+
+A fallible `main` may create a fixed-size tracer, its backing array, and its
+virtual interface locally. Returning an error retains that bounded storage
+in the entry wrapper, which reports the trace before running its cleanup.
+The error's existing tracer interface controls reporting; the wrapper does
+not replace it with the default tracer.

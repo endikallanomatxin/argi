@@ -2032,6 +2032,8 @@ pub const Resolver = struct {
             return true;
         }
         const expected_fields = types.fields(self.graph, target) orelse return false;
+        // TODO: Require every non-defaulted nominal field before retagging a
+        // literal; missing fields must not produce partially initialized values.
         for (0..expected_fields.len) |offset| {
             const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(offset))];
             const actual = self.callArgument(literal, offset, expected.name) orelse continue;

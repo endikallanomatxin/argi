@@ -143,6 +143,17 @@ pub const TypeResolutionState = enum(u8) {
 pub const unresolved_type_poison_decl: GlobalDeclId = @enumFromInt(std.math.maxInt(u32));
 const unresolved_binding_type_poison: GlobalTypeId = @enumFromInt(std.math.maxInt(u32));
 
+/// Hidden caller-owned storage is computed after concrete specialization. It
+/// does not participate in source dispatch or persistent ModuleSG snapshots.
+pub const RetainedStorage = struct {
+    bindings: []const GlobalBindingId = &.{},
+    calls: []const GlobalNodeId = &.{},
+    cleanup: []const GlobalAutoDeinitId = &.{},
+    pub fn present(self: RetainedStorage) bool {
+        return self.bindings.len != 0 or self.calls.len != 0;
+    }
+};
+
 pub const GlobalSemanticGraph = struct {
     pub const Checkpoint = struct {
         pool_lengths: [@typeInfo(GlobalSemanticGraph).@"struct".fields.len]usize,
@@ -212,6 +223,8 @@ pub const GlobalSemanticGraph = struct {
         }
     };
 
+    retained_storage: std.ArrayList(RetainedStorage) = .empty,
+    retained_call_owners: std.ArrayList(?GlobalBindingId) = .empty,
     target: @import("../../1_base/target.zig").Config = .{},
     modules: std.ArrayList(Module) = .empty,
     module_aliases: std.ArrayList(ModuleAlias) = .empty,
@@ -301,6 +314,13 @@ pub const GlobalSemanticGraph = struct {
     }
 
     pub fn deinit(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) void {
+        for (self.retained_storage.items) |frame| {
+            allocator.free(frame.bindings);
+            allocator.free(frame.calls);
+            allocator.free(frame.cleanup);
+        }
+        self.retained_storage.deinit(allocator);
+        self.retained_call_owners.deinit(allocator);
         self.lookup.deinit(allocator);
         self.construction.deinit(allocator);
         inline for (.{
@@ -316,6 +336,20 @@ pub const GlobalSemanticGraph = struct {
             &self.virtual_registry_refs, &self.strings,               &self.roots,
         }) |list| list.deinit(allocator);
         self.* = .{};
+    }
+
+    pub fn retainedBinding(self: *const GlobalSemanticGraph, binding_id: GlobalBindingId) bool {
+        for (self.retained_storage.items) |frame| {
+            if (std.mem.indexOfScalar(GlobalBindingId, frame.bindings, binding_id) != null) return true;
+        }
+        return false;
+    }
+
+    pub fn retainedCleanup(self: *const GlobalSemanticGraph, id: GlobalAutoDeinitId) bool {
+        for (self.retained_storage.items) |frame| {
+            if (std.mem.indexOfScalar(GlobalAutoDeinitId, frame.cleanup, id) != null) return true;
+        }
+        return false;
     }
 
     pub fn text(self: *const GlobalSemanticGraph, range: StringRange) []const u8 {
