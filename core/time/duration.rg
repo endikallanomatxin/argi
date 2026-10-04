@@ -7,21 +7,24 @@ Duration init(.nanoseconds: UInt64) -> (.result: Duration) := {
     result = (._nanoseconds = nanoseconds)
 }
 
+_duration_checked(
+        .value : Errable#(.t: UInt64, .reasons: (..out_of_range))
+    ) -> (
+        .result : Errable#(.t: Duration, .reasons: (..out_of_range))
+    ) := {
+    match value {
+        ..ok nanoseconds { result = ..ok Duration(.nanoseconds = nanoseconds) }
+        ..error error { result = ..error error }
+    }
+}
+
 _duration_scaled(
         .value : UInt64,
         .scale : UInt64
     ) -> (
-        .result : Errable#(
-            .t       : Duration,
-            .reasons : (..out_of_range)
-        )
+        .result : Errable#(.t: Duration, .reasons: (..out_of_range))
     ) := {
-    maximum: UInt64 = 18446744073709551615
-    if value > maximum / scale {
-        result = ..error(.reason = ..out_of_range)
-        return
-    }
-    result = ..ok Duration(.nanoseconds = value * scale)
+    result = _duration_checked(.value = checked_multiply(.left = value, .right = scale)).result
 }
 
 Duration init(
@@ -61,12 +64,9 @@ add(
             .reasons : (..out_of_range)
         )
     ) := {
-    maximum: UInt64 = 18446744073709551615
-    if left._nanoseconds > maximum - right._nanoseconds {
-        result = ..error(.reason = ..out_of_range)
-        return
-    }
-    result = ..ok Duration(.nanoseconds = left._nanoseconds + right._nanoseconds)
+    result = _duration_checked(
+        .value = checked_add(.left = left._nanoseconds, .right = right._nanoseconds)
+    ).result
 }
 
 subtract(
@@ -78,11 +78,9 @@ subtract(
             .reasons : (..out_of_range)
         )
     ) := {
-    if left._nanoseconds < right._nanoseconds {
-        result = ..error(.reason = ..out_of_range)
-        return
-    }
-    result = ..ok Duration(.nanoseconds = left._nanoseconds - right._nanoseconds)
+    result = _duration_checked(
+        .value = checked_subtract(.left = left._nanoseconds, .right = right._nanoseconds)
+    ).result
 }
 
 operator == (.left: Duration, .right: Duration) -> (.ok: Bool) := {
