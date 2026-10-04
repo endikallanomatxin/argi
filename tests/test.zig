@@ -9803,3 +9803,12 @@ test "feature_tests/collections/148_priority_queue" {
     try expectSuccessfulBuild("tests/feature_tests/collections/148_priority_queue");
     try runExpect("tests/feature_tests/collections/148_priority_queue", 0);
 }
+
+test "feature_tests/collections/149_owned_bit_set" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/149_owned_bit_set");
+    try runExpect("tests/feature_tests/collections/149_owned_bit_set", 0);
+}
+
+test "feature_tests/collections/150X_bit_set_view_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/collections/150X_bit_set_view_after_cleanup", "root that has ended");
+}

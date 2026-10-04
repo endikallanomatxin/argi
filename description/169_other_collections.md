@@ -218,3 +218,9 @@ perform logarithmic comparisons. Equal-priority removal order is unspecified.
 The policy must remain live and its comparisons stable while values are queued.
 `deinit` releases the backing dynamic array. Ownership-bearing elements need a
 separate borrowed comparison and movement protocol before they can be supported.
+
+`BitSet(.count, .allocator)` owns initialized storage for a fixed bit count.
+It shares the checked `length`, `contains`, `set` and `count_set` operations
+with borrowed bit sets. `as_view(.self: $&BitSet)` borrows a mutable `BitSetView`
+without clearing any bits. Cleanup releases the underlying dynamic array and
+invalidates its borrowed views; owners cannot be implicitly copied.
