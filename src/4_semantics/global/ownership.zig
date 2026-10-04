@@ -40,6 +40,7 @@ pub const Resolver = struct {
     denied_copy: ?DeniedCopy = null,
     auto_nodes: std.ArrayList(AutoNode) = .empty,
     empty_block: ?global_sg.GlobalBlockId = null,
+    loop_cleanup_base: ?struct { active: usize, defers: usize } = null,
     stats: Stats = .{},
     profile_io: ?std.Io = null,
     profile_destructor_calls: usize = 0,
@@ -468,8 +469,23 @@ pub const Resolver = struct {
                     if (statement.else_block) |child|
                         try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index);
                 },
-                .while_statement => |statement| try self.finalizeBlock(statement.body, &active, &defers, &visible, &.{}, owner_function, module_index),
-                .for_statement => |statement| try self.finalizeBlock(statement.body, &active, &defers, &visible, &.{}, owner_function, module_index),
+                .while_statement, .for_statement => {
+                    const previous_loop = self.loop_cleanup_base;
+                    self.loop_cleanup_base = .{ .active = active.items.len, .defers = defers.items.len };
+                    defer self.loop_cleanup_base = previous_loop;
+                    const body = if (node.content == .while_statement) node.content.while_statement.body else node.content.for_statement.body;
+                    try self.finalizeBlock(body, &active, &defers, &visible, &.{}, owner_function, module_index);
+                },
+                .break_statement, .continue_statement => {
+                    if (self.loop_cleanup_base) |base| {
+                        // Loop transfers end nested lexical scopes but retain the
+                        // iterator owner in the surrounding loop scope.
+                        const cleanup = try self.appendCleanup(active.items[base.active..], defers.items[base.defers..]);
+                        _ = rebuilt.pop();
+                        try rebuilt.appendSlice(self.allocator, self.graph.node_refs.items[cleanup.start..][0..cleanup.len]);
+                        try rebuilt.append(self.allocator, node_id);
+                    }
+                },
                 .switch_statement => |switch_id| {
                     const sw = self.graph.switches.items[@intFromEnum(switch_id)];
                     const cases = try self.allocator.dupe(global_sg.SwitchCase, self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]);
