@@ -4,8 +4,8 @@ Build and run from the repository root:
 
 ```sh
 zig build
-./zig-out/bin/argi build examples/word_count
-./examples/word_count/build/output path/to/directory 1048576
+./zig-out/bin/argi build tests/usecase_tests/03_word_count
+./tests/usecase_tests/03_word_count/build/output path/to/directory 1048576
 ```
 
 The optional second argument sets the maximum bytes accepted per file; it

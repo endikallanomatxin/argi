@@ -9700,5 +9700,33 @@ test "feature_tests/numbers/09_parse_uintnative" {
 test "feature_tests/system/86_word_count_consumer" {
     try expectSuccessfulBuild("tests/feature_tests/system/86_word_count_consumer");
     try runExpect("tests/feature_tests/system/86_word_count_consumer", 0);
-    try expectSuccessfulBuild("examples/word_count");
+}
+
+test "usecase_tests/03_word_count" {
+    const test_path = "tests/usecase_tests/03_word_count";
+    try expectSuccessfulBuild(test_path);
+    const output_path = try outputPathFor(test_path);
+    defer std.testing.allocator.free(output_path);
+    const result = try runChild(&.{ output_path, "tests/feature_tests/system/86_word_count_consumer/data", "64" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+    var lines = std.mem.tokenizeScalar(u8, result.stdout, '\n');
+    var seen: u8 = 0;
+    while (lines.next()) |line| {
+        const bit: u8 = if (std.mem.eql(u8, line, "3\tcafé")) 1 else if (std.mem.eql(u8, line, "2\ttea")) 2 else if (std.mem.eql(u8, line, "2\t🙂")) 4 else return error.UnexpectedWordCount;
+        try expect(seen & bit == 0);
+        seen |= bit;
+    }
+    try expectEqual(@as(u8, 7), seen);
+    try runExpectStdoutWithArgs(test_path, &.{}, 0, "Usage: word-count <directory> [maximum-file-bytes]\n");
+    const failure = try runChild(&.{ output_path, "tests/feature_tests/system/86_word_count_consumer/data", "1" });
+    defer std.testing.allocator.free(failure.stdout);
+    defer std.testing.allocator.free(failure.stderr);
+    switch (failure.term) {
+        .exited => |code| try expect(code != 0),
+        else => return error.UnexpectedProcessTermination,
+    }
+    try expectEqualStrings("", failure.stdout);
+    try expect(std.mem.indexOf(u8, failure.stderr, "size_limit_exceeded") != null);
 }

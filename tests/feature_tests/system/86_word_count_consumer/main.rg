@@ -1,4 +1,4 @@
-words ::= import ("../../../../examples/word_count/library")
+words ::= import ("../../../usecase_tests/03_word_count/library")
 
 expect_count(
         .self      : &OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
