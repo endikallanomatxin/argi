@@ -34,6 +34,8 @@ For a first pass, read [Syntax overview](00_syntax_overview.md),
   [Other collections](169_other_collections.md).
 - **Numeric utilities:** [Deterministic randomness](163_randomness.md) and
   [Duration and clocks](164_time.md).
+- **Binary data and I/O:** [Binary views and cursors](170_binary.md),
+  [Streams](171_streams.md), and [Filesystem operations](172_filesystem.md).
 - **Native tools:** [Processes](165_processes.md) and
   [Semantic versions](166_semver.md),
   [Python embedding](167_python.md), and [Networking](168_networking.md).

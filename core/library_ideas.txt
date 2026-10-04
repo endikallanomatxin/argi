@@ -18,10 +18,9 @@ System and tooling
 Collections and values
 
 - Treaps and other ordered collections whose use cases justify an extra type.
-- Ring buffers and deques; exploratory shapes remain in
-  description/169_other_collections.md.
-- Semantic version comparison/parsing; core/semantic_versioning/Version.rg
-  retains a commented baseline.
+- Owning generic hash maps and sets beyond the current copyable element contracts.
+- Unicode decoding and validated text views beyond byte-oriented strings.
+- Numeric utilities such as checked arithmetic and reusable rounding contracts.
 - Value canonicalization/interning facilities, inspired by the earlier unique
   entry, only if their ownership and lifetime semantics are useful and clear.
 - Weak references, only with an explicit model for detecting an ended lifetime.
@@ -44,8 +43,8 @@ Runtime and diagnostics
 Comptime and library foundations
 
 - Type introspection/reflection utilities consistent with Argi's comptime model.
-- Random generation: system entropy and cryptographic operations need distinct
-  capability and quality contracts from deterministic PRNG state.
+- Cryptographic operations beyond the existing system entropy capability need
+  explicit quality and ownership contracts distinct from deterministic PRNG state.
 - Low-level/unsafe facilities must name their trusted obligations explicitly.
 
 These ideas originated as reference-library comparisons. They require original

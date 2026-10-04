@@ -8,10 +8,15 @@ The implemented foundations include:
 
 - Memory: raw storage, allocations, temporal dependencies, opaque ownership,
   and allocator composition.
-- Collections and text: arrays, array views, dynamic arrays, strings, and
-  named collection operations.
+- Collections and text: arrays, array views, dynamic arrays, Deque with value
+  and borrowed iteration, hash maps and sets, strings, and collection operations.
+- Binary data: checked unsigned endian reads and writes, and borrowed byte
+  cursors whose positions advance only after successful operations.
 - System and I/O: program capabilities, files, filesystem operations, terminal
-  streams, and reader/writer contracts.
+  streams, blocking networking, processes, and byte/block reader/writer contracts.
+  Filesystem helpers include directory enumeration, metadata, file positioning
+  and truncation, and temporary directory owners. Stream helpers support exact
+  reads, complete writes, bounded delimiter reads, and copying with caller buffers.
 - Errors: nominal reasons, `Errable`, explicit propagation, and tracing policies.
 - Interoperability: explicit foreign-function capability and libc declarations.
 
@@ -19,8 +24,8 @@ A directory's presence does not imply that its module is complete. Consult
 its `.rg` implementation and registered feature tests for the supported
 operations. Language contracts belong in `description/`; planned library
 extensions and implementation milestones belong in the
-[0.3 library checklist](../plan/0.3.md#core-library) and
-[0.4 candidates](../plan/0.4.md#core-library).
+[0.3 preparation](../plan/0.3.md) and
+[0.4 roadmap](../plan/0.4.md).
 Exploratory possibilities that are not scheduled remain in
 [the library ideas inventory](library_ideas.txt), alongside existing module
 sketches.

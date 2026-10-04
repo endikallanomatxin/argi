@@ -190,6 +190,21 @@ feature first.
   storage acquisition receipts. UDP truncation is an error even when a prefix
   was written.
 
+- Filesystem extensions use `core/platforms/shared/filesystem.c` and its private
+  `filesystem.h` ABI header through the same selected runtime adapters. Directory
+  and temporary-directory owners borrow `FileSystem`; their native handles grant
+  no safe-reference validity. Copy directory names before advancing enumeration.
+  Temporary directory cleanup removes only an empty directory; explicit close
+  retains the handle on failure so callers can remove children and retry.
+  File seek and truncate preserve the owning file's FFI dependency.
+
+- Block stream operations use initialized byte views and readonly write sources.
+  Validate complete ranges before binary writes, and advance borrowed byte cursor
+  positions only on success. Exact reads and complete writes accept partial native
+  progress; zero write progress is an error. Buffered readers initialize their
+  allocation before exposing a native refill view. Deque iterators retain its
+  shape dependency, including in returned borrowed elements.
+
 - Local `Errable` handling (`handle value, error { ... }`) lowers to a match
   inside an explicit `value_sequence`. Its result storage is deferred in the
   enclosing scope, while match payloads and handler locals belong to branches.
