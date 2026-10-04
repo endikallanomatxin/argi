@@ -8997,3 +8997,86 @@ test "feature_tests/basics/71_large_numeric_array_branches" {
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+// CPython remains an optional native dependency. Supplying its adapter object
+// and embedding library enables executable coverage without requiring Python
+// development packages for ordinary compiler builds.
+fn checkPythonFixture(path: []const u8) !void {
+    const allocator = std.testing.allocator;
+    var environment = try std.testing.environ.createMap(allocator);
+    defer environment.deinit();
+    const runtime = environment.get("ARGI_PYTHON_RUNTIME_OBJECT") orelse return error.SkipZigTest;
+    const library = environment.get("ARGI_PYTHON_LIBRARY") orelse return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, path });
+    defer allocator.free(fixture);
+    const app = if (@import("builtin").os.tag == .windows) "app.exe" else "app";
+    const executable = try std.fs.path.join(allocator, &.{ root, app });
+    defer allocator.free(executable);
+    for (0..2) |_| {
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--output", app, "--link-file", runtime, "--link-file", library, "--emit-llvm", "app.ll" }, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChildInCwd(&.{executable}, root);
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        if (executed.term != .exited or executed.term.exited != 0) std.debug.print("{s}", .{executed.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+        try expectEqualStrings("", executed.stderr);
+        const ir = try tmp.dir.readFileAlloc(std.testing.io, "app.ll", allocator, .limited(1024 * 1024));
+        defer allocator.free(ir);
+        try expect(std.mem.indexOf(u8, ir, "@_argi_python_start") != null);
+        try expect(std.mem.indexOf(u8, ir, "@_argi_python_stop") != null);
+        try expect(std.mem.indexOf(u8, ir, "@_argi_python_release") != null);
+    }
+}
+
+test "feature_tests/python/01_json" {
+    try checkPythonFixture("tests/feature_tests/python/01_json");
+}
+test "feature_tests/python/02_values_errors" {
+    try checkPythonFixture("tests/feature_tests/python/02_values_errors");
+}
+test "feature_tests/python/03_keywords" {
+    try checkPythonFixture("tests/feature_tests/python/03_keywords");
+}
+test "feature_tests/python/04X_object_lifetime" {
+    try buildExpectFail("tests/feature_tests/python/04X_object_lifetime", "reference depends on a root that has ended");
+}
+test "feature_tests/python/05X_object_copy" {
+    try buildExpectFail("tests/feature_tests/python/05X_object_copy", "cannot be copied implicitly");
+}
+test "feature_tests/python/06X_private_handle" {
+    try buildExpectFail("tests/feature_tests/python/06X_private_handle", "field '_handle' is private to its module");
+}
+test "feature_tests/python/07X_object_escape" {
+    try buildExpectFail("tests/feature_tests/python/07X_object_escape", "function output cannot depend on a local storage generation");
+}
+
+test "feature_tests/python/08_conversions" {
+    try checkPythonFixture("tests/feature_tests/python/08_conversions");
+}
+
+test "feature_tests/python/09_methods_iteration" {
+    try checkPythonFixture("tests/feature_tests/python/09_methods_iteration");
+}
+
+test "feature_tests/python/10_exceptions" {
+    try checkPythonFixture("tests/feature_tests/python/10_exceptions");
+}
+
+test "feature_tests/python/11_numeric_buffers" {
+    try checkPythonFixture("tests/feature_tests/python/11_numeric_buffers");
+}
+test "feature_tests/python/12X_numeric_readonly" {
+    try buildExpectFail("tests/feature_tests/python/12X_numeric_readonly", "no overload of 'copy_numeric' accepts arguments");
+}

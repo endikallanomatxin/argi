@@ -35,7 +35,8 @@ For a first pass, read [Syntax overview](00_syntax_overview.md),
 - **Numeric utilities:** [Deterministic randomness](163_randomness.md) and
   [Duration and clocks](164_time.md).
 - **Native tools:** [Processes](165_processes.md) and
-  [Semantic versions](166_semver.md).
+  [Semantic versions](166_semver.md),
+  [Python embedding](167_python.md).
 - **Integration and tooling:** [Modules](02_modules.md),
   [C interoperability](20_c.md), [Testing](72_testing.md),
   [Documentation comments](73_documentation.md), and [System](80_system.md).
