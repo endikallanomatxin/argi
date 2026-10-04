@@ -1117,6 +1117,12 @@ pub const Resolver = struct {
             var candidate_deferred = false;
             for (storage.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, position| {
                 if (self.core.callArgumentNamed(literal, position, candidate_module.text(field.name))) |supplied| {
+                    // Earlier typed inputs may determine a generic scalar.
+                    // A literal then supplies context-compatible data, rather
+                    // than conflicting evidence from its default numeric type.
+                    if (self.generics.instantiateParameterizedType(candidate_index, field.ty, &bindings, null)) |expected| {
+                        if (self.core.contextualLiteralFits(supplied, expected)) continue;
+                    } else |_| {}
                     const actual = self.staticInputType(supplied) orelse {
                         candidate_deferred = true;
                         matches = false;
@@ -2424,8 +2430,9 @@ pub const Resolver = struct {
 
         fn instantiateResolvedNode(self: *InstanceContext, node: ir.ResolvedNode) anyerror!global_sg.Node {
             if (node.content == .struct_value_literal) return self.instantiateStructValue(node);
-            if (node.content == .code_block) {
-                const block = try self.instantiateBlock(node.content.code_block);
+            if (node.content == .code_block or node.content == .value_sequence) {
+                const is_sequence = node.content == .value_sequence;
+                const block = try self.instantiateBlock(if (is_sequence) node.content.value_sequence else node.content.code_block);
                 const body = self.resolver.graph.blocks.items[@intFromEnum(block)];
                 const ty: ?global_sg.GlobalTypeId = if (body.ret_val) |ret_val|
                     self.resolver.graph.nodes.items[@intFromEnum(ret_val)].ty
@@ -2434,7 +2441,7 @@ pub const Resolver = struct {
                 return .{
                     .source = self.resolver.sourceFor(self.module_index, node.source),
                     .ty = ty,
-                    .content = .{ .code_block = block },
+                    .content = if (is_sequence) .{ .value_sequence = block } else .{ .code_block = block },
                 };
             }
             if (node.content == .binding_use or node.content == .binding_declaration) {
@@ -2467,6 +2474,7 @@ pub const Resolver = struct {
                             try self.instantiateNode(assignment.value),
                     } },
                     .code_block => |block| .{ .code_block = try self.instantiateBlock(block) },
+                    .value_sequence => |block| .{ .value_sequence = try self.instantiateBlock(block) },
                     .int_literal => |value| .{ .int_literal = value },
                     .float_literal => |value| .{ .float_literal = value },
                     .char_literal => |value| .{ .char_literal = value },
@@ -3341,9 +3349,11 @@ pub const Resolver = struct {
                 else => self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty orelse return error.ParameterizedAddressUntyped,
             };
             const mutability: primitives.PointerMutability = switch (detail) {
-                .pointer_mutability => |value| value,
+                .pointer_mutability, .pipe_pointer_mutability => |value| value,
                 else => return error.InvalidParameterizedAddressOf,
             };
+            if (detail == .pipe_pointer_mutability and self.resolver.graph.types.items[@intFromEnum(child)] == .pointer)
+                return self.resolver.graph.node(operands[0]);
             const pointer = try self.resolver.generics.internType(.{ .pointer = .{ .child = child, .mutability = mutability } });
             return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = pointer, .content = .{ .address_of = operands[0] } };
         }

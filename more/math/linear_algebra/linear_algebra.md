@@ -1,122 +1,54 @@
-Link against BLAS and LAPACK.
-- What they provide: the foundation for dense linear algebra (vector and matrix multiplication, plus advanced decompositions).
-- Why they matter: nearly all scientific, machine learning, and numerical simulation software (MATLAB, R, Julia, NumPy/SciPy, PETSc…) uses them under the hood to deliver performance across CPUs.
+# Dense vectors and matrices
 
-Check whether they are installed on the system, in order of preference.
-If none are installed, suggest a command to install them.
+Import `math/linear_algebra`. Storage is dense and row-major. `Scalar` includes
+Argi's built-in signed/unsigned integers and Float16/32/64. Operands share an
+exact scalar type; conversions remain explicit and arithmetic follows ordinary
+scalar semantics. No BLAS, NumPy, or other native dependency is required.
 
+## Fixed dimensions
 
-Julia seems very good for working with arrays, vectors, and related structures.
+`Vector#(.n, .t)` owns an array in `.values`. `Matrix#(.rows, .cols, .t)` owns a
+nested array in `.values`, indexed by row then column. Both are implicitly
+copyable; constructors accept matching arrays. Dimensions belong to the type.
 
-> [!TODO] Choose a name for the most general type.
+- Vector `add`, `scale`, and `dot` preserve the scalar type.
+- Matrix `add` requires matching rows and columns.
+- `multiply` accepts R×K and K×C and returns R×C.
+- `transpose` returns C×R from R×C.
 
-```
-NDVector : Abstract = (
-	.type : Type
-	.data : Ptr
-	.n_dim : UIntNative
-	...
-)
+Shared comptime parameters reject mismatched shapes during semantizing. Results
+own their storage and do not borrow inputs. Empty vectors have a zero dot
+product; multiplication across an empty inner dimension produces zeros.
 
-Implementors of `NDVector`:
-- `Vector`
-- `Matrix`
-```
-
-```
-v :: Vector = [1, 2, 3]
--- Becomes
-v ::= Vector((1, 2, 3))
-```
-
-```
-m :: Matrix = [[1, 2, 3], [4, 5, 6]]
+```rg
+math := import("math/linear_algebra")
+main() -> (.status_code: Int32 = 0) := {
+    left: math.Vector#(.n = 3, .t: Float64) = (.values = (1.0, 2.0, 3.0))
+    right: math.Vector#(.n = 3, .t: Float64) = (.values = (4.0, 5.0, 6.0))
+    product ::= math.dot(.left = &left, .right = &right)
+    if product != 32.0 { abort }
+}
 ```
 
-Both Vector and Matrix have additional information about their orientation.
-They are coherent with that when doing operations.
+## Dynamic dimensions
 
+`DynamicVector#(.t)` and `DynamicMatrix#(.t)` own private DynamicArray storage.
+Their constructors copy an initialized readonly view with an explicit allocator.
+A matrix additionally takes `.rows` and `.cols`; the checked product must equal
+the source view's length. Overflow or incompatible dimensions return
+`dimension_mismatch`; allocation failures return `out_of_memory`.
 
-Dot product:
-```
-v1 ::= Vector((1, 2, 3))
-v2 ::= Vector((4, 5, 6))
+Vectors expose `length`, checked `get`/`set`, `dot`, `add`, and `scale`. Matrices
+expose `shape`, checked `get`/`set`, `add`, `multiply`, and `transpose`. Dynamic
+shape incompatibilities return `dimension_mismatch`. Operations returning new
+owners take `.allocator`; scalar reads, writes, and dot products do not allocate.
+Index errors return `out_of_bounds` without writing. No operation resizes an
+existing owner or exposes mutable shape fields.
 
--- Opciones
-v1|dot(v2) == 32
-v1 * v2|transpose == 32
-```
+Results use separate storage, including when both operands are the same owner.
+Inputs remain unchanged on shape or allocation failure. Zero-size dimensions
+are preserved; zero-element operations skip iteration over large empty shapes.
+Dynamic owners are not implicitly copyable and are cleaned up automatically.
 
-Cross product:
-```
-v1 ::= Vector((1, 2, 3))
-v2 ::= Vector((4, 5, 6))
-
-v1|cross(v2) == Vector([-3, 6, -3])
-```
-
-Matrix types:
-
-```
-Matrix : Abstract = (
-	...
-)
-
-Implementors of `Matrix#(.t: Type)`:
-- `RectangularMatrix`  -- Square also, but generally rectangular
-- `IdentityMatrix`
-- `ZeroMatrix`
-- `UpperTriangularMatrix`
-- `LowerTriangularMatrix`
-- `DiagonalMatrix`
-- `SymmetricMatrix`
-- `AntiSymmetricMatrix`
-- `OrthogonalMatrix`  -- ?
-- `UnitaryMatrix`  -- ?
-- `HermitianMatrix`  -- ?
-```
-
-```
-i := IdentityMatrix(3)
-```
-
-```
-Vector : Abstract = (
-	...
-)
-
-Implementors of `Vector`:
-- `GeneralVector`
-- `OnesVector`
-- `ZerosVector`
-- `OneHotVector`  -- Contains one 1; the rest are 0. Enables many optimizations.
-- `ManyHotVector` -- Contains several 1s; the rest are 0.
-```
-
-
-**Linear algebra functions**
-
-```
-det(), inv(), eig(), qr(), lu(), norm()
-```
-
-How data is stored in memory can matter for operation efficiency.
-
-```
-m|to_stack
-m|to_column_major
-```
-
-This must be configurable during initialization.
-```
-m := Matrix(((1, 2, 3),
-	     (4, 5, 6)),
-		 storage_implementation = ..ColumnMajor)
-```
-
-Supported options:
-
-- storage_implementation: column_major, row_major, stack. (default: column_major)
-- definition_inner_orientation: row, column. (default: row)
-
-Optimize using BLAS and LAPACK.
+Sparse matrices, arbitrary strided views, decomposition algorithms, generic
+abstract representation dispatch, and BLAS integration remain separate work.

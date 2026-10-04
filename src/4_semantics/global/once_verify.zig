@@ -126,7 +126,7 @@ const State = struct {
                 for (self.graph.function_refs.items[registry.implementations.start..][0..registry.implementations.len]) |callee|
                     try self.walkCall(node_id, callee);
             },
-            .code_block => |block| try self.walkBlock(block),
+            .code_block, .value_sequence => |block| try self.walkBlock(block),
             .list_literal => |literal| {
                 for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |value|
                     try self.walkNode(value);

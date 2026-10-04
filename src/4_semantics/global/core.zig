@@ -241,6 +241,13 @@ pub const Resolver = struct {
                 node.ty = inferred;
                 changed = true;
             },
+            .value_sequence => |block| {
+                const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse continue;
+                const inferred = self.graph.node(value).ty orelse continue;
+                if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
+                node.ty = inferred;
+                changed = true;
+            },
             .move_value => |value| {
                 const inferred = self.graph.nodes.items[@intFromEnum(value)].ty orelse continue;
                 if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
@@ -453,6 +460,9 @@ pub const Resolver = struct {
         for (candidates) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
             if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
+            // Specializations are cached implementations, not new overloads.
+            // Reconsider the generic declaration so lookup is call-order independent.
+            if (function.flags.is_generic_instantiation) continue;
             if (self.graph.declaration(function.declaration).constructor_type != null) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
             const score = switch (try self.matchCallInputWithReach(function.input, input_node, context)) {
@@ -495,6 +505,9 @@ pub const Resolver = struct {
         for (candidates) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
             if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
+            // Specializations are cached implementations, not new overloads.
+            // Reconsider the generic declaration so lookup is call-order independent.
+            if (function.flags.is_generic_instantiation) continue;
             if (self.graph.declaration(function.declaration).constructor_type != null) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
             const score = switch (self.matchCallInput(function.input, input_node)) {
@@ -611,6 +624,14 @@ pub const Resolver = struct {
     pub fn isUnpackedOutputField(self: *const Resolver, node: global_sg.GlobalNodeId, name: []const u8) bool {
         const function_id = switch (self.graph.nodes.items[@intFromEnum(node)].content) {
             .function_call => |call| call.callee,
+            .value_sequence => |block| return self.isUnpackedOutputField(self.graph.blocks.items[@intFromEnum(block)].ret_val orelse return false, name),
+            .binding_use => |id| blk: {
+                const binding = self.graph.binding(id);
+                // Internal pipe storage preserves single-output labels while
+                // ordinary user bindings keep their scalar value semantics.
+                if (!std.mem.eql(u8, self.graph.text(binding.name), "#pipe_temporary")) break :blk null;
+                return self.isUnpackedOutputField(binding.initialization orelse return false, name);
+            } orelse return false,
             else => return false,
         };
         const output = self.graph.functions.items[@intFromEnum(function_id)].output;
@@ -1002,8 +1023,17 @@ pub const Resolver = struct {
         if (self.graph.nodes.items[@intFromEnum(right)].ty == null and
             self.contextualizeChoiceOperand(module_index, o, right, left_ty)) return false;
         var right_ty = self.graph.nodes.items[@intFromEnum(right)].ty orelse return false;
-        // TODO: Contextualize floating literals against the other operand and
-        // diagnose incompatible widths instead of leaving comparisons unresolved.
+        // Literal context can arrive after syntaxing when an imported generic
+        // supplies the other operand's type. Typed values retain their widths.
+        if (!types.equal(self.graph, left_ty, right_ty)) {
+            if (self.floatLiteralFits(right, left_ty)) {
+                self.graph.nodes.items[@intFromEnum(right)].ty = left_ty;
+                right_ty = left_ty;
+            } else if (self.floatLiteralFits(left, right_ty)) {
+                self.graph.nodes.items[@intFromEnum(left)].ty = right_ty;
+                left_ty = right_ty;
+            }
+        }
         self.coerceIntegerPair(left, &left_ty, right, &right_ty);
         const bool_ty = try self.builtin(.Bool);
         const target = globalizer.globalNode(o, value.node);

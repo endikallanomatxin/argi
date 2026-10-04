@@ -90,6 +90,8 @@ pub fn lowerInitializerExpression(
     return context.lowerNode(node, expected);
 }
 
+const PipeOperandOverride = struct { syntax: syn.NodeIndex, value: Lowered };
+
 const Context = struct {
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
@@ -104,6 +106,7 @@ const Context = struct {
     tree: *const syn.FileSyntaxTree = undefined,
     source: []const u8 = &.{},
     pipe_value: ?Lowered = null,
+    pipe_operand_overrides: []const PipeOperandOverride = &.{},
     expression_mode: ExpressionMode = .body,
     suppress_implicit_copies: bool = false,
     current_function: ?entities.ModuleFunctionId = null,
@@ -301,6 +304,7 @@ const Context = struct {
     }
 
     fn lowerNode(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) anyerror!Lowered {
+        for (self.pipe_operand_overrides) |entry| if (entry.syntax == node) return entry.value;
         // TODO: Support contextual choice literals in parameter defaults;
         // callers can express these defaults through a value-returning helper.
         if (self.expression_mode == .initializer) switch (self.tree.tag(node)) {
@@ -499,11 +503,73 @@ const Context = struct {
             if (expected) |ty| try self.pointerChild(ty) else null
         else
             null;
-        const lhs = try self.lowerNode(op.lhs, lhs_expected);
+        var evaluations = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
+        defer evaluations.deinit();
+        const lhs = try self.lowerPipeOperand(op.lhs, lhs_expected, &evaluations);
         const previous = self.pipe_value;
         self.pipe_value = lhs;
         defer self.pipe_value = previous;
-        return self.lowerNode(op.rhs, expected);
+        const rhs = try self.lowerNode(op.rhs, expected);
+        if (evaluations.items.len == 0) return rhs;
+        try evaluations.append(rhs.node);
+        const block = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(evaluations.items), .ret_val = rhs.node });
+        return self.resolved(node, rhs.ty, .{ .value_sequence = block });
+    }
+
+    // Stable lvalues retain their original storage. Effectful bases and index
+    // expressions are cached before projection, so repeated placeholders do
+    // not repeat calls and mutable borrows still refer to the original object.
+    fn lowerPipeOperand(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId, evaluations: *std.array_list.Managed(entities.ModuleNodeId)) anyerror!Lowered {
+        switch (self.tree.tag(node)) {
+            .identifier, .pipe_placeholder => return self.lowerNode(node, expected),
+            .struct_field_access, .choice_payload_access, .dereference, .index_access => {
+                const base_node = switch (self.tree.tag(node)) {
+                    .struct_field_access => self.tree.structFieldAccess(node).?.value,
+                    .choice_payload_access => self.tree.choicePayloadAccess(node).?.value,
+                    .dereference => self.tree.unaryOperand(node).?,
+                    .index_access => self.tree.binaryOperation(node).?.lhs,
+                    else => unreachable,
+                };
+                const base = try self.lowerPipeOperand(base_node, null, evaluations);
+                var entries: [2]PipeOperandOverride = undefined;
+                entries[0] = .{ .syntax = base_node, .value = base };
+                var count: usize = 1;
+                if (self.tree.tag(node) == .index_access) {
+                    const index_node = self.tree.binaryOperation(node).?.rhs;
+                    const index = try self.cachePipeValue(index_node, try self.lowerNode(index_node, try self.builtin(.UIntNative)), evaluations);
+                    entries[1] = .{ .syntax = index_node, .value = index };
+                    count = 2;
+                }
+                const previous = self.pipe_operand_overrides;
+                self.pipe_operand_overrides = entries[0..count];
+                defer self.pipe_operand_overrides = previous;
+                return self.lowerNode(node, expected);
+            },
+            else => return self.cachePipeValue(node, try self.lowerNode(node, expected), evaluations),
+        }
+    }
+
+    fn cachePipeValue(self: *Context, node: syn.NodeIndex, value: Lowered, evaluations: *std.array_list.Managed(entities.ModuleNodeId)) !Lowered {
+        // Keep literals contextual: hiding them behind a binding would freeze
+        // their default width before a call or array index provides its type.
+        if (self.tree.tag(node) == .literal) return value;
+        const temporaries = self.temporary_declarations orelse return value;
+        // Reserve storage in the enclosing lexical block. Initialization stays
+        // inside this expression, preserving branches and short-circuiting.
+        const name = try self.writer.addString("#pipe_temporary");
+        const storage = if (value.ty) |ty|
+            try self.writer.addBinding(.{ .name = name, .source = self.sourceRef(node), .ty = ty, .initialization = value.node, .deferred_initialization = true, .mutability = .variable })
+        else blk: {
+            const id = try self.writer.addUnresolvedBinding(name, self.sourceRef(node), value.node, .variable);
+            self.graph.semantic.bindings.items[@intFromEnum(id)].deferred_initialization = true;
+            break :blk id;
+        };
+        try self.captureBindingCleanup(node, storage);
+        const declaration = try self.resolved(node, value.ty, .{ .binding_declaration = storage });
+        try temporaries.append(declaration.node);
+        const assignment = try self.resolved(node, value.ty, .{ .assignment = .{ .binding = storage, .value = value.node } });
+        try evaluations.append(assignment.node);
+        return self.resolved(node, value.ty, .{ .binding_use = storage });
     }
 
     fn lowerUnwrap(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {

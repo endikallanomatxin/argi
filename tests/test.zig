@@ -1474,13 +1474,10 @@ test "feature_tests/functions/06X_pipe_requires_placeholder" {
     );
 }
 
-test "feature_tests/functions/07X_pipe_expression_placeholder_not_supported" {
-    try buildExpectFailExact("tests/feature_tests/functions/07X_pipe_expression_placeholder_not_supported",
-        \\tests/feature_tests/functions/07X_pipe_expression_placeholder_not_supported/main.rg:6:34: error: pipe placeholders are only supported as '_', '&_', '$&_', '_.field', or '..variant' payload access for now
-        \\      status_code = 41 | add_one(_ + 1)
-        \\                                   ^
-        \\
-    );
+test "feature_tests/functions/07_pipe_expression_placeholder" {
+    const path = "tests/feature_tests/functions/07_pipe_expression_placeholder";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
 }
 
 test "feature_tests/functions/08_pipe_chain" {
@@ -2497,7 +2494,7 @@ test "feature_tests/collections/48_array_view_fixed_storage" {
 test "feature_tests/collections/49X_array_view_unproven_length" {
     try buildExpectFail(
         "tests/feature_tests/collections/49X_array_view_unproven_length",
-        "no function named 'array_view' exists",
+        "no matching generic overload of 'array_view' accepts arguments",
     );
 }
 
@@ -7609,7 +7606,7 @@ test "feature_tests/collections/115_collection_sort_records" {
 }
 
 test "feature_tests/collections/116X_collection_sort_readonly" {
-    try buildExpectFail("tests/feature_tests/collections/116X_collection_sort_readonly", "no function named 'sort'");
+    try buildExpectFail("tests/feature_tests/collections/116X_collection_sort_readonly", "no matching generic overload of 'sort' accepts arguments");
 }
 
 test "tests/feature_tests/basics/25X_numeric_binding_type" {
@@ -7653,7 +7650,7 @@ test "tests/feature_tests/polymorphism/61_generic_constraint_alternate" {
 }
 
 test "tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape" {
-    try buildExpectFail("tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape", "no function named 'accept'");
+    try buildExpectFail("tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape", "no matching generic overload of 'accept' accepts arguments");
 }
 
 test "tests/feature_tests/polymorphism/63X_generic_constraint_qualified" {
@@ -9079,4 +9076,64 @@ test "feature_tests/python/11_numeric_buffers" {
 }
 test "feature_tests/python/12X_numeric_readonly" {
     try buildExpectFail("tests/feature_tests/python/12X_numeric_readonly", "no overload of 'copy_numeric' accepts arguments");
+}
+
+test "feature_tests/functions/32_generic_view_dispatch_order" {
+    const path = "tests/feature_tests/functions/32_generic_view_dispatch_order";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/system/71_system_entropy" {
+    const path = "tests/feature_tests/system/71_system_entropy";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/system/72X_entropy_readonly" {
+    try buildExpectFail("tests/feature_tests/system/72X_entropy_readonly", "no overload of 'fill_random_bytes' accepts arguments");
+}
+
+test "feature_tests/more/01_uri" {
+    const path = "tests/feature_tests/more/01_uri";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/more/02_linear_algebra" {
+    const path = "tests/feature_tests/more/02_linear_algebra";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/more/03X_matrix_dimensions" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/more/03X_matrix_dimensions", "repeated generic dimensions must agree", "failed without a diagnostic");
+}
+
+test "feature_tests/functions/33X_generic_conflict_diagnostic" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/functions/33X_generic_conflict_diagnostic", "conflicting inferred generic parameters", "failed without a diagnostic");
+}
+
+test "feature_tests/functions/34_pipe_value_expressions" {
+    const path = "tests/feature_tests/functions/34_pipe_value_expressions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/functions/35X_nested_pipe_requires_outer_placeholder" {
+    try buildExpectFail("tests/feature_tests/functions/35X_nested_pipe_requires_outer_placeholder", "pipe right-hand side must use at least one argument placeholder");
+}
+
+test "feature_tests/functions/36X_generic_pipe_temporary_escape" {
+    try buildExpectFail(
+        "tests/feature_tests/functions/36X_generic_pipe_temporary_escape",
+        "function output cannot depend on a local storage generation that ends before return",
+    );
+}
+
+test "feature_tests/functions/37X_pipe_temporary_consumed_twice" {
+    try buildExpectFail(
+        "tests/feature_tests/functions/37X_pipe_temporary_consumed_twice",
+        "was moved and cannot be used again",
+    );
 }

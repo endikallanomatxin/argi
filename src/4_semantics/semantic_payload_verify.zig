@@ -251,7 +251,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
         },
         .virtualize => |id| try require(verify.idFits(id, bounds.virtualizes)),
         .virtual_call => |id| try require(verify.idFits(id, bounds.virtual_calls)),
-        .code_block => |id| try require(verify.idFits(id, bounds.blocks)),
+        .code_block, .value_sequence => |id| try require(verify.idFits(id, bounds.blocks)),
         .int_literal, .float_literal, .char_literal, .bool_literal, .break_statement, .continue_statement, .abort_statement => {},
         .string_literal => |text| try require(verify.stringFits(text, bounds.strings)),
         .list_literal => |item| {

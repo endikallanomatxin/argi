@@ -383,6 +383,17 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         loop_transfers: ?*LoopTransfers,
     ) anyerror!void {
+        try self.validateBlockWithResult(function, block_id, state, loop_transfers, null);
+    }
+
+    fn validateBlockWithResult(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        block_id: graph_mod.GlobalBlockId,
+        state: *FunctionState,
+        loop_transfers: ?*LoopTransfers,
+        result: ?*facts.ValueFacts,
+    ) anyerror!void {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
             if (!state.reachable) break;
@@ -495,7 +506,12 @@ pub const SafetyChecker = struct {
                 },
                 .abort_statement => state.reachable = false,
                 .code_block => |nested| try self.validateBlock(function, nested, state, loop_transfers),
-                else => _ = try self.evaluate(function, node_id, state),
+                else => {
+                    const value = try self.evaluate(function, node_id, state);
+                    if (block.ret_val != null and block.ret_val.? == node_id) if (result) |out| {
+                        out.* = value;
+                    };
+                },
             }
             try self.validateUniqueOwnership(function, node.source, state);
             if (!state.reachable) {
@@ -761,6 +777,11 @@ pub const SafetyChecker = struct {
                 _ = try self.evaluate(function, logic.right, &right_state);
                 try self.joinState(state, state, &right_state);
                 break :blk .{};
+            },
+            .value_sequence => |block| blk: {
+                var value: facts.ValueFacts = .{};
+                try self.validateBlockWithResult(function, block, state, null, &value);
+                break :blk value;
             },
             .code_block => |block| blk: {
                 try self.validateBlock(function, block, state, null);

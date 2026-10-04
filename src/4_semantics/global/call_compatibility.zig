@@ -151,6 +151,9 @@ fn matchFunctionNamed(
     for (function_candidates) |id| {
         const function = compatibility.core.graph.functions.items[@intFromEnum(id)];
         if (function.flags.is_abstract_dispatch) continue;
+        // Specializations are cached implementations, not new overloads.
+        // Reconsider the generic declaration so lookup is call-order independent.
+        if (function.flags.is_generic_instantiation) continue;
         if (!compatibility.core.declarationVisible(current_module, function.declaration, module_filter)) continue;
         const score = switch (try matchInputWithReach(
             compatibility,

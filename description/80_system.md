@@ -30,9 +30,9 @@ I/O, process arguments and environment, files, networking, processes, time,
 randomness, and foreign calls.
 
 > [!IMPLEMENTATION]
-> `Network` and `RandomNumberGenerator` are
-> currently capability placeholders without general operations.
+> `Network` is currently a capability placeholder without general operations.
 
+`RandomNumberGenerator` provides [system entropy](163_randomness.md).
 `Clock` provides [monotonic time, civil time, and blocking sleep](164_time.md).
 `ProcessManager` provides [child processes and their streams](165_processes.md).
 

@@ -122,7 +122,7 @@ pub const Resolver = struct {
                 .binding_declaration => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
                 .binding_use => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
                 .assignment => |assignment| if (self.graph.isBindingTypeUnresolved(assignment.binding)) return false,
-                .code_block => |child| if (!self.blockReadyForCleanup(child)) return false,
+                .code_block, .value_sequence => |child| if (!self.blockReadyForCleanup(child)) return false,
                 .if_statement => |statement| {
                     if (!self.blockReadyForCleanup(statement.then_block)) return false;
                     if (statement.else_block) |child|
@@ -132,8 +132,10 @@ pub const Resolver = struct {
                 .for_statement => |statement| {
                     if (statement.init) |init| {
                         const init_node = self.graph.nodes.items[@intFromEnum(init)];
-                        if (init_node.content == .code_block and !self.blockReadyForCleanup(init_node.content.code_block))
-                            return false;
+                        if (init_node.content == .code_block or init_node.content == .value_sequence) {
+                            const initialization_block = if (init_node.content == .value_sequence) init_node.content.value_sequence else init_node.content.code_block;
+                            if (!self.blockReadyForCleanup(initialization_block)) return false;
+                        }
                     }
                     if (!self.blockReadyForCleanup(statement.body)) return false;
                 },
@@ -207,6 +209,18 @@ pub const Resolver = struct {
             // be part of overload/initializer matching, where failure here
             // must continue to reject the candidate.
             if (self.graph.nodes.items[@intFromEnum(source)].content != .binding_use) return false;
+            const binding = self.graph.nodes.items[@intFromEnum(source)].content.binding_use;
+            if (std.mem.eql(u8, self.graph.text(self.graph.bindings.items[@intFromEnum(binding)].name), "#pipe_temporary")) {
+                // Stabilizing a produced value must preserve its transfer into
+                // a consuming argument. Repeated consumption remains a move
+                // error, while borrows still use the temporary's storage.
+                self.graph.nodes.items[@intFromEnum(target)] = .{
+                    .source = self.graph.nodes.items[@intFromEnum(source)].source,
+                    .ty = ty,
+                    .content = .{ .move_value = source },
+                };
+                return true;
+            }
             if (self.denied_copy == null) self.denied_copy = .{
                 .source = self.graph.nodes.items[@intFromEnum(source)].source,
                 .ty = ty,
@@ -412,7 +426,7 @@ pub const Resolver = struct {
                     try active.append(self.allocator, binding);
                 },
                 .return_statement => |*ret| ret.cleanup = try self.appendCleanup(active.items, defers.items),
-                .code_block => |child| try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index),
+                .code_block, .value_sequence => |child| try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index),
                 .if_statement => |statement| {
                     try self.finalizeBlock(statement.then_block, &active, &defers, &visible, &.{}, owner_function, module_index);
                     if (statement.else_block) |child|

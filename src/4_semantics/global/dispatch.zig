@@ -192,9 +192,6 @@ pub const Resolver = struct {
     ) !?ImplicitFunctionCall {
         if (self.profile_io != null) self.implicit_lookup_stats.ordinary_calls += 1;
         var stage_start = self.profileTimestamp();
-        // TODO: Rank unspecialized generic overloads alongside cached ones.
-        // A cached view(&[N]T) can accept $&[N]T by coercion here before
-        // generic matching gets to select the more specific writable overload.
         const ordinary = try self.core.matchUnqualifiedFunctionByNameWithReach(module_index, name, input, reach);
         self.profileAccumulate(stage_start, &self.implicit_lookup_stats.ordinary_matching_ns);
         switch (ordinary) {

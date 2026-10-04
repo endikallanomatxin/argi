@@ -12,6 +12,7 @@
 #include <string.h>
 #include <io.h>
 #include <fcntl.h>
+#include "entropy.c"
 #include "time.c"
 #include "processes.c"
 

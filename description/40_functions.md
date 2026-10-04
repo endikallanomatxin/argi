@@ -109,3 +109,39 @@ once from the reachable call graph of the compiled entrypoint.
 > An explicit memoization wrapper could cache a function's result for equal
 > inputs. It would need rules for side effects, input equality, and the
 > ownership and validity of cached results.
+
+### Pipe evaluation and placeholder scope
+
+A pipe evaluates its left operand before the right expression's arguments.
+Calls and other computed left operands run once even when `_` appears multiple
+times. Lvalues retain their storage identity: borrowing `$&_` can modify the
+original object, and effectful indices or projection bases are evaluated once.
+Ordinary argument evaluation order, copy/move rules, and borrow lifetimes apply.
+A produced owned value transfers into a consuming argument without an implicit
+copy. Passing that same result to two consuming arguments is a move error;
+copyable values may be used repeatedly. Short-circuited expressions do not evaluate their skipped pipe stages.
+
+Placeholders may appear inside arithmetic, comparisons, indexing, dereferences,
+choices, and nested call arguments. A grouped right expression uses ordinary
+square-bracket grouping, for example `number | [_ * 2 + 1]`. Qualified calls and
+explicit or inferred comptime arguments use the same syntax as ordinary calls:
+
+```rg
+result ::= value | module.identity#(.t: Int32)(.value = _ + 1)
+```
+
+Each nested pipe binds placeholders in its own right operand. Its left operand
+can use the enclosing pipe's placeholder. An independent nested pipe does not
+satisfy the enclosing stage's placeholder requirement:
+
+```rg
+sum ::= 5 | add(.left = _ | identity(.value = _), .right = _)
+-- This lacks an outer placeholder and is rejected:
+-- 5 | identity(.value = 2 | identity(.value = _))
+```
+
+Pipes bind more tightly than multiplication and addition, retaining the same
+precedence as direct call/postfix expressions. Use `[a + b] | process(_)` to
+pipe the sum, or `[value | transform(_)] * scale` to group the transformed value.
+The right operand is a call or another primary expression, so a complete
+arithmetic right operand uses brackets. Braces remain lexical blocks.
