@@ -96,10 +96,10 @@ borrows; obtain a new borrow after mutation. Cleanup also invalidates borrows.
 Returned indices carry no storage lifetime and can become stale after popping.
 The allocation receipt, head, occupancy, and invalidation marker are private.
 
-> [!IDEA]
-> A growable `Deque<T>` could add double-ended insertion and removal. Its
-> front position, length, capacity, growth failures, and owning-element
-> relocation need a concrete use case before fixing the API.
+`Deque#(.t: T)` provides a growable owning queue with double-ended insertion
+and removal. Growth relocates occupied elements in logical order and preserves
+the old queue if allocation fails. See [growable deque](161_lists.md#growable-deque)
+for its operations, borrowing rules, and consumed-argument behavior.
 
 ## SoA and AoS
 

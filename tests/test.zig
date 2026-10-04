@@ -9334,6 +9334,38 @@ test "feature_tests/polymorphism/51_virtual_associated_parameters" {
     try runExpect("tests/feature_tests/polymorphism/51_virtual_associated_parameters", 0);
 }
 
+test "feature_tests/collections/117_deque" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/117_deque");
+    try runExpect("tests/feature_tests/collections/117_deque", 0);
+}
+
+test "feature_tests/collections/118_deque_ownership" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/118_deque_ownership");
+    try runExpect("tests/feature_tests/collections/118_deque_ownership", 0);
+}
+
+test "feature_tests/collections/119_deque_growth_failure" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/119_deque_growth_failure");
+    try runExpect("tests/feature_tests/collections/119_deque_growth_failure", 0);
+}
+
+test "feature_tests/collections/123_deque_zero_sized" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/123_deque_zero_sized");
+    try runExpect("tests/feature_tests/collections/123_deque_zero_sized", 0);
+}
+
+test "feature_tests/collections/120X_deque_borrow_after_growth" {
+    try buildExpectFail("tests/feature_tests/collections/120X_deque_borrow_after_growth", "root that has ended");
+}
+
+test "feature_tests/collections/121X_deque_borrow_after_pop" {
+    try buildExpectFail("tests/feature_tests/collections/121X_deque_borrow_after_pop", "root that has ended");
+}
+
+test "feature_tests/collections/122X_deque_copy" {
+    try buildExpectFail("tests/feature_tests/collections/122X_deque_copy", "cannot be copied implicitly");
+}
+
 test "feature_tests/errors/84X_handle_non_errable" {
     try buildExpectFail("tests/feature_tests/errors/84X_handle_non_errable", "handle expects an Errable value");
 }

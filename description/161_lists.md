@@ -304,3 +304,27 @@ does not replace or resize backing storage. Existing references and views
 remain live and designate their original positions, whose values can change.
 A native array or a subrange participates through its mutable view. Read-only
 views cannot be sorted. Owning elements require a separate exchange contract.
+
+## Growable deque
+
+`Deque#(.t: T)` owns a ring of live elements. Construct it with an explicit or
+reached allocator; `.capacity` defaults to eight, and zero requests a minimum
+capacity of one. `push_front` and `push_back` grow geometrically when full;
+`pop_front` and `pop_back` transfer ownership of one element or return `..empty`.
+Both ends take constant time without growth; growth moves every live element
+once in logical order. Elements need no implicit-copy capability.
+
+`length` and `capacity` report occupancy and reserved slots.
+`reserve(.self, .capacity, .allocator)` grows to the requested minimum without
+shrinking and leaves the deque unchanged if allocation fails. Arithmetic
+overflow returns `..out_of_memory` before acquiring storage. Insertion consumes
+its supplied value even if growth fails, cleaning it up exactly once.
+
+Checked `get_ro_ref` and `get_rw_ref` borrow an element by logical index; `get`
+requires `ImplicitlyCopyable` and returns a copy. Deque implements `Indexable`.
+Structural changes invalidate outstanding element references, including pushes
+that do not grow, pops, and successful growth. A failed reserve preserves the
+old storage and occupancy. No allocation, physical slot, or occupancy metadata
+is public. Whole-deque copies are rejected. Cleanup destroys only occupied
+elements and releases storage through its recorded deallocator; an allocator
+may be reached for element destructors.
