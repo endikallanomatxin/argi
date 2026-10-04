@@ -9448,3 +9448,13 @@ test "feature_tests/python/16X_numpy_private_object" {
 test "feature_tests/system/79_network_native" {
     try checkNativeCFixture("tests/feature_tests/system/79_network_native", &.{"declare i32 @argi_network_probe()"});
 }
+
+test "feature_tests/binary/01_endian" {
+    try expectSuccessfulBuild("tests/feature_tests/binary/01_endian");
+    try runExpect("tests/feature_tests/binary/01_endian", 0);
+}
+
+test "feature_tests/binary/02_cursor" {
+    try expectSuccessfulBuild("tests/feature_tests/binary/02_cursor");
+    try runExpect("tests/feature_tests/binary/02_cursor", 0);
+}
