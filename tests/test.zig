@@ -9788,3 +9788,8 @@ test "feature_tests/io/42_memory_streams" {
     try expectSuccessfulBuild("tests/feature_tests/io/42_memory_streams");
     try runExpect("tests/feature_tests/io/42_memory_streams", 0);
 }
+
+test "feature_tests/io/43_limited_reader" {
+    try expectSuccessfulBuild("tests/feature_tests/io/43_limited_reader");
+    try runExpect("tests/feature_tests/io/43_limited_reader", 0);
+}

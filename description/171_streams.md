@@ -71,3 +71,11 @@ with no capacity reports `stream_write_failed` for nonempty writes; writing an
 empty block succeeds with zero. Failed byte writes preserve position and
 storage. `flush` succeeds without side effects. Binary and stream operations
 share the same cursor position and require no allocator or FFI capability.
+
+`LimitedReader#(.t)(.source, .limit)` borrows a `BlockReader` and implements
+`BlockReader`. Its `read_block` clips the destination to the remaining limit
+and decrements that limit only by successfully read bytes. Zero remaining
+limit returns zero without calling the source. Source EOF can occur before
+the limit. `remaining` reports the unused allowance. Once the adapter's loan
+ends, the underlying source resumes at the next unread byte; no lookahead is
+consumed. Errors propagate and do not decrement the allowance.
