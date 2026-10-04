@@ -9740,3 +9740,8 @@ test "feature_tests/numbers/10_integer_foundations" {
     try expectSuccessfulBuild("tests/feature_tests/numbers/10_integer_foundations");
     try runExpect("tests/feature_tests/numbers/10_integer_foundations", 0);
 }
+
+test "feature_tests/text/45_ascii_foundations" {
+    try expectSuccessfulBuild("tests/feature_tests/text/45_ascii_foundations");
+    try runExpect("tests/feature_tests/text/45_ascii_foundations", 0);
+}

@@ -377,3 +377,12 @@ a scalar count is not a count of user-perceived characters.
 `parse_uintnative(.text, .base = 10)` reads an unsigned integer using the
 compilation target's pointer width. It has the same digit and error contracts
 as the fixed-width integer parsers; out-of-range values never truncate.
+
+ASCII byte helpers classify ASCII, digits, lower/upper letters, letters,
+alphanumeric bytes and whitespace through `ascii_is_ascii`, `ascii_is_digit`,
+`ascii_is_lower`, `ascii_is_upper`, `ascii_is_alpha`, `ascii_is_alphanumeric`
+and `ascii_is_whitespace`. Whitespace includes space and bytes 9 through 13.
+`ascii_to_lower` and `ascii_to_upper` preserve nonletters and non-ASCII bytes;
+they do not perform Unicode case folding. Trimming uses the same whitespace
+classification. `find_last(.self, .pattern)` returns the last matching byte
+offset; the empty pattern matches at the end of the view.

@@ -19,15 +19,11 @@ _string_view_subrange(
     )
 }
 
-_string_ascii_whitespace(.byte: UInt8) -> (.ok: Bool) := {
-    ok = byte == 32 or byte >= 9 and byte <= 13
-}
-
 trim_start(.self: StringView) -> (.view: StringView) := {
     start :: UIntNative = 0
     while start < self.length {
         if [
-            _string_ascii_whitespace(.byte = bytes_get(.view = &self, .index = start).byte).ok
+            ascii_is_whitespace(.byte = bytes_get(.view = &self, .index = start).byte).ok
             == false
         ] { break }
         start = start + 1
@@ -39,7 +35,7 @@ trim_end(.self: StringView) -> (.view: StringView) := {
     end :: UIntNative = self.length
     while end > 0 {
         if [
-            _string_ascii_whitespace(.byte = bytes_get(.view = &self, .index = end - 1).byte).ok
+            ascii_is_whitespace(.byte = bytes_get(.view = &self, .index = end - 1).byte).ok
             == false
         ] { break }
         end = end - 1

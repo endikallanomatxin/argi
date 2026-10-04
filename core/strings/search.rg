@@ -69,3 +69,18 @@ ends_with(.self: StringView, .pattern: StringView) -> (.ok: Bool) := {
         ]
     ).ok
 }
+
+-- Reverse search returns the last matching byte offset, including the extent
+-- for an empty pattern. Check zero before decrementing the unsigned cursor.
+find_last(.self: StringView, .pattern: StringView) -> (.index: ?UIntNative = ..none) := {
+    if pattern.length > self.length { return }
+    start ::= self.length - pattern.length
+    while true {
+        if _string_view_matches_at(.self = self, .pattern = pattern, .start = start).ok {
+            index = ..some(.value = start)
+            return
+        }
+        if start == 0 { return }
+        start = start - 1
+    }
+}
