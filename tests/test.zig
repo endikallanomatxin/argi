@@ -6757,7 +6757,7 @@ test "feature_tests/basics/27X_mixed_width_arithmetic" {
 
 test "feature_tests/basics/28X_unsupported_initializer_expression" {
     try buildExpectFailExact("tests/feature_tests/basics/28X_unsupported_initializer_expression",
-        \\tests/feature_tests/basics/28X_unsupported_initializer_expression/main.rg:3:19: error: this expression is not supported in an initializer
+        \\tests/feature_tests/basics/28X_unsupported_initializer_expression/main.rg:3:19: error: choice option '..first_reason' needs a concrete choice type
         \\  Wrong : Choice = (..first_reason, ..second_reason)
         \\                    ^
         \\
