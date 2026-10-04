@@ -1,8 +1,3 @@
--- Preserve bytes and case; punctuation belongs to the word.
-_separator(.byte: UInt8) -> (.yes: Bool) := {
-    yes = byte == 32 or byte == 9 or byte == 10 or byte == 11 or byte == 12 or byte == 13
-}
-
 count_text(
         .self      : $&OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
         .text      : StringView,
@@ -12,24 +7,17 @@ count_text(
     ) := {
     assume allocator
     validate_utf8(.text = text)!
-    index :: UIntNative = 0
-    while index < text.length {
-        if _separator(.byte = bytes_get(.view = &text, .index = index)).yes {
-            index = index + 1
-        } else {
-            word ::= String(.allocator = allocator, .capacity = 16)!
-            while index < text.length {
-                byte ::= bytes_get(.view = &text, .index = index).byte
-                if _separator(.byte = byte).yes { break }
-                push_byte(.self = $&word, .byte = byte, .allocator = allocator)!
-                index = index + 1
+    iterator ::= split_whitespace(.self = text)
+    while has_next(.self = &iterator).ok {
+        token ::= next(.self = $&iterator).value
+        match get_ref(.self = self, .key = token).result {
+            ..none {
+                word ::= format(.value = token, .allocator = allocator)!
+                put(.self = self, .key = ~word, .value = 1, .allocator = allocator)!
             }
-            count :: UIntNative = 1
-            match get_ro_ref(.self = self, .key = &word).result {
-                ..none {}
-                ..some borrowed { count = checked_add(.left = borrowed.value&, .right = 1)! }
+            ..some borrowed {
+                borrowed.value&= checked_add(.left = borrowed.value&, .right = 1)!
             }
-            put(.self = self, .key = ~word, .value = count, .allocator = allocator)!
         }
     }
 }

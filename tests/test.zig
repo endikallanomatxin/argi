@@ -9764,3 +9764,12 @@ test "feature_tests/numbers/11_float_classification" {
     try expectSuccessfulBuild("tests/feature_tests/numbers/11_float_classification");
     try runExpect("tests/feature_tests/numbers/11_float_classification", 0);
 }
+
+test "feature_tests/collections/145_owned_string_view_lookup" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/145_owned_string_view_lookup");
+    try runExpect("tests/feature_tests/collections/145_owned_string_view_lookup", 0);
+}
+
+test "feature_tests/collections/146X_owned_view_after_put" {
+    try buildExpectFail("tests/feature_tests/collections/146X_owned_view_after_put", "root that has ended");
+}

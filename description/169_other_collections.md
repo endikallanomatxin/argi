@@ -184,3 +184,11 @@ Owning a key or value does not freeze borrowed state inside it. External backing
 storage must remain live and key contents must remain unchanged while stored.
 Ownership transfer supplies no new native allocation receipt or reference
 validity beyond the original values' checked storage contracts.
+
+For `OwnedHashMap<String, V, StringHashPolicy>`, `contains` and `get_ro_ref`
+also accept `.key: StringView`. `get_ref(.self: $&map, .key: StringView)`
+returns an optional mutable value reference. These probes allocate nothing,
+retain the map shape dependency and never expose mutable keys. Editing a value
+preserves table shape; insertion, removal, growth and cleanup invalidate its
+borrowed references. The query text is used only for the lookup and is not
+retained by the returned value reference.
