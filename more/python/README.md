@@ -126,3 +126,9 @@ headers or library paths. `--numpy` requires NumPy in that Python environment.
 and checks type/width/byte order and capacity before writing initialized Argi
 storage. For writable fixed-array destinations use
 `array_view(.array = $&owner).view`. The API never lends an Argi allocation to Python's object graph.
+
+The optional Python CI workflow exercises CPython 3.12 and 3.14 on Linux
+x86_64/ARM64, macOS Intel/Apple Silicon, and Windows. It runs the native ownership
+probe, debug/release consumers, NumPy, installed-helper preparation, and the
+positive/negative compiler fixtures. Those dependencies belong to that workflow,
+not to ordinary compiler builds.

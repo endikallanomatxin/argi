@@ -1,0 +1,139 @@
+name: Optional Python embedding
+
+"on":
+  workflow_dispatch:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'src/**'
+      - 'core/**'
+      - 'more/python/**'
+      - 'tests/feature_tests/python/**'
+      - 'tests/python_native.c'
+      - 'tests/test.zig'
+      - '.github/scripts/python_smoke.py'
+      - '.github/workflows/python.yml'
+  push:
+    branches: [develop]
+    paths:
+      - 'src/**'
+      - 'core/**'
+      - 'more/python/**'
+      - 'tests/feature_tests/python/**'
+      - 'tests/python_native.c'
+      - 'tests/test.zig'
+      - '.github/scripts/python_smoke.py'
+      - '.github/workflows/python.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel, macos-15, windows-2025]
+        python: ['3.12', '3.14']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          install: mingw-w64-ucrt-x86_64-gcc
+
+      - name: Install LLVM 21 on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+          sudo apt-get install -y llvm-21-dev
+          echo "LLVM_INCLUDE_DIR=$(llvm-config-21 --includedir)" >> "$GITHUB_ENV"
+          echo "LLVM_LIB_DIR=$(llvm-config-21 --libdir)" >> "$GITHUB_ENV"
+          echo "LLVM_LIBS=$(llvm-config-21 --libs)" >> "$GITHUB_ENV"
+
+      - name: Install LLVM 21 on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install llvm@21
+          llvm_config="$(brew --prefix llvm@21)/bin/llvm-config"
+          echo "LLVM_INCLUDE_DIR=$("$llvm_config" --includedir)" >> "$GITHUB_ENV"
+          echo "LLVM_LIB_DIR=$("$llvm_config" --libdir)" >> "$GITHUB_ENV"
+          echo "LLVM_LIBS=$("$llvm_config" --libs)" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@v4
+        if: runner.os == 'Windows'
+        id: llvm-sdk
+        with:
+          path: ${{ runner.temp }}/llvm-sdk
+          key: llvm-21.1.8-windows-x64-c-api
+      - name: Install LLVM 21 development distribution on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = 'clang+llvm-21.1.8-x86_64-pc-windows-msvc'
+          $archive = Join-Path $env:RUNNER_TEMP 'llvm.tar.xz'
+          $destination = Join-Path $env:RUNNER_TEMP 'llvm-sdk'
+          New-Item -ItemType Directory -Force $destination | Out-Null
+          if ('${{ steps.llvm-sdk.outputs.cache-hit }}' -ne 'true') {
+            Invoke-WebRequest "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/$name.tar.xz" -OutFile $archive
+            tar -xf $archive -C $destination "$name/include" "$name/lib/LLVM-C.lib" "$name/bin/LLVM-C.dll"
+            if ($LASTEXITCODE -ne 0) { throw 'LLVM extraction failed' }
+          }
+          $root = Join-Path $destination $name
+          "LLVM_INCLUDE_DIR=$root/include" >> $env:GITHUB_ENV
+          "LLVM_LIB_DIR=$root/lib" >> $env:GITHUB_ENV
+          'LLVM_LIBS=LLVM-C.lib' >> $env:GITHUB_ENV
+          "LLVM_RUNTIME_DLL=$root/bin/LLVM-C.dll" >> $env:GITHUB_ENV
+
+      - name: Build compiler and validate the optional adapter
+        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
+        run: |
+          export CC=gcc
+          zig build -j1 --summary all
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp "$(cygpath -u "$LLVM_RUNTIME_DLL")" zig-out/bin/LLVM-C.dll
+          fi
+          export PATH="$PWD/zig-out/bin:$PATH"
+          python -c "import sys; assert sys.version_info[:2] == tuple(map(int, '${{ matrix.python }}'.split('.')))"
+          python -m pip install numpy
+          argi_binary=zig-out/bin/argi
+          if [ "$RUNNER_OS" = Windows ]; then argi_binary=zig-out/bin/argi.exe; fi
+          python .github/scripts/python_smoke.py --argi "$argi_binary" --cc gcc --numpy
+
+      - name: Run positive and negative Python compiler fixtures
+        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
+        run: |
+          export CC=gcc
+          export PATH="$PWD/zig-out/bin:$PATH"
+          python - <<'PY'
+          import json, os, pathlib, subprocess, sys
+          metadata = json.loads(subprocess.check_output([
+              sys.executable, 'more/python/build.py', '--cc', 'gcc', '--json', 'prepare'], text=True))
+          environment = os.environ.copy()
+          environment['ARGI_PYTHON_RUNTIME_OBJECT'] = metadata['runtime_object']
+          environment['ARGI_PYTHON_LIBRARY'] = metadata['python_library']
+          if os.name == 'nt':
+              environment['PATH'] = sys.base_prefix + os.pathsep + environment['PATH']
+          else:
+              key = 'DYLD_LIBRARY_PATH' if sys.platform == 'darwin' else 'LD_LIBRARY_PATH'
+              environment[key] = str(pathlib.Path(metadata['python_library']).parent) + os.pathsep + environment.get(key, '')
+          subprocess.run(['zig', 'build', 'test', '-j1', '-Dtest-filter=python', '--summary', 'all'], env=environment, check=True)
+          PY
