@@ -79,3 +79,19 @@ limit returns zero without calling the source. Source EOF can occur before
 the limit. `remaining` reports the unused allowance. Once the adapter's loan
 ends, the underlying source resumes at the next unread byte; no lookahead is
 consumed. Errors propagate and do not decrement the allowance.
+
+## Bounded borrowed lines
+
+`read_line(.self, .buffer)` returns an optional `ByteLine` in an `Errable`.
+A line borrows the supplied initialized buffer through readonly `.bytes`;
+`.terminated` distinguishes LF termination from a final unterminated line.
+LF is consumed but excluded. A CR immediately before LF is also excluded;
+a CR at EOF remains data. Empty lines are values; EOF with no data returns
+none. Byte contents are not UTF-8 validated.
+
+Buffer capacity counts bytes before LF, including a possible CR. An exact
+fit succeeds after one byte of lookahead. Longer input reports `line_too_long`
+after consuming the first overflowing byte; the buffer holds the prefix and
+the source remains after that byte. Errors can therefore consume input and
+modify the buffer. Reusing the buffer changes earlier borrowed line contents;
+copy a line when it must survive later reads. This operation allocates nothing.

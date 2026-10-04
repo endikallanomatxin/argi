@@ -9793,3 +9793,8 @@ test "feature_tests/io/43_limited_reader" {
     try expectSuccessfulBuild("tests/feature_tests/io/43_limited_reader");
     try runExpect("tests/feature_tests/io/43_limited_reader", 0);
 }
+
+test "feature_tests/io/44_bounded_lines" {
+    try expectSuccessfulBuild("tests/feature_tests/io/44_bounded_lines");
+    try runExpect("tests/feature_tests/io/44_bounded_lines", 0);
+}
