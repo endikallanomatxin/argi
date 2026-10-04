@@ -3,6 +3,12 @@
 StringWhitespaceIterator: Type = (._text: StringView, ._start: UIntNative)
 
 StringWhitespaceIterator implements Iterator#(.t: StringView)
+StringWhitespaceIterator implements Iterable#(.t: StringView)
+
+-- Iteration copies the remaining cursor state and preserves source lifetimes.
+to_iterator(.value: &StringWhitespaceIterator) -> (.iterator: StringWhitespaceIterator) := {
+    iterator = (._text = value&._text, ._start = value&._start)
+}
 
 _whitespace_token_start(.text: StringView, .start: UIntNative) -> (.position: UIntNative) := {
     position = start

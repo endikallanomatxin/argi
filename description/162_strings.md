@@ -398,3 +398,7 @@ not a separator; UTF-8 bytes and embedded NULs otherwise remain unchanged.
 `Errable` view with `out_of_bounds` on failure. It does not require codepoint
 boundaries or UTF-8 validation. Empty slices at the extent succeed without
 forming a one-past reference. Oversized counts and offsets cannot wrap.
+
+Whitespace iterators also support `for token in split_whitespace(.self = text)`.
+Iteration copies the remaining cursor state; it does not advance the original
+iterator. The copy retains the same source lifetime.
