@@ -1675,3 +1675,18 @@ test "LSP formatting introduces scalar grouping for long operations" {
     try std.testing.expectEqual(@as(u32, @intCast(source.len)), edits.items[0].range.end.character);
     try std.testing.expectEqualStrings("result := [\n    base_amount\n    + additional_service_charge\n    + international_delivery_cost\n    - loyalty_discount\n    - promotional_discount\n]\n", edits.items[0].new_text);
 }
+
+test "LSP formatting removes multiline struct literal commas" {
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer svc.deinit();
+    const uri = "file:///tmp/argi-format-struct/main.rg";
+    const path = try std.fs.path.resolve(std.testing.allocator, &.{"tests/feature_tests/basics/67_formatter_layout/main.rg"});
+    defer std.testing.allocator.free(path);
+    const source = "value := (\n.first = 1,\n.second = 2,\n)\n";
+    var diagnostics = try svc.openDocument(uri, path, 1, source);
+    defer diagnostics.deinit();
+    var edits = try svc.formatting(uri);
+    defer edits.deinit();
+    try std.testing.expectEqual(@as(usize, 1), edits.items.len);
+    try std.testing.expectEqualStrings("value := (\n    .first  = 1\n    .second = 2\n)\n", edits.items[0].new_text);
+}

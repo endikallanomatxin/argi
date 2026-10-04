@@ -8,7 +8,7 @@ const source_files = @import("../1_base/source_files.zig");
 
 const Tag = std.meta.Tag(tok.Content);
 const List = std.array_list.Managed(u8);
-const Frame = struct { tag: Tag, multiline: bool, expand: bool = false, signature: bool = false };
+const Frame = struct { tag: Tag, multiline: bool, expand: bool = false, signature: bool = false, comma_free: bool = false };
 const line_width = 100;
 const InsertedToken = struct { ordinal: usize, tag: Tag };
 
@@ -17,8 +17,9 @@ const InsertedToken = struct { ordinal: usize, tag: Tag };
 /// syntaxing identifies complete signature groups and statement boundaries.
 /// New breaks occur at collection fields and those boundaries. Token text
 /// stays verbatim: comments, escapes, and numeric spellings are never rebuilt.
-/// Added scalar grouping brackets are tracked explicitly and verified against
-/// the original syntax structure before an edit is returned.
+/// Added scalar grouping brackets and removed multiline struct separators are
+/// tracked explicitly and verified against the original syntax structure
+/// before an edit is returned.
 pub fn format(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     var current = try formatOnce(allocator, source);
     errdefer allocator.free(current);
@@ -50,6 +51,8 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     var out = List.init(temporary);
     var stack = std.array_list.Managed(Frame).init(temporary);
     var inserted = std.array_list.Managed(InsertedToken).init(temporary);
+    const removed = try temporary.alloc(bool, tokens.len);
+    @memset(removed, false);
     var emitted_tokens: usize = 0;
     var previous: ?Tag = null;
     var line_start: usize = 0;
@@ -62,6 +65,14 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
             if (layout.suppress_newlines[i]) continue;
             source_newlines += 1;
             continue;
+        }
+        if (tag == .comma and stack.items.len != 0) {
+            const frame = stack.items[stack.items.len - 1];
+            if (frame.expand and frame.comma_free) {
+                removed[i] = true;
+                if (tokens.contents[i + 1] != .comment) pending_newlines = @max(pending_newlines, 1);
+                continue;
+            }
         }
         for (0..layout.wrap_before[i]) |_| {
             if (previous) |left| if (needsSpace(left, .open_bracket, tokens, i)) try out.append(' ');
@@ -118,7 +129,7 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
             const expand = layout.expand[i] or ((tag == .open_parenthesis or (tag == .open_bracket and layout.scalar_groups[i])) and multiline) or (tag != .open_bracket and
                 layout.ends[i] > i + 1 and
                 out.items.len - line_start + flatLength(tokens, source, i, layout.ends[i] + 1) > line_width);
-            try stack.append(.{ .tag = tag, .multiline = multiline or expand, .expand = expand, .signature = layout.signature[i] });
+            try stack.append(.{ .tag = tag, .multiline = multiline or expand, .expand = expand, .signature = layout.signature[i], .comma_free = layout.struct_literals[i] });
             if (expand) pending_newlines = 1;
         }
         // Expanded collections use complete rows rather than spilling only
@@ -161,12 +172,12 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
             inserted_index += 1;
             continue;
         }
-        while (original_index < tokens.len and tokens.contents[original_index] == .new_line) original_index += 1;
+        while (original_index < tokens.len and (tokens.contents[original_index] == .new_line or removed[original_index])) original_index += 1;
         if (original_index >= tokens.len or std.meta.activeTag(formatted_tokens.contents[index]) != std.meta.activeTag(tokens.contents[original_index])) return error.TokenSequenceChanged;
         if (!std.mem.eql(u8, tokenText(tokens, source, original_index), tokenText(formatted_tokens, result, index))) return error.TokenSequenceChanged;
         original_index += 1;
     }
-    while (original_index < tokens.len and tokens.contents[original_index] == .new_line) original_index += 1;
+    while (original_index < tokens.len and (tokens.contents[original_index] == .new_line or removed[original_index])) original_index += 1;
     if (original_index != tokens.len or inserted_index != inserted.items.len) return error.TokenSequenceChanged;
     if (layout.syntax_tags) |tags| {
         // Token identity alone is insufficient: newlines can end expressions.
@@ -196,6 +207,7 @@ const Layout = struct {
     wrap_after: []u16,
     suppress_newlines: []bool,
     scalar_groups: []bool,
+    struct_literals: []bool,
     syntax_tags: ?[]const syn.Node.Tag = null,
     root_count: usize = 0,
 
@@ -209,6 +221,7 @@ const Layout = struct {
             .wrap_after = try allocator.alloc(u16, tokens.len),
             .suppress_newlines = try allocator.alloc(bool, tokens.len),
             .scalar_groups = try allocator.alloc(bool, tokens.len),
+            .struct_literals = try allocator.alloc(bool, tokens.len),
         };
         @memset(layout.ends, 0);
         @memset(layout.breaks, 0);
@@ -218,6 +231,7 @@ const Layout = struct {
         @memset(layout.wrap_after, 0);
         @memset(layout.suppress_newlines, false);
         @memset(layout.scalar_groups, false);
+        @memset(layout.struct_literals, false);
         var opens = std.array_list.Managed(usize).init(allocator);
         for (tokens.contents, 0..) |content, i| switch (content) {
             .open_parenthesis, .open_bracket, .open_brace => try opens.append(i),
@@ -256,6 +270,9 @@ const Layout = struct {
         };
         for (0..tree.nodes.len) |raw| {
             const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
+            if (tree.tag(node) == .struct_value_literal) {
+                layout.struct_literals[@intFromEnum(tree.mainToken(node))] = true;
+            }
             if (tree.tag(node) == .index_access or tree.tag(node) == .array_type) {
                 const open = @intFromEnum(tree.mainToken(node));
                 if (tokens.contents[open] == .open_bracket) layout.scalar_groups[open] = false;
@@ -739,7 +756,7 @@ test "formatter keeps declaration comments attached and manual blank lines" {
 test "formatter expands long calls into complete argument rows" {
     try expectFormat(
         "result:=operation(.first_argument=\"abcdefghijklmnopqrstuvwxyz0123456789\",.second_argument=\"abcdefghijklmnopqrstuvwxyz0123456789\")\n",
-        "result := operation(\n    .first_argument  = \"abcdefghijklmnopqrstuvwxyz0123456789\",\n    .second_argument = \"abcdefghijklmnopqrstuvwxyz0123456789\"\n)\n",
+        "result := operation(\n    .first_argument  = \"abcdefghijklmnopqrstuvwxyz0123456789\"\n    .second_argument = \"abcdefghijklmnopqrstuvwxyz0123456789\"\n)\n",
     );
 }
 
@@ -818,4 +835,22 @@ test "formatter preserves signed literals in multiline conditions" {
     try std.testing.expect(std.mem.indexOf(u8, result, "!= -42") != null);
     try std.testing.expect(std.mem.indexOf(u8, result, "!= -7") != null);
     try expectSameSyntax(std.testing.allocator, source, result);
+}
+
+test "formatter omits commas in multiline struct literals" {
+    try expectFormat(
+        "value := (\n.first = 1,\n.second = 2,\n)\n",
+        "value := (\n    .first  = 1\n    .second = 2\n)\n",
+    );
+}
+
+test "formatter retains inline struct commas and nested inline separators" {
+    try expectFormat(
+        "value:=(.first=1,.second=2)\n",
+        "value := (.first = 1, .second = 2)\n",
+    );
+    try expectFormat(
+        "value := (\n.outer = (.first = 1, .second = 2), -- outer comment\n.other = 3,\n)\n",
+        "value := (\n    .outer = (.first = 1, .second = 2) -- outer comment\n    .other = 3\n)\n",
+    );
 }

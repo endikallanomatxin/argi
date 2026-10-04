@@ -36,8 +36,10 @@ add#(
 }
 ```
 
-Existing commas are preserved. Nested type arguments that fit on one line can
-stay compact inside a multiline signature.
+Multiline struct literals omit comma separators, including the structural
+values passed as call arguments. Inline literals retain their commas. Nested
+type arguments that fit on one line can stay compact inside a multiline
+signature.
 
 Long operations use leading operators inside scalar grouping brackets:
 
@@ -67,10 +69,10 @@ alignment groups. Other declarations use uniform spacing.
 Comments, literal contents, declaration order, import order, and field order
 are preserved. Blank-line runs become at most one blank line, leading and
 trailing blank lines are removed, and nonempty files end with a newline.
-Formatting is idempotent. Edits preserve original token contents and verify,
-for a syntactically valid document, that added grouping and line breaks keep
-the same syntax structure
-before they are returned or written.
+Formatting is idempotent. Edits preserve original token contents except for
+optional commas in multiline struct literals. For a syntactically valid
+document, added grouping, removed separators, and line breaks must keep the
+same syntax structure before edits are returned or written.
 
 `argi format` accepts `.rg` files and directories, defaulting to the current
 directory. Directories are searched recursively, excluding hidden entries,
