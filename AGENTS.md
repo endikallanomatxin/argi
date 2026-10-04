@@ -101,6 +101,9 @@ feature first.
   library before manually invoking `zig-out/bin/argi`, so validation uses the
   edited installed bundle. Both directories are cleaned before installation
   to remove stale modules.
+  Do not overlap build/test invocations that reinstall these bundles: cleaning
+  installed core can temporarily remove runtime headers needed by another
+  invocation. Run optimization-mode validation serially after the active suite.
 
 - Current module rules in the compiler:
   - all `.rg` files in a folder share namespace
