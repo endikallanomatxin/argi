@@ -9670,3 +9670,8 @@ test "feature_tests/io/41_bounded_stream_allocation_failure" {
     try expectSuccessfulBuild("tests/feature_tests/io/41_bounded_stream_allocation_failure");
     try runExpect("tests/feature_tests/io/41_bounded_stream_allocation_failure", 0);
 }
+
+test "feature_tests/polymorphism/67_generic_nominal_policy_overloads" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/67_generic_nominal_policy_overloads");
+    try runExpect("tests/feature_tests/polymorphism/67_generic_nominal_policy_overloads", 0);
+}

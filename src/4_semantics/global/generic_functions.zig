@@ -271,16 +271,8 @@ pub const Resolver = struct {
                 continue;
             }
 
-            {
-                if (self.generics.instantiateParameterizedType(
-                    candidate_module_index,
-                    pattern,
-                    bindings,
-                    null,
-                )) |expected| {
-                    if (self.core.contextualLiteralFits(operand, expected)) continue;
-                } else |_| {}
-            }
+            if (self.definiteNominalReferenceMismatch(candidate_module_index, pattern, operand_types[offset])) return false;
+            if (self.contextualParameterizedLiteralFits(candidate_module_index, pattern, bindings, operand)) continue;
 
             if (!try self.inferInputType(
                 candidate_module_index,
@@ -720,10 +712,12 @@ pub const Resolver = struct {
         const fields = storage.fields.items[shape.fields.start + field_offset ..][0 .. shape.fields.len - field_offset];
         for (fields, 0..) |field, expected_position| {
             const value = self.core.callArgumentNamed(literal, expected_position, module.text(field.name)) orelse continue;
+            // Reject unrelated nominal references before instantiating their
+            // constraints; a losing overload must not emit type diagnostics.
+            if (self.staticInputType(value)) |actual|
+                if (self.definiteNominalReferenceMismatch(module_index, field.ty, actual)) return false;
             if (allow_contextual_concrete) {
-                if (self.generics.instantiateParameterizedType(module_index, field.ty, bindings, null)) |expected| {
-                    if (self.core.contextualLiteralFits(value, expected)) continue;
-                } else |_| {}
+                if (self.contextualParameterizedLiteralFits(module_index, field.ty, bindings, value)) continue;
             }
             const actual = self.staticInputType(value) orelse return false;
             if (!try self.inferInputType(module_index, field.ty, actual, bindings)) return false;
@@ -1118,28 +1112,21 @@ pub const Resolver = struct {
             var candidate_deferred = false;
             for (storage.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, position| {
                 if (self.core.callArgumentNamed(literal, position, candidate_module.text(field.name))) |supplied| {
+                    if (self.staticInputType(supplied)) |actual| {
+                        if (self.definiteNominalReferenceMismatch(candidate_index, field.ty, actual)) {
+                            matches = false;
+                            break;
+                        }
+                    }
                     // Earlier typed inputs may determine a generic scalar.
                     // A literal then supplies context-compatible data, rather
                     // than conflicting evidence from its default numeric type.
-                    if (self.generics.instantiateParameterizedType(candidate_index, field.ty, &bindings, null)) |expected| {
-                        if (self.core.contextualLiteralFits(supplied, expected)) continue;
-                    } else |_| {}
+                    if (self.contextualParameterizedLiteralFits(candidate_index, field.ty, &bindings, supplied)) continue;
                     const actual = self.staticInputType(supplied) orelse {
                         candidate_deferred = true;
                         matches = false;
                         break;
                     };
-                    // Destructor calls commonly probe many generic receivers
-                    // with the same address. Reject a different concrete
-                    // nominal base before allocating inference state or
-                    // recursively matching the receiver pattern.
-                    if (std.mem.eql(u8, name, "deinit") and
-                        self.graph.nodes.items[@intFromEnum(supplied)].content == .address_of and
-                        self.definiteDestructorReceiverMismatch(candidate_index, field.ty, actual))
-                    {
-                        matches = false;
-                        break;
-                    }
                     _ = self.inferInputType(candidate_index, field.ty, actual, &bindings) catch |err| {
                         if (err == error.ConflictingGenericArgument) {
                             conflicting_candidates += 1;
@@ -1243,7 +1230,29 @@ pub const Resolver = struct {
         return result;
     }
 
-    fn definiteDestructorReceiverMismatch(
+    fn contextualParameterizedLiteralFits(
+        self: *Resolver,
+        module_index: usize,
+        pattern: ir.ParameterizedTypeId,
+        bindings: *generic_mod.Resolver.Bindings,
+        value: global_sg.GlobalNodeId,
+    ) bool {
+        // Context probes can materialize constrained nominal types even before
+        // the actual argument is resolved. Keep those types speculative: the
+        // final constraint pass must see only selected or source-written types.
+        const checkpoint = self.graph.checkpoint();
+        const side_effect_checkpoint = self.checkpointSideEffects();
+        const saved_stats = self.generics.stats;
+        defer {
+            self.graph.rollback(checkpoint);
+            self.rollbackSideEffects(side_effect_checkpoint);
+            self.generics.stats = saved_stats;
+        }
+        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return false;
+        return self.core.contextualLiteralFits(value, expected);
+    }
+
+    fn definiteNominalReferenceMismatch(
         self: *const Resolver,
         module_index: usize,
         pattern: ir.ParameterizedTypeId,
@@ -1277,11 +1286,7 @@ pub const Resolver = struct {
             },
             else => return false,
         };
-        const local_declaration = switch (storage.declarations.items[@intFromEnum(expected_ref)].target) {
-            .module => |declaration| declaration,
-            .external => return false,
-        };
-        const expected_base = globalizer.globalDecl(self.offsets[module_index], local_declaration);
+        const expected_base = self.generics.resolveParameterizedDeclaration(module_index, expected_ref) catch return false;
         // A different concrete nominal base cannot be supplied by reach or
         // pointer compatibility. Abstract receivers keep the full matcher.
         return self.graph.declarations.items[@intFromEnum(expected_base)].kind == .type and actual_base != expected_base;
@@ -1754,6 +1759,7 @@ pub const Resolver = struct {
                     };
                     if (pointer.mutability == .read_write and value.mutability != .read_write) return false;
                     if (try self.inferInputType(module_index, pointer.child, value.child, bindings)) return true;
+                    if (self.definiteNominalReferenceMismatch(module_index, pattern, actual)) return false;
                     const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return false;
                     if (self.core.callTypesCompatible(actual, expected)) return true;
                     if (self.nested_call_context) |abstracts| {
