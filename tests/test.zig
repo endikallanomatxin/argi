@@ -9096,3 +9096,9 @@ test "feature_tests/system/71_system_entropy" {
 test "feature_tests/system/72X_entropy_readonly" {
     try buildExpectFail("tests/feature_tests/system/72X_entropy_readonly", "no overload of 'fill_random_bytes' accepts arguments");
 }
+
+test "feature_tests/more/01_uri" {
+    const path = "tests/feature_tests/more/01_uri";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
