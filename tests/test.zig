@@ -9845,3 +9845,8 @@ test "feature_tests/collections/149_owned_ordering" {
     try expectSuccessfulBuild("tests/feature_tests/collections/149_owned_ordering");
     try runExpect("tests/feature_tests/collections/149_owned_ordering", 0);
 }
+
+test "feature_tests/control_flow/23_generic_for" {
+    try expectSuccessfulBuild("tests/feature_tests/control_flow/23_generic_for");
+    try runExpect("tests/feature_tests/control_flow/23_generic_for", 0);
+}

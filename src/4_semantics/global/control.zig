@@ -497,7 +497,7 @@ pub const Resolver = struct {
         call: global_sg.GlobalNodeId,
     };
 
-    fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
+    pub fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
         @setEvalBranchQuota(5000);
         const core = self.core orelse return .deferred;
         const generic_functions = self.generic_functions orelse return .deferred;

@@ -243,6 +243,9 @@ feature first.
   retaining the iterator until loop exit. Consuming array iterators keep an
   initialized interval over their private allocation; destroy undelivered
   structural elements through lexical owners before marking storage empty.
+  Parameterized loops retain their item binding, mode and body in syntax-free
+  IR. Specialization resolves the shared iterator protocol before the body,
+  so item types are available to dispatch and the same cleanup rules apply.
 
 - Pipes preserve one evaluation of computed operands and retain lvalue storage.
   Concrete and parameterized body lowering both reserve private deferred
