@@ -9675,3 +9675,19 @@ test "feature_tests/polymorphism/67_generic_nominal_policy_overloads" {
     try expectSuccessfulBuild("tests/feature_tests/polymorphism/67_generic_nominal_policy_overloads");
     try runExpect("tests/feature_tests/polymorphism/67_generic_nominal_policy_overloads", 0);
 }
+
+test "feature_tests/numbers/05_checked_arithmetic_exhaustive" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/05_checked_arithmetic_exhaustive");
+    try runExpect("tests/feature_tests/numbers/05_checked_arithmetic_exhaustive", 0);
+}
+
+test "feature_tests/numbers/06_checked_arithmetic_boundaries" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/06_checked_arithmetic_boundaries");
+    try runExpect("tests/feature_tests/numbers/06_checked_arithmetic_boundaries", 0);
+}
+test "feature_tests/numbers/07X_checked_arithmetic_mixed_types" {
+    try buildExpectFail("tests/feature_tests/numbers/07X_checked_arithmetic_mixed_types", "conflicting inferred generic parameters");
+}
+test "feature_tests/numbers/08X_checked_arithmetic_float" {
+    try buildExpectFail("tests/feature_tests/numbers/08X_checked_arithmetic_float", "does not satisfy abstract constraint 'Int'");
+}
