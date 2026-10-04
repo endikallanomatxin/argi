@@ -1,3 +1,8 @@
+# SQL query abstraction
+
+[!IDEA] Exploratory design sketch; this is not an executable module.
+
+```text
 SQLDB : Type = [
 	-- An SQL Database Descriptor
 ]
@@ -21,3 +26,4 @@ result = my_db
 	 | group_by(&_, "item")
 	 | order_by(&_, "item", ..desc)
 ---
+```
