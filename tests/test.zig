@@ -9798,3 +9798,8 @@ test "feature_tests/io/44_bounded_lines" {
     try expectSuccessfulBuild("tests/feature_tests/io/44_bounded_lines");
     try runExpect("tests/feature_tests/io/44_bounded_lines", 0);
 }
+
+test "feature_tests/collections/148_priority_queue" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/148_priority_queue");
+    try runExpect("tests/feature_tests/collections/148_priority_queue", 0);
+}

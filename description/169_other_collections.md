@@ -206,3 +206,15 @@ the required bytes remains unchanged, and zero bits require no bytes.
 idempotent, and invalid indices leave storage unchanged. `count_set` counts
 only the recorded bit range, ignoring padding bits in the final byte. The
 view allocates nothing and retains the backing storage's lifetime.
+
+## Priority queues
+
+`PriorityQueue#(.t, .order)(.order, .allocator, .capacity = 8)` owns a minimum
+heap of implicitly copyable values and borrows a strict-weak `OrderPolicy`.
+`push` grows storage as needed; allocation failure preserves existing values.
+`peek` and `pop` return optional copied values, with none for an empty queue.
+`length` reports the number of elements. Peek is constant time; push and pop
+perform logarithmic comparisons. Equal-priority removal order is unspecified.
+The policy must remain live and its comparisons stable while values are queued.
+`deinit` releases the backing dynamic array. Ownership-bearing elements need a
+separate borrowed comparison and movement protocol before they can be supported.

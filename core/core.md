@@ -10,17 +10,20 @@ The implemented foundations include:
   and allocator composition.
 - Collections and text: arrays, array views, dynamic arrays, Deque with value
   and borrowed iteration, copyable and owning hash maps and sets with iteration,
-  strings, and collection operations. Strict UTF-8 operations provide checked scalars,
+  strings with shared ASCII helpers and borrowed whitespace tokenization, borrowed bit sets, minimum priority queues, and collection operations. Strict UTF-8 operations provide checked scalars,
   bounded encoding, decoding cursors, and validated borrowed text iteration.
-- Numbers: checked integer arithmetic and numeric parsing/formatting.
+- Numbers: public integer limits, checked arithmetic and rounding, unsigned
+  bit utilities, IEEE float classification and rounding, and numeric parsing/formatting.
 - Binary data: checked unsigned endian reads and writes, and borrowed byte
-  cursors whose positions advance only after successful operations.
+  cursors whose positions advance only after successful operations, plus byte
+  comparison/search and checked borrowed string/array subranges.
 - System and I/O: program capabilities, files, filesystem operations, terminal
   streams, blocking networking, processes, and byte/block reader/writer contracts.
   Filesystem helpers include directory enumeration, metadata, file positioning
   and truncation, and temporary directory owners. Stream helpers support exact
   reads, complete writes, bounded delimiter reads, copying with caller buffers,
-  and size-limited copying and owning binary reads.
+  size-limited copying and owning binary reads, memory adapters, limited block
+  readers, and bounded borrowed LF/CRLF lines.
 - Errors: nominal reasons, `Errable`, explicit propagation, and tracing policies.
 - Testing: bounded equality diagnostics for numeric values, strings, bytes,
   and readonly views, with error traces for failed or skipped test roots.
