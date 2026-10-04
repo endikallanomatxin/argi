@@ -437,14 +437,15 @@ fn compileResolvedPlan(
     // as user C inputs, including installed and cross-target builds.
     const needs_windows_runtime = flags.target.os == .windows;
     const needs_posix_runtime = flags.target.os == .linux or flags.target.os == .macos;
-    const extra: usize = if (needs_windows_runtime) 2 else if (needs_posix_runtime) 1 else 0;
+    const extra: usize = if (needs_windows_runtime) 3 else if (needs_posix_runtime) 1 else 0;
     const native_inputs = try allocator.alloc(link.NativeInput, plan.native_inputs.len + flags.native_inputs.len + extra);
     @memcpy(native_inputs[0..plan.native_inputs.len], plan.native_inputs);
     @memcpy(native_inputs[plan.native_inputs.len..][0..flags.native_inputs.len], flags.native_inputs);
     if (needs_windows_runtime) {
         const core_dir = try sf.resolveToolCoreDir(&allocator, io, .{ .explicit_sysroot = flags.sysroot_path, .environ_map = environ_map });
-        native_inputs[native_inputs.len - 2] = .{ .file = try std.fs.path.join(allocator, &.{ core_dir, "platforms", "windows", "runtime.c" }) };
-        native_inputs[native_inputs.len - 1] = .{ .library = "shell32" };
+        native_inputs[native_inputs.len - 3] = .{ .file = try std.fs.path.join(allocator, &.{ core_dir, "platforms", "windows", "runtime.c" }) };
+        native_inputs[native_inputs.len - 2] = .{ .library = "shell32" };
+        native_inputs[native_inputs.len - 1] = .{ .library = "ws2_32" };
     } else if (needs_posix_runtime) {
         const core_dir = try sf.resolveToolCoreDir(&allocator, io, .{ .explicit_sysroot = flags.sysroot_path, .environ_map = environ_map });
         native_inputs[native_inputs.len - 1] = .{ .file = try std.fs.path.join(allocator, &.{ core_dir, "platforms", "posix", "processes.c" }) };

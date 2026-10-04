@@ -1,6 +1,8 @@
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0602
 #endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <shellapi.h>
 #include <malloc.h>
@@ -15,6 +17,7 @@
 #include "entropy.c"
 #include "time.c"
 #include "processes.c"
+#include "../shared/network.c"
 
 uintptr_t _argi_page_size(void) {
     SYSTEM_INFO info;

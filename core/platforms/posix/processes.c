@@ -139,3 +139,5 @@ int32_t _argi_process_stream_write(uintptr_t handle, uint8_t byte) {
     if (sigprocmask(SIG_SETMASK, &old, NULL)) return -1;
     return count == 1 ? 0 : -1;
 }
+
+#include "../shared/network.c"

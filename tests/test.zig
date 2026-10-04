@@ -7636,7 +7636,7 @@ test "tests/feature_tests/polymorphism/61_generic_constraint_alternate" {
 }
 
 test "tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape" {
-    try buildExpectFail("tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape", "no matching generic overload of 'accept' accepts arguments");
+    try buildExpectFail("tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape", "no matching generic overload of 'accept_owned' accepts arguments");
 }
 
 test "tests/feature_tests/polymorphism/63X_generic_constraint_qualified" {
@@ -9366,6 +9366,32 @@ test "feature_tests/collections/122X_deque_copy" {
     try buildExpectFail("tests/feature_tests/collections/122X_deque_copy", "cannot be copied implicitly");
 }
 
+test "feature_tests/system/73_network_loopback" {
+    try expectSuccessfulBuild("tests/feature_tests/system/73_network_loopback");
+    try runExpect("tests/feature_tests/system/73_network_loopback", 0);
+}
+
+test "feature_tests/system/74_network_errors" {
+    try expectSuccessfulBuild("tests/feature_tests/system/74_network_errors");
+    try runExpect("tests/feature_tests/system/74_network_errors", 0);
+}
+
+test "feature_tests/system/75X_network_owner_copy" {
+    try buildExpectFail("tests/feature_tests/system/75X_network_owner_copy", "cannot be copied implicitly");
+}
+
+test "feature_tests/system/76X_network_private_handle" {
+    try buildExpectFail("tests/feature_tests/system/76X_network_private_handle", "field '_handle' is private");
+}
+
+test "feature_tests/system/77X_network_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/system/77X_network_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/system/78X_network_missing_capability" {
+    try buildExpectFail("tests/feature_tests/system/78X_network_missing_capability", "network");
+}
+
 test "feature_tests/errors/84X_handle_non_errable" {
     try buildExpectFail("tests/feature_tests/errors/84X_handle_non_errable", "handle expects an Errable value");
 }
@@ -9398,4 +9424,8 @@ test "feature_tests/errors/86X_handle_local_borrow" {
 
 test "feature_tests/errors/87X_handle_arbitrary_choice" {
     try buildExpectFail("tests/feature_tests/errors/87X_handle_arbitrary_choice", "handle expects an Errable value");
+}
+
+test "feature_tests/system/79_network_native" {
+    try checkNativeCFixture("tests/feature_tests/system/79_network_native", &.{"declare i32 @argi_network_probe()"});
 }

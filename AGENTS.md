@@ -179,6 +179,15 @@ feature first.
   Py_buffer must be released. Exception snapshots own native text independently
   of interpreter lifetime. Do not reintroduce hidden Python/core dependencies.
 
+- Blocking networking uses `core/platforms/shared/network.c` and its private
+  `network.h` ABI header, included by the selected POSIX/Windows runtime adapter;
+  Windows links `ws2_32` as well as `shell32`. Keep the shared source and header
+  in installed core bundles. Resolution and
+  socket owners borrow `Network`, which retains its FFI dependency. Address
+  values copy native bytes; no native handle grants safe-reference validity or
+  storage acquisition receipts. UDP truncation is an error even when a prefix
+  was written.
+
 - Local `Errable` handling (`handle value, error { ... }`) lowers to a match
   inside an explicit `value_sequence`. Its result storage is deferred in the
   enclosing scope, while match payloads and handler locals belong to branches.

@@ -29,8 +29,7 @@ The fields expose different kinds of work: memory and allocation, terminal
 I/O, process arguments and environment, files, networking, processes, time,
 randomness, and foreign calls.
 
-> [!IMPLEMENTATION]
-> `Network` is currently a capability placeholder without general operations.
+`Network` provides [blocking address resolution, TCP, and UDP](168_networking.md).
 
 `RandomNumberGenerator` provides [system entropy](163_randomness.md).
 `Clock` provides [monotonic time, civil time, and blocking sleep](164_time.md).
