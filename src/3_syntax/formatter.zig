@@ -1,18 +1,21 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
 const tokenizer = @import("../2_tokens/tokenizer.zig");
+const syntaxer = @import("syntaxer.zig");
+const syn = @import("syntax_tree.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 const source_files = @import("../1_base/source_files.zig");
 
 const Tag = std.meta.Tag(tok.Content);
 const List = std.array_list.Managed(u8);
-const Frame = struct { tag: Tag, multiline: bool, expand: bool = false };
+const Frame = struct { tag: Tag, multiline: bool, expand: bool = false, signature: bool = false };
+const line_width = 100;
 
 /// Formatting uses the complete token stream, including discarded target
 /// branches. Newlines are syntax in Argi, so existing breaks are retained and
-/// new ones are introduced only after commas inside parentheses or at block
-/// boundaries. Token text stays verbatim: comments, escapes, and numeric
-/// spellings are never rebuilt.
+/// syntaxing identifies complete signature groups and statement boundaries.
+/// New breaks occur at collection fields and those boundaries. Token text
+/// stays verbatim: comments, escapes, and numeric spellings are never rebuilt.
 pub fn format(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     var current = try formatOnce(allocator, source);
     errdefer allocator.free(current);
@@ -40,18 +43,23 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     var lex = tokenizer.Tokenizer.init(temporary, &diagnostics, source, diagnostics.source_db.fileId(0));
     const tokens = try lex.tokenize();
     if (diagnostics.hasErrors()) return error.InvalidSource;
+    const layout = try Layout.init(temporary, tokens, source);
     var out = List.init(temporary);
     var stack = std.array_list.Managed(Frame).init(temporary);
     var previous: ?Tag = null;
     var line_start: usize = 0;
     var pending_newlines: usize = 0;
+    var source_newlines: usize = 0;
     for (0..tokens.len) |i| {
         const tag = std.meta.activeTag(tokens.contents[i]);
         if (tag == .eof) break;
         if (tag == .new_line) {
-            pending_newlines += 1;
+            source_newlines += 1;
             continue;
         }
+        pending_newlines = @max(pending_newlines, @max(source_newlines, layout.breaks[i]));
+        source_newlines = 0;
+        var closing_indent: usize = 0;
         const closing = tag == .close_parenthesis or tag == .close_bracket or tag == .close_brace;
         if (closing) {
             if (stack.items.len == 0) return error.UnbalancedDelimiters;
@@ -62,7 +70,10 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
                 else => .open_brace,
             };
             if (frame.tag != expected) return error.UnbalancedDelimiters;
-            if (frame.expand) pending_newlines = @max(pending_newlines, 1);
+            if (frame.expand) {
+                pending_newlines = @max(pending_newlines, 1);
+                if (frame.signature) closing_indent = 4;
+            }
         }
         if (pending_newlines != 0) {
             if (out.items.len != 0) {
@@ -75,11 +86,11 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
             previous = null;
         }
         if (previous == null) {
-            var depth: usize = 0;
+            var indent = closing_indent;
             for (stack.items) |frame| if (frame.multiline) {
-                depth += 1;
+                indent += if (frame.signature) @as(usize, 8) else 4;
             };
-            try out.appendNTimes(' ', depth * 4);
+            try out.appendNTimes(' ', indent);
         } else if (needsSpace(previous.?, tag, tokens, i)) try out.append(' ');
         const start: usize = tokens.locations[i].offset;
         const end: usize = if (i + 1 < tokens.len) tokens.locations[i + 1].offset else source.len;
@@ -88,16 +99,16 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
         previous = tag;
         if (tag == .open_parenthesis or tag == .open_bracket or tag == .open_brace) {
             const multiline = containsNewline(tokens, i);
-            const expand = tag == .open_brace and !multiline and out.items.len - line_start + inlineLength(tokens, source, i) > 100;
-            try stack.append(.{ .tag = tag, .multiline = multiline or expand, .expand = expand });
+            const expand = layout.expand[i] or (tag == .open_parenthesis and multiline) or (tag != .open_bracket and
+                layout.ends[i] > i + 1 and
+                out.items.len - line_start + flatLength(tokens, source, i, layout.ends[i] + 1) > line_width);
+            try stack.append(.{ .tag = tag, .multiline = multiline or expand, .expand = expand, .signature = layout.signature[i] });
             if (expand) pending_newlines = 1;
         }
-        // Break long comma-separated lines without flattening manual layout.
-        // The break is stable on subsequent passes and cannot end a statement.
-        if (tag == .comma and out.items.len - line_start + nextElementLength(tokens, source, i + 1) > 100 and stack.items.len != 0 and stack.items[stack.items.len - 1].tag == .open_parenthesis) {
+        // Expanded collections use complete rows rather than spilling only
+        // the last argument onto a continuation line.
+        if (tag == .comma and stack.items.len != 0 and stack.items[stack.items.len - 1].expand and stack.items[stack.items.len - 1].tag == .open_parenthesis)
             pending_newlines = @max(pending_newlines, 1);
-            stack.items[stack.items.len - 1].multiline = true;
-        }
     }
     if (stack.items.len != 0) return error.UnbalancedDelimiters;
     trimSpaces(&out);
@@ -117,23 +128,175 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     }
     while (original_index < tokens.len and tokens.contents[original_index] == .new_line) original_index += 1;
     if (original_index != tokens.len) return error.TokenSequenceChanged;
+    if (layout.syntax_tags) |tags| {
+        // Token identity alone is insufficient: newlines can end expressions.
+        // Refuse an edit that changes the syntax of an initially valid file.
+        const result_files = [_]source_files.SourceFile{.{ .path = "format.rg", .code = result }};
+        var result_diagnostics = diagnostic.Diagnostics.init(&temporary, &result_files);
+        defer result_diagnostics.deinit();
+        var parser = try syntaxer.Syntaxer.init(temporary, formatted_tokens, result, &result_diagnostics);
+        defer parser.deinit();
+        var tree = parser.parse() catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return error.InvalidFormattedSyntax,
+        };
+        defer tree.deinit(temporary);
+        if (tree.roots.len != layout.root_count or !std.mem.eql(syn.Node.Tag, tags, tree.nodes.items(.tag)))
+            return error.SyntaxStructureChanged;
+    }
     return result;
 }
 
-fn inlineLength(tokens: tok.View, source: []const u8, start: usize) usize {
-    var depth: usize = 0;
-    for (start..tokens.len) |i| {
-        switch (tokens.contents[i]) {
-            .open_parenthesis, .open_bracket, .open_brace => depth += 1,
+const Layout = struct {
+    ends: []usize,
+    breaks: []u8,
+    expand: []bool,
+    signature: []bool,
+    syntax_tags: ?[]const syn.Node.Tag = null,
+    root_count: usize = 0,
+
+    fn init(allocator: std.mem.Allocator, tokens: tok.View, source: []const u8) !Layout {
+        var layout: Layout = .{
+            .ends = try allocator.alloc(usize, tokens.len),
+            .breaks = try allocator.alloc(u8, tokens.len),
+            .expand = try allocator.alloc(bool, tokens.len),
+            .signature = try allocator.alloc(bool, tokens.len),
+        };
+        @memset(layout.ends, 0);
+        @memset(layout.breaks, 0);
+        @memset(layout.expand, false);
+        @memset(layout.signature, false);
+        var opens = std.array_list.Managed(usize).init(allocator);
+        for (tokens.contents, 0..) |content, i| switch (content) {
+            .open_parenthesis, .open_bracket, .open_brace => try opens.append(i),
             .close_parenthesis, .close_bracket, .close_brace => {
-                depth -= 1;
-                if (depth == 0) return tokens.locations[i].offset - tokens.locations[start].offset;
+                const open = opens.pop() orelse return error.UnbalancedDelimiters;
+                const expected: Tag = switch (content) {
+                    .close_parenthesis => .open_parenthesis,
+                    .close_bracket => .open_bracket,
+                    else => .open_brace,
+                };
+                if (std.meta.activeTag(tokens.contents[open]) != expected) return error.UnbalancedDelimiters;
+                layout.ends[open] = i;
             },
-            .new_line, .eof => return 0,
             else => {},
+        };
+        if (opens.items.len != 0) return error.UnbalancedDelimiters;
+
+        // Editing and target directives can leave a tokenizable document that
+        // does not syntax successfully. Preserve its manual layout in that case;
+        // never guess statement boundaries from adjacent identifiers.
+        const files = [_]source_files.SourceFile{.{ .path = "format.rg", .code = source }};
+        var diagnostics = diagnostic.Diagnostics.init(&allocator, &files);
+        defer diagnostics.deinit();
+        var parser = try syntaxer.Syntaxer.init(allocator, tokens, source, &diagnostics);
+        defer parser.deinit();
+        var tree = parser.parse() catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return layout,
+        };
+        defer tree.deinit(allocator);
+        layout.syntax_tags = try allocator.dupe(syn.Node.Tag, tree.nodes.items(.tag));
+        layout.root_count = tree.roots.len;
+        for (tree.roots, 0..) |root, index| {
+            if (index != 0 and (isGlobalDeclaration(tree.tag(root)) or isGlobalDeclaration(tree.tag(tree.roots[index - 1])))) {
+                var start = firstToken(&tree, root);
+                // Keep leading documentation comments attached to declarations.
+                var cursor = start;
+                while (cursor != 0) {
+                    cursor -= 1;
+                    if (tokens.contents[cursor] == .new_line) continue;
+                    if (tokens.contents[cursor] != .comment) break;
+                    if (cursor != 0 and tokens.contents[cursor - 1] != .new_line) break;
+                    start = cursor;
+                }
+                layout.breaks[start] = 2;
+            }
         }
+        for (0..tree.nodes.len) |raw| {
+            const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
+            if (tree.functionDeclaration(node) orelse if (tree.testDeclaration(node)) |test_decl| test_decl.function else null) |function| {
+                const start = firstToken(&tree, node);
+                const output = @intFromEnum(tree.mainToken(function.output));
+                const end = if (tokens.contents[output] == .open_parenthesis) layout.ends[output] + 1 else layout.ends[@intFromEnum(tree.mainToken(function.input))] + 1;
+                const groups = [_]?syn.NodeIndex{ function.generic_params_struct, function.input, function.output };
+                var multiline = flatLength(tokens, source, start, end) > line_width;
+                for (groups) |group| if (group) |value| {
+                    const open = @intFromEnum(tree.mainToken(value));
+                    if (tokens.contents[open] == .open_parenthesis and containsNewline(tokens, open)) multiline = true;
+                };
+                for (groups) |group| if (group) |value| {
+                    const open = @intFromEnum(tree.mainToken(value));
+                    if (tokens.contents[open] != .open_parenthesis) continue;
+                    layout.signature[open] = multiline;
+                    layout.expand[open] = multiline and layout.ends[open] > open + 1;
+                };
+            }
+            if (tree.codeBlock(node)) |block| {
+                const open = @intFromEnum(tree.mainToken(node));
+                if (block.statements.len > 1) {
+                    layout.expand[open] = true;
+                    for (block.statements) |statement| {
+                        var start = firstToken(&tree, statement);
+                        // Scalar grouping brackets do not create syntax nodes.
+                        // Include any enclosing group in the statement boundary.
+                        for (open + 1..start) |candidate| {
+                            if (tokens.contents[candidate] == .open_bracket and layout.ends[candidate] >= start) {
+                                start = candidate;
+                                break;
+                            }
+                        }
+                        layout.breaks[start] = @max(layout.breaks[start], 1);
+                    }
+                }
+            }
+        }
+        return layout;
     }
-    return source.len - tokens.locations[start].offset;
+};
+
+fn isGlobalDeclaration(tag: syn.Node.Tag) bool {
+    return switch (tag) {
+        .function_declaration, .function_declaration_once, .test_declaration, .c_function_pointer_declaration, .type_declaration, .abstract_declaration, .c_enum_declaration, .c_union_declaration, .c_struct_declaration, .c_incomplete_declaration => true,
+        else => false,
+    };
+}
+
+fn firstToken(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) usize {
+    var first: usize = @intFromEnum(tree.mainToken(node));
+    if (tree.tag(node) == .assume_statement and first != 0) return first - 1;
+    if (tree.functionCall(node)) |call| if (call.module_qualifier) |qualifier| {
+        return @min(first, @intFromEnum(qualifier));
+    };
+    if (tree.functionDeclaration(node)) |function| {
+        if (function.constructor_type orelse function.destructor_type) |receiver| first = @intFromEnum(receiver);
+        if (function.is_once and first != 0) first -= 1;
+        return first;
+    }
+    const child: ?syn.NodeIndex = switch (tree.tag(node)) {
+        .expression_statement, .error_propagation, .nullable_test, .dereference => tree.unaryOperand(node),
+        .struct_field_access => tree.structFieldAccess(node).?.value,
+        .choice_payload_access => tree.choicePayloadAccess(node).?.value,
+        .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo, .compare_equal, .compare_not_equal, .compare_less, .compare_greater, .compare_less_equal, .compare_greater_equal, .logical_and, .logical_or, .pipe_expression, .index_access, .index_assignment, .pointer_assignment, .error_context, .unwrap_or, .unwrap_or_do => tree.binaryOperation(node).?.lhs,
+        else => null,
+    };
+    if (child) |value| first = @min(first, firstToken(tree, value));
+    return first;
+}
+
+fn flatLength(tokens: tok.View, source: []const u8, start: usize, end: usize) usize {
+    var length: usize = 0;
+    var previous: ?Tag = null;
+    for (start..@min(end, tokens.len)) |i| {
+        const tag = std.meta.activeTag(tokens.contents[i]);
+        if (tag == .new_line or tag == .eof) continue;
+        if (previous) |left| if (needsSpace(left, tag, tokens, i)) {
+            length += 1;
+        };
+        length += tokenText(tokens, source, i).len;
+        previous = tag;
+    }
+    return length;
 }
 
 fn tokenText(tokens: tok.View, source: []const u8, index: usize) []const u8 {
@@ -185,26 +348,6 @@ fn needsSpace(left: Tag, right: Tag, tokens: tok.View, index: usize) bool {
     if (left == .open_brace and right == .close_brace) return false;
     if (left == .binary_operator and index >= 2 and !operandEnd(std.meta.activeTag(tokens.contents[index - 2]))) return false;
     return true;
-}
-
-fn nextElementLength(tokens: tok.View, source: []const u8, start: usize) usize {
-    if (start >= tokens.len) return 0;
-    var depth: usize = 0;
-    for (start..tokens.len) |i| {
-        switch (tokens.contents[i]) {
-            .new_line, .eof, .comment => return 0,
-            .open_parenthesis, .open_bracket, .open_brace => depth += 1,
-            .close_parenthesis, .close_bracket, .close_brace => {
-                if (depth == 0) return tokens.locations[i].offset - tokens.locations[start].offset + 1;
-                depth -= 1;
-            },
-            .comma => if (depth == 0) {
-                return tokens.locations[i].offset - tokens.locations[start].offset + 1;
-            },
-            else => {},
-        }
-    }
-    return source.len - tokens.locations[start].offset;
 }
 
 const Field = struct { indent: usize, name_end: usize, marker_end: usize, equal: ?usize };
@@ -334,7 +477,7 @@ fn expectFormat(source: []const u8, expected: []const u8) !void {
 test "formatter preserves manual layout and aligns multiline fields" {
     try expectFormat(
         "Point:Type=(\n.x:Int32=1\n.long_name:UInt8=2\n)\nmain()->(.status_code:Int32=0):={ status_code=1 }\n",
-        "Point: Type = (\n    .x         : Int32 = 1\n    .long_name : UInt8 = 2\n)\nmain() -> (.status_code: Int32 = 0) := { status_code = 1 }\n",
+        "Point: Type = (\n    .x         : Int32 = 1\n    .long_name : UInt8 = 2\n)\n\nmain() -> (.status_code: Int32 = 0) := { status_code = 1 }\n",
     );
 }
 
@@ -348,7 +491,7 @@ test "formatter preserves comments literals grouping and target branches" {
 test "formatter keeps list breaks and separates field groups" {
     try expectFormat(
         "x:Type=(\n.a:Int8\n\n-- group\n.long:Int64\n.b:UInt8\n)\nf(.x=1,.y=-2)\n",
-        "x: Type = (\n    .a : Int8\n\n    -- group\n    .long : Int64\n    .b    : UInt8\n)\nf(.x = 1, .y = -2)\n",
+        "x: Type = (\n    .a : Int8\n\n    -- group\n    .long : Int64\n    .b    : UInt8\n)\n\nf(.x = 1, .y = -2)\n",
     );
 }
 
@@ -358,7 +501,7 @@ test "formatter rejects damaged delimiters" {
 
 test "formatter is idempotent across core and feature sources" {
     const allocator = std.testing.allocator;
-    for ([_][]const u8{ "core", "tests/feature_tests" }) |root| {
+    for ([_][]const u8{ "core", "more", "tests/feature_tests" }) |root| {
         var dir = try std.Io.Dir.cwd().openDir(std.testing.io, root, .{ .iterate = true });
         defer dir.close(std.testing.io);
         var walker = try dir.walk(allocator);
@@ -374,6 +517,10 @@ test "formatter is idempotent across core and feature sources" {
             defer allocator.free(first);
             const second = try format(allocator, first);
             defer allocator.free(second);
+            expectSameSyntax(allocator, source, first) catch |err| {
+                std.debug.print("formatter changes syntax for {s}/{s}\n", .{ root, entry.path });
+                return err;
+            };
             if (!std.mem.eql(u8, first, second)) {
                 std.debug.print("formatter is unstable for {s}/{s}\n", .{ root, entry.path });
                 return error.UnstableFormat;
@@ -384,4 +531,79 @@ test "formatter is idempotent across core and feature sources" {
 
 test "formatter preserves field-like text inside multiline strings" {
     try expectFormat("text:=\"first\n.fake:Int32= 1\n\"\n", "text := \"first\n.fake:Int32= 1\n\"\n");
+}
+
+test "formatter expands complete long signature groups" {
+    try expectFormat(
+        "add#(.n:UIntNative,.t:Type:Scalar)(.left:&Vector#(.n=n,.t:t),.right:&Vector#(.n=n,.t:t))->(.result:Vector#(.n=n,.t:t)):={ result=left }\n",
+        "add#(\n        .n : UIntNative,\n        .t : Type: Scalar\n    )(\n        .left  : &Vector#(.n = n, .t: t),\n        .right : &Vector#(.n = n, .t: t)\n    ) -> (\n        .result : Vector#(.n = n, .t: t)\n    ) := { result = left }\n",
+    );
+}
+
+test "formatter retains short signatures and expands multiple statements" {
+    try expectFormat(
+        "Counter:Type=(.value:Int32)\nbump(.self:$&Counter)->():={self&.value=self&.value+1}\nrun()->():={i::UIntNative=0 while i<2 {values[i]=values[i]+1 i=i+1} return}\n",
+        "Counter: Type = (.value: Int32)\n\nbump(.self: $&Counter) -> () := { self&.value = self&.value + 1 }\n\nrun() -> () := {\n    i :: UIntNative = 0\n    while i < 2 {\n        values[i] = values[i] + 1\n        i = i + 1\n    }\n    return\n}\n",
+    );
+}
+
+test "formatter keeps declaration comments attached and manual blank lines" {
+    try expectFormat(
+        "First:Type=()\n-- documentation\nSecond:Type=()\nf()->():={\n\nreturn\n\n}\n",
+        "First: Type = ()\n\n-- documentation\nSecond: Type = ()\n\nf() -> () := {\n\n    return\n\n}\n",
+    );
+}
+
+test "formatter expands long calls into complete argument rows" {
+    try expectFormat(
+        "result:=operation(.first_argument=\"abcdefghijklmnopqrstuvwxyz0123456789\",.second_argument=\"abcdefghijklmnopqrstuvwxyz0123456789\")\n",
+        "result := operation(\n    .first_argument  = \"abcdefghijklmnopqrstuvwxyz0123456789\",\n    .second_argument = \"abcdefghijklmnopqrstuvwxyz0123456789\"\n)\n",
+    );
+}
+
+fn testSyntaxTree(allocator: std.mem.Allocator, source: []const u8) !?syn.FileSyntaxTree {
+    const files = [_]source_files.SourceFile{.{ .path = "format.rg", .code = source }};
+    var diagnostics = diagnostic.Diagnostics.init(&allocator, &files);
+    defer diagnostics.deinit();
+    var lex = tokenizer.Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
+    const tokens = try lex.tokenize();
+    var parser = try syntaxer.Syntaxer.init(allocator, tokens, source, &diagnostics);
+    defer parser.deinit();
+    return parser.parse() catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => null,
+    };
+}
+
+fn expectSameSyntax(allocator: std.mem.Allocator, source: []const u8, formatted: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const temporary = arena.allocator();
+    var original = (try testSyntaxTree(temporary, source)) orelse return;
+    defer original.deinit(temporary);
+    var result = (try testSyntaxTree(temporary, formatted)) orelse return error.FormattedSyntaxInvalid;
+    defer result.deinit(temporary);
+    try std.testing.expectEqual(original.roots.len, result.roots.len);
+    try std.testing.expectEqualSlices(syn.Node.Tag, original.nodes.items(.tag), result.nodes.items(.tag));
+}
+
+test "formatter preserves prefixes and grouping at statement boundaries" {
+    try expectFormat(
+        "f()->():={assume allocator:=source mod.write(.value=1)!!\"context\"\n[values[index]]=2 return}\n",
+        "f() -> () := {\n    assume allocator := source\n    mod.write(.value = 1)!! \"context\"\n    [values[index]] = 2\n    return\n}\n",
+    );
+}
+
+test "formatter separates associated lifecycle declarations before their prefixes" {
+    try expectFormat(
+        "Point:Type=(.value:Int32)\nonce Point init(.value:Int32)->(.result:Point):={result=(.value=value)}\nPoint deinit(.self:$&Point)->():={}\n",
+        "Point: Type = (.value: Int32)\n\nonce Point init(.value: Int32) -> (.result: Point) := { result = (.value = value) }\n\nPoint deinit(.self: $&Point) -> () := {}\n",
+    );
+}
+
+test "formatter retains trailing comments when separating declarations" {
+    try expectFormat(
+        "First:Type=() -- trailing\n-- second documentation\nSecond:Type=()\n",
+        "First: Type = () -- trailing\n\n-- second documentation\nSecond: Type = ()\n",
+    );
 }
