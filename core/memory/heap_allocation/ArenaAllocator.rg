@@ -1,52 +1,65 @@
-_ArenaBlock : Type = (
-    .storage: Allocation
-    .next: UIntNative
-    .size: UIntNative
+_ArenaBlock: Type = (
+    .storage : Allocation
+    .next    : UIntNative
+    .size    : UIntNative
 )
 
 -- Replacing the complete domain establishes a new storage generation after
 -- reset. Updating only the marker would leave the former generation ended.
-ArenaDomain : Type = (.marker: Bool)
+ArenaDomain: Type = (.marker: Bool)
+
 ArenaDomain init() -> (.result: ArenaDomain) := { result = (.marker = false) }
+
 ArenaDomain deinit(.self: $&ArenaDomain) -> () := {}
 
 -- Backing receipts live in block headers. No metadata or storage is acquired
 -- until the first allocation; all blocks come from the chosen backing policy.
-ArenaAllocator : Type = (
-    ._backing_allocator: Virtual#(.abstract: Allocator)
-    .domain: ArenaDomain
-    ._block_head: UIntNative
-    .block_count: UIntNative
-    .block_size: UIntNative
-    ._current_block_offset: UIntNative
+ArenaAllocator: Type = (
+    ._backing_allocator    : Virtual#(.abstract: Allocator)
+    .domain                : ArenaDomain
+    ._block_head           : UIntNative
+    .block_count           : UIntNative
+    .block_size            : UIntNative
+    ._current_block_offset : UIntNative
 )
 
-ArenaAllocator init(.allocator: $&Allocator, .block_size: UIntNative = 4096) -> (.result: Errable#(.t: ArenaAllocator, .reasons: (..out_of_memory))) := {
+ArenaAllocator init(
+        .allocator  : $&Allocator,
+        .block_size : UIntNative   = 4096
+    ) -> (
+        .result : Errable#(.t: ArenaAllocator, .reasons: (..out_of_memory))
+    ) := {
     constructed :: ArenaAllocator
 
     actual_block_size ::= block_size
     if actual_block_size == 0 { actual_block_size = 1 }
     constructed = (
-        ._backing_allocator = to_virtual#(.abstract: Allocator)(.value = allocator),
-        .domain = ArenaDomain(),
-        ._block_head = 0,
-        .block_count = 0,
-        .block_size = actual_block_size,
-        ._current_block_offset = 0,
+        ._backing_allocator    = to_virtual#(.abstract: Allocator)(.value = allocator)
+        .domain                = ArenaDomain()
+        ._block_head           = 0
+        .block_count           = 0
+        .block_size            = actual_block_size
+        ._current_block_offset = 0
     )
     result = ..ok ~constructed
 }
 
 _trusted_arena_block(.address: UIntNative, .owner: $&ArenaAllocator) -> (.block: $&_ArenaBlock) := {
     raw ::= raw_pointer#(.t: _ArenaBlock)(.address = address).raw
-    block = trusted_establish_inherited_reference#(.t: _ArenaBlock)(.raw = raw, .root = erase_mutable_reference#(.t: ArenaDomain)(.base = $&owner&.domain).reference).reference
+    block = trusted_establish_inherited_reference#(.t: _ArenaBlock)(
+        .raw  = raw
+        .root = erase_mutable_reference#(.t: ArenaDomain)(.base = $&owner&.domain).reference
+    ).reference
 }
 
 arena_free_blocks(.self: $&ArenaAllocator) -> () := {
     while self&._block_head != 0 {
         block ::= _trusted_arena_block(.address = self&._block_head, .owner = self).block
         next ::= block&.next
-        storage ::= trusted_opaque_move_out#(.t: Allocation, .storage_type: _ArenaBlock)(.storage = block, .slot = $&block&.storage).result
+        storage ::= trusted_opaque_move_out#(.t: Allocation, .storage_type: _ArenaBlock)(
+            .storage = block
+            .slot    = $&block&.storage
+        ).result
         self&._block_head = next
         deinit(.self = $&storage)
     }
@@ -65,7 +78,13 @@ ArenaAllocator deinit(.self: $&ArenaAllocator) -> () := {
     deinit(.self = $&self&.domain)
 }
 
-allocate(.self: $&ArenaAllocator, .size: UIntNative, .alignment: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+allocate(
+        .self      : $&ArenaAllocator,
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) := {
     _require_allocation_alignment(.alignment = alignment)
     required ::= size
     if required == 0 { required = 1 }
@@ -100,13 +119,17 @@ allocate(.self: $&ArenaAllocator, .size: UIntNative, .alignment: UIntNative) -> 
         block_alignment ::= alignment
         header_alignment ::= alignment_of(.type = _ArenaBlock)
         if block_alignment < header_alignment { block_alignment = header_alignment }
-        allocated ::= allocate(.self = $&self&._backing_allocator, .size = new_size, .alignment = block_alignment)
+        allocated ::= allocate(
+            .self      = $&self&._backing_allocator
+            .size      = new_size
+            .alignment = block_alignment
+        )
         match allocated {
             ..error _ {
                 result = ..error(.reason = ..out_of_memory)
                 return
             }
-            ..ok ~ payload {
+            ..ok ~payload {
                 storage ::= ~payload
                 address ::= storage.data.address
                 block ::= _trusted_arena_block(.address = address, .owner = self).block
@@ -123,22 +146,30 @@ allocate(.self: $&ArenaAllocator, .size: UIntNative, .alignment: UIntNative) -> 
         }
     }
     address ::= self&._block_head + aligned_offset
-    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
+    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
+        .value = self
+    )
     allocation :: Allocation = (
-        .data = raw_pointer#(.t: UInt8)(.address = address).raw,
-        .size = size,
-        .alignment = alignment,
-        .anchor = erase_mutable_reference#(.t: ArenaDomain)(.base = $&self&.domain).reference,
-        .deallocator = deallocator,
-        ._storage_address = address,
-        ._storage_size = size,
-        ._storage_alignment = alignment,
-        ._release_size = size,
+        .data               = raw_pointer#(.t: UInt8)(.address = address).raw
+        .size               = size
+        .alignment          = alignment
+        .anchor             = erase_mutable_reference#(.t: ArenaDomain)(.base = $&self&.domain).reference
+        .deallocator        = deallocator
+        ._storage_address   = address
+        ._storage_size      = size
+        ._storage_alignment = alignment
+        ._release_size      = size
     )
     self&._current_block_offset = aligned_offset + required
     result = ..ok ~allocation
 }
 
-deallocate(.self: $&ArenaAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () := {}
+deallocate(
+        .self      : $&ArenaAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> () := {}
+
 ArenaAllocator implements Allocator
 ArenaAllocator implements Deallocator

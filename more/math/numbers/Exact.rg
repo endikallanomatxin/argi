@@ -1,4 +1,4 @@
-ExactRealNumber : Type = (
+ExactRealNumber: Type = (
     -- For mathematicians.
     -- Stores the operations that produce an exact number.
     -- Allows viewing it in LaTeX.
@@ -8,7 +8,7 @@ ExactRealNumber : Type = (
 
 ExactRealNumber implements RealNumber
 
-is_rational (.n: ExactRealNumber) -> (.r: Bool) := {
+is_rational(.n: ExactRealNumber) -> (.r: Bool) := {
     -- Check if it is only describe by a ratio.
     ...
 }

@@ -1,16 +1,25 @@
 #if target_os("linux") or target_os("macos") {
     -- Supported POSIX targets use a 64-bit time_t and long in struct timespec.
     _PosixTimespec: CStruct = (.seconds: CLong, .nanoseconds: CLong)
-    _clock_gettime(.id: CInt, .time: $&_PosixTimespec) -> (.status: CInt): CFunction(.symbol = "clock_gettime")
-    _clock_nanosleep(.request: &_PosixTimespec, .remaining: $&_PosixTimespec) -> (.status: CInt): CFunction(.symbol = "nanosleep")
+    _clock_gettime(.id: CInt, .time: $&_PosixTimespec) -> (.status: CInt): CFunction(
+        .symbol = "clock_gettime"
+    )
+    _clock_nanosleep(.request: &_PosixTimespec, .remaining: $&_PosixTimespec) -> (.status: CInt): CFunction(
+        .symbol = "nanosleep"
+    )
     #if target_os("linux") {
-        _clock_errno() -> (.pointer: RawPointer#(.t: CInt)): CFunction(.symbol = "__errno_location")
+        _clock_errno() -> (.pointer: RawPointer#(.t: CInt)): CFunction(
+            .symbol = "__errno_location"
+        )
     }#else {
         _clock_errno() -> (.pointer: RawPointer#(.t: CInt)): CFunction(.symbol = "__error")
     }
 
-    _platform_monotonic(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.status: Int32 = -1,
-        .seconds : UInt64 = 0, .nanoseconds: UInt32 = 0) := {
+    _platform_monotonic(.ffi: $&ForeignFunctionInterface = reach ffi) -> (
+        .status      : Int32  = -1,
+        .seconds     : UInt64 = 0,
+        .nanoseconds : UInt32 = 0
+    ) := {
         assume ffi
         time :: _PosixTimespec = (.seconds = 0, .nanoseconds = 0)
         id :: CInt = 1
@@ -21,8 +30,11 @@
         nanoseconds = unwrap_or_abort(.value = UInt32(.value = time.nanoseconds)).result
         status = 0
     }
-    _platform_wall(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.status: Int32 = -1,
-        .seconds : Int64 = 0, .nanoseconds: UInt32 = 0) := {
+    _platform_wall(.ffi: $&ForeignFunctionInterface = reach ffi) -> (
+        .status      : Int32  = -1,
+        .seconds     : Int64  = 0,
+        .nanoseconds : UInt32 = 0
+    ) := {
         assume ffi
         time :: _PosixTimespec = (.seconds = 0, .nanoseconds = 0)
         if _clock_gettime(.id = 0, .time = $&time).status != 0 { return }
@@ -31,8 +43,11 @@
         nanoseconds = unwrap_or_abort(.value = UInt32(.value = time.nanoseconds)).result
         status = 0
     }
-    _platform_sleep(.seconds: UInt64, .nanoseconds: UInt32,
-        .ffi : $&ForeignFunctionInterface = reach ffi) -> (.status: Int32 = -1) := {
+    _platform_sleep(
+        .seconds     : UInt64,
+        .nanoseconds : UInt32,
+        .ffi         : $&ForeignFunctionInterface = reach ffi
+    ) -> (.status: Int32 = -1) := {
         assume ffi
         unspent ::= seconds
         fraction ::= nanoseconds
@@ -55,7 +70,10 @@
                 -- call. Its FFI root bounds the borrow without acquiring storage.
                 raw ::= _clock_errno().pointer
                 root ::= erase_mutable_reference(.base = ffi).reference
-                error ::= trusted_establish_inherited_reference#(.t: CInt)(.raw = raw, .root = root).reference&
+                error ::= trusted_establish_inherited_reference#(.t: CInt)(
+                    .raw  = raw,
+                    .root = root
+                ).reference&
                 if error != 4 { return }
                 if remaining.seconds < 0 or remaining.nanoseconds < 0 or remaining.nanoseconds >= 1000000000 {
                     return

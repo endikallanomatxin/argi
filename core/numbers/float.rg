@@ -1,10 +1,10 @@
-Float : Abstract = (
-	-- operator +(_, _) : _
-	-- operator -(_, _) : _
-	-- operator *(_, _) : _
-	-- operator /(_, _) : _
-	-- operator ^(_, _) : _
-	-- ...
+Float: Abstract = (
+    -- operator +(_, _) : _
+    -- operator -(_, _) : _
+    -- operator *(_, _) : _
+    -- operator /(_, _) : _
+    -- operator ^(_, _) : _
+    -- ...
 )
 
 Float16 implements Float
@@ -15,6 +15,5 @@ Float64 implements Float
 
 -- You cannot customize that layout from within standard LLVM IR
 -- So it doesn't make sense to have a CustomLengthedFloat<N> type
-
 
 Float defaultsto Float32

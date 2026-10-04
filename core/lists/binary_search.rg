@@ -1,10 +1,14 @@
 -- Search an ordered collection for the first policy-equivalent element.
 -- The half-open interval keeps midpoint arithmetic within UIntNative bounds.
-binary_search#(.t: Type: ImplicitlyCopyable)(
-    .self: &Indexable#(.t: t),
-    .value: t,
-    .order: &OrderPolicy#(.t: t),
-) -> (.index: ?UIntNative) := {
+binary_search#(
+        .t : Type: ImplicitlyCopyable
+    )(
+        .self  : &Indexable#(.t: t),
+        .value : t,
+        .order : &OrderPolicy#(.t: t),
+    ) -> (
+        .index : ?UIntNative
+    ) := {
     count ::= length(.self = self).count
     start :: UIntNative = 0
     end ::= count

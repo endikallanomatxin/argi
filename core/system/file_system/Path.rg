@@ -5,19 +5,23 @@
 -- the compilation target; joining uses '/' on both supported platform families.
 -- This type does not canonicalize paths or query the filesystem.
 --
-Path : Type = (
-    .text: String
+Path: Type = (
+    .text : String
 )
 
 path_is_separator(
-    .byte: UInt8,
-) -> (.ok: Bool) := {
+        .byte : UInt8,
+    ) -> (
+        .ok : Bool
+    ) := {
     ok = _platform_path_is_separator(.byte = byte).ok
 }
 
 path_last_separator_index(
-    .view: &StringView,
-) -> (.value: ?UIntNative) := {
+        .view : &StringView,
+    ) -> (
+        .value : ?UIntNative
+    ) := {
     if view&.length == 0 {
         value = ..none
         return
@@ -36,26 +40,34 @@ path_last_separator_index(
 }
 
 string_view_slice(
-    .view: &StringView,
-    .start: UIntNative,
-    .length: UIntNative,
-) -> (.out: StringView) := {
+        .view   : &StringView,
+        .start  : UIntNative,
+        .length : UIntNative,
+    ) -> (
+        .out : StringView
+    ) := {
     out = (
-        .data = trusted_reference_offset#(.t: UInt8)(.base = view&.data, .elements = start).reference,
-        .length = length,
+        .data   = trusted_reference_offset#(.t: UInt8)(.base = view&.data, .elements = start).reference
+        .length = length
     )
 }
 
-Path init(.text: String,
-) -> (.result: Path) := {
+Path init(
+        .text : String,
+    ) -> (
+        .result : Path
+    ) := {
     result = (
-        .text = ~text,
+        .text = ~text
     )
 }
 
-Path init(.view: StringView,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
+Path init(
+        .view      : StringView,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: Path, .reasons: (..out_of_memory))
+    ) := {
     constructed :: Path
 
     assume allocator
@@ -65,50 +77,60 @@ Path init(.view: StringView,
 }
 
 path_with_view(
-    .view: StringView,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
+        .view      : StringView,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: Path, .reasons: (..out_of_memory))
+    ) := {
     assume allocator
 
     text ::= string_with_capacity(.allocator = allocator, .capacity = view.length)!
     push_view(.self = $&text, .view = view, .allocator = allocator)!
-    result = ..ok (.text = ~text)
+    result = ..ok(.text = ~text)
 }
 
 Path deinit(
-    .self: $&Path,
-    .allocator: $&Allocator,
-) -> () := {
+        .self      : $&Path,
+        .allocator : $&Allocator,
+    ) -> () := {
     assume allocator
 
     deinit(.self = $&self&.text, .allocator = allocator)
 }
 
 copy(
-    .self: &Path,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
+        .self      : &Path,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: Path, .reasons: (..out_of_memory))
+    ) := {
     assume allocator
 
     text ::= copy(.self = &self&.text, .allocator = allocator)!
-    result = ..ok (.text = ~text)
+    result = ..ok(.text = ~text)
 }
 
 as_view(
-    .self: &Path,
-) -> (.view: StringView) := {
+        .self : &Path,
+    ) -> (
+        .view : StringView
+    ) := {
     view = as_view(.self = &self&.text)
 }
 
 as_c_string(
-    .self: &Path,
-) -> (.text: &Char) := {
+        .self : &Path,
+    ) -> (
+        .text : &Char
+    ) := {
     text = as_c_string(.self = &self&.text)
 }
 
 is_absolute(
-    .self: &Path,
-) -> (.ok: Bool) := {
+        .self : &Path,
+    ) -> (
+        .ok : Bool
+    ) := {
     view ::= as_view(.self = self)
     if view.length == 0 {
         ok = false
@@ -119,8 +141,10 @@ is_absolute(
 }
 
 file_name(
-    .self: &Path,
-) -> (.value: ?StringView) := {
+        .self : &Path,
+    ) -> (
+        .value : ?StringView
+    ) := {
     view ::= as_view(.self = self)
     if view.length == 0 {
         value = ..none
@@ -140,7 +164,16 @@ file_name(
                 value = ..none
                 return
             }
-            value = ..some(.value = string_view_slice(.view = &view, .start = start, .length = view.length - start))
+            value = ..some(
+                .value = string_view_slice(
+                    .view   = &view
+                    .start  = start
+                    .length = [
+                        view.length
+                        - start
+                    ]
+                )
+            )
         }
         ..none {
             value = ..some(.value = view)
@@ -149,18 +182,24 @@ file_name(
 }
 
 parent(
-    .self: &Path,
-) -> (.value: ?StringView) := {
+        .self : &Path,
+    ) -> (
+        .value : ?StringView
+    ) := {
     view ::= as_view(.self = self)
     sep_index ::= path_last_separator_index(.view = &view).value
     match sep_index {
         ..some payload {
             root_length ::= _platform_path_root_length(.view = &view).length
             if payload.value < root_length {
-                value = ..some(.value = string_view_slice(.view = &view, .start = 0, .length = root_length))
+                value = ..some(
+                    .value = string_view_slice(.view = &view, .start = 0, .length = root_length)
+                )
                 return
             }
-            value = ..some(.value = string_view_slice(.view = &view, .start = 0, .length = payload.value))
+            value = ..some(
+                .value = string_view_slice(.view = &view, .start = 0, .length = payload.value)
+            )
         }
         ..none {
             value = ..none
@@ -169,8 +208,10 @@ parent(
 }
 
 extension(
-    .self: &Path,
-) -> (.value: ?StringView) := {
+        .self : &Path,
+    ) -> (
+        .value : ?StringView
+    ) := {
     name ::= file_name(.self = self).value
     match name {
         ..none {
@@ -192,7 +233,16 @@ extension(
                         value = ..none
                         return
                     }
-                    value = ..some(.value = string_view_slice(.view = &file_view, .start = i, .length = file_view.length - i))
+                    value = ..some(
+                        .value = string_view_slice(
+                            .view   = &file_view
+                            .start  = i
+                            .length = [
+                                file_view.length
+                                - i
+                            ]
+                        )
+                    )
                     return
                 }
             }
@@ -203,10 +253,12 @@ extension(
 }
 
 join_views(
-    .left: &StringView,
-    .right: &StringView,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
+        .left      : &StringView,
+        .right     : &StringView,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: Path, .reasons: (..out_of_memory))
+    ) := {
     assume allocator
 
     target_capacity ::= left&.length + right&.length
@@ -219,21 +271,29 @@ join_views(
 
     created ::= string_with_capacity(.allocator = allocator, .capacity = target_capacity)
     match created {
-        ..ok ~ created_text {
+        ..ok ~created_text {
             text ::= ~created_text
-            left_bytes ::= _trusted_array_view_ro#(.t: UInt8)(.data = left&.data, .length = left&.length)
+            left_bytes ::= _trusted_array_view_ro#(.t: UInt8)(
+                .data   = left&.data
+                .length = left&.length
+            )
             string_append_bytes(.self = $&text, .source = left_bytes)
 
             if left&.length > 0 and right&.length > 0 {
-                if path_is_separator(.byte = bytes_get(.view = left, .index = left&.length - 1).byte).ok {
+                if path_is_separator(
+                    .byte = bytes_get(.view = left, .index = left&.length - 1).byte
+                ).ok {
                 } else {
                     string_append_byte(.self = $&text, .byte = 47)
                 }
             }
 
-            right_bytes ::= _trusted_array_view_ro#(.t: UInt8)(.data = right&.data, .length = right&.length)
+            right_bytes ::= _trusted_array_view_ro#(.t: UInt8)(
+                .data   = right&.data
+                .length = right&.length
+            )
             string_append_bytes(.self = $&text, .source = right_bytes)
-            result = ..ok (.text = ~text)
+            result = ..ok(.text = ~text)
             return
         }
         ..error _ {
@@ -243,10 +303,12 @@ join_views(
 }
 
 join(
-    .left: &Path,
-    .right: &Path,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
+        .left      : &Path,
+        .right     : &Path,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: Path, .reasons: (..out_of_memory))
+    ) := {
     assume allocator
 
     left_view ::= as_view(.self = left)
@@ -254,17 +316,21 @@ join(
     result = join_views(.left = &left_view, .right = &right_view, .allocator = allocator)
 }
 
-operator ==(
-    .left: &Path,
-    .right: &Path,
-) -> (.ok: Bool) := {
+operator == (
+        .left  : &Path,
+        .right : &Path,
+    ) -> (
+        .ok : Bool
+    ) := {
     ok = path_equals(.left = left, .right = right).ok
 }
 
 path_equals(
-    .left: &Path,
-    .right: &Path,
-) -> (.ok: Bool) := {
+        .left  : &Path,
+        .right : &Path,
+    ) -> (
+        .ok : Bool
+    ) := {
     left_view ::= as_view(.self = left)
     right_view ::= as_view(.self = right)
     ok = left_view == right_view

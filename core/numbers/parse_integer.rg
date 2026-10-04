@@ -19,13 +19,17 @@ _integer_parse_digit#(.t: Type: Int)(.byte: UInt8) -> (.value: ?t) := {
     value = ..none
 }
 
-_integer_parse#(.t: Type: Int)(
-    .text: StringView,
-    .base: UInt8,
-    .minimum: t,
-    .maximum: t,
-    .allow_negative: Bool,
-) -> (.result: Errable#(.t: t, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))) := {
+_integer_parse#(
+        .t : Type: Int
+    )(
+        .text           : StringView,
+        .base           : UInt8,
+        .minimum        : t,
+        .maximum        : t,
+        .allow_negative : Bool,
+    ) -> (
+        .result : Errable#(.t: t, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))
+    ) := {
     if base < 2 or base > 36 {
         result = ..error(.reason = ..invalid_base)
         return
@@ -59,7 +63,9 @@ _integer_parse#(.t: Type: Int)(
     }
     accumulated :: t = 0
     while index < text.length {
-        decoded ::= _integer_parse_digit#(.t: t)(.byte = bytes_get(.view = &text, .index = index).byte).value
+        decoded ::= _integer_parse_digit#(.t: t)(
+            .byte = bytes_get(.view = &text, .index = index).byte
+        ).value
         match decoded {
             ..none {
                 result = ..error(.reason = ..invalid_input)
@@ -99,105 +105,121 @@ _integer_parse#(.t: Type: Int)(
 }
 
 parse_uint8(
-    .text: StringView,
-    .base: UInt8 = 10,
-) -> (.result: Errable#(.t: UInt8, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))) := {
+        .text : StringView,
+        .base : UInt8       = 10,
+    ) -> (
+        .result : Errable#(.t: UInt8, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))
+    ) := {
     result = _integer_parse#(.t: UInt8)(
-        .text = text,
-        .base = base,
-        .minimum = 0,
-        .maximum = 255,
-        .allow_negative = false,
+        .text           = text
+        .base           = base
+        .minimum        = 0
+        .maximum        = 255
+        .allow_negative = false
     ).result
 }
 
 parse_uint16(
-    .text: StringView,
-    .base: UInt8 = 10,
-) -> (.result: Errable#(.t: UInt16, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))) := {
+        .text : StringView,
+        .base : UInt8       = 10,
+    ) -> (
+        .result : Errable#(.t: UInt16, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))
+    ) := {
     result = _integer_parse#(.t: UInt16)(
-        .text = text,
-        .base = base,
-        .minimum = 0,
-        .maximum = 65535,
-        .allow_negative = false,
+        .text           = text
+        .base           = base
+        .minimum        = 0
+        .maximum        = 65535
+        .allow_negative = false
     ).result
 }
 
 parse_uint32(
-    .text: StringView,
-    .base: UInt8 = 10,
-) -> (.result: Errable#(.t: UInt32, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))) := {
+        .text : StringView,
+        .base : UInt8       = 10,
+    ) -> (
+        .result : Errable#(.t: UInt32, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))
+    ) := {
     result = _integer_parse#(.t: UInt32)(
-        .text = text,
-        .base = base,
-        .minimum = 0,
-        .maximum = 4294967295,
-        .allow_negative = false,
+        .text           = text
+        .base           = base
+        .minimum        = 0
+        .maximum        = 4294967295
+        .allow_negative = false
     ).result
 }
 
 parse_uint64(
-    .text: StringView,
-    .base: UInt8 = 10,
-) -> (.result: Errable#(.t: UInt64, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))) := {
+        .text : StringView,
+        .base : UInt8       = 10,
+    ) -> (
+        .result : Errable#(.t: UInt64, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))
+    ) := {
     result = _integer_parse#(.t: UInt64)(
-        .text = text,
-        .base = base,
-        .minimum = 0,
-        .maximum = 18446744073709551615,
-        .allow_negative = false,
+        .text           = text
+        .base           = base
+        .minimum        = 0
+        .maximum        = 18446744073709551615
+        .allow_negative = false
     ).result
 }
 
 parse_int8(
-    .text: StringView,
-    .base: UInt8 = 10,
-) -> (.result: Errable#(.t: Int8, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))) := {
+        .text : StringView,
+        .base : UInt8       = 10,
+    ) -> (
+        .result : Errable#(.t: Int8, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))
+    ) := {
     result = _integer_parse#(.t: Int8)(
-        .text = text,
-        .base = base,
-        .minimum = -128,
-        .maximum = 127,
-        .allow_negative = true,
+        .text           = text
+        .base           = base
+        .minimum        = -128
+        .maximum        = 127
+        .allow_negative = true
     ).result
 }
 
 parse_int16(
-    .text: StringView,
-    .base: UInt8 = 10,
-) -> (.result: Errable#(.t: Int16, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))) := {
+        .text : StringView,
+        .base : UInt8       = 10,
+    ) -> (
+        .result : Errable#(.t: Int16, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))
+    ) := {
     result = _integer_parse#(.t: Int16)(
-        .text = text,
-        .base = base,
-        .minimum = -32768,
-        .maximum = 32767,
-        .allow_negative = true,
+        .text           = text
+        .base           = base
+        .minimum        = -32768
+        .maximum        = 32767
+        .allow_negative = true
     ).result
 }
 
 parse_int32(
-    .text: StringView,
-    .base: UInt8 = 10,
-) -> (.result: Errable#(.t: Int32, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))) := {
+        .text : StringView,
+        .base : UInt8       = 10,
+    ) -> (
+        .result : Errable#(.t: Int32, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))
+    ) := {
     result = _integer_parse#(.t: Int32)(
-        .text = text,
-        .base = base,
-        .minimum = -2147483648,
-        .maximum = 2147483647,
-        .allow_negative = true,
+        .text           = text
+        .base           = base
+        .minimum        = -2147483648
+        .maximum        = 2147483647
+        .allow_negative = true
     ).result
 }
 
 parse_int64(
-    .text: StringView,
-    .base: UInt8 = 10,
-) -> (.result: Errable#(.t: Int64, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))) := {
+        .text : StringView,
+        .base : UInt8       = 10,
+    ) -> (
+        .result : Errable#(.t: Int64, .reasons: (..invalid_base, ..invalid_input, ..out_of_range))
+    ) := {
     result = _integer_parse#(.t: Int64)(
-        .text = text,
-        .base = base,
-        .minimum = -9223372036854775808,
-        .maximum = 9223372036854775807,
-        .allow_negative = true,
+        .text           = text
+        .base           = base
+        .minimum        = -9223372036854775808
+        .maximum        = 9223372036854775807
+        .allow_negative = true
     ).result
 }

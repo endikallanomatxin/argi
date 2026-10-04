@@ -1,16 +1,22 @@
 _string_copy_view_into(.output: $&String, .offset: UIntNative, .source: StringView) -> () := {
     index :: UIntNative = 0
     while index < source.length {
-        bytes_set(.string = output, .index = offset + index, .value = bytes_get(.view = &source, .index = index).byte)
+        bytes_set(
+            .string = output
+            .index  = offset + index
+            .value  = bytes_get(.view = &source, .index = index).byte
+        )
         index = index + 1
     }
 }
 
 join(
-    .parts: ArrayViewRO#(.t: StringView),
-    .separator: StringView,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory, ..size_overflow))) := {
+        .parts     : ArrayViewRO#(.t: StringView),
+        .separator : StringView,
+        .allocator : $&Allocator,
+    ) -> (
+        .result : Errable#(.t: String, .reasons: (..out_of_memory, ..size_overflow))
+    ) := {
     limit ::= _string_max_result_length().length
     count ::= length(.self = &parts).count
     total :: UIntNative = 0

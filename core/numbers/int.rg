@@ -1,12 +1,12 @@
-Int : Abstract = (
-	-- float(_) : Float
-	-- operator +(_, _) : Int
-	-- operator -(_, _) : Int
-	-- operator *(_, _) : Int
-	-- operator /(_, _) : Int
-	-- operator %(_, _) : Int
-	-- operator ^(_, _) : Int
-	-- ...
+Int: Abstract = (
+    -- float(_) : Float
+    -- operator +(_, _) : Int
+    -- operator -(_, _) : Int
+    -- operator *(_, _) : Int
+    -- operator /(_, _) : Int
+    -- operator %(_, _) : Int
+    -- operator ^(_, _) : Int
+    -- ...
 )
 
 -- Signed integers
@@ -22,15 +22,13 @@ UInt32 implements Int
 UInt64 implements Int
 UIntNative implements Int
 
+UInt: Abstract = ()
 
-UInt : Abstract = ()
 UInt8 implements UInt
 UInt16 implements UInt
 UInt32 implements UInt
 UInt64 implements UInt
 UIntNative implements UInt
-
-
 
 -- TODO: Think if having SignedInteger and UnsignedInteger as abstracts is a
 -- good idea. I think it is not very useful. But consider.

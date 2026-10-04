@@ -1,12 +1,13 @@
-InfalliblyCopyable : Abstract = (
+InfalliblyCopyable: Abstract = (
     copy(.self: &Self) -> (.value: Self)
 )
 
-FalliblyCopyable#(.reasons: Type) : Abstract = (
+FalliblyCopyable#(.reasons: Type): Abstract = (
     copy(.self: &Self, .allocator: $&Allocator) -> (.result: Errable#(.t: Self, .reasons: reasons))
 )
 
-ImplicitlyCopyable : Abstract = ()
+ImplicitlyCopyable: Abstract = ()
+
 ImplicitlyCopyable implements InfalliblyCopyable
 
 Int8 implements ImplicitlyCopyable

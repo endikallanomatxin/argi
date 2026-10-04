@@ -6,15 +6,42 @@ _DecimalText: Type = (
 )
 
 _decimal_digit#(.t: Type: Int)(.digit: t) -> (.byte: UInt8) := {
-    if digit == 0 { byte = 48 return }
-    if digit == 1 { byte = 49 return }
-    if digit == 2 { byte = 50 return }
-    if digit == 3 { byte = 51 return }
-    if digit == 4 { byte = 52 return }
-    if digit == 5 { byte = 53 return }
-    if digit == 6 { byte = 54 return }
-    if digit == 7 { byte = 55 return }
-    if digit == 8 { byte = 56 return }
+    if digit == 0 {
+        byte = 48
+        return
+    }
+    if digit == 1 {
+        byte = 49
+        return
+    }
+    if digit == 2 {
+        byte = 50
+        return
+    }
+    if digit == 3 {
+        byte = 51
+        return
+    }
+    if digit == 4 {
+        byte = 52
+        return
+    }
+    if digit == 5 {
+        byte = 53
+        return
+    }
+    if digit == 6 {
+        byte = 54
+        return
+    }
+    if digit == 7 {
+        byte = 55
+        return
+    }
+    if digit == 8 {
+        byte = 56
+        return
+    }
     byte = 57
 }
 

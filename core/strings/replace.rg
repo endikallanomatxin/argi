@@ -1,9 +1,14 @@
 replace(
-    .self: StringView,
-    .pattern: StringView,
-    .replacement: StringView,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory, ..size_overflow, ..empty_pattern))) := {
+        .self        : StringView,
+        .pattern     : StringView,
+        .replacement : StringView,
+        .allocator   : $&Allocator,
+    ) -> (
+        .result : Errable#(
+            .t       : String,
+            .reasons : (..out_of_memory, ..size_overflow, ..empty_pattern)
+        )
+    ) := {
     if pattern.length == 0 {
         result = ..error(.reason = ..empty_pattern)
         return

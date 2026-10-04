@@ -1,9 +1,9 @@
 -- Bounded byte copies are language operations and need no foreign-call
 -- authority. Source and destination must not overlap, as with memcpy.
 memcpy_bytes(
-    .dst: ArrayView#(.t: UInt8),
-    .src: ArrayView#(.t: UInt8),
-) -> () := {
+        .dst : ArrayView#(.t: UInt8),
+        .src : ArrayView#(.t: UInt8),
+    ) -> () := {
     count ::= length#(.t: UInt8)(.self = &dst).count
     if count > length#(.t: UInt8)(.self = &src).count { abort }
     target :: ArrayView#(.t: UInt8) = dst
@@ -16,9 +16,9 @@ memcpy_bytes(
 }
 
 memcpy_bytes(
-    .dst: ArrayView#(.t: UInt8),
-    .src: ArrayViewRO#(.t: UInt8),
-) -> () := {
+        .dst : ArrayView#(.t: UInt8),
+        .src : ArrayViewRO#(.t: UInt8),
+    ) -> () := {
     count ::= length#(.t: UInt8)(.self = &dst).count
     if count > length#(.t: UInt8)(.self = &src).count { abort }
     target :: ArrayView#(.t: UInt8) = dst

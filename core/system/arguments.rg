@@ -1,13 +1,14 @@
-argi_runtime_argc() -> (.count: UIntNative) : ExternFunction
-argi_runtime_argv() -> (.address: UIntNative) : ExternFunction
+argi_runtime_argc() -> (.count: UIntNative): ExternFunction
 
-Arguments : Type = (
-    ._ffi: $&ForeignFunctionInterface
+argi_runtime_argv() -> (.address: UIntNative): ExternFunction
+
+Arguments: Type = (
+    ._ffi    : $&ForeignFunctionInterface
     .count   : UIntNative
     .address : UIntNative
 )
 
-ArgumentsIterator : Type = (
+ArgumentsIterator: Type = (
     .args  : &Arguments
     .index : UIntNative
 )
@@ -17,9 +18,9 @@ Arguments implements Iterable#(.t: StringView)
 
 once Arguments init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Arguments) := {
     result = (
-        ._ffi = ffi,
-        .count = argi_runtime_argc().count,
-        .address = argi_runtime_argv().address,
+        ._ffi    = ffi
+        .count   = argi_runtime_argc().count
+        .address = argi_runtime_argv().address
     )
 }
 
@@ -28,55 +29,65 @@ length(.self: &Arguments) -> (.count: UIntNative) := {
 }
 
 has_argument(
-    .self: &Arguments,
-    .index: UIntNative,
-) -> (.ok: Bool) := {
+        .self  : &Arguments,
+        .index : UIntNative,
+    ) -> (
+        .ok : Bool
+    ) := {
     ok = index < self&.count
 }
 
 argument_pointer_address(
-    .self: &Arguments,
-    .index: UIntNative,
-) -> (.address: UIntNative) := {
+        .self  : &Arguments,
+        .index : UIntNative,
+    ) -> (
+        .address : UIntNative
+    ) := {
     stride :: UIntNative = size_of(.type = UIntNative)
     address = self&.address + index * stride
 }
 
 argument_at(
-    .self: &Arguments,
-    .index: UIntNative,
-) -> (.text: &Char) := {
+        .self  : &Arguments,
+        .index : UIntNative,
+    ) -> (
+        .text : &Char
+    ) := {
     addr ::= argument_pointer_address(.self = self, .index = index).address
     raw ::= raw_pointer#(.t: UIntNative)(.address = addr)
     ptr ::= trusted_establish_inherited_reference#(.t: UIntNative)(
-        .raw = raw,
-        .root = erase_reference#(.t: Arguments)(.base = self).reference,
+        .raw  = raw
+        .root = erase_reference#(.t: Arguments)(.base = self).reference
     ).reference
     text_address ::= ptr&
     text_raw ::= raw_pointer#(.t: Char)(.address = text_address)
     inherited ::= trusted_establish_inherited_reference#(.t: Char)(
-        .raw = text_raw,
-        .root = erase_reference#(.t: Arguments)(.base = self).reference,
+        .raw  = text_raw
+        .root = erase_reference#(.t: Arguments)(.base = self).reference
     ).reference
     text = read_reference#(.t: Char)(.base = inherited).reference
 }
 
 argument_view_at(
-    .self: &Arguments,
-    .index: UIntNative,
-) -> (.view: StringView) := {
+        .self  : &Arguments,
+        .index : UIntNative,
+    ) -> (
+        .view : StringView
+    ) := {
     assume ffi := self&._ffi
     text ::= argument_at(.self = self, .index = index)
     view = (
-        .data = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,
-        .length = strlen(.string = text).length,
+        .data   = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference
+        .length = strlen(.string = text).length
     )
 }
 
 get(
-    .self: &Arguments,
-    .index: UIntNative,
-) -> (.result: Errable#(.t: StringView, .reasons: (..out_of_bounds))) := {
+        .self  : &Arguments,
+        .index : UIntNative,
+    ) -> (
+        .result : Errable#(.t: StringView, .reasons: (..out_of_bounds))
+    ) := {
     if index >= self&.count {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -85,27 +96,33 @@ get(
 }
 
 to_iterator(
-    .value: &Arguments,
-) -> (.iterator: ArgumentsIterator) := {
+        .value : &Arguments,
+    ) -> (
+        .iterator : ArgumentsIterator
+    ) := {
     iterator = (
-        .args = value,
-        .index = 0,
+        .args  = value
+        .index = 0
     )
 }
 
 has_next(
-    .self: &ArgumentsIterator,
-) -> (.ok: Bool) := {
+        .self : &ArgumentsIterator,
+    ) -> (
+        .ok : Bool
+    ) := {
     ok = self&.index < self&.args&.count
 }
 
 next(
-    .self: $&ArgumentsIterator,
-) -> (.value: StringView) := {
+        .self : $&ArgumentsIterator,
+    ) -> (
+        .value : StringView
+    ) := {
     current_index :: UIntNative = self&.index
     value = argument_view_at(.self = self&.args, .index = current_index)
-    self& = (
-        .args = self&.args,
-        .index = current_index + 1,
+    self&= (
+        .args  = self&.args
+        .index = current_index + 1
     )
 }

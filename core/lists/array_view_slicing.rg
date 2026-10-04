@@ -1,10 +1,14 @@
 -- A subrange is justified by an existing view, not by an arbitrary pointer
 -- and claimed length. Subtraction after checking start avoids range-sum wrap.
-slice#(.t: Type)(
-    .self: &ArrayView#(.t: t),
-    .start: UIntNative,
-    .count: UIntNative,
-) -> (.result: Errable#(.t: ArrayView#(.t: t), .reasons: (..out_of_bounds))) := {
+slice#(
+        .t : Type
+    )(
+        .self  : &ArrayView#(.t: t),
+        .start : UIntNative,
+        .count : UIntNative,
+    ) -> (
+        .result : Errable#(.t: ArrayView#(.t: t), .reasons: (..out_of_bounds))
+    ) := {
     if start > self&._length {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -14,18 +18,25 @@ slice#(.t: Type)(
         return
     }
     if count == 0 {
-        result = ..ok (._data = ..none, ._length = 0)
+        result = ..ok(._data = ..none, ._length = 0)
         return
     }
-    first ::= trusted_mutable_reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = start).reference
+    first ::= trusted_mutable_reference_offset#(.t: t)(
+        .base     = data#(.t: t)(.self = self).pointer
+        .elements = start
+    ).reference
     result = ..ok _trusted_array_view#(.t: t)(.data = first, .length = count).array
 }
 
-slice#(.t: Type)(
-    .self: &ArrayViewRO#(.t: t),
-    .start: UIntNative,
-    .count: UIntNative,
-) -> (.result: Errable#(.t: ArrayViewRO#(.t: t), .reasons: (..out_of_bounds))) := {
+slice#(
+        .t : Type
+    )(
+        .self  : &ArrayViewRO#(.t: t),
+        .start : UIntNative,
+        .count : UIntNative,
+    ) -> (
+        .result : Errable#(.t: ArrayViewRO#(.t: t), .reasons: (..out_of_bounds))
+    ) := {
     if start > self&._length {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -35,9 +46,12 @@ slice#(.t: Type)(
         return
     }
     if count == 0 {
-        result = ..ok (._data = ..none, ._length = 0)
+        result = ..ok(._data = ..none, ._length = 0)
         return
     }
-    first ::= trusted_reference_offset#(.t: t)(.base = data#(.t: t)(.self = self).pointer, .elements = start).reference
+    first ::= trusted_reference_offset#(.t: t)(
+        .base     = data#(.t: t)(.self = self).pointer
+        .elements = start
+    ).reference
     result = ..ok _trusted_array_view_ro#(.t: t)(.data = first, .length = count).array
 }

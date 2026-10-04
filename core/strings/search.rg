@@ -1,10 +1,12 @@
 -- Compares a byte pattern within the recorded view extent. No reference is
 -- formed for an empty pattern, including an empty view at its end.
 _string_view_matches_at(
-    .self: StringView,
-    .pattern: StringView,
-    .start: UIntNative,
-) -> (.ok: Bool) := {
+        .self    : StringView,
+        .pattern : StringView,
+        .start   : UIntNative,
+    ) -> (
+        .ok : Bool
+    ) := {
     if start > self.length {
         ok = false
         return
@@ -15,7 +17,10 @@ _string_view_matches_at(
     }
     offset :: UIntNative = 0
     while offset < pattern.length {
-        if bytes_get(.view = &self, .index = start + offset).byte != bytes_get(.view = &pattern, .index = offset).byte {
+        if [
+            bytes_get(.view = &self, .index = start + offset).byte
+            != bytes_get(.view = &pattern, .index = offset).byte
+        ] {
             ok = false
             return
         }
@@ -43,7 +48,7 @@ find(.self: StringView, .pattern: StringView) -> (.index: ?UIntNative) := {
 
 contains(.self: StringView, .pattern: StringView) -> (.ok: Bool) := {
     position ::= find(.self = self, .pattern = pattern).index
-    ok = position?
+    ok = position ?
 }
 
 starts_with(.self: StringView, .pattern: StringView) -> (.ok: Bool) := {
@@ -55,5 +60,12 @@ ends_with(.self: StringView, .pattern: StringView) -> (.ok: Bool) := {
         ok = false
         return
     }
-    ok = _string_view_matches_at(.self = self, .pattern = pattern, .start = self.length - pattern.length).ok
+    ok = _string_view_matches_at(
+        .self    = self
+        .pattern = pattern
+        .start   = [
+            self.length
+            - pattern.length
+        ]
+    ).ok
 }

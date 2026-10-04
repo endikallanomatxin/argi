@@ -1,4 +1,5 @@
 Scalar: Abstract = ()
+
 Int8 implements Scalar
 Int16 implements Scalar
 Int32 implements Scalar

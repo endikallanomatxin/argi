@@ -1,9 +1,9 @@
-Quaternion : Abstract = (
-	operator + (.left: Self, .right: Self) -> (.result: Self)
-	operator - (.left: Self, .right: Self) -> (.result: Self)
-	operator * (.left: Self, .right: Self) -> (.result: Self)
-	operator / (.left: Self, .right: Self) -> (.result: Self)
-	...
+Quaternion: Abstract = (
+    operator + (.left: Self, .right: Self) -> (.result: Self)
+    operator - (.left: Self, .right: Self) -> (.result: Self)
+    operator * (.left: Self, .right: Self) -> (.result: Self)
+    operator / (.left: Self, .right: Self) -> (.result: Self)
+    ...
 )
 
 Quaternion8 implements Quaternion

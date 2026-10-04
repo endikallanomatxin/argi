@@ -1,17 +1,23 @@
 -- The system source is a capability, independent of deterministic Pcg32 state.
 RandomNumberGenerator: Type = (._ffi: $&ForeignFunctionInterface)
 
-once RandomNumberGenerator init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: RandomNumberGenerator) := {
+once RandomNumberGenerator init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (
+    .result : RandomNumberGenerator
+) := {
     result = (._ffi = ffi)
 }
 
 ..entropy_unavailable
 
 #if target_os("linux") or target_os("macos") {
-    _system_entropy(.bytes: $&UInt8, .length: UIntNative) -> (.status: Int32): CFunction(.symbol = "getentropy")
+    _system_entropy(.bytes: $&UInt8, .length: UIntNative) -> (.status: Int32): CFunction(
+        .symbol = "getentropy"
+    )
 }#else {
     #if target_os("windows") {
-        _system_entropy(.bytes: $&UInt8, .length: UIntNative) -> (.status: Int32): CFunction(.symbol = "_argi_system_entropy")
+        _system_entropy(.bytes: $&UInt8, .length: UIntNative) -> (.status: Int32): CFunction(
+            .symbol = "_argi_system_entropy"
+        )
     }
 }
 
@@ -29,7 +35,9 @@ fill_random_bytes(
         while offset < extent {
             chunk ::= extent - offset
             if chunk > 256 { chunk = 256 }
-            pointer ::= unwrap_or_abort(.value = get_rw_ref(.self = $&destination, .index = offset)).result
+            pointer ::= unwrap_or_abort(
+                .value = get_rw_ref(.self = $&destination, .index = offset)
+            ).result
             if _system_entropy(.bytes = pointer, .length = chunk).status != 0 {
                 result = ..error(.reason = ..entropy_unavailable)
                 return

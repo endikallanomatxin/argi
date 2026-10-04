@@ -1,6 +1,6 @@
-PageAllocator : Type = (
-    .memory: $&Memory
-    .page_size: UIntNative
+PageAllocator: Type = (
+    .memory    : $&Memory
+    .page_size : UIntNative
 )
 
 PageAllocator init(.memory: $&Memory) -> (.result: PageAllocator) := {
@@ -12,9 +12,11 @@ page_allocator_page_size(.self: $&PageAllocator) -> (.size: UIntNative) := {
 }
 
 page_allocator_round_up(
-    .size: UIntNative,
-    .alignment: UIntNative,
-) -> (.rounded: UIntNative) := {
+        .size      : UIntNative,
+        .alignment : UIntNative,
+    ) -> (
+        .rounded : UIntNative
+    ) := {
     rounded = size
     if rounded == 0 {
         rounded = alignment
@@ -29,11 +31,17 @@ page_allocator_round_up(
     }
 }
 
-allocate(.self: $&PageAllocator, .size: UIntNative, .alignment: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+allocate(
+        .self      : $&PageAllocator,
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) := {
     mapped ::= map_pages(.self = self&.memory, .size = size, .alignment = alignment)
     match mapped {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
-        ..ok ~ payload {
+        ..ok ~payload {
             allocation ::= ~payload
             allocation.size = size
             -- Page padding is not part of the range granted to the caller.

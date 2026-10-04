@@ -1,12 +1,19 @@
 -- Decimal inputs are rounded from exact rational integers, without an
 -- intermediate floating-point format or a dependency on the host library.
-_float_parse#(.t: Type: Float)(
-    .text             : StringView,
-    .precision        : Int32,
-    .maximum_exponent : Int32,
-    .minimum_exponent : Int32,
-) -> (.result: Errable#(.t: t, .reasons: (..invalid_input, ..out_of_range))) := {
-    if text.length == 0 { result = ..error(.reason = ..invalid_input) return }
+_float_parse#(
+        .t : Type: Float
+    )(
+        .text             : StringView,
+        .precision        : Int32,
+        .maximum_exponent : Int32,
+        .minimum_exponent : Int32,
+    ) -> (
+        .result : Errable#(.t: t, .reasons: (..invalid_input, ..out_of_range))
+    ) := {
+    if text.length == 0 {
+        result = ..error(.reason = ..invalid_input)
+        return
+    }
     index :: UIntNative = 0
     negative :: Bool = false
     first ::= bytes_get(.view = &text, .index = index).byte
@@ -26,7 +33,10 @@ _float_parse#(.t: Type: Float)(
     while index < text.length {
         byte ::= bytes_get(.view = &text, .index = index).byte
         if byte == 46 {
-            if point { result = ..error(.reason = ..invalid_input) return }
+            if point {
+                result = ..error(.reason = ..invalid_input)
+                return
+            }
             point = true
         } else {
             if byte < 48 or byte > 57 { break }
@@ -49,12 +59,18 @@ _float_parse#(.t: Type: Float)(
         }
         index = index + 1
     }
-    if has_digit == false { result = ..error(.reason = ..invalid_input) return }
+    if has_digit == false {
+        result = ..error(.reason = ..invalid_input)
+        return
+    }
     exponent_negative :: Bool = false
     exponent :: UIntNative = 0
     if index < text.length {
         byte ::= bytes_get(.view = &text, .index = index).byte
-        if byte != 101 and byte != 69 { result = ..error(.reason = ..invalid_input) return }
+        if byte != 101 and byte != 69 {
+            result = ..error(.reason = ..invalid_input)
+            return
+        }
         index = index + 1
         if index < text.length {
             sign ::= bytes_get(.view = &text, .index = index).byte
@@ -71,7 +87,8 @@ _float_parse#(.t: Type: Float)(
         while index < text.length {
             digit_byte ::= bytes_get(.view = &text, .index = index).byte
             if digit_byte < 48 or digit_byte > 57 {
-                result = ..error(.reason = ..invalid_input) return
+                result = ..error(.reason = ..invalid_input)
+                return
             }
             digit ::= UIntNative(.value = digit_byte - 48)
             if exponent <= cap / 10 {
@@ -80,7 +97,10 @@ _float_parse#(.t: Type: Float)(
             } else { exponent = cap }
             index = index + 1
         }
-        if start == index { result = ..error(.reason = ..invalid_input) return }
+        if start == index {
+            result = ..error(.reason = ..invalid_input)
+            return
+        }
     }
     zero :: t = 0.0
     one :: t = 1.0
@@ -100,11 +120,17 @@ _float_parse#(.t: Type: Float)(
     power :: Int32 = 0
     if positive_power >= negative_power {
         difference ::= positive_power - negative_power
-        if difference > 400 { result = ..error(.reason = ..out_of_range) return }
+        if difference > 400 {
+            result = ..error(.reason = ..out_of_range)
+            return
+        }
         power = unwrap_or_abort(.value = Int32(.value = difference)).result
     } else {
         difference ::= negative_power - positive_power
-        if difference > 1200 { result = ..error(.reason = ..out_of_range) return }
+        if difference > 1200 {
+            result = ..error(.reason = ..out_of_range)
+            return
+        }
         power = 0 - unwrap_or_abort(.value = Int32(.value = difference)).result
     }
     -- A retained significand has at most 800 digits. Powers outside these
@@ -155,36 +181,81 @@ _float_parse#(.t: Type: Float)(
             mantissa = mantissa + one
         }
     }
-    if mantissa == zero { result = ..error(.reason = ..out_of_range) return }
+    if mantissa == zero {
+        result = ..error(.reason = ..out_of_range)
+        return
+    }
     if binary_exponent == maximum_exponent {
         limit :: t = 1.0
         count :: Int32 = precision
-        while count > 0 { limit = limit * two count = count - 1 }
-        if mantissa == limit { result = ..error(.reason = ..out_of_range) return }
+        while count > 0 {
+            limit = limit * two
+            count = count - 1
+        }
+        if mantissa == limit {
+            result = ..error(.reason = ..out_of_range)
+            return
+        }
     }
     scale :: t = 1.0
     shift ::= binary_exponent - bits + 1
-    while shift > 0 { scale = scale * two shift = shift - 1 }
-    while shift < 0 { scale = scale * half shift = shift + 1 }
+    while shift > 0 {
+        scale = scale * two
+        shift = shift - 1
+    }
+    while shift < 0 {
+        scale = scale * half
+        shift = shift + 1
+    }
     value ::= mantissa * scale
     if negative { value = value * minus_one }
     result = ..ok value
 }
 
-parse_float16(.text: StringView) -> (.result: Errable#(.t: Float16,
-        .reasons : (..invalid_input, ..out_of_range))) := {
-    result = _float_parse#(.t: Float16)(.text = text, .precision = 11, .maximum_exponent = 15,
-        .minimum_exponent = -24).result
+parse_float16(
+        .text : StringView
+    ) -> (
+        .result : Errable#(
+            .t       : Float16,
+            .reasons : (..invalid_input, ..out_of_range)
+        )
+    ) := {
+    result = _float_parse#(.t: Float16)(
+        .text             = text
+        .precision        = 11
+        .maximum_exponent = 15
+        .minimum_exponent = -24
+    ).result
 }
 
-parse_float32(.text: StringView) -> (.result: Errable#(.t: Float32,
-        .reasons : (..invalid_input, ..out_of_range))) := {
-    result = _float_parse#(.t: Float32)(.text = text, .precision = 24, .maximum_exponent = 127,
-        .minimum_exponent = -149).result
+parse_float32(
+        .text : StringView
+    ) -> (
+        .result : Errable#(
+            .t       : Float32,
+            .reasons : (..invalid_input, ..out_of_range)
+        )
+    ) := {
+    result = _float_parse#(.t: Float32)(
+        .text             = text
+        .precision        = 24
+        .maximum_exponent = 127
+        .minimum_exponent = -149
+    ).result
 }
 
-parse_float64(.text: StringView) -> (.result: Errable#(.t: Float64,
-        .reasons : (..invalid_input, ..out_of_range))) := {
-    result = _float_parse#(.t: Float64)(.text = text, .precision = 53, .maximum_exponent = 1023,
-        .minimum_exponent = -1074).result
+parse_float64(
+        .text : StringView
+    ) -> (
+        .result : Errable#(
+            .t       : Float64,
+            .reasons : (..invalid_input, ..out_of_range)
+        )
+    ) := {
+    result = _float_parse#(.t: Float64)(
+        .text             = text
+        .precision        = 53
+        .maximum_exponent = 1023
+        .minimum_exponent = -1074
+    ).result
 }

@@ -3,6 +3,7 @@
 Pcg32: Type = (
     ._state : UInt64
 )
+
 Pcg32 implements ImplicitlyCopyable
 
 _pcg_advance(.state: UInt64) -> (.next: UInt64) := {
@@ -52,12 +53,17 @@ _pcg_xor_window(.left: UInt64, .right: UInt64) -> (.value: UInt64) := {
 next_uint32(.self: $&Pcg32) -> (.value: UInt32) := {
     previous ::= self&._state
     self&._state = _pcg_advance(.state = previous).next
-    mixed ::= _pcg_xor_window(.left = [previous / 134217728] % 4294967296,
-        .right = previous / 35184372088832).value
+    mixed ::= _pcg_xor_window(
+        .left  = [previous / 134217728] % 4294967296
+        .right = previous / 35184372088832
+    ).value
     rotation ::= previous / 576460752303423488
     divisor :: UInt64 = 1
     remaining ::= rotation
-    while remaining > 0 { divisor = divisor * 2 remaining = remaining - 1 }
+    while remaining > 0 {
+        divisor = divisor * 2
+        remaining = remaining - 1
+    }
     rotated ::= mixed / divisor + [mixed % divisor] * [4294967296 / divisor]
     value = unwrap_or_abort(.value = UInt32(.value = rotated)).result
 }
@@ -72,9 +78,19 @@ next_bool(.self: $&Pcg32) -> (.value: Bool) := {
     value = next_uint32(.self = self).value >= 2147483648
 }
 
-uniform_uint32(.self: $&Pcg32, .upper_bound: UInt32) -> (.result: Errable#(.t: UInt32,
-        .reasons : (..invalid_range))) := {
-    if upper_bound == 0 { result = ..error(.reason = ..invalid_range) return }
+uniform_uint32(
+        .self        : $&Pcg32,
+        .upper_bound : UInt32
+    ) -> (
+        .result : Errable#(
+            .t       : UInt32,
+            .reasons : (..invalid_range)
+        )
+    ) := {
+    if upper_bound == 0 {
+        result = ..error(.reason = ..invalid_range)
+        return
+    }
     bound ::= UInt64(.value = upper_bound)
     space: UInt64 = 4294967296
     threshold ::= [space - bound] % bound
@@ -87,9 +103,19 @@ uniform_uint32(.self: $&Pcg32, .upper_bound: UInt32) -> (.result: Errable#(.t: U
     }
 }
 
-uniform_uint64(.self: $&Pcg32, .upper_bound: UInt64) -> (.result: Errable#(.t: UInt64,
-        .reasons : (..invalid_range))) := {
-    if upper_bound == 0 { result = ..error(.reason = ..invalid_range) return }
+uniform_uint64(
+        .self        : $&Pcg32,
+        .upper_bound : UInt64
+    ) -> (
+        .result : Errable#(
+            .t       : UInt64,
+            .reasons : (..invalid_range)
+        )
+    ) := {
+    if upper_bound == 0 {
+        result = ..error(.reason = ..invalid_range)
+        return
+    }
     maximum: UInt64 = 18446744073709551615
     threshold ::= [maximum % upper_bound + 1] % upper_bound
     while true {
@@ -119,15 +145,30 @@ _pcg_fraction#(.t: Type: Float)(.sample: UInt64, .bits: UInt32) -> (.value: t) :
 }
 
 next_float16(.self: $&Pcg32) -> (.value: Float16) := {
-    value = _pcg_fraction#(.t: Float16)(.sample = UInt64(.value = next_uint32(.self = self).value) / 2097152,
+    value = _pcg_fraction#(.t: Float16)(
+        .sample = [
+            UInt64(.value = next_uint32(.self = self).value)
+            / 2097152
+        ]
 
-        .bits = 11).value
+        .bits = 11
+    ).value
 }
+
 next_float32(.self: $&Pcg32) -> (.value: Float32) := {
-    value = _pcg_fraction#(.t: Float32)(.sample = UInt64(.value = next_uint32(.self = self).value) / 256,
+    value = _pcg_fraction#(.t: Float32)(
+        .sample = [
+            UInt64(.value = next_uint32(.self = self).value)
+            / 256
+        ]
 
-        .bits = 24).value
+        .bits = 24
+    ).value
 }
+
 next_float64(.self: $&Pcg32) -> (.value: Float64) := {
-    value = _pcg_fraction#(.t: Float64)(.sample = next_uint64(.self = self).value / 2048, .bits = 53).value
+    value = _pcg_fraction#(.t: Float64)(
+        .sample = next_uint64(.self = self).value / 2048
+        .bits   = 53
+    ).value
 }

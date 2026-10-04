@@ -1,9 +1,9 @@
 -- Canonical endpoints do not allocate or choose a buffering policy.
 -- Programs borrow these files and wrap them in readers or writers as needed.
-Terminal : Type = (
-    .stdin: File
-    .stdout: File
-    .stderr: File
+Terminal: Type = (
+    .stdin  : File
+    .stdout : File
+    .stderr : File
 )
 
 once Terminal init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Terminal) := {
@@ -20,10 +20,12 @@ Terminal deinit(.self: $&Terminal) -> () := {
 }
 
 read_line_into_buffer(
-    .buffer: $&String,
-    .allocator: $&Allocator,
-    .reader: $&Reader,
-) -> (.result: Errable#(.t: Void, .reasons: (..stream_read_failed))) := {
+        .buffer    : $&String,
+        .allocator : $&Allocator,
+        .reader    : $&Reader,
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_read_failed))
+    ) := {
     assume allocator
     assume reader
 
@@ -51,7 +53,11 @@ read_line_into_buffer(
                             break
                         }
 
-                        pushed ::= push_byte(.self = buffer, .byte = payload, .allocator = allocator)
+                        pushed ::= push_byte(
+                            .self      = buffer
+                            .byte      = payload
+                            .allocator = allocator
+                        )
                         match pushed {
                             ..ok _ {
                             }
@@ -70,9 +76,11 @@ read_line_into_buffer(
 }
 
 read_line(
-    .allocator: $&Allocator,
-    .reader: $&Reader,
-) -> (.result: Errable#(.t: ReadLine, .reasons: (..stream_read_failed, ..out_of_memory))) := {
+        .allocator : $&Allocator,
+        .reader    : $&Reader,
+    ) -> (
+        .result : Errable#(.t: ReadLine, .reasons: (..stream_read_failed, ..out_of_memory))
+    ) := {
     assume allocator
     assume reader
 
@@ -86,7 +94,7 @@ read_line(
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = initial_capacity)
     line :: String
     match create_result {
-        ..ok ~ payload { line = ~payload }
+        ..ok ~payload { line = ~payload }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
             return
@@ -141,26 +149,32 @@ read_line(
 }
 
 print(
-    .value: StringView,
-    .writer: $&Writer,
-    .terminator: StringView = "\n",
-) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+        .value      : StringView,
+        .writer     : $&Writer,
+        .terminator : StringView  = "\n",
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
     write(.self = writer, .text = value)!
     result = write(.self = writer, .text = terminator)
 }
 
 flush(
-    .writer: $&Writer,
-) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+        .writer : $&Writer,
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
     assume writer
 
     result = flush(.self = writer)
 }
 
 print_error(
-    .value: StringView,
-    .writer: $&Writer,
-) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+        .value  : StringView,
+        .writer : $&Writer,
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
     assume writer
 
     i :: UIntNative = 0
@@ -169,7 +183,7 @@ print_error(
         match wrote {
             ..ok _ {
             }
-            ..error & err {
+            ..error&err {
                 if is(.value = err&.reason, .variant = ..stream_write_failed) {
                     result = ..error(.reason = ..stream_write_failed)
                 } else {
@@ -185,36 +199,48 @@ print_error(
 }
 
 flush_error(
-    .writer: $&Writer,
-) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+        .writer : $&Writer,
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
     assume writer
 
     result = flush(.self = writer)
 }
 
 print(
-    .value: &String,
-    .writer: $&Writer,
-    .terminator: StringView = "\n",
-) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+        .value      : &String,
+        .writer     : $&Writer,
+        .terminator : StringView = "\n",
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
     assume writer
     result = print(as_view(value), .terminator = terminator)
 }
 
-print#(.t: Type: Int)(
-    .value      : t,
-    .writer     : $&Writer   = reach writer,
-    .terminator : StringView = "\n",
-) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+print#(
+        .t : Type: Int
+    )(
+        .value      : t,
+        .writer     : $&Writer   = reach writer,
+        .terminator : StringView = "\n",
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
     format_into(.out = writer, .value = value)!
     result = write(.self = writer, .text = terminator)
 }
 
-print#(.t: Type: Float)(
-    .value: t,
-    .writer: $&Writer = reach writer,
-    .terminator: StringView = "\n",
-) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+print#(
+        .t : Type: Float
+    )(
+        .value      : t,
+        .writer     : $&Writer   = reach writer,
+        .terminator : StringView = "\n",
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
     format_into(.out = writer, .value = value)!
     result = write(.self = writer, .text = terminator)
 }
