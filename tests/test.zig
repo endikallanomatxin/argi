@@ -2497,7 +2497,7 @@ test "feature_tests/collections/48_array_view_fixed_storage" {
 test "feature_tests/collections/49X_array_view_unproven_length" {
     try buildExpectFail(
         "tests/feature_tests/collections/49X_array_view_unproven_length",
-        "no function named 'array_view' exists",
+        "no matching generic overload of 'array_view' accepts arguments",
     );
 }
 
