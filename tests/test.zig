@@ -9511,3 +9511,41 @@ test "feature_tests/binary/03X_cursor_after_storage" {
 test "feature_tests/system/85_filesystem_native" {
     try checkNativeCFixture("tests/feature_tests/system/85_filesystem_native", &.{"declare i32 @argi_filesystem_probe()"});
 }
+
+test "feature_tests/collections/127_hash_iteration" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/127_hash_iteration");
+    try runExpect("tests/feature_tests/collections/127_hash_iteration", 0);
+}
+
+test "feature_tests/collections/128X_hash_iterator_after_put" {
+    try buildExpectFail("tests/feature_tests/collections/128X_hash_iterator_after_put", "root that has ended");
+}
+
+test "feature_tests/collections/129X_hash_entry_after_remove" {
+    try buildExpectFail("tests/feature_tests/collections/129X_hash_entry_after_remove", "root that has ended");
+}
+
+test "feature_tests/collections/130X_hash_iterator_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/collections/130X_hash_iterator_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/collections/131X_hash_entry_mutable_key" {
+    try buildExpectFail("tests/feature_tests/collections/131X_hash_entry_mutable_key", "read-only");
+}
+
+test "feature_tests/collections/132X_hash_set_iterator_after_remove" {
+    try buildExpectFail("tests/feature_tests/collections/132X_hash_set_iterator_after_remove", "root that has ended");
+}
+
+test "feature_tests/collections/133_hash_iteration_collisions" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/133_hash_iteration_collisions");
+    try runExpect("tests/feature_tests/collections/133_hash_iteration_collisions", 0);
+}
+
+test "feature_tests/collections/134X_hash_rw_entry_after_put" {
+    try buildExpectFail("tests/feature_tests/collections/134X_hash_rw_entry_after_put", "root that has ended");
+}
+
+test "feature_tests/collections/135X_hash_key_after_growth" {
+    try buildExpectFail("tests/feature_tests/collections/135X_hash_key_after_growth", "root that has ended");
+}

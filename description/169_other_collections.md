@@ -39,6 +39,22 @@ copying a borrowed key or value does not acquire its backing storage.
 - `length` reports entries, `capacity` reports slots, and
   `deinit(.self, .allocator)` releases the table and owned policy.
 
+`HashMap` implements `Iterable<HashMapEntry<K, V>>`: `for entry in map`
+visits copied `.key`/`.value` pairs. `to_key_iterator` and `to_value_iterator`
+visit copied keys and values. Iteration scans table slots, skips deleted entries,
+and does not call hashing or equality policies. Order is unspecified; iterators
+allocate no storage and are not snapshots.
+
+`to_ro_entry_iterator` returns borrowed entries with `.key: &K` and `.value: &V`.
+`to_rw_entry_iterator` accepts a mutable map and returns `.key: &K` and
+`.value: $&V`. Keys remain readonly so value edits cannot corrupt lookup policy
+invariants. Direct edits through borrowed value references preserve iteration.
+Every successful `put`, removal of an existing key, growth, and cleanup
+invalidates existing iterators and entry references; reacquire them afterward.
+Copied entries remain independent of table storage, while any borrowed state
+inside their keys or values still needs its original backing storage.
+`next` requires a preceding successful `has_next`; calling it at end aborts.
+
 Keys and values with borrowed state require their backing storage to remain
 live. Key contents must stay unchanged until removal or cleanup. Collisions and
 deletions preserve lookup paths, and every probe is bounded by table capacity.
@@ -62,7 +78,10 @@ false when an equivalent key is already present. Duplicate insertion retains
 the existing key, leaves length unchanged, and does not allocate. Failed growth
 preserves membership. `contains`, `remove`, `length`, `capacity`, and `deinit`
 have the corresponding map contracts. The set does not expose stored-key
-references or acquire ownership of borrowed backing storage.
+references or acquire ownership of borrowed backing storage. It implements
+`Iterable<K>` and visits copied keys through `for key in set`. Order, allocation,
+exhaustion, and structural invalidation follow map iteration. Duplicate insertion
+and unsuccessful removal do not change the table or invalidate an iterator.
 
 ## Graphs
 
