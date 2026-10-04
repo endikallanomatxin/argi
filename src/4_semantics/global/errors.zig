@@ -192,6 +192,9 @@ pub const Resolver = struct {
         return false;
     }
 
+    // TODO: Keep reason literals contextual when inferred outputs combine
+    // local errors with propagated imported errors. Explicit reason sets avoid
+    // stale provisional reason identities in package wrappers.
     fn markErrableNode(self: *Resolver, node_id: global_sg.GlobalNodeId, out: *std.ArrayList(global_sg.GlobalVariantId)) !void {
         const node = self.graph.node(node_id);
         const reasons = switch (node.content) {

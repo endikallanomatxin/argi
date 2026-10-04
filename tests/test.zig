@@ -9015,7 +9015,7 @@ fn checkPythonFixture(path: []const u8) !void {
         if (executed.term != .exited or executed.term.exited != 0) std.debug.print("{s}", .{executed.stderr});
         try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
         try expectEqualStrings("", executed.stderr);
-        const ir = try tmp.dir.readFileAlloc(std.testing.io, "app.ll", allocator, .limited(1024 * 1024));
+        const ir = try tmp.dir.readFileAlloc(std.testing.io, "app.ll", allocator, .limited(16 * 1024 * 1024));
         defer allocator.free(ir);
         try expect(std.mem.indexOf(u8, ir, "@_argi_python_start") != null);
         try expect(std.mem.indexOf(u8, ir, "@_argi_python_stop") != null);
@@ -9413,6 +9413,13 @@ test "feature_tests/polymorphism/55X_virtual_method_generic" {
     try buildExpectFail("tests/feature_tests/polymorphism/55X_virtual_method_generic", "method-local generic parameters");
 }
 
+test "feature_tests/python/13_numpy_vector" {
+    var environment = try std.testing.environ.createMap(std.testing.allocator);
+    defer environment.deinit();
+    if (!std.mem.eql(u8, environment.get("ARGI_PYTHON_NUMPY") orelse "", "1")) return error.SkipZigTest;
+    try checkPythonFixture("tests/feature_tests/python/13_numpy_vector");
+}
+
 test "feature_tests/errors/85_handle_evaluation_cleanup" {
     try expectSuccessfulBuild("tests/feature_tests/errors/85_handle_evaluation_cleanup");
     try runExpect("tests/feature_tests/errors/85_handle_evaluation_cleanup", 0);
@@ -9424,6 +9431,18 @@ test "feature_tests/errors/86X_handle_local_borrow" {
 
 test "feature_tests/errors/87X_handle_arbitrary_choice" {
     try buildExpectFail("tests/feature_tests/errors/87X_handle_arbitrary_choice", "handle expects an Errable value");
+}
+
+test "feature_tests/python/14X_numpy_copy" {
+    try buildExpectFail("tests/feature_tests/python/14X_numpy_copy", "cannot be copied implicitly");
+}
+
+test "feature_tests/python/15X_numpy_context_lifetime" {
+    try buildExpectFail("tests/feature_tests/python/15X_numpy_context_lifetime", "root that has ended");
+}
+
+test "feature_tests/python/16X_numpy_private_object" {
+    try buildExpectFail("tests/feature_tests/python/16X_numpy_private_object", "field '_object' is private");
 }
 
 test "feature_tests/system/79_network_native" {

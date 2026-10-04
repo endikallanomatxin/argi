@@ -130,6 +130,7 @@ jobs:
           environment = os.environ.copy()
           environment['ARGI_PYTHON_RUNTIME_OBJECT'] = metadata['runtime_object']
           environment['ARGI_PYTHON_LIBRARY'] = metadata['python_library']
+          environment['ARGI_PYTHON_NUMPY'] = '1'
           if os.name == 'nt':
               environment['PATH'] = sys.base_prefix + os.pathsep + environment['PATH']
           else:

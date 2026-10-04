@@ -132,3 +132,7 @@ x86_64/ARM64, macOS Intel/Apple Silicon, and Windows. It runs the native ownersh
 probe, debug/release consumers, NumPy, installed-helper preparation, and the
 positive/negative compiler fixtures. Those dependencies belong to that workflow,
 not to ordinary compiler builds.
+
+`python/numpy` also provides a [typed Float64 vector API](numpy/README.md) with
+shape-checked arithmetic and copied input/output storage. NumPy remains an
+optional package in the explicitly selected interpreter environment.

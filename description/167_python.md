@@ -234,3 +234,14 @@ cannot describe those hidden references. This API therefore keeps all exported
 storage owned by Python and imports data into existing Argi owners through
 checked copies. Transferring ownership of an allocation or safely sharing an
 owner remains a separate design decision.
+
+## Typed package wrappers
+
+`python/numpy` provides an optional `Vector64` wrapper with fixed Float64 dtype
+and one-dimensional shape. Construction copies initialized Argi values into
+Python-owned storage; arithmetic returns owners and bulk output copies into
+initialized Argi views. The private Python object preserves the wrapper's shape
+invariant. See [its API and executable consumer](../more/python/numpy/README.md).
+Wrappers retain ordinary Python context lifetimes, explicit native dependencies,
+and exception reporting; they introduce no shared-buffer or callback lifetime
+contract.

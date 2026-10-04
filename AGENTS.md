@@ -178,6 +178,8 @@ feature first.
   views; buffer validation must precede all destination writes, and every acquired
   Py_buffer must be released. Exception snapshots own native text independently
   of interpreter lifetime. Do not reintroduce hidden Python/core dependencies.
+  Optional NumPy wrapper execution additionally requires `ARGI_PYTHON_NUMPY=1`;
+  its negative ownership fixtures need no NumPy dependency.
 
 - Blocking networking uses `core/platforms/shared/network.c` and its private
   `network.h` ABI header, included by the selected POSIX/Windows runtime adapter;

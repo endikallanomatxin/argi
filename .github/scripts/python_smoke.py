@@ -48,7 +48,7 @@ def main():
                         "-o", str(probe)], check=True, cwd=root)
         subprocess.run([str(probe)], check=True, cwd=root)
         for fixture in sorted((REPO / "tests/feature_tests/python").iterdir()):
-            if "X" in fixture.name:
+            if "X" in fixture.name or ("numpy" in fixture.name and not options.numpy):
                 continue
             for flags in ([], ["--release", "--no-cache"]):
                 output = root / (fixture.name + (".exe" if os.name == "nt" else ""))
