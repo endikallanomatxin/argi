@@ -276,6 +276,7 @@ int32_t _argi_python_tuple_set(uintptr_t address, PyObject *tuple, uintptr_t ind
 PyObject *_argi_python_call(uintptr_t address, PyObject *callable, PyObject *args, PyObject *keywords) {
     struct argi_python *context = (struct argi_python *)address;
     if (!guard(context)) return NULL;
+    if (!PyTuple_Check(args)) { PyErr_SetString(PyExc_TypeError, "Positional arguments must be a Python tuple"); capture_error(context); return NULL; }
     if (keywords && !PyDict_Check(keywords)) { PyErr_SetString(PyExc_TypeError, "Keywords must be a Python dict"); capture_error(context); return NULL; }
     PyObject *result = PyObject_Call(callable, args, keywords);
     if (!result) capture_error(context);
@@ -322,4 +323,15 @@ int32_t _argi_python_error_copy(uintptr_t address, uint8_t *destination, uintptr
     if (!guard(context) || length < context->error_length) return -1;
     if (context->error_length) memcpy(destination, context->error, context->error_length);
     return 0;
+}
+
+PyObject *_argi_python_float32(uintptr_t address, float value) {
+    return _argi_python_scalar(address, 4, 0, 0, (double)value);
+}
+PyObject *_argi_python_as_tuple(uintptr_t address, PyObject *value) {
+    struct argi_python *context = (struct argi_python *)address;
+    if (!guard(context)) return NULL;
+    PyObject *result = PySequence_Tuple(value);
+    if (!result) capture_error(context);
+    return result;
 }

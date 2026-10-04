@@ -102,3 +102,25 @@ explicitly as described in [the module instructions](../more/python/README.md).
 
 CPython references: [initialization configuration](https://docs.python.org/3/c-api/init_config.html)
 and [reference ownership](https://docs.python.org/3/c-api/refcounting.html).
+
+## Argi values and arguments
+
+`to_object(.self: &Python, .value)` is an ordinary overload family for signed
+and unsigned integer primitives, Bool, Float32/Float64, StringView, borrowed
+String, and borrowed Object (which acquires a new reference). Integer widening
+is explicit inside the module. Float16 is not supported by this boundary.
+Read-only and mutable views, fixed arrays, and DynamicArray owners convert into
+Python lists. Collection elements are copied or converted; Python results retain
+no borrow of the input collection. Nested collections convert recursively.
+
+`Argument` is an implicitly copyable choice for heterogeneous inputs, with
+`none`, `boolean Bool`, `integer Int64`, `unsigned UInt64`, `floating Float64`,
+`text StringView`, and `object &Object` alternatives. It owns no Python reference;
+conversion acquires one. `positional_arguments(.self, .values: ArrayViewRO<T>)`
+converts a homogeneous view or an Argument view into an owning Python tuple.
+Pass that tuple as `.arguments: &Object` to `call`.
+
+`keyword_arguments` accepts a view of `Keyword(.name, .value: &Object)` or
+`NamedArgument(.name, .value: Argument)` records and creates an owning Python
+dictionary. Repeated names follow normal dictionary assignment: the last wins.
+These helpers propagate conversion errors and clean up already-created values.

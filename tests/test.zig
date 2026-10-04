@@ -9058,3 +9058,7 @@ test "feature_tests/python/06X_private_handle" {
 test "feature_tests/python/07X_object_escape" {
     try buildExpectFail("tests/feature_tests/python/07X_object_escape", "function output cannot depend on a local storage generation");
 }
+
+test "feature_tests/python/08_conversions" {
+    try checkPythonFixture("tests/feature_tests/python/08_conversions");
+}
