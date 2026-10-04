@@ -7239,7 +7239,7 @@ test "feature_tests/polymorphism/47X_virtual_missing_receiver" {
 }
 
 test "feature_tests/polymorphism/48X_virtual_associated_parameters" {
-    try buildExpectFail("tests/feature_tests/polymorphism/48X_virtual_associated_parameters", "parameterized abstract virtual conversion is not implemented");
+    try buildExpectFail("tests/feature_tests/polymorphism/48X_virtual_associated_parameters", "does not implement the selected abstract");
 }
 
 test "feature_tests/polymorphism/49_virtual_explicit_peer_handle" {
@@ -9329,8 +9329,30 @@ test "feature_tests/errors/83_handle_owner" {
     try runExpect("tests/feature_tests/errors/83_handle_owner", 0);
 }
 
+test "feature_tests/polymorphism/51_virtual_associated_parameters" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/51_virtual_associated_parameters");
+    try runExpect("tests/feature_tests/polymorphism/51_virtual_associated_parameters", 0);
+}
+
 test "feature_tests/errors/84X_handle_non_errable" {
     try buildExpectFail("tests/feature_tests/errors/84X_handle_non_errable", "handle expects an Errable value");
+}
+
+test "feature_tests/polymorphism/52_virtual_bound_values" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/52_virtual_bound_values");
+    try runExpect("tests/feature_tests/polymorphism/52_virtual_bound_values", 0);
+}
+
+test "feature_tests/polymorphism/53X_virtual_bound_value_mismatch" {
+    try buildExpectFail("tests/feature_tests/polymorphism/53X_virtual_bound_value_mismatch", "does not implement the selected abstract");
+}
+
+test "feature_tests/polymorphism/54X_virtual_bound_borrow_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/polymorphism/54X_virtual_bound_borrow_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/polymorphism/55X_virtual_method_generic" {
+    try buildExpectFail("tests/feature_tests/polymorphism/55X_virtual_method_generic", "method-local generic parameters");
 }
 
 test "feature_tests/errors/85_handle_evaluation_cleanup" {

@@ -481,6 +481,11 @@ pub const Syntaxer = struct {
                 name = try self.parseOperatorName(name.token);
             }
 
+            if (self.tokenIs(.hash)) {
+                try self.diags.add(self.tokenLocation(), .syntax, "method-local generic parameters are not supported in abstract methods; bind associated parameters on the abstract", .{});
+                return SyntaxerError.ExpectedIdentifier;
+            }
+
             if (self.tokenIs(.open_parenthesis)) {
                 const in_st = try self.parseStructTypeLiteral();
                 if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;

@@ -185,6 +185,8 @@ feature first.
   Ownership must traverse value sequences nested in initializers, arguments,
   assignments, conditions, and returns before finalizing cleanup. Codegen must
   not retain binding-map entry pointers across recursive expression emission.
+  Bound virtual abstract identities include associated type/value arguments;
+  safety implementation registries must keep those identities separate.
 
 - Pipes preserve one evaluation of computed operands and retain lvalue storage.
   Concrete and parameterized body lowering both reserve private deferred

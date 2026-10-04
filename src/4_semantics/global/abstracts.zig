@@ -291,15 +291,8 @@ pub const Resolver = struct {
             };
         };
         const abstract_ty = abstract_type orelse return null;
-        const abstract_decl = switch (self.graph.types.items[@intFromEnum(abstract_ty)]) {
-            .declared => |declaration| declaration,
-            .generic => |generic| {
-                if (self.findAbstractDefinition(generic.base) != null)
-                    self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "parameterized abstract virtual conversion is not implemented; use a contract with fixed concrete signature types" };
-                return null;
-            },
-            else => return null,
-        };
+        const abstract_use = self.abstractUse(abstract_ty) orelse return null;
+        const abstract_decl = abstract_use.declaration;
         const located = self.findAbstractDefinition(abstract_decl) orelse return null;
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |value| value,
@@ -318,7 +311,10 @@ pub const Resolver = struct {
         };
         const concrete = pointer.child;
         if (!try self.validateVirtualContract(abstract_ty, located, self.sourceFor(module_index, reference.source), pointer.mutability)) return null;
-        if (!try self.implements(concrete, abstract_decl)) return null;
+        if (!self.concreteImplements(concrete, abstract_ty)) {
+            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "the concrete type does not implement the selected abstract with these associated arguments" };
+            return null;
+        }
 
         var methods: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
         defer methods.deinit(self.allocator);
@@ -326,11 +322,11 @@ pub const Resolver = struct {
         defer receiver_indices.deinit(self.allocator);
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
-            const instance = try self.requirementInstance(abstract_decl, concrete, located, requirement, @intCast(method_index));
+            const instance = (try self.requirementInstanceForAbstractUse(abstract_use, concrete, located, requirement, @intCast(method_index))) orelse return null;
             const implementation = self.findConcreteMethod(self.modules[located.module_index].text(requirement.name), instance.input, instance.output) orelse return null;
             if (self.fallibleOutput(instance.output)) try self.core.ensureErrorTracerInput(implementation);
             try methods.append(self.allocator, implementation);
-            const erased = try self.requirementInstance(abstract_decl, abstract_ty, located, requirement, @intCast(method_index));
+            const erased = (try self.requirementInstanceForAbstractUse(abstract_use, abstract_ty, located, requirement, @intCast(method_index))) orelse return null;
             const fields = global_types.fields(self.graph, erased.input) orelse return error.InvalidAbstractRequirementInput;
             for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
                 const ty = self.graph.semanticType(field.ty);
@@ -1059,13 +1055,17 @@ pub const Resolver = struct {
         for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, index| {
             const name = module.text(requirement.name);
             var reason: ?[]const u8 = null;
-            if (requirement.parameters.len != 0 or located.definition.parameters.len != 0) {
-                reason = "the virtual slot requires fixed signature types; parameterized virtual contracts are not implemented";
+            if (requirement.parameters.len != 0) {
+                reason = "the virtual slot requires fixed signature types; method-local generic parameters are not supported";
             } else {
-                const instance = try self.requirementInstance(blk: {
-                    const base = self.offsets[located.module_index].declaration_base;
-                    break :blk @enumFromInt(base + @intFromEnum(located.definition.declaration));
-                }, abstract_ty, located, requirement, @intCast(index));
+                // Associated arguments belong to the handle's identity. Bind
+                // them before erasure; method-local specialization still cannot
+                // define one fixed callable slot.
+                const abstract_use = self.abstractUse(abstract_ty) orelse return false;
+                const instance = (try self.requirementInstanceForAbstractUse(abstract_use, abstract_ty, located, requirement, @intCast(index))) orelse {
+                    self.virtual_signature_failure = .{ .source = source, .method_name = name, .reason = "virtual associated parameters must be fully bound" };
+                    return false;
+                };
                 const inputs = global_types.fields(self.graph, instance.input) orelse return error.InvalidAbstractRequirementInput;
                 const outputs = global_types.fields(self.graph, instance.output) orelse return error.InvalidAbstractRequirementOutput;
                 var receivers: usize = 0;
@@ -1143,25 +1143,6 @@ pub const Resolver = struct {
         if (!self.bindAbstractUseArguments(abstract_use, located, &bindings)) return null;
         return .{
             .declaration = abstract_use.declaration,
-            .method_index = method_index,
-            .input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings, self_type),
-            .output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings, self_type),
-        };
-    }
-
-    fn requirementInstance(
-        self: *Resolver,
-        declaration: global_sg.GlobalDeclId,
-        self_type: global_sg.GlobalTypeId,
-        located: LocatedAbstractDefinition,
-        requirement: parameterized_storage.AbstractRequirement,
-        method_index: u32,
-    ) !RequirementInstance {
-        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
-        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
-        defer bindings.deinit(self.allocator);
-        return .{
-            .declaration = declaration,
             .method_index = method_index,
             .input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings, self_type),
             .output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings, self_type),
@@ -1908,26 +1889,26 @@ pub const Resolver = struct {
         for (self.graph.virtualizes.items) |virtualize| {
             const registries = self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len];
             for (registries, 0..) |registry_id, method_index|
-                try self.closeVirtualMethodRegistry(registry_id, virtualize.abstract_decl, method_index);
+                try self.closeVirtualMethodRegistry(registry_id, self.graph.semanticType(virtualize.virtual_type).virtual, method_index);
         }
 
         for (self.graph.virtual_calls.items) |call| {
-            const abstract_decl = self.virtualCallAbstract(call) orelse continue;
-            try self.closeVirtualMethodRegistry(call.safety_methods, abstract_decl, call.method_index);
+            const abstract_ty = self.virtualCallAbstract(call) orelse continue;
+            try self.closeVirtualMethodRegistry(call.safety_methods, abstract_ty, call.method_index);
         }
     }
 
     fn closeVirtualMethodRegistry(
         self: *Resolver,
         registry_id: global_sg.GlobalVirtualRegistryId,
-        abstract_decl: global_sg.GlobalDeclId,
+        abstract_ty: global_sg.GlobalTypeId,
         method_index: usize,
     ) !void {
         var implementations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
         defer implementations.deinit(self.allocator);
 
         for (self.graph.virtualizes.items) |candidate| {
-            if (candidate.abstract_decl != abstract_decl or method_index >= candidate.methods.len) continue;
+            if (!global_types.equal(self.graph, self.graph.semanticType(candidate.virtual_type).virtual, abstract_ty) or method_index >= candidate.methods.len) continue;
             const implementation = self.graph.function_refs.items[candidate.methods.start + @as(u32, @intCast(method_index))];
             var exists = false;
             for (implementations.items) |existing| if (existing == implementation) {
@@ -1946,13 +1927,15 @@ pub const Resolver = struct {
         };
     }
 
-    fn virtualCallAbstract(self: *const Resolver, call: global_sg.VirtualCall) ?global_sg.GlobalDeclId {
+    fn virtualCallAbstract(self: *const Resolver, call: global_sg.VirtualCall) ?global_sg.GlobalTypeId {
         const handle_ty = self.graph.nodes.items[@intFromEnum(call.handle)].ty orelse return null;
         const handle_child = switch (self.graph.types.items[@intFromEnum(handle_ty)]) {
             .pointer => |pointer| pointer.child,
             else => handle_ty,
         };
-        if (self.abstractDeclFromType(handle_child)) |declaration| return declaration;
+        const handle_type = self.graph.semanticType(handle_child);
+        if (handle_type == .virtual) return handle_type.virtual;
+        if (self.abstractUse(handle_child) != null) return handle_child;
 
         const input_fields = global_types.fields(self.graph, call.input_type) orelse return null;
         if (call.self_input_index >= input_fields.len) return null;
@@ -1961,7 +1944,7 @@ pub const Resolver = struct {
             .pointer => |pointer| pointer.child,
             else => self_ty,
         };
-        return self.abstractDeclFromType(self_child);
+        return if (self.abstractUse(self_child) != null) self_child else null;
     }
 
     fn abstractDeclFromType(self: *const Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalDeclId {

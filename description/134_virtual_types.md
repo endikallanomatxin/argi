@@ -141,12 +141,10 @@ Fallible methods carry a uniform error-tracer capability input, including
 implementations that always succeed. Errors created by a selected method
 therefore follow the same capability rules as static calls.
 
-> [!IMPLEMENTATION]
-> The compiler validates receiver and `Self` restrictions at virtual conversion
-> and dispatch, including methods that are never called but occupy a table slot.
-> Virtual conversion of parameterized abstracts is not implemented, even when
-> their associated arguments are fixed; it reports a dedicated diagnostic.
-> Use a non-parameterized contract with concrete signature types for now.
+Receiver and `Self` restrictions apply at virtual conversion and dispatch,
+including methods that are never called but occupy a table slot. Virtual
+conversion supports parameterized abstracts with fully bound type and value
+arguments. Method-local generic parameters do not define virtual slots.
 
 ## Safety across implementations
 
@@ -169,3 +167,9 @@ storage generations, and opaque storage.
 > Unknown dispatch currently uses a program-wide set of implementations found
 > through virtual conversions. This can be more conservative than the actual
 > runtime alternatives at a particular call site.
+
+For example, a fixed `Readable#(.item: Int32)` contract can occupy a virtual
+handle. Conversion checks the concrete type's declared associated arguments,
+then fixes every method signature before erasing `Self`. Handles for different
+associated arguments are different types; their possible implementation sets
+also remain separate during safety checking.
