@@ -25,9 +25,8 @@ main(
                 ..stream_write_failed,
                 ..stream_flush_failed
             )
-        )
+        ) = ..ok Void()
     ) := {
-    result = ..ok Void()
     assume allocator := system.page_allocator
     out ::= $&system.terminal&.stdout
     argc ::= length(.self = system.args).count

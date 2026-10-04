@@ -8,9 +8,8 @@ count_text(
         .text      : StringView,
         .allocator : $&PageAllocator
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..invalid_utf8, ..out_of_memory, ..out_of_range))
+        .result : Errable#(.t: Void, .reasons: (..invalid_utf8, ..out_of_memory, ..out_of_range)) = ..ok Void()
     ) := {
-    result = ..ok Void()
     assume allocator
     validate_utf8(.text = text)!
     index :: UIntNative = 0
@@ -61,9 +60,8 @@ count_directory(
                 ..size_limit_exceeded,
                 ..size_overflow
             )
-        )
+        ) = ..ok Void()
     ) := {
-    result = ..ok Void()
     assume allocator
     directory ::= Directory(.path = path, .self = file_sys)!
     while true {
