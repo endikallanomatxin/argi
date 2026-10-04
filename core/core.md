@@ -12,6 +12,7 @@ The implemented foundations include:
   and borrowed iteration, copyable and owning hash maps and sets with iteration,
   strings, and collection operations. Strict UTF-8 operations provide checked scalars,
   bounded encoding, decoding cursors, and validated borrowed text iteration.
+- Numbers: checked integer arithmetic and numeric parsing/formatting.
 - Binary data: checked unsigned endian reads and writes, and borrowed byte
   cursors whose positions advance only after successful operations.
 - System and I/O: program capabilities, files, filesystem operations, terminal

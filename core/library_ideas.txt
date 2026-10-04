@@ -20,7 +20,7 @@ Collections and values
 - Treaps and other ordered collections whose use cases justify an extra type.
 - Unicode normalization, case folding, and grapheme segmentation beyond strict
   UTF-8 scalar decoding and validated text views.
-- Numeric utilities such as checked arithmetic and reusable rounding contracts.
+- Numeric utilities such as reusable rounding contracts.
 - Value canonicalization/interning facilities, inspired by the earlier unique
   entry, only if their ownership and lifetime semantics are useful and clear.
 - Weak references, only with an explicit model for detecting an ended lifetime.
