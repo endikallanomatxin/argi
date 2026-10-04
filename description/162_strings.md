@@ -393,3 +393,8 @@ whitespace. Leading, repeated and trailing whitespace is skipped. Empty or
 all-whitespace input has no tokens. Returned tokens retain their source
 lifetime and remain valid when the iterator advances. Unicode whitespace is
 not a separator; UTF-8 bytes and embedded NULs otherwise remain unchanged.
+
+`slice(.self: StringView, .start, .count)` checks byte ranges and returns an
+`Errable` view with `out_of_bounds` on failure. It does not require codepoint
+boundaries or UTF-8 validation. Empty slices at the extent succeed without
+forming a one-past reference. Oversized counts and offsets cannot wrap.

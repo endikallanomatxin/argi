@@ -9754,3 +9754,8 @@ test "feature_tests/text/46_whitespace_tokens" {
 test "feature_tests/text/47X_whitespace_source_after_cleanup" {
     try buildExpectFail("tests/feature_tests/text/47X_whitespace_source_after_cleanup", "root that has ended");
 }
+
+test "feature_tests/text/48_checked_string_slice" {
+    try expectSuccessfulBuild("tests/feature_tests/text/48_checked_string_slice");
+    try runExpect("tests/feature_tests/text/48_checked_string_slice", 0);
+}

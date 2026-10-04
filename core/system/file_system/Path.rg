@@ -46,10 +46,7 @@ string_view_slice(
     ) -> (
         .out : StringView
     ) := {
-    out = (
-        .data   = trusted_reference_offset#(.t: UInt8)(.base = view&.data, .elements = start).reference
-        .length = length
-    )
+    out = _string_view_subrange(.self = view&, .start = start, .count = length).view
 }
 
 Path init(

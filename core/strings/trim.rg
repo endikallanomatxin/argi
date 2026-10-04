@@ -47,3 +47,23 @@ trim(.self: StringView) -> (.view: StringView) := {
     leading ::= trim_start(.self = self).view
     view = trim_end(.self = leading).view
 }
+
+-- Validate by subtraction before forming a borrowed reference. Empty results
+-- use static storage, including a slice at the source extent.
+slice(
+        .self  : StringView,
+        .start : UIntNative,
+        .count : UIntNative
+    ) -> (
+        .result : Errable#(.t: StringView, .reasons: (..out_of_bounds))
+    ) := {
+    if start > self.length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    if count > self.length - start {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    result = ..ok _string_view_subrange(.self = self, .start = start, .count = count).view
+}
