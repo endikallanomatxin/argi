@@ -9458,3 +9458,12 @@ test "feature_tests/binary/02_cursor" {
     try expectSuccessfulBuild("tests/feature_tests/binary/02_cursor");
     try runExpect("tests/feature_tests/binary/02_cursor", 0);
 }
+
+test "feature_tests/collections/124_deque_iteration" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/124_deque_iteration");
+    try runExpect("tests/feature_tests/collections/124_deque_iteration", 0);
+}
+
+test "feature_tests/collections/125X_deque_iterator_after_mutation" {
+    try buildExpectFail("tests/feature_tests/collections/125X_deque_iterator_after_mutation", "root that has ended");
+}

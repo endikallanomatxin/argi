@@ -328,3 +328,10 @@ old storage and occupancy. No allocation, physical slot, or occupancy metadata
 is public. Whole-deque copies are rejected. Cleanup destroys only occupied
 elements and releases storage through its recorded deallocator; an allocator
 may be reached for element destructors.
+
+Deque supports value iteration when elements are `ImplicitlyCopyable`, and
+readonly/mutable pointer iteration for all element types. Iteration follows
+logical front-to-back order, including wrapped storage. Iterators borrow the
+owner and its shape generation; insertion, extraction, growth, and cleanup
+invalidate them. Returned references retain the same shape dependency. Calling
+`next` without `has_next` is a contract violation and aborts.
