@@ -9473,11 +9473,6 @@ test "feature_tests/io/37_block_streams" {
     try runExpect("tests/feature_tests/io/37_block_streams", 0);
 }
 
-test "feature_tests/io/38_buffered_block_refill" {
-    try expectSuccessfulBuild("tests/feature_tests/io/38_buffered_block_refill");
-    try runExpect("tests/feature_tests/io/38_buffered_block_refill", 0);
-}
-
 test "feature_tests/system/80_filesystem_operations" {
     try expectSuccessfulBuild("tests/feature_tests/system/80_filesystem_operations");
     try runExpect("tests/feature_tests/system/80_filesystem_operations", 0);
@@ -9498,6 +9493,19 @@ test "feature_tests/system/83X_directory_after_cleanup" {
 
 test "feature_tests/system/84X_temporary_directory_private" {
     try buildExpectFail("tests/feature_tests/system/84X_temporary_directory_private", "field '_handle' is private");
+}
+
+test "feature_tests/io/38_buffered_block_refill" {
+    try expectSuccessfulBuild("tests/feature_tests/io/38_buffered_block_refill");
+    try runExpect("tests/feature_tests/io/38_buffered_block_refill", 0);
+}
+
+test "feature_tests/collections/126X_deque_iteration_reference_after_pop" {
+    try buildExpectFail("tests/feature_tests/collections/126X_deque_iteration_reference_after_pop", "root that has ended");
+}
+
+test "feature_tests/binary/03X_cursor_after_storage" {
+    try buildExpectFail("tests/feature_tests/binary/03X_cursor_after_storage", "root that has ended");
 }
 
 test "feature_tests/system/85_filesystem_native" {
