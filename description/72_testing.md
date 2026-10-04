@@ -142,3 +142,30 @@ This is intentional:
 > hierarchy, so tooling can list, select and run individual tests or subtrees.
 > Define the discovery scope, including whether imported dependencies contribute
 > tests, while preserving each test's independent root semantics.
+
+### Equality diagnostics
+
+`expect` and `expect_equal` accept an optional bounded `.message: StringView`
+that supplies caller context. Integer, floating-point, and Boolean equality
+failures report the expected and actual values; other comparable types retain
+an ordinary equality failure message. Successful checks produce no output.
+
+`expect_equal_strings(.expected, .actual, .message)` compares complete byte
+extents, including embedded NULs. Inputs may be two StringViews or two borrowed
+Strings. `expect_equal` also compares StringViews by their byte contents.
+Failures report the first differing byte index, expected and actual byte values
+(or `<end>` for a shorter input), and both lengths. Indices count bytes, not
+Unicode scalars or graphemes.
+
+`expect_equal_views(.expected, .actual, .message)` compares readonly initialized
+array views element by element. Element types must support equality. Failures
+report the first differing element index and both lengths. A differing length
+reports the common-prefix length as its index. `expect_equal_bytes` additionally
+reports byte values or `<end>`. Empty views require no data pointer.
+
+Assertion diagnostics use bounded stack storage and require no allocator.
+Each diagnostic context is limited to 128 bytes; the bounded error tracer
+reports truncation when caller context exceeds its capacity. Test failures and
+skips print their captured error trace before entry resources are cleaned up.
+The original reason still determines failure or skip status. Tracer buffers and
+borrowed context storage do not escape the test entry scope.

@@ -250,7 +250,7 @@ pub const FrontendPipeline = struct {
         const result = if (is_test) "result" else "status_code";
         fallible_main = fallible_main and !is_test;
         const template = if (takes_system) @embedFile("program_entry.rg") else if (fallible_main) @embedFile("fallible_plain_entry.rg") else @embedFile("plain_entry.rg");
-        const tracer = if (fallible_main)
+        const tracer = if (fallible_main or is_test)
             "trace_buffer :: [4096]UInt8 = zeroed#(.t: [4096]UInt8)()\n" ++
                 "    tracer_storage ::= FixedSizeErrorTracer(.buffer = view($&trace_buffer))\n" ++
                 "    tracer_virtual ::= to_virtual#(.abstract: ErrorTracer)(.value = $&tracer_storage)\n" ++
@@ -258,7 +258,21 @@ pub const FrontendPipeline = struct {
         else
             "assume error_tracer ::= $&noop_error_tracer";
         const call_args = if (takes_system) ".system = system" else "";
-        const call = if (fallible_main)
+        // Test diagnostics must finish while the entry's tracer and terminal
+        // are alive. Replace the reported trace with a program-lifetime noop
+        // trace before returning the unchanged reason to the C status wrapper.
+        const call = if (is_test)
+            try std.fmt.allocPrint(self.allocator, "test_result := {s}({s})\n" ++
+                "    match test_result {{\n" ++
+                "        ..ok _ {{}}\n" ++
+                "        ..error $&error {{\n" ++
+                "            assume error_tracer ::= $&noop_error_tracer\n" ++
+                "            report_trace(.trace = &error&.trace, .writer = $&terminal&.stderr)\n" ++
+                "            error&.trace = (.tracer = $&noop_error_tracer)\n" ++
+                "        }}\n" ++
+                "    }}\n" ++
+                "    result = ~test_result", .{ target, call_args })
+        else if (fallible_main)
             try std.fmt.allocPrint(self.allocator, "main_result := {s}({s})\n" ++
                 "    match main_result {{\n" ++
                 "        ..ok _ {{}}\n" ++

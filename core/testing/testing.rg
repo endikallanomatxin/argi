@@ -19,13 +19,18 @@ skip(.message: &Char) -> (.result: Errable#(.t: Void, .reasons: (..test_skipped)
     result = ..ok Void()
 }
 
-expect(.condition: Bool) -> (.result: Errable#(.t: Void, .reasons: (..test_failed))) := {
+expect(
+        .condition : Bool,
+        .message   : StringView = ""
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..test_failed))
+    ) := {
     if condition {
         result = ..ok Void()
         return
     }
 
-    fail(.message = "expect failed: condition was false")!
+    result = _testing_failure(.detail = "expect failed: condition was false", .message = message)
 }
 
 expect_equal#(
@@ -33,6 +38,7 @@ expect_equal#(
     )(
         .expected : t,
         .actual   : t,
+        .message  : StringView = "",
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..test_failed))
     ) := {
@@ -41,7 +47,10 @@ expect_equal#(
         return
     }
 
-    fail(.message = "expect_equal failed: expected and actual differ")!
+    result = _testing_failure(
+        .detail  = "expect_equal failed: expected and actual differ"
+        .message = message
+    )
 }
 
 expect_error#(

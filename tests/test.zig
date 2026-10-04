@@ -5679,7 +5679,7 @@ test "feature_tests/testing/04_expect_equal" {
 }
 
 test "feature_tests/testing/05_assertion_failure" {
-    try argiTestExpectStderr(
+    try argiTestExpectStderrContains(
         "tests/feature_tests/testing/05_assertion_failure",
         &.{},
         1,
@@ -5688,7 +5688,7 @@ test "feature_tests/testing/05_assertion_failure" {
 }
 
 test "feature_tests/testing/06_direct_propagated_error" {
-    try argiTestExpectStderr(
+    try argiTestExpectStderrContains(
         "tests/feature_tests/testing/06_direct_propagated_error",
         &.{},
         1,
@@ -5721,7 +5721,7 @@ test "feature_tests/testing/09_expected_error" {
 }
 
 test "feature_tests/testing/10_expected_error_mismatch" {
-    try argiTestExpectStderr(
+    try argiTestExpectStderrContains(
         "tests/feature_tests/testing/10_expected_error_mismatch",
         &.{},
         1,
@@ -5730,7 +5730,7 @@ test "feature_tests/testing/10_expected_error_mismatch" {
 }
 
 test "feature_tests/testing/11_expected_error_unexpected_ok" {
-    try argiTestExpectStderr(
+    try argiTestExpectStderrContains(
         "tests/feature_tests/testing/11_expected_error_unexpected_ok",
         &.{},
         1,
@@ -9566,4 +9566,52 @@ test "feature_tests/text/36X_utf8_after_storage" {
 
 test "feature_tests/text/37X_unicode_scalar_private" {
     try buildExpectFail("tests/feature_tests/text/37X_unicode_scalar_private", "field '_value' is private");
+}
+
+test "feature_tests/testing/16_equality_helpers" {
+    try argiTestExpectStderr("tests/feature_tests/testing/16_equality_helpers", &.{}, 0, "PASS equality_helpers\n");
+}
+
+test "feature_tests/testing/17_numeric_diagnostics signed_value" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/17_numeric_diagnostics", &.{ "--filter", "signed_value" }, 1, "expected -9223372036854775808, actual 9223372036854775807");
+}
+
+test "feature_tests/testing/17_numeric_diagnostics unsigned_value" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/17_numeric_diagnostics", &.{ "--filter", "unsigned_value" }, 1, "expected 18446744073709551615, actual 0");
+}
+
+test "feature_tests/testing/17_numeric_diagnostics float_value" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/17_numeric_diagnostics", &.{ "--filter", "float_value" }, 1, "expected 1.5, actual 2.5");
+}
+
+test "feature_tests/testing/17_numeric_diagnostics bool_value" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/17_numeric_diagnostics", &.{ "--filter", "bool_value" }, 1, "expected true, actual false");
+}
+
+test "feature_tests/testing/18_string_diagnostics string_mismatch" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/18_string_diagnostics", &.{ "--filter", "string_mismatch" }, 1, "strings differ at byte 1: expected 98, actual 120; lengths expected 3, actual 3");
+}
+
+test "feature_tests/testing/18_string_diagnostics string_prefix" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/18_string_diagnostics", &.{ "--filter", "string_prefix" }, 1, "strings differ at byte 2: expected 99, actual <end>; lengths expected 3, actual 2");
+}
+
+test "feature_tests/testing/18_string_diagnostics string_empty" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/18_string_diagnostics", &.{ "--filter", "string_empty" }, 1, "strings differ at byte 0: expected <end>, actual 120; lengths expected 0, actual 1");
+}
+
+test "feature_tests/testing/18_string_diagnostics string_embedded_nul" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/18_string_diagnostics", &.{ "--filter", "string_embedded_nul" }, 1, "strings differ at byte 2: expected 90, actual 91; lengths expected 3, actual 3");
+}
+
+test "feature_tests/testing/19_view_diagnostics view_mismatch" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/19_view_diagnostics", &.{ "--filter", "view_mismatch" }, 1, "views differ at index 1; lengths expected 3, actual 3");
+}
+
+test "feature_tests/testing/19_view_diagnostics byte_prefix" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/19_view_diagnostics", &.{ "--filter", "byte_prefix" }, 1, "bytes differ at byte 1: expected 2, actual <end>; lengths expected 2, actual 1");
+}
+
+test "feature_tests/testing/20_bounded_diagnostics bounded_message" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/20_bounded_diagnostics", &.{ "--filter", "bounded_message" }, 1, "<context truncated>");
 }
