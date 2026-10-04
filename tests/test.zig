@@ -9615,3 +9615,43 @@ test "feature_tests/testing/19_view_diagnostics byte_prefix" {
 test "feature_tests/testing/20_bounded_diagnostics bounded_message" {
     try argiTestExpectStderrContains("tests/feature_tests/testing/20_bounded_diagnostics", &.{ "--filter", "bounded_message" }, 1, "<context truncated>");
 }
+
+test "feature_tests/collections/136_owned_hash_map" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/136_owned_hash_map");
+    try runExpect("tests/feature_tests/collections/136_owned_hash_map", 0);
+}
+
+test "feature_tests/collections/137_owned_hash_lifecycle" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/137_owned_hash_lifecycle");
+    try runExpect("tests/feature_tests/collections/137_owned_hash_lifecycle", 0);
+}
+
+test "feature_tests/collections/138_owned_hash_allocation_failure" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/138_owned_hash_allocation_failure");
+    try runExpect("tests/feature_tests/collections/138_owned_hash_allocation_failure", 0);
+}
+
+test "feature_tests/collections/139_owned_hash_nested_values" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/139_owned_hash_nested_values");
+    try runExpect("tests/feature_tests/collections/139_owned_hash_nested_values", 0);
+}
+
+test "feature_tests/collections/140X_owned_hash_map_copy" {
+    try buildExpectFail("tests/feature_tests/collections/140X_owned_hash_map_copy", "cannot be copied implicitly");
+}
+
+test "feature_tests/collections/141X_owned_hash_map_borrow_after_put" {
+    try buildExpectFail("tests/feature_tests/collections/141X_owned_hash_map_borrow_after_put", "root that has ended");
+}
+
+test "feature_tests/collections/142X_owned_hash_entry_after_remove" {
+    try buildExpectFail("tests/feature_tests/collections/142X_owned_hash_entry_after_remove", "root that has ended");
+}
+
+test "feature_tests/collections/143X_owned_hash_value_after_move" {
+    try buildExpectFail("tests/feature_tests/collections/143X_owned_hash_value_after_move", "moved");
+}
+
+test "feature_tests/collections/144X_owned_hash_key_mutation" {
+    try buildExpectFail("tests/feature_tests/collections/144X_owned_hash_key_mutation", "read-only");
+}

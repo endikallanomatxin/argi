@@ -58,7 +58,7 @@ inside their keys or values still needs its original backing storage.
 Keys and values with borrowed state require their backing storage to remain
 live. Key contents must stay unchanged until removal or cleanup. Collisions and
 deletions preserve lookup paths, and every probe is bounded by table capacity.
-Owning keys and values require a separate ownership contract before support.
+Owning keys and values use the separate owning families described below.
 
 
 > [!IDEA]
@@ -131,3 +131,56 @@ for its operations, borrowing rules, and consumed-argument behavior.
 > [!IDEA]
 > Beyond the basic [iterator contract](44_control_flow.md), library adapters
 > could provide zipping, enumeration, and sliding-window iteration.
+
+## Owning hash maps and sets
+
+`OwnedHashMap<K, V, P>` moves keys and values into owned table storage. Neither
+needs to be implicitly copyable. `BorrowedHashPolicy<K>` hashes `.key: &K` and
+compares `.left: &K`/`.right: &K`; policy methods never consume lookup keys.
+The same stable equivalence and equal-hash obligations apply. Core provides
+`StringHashPolicy` for owning Strings, and the integer policies implement both
+copyable and borrowed contracts. The map owns its policy as well as its entries.
+
+Construction takes `.policy`, `.allocator`, and optional `.capacity` (at least
+eight slots). Occupied load remains at most one half. `reserve` requests a larger
+slot capacity. Growth allocates all new storage before relocating any entry;
+`out_of_memory` preserves the old entries and capacity. Entry relocation does
+not copy or destroy their owning contents. Destructors may require the supplied
+allocator; other reached cleanup capabilities retain their ordinary contracts.
+
+`put(.self, .key, .value, .allocator)` consumes both input values on every
+outcome. New insertion moves them into the table. Replacement destroys both the
+previous key and value and installs the supplied equivalent key and new value,
+without allocating table storage. Failed growth destroys consumed inputs and
+preserves existing entries. This replacement rule differs from copyable
+`HashMap`, which retains the existing key.
+
+`contains(.self, .key: &K)` queries membership; `get_ro_ref` returns an optional
+borrowed `&V`. `extract(.self, .key: &K)` removes an entry and returns an optional
+owning `OwnedHashMapEntry<K, V>` containing `.key` and `.value`. The extracted
+entry has independent ownership and can outlive the table. `remove` destroys
+the matching entry and reports whether it existed. `length`, `capacity`, and
+`deinit` follow the copyable map meanings. Cleanup destroys every remaining key,
+value, and policy once and releases table storage. No owning key is exposed
+through a mutable reference.
+
+`for entry in map` visits borrowed `.key: &K`/`.value: &V` entries rather than
+copies of the owners. Iteration allocates no storage, skips deleted slots, and
+has unspecified table order. Iterators and returned references retain the table
+shape dependency. Reacquire loans after mutating calls, including fallible ones:
+safety summaries conservatively join their possible outcomes. Successful put,
+removal, extraction, capacity-changing reserve, and cleanup invalidate loans.
+`next` requires a successful `has_next` and aborts at exhaustion.
+
+`OwnedHashSet<K, P>` owns keys using the same table. `insert(.self, .key,
+.allocator)` consumes its argument and returns true only for new membership.
+Duplicate insertion retains the stored key and destroys the supplied equivalent
+key. Failed growth destroys the supplied key and preserves membership.
+`contains`, `remove`, `reserve`, `length`, `capacity`, and `deinit` correspond to
+map operations. `extract(.self, .key: &K)` returns the removed owning key.
+`to_ro_pointer_iterator` visits readonly key references; it never copies owners.
+
+Owning a key or value does not freeze borrowed state inside it. External backing
+storage must remain live and key contents must remain unchanged while stored.
+Ownership transfer supplies no new native allocation receipt or reference
+validity beyond the original values' checked storage contracts.
