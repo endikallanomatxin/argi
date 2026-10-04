@@ -335,3 +335,32 @@ PyObject *_argi_python_as_tuple(uintptr_t address, PyObject *value) {
     if (!result) capture_error(context);
     return result;
 }
+
+int32_t _argi_python_set_attribute(uintptr_t address, PyObject *object, const uint8_t *bytes, uintptr_t length, PyObject *value) {
+    struct argi_python *context = (struct argi_python *)address;
+    if (!guard(context)) return -1;
+    char *name = c_text(context, bytes, length);
+    if (!name) return -1;
+    int result = PyObject_SetAttrString(object, name, value);
+    free(name);
+    if (result) capture_error(context);
+    return result;
+}
+PyObject *_argi_python_iterator(uintptr_t address, PyObject *object) {
+    struct argi_python *context = (struct argi_python *)address;
+    if (!guard(context)) return NULL;
+    PyObject *result = PyObject_GetIter(object);
+    if (!result) capture_error(context);
+    return result;
+}
+PyObject *_argi_python_next(uintptr_t address, PyObject *object, int32_t *exhausted) {
+    struct argi_python *context = (struct argi_python *)address;
+    *exhausted = 0;
+    if (!guard(context)) return NULL;
+    PyObject *result = PyIter_Next(object);
+    if (!result) {
+        if (PyErr_Occurred()) capture_error(context);
+        else *exhausted = 1;
+    }
+    return result;
+}

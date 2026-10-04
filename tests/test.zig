@@ -9062,3 +9062,7 @@ test "feature_tests/python/07X_object_escape" {
 test "feature_tests/python/08_conversions" {
     try checkPythonFixture("tests/feature_tests/python/08_conversions");
 }
+
+test "feature_tests/python/09_methods_iteration" {
+    try checkPythonFixture("tests/feature_tests/python/09_methods_iteration");
+}

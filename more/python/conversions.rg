@@ -174,3 +174,7 @@ to_object#(.t: Type)(.self: &Python, .value: ArrayView#(.t: t)) -> (.result: Err
     }
     result = ..ok ~converted
 }
+to_object(.self: &Python, .value: &&Object) -> (.result: Errable#(.t: Object,
+        .reasons : (..python_error))) := {
+    result = clone(.self = value&)
+}

@@ -124,3 +124,24 @@ Pass that tuple as `.arguments: &Object` to `call`.
 `NamedArgument(.name, .value: Argument)` records and creates an owning Python
 dictionary. Repeated names follow normal dictionary assignment: the last wins.
 These helpers propagate conversion errors and clean up already-created values.
+
+## Methods, attributes, and iteration
+
+`call_method(.self: &Object, .name: StringView, .arguments, .keywords)` obtains
+an attribute, calls it, and releases the temporary callable. Its arguments and
+errors follow `call`, including prepared tuple arguments. Method lookup occurs
+in Python during execution; Argi dispatch selects an ordinary library function.
+
+`set_attribute(.self: &Object, .name: StringView, .value: &Object)` returns
+`Errable<Void, python_error>` using Python's attribute assignment protocol.
+`tuple(.self: &Python, .values: ArrayViewRO<&Object>)` creates an owning tuple,
+with an empty default value view. Python retains its elements independently of
+the Argi view.
+
+`iterate(.self: &Object)` returns an owning `PythonIterator` in an Errable.
+`next(.self: $&PythonIterator)` returns `Errable<Nullable<Object>, python_error>`:
+an owned item, successful exhaustion (`none`), or a captured exception. It does
+not implement core's Iterator abstract, whose next operation is infallible.
+The iterator keeps its Python source alive and borrows only its interpreter.
+An exhausted iterator may be queried again; exhaustion does not replace the
+most recent exception text.
