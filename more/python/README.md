@@ -5,6 +5,48 @@ Argi builds do not require Python. Programs importing this module must compile
 `runtime.c` with matching CPython development headers and explicitly link its
 embedding library. CPython 3.12+ with the standard GIL is required.
 
+## Preparing a consumer
+
+Run the helper using the Python installation or virtual environment you want:
+
+```sh
+python3 more/python/build.py build path/to/module
+python3 more/python/build.py run path/to/module --release
+```
+
+It discovers the matching development headers and shared embedding library,
+compiles the adapter, and forwards ordinary build/run/test options to Argi with
+explicit native dependencies. Python remains optional: the compiler itself has
+no Python discovery or special package behavior. All options for the helper must
+precede `build`, `run`, `test`, or `prepare`.
+
+The prepared object is cached under `.argi-cache/native/python`, fingerprinted
+by the adapter sources, headers, Python ABI/environment, driver, and arguments.
+The helper compiles the selected Python executable as the default for
+`Python(.ffi)`; an explicitly supplied non-default `.program_name` overrides it.
+This also selects a virtual environment without setting global PYTHONHOME.
+
+```sh
+.venv/bin/python more/python/build.py --argi /path/to/argi build path/to/module
+python3 more/python/build.py --cc gcc --cc-arg=-O3 build path/to/module
+python3 more/python/build.py prepare
+```
+
+`prepare` prints a TOML fragment containing ordinary `[[native]]` file entries
+for inclusion in a package manifest; `--json prepare` emits machine-readable
+paths and driver flags. `--include-dir` (repeatable) and `--library` override
+discovery for development installations. Missing headers/libraries produce
+explicit setup diagnostics. The helper checks the header version; initialization
+also checks the loaded embedding library against the compiled headers. Cache paths are absolute, so regenerate the fragment
+when moving a package or its native environment.
+
+The helper supports native GCC-compatible drivers, including Clang and MinGW.
+Static Python embedding and cross builds require explicit target-native
+compilation/linking; they are not automatically discovered from the host Python.
+The installed helper lives at `lib/argi/more/python/build.py`.
+
+## Manual compilation
+
 On Linux with a shared CPython build and its development tools installed:
 
 ```sh
@@ -64,6 +106,17 @@ zig build test -j1 -Dtest-filter=python
 The executable tests run outside the source checkout and repeat builds to
 exercise frontend reuse. They cover JSON, positional/keyword calls, strict
 conversions, integer boundaries, collections, binary NULs, traceback capture,
-and recovery after failures. The native probe checks reference counts, bounded
+and recovery after failures. Method/iteration, recursive conversion, and retained
+exception cases extend that coverage. The native probe checks reference counts, bounded
 copies, initialization exclusion, finalization, rejected restart, and (on POSIX)
 wrong-thread rejection.
+
+For the complete native smoke (cached preparation, debug/release execution,
+interpreter discovery, and installed-helper use):
+
+```sh
+python3 .github/scripts/python_smoke.py --argi zig-out/bin/argi --numpy
+```
+
+Pass `--include-dir` and `--library` when the selected installation needs explicit
+headers or library paths. `--numpy` requires NumPy in that Python environment.

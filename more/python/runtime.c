@@ -8,10 +8,16 @@
 #if PY_VERSION_HEX < 0x030C0000
 #error "more/python requires CPython 3.12 or newer"
 #endif
+#if defined(ARGI_PYTHON_VERSION) && (PY_VERSION_HEX >> 16) != (ARGI_PYTHON_VERSION >> 16)
+#error "Python development headers do not match the selected Python interpreter"
+#endif
 #ifdef Py_GIL_DISABLED
 #error "more/python requires the standard GIL-enabled CPython build"
 #endif
 
+#ifndef ARGI_PYTHON_DEFAULT_EXECUTABLE
+#define ARGI_PYTHON_DEFAULT_EXECUTABLE "python3"
+#endif
 #include "errors.h"
 
 struct argi_python {
@@ -82,6 +88,15 @@ uintptr_t _argi_python_start(const uint8_t *program, uintptr_t program_length,
         set_initialization_error("An interpreter already exists or initialization has already been attempted");
         return 0;
     }
+    /* Py_GetVersion is callable before initialization. Reject a mismatched
+       embedding library before using version-specific configuration layouts. */
+    char *version_end;
+    unsigned long major = strtoul(Py_GetVersion(), &version_end, 10);
+    unsigned long minor = *version_end == '.' ? strtoul(version_end + 1, NULL, 10) : 0;
+    if (major != PY_MAJOR_VERSION || minor != PY_MINOR_VERSION) {
+        set_initialization_error("Python headers and embedding library have different major/minor versions");
+        return 0;
+    }
     struct argi_python *context = calloc(1, sizeof(*context));
     if (!context) { replace_error(&initialization_failure, &memory_error); return 0; }
     char *program_text = c_text(context, program, program_length);
@@ -93,7 +108,8 @@ uintptr_t _argi_python_start(const uint8_t *program, uintptr_t program_length,
     config.install_signal_handlers = 0;
     config.parse_argv = 0;
     config.safe_path = 1;
-    PyStatus status = PyConfig_SetBytesString(&config, &config.program_name, program_text);
+    PyStatus status = PyConfig_SetBytesString(&config, &config.program_name,
+        program_length == 7 && !memcmp(program, "python3", 7) ? ARGI_PYTHON_DEFAULT_EXECUTABLE : program_text);
     if (!PyStatus_Exception(status) && home_length)
         status = PyConfig_SetBytesString(&config, &config.home, home_text);
     if (!PyStatus_Exception(status)) {

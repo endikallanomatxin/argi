@@ -187,3 +187,13 @@ operations continue to return core Errable, so ordinary propagation stays intact
 latest failed initialization. Its message covers invalid paths/names, duplicate
 initialization, and CPython configuration failures, including the PyStatus error
 message. Before any failure, snapshot fields are empty.
+
+## Native preparation
+
+The optional `more/python/build.py` helper discovers native development headers
+and the shared embedding library using the Python installation that runs it.
+It prepares a cached object and passes ordinary native file dependencies to
+Argi, or prints `[[native]]` manifest entries. Neither module imports nor the
+compiler perform implicit Python discovery. An adapter prepared this way uses
+the helper's Python executable as its default program name, including a virtual
+environment; explicit non-default program names continue to override it.
