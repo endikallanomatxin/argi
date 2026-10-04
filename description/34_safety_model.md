@@ -112,6 +112,11 @@ cleanup responsibilities cannot be represented precisely. An Opaque Storage
 Domain, identified by a storage Place, conservatively retains hidden
 dependencies.
 
+Reading a reference from an opaque slot retains the lifetime dependencies
+of the stored references, including roots that have already ended. The same
+check applies through function summaries. Live storage for the slot does not
+prove that the referenced values remain live.
+
 Visible and hidden dependencies have intentionally different rules:
 
 ```text

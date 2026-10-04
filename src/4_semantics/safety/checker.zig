@@ -1393,6 +1393,22 @@ pub const SafetyChecker = struct {
                 for (path.projections) |projection| target = try self.project(target, projection);
                 if (self.valueAtPlace(state, target)) |stored| value = try self.reconstructPlaceValue(state, target, stored);
             };
+            for (path.projections) |projection| if (projection == .dereference) {
+                var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
+                defer provenances.deinit();
+                try self.collectOpaqueProvenancesCarriedBy(state, arguments[path.input_index], &provenances);
+                var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+                try dependencies.appendSlice(value.dependencies);
+                for (provenances.items) |provenance| for (state.opaque_storages.items) |domain| {
+                    if (!domain.storage.eql(provenance.storage)) continue;
+                    for (domain.hidden_dependencies) |dependency| {
+                        if (!self.opaqueDependencyIsInternalToStorage(state, domain.storage, dependency))
+                            try appendDependencyFact(&dependencies, .{ .root = dependency });
+                    }
+                };
+                value.dependencies = try dependencies.toOwnedSlice();
+                break;
+            };
             if (value.referenced_place) |storage| {
                 // A capability authorizes a call only while its value remains
                 // initialized. Unlike an output pointer, it is never merely a
@@ -1403,8 +1419,9 @@ pub const SafetyChecker = struct {
             // Summary paths select nested payloads, but ownership can live on
             // the containing choice. Keep that envelope when checking roots
             // that exist only on the selected success branch.
-            if (valueDependsOnDeadRootWithOwners(value, owners, state))
+            if (valueDependsOnDeadRootWithOwners(value, owners, state)) {
                 try self.report(source, "reference depends on a root that has ended", .{});
+            }
         }
         return self.diagnostics.list.items.len == before;
     }
@@ -2377,7 +2394,23 @@ pub const SafetyChecker = struct {
         var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
         defer provenances.deinit();
         try self.collectOpaqueProvenancesCarriedBy(state, pointer, &provenances);
-        return self.addOpaqueReadEnvelope(value, ty, provenances.items);
+        var stored = value;
+        if (ty) |value_type| if (self.typeContainsPointer(value_type)) {
+            var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+            try dependencies.appendSlice(value.dependencies);
+            // Reading a reference from an opaque slot borrows the references
+            // stored there, including dependencies that have already ended.
+            // Filtering to live roots would hide precisely the stale read.
+            for (provenances.items) |provenance| for (state.opaque_storages.items) |domain| {
+                if (!domain.storage.eql(provenance.storage)) continue;
+                for (domain.hidden_dependencies) |dependency| {
+                    if (!self.opaqueDependencyIsInternalToStorage(state, domain.storage, dependency))
+                        try appendDependencyFact(&dependencies, .{ .root = dependency });
+                }
+            };
+            stored.dependencies = try dependencies.toOwnedSlice();
+        };
+        return self.addOpaqueReadEnvelope(stored, ty, provenances.items);
     }
 
     fn addOpaqueReadEnvelope(

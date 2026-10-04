@@ -2965,8 +2965,14 @@ pub const Infer = struct {
         required: *std.array_list.Managed(facts.InputPath),
     ) !void {
         const effect = try self.inferExpression(function_id, pointer);
-        for (try self.symbolicSourcePaths(function_id, pointer, effect)) |path|
-            try appendInputPath(required, path);
+        const paths = try self.symbolicSourcePaths(function_id, pointer, effect);
+        for (paths) |path| try appendInputPath(required, path);
+        // Using a pointer loaded through another pointer requires the loaded
+        // reference's lifetime, independently of its containing slot's storage.
+        if (self.graph.node(pointer).content == .dereference) {
+            for (try self.projectInputPaths(paths, .dereference)) |path|
+                try appendInputPath(required, path);
+        }
     }
 
     fn symbolicSourcePaths(
