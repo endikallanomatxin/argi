@@ -8,7 +8,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     squared ::= unwrap_or_abort(.value = python.call_method(.self = &array, .name = "__mul__",
             .arguments = view(.array = &arguments))).result
     output :: [4]Float64 = (0.0, 0.0, 0.0, 0.0)
-    destination: ArrayView#(.t: Float64) = array_view(.array = $&output).view
+    destination: ArrayView#(.t: Float64) = view(.array = $&output)
     if unwrap_or_abort(.value = python.copy_numeric(.self = &squared,
             .destination = destination)).result != 4 { abort }
     expected: [4]Float64 = (1.0, 4.0, 9.0, 16.0)

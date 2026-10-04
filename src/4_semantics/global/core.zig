@@ -453,6 +453,9 @@ pub const Resolver = struct {
         for (candidates) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
             if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
+            // Specializations are cached implementations, not new overloads.
+            // Reconsider the generic declaration so lookup is call-order independent.
+            if (function.flags.is_generic_instantiation) continue;
             if (self.graph.declaration(function.declaration).constructor_type != null) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
             const score = switch (try self.matchCallInputWithReach(function.input, input_node, context)) {
@@ -495,6 +498,9 @@ pub const Resolver = struct {
         for (candidates) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
             if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
+            // Specializations are cached implementations, not new overloads.
+            // Reconsider the generic declaration so lookup is call-order independent.
+            if (function.flags.is_generic_instantiation) continue;
             if (self.graph.declaration(function.declaration).constructor_type != null) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
             const score = switch (self.matchCallInput(function.input, input_node)) {

@@ -9080,3 +9080,9 @@ test "feature_tests/python/11_numeric_buffers" {
 test "feature_tests/python/12X_numeric_readonly" {
     try buildExpectFail("tests/feature_tests/python/12X_numeric_readonly", "no overload of 'copy_numeric' accepts arguments");
 }
+
+test "feature_tests/functions/32_generic_view_dispatch_order" {
+    const path = "tests/feature_tests/functions/32_generic_view_dispatch_order";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
