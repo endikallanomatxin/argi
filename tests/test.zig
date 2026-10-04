@@ -7609,7 +7609,7 @@ test "feature_tests/collections/115_collection_sort_records" {
 }
 
 test "feature_tests/collections/116X_collection_sort_readonly" {
-    try buildExpectFail("tests/feature_tests/collections/116X_collection_sort_readonly", "no function named 'sort'");
+    try buildExpectFail("tests/feature_tests/collections/116X_collection_sort_readonly", "no matching generic overload of 'sort' accepts arguments");
 }
 
 test "tests/feature_tests/basics/25X_numeric_binding_type" {
@@ -7653,7 +7653,7 @@ test "tests/feature_tests/polymorphism/61_generic_constraint_alternate" {
 }
 
 test "tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape" {
-    try buildExpectFail("tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape", "no function named 'accept'");
+    try buildExpectFail("tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape", "no matching generic overload of 'accept' accepts arguments");
 }
 
 test "tests/feature_tests/polymorphism/63X_generic_constraint_qualified" {
