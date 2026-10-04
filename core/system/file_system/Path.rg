@@ -258,10 +258,28 @@ join_views(
     ) := {
     assume allocator
 
-    target_capacity ::= left&.length + right&.length
+    native :: UIntNative = 0
+    maximum ::= integer_limits(.value = native).maximum
+    target_capacity :: UIntNative = 0
+    match checked_add(.left = left&.length, .right = right&.length) {
+        ..ok count { target_capacity = count }
+        ..error _ {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+    }
+    -- Strings require a trailing NUL in addition to the visible capacity.
+    if target_capacity == maximum {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     if left&.length > 0 and right&.length > 0 {
         if path_is_separator(.byte = bytes_get(.view = left, .index = left&.length - 1).byte).ok {
         } else {
+            if target_capacity == maximum - 1 {
+                result = ..error(.reason = ..out_of_memory)
+                return
+            }
             target_capacity = target_capacity + 1
         }
     }

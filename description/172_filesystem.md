@@ -65,3 +65,8 @@ recursively deletes user data; a nonempty directory remains on disk. A retained
 path view borrows the owning String, not a promise that the directory still
 exists. No native handle or copied address grants safe-reference validity or
 an allocation receipt.
+
+Path joining validates the combined byte capacity and any inserted separator
+before allocation or copying. Unrepresentable capacities, including room for
+String's trailing NUL, report `out_of_memory` consistently with String
+construction. Empty borrowed path subranges form no one-past reference.
