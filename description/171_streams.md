@@ -58,4 +58,3 @@ A limit that cannot leave room for the trailing NUL reports `size_overflow`
 before allocation or reading. `out_of_memory`, `stream_read_failed`, and limit
 errors release accumulated ownership; they return no partial owner and do not
 rewind the stream. Static and virtual block readers support both operations.
-

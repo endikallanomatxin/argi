@@ -18,7 +18,6 @@ System and tooling
 Collections and values
 
 - Treaps and other ordered collections whose use cases justify an extra type.
-- Owning generic hash maps and sets beyond the current copyable element contracts.
 - Unicode normalization, case folding, and grapheme segmentation beyond strict
   UTF-8 scalar decoding and validated text views.
 - Numeric utilities such as checked arithmetic and reusable rounding contracts.

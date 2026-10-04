@@ -204,6 +204,15 @@ feature first.
   progress; zero write progress is an error. Buffered readers initialize their
   allocation before exposing a native refill view. Deque iterators retain its
   shape dependency, including in returned borrowed elements.
+  Limited copies stop without lookahead; owning complete reads check EOF with
+  one extra scratch byte and destroy partial owners on error. Reserve bounded
+  capacity before consuming a chunk.
+
+- Owning hash tables keep occupied entries separate from slot metadata. Move
+  extracted structural entries into lexical owners for recursive field cleanup;
+  nominal-only opaque drop hooks do not replace aggregate cleanup. Replace
+  grouped backing storage as a whole when growing to update sibling lifetime
+  roots together. Keys exposed for lookup and iteration remain readonly.
 
 - Hash map iteration never exposes mutable keys. Borrowed entry iterators retain
   a direct table shape anchor in addition to their owner loan; return references

@@ -290,6 +290,8 @@ reserve#(
     deinit(.self = $&self&._table._entries)
     deinit(.self = $&self&._table._slots, .allocator = allocator)
     _owned_hash_invalidate(.self = self)
+    -- Replace the table as one ownership unit so its backing roots change
+    -- together; independent field replacement retains obsolete sibling facts.
     self&._table = (._entries = ~entries, ._slots = ~slots)
     result = ..ok Void()
 }
@@ -314,6 +316,7 @@ put#(
                 .allocation = &self&._table._entries
                 .index      = found.value
             )
+            -- A lexical owner invokes recursive cleanup for structural entries.
             previous ::= _trusted_uninit_take(.allocation = $&self&._table._entries, .slot = slot)
             entry :: OwnedHashMapEntry#(.key: key, .value: value) = (.key = ~key, .value = ~value)
             _trusted_uninit_write(
