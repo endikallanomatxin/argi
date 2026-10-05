@@ -84,71 +84,27 @@ read_line(
     assume allocator
     assume reader
 
-    --
-    -- `read_line()` returns an owning `String`.
-    --
-    -- The returned bytes are independent from the input stream and remain
-    -- valid until the caller `deinit()`s that `String`.
-    --
-    initial_capacity :: UIntNative = 16
-    create_result ::= string_with_capacity(.allocator = allocator, .capacity = initial_capacity)
-    line :: String
+    -- The result owns independent text. Lexical cleanup releases partial
+    -- lines on failure; a successfully moved line belongs to the caller.
+    line ::= String(.capacity = 16)!
 
-    match create_result {
-        ..ok ~payload { line = ~payload }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-            return
-        }
-    }
-
-    line_complete ::= false
-
-    while 1 == 1 {
-        next ::= read_byte(reader)
-        match next {
-            ..error _ {
-                deinit(.self = $&line, .allocator = allocator)
-                result = ..error(.reason = ..stream_read_failed)
-                return
-            }
-            ..ok next_value {
-                match next_value {
-                    ..end {
-                        if line.length == 0 {
-                            deinit(.self = $&line, .allocator = allocator)
-                            result = ..ok ..end
-                            return
-                        }
-
-                        line_complete = true
-                        break
-                    }
-                    ..ok payload {
-                        if payload == 10 {
-                            line_complete = true
-                            break
-                        }
-
-                        grew ::= push_byte($&line, .byte = payload, .allocator = allocator)
-                        match grew {
-                            ..ok _ {
-                            }
-                            ..error _ {
-                                deinit(.self = $&line, .allocator = allocator)
-                                result = ..error(.reason = ..out_of_memory)
-                                return
-                            }
-                        }
-                    }
+    while true {
+        match read_byte(reader)! {
+            ..end {
+                if line.length == 0 {
+                    result = ..ok ..end
+                    return
                 }
+                break
+            }
+            ..ok byte {
+                if byte == 10 { break }
+                push_byte($&line, .byte = byte)!
             }
         }
     }
 
-    if line_complete {
-        result = ..ok ..ok ~line
-    }
+    result = ..ok ..ok ~line
 }
 
 print(

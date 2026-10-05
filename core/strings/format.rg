@@ -65,7 +65,7 @@ format_into(
     ) := {
     assume allocator
 
-    result = push_view(out, .view = value, .allocator = allocator)
+    result = push_view(out, .view = value)
 }
 
 format_into(
@@ -78,9 +78,9 @@ format_into(
     assume allocator
 
     if value {
-        result = push_c_string(out, .text = "true", .allocator = allocator)
+        result = push_c_string(out, .text = "true")
     } else {
-        result = push_c_string(out, .text = "false", .allocator = allocator)
+        result = push_c_string(out, .text = "false")
     }
 }
 
@@ -92,23 +92,10 @@ format(
     ) := {
     assume allocator
 
-    create_result ::= string_with_capacity(.allocator = allocator, .capacity = value.length)
+    out ::= string_with_capacity(.capacity = value.length)!
+    push_view($&out, .view = value)!
 
-    match create_result {
-        ..ok ~view_output_payload {
-            out ::= ~view_output_payload
-            pushed ::= push_view($&out, .view = value, .allocator = allocator)
-            if is(.value = pushed, .variant = ..error) {
-                deinit(.self = $&out, .allocator = allocator)
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-            result = ..ok ~out
-        }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-        }
-    }
+    result = ..ok ~out
 }
 
 format(
@@ -119,23 +106,10 @@ format(
     ) := {
     assume allocator
 
-    create_result ::= string_with_capacity(.allocator = allocator, .capacity = 5)
+    out ::= string_with_capacity(.capacity = 5)!
+    format_into(.out = $&out, .value = value)!
 
-    match create_result {
-        ..ok ~bool_output_payload {
-            out ::= ~bool_output_payload
-            pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
-            if is(.value = pushed, .variant = ..error) {
-                deinit(.self = $&out, .allocator = allocator)
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-            result = ..ok ~out
-        }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-        }
-    }
+    result = ..ok ~out
 }
 
 format_into#(

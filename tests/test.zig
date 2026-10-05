@@ -10167,3 +10167,8 @@ test "feature_tests/text/50X_split_for_source_after_cleanup" {
 test "feature_tests/text/51X_split_for_separator_after_cleanup" {
     try buildExpectFail("tests/feature_tests/text/51X_split_for_separator_after_cleanup", "root that has ended");
 }
+
+test "feature_tests/io/48_line_error_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/io/48_line_error_cleanup");
+    try runExpect("tests/feature_tests/io/48_line_error_cleanup", 0);
+}
