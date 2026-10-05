@@ -444,3 +444,158 @@ copy_stream(
         copied = grown
     }
 }
+
+-- Transfer dispatch considers both endpoints. Buffered writers fill their own
+-- free space; plain writers need only one initialized byte. Success counts newly
+-- accepted bytes and leaves final flushing and endpoint cleanup to the caller.
+transfer_stream(
+        .reader : $&BlockReader,
+        .writer : $&Writer
+    ) -> (
+        .result : Errable#(
+            UIntNative,
+            (..stream_read_failed, ..stream_write_failed, ..stream_flush_failed, ..size_overflow)
+        )
+    ) := {
+    storage ::= zeroed#([1]UInt8)()
+    buffer ::= view($&storage)
+    copied :: UIntNative = 0
+
+    while true {
+        got ::= read_block(.self = reader, .buffer = buffer)!
+        if got == 0 {
+            result = ..ok copied
+            return
+        }
+        if got > 1 { abort }
+        if copied + 1 < copied {
+            result = ..error(.reason = ..size_overflow)
+            return
+        }
+
+        write_byte(.self = writer, .byte = storage[0])!
+        copied = copied + 1
+    }
+}
+
+transfer_stream(
+        .reader : $&Virtual#(.abstract: BlockReader),
+        .writer : $&Writer
+    ) -> (
+        .result : Errable#(
+            UIntNative,
+            (..stream_read_failed, ..stream_write_failed, ..stream_flush_failed, ..size_overflow)
+        )
+    ) := {
+    storage ::= zeroed#([1]UInt8)()
+    buffer ::= view($&storage)
+    copied :: UIntNative = 0
+
+    while true {
+        got ::= read_block(.self = reader, .buffer = buffer)!
+        if got == 0 {
+            result = ..ok copied
+            return
+        }
+        if got > 1 { abort }
+        if copied + 1 < copied {
+            result = ..error(.reason = ..size_overflow)
+            return
+        }
+
+        write_byte(.self = writer, .byte = storage[0])!
+        copied = copied + 1
+    }
+}
+
+transfer_stream#(
+        .base_type : Type: Writer
+    )(
+        .reader : $&BlockReader,
+        .writer : $&BufferedWriter#(.base_type: base_type)
+    ) -> (
+        .result : Errable#(
+            UIntNative,
+            (..stream_read_failed, ..stream_write_failed, ..stream_flush_failed, ..size_overflow)
+        )
+    ) := {
+    capacity ::= length(&writer&.buffer).count
+    copied :: UIntNative = 0
+
+    if capacity == 0 {
+        result = transfer_stream(.writer = writer&.base, .reader = reader)
+        return
+    }
+
+    while true {
+        if writer&.length == capacity {
+            buffered_writer_flush(.self = writer)!
+        }
+
+        available ::= capacity - writer&.length
+        free_space ::= unwrap_or_abort(
+            .value = slice(.self = &writer&.buffer, .start = writer&.length, .count = available)
+        )
+        -- A failed read may modify free space; commit only a successful count.
+        got ::= read_block(.self = reader, .buffer = free_space)!
+        if got == 0 {
+            result = ..ok copied
+            return
+        }
+        if got > available { abort }
+        grown ::= copied + got
+        if grown < copied {
+            result = ..error(.reason = ..size_overflow)
+            return
+        }
+
+        writer&.length = writer&.length + got
+        copied = grown
+    }
+}
+
+transfer_stream#(
+        .base_type : Type: Writer
+    )(
+        .reader : $&Virtual#(.abstract: BlockReader),
+        .writer : $&BufferedWriter#(.base_type: base_type)
+    ) -> (
+        .result : Errable#(
+            UIntNative,
+            (..stream_read_failed, ..stream_write_failed, ..stream_flush_failed, ..size_overflow)
+        )
+    ) := {
+    capacity ::= length(&writer&.buffer).count
+    copied :: UIntNative = 0
+
+    if capacity == 0 {
+        result = transfer_stream(.writer = writer&.base, .reader = reader)
+        return
+    }
+
+    while true {
+        if writer&.length == capacity {
+            buffered_writer_flush(.self = writer)!
+        }
+
+        available ::= capacity - writer&.length
+        free_space ::= unwrap_or_abort(
+            .value = slice(.self = &writer&.buffer, .start = writer&.length, .count = available)
+        )
+        -- A failed read may modify free space; commit only a successful count.
+        got ::= read_block(.self = reader, .buffer = free_space)!
+        if got == 0 {
+            result = ..ok copied
+            return
+        }
+        if got > available { abort }
+        grown ::= copied + got
+        if grown < copied {
+            result = ..error(.reason = ..size_overflow)
+            return
+        }
+
+        writer&.length = writer&.length + got
+        copied = grown
+    }
+}

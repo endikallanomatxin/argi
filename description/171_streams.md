@@ -30,6 +30,27 @@ These helpers borrow streams and buffers and allocate no storage. Generic
 failures retain stream reasons; TCP's direct socket operations retain socket
 reasons.
 
+## Transfers with destination storage
+
+`transfer_stream(.reader, .writer)` is a free function taking a `BlockReader`
+or its `Virtual` handle and a concrete `Writer`. It transfers until EOF and returns the number of newly accepted
+bytes. Dispatch considers both inputs; no transfer buffer is supplied by the
+caller. An ordinary writer uses one initialized byte of local storage.
+
+With a `BufferedWriter`, the function reads directly into the free portion of
+that writer's initialized buffer. Pending output stays before newly read bytes;
+a full buffer is flushed before the next read. A zero-capacity wrapper delegates
+to its underlying writer. The transfer borrows both endpoints, allocates nothing,
+and leaves their owners open. Success does not promise a flushed destination;
+call `flush` explicitly to check the final output.
+
+Only successful reads increase the pending length. On a read failure, previously
+accepted bytes remain pending; bytes written into free space by the failed read
+are ignored. Writes and flushes retain the buffered writer's existing failure
+policy, which discards pending bytes on failure to avoid repeating uncertain
+native progress. Stream errors and unrepresentable totals are reported through
+an `Errable`; failure may follow consumed input and already written output.
+
 ## Bounded consumption
 
 `copy_stream_limited(.reader, .writer, .buffer, .limit)` copies at most `limit`
