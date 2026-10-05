@@ -16,15 +16,7 @@ write(
     i :: UIntNative = 0
 
     while i < text.length {
-        wrote ::= write_byte(self, .byte = bytes_get(.view = &text, .index = i).byte)
-        match wrote {
-            ..ok _ {
-            }
-            ..error&err {
-                result = ..error(.reason = err&.reason)
-                return
-            }
-        }
+        write_byte(self, .byte = bytes_get(.view = &text, .index = i).byte)!
         i = i + 1
     }
 
@@ -48,21 +40,10 @@ write(
     ) := {
     wrote_count :: UIntNative = 0
 
-    while wrote_count < length#(.t: UInt8)(&buffer).count {
-        ptr ::= trusted_reference_offset#(.t: UInt8)(
-            .base     = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(&buffer).pointer).reference
-            .elements = wrote_count
-        ).reference
-        wrote ::= write_byte(self, .byte = ptr&)
-        match wrote {
-            ..ok _ {
-                wrote_count = wrote_count + 1
-            }
-            ..error&err {
-                result = ..error(.reason = err&.reason)
-                return
-            }
-        }
+    while wrote_count < length(&buffer).count {
+        byte ::= unwrap_or_abort(.value = get_ro_ref(&buffer, .index = wrote_count))
+        write_byte(self, .byte = byte&)!
+        wrote_count = wrote_count + 1
     }
 
     result = ..ok wrote_count

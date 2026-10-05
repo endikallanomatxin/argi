@@ -344,6 +344,13 @@ feature first.
   repeatedly. Preserve explicit capability selection when switching resources.
   Spell Errable type applications positionally, such as `Errable#(Void, Reasons)`,
   including in return signatures.
+  Inline a single-use owner or initialized backing array into a borrowing
+  constructor when its lifetime covers the consumer. Keep an explicit owner
+  when later checked close or other access makes the resource's role clearer.
+  At program boundaries, register checked deferred flushing next to output
+  setup; a failing deferred flush replaces a pending return error.
+  Retain labels required by built-in dispatch, including `.value` on numeric
+  conversions, and when omitting a preceding capability input.
   Keep test fixtures explicit when their syntax is part of the behavior tested.
 
 - Follow Zig coding style:
