@@ -9785,6 +9785,65 @@ test "usecase_tests/03_word_count" {
     }
     try expectEqualStrings("", failure.stdout);
     try expect(std.mem.indexOf(u8, failure.stderr, "size_limit_exceeded") != null);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const large_input = try std.testing.allocator.alloc(u8, 5 * 2000);
+    defer std.testing.allocator.free(large_input);
+    for (0..2000) |index| @memcpy(large_input[index * 5 ..][0..5], "word ");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "large.txt", .data = large_input });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "unicode.txt", .data = "word\tcafé\r\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "empty.txt", .data = "" });
+    try tmp.dir.createDirPath(std.testing.io, "nested");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "nested/ignored.txt", .data = "ignored" });
+
+    var cwd_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const cwd_length = try tmp.dir.realPath(std.testing.io, &cwd_buffer);
+    const repo_root = try repoRootPrefix();
+    defer std.testing.allocator.free(repo_root);
+    const executable = try std.fs.path.join(std.testing.allocator, &.{ repo_root, output_path });
+    defer std.testing.allocator.free(executable);
+
+    for ([_][]const u8{ ".", "./" }) |directory| {
+        const counted = try runChildInCwd(&.{ executable, directory, "10000" }, cwd_buffer[0..cwd_length]);
+        defer std.testing.allocator.free(counted.stdout);
+        defer std.testing.allocator.free(counted.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, counted.term);
+        try expectEqualStrings("", counted.stderr);
+        try expect(std.mem.eql(u8, counted.stdout, "2001\tword\n1\tcafé\n") or
+            std.mem.eql(u8, counted.stdout, "1\tcafé\n2001\tword\n"));
+    }
+
+    for ([_][]const u8{ "9999", "invalid", "-1" }) |limit| {
+        const rejected = try runChildInCwd(&.{ executable, ".", limit }, cwd_buffer[0..cwd_length]);
+        defer std.testing.allocator.free(rejected.stdout);
+        defer std.testing.allocator.free(rejected.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 1 }, rejected.term);
+        try expectEqualStrings("", rejected.stdout);
+        try expect(rejected.stderr.len > 0);
+        if (std.mem.eql(u8, limit, "9999")) {
+            try expect(std.mem.indexOf(u8, rejected.stderr, "large.txt") != null);
+        }
+    }
+
+    try tmp.dir.createDirPath(std.testing.io, "invalid-utf8");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "invalid-utf8/bad.txt", .data = "valid \xff" });
+    const invalid_utf8 = try runChildInCwd(&.{ executable, "invalid-utf8" }, cwd_buffer[0..cwd_length]);
+    defer std.testing.allocator.free(invalid_utf8.stdout);
+    defer std.testing.allocator.free(invalid_utf8.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, invalid_utf8.term);
+    try expectEqualStrings("", invalid_utf8.stdout);
+    try expect(std.mem.indexOf(u8, invalid_utf8.stderr, "invalid_utf8") != null);
+    try expect(std.mem.indexOf(u8, invalid_utf8.stderr, "bad.txt") != null);
+
+    try tmp.dir.createDirPath(std.testing.io, "empty-directory");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "empty-directory/empty.txt", .data = "" });
+    const empty = try runChildInCwd(&.{ executable, "empty-directory", "0" }, cwd_buffer[0..cwd_length]);
+    defer std.testing.allocator.free(empty.stdout);
+    defer std.testing.allocator.free(empty.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, empty.term);
+    try expectEqualStrings("", empty.stdout);
+    try expectEqualStrings("", empty.stderr);
 }
 
 test "feature_tests/binary/04_byte_search" {

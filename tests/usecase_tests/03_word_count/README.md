@@ -10,7 +10,8 @@ zig build
 
 The optional second argument sets the maximum bytes accepted per file; it
 otherwise defaults to 1 MiB. The directory's immediate regular files are read
-with bounded scratch storage. Subdirectories and other entry kinds are skipped.
+with an initialized 8 KiB scratch buffer and the per-file byte limit.
+Subdirectories and other entry kinds are skipped.
 Metadata follows native link rules, so this is not a sandbox or a recursive
 walker. Files may change between metadata and opening.
 
@@ -26,12 +27,13 @@ from earlier files on error; a single invalid UTF-8 input is validated before
 any count changes.
 
 The library receives explicit filesystem and allocator capabilities. The CLI
-uses initialized caller scratch, owning strings and hash entries, checked count
-increments, and borrowed iteration. It never acquires safe references from
-native file handles.
+uses inferred Errable reasons, a buffered output writer with a checked deferred
+flush, owning strings and hash entries, checked count increments, and borrowed
+iteration. Files are explicitly closed before their text is counted; file errors
+include their path. It never acquires safe references from native file handles.
 
-This consumer exposes two remaining opportunities: query/update owning String
-keys using StringView without allocating replacement keys, and portable bounded
-path joining. Its current path join accepts the example's explicit directory
-path and native enumeration names and inserts `/`, supported by the selected
-filesystem adapters. It intentionally does not promise path normalization.
+Whitespace tokens use ordinary `for` iteration. Hash lookup borrows each token
+as a StringView; only a new word allocates an owning key. Directory entry paths
+use the standard `join_views` operation, which recognizes the target's native
+separators and avoids adding a duplicate separator. It does not normalize paths
+or resolve them against the filesystem.

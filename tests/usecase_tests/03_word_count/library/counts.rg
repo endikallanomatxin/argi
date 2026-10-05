@@ -2,20 +2,16 @@ count_text(
         .self      : $&OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
         .text      : StringView,
         .allocator : $&PageAllocator
-    ) -> (
-        .result : Errable#(Void, (..invalid_utf8, ..out_of_memory, ..out_of_range)) = ..ok Void()
-    ) := {
+    ) -> !Void = ..ok Void() := {
     assume allocator
 
     validate_utf8(text)!
-    iterator ::= split_whitespace(text)
 
-    while has_next(&iterator).ok {
-        token ::= next($&iterator).value
-        match get_ref(.self = self, .key = token).result {
+    for token in split_whitespace(text) {
+        match get_ref(self, token).result {
             ..none {
                 word ::= format(token)!
-                put(.self = self, .key = ~word, .value = 1)!
+                put(self, ~word, 1)!
             }
             ..some borrowed {
                 borrowed.value&= checked_add(borrowed.value&, 1)!
@@ -31,61 +27,27 @@ count_directory(
         .buffer      : ArrayView#(.t: UInt8),
         .file_system : $&FileSystem,
         .allocator   : $&PageAllocator
-    ) -> (
-        .result : Errable#(
-            Void,
-            (
-                ..invalid_utf8,
-                ..out_of_memory,
-                ..out_of_range,
-                ..invalid_path,
-                ..path_not_found,
-                ..permission_denied,
-                ..already_exists,
-                ..not_a_directory,
-                ..filesystem_failed,
-                ..path_open_failed,
-                ..stream_read_failed,
-                ..invalid_stream_buffer,
-                ..size_limit_exceeded,
-                ..size_overflow
-            )
-        ) = ..ok Void()
-    ) := {
+    ) -> !Void = ..ok Void() := {
     assume allocator
     assume file_system
 
-    directory ::= Directory(.path = path)!
+    directory ::= Directory(.path = path)!! path
 
     while true {
-        match next($&directory)! {
+        match next($&directory)!! path {
             ..none { return }
-            ..some ~payload {
-                joined ::= String(.capacity = 16)!
-                push_view(.self = $&joined, .view = path)!
-                push_byte(.self = $&joined, .byte = 47)!
-                push_view(
-                    .self = $&joined
-                    .view = as_view(&payload.value.name)
-                )!
+            ..some ~entry {
+                name ::= as_view(&entry.value.name)
+                joined ::= join_views(&path, &name)!
+                full_path ::= as_view(&joined)
+                info ::= metadata(file_system, full_path)!! full_path
 
-                info ::= metadata(.path = as_view(&joined), .self = file_system)!
                 if info.kind == ..file {
-                    file ::= open_read(
-                        .self = file_system
-                        .path = as_view(&joined)
-                    )!
+                    file_reader ::= open_read(file_system, full_path)!! full_path
+                    text ::= read_all_limited($&file_reader, buffer, limit)!! full_path
+                    close($&file_reader)!! full_path
 
-                    text ::= read_all_limited(
-                        .self   = $&file
-                        .buffer = buffer
-                        .limit  = limit
-                    )!
-
-                    count_text(
-                        .self = self
-                        .text = as_view(&text)
-                    )!
+                    count_text(self, as_view(&text))!! full_path
                 }
             }
         }
