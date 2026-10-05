@@ -1,53 +1,46 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
-    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+-- Copy binary input with bounded working storage and checked stream progress.
+main(.system: System) -> !Void = ..ok Void() := {
+    assume allocator := system.page_allocator
+    assume reader ::= $&system.terminal&.stdin
     assume writer ::= $&system.terminal&.stdout
 
-    argc ::= system.args | length(&_)
-    if argc >= 2 {
-        first_arg := argument_view_at(system.args, 1)
-        if first_arg == "-h" or first_arg == "--help" {
-            print(
-                "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help."
-            )
+    specs ::= (CliSpec("help", "h", "Show help"),)
+    arguments ::= parse_cli(
+        .source = system.args
+        .specs  = view(&specs)
+        .start  = 1
+    )!
+
+    for option in arguments.options {
+        if option.name == "help" {
+            write_cli_help(
+                .program = "cat"
+                .about   = "Concatenate files to standard output. With no files or FILE '-', read standard input."
+                .specs   = view(&specs)
+            )!
+            flush()!
             return
         }
     }
 
-    if argc < 2 {
-        status_code = 1
-        return
-    }
+    storage ::= zeroed#([8192]UInt8)()
+    buffer ::= view($&storage)
 
-    i :: UIntNative = 1
-    while i < argc {
-        path := argument_at(system.args, i)
-        text_result ::= read_file(system.file_system, path)
-        match text_result {
-            ..ok ~payload {
-                text ::= ~payload
-                view ::= as_view(&text)
-                write(writer, view)
-                i = i + 1
-            }
-            ..error ~err {
-                match err.reason {
-                    ..path_open_failed {
-                        print("cat: failed to open file")
-                    }
-                    ..stream_read_failed {
-                        print("cat: failed to read file")
-                    }
-                    ..stream_close_failed {
-                        print("cat: failed to close file")
-                    }
-                    ..out_of_memory {
-                        print("cat: out of memory")
-                    }
-                }
-                status_code = 1
-                return
+    if length(&arguments.positionals).count == 0 {
+        copy_stream(.buffer = buffer)!
+    } else {
+        for path in arguments.positionals {
+            if path == "-" {
+                copy_stream(.buffer = buffer)!
+            } else {
+                file ::= open_read(system.file_system, .path = path)!! path
+                assume reader ::= $&file
+
+                copy_stream(.buffer = buffer)!! path
+                close($&file)!! path
             }
         }
     }
+
+    flush()!
 }

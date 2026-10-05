@@ -1319,7 +1319,7 @@ test "feature_tests/basics/01_minimal_main" {
 
 test "usecase_tests/01_cat_cli" {
     const test_path = "tests/usecase_tests/01_cat_cli";
-    const expected_help = "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help.\n";
+    const expected_help = "Concatenate files to standard output. With no files or FILE '-', read standard input.\nUsage: cat [OPTIONS] [ARGS]\n\nOptions:\n  -h, --help  Show help\n";
     const input_1 = try pathInTest(test_path, "input.txt");
     defer std.testing.allocator.free(input_1);
     const input_2 = try pathInTest(test_path, "input_2.txt");
@@ -1343,6 +1343,52 @@ test "usecase_tests/01_cat_cli" {
         0,
         expected_help,
     );
+    try runExpectStdoutWithArgs(test_path, &.{ "missing-cat-input", "--help" }, 0, expected_help);
+    try runExpectStdoutWithArgsAndStdin(test_path, &.{}, "stdin\x00bytes\n", 0, "stdin\x00bytes\n");
+    try runExpectStdoutWithArgsAndStdin(test_path, &.{"-"}, "", 0, "");
+    try runExpectStdoutWithArgsAndStdin(
+        test_path,
+        &.{ input_1, "-", input_2, "-" },
+        "standard input\n",
+        0,
+        "Hello from Argi.\nThis is a tiny cat clone.\nstandard input\nAnd now a second file.\nCat should concatenate both.\n",
+    );
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var binary: [8192 * 2 + 17]u8 = undefined;
+    for (&binary, 0..) |*byte, index| byte.* = @truncate(index * 73);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "--help", .data = &binary });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "empty", .data = "" });
+
+    var cwd_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const cwd_length = try tmp.dir.realPath(std.testing.io, &cwd_buffer);
+    const repo_root = try repoRootPrefix();
+    defer std.testing.allocator.free(repo_root);
+    const output_path = try outputPathFor(test_path);
+    defer std.testing.allocator.free(output_path);
+    const executable = try std.fs.path.join(std.testing.allocator, &.{ repo_root, output_path });
+    defer std.testing.allocator.free(executable);
+
+    const binary_result = try runChildInCwd(&.{ executable, "--", "empty", "--help", "empty" }, cwd_buffer[0..cwd_length]);
+    defer std.testing.allocator.free(binary_result.stdout);
+    defer std.testing.allocator.free(binary_result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, binary_result.term);
+    try expectEqualStrings(&binary, binary_result.stdout);
+    try expectEqualStrings("", binary_result.stderr);
+
+    for ([_][]const u8{ "--unknown", "missing-cat-input" }) |argument| {
+        const failed = try runChildInCwd(&.{ executable, argument }, cwd_buffer[0..cwd_length]);
+        defer std.testing.allocator.free(failed.stdout);
+        defer std.testing.allocator.free(failed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 1 }, failed.term);
+        try expectEqualStrings("", failed.stdout);
+        try expect(failed.stderr.len > 0);
+        if (std.mem.eql(u8, argument, "missing-cat-input")) {
+            try expect(std.mem.indexOf(u8, failed.stderr, argument) != null);
+        }
+    }
 }
 
 test "usecase_tests/02_echo_until_empty" {
