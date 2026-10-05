@@ -168,7 +168,7 @@ fn buildLinkArgv(
         .static_library, .shared_library => unreachable,
     };
     // MinGW selects its CRT through the driver; it has no Unix libc archive.
-    if (target.os != .windows) try argv.append(allocator, "-lc");
+    if (target.os != .windows) try argv.appendSlice(allocator, &.{ "-lm", "-lc" });
     return argv.toOwnedSlice(allocator);
 }
 
@@ -388,7 +388,8 @@ test "buildLinkArgv keeps linker object output and libc order" {
     try std.testing.expectEqualStrings("/tmp/input.o", argv[1]);
     try std.testing.expectEqualStrings("-o", argv[2]);
     try std.testing.expectEqualStrings("/tmp/output", argv[3]);
-    try std.testing.expectEqualStrings("-lc", argv[4]);
+    try std.testing.expectEqualStrings("-lm", argv[4]);
+    try std.testing.expectEqualStrings("-lc", argv[5]);
 }
 
 test "optimization modes select machine code optimization levels" {

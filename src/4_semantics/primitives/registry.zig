@@ -17,6 +17,7 @@ pub const Spec = struct {
 };
 
 pub const specs = [_]Spec{
+    .{ .primitive = .float_math, .path = "core/numbers/math.rg", .name = "_float_math", .signatures = &.{"#(.t: Type: Float)(.operation: UInt32, .left: t, .right: t) -> (.result: t)"} },
     .{ .primitive = .establish_inherited_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_establish_inherited_reference", .signatures = &.{"#(.t: Type)(.raw: RawPointer#(.t: t), .root: &Any) -> (.reference: $&t)"} },
     .{ .primitive = .establish_inherited_storage, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_establish_inherited_storage", .signatures = &.{"(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8))"} },
     .{ .primitive = .reference_offset, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_reference_offset", .signatures = &.{"#(.t: Type)(.base: &t, .elements: UIntNative) -> (.reference: &t)"} },
@@ -205,7 +206,7 @@ pub const Transfer = struct {
 
 pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
     return switch (primitive) {
-        .none => .{ .value = .empty },
+        .none, .float_math => .{ .value = .empty },
         .raw_allocated_storage => .{ .value = .raw_storage },
         // Body-backed page acquisition retains the Argi UIntNative ABI;
         // libc acquisition identity also selects its pointer-return ABI.
