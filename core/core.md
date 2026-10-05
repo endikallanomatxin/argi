@@ -25,7 +25,7 @@ The implemented foundations include:
 - System and I/O: program capabilities, files, filesystem operations, terminal
   streams, blocking networking, processes, and byte/block reader/writer contracts.
   Filesystem helpers include directory enumeration, metadata, file positioning
-  and truncation, and temporary directory owners. Stream helpers support exact
+  and truncation, temporary directory owners, and lexical path normalization. Stream helpers support exact
   reads, complete writes, bounded delimiter reads, copying with caller buffers,
   size-limited copying and owning binary reads, memory adapters, limited block
   and byte readers, bounded borrowed LF/CRLF lines, and fallible iteration

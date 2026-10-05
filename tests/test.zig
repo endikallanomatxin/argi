@@ -9860,3 +9860,8 @@ test "feature_tests/io/45_owned_lines" {
     try expectSuccessfulBuild("tests/feature_tests/io/45_owned_lines");
     try runExpect("tests/feature_tests/io/45_owned_lines", 0);
 }
+
+test "feature_tests/system/88_path_normalization" {
+    try expectSuccessfulBuild("tests/feature_tests/system/88_path_normalization");
+    try runExpect("tests/feature_tests/system/88_path_normalization", 0);
+}
