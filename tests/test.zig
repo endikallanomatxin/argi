@@ -9296,7 +9296,8 @@ test "feature_tests/basics/76_fallible_main_trace" {
     try expect(std.mem.indexOf(u8, result.stderr, "error: unhandled error in main") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "starting application") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "76_fallible_main_trace/main.rg:3:") != null);
+    const location = if (@import("builtin").os.tag == .windows) "76_fallible_main_trace\\main.rg:3:" else "76_fallible_main_trace/main.rg:3:";
+    try expect(std.mem.indexOf(u8, result.stderr, location) != null);
 }
 
 test "feature_tests/basics/77_fallible_main_system" {
@@ -9399,7 +9400,8 @@ test "feature_tests/basics/83_fallible_main_local_tracer" {
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("", result.stdout);
     try expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "83_fallible_main_local_tracer/main.rg:8:") != null);
+    const location = if (@import("builtin").os.tag == .windows) "83_fallible_main_local_tracer\\main.rg:8:" else "83_fallible_main_local_tracer/main.rg:8:";
+    try expect(std.mem.indexOf(u8, result.stderr, location) != null);
 }
 
 test "feature_tests/ownership/327_caller_storage_generic" {
