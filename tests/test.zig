@@ -9900,3 +9900,8 @@ test "feature_tests/system/91_cli_schema" {
     try expectSuccessfulBuild("tests/feature_tests/system/91_cli_schema");
     try runExpect("tests/feature_tests/system/91_cli_schema", 0);
 }
+
+test "feature_tests/system/93_directory_walk" {
+    try expectSuccessfulBuild("tests/feature_tests/system/93_directory_walk");
+    try runExpect("tests/feature_tests/system/93_directory_walk", 0);
+}

@@ -4,6 +4,7 @@
 /* Private native adapter ABI; all path and entry bytes cross by bounded copy. */
 int32_t _argi_fs_mkdir(const uint8_t *, uintptr_t);
 int32_t _argi_fs_rmdir(const uint8_t *, uintptr_t);
+int32_t _argi_fs_metadata_nofollow(const uint8_t *, uintptr_t, int32_t *, uint64_t *, int64_t *, uint32_t *);
 int32_t _argi_fs_metadata(const uint8_t *, uintptr_t, int32_t *, uint64_t *, int64_t *, uint32_t *);
 int32_t _argi_fs_directory_open(const uint8_t *, uintptr_t, uintptr_t *);
 int32_t _argi_fs_directory_next(uintptr_t, uintptr_t *);
