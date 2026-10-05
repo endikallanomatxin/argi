@@ -1,0 +1,6 @@
+endpoint,duration_ms,note
+/health,10,"cached, fast"
+/search,20,"first line
+second line"
+/checkout,30,"quoted ""note"""
+/search,100,slow
