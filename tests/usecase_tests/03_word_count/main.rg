@@ -28,35 +28,37 @@ main(
         ) = ..ok Void()
     ) := {
     assume allocator := system.page_allocator
-    out ::= $&system.terminal&.stdout
-    argc ::= length(.self = system.args).count
+    assume writer ::= $&system.terminal&.stdout
+    assume file_system := system.file_system
+
+    argc ::= length(system.args).count
     if argc < 2 or argc > 3 {
-        write(.self = out, .text = "Usage: word-count <directory> [maximum-file-bytes]\n")!
+        write(writer, "Usage: word-count <directory> [maximum-file-bytes]\n")!
         return
     }
+
     limit :: UIntNative = 1048576
     if argc == 3 {
-        parsed ::= parse_uintnative(.text = argument_view_at(.self = system.args, .index = 2))!
-        limit = parsed
+        limit = parse_uintnative(argument_view_at(system.args, 2))!
     }
+
     counts ::= OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy)(
-        .policy    = StringHashPolicy()
-        .allocator = allocator
+        .policy = StringHashPolicy()
     )!
-    scratch :: [4]UInt8 = (0, 0, 0, 0)
+    scratch ::= zeroed#([4]UInt8)()
     words.count_directory(
-        .self        = $&counts
-        .path        = argument_view_at(.self = system.args, .index = 1)
-        .limit       = limit
-        .buffer      = view(.array = $&scratch)
-        .file_system = system.file_system
-        .allocator   = allocator
+        .self   = $&counts
+        .path   = argument_view_at(system.args, 1)
+        .limit  = limit
+        .buffer = view($&scratch)
     )!
+
     for entry in counts {
-        write(.self = out, .value = entry.value&)!
-        write(.self = out, .text = "\t")!
-        write(.self = out, .text = as_view(.self = entry.key))!
-        write(.self = out, .text = "\n")!
+        write(writer, .value = entry.value&)!
+        write(writer, "\t")!
+        write(writer, as_view(entry.key))!
+        write(writer, "\n")!
     }
-    flush(.self = out)!
+
+    flush()!
 }
