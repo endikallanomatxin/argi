@@ -9875,3 +9875,8 @@ test "feature_tests/numbers/13_elementary_math" {
     try expectSuccessfulBuild("tests/feature_tests/numbers/13_elementary_math");
     try runExpect("tests/feature_tests/numbers/13_elementary_math", 0);
 }
+
+test "feature_tests/codecs/01_hex_base64" {
+    try expectSuccessfulBuild("tests/feature_tests/codecs/01_hex_base64");
+    try runExpect("tests/feature_tests/codecs/01_hex_base64", 0);
+}
