@@ -9885,3 +9885,8 @@ test "feature_tests/logging/01_writer_logger" {
     try expectSuccessfulBuild("tests/feature_tests/logging/01_writer_logger");
     try runExpect("tests/feature_tests/logging/01_writer_logger", 0);
 }
+
+test "feature_tests/system/92_utc_format" {
+    try expectSuccessfulBuild("tests/feature_tests/system/92_utc_format");
+    try runExpect("tests/feature_tests/system/92_utc_format", 0);
+}
