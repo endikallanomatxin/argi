@@ -10154,3 +10154,16 @@ test "feature_tests/io/47_deferred_flush" {
     try expectSuccessfulBuild("tests/feature_tests/io/47_deferred_flush");
     try runExpect("tests/feature_tests/io/47_deferred_flush", 0);
 }
+
+test "feature_tests/text/49_split_iteration" {
+    try expectSuccessfulBuild("tests/feature_tests/text/49_split_iteration");
+    try runExpect("tests/feature_tests/text/49_split_iteration", 0);
+}
+
+test "feature_tests/text/50X_split_for_source_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/50X_split_for_source_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/text/51X_split_for_separator_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/51X_split_for_separator_after_cleanup", "root that has ended");
+}

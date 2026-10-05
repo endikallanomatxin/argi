@@ -260,6 +260,10 @@ feature first.
   Parameterized loops retain their item binding, mode and body in syntax-free
   IR. Specialization resolves the shared iterator protocol before the body,
   so item types are available to dispatch and the same cleanup rules apply.
+  Borrowed loops likewise keep synthetic iterator declarations and computed
+  collections in that surrounding block. A declaration in a for-node init
+  expression bypasses ordinary block initializedness and lifetime checking;
+  never put those declarations into an expression-only init slot.
 
 - Pipes preserve one evaluation of computed operands and retain lvalue storage.
   Concrete and parameterized body lowering both reserve private deferred

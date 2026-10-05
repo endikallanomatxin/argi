@@ -131,7 +131,9 @@ Borrowed byte utilities preserve the backing storage lifetime:
   and embedded NULs, and leave non-ASCII whitespace unchanged. Empty results
   need no one-past reference.
 - `split(.self, .separator)` returns a fallible `StringSplitIterator` that
-  implements `Iterator<StringView>`. The iterator borrows both text and
+  implements `Iterator<StringView>` and `Iterable<StringView>`. A `for` loop
+  copies its current cursor without advancing the original. The iterator
+  borrows both text and
   separator; both backing stores must remain live while it is used. Matching
   is byte-wise and non-overlapping. An empty separator is `empty_separator`;
   an empty input produces one empty segment. Leading, consecutive, and
