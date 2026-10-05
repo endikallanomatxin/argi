@@ -13,6 +13,7 @@ _string_view_subrange(
         view = ""
         return
     }
+
     view = (
         .data   = trusted_reference_offset#(.t: UInt8)(.base = self.data, .elements = start).reference
         .length = count
@@ -21,6 +22,7 @@ _string_view_subrange(
 
 trim_start(.self: StringView) -> (.view: StringView) := {
     start :: UIntNative = 0
+
     while start < self.length {
         if [
             ascii_is_whitespace(.byte = bytes_get(.view = &self, .index = start).byte).ok
@@ -28,11 +30,13 @@ trim_start(.self: StringView) -> (.view: StringView) := {
         ] { break }
         start = start + 1
     }
+
     view = _string_view_subrange(.self = self, .start = start, .count = self.length - start).view
 }
 
 trim_end(.self: StringView) -> (.view: StringView) := {
     end :: UIntNative = self.length
+
     while end > 0 {
         if [
             ascii_is_whitespace(.byte = bytes_get(.view = &self, .index = end - 1).byte).ok
@@ -40,12 +44,13 @@ trim_end(.self: StringView) -> (.view: StringView) := {
         ] { break }
         end = end - 1
     }
+
     view = _string_view_subrange(.self = self, .start = 0, .count = end).view
 }
 
 trim(.self: StringView) -> (.view: StringView) := {
-    leading ::= trim_start(.self = self).view
-    view = trim_end(.self = leading).view
+    leading ::= trim_start(self).view
+    view = trim_end(leading).view
 }
 
 -- Validate by subtraction before forming a borrowed reference. Empty results
@@ -61,9 +66,11 @@ slice(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     if count > self.length - start {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     result = ..ok _string_view_subrange(.self = self, .start = start, .count = count).view
 }

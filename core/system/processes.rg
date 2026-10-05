@@ -88,10 +88,12 @@ _process_mode(.value: ProcessStreamMode) -> (.mode: Int32) := {
         mode = 1
         return
     }
+
     if is(.value = value, .variant = ..discard) {
         mode = 2
         return
     }
+
     mode = 0
 }
 
@@ -116,17 +118,20 @@ spawn(
     ) := {
     assume ffi := self&._ffi
     builder ::= _process_builder().address
+
     if builder == 0 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     status :: Int32 = _process_argument(
         .builder = builder
         .bytes   = executable.data
         .length  = executable.length
     ).status
     i :: UIntNative = 0
-    while status == 0 and i < length(.self = &arguments).count {
+
+    while status == 0 and i < length(&arguments).count {
         argument ::= unwrap_or_abort(.value = get_ro_ref(.self = &arguments, .index = i)).result
         status = _process_argument(
             .builder = builder
@@ -135,10 +140,12 @@ spawn(
         ).status
         i = i + 1
     }
+
     handle :: UIntNative = 0
     input :: UIntNative = 0
     output :: UIntNative = 0
     error :: UIntNative = 0
+
     if status == 0 {
         status = _process_spawn(
             .builder = builder
@@ -151,19 +158,24 @@ spawn(
             .stderr  = $&error
         ).status
     }
+
     _process_builder_free(.builder = builder)
+
     if status == -2 {
         result = ..error(.reason = ..invalid_process_argument)
         return
     }
+
     if status == -3 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     if status != 0 {
         result = ..error(.reason = ..process_spawn_failed)
         return
     }
+
     result = ..ok(
         ._ffi    = self&._ffi
         ._handle = handle
@@ -182,20 +194,25 @@ wait(
         )
     ) := {
     assume ffi := self&._ffi
+
     if self&._handle == 0 {
         result = ..error(.reason = ..process_wait_failed)
         return
     }
+
     code :: UInt32 = 0
     signal :: UInt32 = 0
+
     if _process_wait(.handle = self&._handle, .code = $&code, .signal = $&signal).status != 0 {
         result = ..error(.reason = ..process_wait_failed)
         return
     }
+
     if signal != 0 {
         result = ..ok ..signaled(.signal = signal)
         return
     }
+
     result = ..ok ..exited(.code = code)
 }
 
@@ -205,14 +222,17 @@ terminate(
         .result : Errable#(.t: Void, .reasons: (..process_terminate_failed))
     ) := {
     assume ffi := self&._ffi
+
     if self&._handle == 0 {
         result = ..error(.reason = ..process_terminate_failed)
         return
     }
+
     if _process_terminate(.handle = self&._handle).status != 0 {
         result = ..error(.reason = ..process_terminate_failed)
         return
     }
+
     result = ..ok Void()
 }
 
@@ -222,10 +242,12 @@ close(.self: $&ProcessStream) -> (.result: Errable#(.t: Void, .reasons: (..strea
     assume ffi := self&._ffi
     handle ::= self&._handle
     self&._handle = 0
+
     if _process_stream_close(.handle = handle).status != 0 {
         result = ..error(.reason = ..stream_close_failed)
         return
     }
+
     result = ..ok Void()
 }
 
@@ -238,20 +260,25 @@ read_byte(
         )
     ) := {
     assume ffi := self&._ffi
+
     if self&._handle == 0 or self&._writable {
         result = ..error(.reason = ..stream_read_failed)
         return
     }
+
     byte :: UInt8 = 0
     status ::= _process_stream_read(.handle = self&._handle, .byte = $&byte).status
+
     if status < 0 {
         result = ..error(.reason = ..stream_read_failed)
         return
     }
+
     if status == 0 {
         result = ..ok ..end
         return
     }
+
     result = ..ok ..ok byte
 }
 
@@ -265,14 +292,17 @@ write_byte(
         )
     ) := {
     assume ffi := self&._ffi
+
     if self&._handle == 0 or self&._writable == false {
         result = ..error(.reason = ..stream_write_failed)
         return
     }
+
     if _process_stream_write(.handle = self&._handle, .byte = byte).status != 0 {
         result = ..error(.reason = ..stream_write_failed)
         return
     }
+
     result = ..ok Void()
 }
 
@@ -288,6 +318,7 @@ flush(
         result = ..error(.reason = ..stream_flush_failed)
         return
     }
+
     result = ..ok Void()
 }
 

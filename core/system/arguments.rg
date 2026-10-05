@@ -92,6 +92,7 @@ get(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     result = ..ok argument_view_at(.self = self, .index = index)
 }
 

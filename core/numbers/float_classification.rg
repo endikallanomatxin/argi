@@ -9,16 +9,19 @@ classify_float#(.t: Type: Float)(.value: t) -> (.classification: FloatClass) := 
     magnitude ::= encoding.bits % [encoding.fraction_unit * encoding.exponent_limit]
     exponent ::= magnitude / encoding.fraction_unit
     fraction ::= magnitude % encoding.fraction_unit
+
     if exponent == encoding.exponent_limit - 1 {
         classification = ..infinity
         if fraction != 0 { classification = ..nan }
         return
     }
+
     if exponent == 0 {
         classification = ..zero
         if fraction != 0 { classification = ..subnormal }
         return
     }
+
     classification = ..normal
 }
 

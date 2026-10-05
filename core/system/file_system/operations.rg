@@ -17,6 +17,7 @@ _FilesystemReasons: Type = (
 
 _fs_reason(.status: Int32) -> (.reason: _FilesystemReasons) := {
     reason = ..filesystem_failed
+
     if status == -2 { reason = ..invalid_path }
     if status == -3 { reason = ..out_of_memory }
     if status == -4 { reason = ..path_not_found }
@@ -90,10 +91,12 @@ create_directory(
     ) := {
     assume ffi := self&._ffi
     status ::= _fs_mkdir(.bytes = path.data, .length = path.length).status
+
     if status != 0 {
         result = ..error(.reason = _fs_reason(.status = status).reason)
         return
     }
+
     result = ..ok Void()
 }
 
@@ -105,10 +108,12 @@ remove_directory(
     ) := {
     assume ffi := self&._ffi
     status ::= _fs_rmdir(.bytes = path.data, .length = path.length).status
+
     if status != 0 {
         result = ..error(.reason = _fs_reason(.status = status).reason)
         return
     }
+
     result = ..ok Void()
 }
 
@@ -133,6 +138,7 @@ metadata(
     seconds :: Int64 = 0
     nanoseconds :: UInt32 = 0
     status :: Int32 = 0
+
     if follow_links {
         status = _fs_metadata(
             .bytes       = path.data
@@ -152,16 +158,20 @@ metadata(
             .nanoseconds = $&nanoseconds
         ).status
     }
+
     if status != 0 {
         result = ..error(.reason = _fs_reason(.status = status).reason)
         return
     }
+
     selected :: FileKind = ..other
+
     if kind == 1 { selected = ..file }
     if kind == 2 { selected = ..directory }
     modified ::= unwrap_or_abort(
         .value = UnixTimestamp(.seconds = seconds, .nanoseconds = nanoseconds)
     )
+
     result = ..ok(.kind = selected, .size = size, .modified = modified)
 }
 
@@ -179,10 +189,12 @@ Directory init(
     assume ffi := self&._ffi
     handle :: UIntNative = 0
     status ::= _fs_directory_open(.bytes = path.data, .length = path.length, .handle = $&handle).status
+
     if status != 0 {
         result = ..error(.reason = _fs_reason(.status = status).reason)
         return
     }
+
     result = ..ok(._filesystem = self, ._handle = handle, ._ended = false)
 }
 
@@ -194,22 +206,28 @@ next(
     ) := {
     assume ffi := self&._filesystem&._ffi
     assume allocator
+
     if self&._ended {
         result = ..ok ..none
         return
     }
+
     size :: UIntNative = 0
     status ::= _fs_directory_next(.handle = self&._handle, .length = $&size).status
+
     if status == 1 {
         self&._ended = true
         result = ..ok ..none
         return
     }
+
     if status != 0 {
         result = ..error(.reason = _fs_reason(.status = status).reason)
         return
     }
+
     name ::= string_with_length(.allocator = allocator, .length = size)!
+
     if size > 0 {
         copied ::= _fs_directory_copy(
             .handle   = self&._handle
@@ -221,6 +239,7 @@ next(
             return
         }
     }
+
     result = ..ok ..some(.value = (.name = ~name))
 }
 
@@ -244,9 +263,11 @@ seek(
     ) := {
     assume ffi := self&._ffi
     selected :: Int32 = 0
+
     if origin == ..current { selected = 1 }
     if origin == ..end { selected = 2 }
     position :: UInt64 = 0
+
     if [
         _fs_seek(
             .stream   = self&.stream_address
@@ -259,6 +280,7 @@ seek(
         result = ..error(.reason = ..stream_seek_failed)
         return
     }
+
     result = ..ok position
 }
 
@@ -273,10 +295,12 @@ truncate(
         .result : Errable#(.t: Void, .reasons: (..stream_truncate_failed))
     ) := {
     assume ffi := self&._ffi
+
     if _fs_truncate(.stream = self&.stream_address, .size = size).status != 0 {
         result = ..error(.reason = ..stream_truncate_failed)
         return
     }
+
     result = ..ok Void()
 }
 
@@ -322,11 +346,14 @@ TemporaryDirectory init(
         .prefix_length = prefix.length
         .handle        = $&handle
     ).status
+
     if status != 0 {
         result = ..error(.reason = _fs_reason(.status = status).reason)
         return
     }
+
     count ::= _fs_temp_length(.handle = handle).length
+
     match string_with_length(.allocator = allocator, .length = count) {
         ..error _ {
             _fs_temp_cleanup(.handle = handle)
@@ -345,17 +372,20 @@ TemporaryDirectory init(
 }
 
 path(.self: &TemporaryDirectory) -> (.view: StringView) := {
-    view = as_view(.self = &self&._path).view
+    view = as_view(&self&._path).view
 }
 
 close(.self: $&TemporaryDirectory) -> (.result: Errable#(.t: Void, .reasons: _FilesystemReasons)) := {
     assume ffi := self&._filesystem&._ffi
     status ::= _fs_temp_close(.handle = self&._handle).status
+
     if status != 0 {
         result = ..error(.reason = _fs_reason(.status = status).reason)
         return
     }
+
     self&._handle = 0
+
     result = ..ok Void()
 }
 

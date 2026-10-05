@@ -9,9 +9,10 @@ binary_search#(
     ) -> (
         .index : ?UIntNative
     ) := {
-    count ::= length(.self = self).count
+    count ::= length(self).count
     start :: UIntNative = 0
     end ::= count
+
     while start < end {
         remaining ::= end - start
         middle ::= start + remaining / 2
@@ -22,6 +23,7 @@ binary_search#(
             end = middle
         }
     }
+
     if start < count {
         element ::= unwrap_or_abort(.value = get_ro_ref(.self = self, .index = start))&
         if less(.self = order, .left = value, .right = element).ok == false {
@@ -29,5 +31,6 @@ binary_search#(
             return
         }
     }
+
     index = ..none
 }

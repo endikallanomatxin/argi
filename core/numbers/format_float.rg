@@ -888,6 +888,7 @@ _float_encoding(.value: Float64) -> (.encoding: _FloatEncoding) := {
 _float_exact_digits(.integer: _FloatDecimalInteger) -> (.digits: _FloatExactDigits) := {
     digits = _FloatExactDigits()
     remaining ::= integer
+
     while true {
         byte ::= _decimal_digit#(.t: UInt32)(
             .digit = _float_integer_divide_ten(.self = $&remaining).remainder
@@ -923,13 +924,16 @@ _float_text_view(.self: &_FloatText) -> (.view: StringView) := {
 
 _float_render(.coefficient: UInt64, .power: Int32, .negative: Bool) -> (.text: _FloatText) := {
     text = _FloatText()
+
     if negative { _float_text_byte(.text = $&text, .byte = 45) }
     reduced ::= coefficient
     scale ::= power
+
     while reduced % 10 == 0 {
         reduced = reduced / 10
         scale = scale + 1
     }
+
     digits ::= _decimal_encode(.value = reduced)
     count :: UIntNative = 20 - digits.start
     exponent ::= scale + unwrap_or_abort(.value = Int32(.value = count)).result - 1
@@ -957,6 +961,7 @@ _float_render(.coefficient: UInt64, .power: Int32, .negative: Bool) -> (.text: _
         }
         return
     }
+
     if exponent < 0 {
         _float_text_byte(.text = $&text, .byte = 48)
         _float_text_byte(.text = $&text, .byte = 46)
@@ -971,8 +976,10 @@ _float_render(.coefficient: UInt64, .power: Int32, .negative: Bool) -> (.text: _
         }
         return
     }
+
     before_point ::= UIntNative(.value = exponent + 1)
     before ::= unwrap_or_abort(.value = before_point).result
+
     while index < count or index < before {
         if index == before { _float_text_byte(.text = $&text, .byte = 46) }
         byte :: UInt8 = 48
@@ -980,6 +987,7 @@ _float_render(.coefficient: UInt64, .power: Int32, .negative: Bool) -> (.text: _
         _float_text_byte(.text = $&text, .byte = byte)
         index = index + 1
     }
+
     if count <= before {
         _float_text_byte(.text = $&text, .byte = 46)
         _float_text_byte(.text = $&text, .byte = 48)
@@ -994,6 +1002,7 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
     fraction ::= magnitude % encoding.fraction_unit
     exponent_field ::= magnitude / encoding.fraction_unit
     text = _FloatText()
+
     if exponent_field == encoding.exponent_limit - 1 {
         if fraction != 0 {
             _float_text_byte(.text = $&text, .byte = 110)
@@ -1007,6 +1016,7 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
         }
         return
     }
+
     if magnitude == 0 {
         if negative { _float_text_byte(.text = $&text, .byte = 45) }
         _float_text_byte(.text = $&text, .byte = 48)
@@ -1014,8 +1024,10 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
         _float_text_byte(.text = $&text, .byte = 48)
         return
     }
+
     mantissa ::= fraction
     binary_power ::= 1 - encoding.bias
+
     if exponent_field != 0 {
         mantissa = mantissa + encoding.fraction_unit
         binary_power = [
@@ -1023,7 +1035,9 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
             - encoding.bias
         ]
     }
+
     unit ::= encoding.fraction_unit
+
     while unit > 1 {
         binary_power = binary_power - 1
         unit = unit / 2
@@ -1031,12 +1045,14 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
     -- Midpoints are integral at a common scale two binary places below value.
     -- At a normal binade boundary the predecessor has half the spacing.
     lower_coefficient ::= mantissa * 4 - 2
+
     if fraction == 0 and exponent_field > 1 { lower_coefficient = mantissa * 4 - 1 }
     lower ::= _float_integer_from_u64(.value = lower_coefficient).integer
     upper ::= _float_integer_from_u64(.value = mantissa * 4 + 2).integer
     exact ::= _float_integer_from_u64(.value = mantissa * 4).integer
     binary_power = binary_power - 2
     decimal_scale :: Int32 = 0
+
     while binary_power < 0 {
         _float_integer_multiply(.self = $&lower, .factor = 5)
         _float_integer_multiply(.self = $&upper, .factor = 5)
@@ -1044,24 +1060,29 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
         decimal_scale = decimal_scale + 1
         binary_power = binary_power + 1
     }
+
     while binary_power > 0 {
         _float_integer_multiply(.self = $&lower, .factor = 2)
         _float_integer_multiply(.self = $&upper, .factor = 2)
         _float_integer_multiply(.self = $&exact, .factor = 2)
         binary_power = binary_power - 1
     }
+
     digits ::= _float_exact_digits(.integer = exact).digits
     count :: UIntNative = 800 - digits.start
     place ::= _float_integer_from_u64(.value = 1).integer
     remaining ::= count - 1
+
     while remaining > 0 {
         _float_integer_multiply(.self = $&place, .factor = 10)
         remaining = remaining - 1
     }
+
     floor ::= _FloatDecimalInteger()
     coefficient :: UInt64 = 0
     index :: UIntNative = 0
     closed ::= mantissa % 2 == 0
+
     while index < count and index < 17 {
         digit ::= UInt32(.value = digits.bytes[digits.start + index] - 48)
         coefficient = coefficient * 10 + UInt64(.value = digit)
@@ -1081,13 +1102,13 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
             .closed    = closed
         ).inside
         if floor_ok or ceil_ok {
-            prefer_ceil :: Bool = false
+            prefer_ceil ::= false
             if index + 1 < count {
                 next ::= digits.bytes[digits.start + index + 1]
                 if next > 53 { prefer_ceil = true }
                 if next == 53 {
                     tail ::= index + 2
-                    sticky :: Bool = false
+                    sticky ::= false
                     while tail < count {
                         if digits.bytes[digits.start + tail] != 48 {
                             sticky = true

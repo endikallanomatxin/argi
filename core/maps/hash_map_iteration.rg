@@ -33,6 +33,7 @@ _hash_map_next_index#(
     ) := {
     index = start
     count ::= capacity(.self = self).count
+
     while index < count {
         slot ::= _trusted_dynamic_array_get(.array = &self&._slots, .index = index)
         if is(.value = slot, .variant = ..occupied) { return }
@@ -105,9 +106,11 @@ next#(
         .value : HashMapEntry#(.key: key, .value: value)
     ) := {
     index ::= _hash_map_next_index(.self = self&._owner, .start = self&._index).index
+
     if index >= capacity(.self = self&._owner).count { abort }
     slot ::= _trusted_dynamic_array_get(.array = &self&._owner&._slots, .index = index)
     self&._index = index + 1
+
     match slot {
         ..occupied entry { value = (.key = entry.key, .value = entry.value) }
         ..empty { abort }
@@ -174,9 +177,11 @@ next#(
         .value : key
     ) := {
     index ::= _hash_map_next_index(.self = self&._owner, .start = self&._index).index
+
     if index >= capacity(.self = self&._owner).count { abort }
     slot ::= _trusted_dynamic_array_get(.array = &self&._owner&._slots, .index = index)
     self&._index = index + 1
+
     match slot {
         ..occupied entry { value = entry.key }
         ..empty { abort }
@@ -243,9 +248,11 @@ next#(
         .value : value
     ) := {
     index ::= _hash_map_next_index(.self = self&._owner, .start = self&._index).index
+
     if index >= capacity(.self = self&._owner).count { abort }
     slot ::= _trusted_dynamic_array_get(.array = &self&._owner&._slots, .index = index)
     self&._index = index + 1
+
     match slot {
         ..occupied entry { value = entry.value }
         ..empty { abort }
@@ -315,9 +322,11 @@ next#(
         .value : HashMapROEntry#(.key: key, .value: value)
     ) := {
     index ::= _hash_map_next_index(.self = self&._owner, .start = self&._index).index
+
     if index >= capacity(.self = self&._owner).count { abort }
     slot ::= dynamic_array_element_ro_pointer(.array = &self&._owner&._slots, .offset = index).pointer
     self&._index = index + 1
+
     match slot&{
         ..occupied&entry {
             borrowed_key ::= depend_on#(.t: &key)(
@@ -399,9 +408,11 @@ next#(
         .value : HashMapRWEntry#(.key: key, .value: value)
     ) := {
     index ::= _hash_map_next_index(.self = self&._owner, .start = self&._index).index
+
     if index >= capacity(.self = self&._owner).count { abort }
     slot ::= dynamic_array_element_rw_pointer(.array = $&self&._owner&._slots, .offset = index).pointer
     self&._index = index + 1
+
     match slot&{
         ..occupied&entry {
             borrowed_key ::= depend_on#(.t: &key)(

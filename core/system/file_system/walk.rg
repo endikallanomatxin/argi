@@ -3,7 +3,7 @@ _WalkFrame: Type = (.directory: Directory, .path: Path, .depth: UIntNative)
 _WalkFrame deinit(.self: $&_WalkFrame, .allocator: $&Allocator) -> () := {
     assume allocator
     deinit(.self = $&self&.directory)
-    deinit(.self = $&self&.path, .allocator = allocator)
+    deinit(.self = $&self&.path)
 }
 
 WalkEntry: Type = (.path: Path, .info: FileMetadata, .depth: UIntNative)
@@ -28,15 +28,17 @@ DirectoryWalker init(
         .result : Errable#(.t: DirectoryWalker, .reasons: _FilesystemReasons)
     ) := {
     assume allocator
-    frames ::= DynamicArray#(.t: _WalkFrame)(.allocator = allocator, .capacity = 1)!
+    frames ::= DynamicArray#(.t: _WalkFrame)(.capacity = 1)!
+
     if maximum_depth > 0 {
-        owned ::= path_with_view(.view = path, .allocator = allocator)!
+        owned ::= path_with_view(.view = path)!
         directory ::= Directory(.self = self, .path = path)!
         push_assume_capacity(
             .self  = $&frames
-            .value = _WalkFrame(.directory = ~directory, .path = ~owned, .depth = 0)
+            .value = _WalkFrame(~directory, ~owned, 0)
         )
     }
+
     result = ..ok(
         ._frames        = ~frames
         ._filesystem    = self
@@ -47,10 +49,12 @@ DirectoryWalker init(
 
 DirectoryWalker deinit(.self: $&DirectoryWalker, .allocator: $&Allocator) -> () := {
     assume allocator
-    while length(.self = &self&._frames).count > 0 {
+
+    while length(&self&._frames).count > 0 {
         discarded ::= ~unwrap_or_abort(.value = pop(.self = $&self&._frames))
     }
-    deinit(.self = $&self&._frames, .allocator = allocator)
+
+    deinit(.self = $&self&._frames)
 }
 
 -- EOF is sticky. Errors are terminal and preserve all owners for cleanup.
@@ -61,39 +65,37 @@ next(
         .result : Errable#(.t: ?WalkEntry, .reasons: _FilesystemReasons)
     ) := {
     assume allocator
+
     if self&._ended {
         result = ..ok ..none
         return
     }
+
     self&._ended = true
-    while length(.self = &self&._frames).count > 0 {
-        count ::= length(.self = &self&._frames).count
+
+    while length(&self&._frames).count > 0 {
+        count ::= length(&self&._frames).count
         frame ::= unwrap_or_abort(.value = get_rw_ref(.self = $&self&._frames, .index = count - 1))
-        match next(.self = $&frame&.directory, .allocator = allocator)! {
+        match next($&frame&.directory)! {
             ..none { discarded ::= ~unwrap_or_abort(.value = pop(.self = $&self&._frames)) }
             ..some ~entry {
-                parent ::= as_view(.self = &frame&.path)
-                name ::= as_view(.self = &entry.value.name)
-                path ::= join_views(.left = &parent, .right = &name, .allocator = allocator)!
-                text ::= as_view(.self = &path)
+                parent ::= as_view(&frame&.path)
+                name ::= as_view(&entry.value.name)
+                path ::= join_views(.left = &parent, .right = &name)!
+                text ::= as_view(&path)
                 info ::= metadata(.self = self&._filesystem, .path = text, .follow_links = false)!
                 depth ::= frame&.depth + 1
                 directory_kind :: FileKind = ..directory
                 if info.kind == directory_kind and depth < self&._maximum_depth {
                     ensure_capacity(
-                        .self      = $&self&._frames
-                        .capacity  = count + 1
-                        .allocator = allocator
+                        .self     = $&self&._frames
+                        .capacity = count + 1
                     )!
-                    owned ::= copy(.self = &path, .allocator = allocator)!
+                    owned ::= copy(.self = &path)!
                     directory ::= Directory(.self = self&._filesystem, .path = text)!
                     push_assume_capacity(
                         .self  = $&self&._frames
-                        .value = _WalkFrame(
-                            .directory = ~directory
-                            .path      = ~owned
-                            .depth     = depth
-                        )
+                        .value = _WalkFrame(~directory, ~owned, depth)
                     )
                 }
                 self&._ended = false
@@ -102,5 +104,6 @@ next(
             }
         }
     }
+
     result = ..ok ..none
 }

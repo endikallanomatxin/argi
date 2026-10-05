@@ -4,10 +4,12 @@ CsvRecord: Type = (.fields: DynamicArray#(.t: String))
 
 CsvRecord deinit(.self: $&CsvRecord, .allocator: $&Allocator) -> () := {
     assume allocator
-    while length(.self = &self&.fields).count > 0 {
+
+    while length(&self&.fields).count > 0 {
         discarded ::= ~unwrap_or_abort(.value = pop(.self = $&self&.fields))
     }
-    deinit(.self = $&self&.fields, .allocator = allocator)
+
+    deinit(.self = $&self&.fields)
 }
 
 -- Borrowed input must remain unchanged. Records own decoded fields, including
@@ -46,21 +48,24 @@ next(
         .result : Errable#(.t: ?CsvRecord, .reasons: CsvReasons)
     ) := {
     assume allocator
+
     if self&._ended or self&._position == self&._text.length {
         result = ..ok ..none
         return
     }
+
     self&._ended = true
-    fields ::= DynamicArray#(.t: String)(.allocator = allocator, .capacity = 1)!
+    fields ::= DynamicArray#(.t: String)(.capacity = 1)!
     record :: CsvRecord = (.fields = ~fields)
     position ::= self&._position
+
     while true {
-        if length(.self = &record.fields).count >= self&.maximum_fields {
+        if length(&record.fields).count >= self&.maximum_fields {
             result = ..error(.reason = ..size_limit_exceeded)
             return
         }
-        field ::= String(.allocator = allocator, .capacity = 16)!
-        quoted :: Bool = false
+        field ::= String(.capacity = 16)!
+        quoted ::= false
         if position < self&._text.length {
             if bytes_get(.view = &self&._text, .index = position).byte == 34 {
                 quoted = true
@@ -70,7 +75,7 @@ next(
                 ]
             }
         }
-        closed :: Bool = false
+        closed ::= false
         while position < self&._text.length {
             byte ::= bytes_get(.view = &self&._text, .index = position).byte
             if quoted {
@@ -82,7 +87,7 @@ next(
                                 result = ..error(.reason = ..size_limit_exceeded)
                                 return
                             }
-                            push_byte(.self = $&field, .byte = 34, .allocator = allocator)!
+                            push_byte(.self = $&field, .byte = 34)!
                             position = position + 1
                             continue
                         }
@@ -101,14 +106,14 @@ next(
                 result = ..error(.reason = ..size_limit_exceeded)
                 return
             }
-            push_byte(.self = $&field, .byte = byte, .allocator = allocator)!
+            push_byte(.self = $&field, .byte = byte)!
             position = position + 1
         }
         if quoted and closed == false {
             result = ..error(.reason = ..invalid_csv)
             return
         }
-        push(.self = $&record.fields, .value = ~field, .allocator = allocator)!
+        push(.self = $&record.fields, .value = ~field)!
         if position == self&._text.length { break }
         separator ::= bytes_get(.view = &self&._text, .index = position).byte
         position = position + 1
@@ -126,8 +131,10 @@ next(
         result = ..error(.reason = ..invalid_csv)
         return
     }
+
     self&._position = position
     self&._ended = false
+
     result = ..ok ..some(.value = ~record)
 }
 
@@ -139,7 +146,8 @@ write_record(
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
     ) := {
     index :: UIntNative = 0
-    while index < length(.self = &fields).count {
+
+    while index < length(&fields).count {
         if index > 0 { write_byte(.self = writer, .byte = 44)! }
         text ::= unwrap_or_abort(.value = get(.self = &fields, .index = index))
         write_byte(.self = writer, .byte = 34)!
@@ -153,5 +161,6 @@ write_record(
         write_byte(.self = writer, .byte = 34)!
         index = index + 1
     }
+
     write(.self = writer, .text = "\r\n")!
 }

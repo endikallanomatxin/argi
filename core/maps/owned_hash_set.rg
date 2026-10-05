@@ -23,6 +23,7 @@ OwnedHashSet init#(
         .capacity  = capacity
     )!
     constructed = (._map = ~map)
+
     result = ..ok ~constructed
 }
 
@@ -41,7 +42,9 @@ insert#(
         result = ..ok false
         return
     }
+
     put(.self = $&self&._map, .key = ~key, .value = _HashSetValue(), .allocator = allocator)!
+
     result = ..ok true
 }
 
@@ -91,7 +94,7 @@ length#(
         .self : &OwnedHashSet#(.key: key, .policy: policy)
     ) -> (
         .count : UIntNative
-    ) := { count = length(.self = &self&._map).count }
+    ) := { count = length(&self&._map).count }
 
 capacity#(
         .key    : Type,
@@ -111,7 +114,9 @@ reserve#(
         .allocator : $&Allocator
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..out_of_memory))
-    ) := { result = reserve(.self = $&self&._map, .capacity = capacity, .allocator = allocator) }
+    ) := {
+    result = reserve(.self = $&self&._map, .capacity = capacity, .allocator = allocator)
+}
 
 OwnedHashSet deinit#(
         .key    : Type,

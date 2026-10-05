@@ -6,6 +6,7 @@ _byte(.text: StringView, .position: UIntNative) -> (.value: UInt8) := {
 
 _space(.text: StringView, .position: UIntNative) -> (.next: UIntNative) := {
     next = position
+
     while next < text.length {
         byte ::= _byte(.text = text, .position = next).value
         if byte != 32 and byte != 9 and byte != 10 and byte != 13 { return }
@@ -18,10 +19,12 @@ _hex(.byte: UInt8) -> (.value: UInt32 = 16) := {
         value = UInt32(.value = byte - 48)
         return
     }
+
     if byte >= 65 and byte <= 70 {
         value = UInt32(.value = byte - 55)
         return
     }
+
     if byte >= 97 and byte <= 102 { value = UInt32(.value = byte - 87) }
 }
 
@@ -35,8 +38,10 @@ _quad(
         result = ..error(.reason = ..invalid_json)
         return
     }
+
     value :: UInt32 = 0
     offset :: UIntNative = 0
+
     while offset < 4 {
         digit ::= _hex(.byte = _byte(.text = text, .position = position + offset).value).value
         if digit == 16 {
@@ -46,6 +51,7 @@ _quad(
         value = value * 16 + digit
         offset = offset + 1
     }
+
     result = ..ok value
 }
 
@@ -58,6 +64,7 @@ _string_end(
         .result : Errable#(.t: UIntNative, .reasons: JsonReasons)
     ) := {
     cursor ::= position + 1
+
     while cursor < text.length {
         byte ::= _byte(.text = text, .position = cursor).value
         cursor = cursor + 1
@@ -122,6 +129,7 @@ _string_end(
             }
         }
     }
+
     result = ..error(.reason = ..invalid_json)
 }
 
@@ -134,12 +142,15 @@ _number_end(
         .result : Errable#(.t: UIntNative, .reasons: JsonReasons)
     ) := {
     cursor ::= position
+
     if _byte(.text = text, .position = cursor).value == 45 { cursor = cursor + 1 }
     if cursor == text.length {
         result = ..error(.reason = ..invalid_json)
         return
     }
+
     byte ::= _byte(.text = text, .position = cursor).value
+
     if byte == 48 { cursor = cursor + 1 } else {
         if byte < 49 or byte > 57 {
             result = ..error(.reason = ..invalid_json)
@@ -152,6 +163,7 @@ _number_end(
             cursor = cursor + 1
         }
     }
+
     if cursor < text.length {
         if _byte(.text = text, .position = cursor).value == 46 {
             cursor = cursor + 1
@@ -168,6 +180,7 @@ _number_end(
             }
         }
     }
+
     if cursor < text.length {
         exponent ::= _byte(.text = text, .position = cursor).value
         if exponent == 101 or exponent == 69 {
@@ -189,6 +202,7 @@ _number_end(
             }
         }
     }
+
     result = ..ok cursor
 }
 
@@ -203,7 +217,9 @@ _literal(
         result = ..error(.reason = ..invalid_json)
         return
     }
+
     offset :: UIntNative = 0
+
     while offset < expected.length {
         if [
             _byte(.text = text, .position = position + offset).value
@@ -217,7 +233,9 @@ _literal(
         }
         offset = offset + 1
     }
+
     end ::= position + expected.length
+
     result = ..ok end
 }
 
@@ -230,39 +248,50 @@ _value_end(
         .result : Errable#(.t: UIntNative, .reasons: JsonReasons)
     ) := {
     cursor ::= _space(.text = text, .position = position).next
+
     if cursor == text.length {
         result = ..error(.reason = ..invalid_json)
         return
     }
+
     byte ::= _byte(.text = text, .position = cursor).value
+
     if byte == 34 {
         result = _string_end(.text = text, .position = cursor)
         return
     }
+
     if byte == 116 {
         result = _literal(.text = text, .position = cursor, .expected = "true")
         return
     }
+
     if byte == 102 {
         result = _literal(.text = text, .position = cursor, .expected = "false")
         return
     }
+
     if byte == 110 {
         result = _literal(.text = text, .position = cursor, .expected = "null")
         return
     }
+
     if byte != 91 and byte != 123 {
         result = _number_end(.text = text, .position = cursor)
         return
     }
+
     if depth == maximum {
         result = ..error(.reason = ..json_depth_exceeded)
         return
     }
+
     object ::= byte == 123
     closing :: UInt8 = 93
+
     if object { closing = 125 }
     cursor = _space(.text = text, .position = cursor + 1).next
+
     if cursor < text.length {
         if _byte(.text = text, .position = cursor).value == closing {
             end ::= cursor + 1
@@ -270,6 +299,7 @@ _value_end(
             return
         }
     }
+
     while true {
         if object {
             if cursor == text.length {
@@ -328,11 +358,14 @@ validate(
         .result : Errable#(.t: Void, .reasons: JsonReasons) = ..ok Void()
     ) := {
     validate_utf8(.text = text)!
+
     if maximum_depth > 256 {
         result = ..error(.reason = ..json_depth_exceeded)
         return
     }
+
     end ::= _value_end(.text = text, .position = 0, .depth = 0, .maximum = maximum_depth)!
+
     if _space(.text = text, .position = end).next != text.length {
         result = ..error(.reason = ..invalid_json)
     }
@@ -354,17 +387,21 @@ JsonCursor init(
         .result : Errable#(.t: JsonCursor, .reasons: JsonReasons)
     ) := {
     validate(.text = text, .maximum_depth = maximum_depth)!
+
     result = ..ok(._text = text, ._position = 0)
 }
 
 next(.self: $&JsonCursor) -> (.result: Errable#(.t: ?JsonToken, .reasons: JsonReasons)) := {
     start ::= _space(.text = self&._text, .position = self&._position).next
+
     if start == self&._text.length {
         result = ..ok ..none
         return
     }
+
     byte ::= _byte(.text = self&._text, .position = start).value
     end ::= start + 1
+
     if byte == 34 { end = _string_end(.text = self&._text, .position = start)! } else {
         if byte == 116 { end = start + 4 } else {
             if byte == 102 { end = start + 5 } else {
@@ -376,11 +413,13 @@ next(.self: $&JsonCursor) -> (.result: Errable#(.t: ?JsonToken, .reasons: JsonRe
             }
         }
     }
+
     lexeme :: StringView = (
         .data   = string_view_byte_address(.self = &self&._text, .index = start).reference
         .length = end - start
     )
     self&._position = end
+
     result = ..ok ..some(.value = (.kind = byte, .lexeme = lexeme))
 }
 
@@ -397,18 +436,21 @@ decode_string(
     assume allocator
     validate(.text = text, .maximum_depth = 0)!
     start ::= _space(.text = text, .position = 0).next
+
     if _byte(.text = text, .position = start).value != 34 {
         result = ..error(.reason = ..invalid_json)
         return
     }
+
     end ::= _string_end(.text = text, .position = start)!
-    decoded ::= String(.allocator = allocator, .capacity = end - start)!
+    decoded ::= String(.capacity = end - start)!
     cursor ::= start + 1
+
     while cursor < end - 1 {
         byte ::= _byte(.text = text, .position = cursor).value
         cursor = cursor + 1
         if byte != 92 {
-            push_byte(.self = $&decoded, .byte = byte, .allocator = allocator)!
+            push_byte(.self = $&decoded, .byte = byte)!
             continue
         }
         escape ::= _byte(.text = text, .position = cursor).value
@@ -423,9 +465,8 @@ decode_string(
             }
             if code < 128 {
                 push_byte(
-                    .self      = $&decoded
-                    .byte      = unwrap_or_abort(.value = UInt8(.value = code))
-                    .allocator = allocator
+                    .self = $&decoded
+                    .byte = unwrap_or_abort(.value = UInt8(.value = code))
                 )!
             } else {
                 width :: UIntNative = 2
@@ -442,7 +483,7 @@ decode_string(
                     prefix = 240
                 }
                 first ::= unwrap_or_abort(.value = UInt8(.value = prefix + code / divisor))
-                push_byte(.self = $&decoded, .byte = first, .allocator = allocator)!
+                push_byte(.self = $&decoded, .byte = first)!
                 continuation :: UInt32 = 128
                 offset :: UIntNative = 1
                 while offset < width {
@@ -450,7 +491,7 @@ decode_string(
                     next_byte ::= unwrap_or_abort(
                         .value = UInt8(.value = continuation + code / divisor % 64)
                     )
-                    push_byte(.self = $&decoded, .byte = next_byte, .allocator = allocator)!
+                    push_byte(.self = $&decoded, .byte = next_byte)!
                     offset = offset + 1
                 }
             }
@@ -460,14 +501,16 @@ decode_string(
             if escape == 110 { escape = 10 }
             if escape == 114 { escape = 13 }
             if escape == 116 { escape = 9 }
-            push_byte(.self = $&decoded, .byte = escape, .allocator = allocator)!
+            push_byte(.self = $&decoded, .byte = escape)!
         }
     }
+
     result = ..ok ~decoded
 }
 
 _hex_ascii(.value: UInt8) -> (.byte: UInt8) := {
     byte = value + 48
+
     if value >= 10 { byte = value + 87 }
 }
 
@@ -484,6 +527,7 @@ write_string(
     validate_utf8(.text = text)!
     write_byte(.self = writer, .byte = 34)!
     cursor :: UIntNative = 0
+
     while cursor < text.length {
         byte ::= _byte(.text = text, .position = cursor).value
         if byte < 32 {
@@ -496,5 +540,6 @@ write_string(
         }
         cursor = cursor + 1
     }
+
     write_byte(.self = writer, .byte = 34)!
 }

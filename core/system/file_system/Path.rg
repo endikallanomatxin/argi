@@ -28,6 +28,7 @@ path_last_separator_index(
     }
 
     i :: UIntNative = view&.length
+
     while i > 0 {
         i = i - 1
         if path_is_separator(.byte = bytes_get(.view = view, .index = i).byte).ok {
@@ -70,6 +71,7 @@ Path init(
     assume allocator
 
     constructed = path_with_view(.view = view, .allocator = allocator)!
+
     result = ..ok ~constructed
 }
 
@@ -83,6 +85,7 @@ path_with_view(
 
     text ::= string_with_capacity(.allocator = allocator, .capacity = view.length)!
     push_view(.self = $&text, .view = view, .allocator = allocator)!
+
     result = ..ok(.text = ~text)
 }
 
@@ -104,6 +107,7 @@ copy(
     assume allocator
 
     text ::= copy(.self = &self&.text, .allocator = allocator)!
+
     result = ..ok(.text = ~text)
 }
 
@@ -112,7 +116,7 @@ as_view(
     ) -> (
         .view : StringView
     ) := {
-    view = as_view(.self = &self&.text)
+    view = as_view(&self&.text)
 }
 
 as_c_string(
@@ -128,7 +132,8 @@ is_absolute(
     ) -> (
         .ok : Bool
     ) := {
-    view ::= as_view(.self = self)
+    view ::= as_view(self)
+
     if view.length == 0 {
         ok = false
         return
@@ -142,7 +147,8 @@ file_name(
     ) -> (
         .value : ?StringView
     ) := {
-    view ::= as_view(.self = self)
+    view ::= as_view(self)
+
     if view.length == 0 {
         value = ..none
         return
@@ -154,6 +160,7 @@ file_name(
     }
 
     sep_index ::= path_last_separator_index(.view = &view).value
+
     match sep_index {
         ..some payload {
             start ::= payload.value + 1
@@ -183,8 +190,9 @@ parent(
     ) -> (
         .value : ?StringView
     ) := {
-    view ::= as_view(.self = self)
+    view ::= as_view(self)
     sep_index ::= path_last_separator_index(.view = &view).value
+
     match sep_index {
         ..some payload {
             root_length ::= _platform_path_root_length(.view = &view).length
@@ -210,6 +218,7 @@ extension(
         .value : ?StringView
     ) := {
     name ::= file_name(.self = self).value
+
     match name {
         ..none {
             value = ..none
@@ -261,6 +270,7 @@ join_views(
     native :: UIntNative = 0
     maximum ::= integer_limits(.value = native).maximum
     target_capacity :: UIntNative = 0
+
     match checked_add(.left = left&.length, .right = right&.length) {
         ..ok count { target_capacity = count }
         ..error _ {
@@ -273,6 +283,7 @@ join_views(
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     if left&.length > 0 and right&.length > 0 {
         if path_is_separator(.byte = bytes_get(.view = left, .index = left&.length - 1).byte).ok {
         } else {
@@ -285,6 +296,7 @@ join_views(
     }
 
     created ::= string_with_capacity(.allocator = allocator, .capacity = target_capacity)
+
     match created {
         ..ok ~created_text {
             text ::= ~created_text
@@ -326,8 +338,9 @@ join(
     ) := {
     assume allocator
 
-    left_view ::= as_view(.self = left)
-    right_view ::= as_view(.self = right)
+    left_view ::= as_view(left)
+    right_view ::= as_view(right)
+
     result = join_views(.left = &left_view, .right = &right_view, .allocator = allocator)
 }
 
@@ -346,7 +359,7 @@ path_equals(
     ) -> (
         .ok : Bool
     ) := {
-    left_view ::= as_view(.self = left)
-    right_view ::= as_view(.self = right)
+    left_view ::= as_view(left)
+    right_view ::= as_view(right)
     ok = left_view == right_view
 }

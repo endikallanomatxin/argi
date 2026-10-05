@@ -13,6 +13,7 @@ round_down#(
         result = ..error(.reason = ..invalid_multiple)
         return
     }
+
     result = ..ok value - value % multiple
 }
 
@@ -28,10 +29,13 @@ round_up#(
         result = ..error(.reason = ..invalid_multiple)
         return
     }
+
     remainder ::= value % multiple
+
     if remainder == 0 {
         result = ..ok value
         return
     }
+
     result = ..ok checked_add#(.t: t)(.left = value, .right = multiple - remainder)!
 }

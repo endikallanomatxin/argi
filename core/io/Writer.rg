@@ -14,6 +14,7 @@ write(
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
     i :: UIntNative = 0
+
     while i < text.length {
         wrote ::= write_byte(.self = self, .byte = bytes_get(.view = &text, .index = i).byte)
         match wrote {
@@ -26,6 +27,7 @@ write(
         }
         i = i + 1
     }
+
     result = ..ok Void()
 }
 

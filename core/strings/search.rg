@@ -11,11 +11,14 @@ _string_view_matches_at(
         ok = false
         return
     }
+
     if pattern.length > self.length - start {
         ok = false
         return
     }
+
     offset :: UIntNative = 0
+
     while offset < pattern.length {
         if [
             bytes_get(.view = &self, .index = start + offset).byte
@@ -26,6 +29,7 @@ _string_view_matches_at(
         }
         offset = offset + 1
     }
+
     ok = true
 }
 
@@ -33,9 +37,11 @@ _string_view_matches_at(
 -- Search is allocation-free; worst-case work is length times pattern length.
 find(.self: StringView, .pattern: StringView) -> (.index: ?UIntNative) := {
     index = ..none
+
     if pattern.length > self.length { return }
     last ::= self.length - pattern.length
     start :: UIntNative = 0
+
     while true {
         if _string_view_matches_at(.self = self, .pattern = pattern, .start = start).ok {
             index = ..some(.value = start)
@@ -60,6 +66,7 @@ ends_with(.self: StringView, .pattern: StringView) -> (.ok: Bool) := {
         ok = false
         return
     }
+
     ok = _string_view_matches_at(
         .self    = self
         .pattern = pattern
@@ -75,6 +82,7 @@ ends_with(.self: StringView, .pattern: StringView) -> (.ok: Bool) := {
 find_last(.self: StringView, .pattern: StringView) -> (.index: ?UIntNative = ..none) := {
     if pattern.length > self.length { return }
     start ::= self.length - pattern.length
+
     while true {
         if _string_view_matches_at(.self = self, .pattern = pattern, .start = start).ok {
             index = ..some(.value = start)

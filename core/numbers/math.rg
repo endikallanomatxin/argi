@@ -37,6 +37,7 @@ pow#(.t: Type: Float)(.base: t, .exponent: t) -> (.result: t) := {
 
 abs_float#(.t: Type: Float)(.value: t) -> (.result: t) := {
     encoding ::= _float_encoding(.value = value).encoding
+
     result = _float_replace_bits(
         .value = value
         .bits  = [
@@ -49,33 +50,42 @@ abs_float#(.t: Type: Float)(.value: t) -> (.result: t) := {
 hypot#(.t: Type: Float)(.left: t, .right: t) -> (.result: t) := {
     a ::= abs_float#(.t: t)(.value = left).result
     b ::= abs_float#(.t: t)(.value = right).result
+
     if is_infinite(.value = a).ok {
         result = a
         return
     }
+
     if is_infinite(.value = b).ok {
         result = b
         return
     }
+
     if is_nan(.value = a).ok {
         result = a
         return
     }
+
     if is_nan(.value = b).ok {
         result = b
         return
     }
+
     if a < b {
         saved ::= a
         a = b
         b = saved
     }
+
     zero :: t = 0.0
     one :: t = 1.0
+
     if a == zero {
         result = a
         return
     }
+
     ratio ::= b / a
+
     result = a * sqrt#(.t: t)(.value = one + ratio * ratio).result
 }

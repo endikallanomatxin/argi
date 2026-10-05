@@ -61,11 +61,14 @@ DynamicArray init#(
     }
 
     bytes ::= actual_capacity * element_size
+
     if element_size != 0 and bytes / element_size != actual_capacity {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     allocated ::= allocate#(.t: t)(.self = allocator, .count = actual_capacity)
+
     match allocated {
         ..ok ~payload {
             constructed = (
@@ -92,6 +95,7 @@ DynamicArray deinit#(
 
     -- Lexical owners recursively destroy fields in logical order.
     i :: UIntNative = 0
+
     while i < self&._length {
         slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = i)
         discarded ::= ~_trusted_uninit_take#(.t: t)(
@@ -102,6 +106,7 @@ DynamicArray deinit#(
     }
     -- Capacity records whether backing allocation ownership exists.
     trusted_opaque_mark_empty(.storage = $&self&._allocation)
+
     if self&._capacity != 0 {
         deinit(.self = $&self&._allocation)
     }
@@ -121,6 +126,7 @@ copy#(
     -- operation; a plain slot read is insufficient for owning `t`.
     out :: DynamicArray#(.t: t)
     initialized ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = self&._length)
+
     match initialized {
         ..ok ~constructed_value { out = ~constructed_value }
         ..error _ {
@@ -130,6 +136,7 @@ copy#(
     }
 
     i :: UIntNative = 0
+
     while i < self&._length {
         ptr ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
         element ::= copy(.self = ptr)
@@ -141,6 +148,7 @@ copy#(
         }
         i = i + 1
     }
+
     result = ..ok ~out
 }
 
@@ -164,6 +172,7 @@ copy#(
 
     out :: DynamicArray#(.t: t)
     initialized ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = self&._length)
+
     match initialized {
         ..ok ~constructed_value { out = ~constructed_value }
         ..error _ {
@@ -173,6 +182,7 @@ copy#(
     }
 
     i :: UIntNative = 0
+
     while i < self&._length {
         ptr ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
         copied ::= copy(.self = ptr)
@@ -188,6 +198,7 @@ copy#(
         }
         i = i + 1
     }
+
     result = ..ok ~out
 }
 
@@ -267,6 +278,7 @@ ensure_capacity#(
         result = ..ok Void()
         return
     }
+
     result = dynamic_array_grow_growing#(.t: t)(
         .allocator    = allocator
         .array        = self
@@ -287,6 +299,7 @@ dynamic_array_grow_growing#(
 
     element_size :: UIntNative = size_of(.type = t)
     maximum ::= integer_limits(.value = min_capacity).maximum
+
     if element_size != 0 { maximum = maximum / element_size }
     if min_capacity > maximum {
         result = ..error(.reason = ..out_of_memory)
@@ -295,14 +308,17 @@ dynamic_array_grow_growing#(
     -- Reserve geometrically so repeated appends relocate a linear number of
     -- elements. Clamp before multiplying, including the allocation byte size.
     new_capacity ::= array&._capacity
+
     if new_capacity == 0 { new_capacity = 1 } else {
         if new_capacity <= maximum / 2 { new_capacity = new_capacity * 2 } else {
             new_capacity = maximum
         }
     }
+
     if new_capacity < min_capacity { new_capacity = min_capacity }
     if new_capacity > maximum { new_capacity = maximum }
     allocate_result ::= allocate#(.t: t)(.self = allocator, .count = new_capacity)
+
     match allocate_result {
         ..ok ~payload {
             new_allocation ::= ~payload
@@ -358,6 +374,7 @@ push#(
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     one :: UIntNative = 1
 
     if self&._length == self&._capacity {
@@ -380,6 +397,7 @@ push#(
     }
 
     push_assume_capacity#(.t: t)(.self = self, .value = ~owned)
+
     result = ..ok Void()
 }
 
@@ -410,12 +428,14 @@ pop#(
         result = ..error(.reason = ..empty)
         return
     }
+
     one :: UIntNative = 1
     new_length ::= self&._length - one
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = new_length)
     moved_out ::= _trusted_uninit_take#(.t: t)(.allocation = $&self&._allocation, .slot = slot)
     _invalidate_dynamic_array_shape#(.t: t)(.array = self)
     self&._length = new_length
+
     result = ..ok ~moved_out
 }
 
@@ -462,6 +482,7 @@ insert_growing#(
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     one :: UIntNative = 1
     current_length ::= self&._length
 
@@ -486,6 +507,7 @@ insert_growing#(
     }
 
     cursor ::= current_length
+
     while cursor > i {
         source_index ::= cursor - one
         source_slot ::= _trusted_uninit_slot#(.t: t)(
@@ -509,6 +531,7 @@ insert_growing#(
     _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~owned)
     _invalidate_dynamic_array_shape#(.t: t)(.array = self)
     self&._length = current_length + one
+
     result = ..ok Void()
 }
 
@@ -524,6 +547,7 @@ remove#(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     one :: UIntNative = 1
     new_length ::= self&._length - one
     removed_slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = i)
@@ -533,6 +557,7 @@ remove#(
     )
 
     cursor ::= i
+
     while cursor < new_length {
         source_slot ::= _trusted_uninit_slot#(.t: t)(
             .allocation = &self&._allocation
@@ -556,6 +581,7 @@ remove#(
 
     _invalidate_dynamic_array_shape#(.t: t)(.array = self)
     self&._length = new_length
+
     result = ..ok ~moved_out
 }
 
@@ -571,7 +597,9 @@ get#(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     ptr ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = index).pointer
+
     result = ..ok ptr&
 }
 
@@ -587,6 +615,7 @@ get_ro_ref#(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     result = ..ok dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = index).pointer
 }
 
@@ -602,6 +631,7 @@ get_rw_ref#(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     result = ..ok dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = index).pointer
 }
 
@@ -624,10 +654,12 @@ set#(
     ) := {
     assume allocator
     owned ::= ~value
+
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = index)
     -- Extract before destroying so nested owners receive ordinary lexical
     -- cleanup. Finish that cleanup before installing the replacement.
@@ -638,6 +670,7 @@ set#(
     _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~owned)
     -- Replacement ends the old content lifetime even when its address stays.
     _invalidate_dynamic_array_shape#(.t: t)(.array = self)
+
     result = ..ok Void()
 }
 

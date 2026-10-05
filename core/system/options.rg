@@ -19,7 +19,7 @@ CliArgumentViews init(.values: ArrayViewRO#(.t: StringView)) -> (.result: CliArg
 }
 
 length(.self: &CliArgumentViews) -> (.count: UIntNative) := {
-    count = length(.self = &self&._values).count
+    count = length(&self&._values).count
 }
 
 get(
@@ -27,7 +27,9 @@ get(
         .index : UIntNative
     ) -> (
         .result : Errable#(.t: StringView, .reasons: (..out_of_bounds))
-    ) := { result = get(.self = &self&._values, .index = index) }
+    ) := {
+    result = get(.self = &self&._values, .index = index)
+}
 
 CliOption: Type = (.name: StringView, .value: ?StringView, .short: Bool)
 
@@ -66,7 +68,7 @@ next#(
     ) -> (
         .result : Errable#(.t: ?CliArgument, .reasons: (..invalid_option))
     ) := {
-    while self&._index < length(.self = self&._source).count {
+    while self&._index < length(self&._source).count {
         text ::= unwrap_or_abort(.value = get(.self = self&._source, .index = self&._index))
         if self&._short_offset > 0 {
             name ::= unwrap_or_abort(
@@ -134,6 +136,7 @@ next#(
         result = ..ok ..some(.value = ..option(.name = name, .value = attached, .short = false))
         return
     }
+
     result = ..ok ..none
 }
 
@@ -149,6 +152,7 @@ take_value#(
             result = ..ok entry.value
             return
         } ..none {} }
+
     if self&._short_offset > 0 {
         text ::= unwrap_or_abort(.value = get(.self = self&._source, .index = self&._index))
         start ::= self&._short_offset
@@ -167,10 +171,12 @@ take_value#(
         self&._index = self&._index + 1
         return
     }
-    if self&._index >= length(.self = self&._source).count {
+
+    if self&._index >= length(self&._source).count {
         result = ..error(.reason = ..missing_option_value)
         return
     }
+
     result = ..ok unwrap_or_abort(.value = get(.self = self&._source, .index = self&._index))
     self&._index = self&._index + 1
 }

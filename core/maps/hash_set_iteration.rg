@@ -28,7 +28,7 @@ has_next#(
     ) -> (
         .ok : Bool
     ) := {
-    ok = has_next(.self = &self&._keys).ok
+    ok = has_next(&self&._keys).ok
 }
 
 next#(
@@ -39,5 +39,5 @@ next#(
     ) -> (
         .value : key
     ) := {
-    value = next(.self = $&self&._keys).value
+    value = next($&self&._keys).value
 }

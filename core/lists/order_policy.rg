@@ -30,6 +30,7 @@ StringViewOrderPolicy implements OrderPolicy#(.t: StringView)
 
 less(.self: &StringViewOrderPolicy, .left: StringView, .right: StringView) -> (.ok: Bool) := {
     index :: UIntNative = 0
+
     while index < left.length and index < right.length {
         left_byte ::= bytes_get(.view = &left, .index = index).byte
         right_byte ::= bytes_get(.view = &right, .index = index).byte
@@ -39,5 +40,6 @@ less(.self: &StringViewOrderPolicy, .left: StringView, .right: StringView) -> (.
         }
         index = index + 1
     }
+
     ok = left.length < right.length
 }

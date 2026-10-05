@@ -8,8 +8,9 @@ find#(
     ) -> (
         .index : ?UIntNative
     ) := {
-    count ::= length(.self = self).count
+    count ::= length(self).count
     position :: UIntNative = 0
+
     while position < count {
         element ::= unwrap_or_abort(.value = get_ro_ref(.self = self, .index = position))&
         if element == value {
@@ -18,6 +19,7 @@ find#(
         }
         position = position + 1
     }
+
     index = ..none
 }
 

@@ -15,12 +15,13 @@ read_line_owned(
         )
     ) := {
     assume allocator
-    bytes ::= DynamicArray#(.t: UInt8)(.allocator = allocator, .capacity = 1)!
-    terminated :: Bool = false
+    bytes ::= DynamicArray#(.t: UInt8)(.capacity = 1)!
+    terminated ::= false
+
     while true {
-        count ::= length(.self = &bytes).count
+        count ::= length(&bytes).count
         if count < maximum {
-            ensure_capacity(.self = $&bytes, .capacity = count + 1, .allocator = allocator)!
+            ensure_capacity(.self = $&bytes, .capacity = count + 1)!
         }
         match read_byte(.self = self)! {
             ..end {
@@ -43,12 +44,15 @@ read_line_owned(
             }
         }
     }
-    count ::= length(.self = &bytes).count
+
+    count ::= length(&bytes).count
+
     if terminated and count > 0 {
         if unwrap_or_abort(.value = get(.self = &bytes, .index = count - 1)) == 13 {
             discarded ::= pop(.self = $&bytes)
         }
     }
+
     result = ..ok ..some(.value = (.bytes = ~bytes, .terminated = terminated))
 }
 
@@ -77,16 +81,18 @@ next#(
         )
     ) := {
     assume allocator
+
     if self&._ended {
         result = ..ok ..none
         return
     }
+
     self&._ended = true
     line ::= ~read_line_owned(
-        .self      = self&._source
-        .maximum   = self&._maximum
-        .allocator = allocator
+        .self    = self&._source
+        .maximum = self&._maximum
     )!
+
     match line {
         ..none { result = ..ok ..none } ..some ~entry {
             self&._ended = false

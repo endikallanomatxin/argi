@@ -30,6 +30,7 @@
         nanoseconds = unwrap_or_abort(.value = UInt32(.value = time.nanoseconds)).result
         status = 0
     }
+
     _platform_wall(.ffi: $&ForeignFunctionInterface = reach ffi) -> (
         .status      : Int32  = -1,
         .seconds     : Int64  = 0,
@@ -43,6 +44,7 @@
         nanoseconds = unwrap_or_abort(.value = UInt32(.value = time.nanoseconds)).result
         status = 0
     }
+
     _platform_sleep(
         .seconds     : UInt64,
         .nanoseconds : UInt32,

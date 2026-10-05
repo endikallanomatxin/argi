@@ -36,6 +36,7 @@ equals(
     }
 
     i :: UIntNative = 0
+
     while i < left.length {
         if bytes_get(.view = &left, .index = i).byte != bytes_get(.view = &right, .index = i).byte {
             ok = false

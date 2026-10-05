@@ -38,11 +38,13 @@ BufferedReader init#(
     buffer ::= allocate(.self = allocator, .size = actual_capacity)!
     -- The refill view contains initialized bytes before any native read.
     index :: UIntNative = 0
+
     while index < actual_capacity {
         byte ::= _trusted_allocation_byte_rw(.allocation = $&buffer, .offset = index).reference
         byte&= 0
         index = index + 1
     }
+
     constructed = (
         .base     = base
         .buffer   = ~buffer
@@ -50,6 +52,7 @@ BufferedReader init#(
         .start    = 0
         .end      = 0
     )
+
     result = ..ok ~constructed
 }
 
@@ -85,6 +88,7 @@ read_byte#(
 
     storage ::= _trusted_allocation_byte_rw(.allocation = $&self&.buffer, .offset = 0).reference
     buffer_view ::= _trusted_array_view#(.t: UInt8)(.data = storage, .length = self&.capacity).array
+
     match read(.self = self&.base, .buffer = buffer_view) {
         ..error _ { result = ..error(.reason = ..stream_read_failed) }
         ..ok count {

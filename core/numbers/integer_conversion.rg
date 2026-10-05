@@ -14,5 +14,6 @@ _checked_integer_conversion#(
         result = ..error(.reason = ..out_of_range)
         return
     }
+
     result = ..ok __integer_conversion#(.to: to)(.value = value)
 }

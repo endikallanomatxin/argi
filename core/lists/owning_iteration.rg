@@ -39,9 +39,11 @@ DynamicArrayOwningIterator deinit#(
         .allocator : $&Allocator
     ) -> () := {
     assume allocator
+
     while self&._next < self&._end {
-        discarded ::= ~next(.self = self).value
+        discarded ::= ~next(self).value
     }
+
     trusted_opaque_mark_empty(.storage = $&self&._allocation)
     deinit(.self = $&self&._allocation)
 }
@@ -56,17 +58,19 @@ to_owning_iterator#(.t: Type)(.value: Deque#(.t: t)) -> (.iterator: DequeOwningI
 }
 
 has_next#(.t: Type)(.self: &DequeOwningIterator#(.t: t)) -> (.ok: Bool) := {
-    ok = length(.self = &self&._owner).count != 0
+    ok = length(&self&._owner).count != 0
 }
 
 next#(.t: Type)(.self: $&DequeOwningIterator#(.t: t)) -> (.value: t) := {
     ring ::= $&self&._owner._ring
+
     if ring&._length == 0 { abort }
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &ring&._allocation, .index = ring&._head)
     value = ~_trusted_uninit_take#(.t: t)(.allocation = $&ring&._allocation, .slot = slot)
     _invalidate_ring_buffer_shape(.self = ring)
     ring&._length = ring&._length - 1
     ring&._head = ring&._head + 1
+
     if ring&._head == ring&._capacity { ring&._head = 0 }
 }
 
@@ -77,8 +81,10 @@ DequeOwningIterator deinit#(
         .allocator : $&Allocator
     ) -> () := {
     assume allocator
-    while has_next(.self = self).ok {
-        discarded ::= ~next(.self = self).value
+
+    while has_next(self).ok {
+        discarded ::= ~next(self).value
     }
+
     deinit(.self = $&self&._owner, .allocator = allocator)
 }

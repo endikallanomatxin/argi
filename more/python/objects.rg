@@ -36,6 +36,7 @@ call_method(
         )
     ) := {
     method ::= attribute(.self = self, .name = name)!
+
     result = call(.self = &method, .arguments = arguments, .keywords = keywords)
 }
 
@@ -51,6 +52,7 @@ call_method(
         )
     ) := {
     method ::= attribute(.self = self, .name = name)!
+
     result = call(.self = &method, .arguments = arguments, .keywords = keywords)
 }
 
@@ -65,6 +67,7 @@ set_attribute(
         )
     ) := {
     assume ffi := self&._python&._ffi
+
     if [
         _set_attribute(
             .context = self&._python&._handle
@@ -79,6 +82,7 @@ set_attribute(
         result = ..error(.reason = ..python_error)
         return
     }
+
     result = ..ok Void()
 }
 
@@ -106,6 +110,7 @@ iterate(.self: &Object) -> (.result: Errable#(.t: PythonIterator, .reasons: (..p
         .self   = self&._python
         .handle = _iterator(.context = self&._python&._handle, .object = self&._handle).handle
     )!
+
     result = ..ok(._object = ~object)
 }
 
@@ -117,13 +122,16 @@ next(.self: $&PythonIterator) -> (.result: Errable#(.t: ?Object, .reasons: (..py
         .object    = self&._object._handle
         .exhausted = $&exhausted
     ).handle
+
     if exhausted == 1 {
         result = ..ok ..none
         return
     }
+
     if handle.address == 0 {
         result = ..error(.reason = ..python_error)
         return
     }
+
     result = ..ok ..some(.value = (._handle = handle, ._python = self&._object._python))
 }

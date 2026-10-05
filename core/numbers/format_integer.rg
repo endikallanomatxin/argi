@@ -10,38 +10,47 @@ _decimal_digit#(.t: Type: Int)(.digit: t) -> (.byte: UInt8) := {
         byte = 48
         return
     }
+
     if digit == 1 {
         byte = 49
         return
     }
+
     if digit == 2 {
         byte = 50
         return
     }
+
     if digit == 3 {
         byte = 51
         return
     }
+
     if digit == 4 {
         byte = 52
         return
     }
+
     if digit == 5 {
         byte = 53
         return
     }
+
     if digit == 6 {
         byte = 54
         return
     }
+
     if digit == 7 {
         byte = 55
         return
     }
+
     if digit == 8 {
         byte = 56
         return
     }
+
     byte = 57
 }
 
@@ -49,6 +58,7 @@ _decimal_encode#(.t: Type: Int)(.value: t) -> (.text: _DecimalText) := {
     text = _DecimalText()
     current :: t = value
     negative ::= current < 0
+
     while true {
         remainder ::= current % 10
         -- Only a remainder's magnitude is negated. The signed minimum itself
@@ -59,6 +69,7 @@ _decimal_encode#(.t: Type: Int)(.value: t) -> (.text: _DecimalText) := {
         current = current / 10
         if current == 0 { break }
     }
+
     if negative {
         text.start = text.start - 1
         text.bytes[text.start] = 45

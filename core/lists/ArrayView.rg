@@ -66,6 +66,7 @@ array_view_ro#(
         view = (._data = ..none, ._length = 0)
         return
     }
+
     first ::= trusted_reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = array).reference
     view = (._data = ..some(.value = first), ._length = n)
 }
@@ -82,6 +83,7 @@ array_view#(
         view = (._data = ..none, ._length = 0)
         return
     }
+
     first ::= trusted_mutable_reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(
         .base = array
     ).reference
@@ -105,6 +107,7 @@ _trusted_array_view_ro#(.t: Type)(.data: &t, .length: UIntNative) -> (.array: Ar
         array = (._data = ..none, ._length = 0)
         return
     }
+
     array = (._data = ..some(.value = data), ._length = length)
 }
 
@@ -120,6 +123,7 @@ _trusted_array_view#(
         array = (._data = ..none, ._length = 0)
         return
     }
+
     array = (
         ._data   = ..some(.value = data)
         ._length = length
@@ -138,6 +142,7 @@ get_ro_ref#(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     result = ..ok trusted_reference_offset#(.t: t)(
         .base     = data#(.t: t)(.self = self).pointer
         .elements = index
@@ -156,6 +161,7 @@ get_ro_ref#(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     result = ..ok trusted_reference_offset#(.t: t)(
         .base     = data#(.t: t)(.self = self).pointer
         .elements = index
@@ -174,6 +180,7 @@ get_rw_ref#(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     result = ..ok trusted_mutable_reference_offset#(.t: t)(
         .base     = data#(.t: t)(.self = self).pointer
         .elements = index
@@ -192,10 +199,12 @@ get#(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     ptr ::= trusted_reference_offset#(.t: t)(
         .base     = data#(.t: t)(.self = self).pointer
         .elements = index
     ).reference
+
     result = ..ok ptr&
 }
 
@@ -212,11 +221,13 @@ set#(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     ptr ::= trusted_mutable_reference_offset#(.t: t)(
         .base     = data#(.t: t)(.self = self).pointer
         .elements = index
     )
     ptr&= value
+
     result = ..ok Void()
 }
 
@@ -245,6 +256,7 @@ as_readonly#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.view: ArrayViewRO#(.t: t)
         view = array_view_ro#(.t: t)().array
         return
     }
+
     first ::= read_reference#(.t: t)(.base = data(.self = self).pointer).reference
     view = _trusted_array_view_ro#(.t: t)(.data = first, .length = self&._length).array
 }

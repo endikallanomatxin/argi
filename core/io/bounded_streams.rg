@@ -2,10 +2,12 @@ _bounded_stream_maximum() -> (.value: UIntNative) := {
     maximum :: UIntNative = 0
     byte_index :: UIntNative = 0
     native_bytes ::= size_of(.type = UIntNative)
+
     while byte_index < native_bytes {
         maximum = maximum * 256 + 255
         byte_index = byte_index + 1
     }
+
     value = maximum
 }
 
@@ -37,15 +39,19 @@ copy_stream_limited(
         )
     ) := {
     copied :: UIntNative = 0
+
     if limit == 0 {
         result = ..ok(.count = 0, .termination = ..limit)
         return
     }
-    size ::= length(.self = &buffer).count
+
+    size ::= length(&buffer).count
+
     if size == 0 {
         result = ..error(.reason = ..invalid_stream_buffer)
         return
     }
+
     while copied < limit {
         request ::= limit - copied
         if request > size { request = size }
@@ -62,6 +68,7 @@ copy_stream_limited(
         write_all(.self = writer, .buffer = as_readonly(.self = &prefix).view)!
         copied = copied + got
     }
+
     result = ..ok(.count = copied, .termination = ..limit)
 }
 
@@ -82,15 +89,19 @@ copy_stream_limited(
         )
     ) := {
     copied :: UIntNative = 0
+
     if limit == 0 {
         result = ..ok(.count = 0, .termination = ..limit)
         return
     }
-    size ::= length(.self = &buffer).count
+
+    size ::= length(&buffer).count
+
     if size == 0 {
         result = ..error(.reason = ..invalid_stream_buffer)
         return
     }
+
     while copied < limit {
         request ::= limit - copied
         if request > size { request = size }
@@ -107,6 +118,7 @@ copy_stream_limited(
         write_all(.self = writer, .buffer = as_readonly(.self = &prefix).view)!
         copied = copied + got
     }
+
     result = ..ok(.count = copied, .termination = ..limit)
 }
 
@@ -127,15 +139,19 @@ copy_stream_limited(
         )
     ) := {
     copied :: UIntNative = 0
+
     if limit == 0 {
         result = ..ok(.count = 0, .termination = ..limit)
         return
     }
-    size ::= length(.self = &buffer).count
+
+    size ::= length(&buffer).count
+
     if size == 0 {
         result = ..error(.reason = ..invalid_stream_buffer)
         return
     }
+
     while copied < limit {
         request ::= limit - copied
         if request > size { request = size }
@@ -152,6 +168,7 @@ copy_stream_limited(
         write_all(.self = writer, .buffer = as_readonly(.self = &prefix).view)!
         copied = copied + got
     }
+
     result = ..ok(.count = copied, .termination = ..limit)
 }
 
@@ -172,15 +189,19 @@ copy_stream_limited(
         )
     ) := {
     copied :: UIntNative = 0
+
     if limit == 0 {
         result = ..ok(.count = 0, .termination = ..limit)
         return
     }
-    size ::= length(.self = &buffer).count
+
+    size ::= length(&buffer).count
+
     if size == 0 {
         result = ..error(.reason = ..invalid_stream_buffer)
         return
     }
+
     while copied < limit {
         request ::= limit - copied
         if request > size { request = size }
@@ -197,6 +218,7 @@ copy_stream_limited(
         write_all(.self = writer, .buffer = as_readonly(.self = &prefix).view)!
         copied = copied + got
     }
+
     result = ..ok(.count = copied, .termination = ..limit)
 }
 
@@ -221,18 +243,24 @@ read_all_limited(
     ) := {
     assume allocator
     maximum ::= _bounded_stream_maximum().value
+
     if limit >= maximum {
         result = ..error(.reason = ..size_overflow)
         return
     }
-    size ::= length(.self = &buffer).count
+
+    size ::= length(&buffer).count
+
     if size == 0 {
         result = ..error(.reason = ..invalid_stream_buffer)
         return
     }
+
     initial ::= size
+
     if initial > limit { initial = limit }
     out ::= string_with_capacity(.allocator = allocator, .capacity = initial)!
+
     while out.length < limit {
         request ::= limit - out.length
         if request > size { request = size }
@@ -246,7 +274,7 @@ read_all_limited(
                 if grown == 0 { grown = 1 }
             }
             fresh ::= string_with_capacity(.allocator = allocator, .capacity = grown)!
-            push_view(.self = $&fresh, .view = as_view(.self = &out), .allocator = allocator)!
+            push_view(.self = $&fresh, .view = as_view(&out), .allocator = allocator)!
             deinit(.self = $&out, .allocator = allocator)
             out = ~fresh
         }
@@ -265,11 +293,13 @@ read_all_limited(
     -- A single scratch byte distinguishes exact EOF from excess data.
     probe ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = 1))
     got ::= read_block(.self = self, .buffer = probe)!
+
     if got > 1 { abort }
     if got != 0 {
         result = ..error(.reason = ..size_limit_exceeded)
         return
     }
+
     result = ..ok ~out
 }
 
@@ -292,18 +322,24 @@ read_all_limited(
     ) := {
     assume allocator
     maximum ::= _bounded_stream_maximum().value
+
     if limit >= maximum {
         result = ..error(.reason = ..size_overflow)
         return
     }
-    size ::= length(.self = &buffer).count
+
+    size ::= length(&buffer).count
+
     if size == 0 {
         result = ..error(.reason = ..invalid_stream_buffer)
         return
     }
+
     initial ::= size
+
     if initial > limit { initial = limit }
     out ::= string_with_capacity(.allocator = allocator, .capacity = initial)!
+
     while out.length < limit {
         request ::= limit - out.length
         if request > size { request = size }
@@ -317,7 +353,7 @@ read_all_limited(
                 if grown == 0 { grown = 1 }
             }
             fresh ::= string_with_capacity(.allocator = allocator, .capacity = grown)!
-            push_view(.self = $&fresh, .view = as_view(.self = &out), .allocator = allocator)!
+            push_view(.self = $&fresh, .view = as_view(&out), .allocator = allocator)!
             deinit(.self = $&out, .allocator = allocator)
             out = ~fresh
         }
@@ -336,10 +372,12 @@ read_all_limited(
     -- A single scratch byte distinguishes exact EOF from excess data.
     probe ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = 1))
     got ::= read_block(.self = self, .buffer = probe)!
+
     if got > 1 { abort }
     if got != 0 {
         result = ..error(.reason = ..size_limit_exceeded)
         return
     }
+
     result = ..ok ~out
 }

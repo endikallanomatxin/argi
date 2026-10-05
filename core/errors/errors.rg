@@ -122,7 +122,8 @@ _error_trace_stride() -> (.size: UIntNative) := {
 -- The buffer is initialized caller-owned storage, not an allocation owned by
 -- the tracer. Trailing bytes that do not fit a complete slot are unused.
 FixedSizeErrorTracer init(.buffer: ArrayView#(.t: UInt8)) -> (.result: FixedSizeErrorTracer) := {
-    capacity ::= length(.self = &buffer).count / _error_trace_stride().size
+    capacity ::= length(&buffer).count / _error_trace_stride().size
+
     result = (
         ._buffer   = buffer
         ._capacity = capacity
@@ -148,6 +149,7 @@ _error_trace_header(
         .header : ArrayView#(.t: UInt8)
     ) := {
     assume error_tracer ::= $&noop_error_tracer
+
     if index >= self&._capacity { abort }
     header = unwrap_or_abort(
         .value = slice(
@@ -190,11 +192,14 @@ _error_trace_load_entry(
 
 add_context(.self: $&FixedSizeErrorTracer, .location: SourceLocationId, .context: StringView) -> () := {
     assume error_tracer ::= $&noop_error_tracer
+
     if self&._capacity == 0 {
         self&._dropped = true
         return
     }
+
     index ::= self&._length
+
     if self&._length == self&._capacity {
         index = self&._next
         self&._dropped = true
@@ -203,11 +208,14 @@ add_context(.self: $&FixedSizeErrorTracer, .location: SourceLocationId, .context
     } else {
         self&._length = self&._length + 1
     }
+
     count ::= context.length
+
     if count > 128 {
         count = 128
         self&._dropped = true
     }
+
     _error_trace_store_entry(
         .self  = self
         .index = index
@@ -216,6 +224,7 @@ add_context(.self: $&FixedSizeErrorTracer, .location: SourceLocationId, .context
     slot_offset ::= index * _error_trace_stride().size
     offset ::= slot_offset + size_of(.type = ErrorTraceEntry)
     i :: UIntNative = 0
+
     while i < count {
         byte ::= bytes_get(.view = &context, .index = i).byte
         destination ::= unwrap_or_abort(
@@ -241,10 +250,12 @@ write_trace_text(
     assume error_tracer ::= $&noop_error_tracer
     view ::= c_string_as_view(.text = text).view
     i :: UIntNative = 0
+
     while i < view.length {
         write_byte(.self = writer, .byte = bytes_get(.view = &view, .index = i).byte)!
         i = i + 1
     }
+
     result = ..ok Void()
 }
 
@@ -256,15 +267,18 @@ write_trace_uint(
     ) := {
     assume error_tracer ::= $&noop_error_tracer
     divisor :: UIntNative = 1
+
     while divisor <= value / 10 { divisor = divisor * 10 }
     remaining ::= value
-    digits :: StringView = "0123456789"
+    digits ::= "0123456789"
+
     while divisor > 0 {
         digit ::= remaining / divisor
         remaining = remaining % divisor
         write_byte(.self = writer, .byte = bytes_get(.view = &digits, .index = digit).byte)!
         divisor = divisor / 10
     }
+
     result = ..ok Void()
 }
 
@@ -286,6 +300,7 @@ _error_report_entry(
     write_trace_uint(.value = location.column, .writer = writer)!
     slot_offset ::= index * _error_trace_stride().size
     offset ::= slot_offset + size_of(.type = ErrorTraceEntry)
+
     if entry.context_length != 0 {
         write_trace_text(.text = ": ", .writer = writer)!
         i :: UIntNative = 0
@@ -295,15 +310,19 @@ _error_report_entry(
             i = i + 1
         }
     }
+
     write_trace_text(.text = "\n    ", .writer = writer)!
     write_trace_text(.text = location.source_line, .writer = writer)!
     write_trace_text(.text = "\n    ", .writer = writer)!
     column :: UIntNative = 1
+
     while column < location.column {
         write_byte(.self = writer, .byte = 32)!
         column = column + 1
     }
+
     write_trace_text(.text = "^\n", .writer = writer)!
+
     result = ..ok Void()
 }
 
@@ -315,11 +334,14 @@ report(
     ) := {
     assume error_tracer ::= $&noop_error_tracer
     write_trace_text(.text = "error trace (most recent first):\n", .writer = writer)!
+
     if self&._length == 0 {
         write_trace_text(.text = "  <empty>\n", .writer = writer)!
     }
+
     first ::= self&._capacity / 2
     recent ::= self&._length
+
     if self&._length == self&._capacity and self&._dropped {
         i ::= self&._capacity - first
         cursor ::= self&._next
@@ -332,14 +354,18 @@ report(
         write_trace_text(.text = "  <context truncated>\n", .writer = writer)!
         recent = first
     }
+
     while recent > 0 {
         recent = recent - 1
         _error_report_entry(.self = self, .index = recent, .writer = writer)!
     }
+
     if self&._dropped and self&._length < self&._capacity {
         write_trace_text(.text = "  <context truncated>\n", .writer = writer)!
     }
+
     flush(.self = writer)!
+
     result = ..ok Void()
 }
 
@@ -352,6 +378,7 @@ report_trace(
     assume error_tracer ::= $&noop_error_tracer
     virtual_writer ::= to_virtual#(.abstract: Writer)(.value = writer)
     report(.self = trace&.tracer, .writer = $&virtual_writer)!
+
     result = ..ok Void()
 }
 
@@ -365,6 +392,7 @@ report_error#(
     ) := {
     assume error_tracer ::= $&noop_error_tracer
     report_trace(.trace = &err&.trace, .writer = writer)!
+
     result = ..ok Void()
 }
 
@@ -383,6 +411,7 @@ report_error#(
     write_trace_text(.text = message, .writer = $&virtual_writer)!
     write_trace_text(.text = "\n", .writer = $&virtual_writer)!
     report_trace(.trace = &err&.trace, .writer = writer)!
+
     result = ..ok Void()
 }
 

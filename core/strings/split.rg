@@ -19,6 +19,7 @@ split(
         result = ..error(.reason = ..empty_separator)
         return
     }
+
     result = ..ok(._text = self, ._separator = separator, ._start = 0, ._done = false)
 }
 
@@ -37,6 +38,7 @@ next(.self: $&StringSplitIterator) -> (.value: StringView) := {
             - start
         ]
     ).view
+
     match find(.self = remaining, .pattern = self&._separator).index {
         ..none {
             value = remaining

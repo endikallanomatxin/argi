@@ -17,14 +17,14 @@ position(.self: &ByteWriter) -> (.count: UIntNative) := { count = self&._positio
 
 remaining(.self: &ByteReader) -> (.count: UIntNative) := {
     count = [
-        length(.self = &self&._bytes).count
+        length(&self&._bytes).count
         - self&._position
     ]
 }
 
 remaining(.self: &ByteWriter) -> (.count: UIntNative) := {
     count = [
-        length(.self = &self&._bytes).count
+        length(&self&._bytes).count
         - self&._position
     ]
 }
@@ -39,7 +39,9 @@ skip(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     self&._position = self&._position + count
+
     result = ..ok Void()
 }
 
@@ -51,6 +53,7 @@ read_uint16(
     ) := {
     value_out ::= read_uint16(.bytes = self&._bytes, .offset = self&._position, .order = order)!
     self&._position = self&._position + 2
+
     result = ..ok value_out
 }
 
@@ -62,6 +65,7 @@ read_uint32(
     ) := {
     value_out ::= read_uint32(.bytes = self&._bytes, .offset = self&._position, .order = order)!
     self&._position = self&._position + 4
+
     result = ..ok value_out
 }
 
@@ -73,6 +77,7 @@ read_uint64(
     ) := {
     value_out ::= read_uint64(.bytes = self&._bytes, .offset = self&._position, .order = order)!
     self&._position = self&._position + 8
+
     result = ..ok value_out
 }
 
@@ -86,7 +91,9 @@ skip(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     self&._position = self&._position + count
+
     result = ..ok Void()
 }
 
@@ -104,6 +111,7 @@ write_uint16(
         .order  = order
     )!
     self&._position = self&._position + 2
+
     result = ..ok value_out
 }
 
@@ -121,6 +129,7 @@ write_uint32(
         .order  = order
     )!
     self&._position = self&._position + 4
+
     result = ..ok value_out
 }
 
@@ -138,5 +147,6 @@ write_uint64(
         .order  = order
     )!
     self&._position = self&._position + 8
+
     result = ..ok value_out
 }

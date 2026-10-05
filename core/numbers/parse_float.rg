@@ -14,22 +14,26 @@ _float_parse#(
         result = ..error(.reason = ..invalid_input)
         return
     }
+
     index :: UIntNative = 0
-    negative :: Bool = false
+    negative ::= false
     first ::= bytes_get(.view = &text, .index = index).byte
+
     if first == 45 or first == 43 {
         negative = first == 45
         index = index + 1
     }
+
     numerator ::= _FloatDecimalInteger()
     denominator ::= _FloatDecimalInteger()
     denominator.words[0] = 1
-    has_digit :: Bool = false
-    point :: Bool = false
+    has_digit ::= false
+    point ::= false
     fractional :: UIntNative = 0
     significant :: UIntNative = 0
     retained :: UIntNative = 0
-    sticky :: Bool = false
+    sticky ::= false
+
     while index < text.length {
         byte ::= bytes_get(.view = &text, .index = index).byte
         if byte == 46 {
@@ -59,12 +63,15 @@ _float_parse#(
         }
         index = index + 1
     }
+
     if has_digit == false {
         result = ..error(.reason = ..invalid_input)
         return
     }
-    exponent_negative :: Bool = false
+
+    exponent_negative ::= false
     exponent :: UIntNative = 0
+
     if index < text.length {
         byte ::= bytes_get(.view = &text, .index = index).byte
         if byte != 101 and byte != 69 {
@@ -102,22 +109,28 @@ _float_parse#(
             return
         }
     }
+
     zero :: t = 0.0
     one :: t = 1.0
     two :: t = 2.0
     half :: t = 0.5
     minus_one :: t = -1.0
+
     if significant == 0 {
         if negative { zero = zero * minus_one }
         result = ..ok zero
         return
     }
+
     positive_power :: UIntNative = significant - retained
     negative_power :: UIntNative = fractional
+
     if exponent_negative { negative_power = negative_power + exponent } else {
         positive_power = positive_power + exponent
     }
+
     power :: Int32 = 0
+
     if positive_power >= negative_power {
         difference ::= positive_power - negative_power
         if difference > 400 {
@@ -140,31 +153,40 @@ _float_parse#(
         _float_integer_multiply(.self = $&numerator, .factor = 10)
         power = power - 1
     }
+
     while power < 0 {
         _float_integer_multiply(.self = $&denominator, .factor = 10)
         power = power + 1
     }
+
     binary_exponent :: Int32 = 0
+
     while _float_integer_compare(.left = &numerator, .right = &denominator).order < 0 {
         _float_integer_multiply(.self = $&numerator, .factor = 2)
         binary_exponent = binary_exponent - 1
     }
+
     while _float_integer_compare(.left = &numerator, .right = &denominator).order >= 0 {
         _float_integer_multiply(.self = $&denominator, .factor = 2)
         binary_exponent = binary_exponent + 1
     }
+
     _float_integer_halve(.self = $&denominator)
     binary_exponent = binary_exponent - 1
+
     if binary_exponent > maximum_exponent or binary_exponent < minimum_exponent - 1 {
         result = ..error(.reason = ..out_of_range)
         return
     }
+
     bits :: Int32 = precision
     available ::= binary_exponent - minimum_exponent + 1
+
     if available < bits { bits = available }
     mantissa :: t = 0.0
-    odd :: Bool = false
+    odd ::= false
     remaining ::= bits
+
     while remaining > 0 {
         mantissa = mantissa * two
         odd = _float_integer_compare(.left = &numerator, .right = &denominator).order >= 0
@@ -175,16 +197,19 @@ _float_parse#(
         _float_integer_multiply(.self = $&numerator, .factor = 2)
         remaining = remaining - 1
     }
+
     if _float_integer_compare(.left = &numerator, .right = &denominator).order >= 0 {
         _float_integer_subtract(.self = $&numerator, .other = &denominator)
         if odd or sticky or _float_integer_nonzero(.self = &numerator).value {
             mantissa = mantissa + one
         }
     }
+
     if mantissa == zero {
         result = ..error(.reason = ..out_of_range)
         return
     }
+
     if binary_exponent == maximum_exponent {
         limit :: t = 1.0
         count :: Int32 = precision
@@ -197,18 +222,24 @@ _float_parse#(
             return
         }
     }
+
     scale :: t = 1.0
     shift ::= binary_exponent - bits + 1
+
     while shift > 0 {
         scale = scale * two
         shift = shift - 1
     }
+
     while shift < 0 {
         scale = scale * half
         shift = shift + 1
     }
+
     value ::= mantissa * scale
+
     if negative { value = value * minus_one }
+
     result = ..ok value
 }
 

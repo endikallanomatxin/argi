@@ -18,6 +18,7 @@ page_allocator_round_up(
         .rounded : UIntNative
     ) := {
     rounded = size
+
     if rounded == 0 {
         rounded = alignment
         return
@@ -25,6 +26,7 @@ page_allocator_round_up(
 
     one :: UIntNative = 1
     blocks :: UIntNative = rounded / alignment
+
     if blocks * alignment != rounded {
         next_blocks :: UIntNative = blocks + one
         rounded = next_blocks * alignment
@@ -39,6 +41,7 @@ allocate(
         .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) := {
     mapped ::= map_pages(.self = self&.memory, .size = size, .alignment = alignment)
+
     match mapped {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~payload {

@@ -31,6 +31,7 @@ string_view_has_c_string_layout(
         .ok : Bool
     ) := {
     i :: UIntNative = 0
+
     while i < self&.length {
         if bytes_get(.view = self, .index = i).byte == 0 {
             ok = false
@@ -56,6 +57,7 @@ as_c_string(
 
     size :: UIntNative = self.length + 1
     allocated ::= allocate(.self = allocator, .size = size)
+
     match allocated {
         ..error _ {
             result = ..error(.reason = ..out_of_memory)

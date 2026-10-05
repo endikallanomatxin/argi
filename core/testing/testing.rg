@@ -11,11 +11,13 @@ test_skip_impl() -> (.result: Errable#(.t: Void, .reasons: (..test_skipped))) :=
 
 fail(.message: &Char) -> (.result: Errable#(.t: Void, .reasons: (..test_failed))) := {
     test_fail_impl()!! message
+
     result = ..ok Void()
 }
 
 skip(.message: &Char) -> (.result: Errable#(.t: Void, .reasons: (..test_skipped))) := {
     test_skip_impl()!! message
+
     result = ..ok Void()
 }
 

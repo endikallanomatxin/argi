@@ -5,6 +5,7 @@ ByteOrder implements ImplicitlyCopyable
 
 _binary_range(.length: UIntNative, .offset: UIntNative, .width: UIntNative) -> (.ok: Bool) := {
     ok = false
+
     if offset <= length { ok = width <= length - offset }
 }
 
@@ -16,15 +17,17 @@ read_uint16(
         .result : Errable#(.t: UInt16, .reasons: (..out_of_bounds))
     ) := {
     if [
-        _binary_range(.length = length(.self = &bytes).count, .offset = offset, .width = 2).ok
+        _binary_range(.length = length(&bytes).count, .offset = offset, .width = 2).ok
         == false
     ] {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     value :: UInt16 = 0
     last: UIntNative = 1
     index :: UIntNative = 0
+
     while index < 2 {
         position :: UIntNative = index
         if order == ..little { position = last - index }
@@ -32,6 +35,7 @@ read_uint16(
         value = value * 256 + UInt16(.value = byte&)
         index = index + 1
     }
+
     result = ..ok value
 }
 
@@ -45,15 +49,17 @@ write_uint16(
     ) := {
     -- Prove the whole range before any destination byte changes.
     if [
-        _binary_range(.length = length(.self = &bytes).count, .offset = offset, .width = 2).ok
+        _binary_range(.length = length(&bytes).count, .offset = offset, .width = 2).ok
         == false
     ] {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     remaining :: UInt16 = value
     last: UIntNative = 1
     index :: UIntNative = 0
+
     while index < 2 {
         position :: UIntNative = index
         if order == ..big { position = last - index }
@@ -62,6 +68,7 @@ write_uint16(
         remaining = remaining / 256
         index = index + 1
     }
+
     result = ..ok Void()
 }
 
@@ -73,15 +80,17 @@ read_uint32(
         .result : Errable#(.t: UInt32, .reasons: (..out_of_bounds))
     ) := {
     if [
-        _binary_range(.length = length(.self = &bytes).count, .offset = offset, .width = 4).ok
+        _binary_range(.length = length(&bytes).count, .offset = offset, .width = 4).ok
         == false
     ] {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     value :: UInt32 = 0
     last: UIntNative = 3
     index :: UIntNative = 0
+
     while index < 4 {
         position :: UIntNative = index
         if order == ..little { position = last - index }
@@ -89,6 +98,7 @@ read_uint32(
         value = value * 256 + UInt32(.value = byte&)
         index = index + 1
     }
+
     result = ..ok value
 }
 
@@ -102,15 +112,17 @@ write_uint32(
     ) := {
     -- Prove the whole range before any destination byte changes.
     if [
-        _binary_range(.length = length(.self = &bytes).count, .offset = offset, .width = 4).ok
+        _binary_range(.length = length(&bytes).count, .offset = offset, .width = 4).ok
         == false
     ] {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     remaining :: UInt32 = value
     last: UIntNative = 3
     index :: UIntNative = 0
+
     while index < 4 {
         position :: UIntNative = index
         if order == ..big { position = last - index }
@@ -119,6 +131,7 @@ write_uint32(
         remaining = remaining / 256
         index = index + 1
     }
+
     result = ..ok Void()
 }
 
@@ -130,15 +143,17 @@ read_uint64(
         .result : Errable#(.t: UInt64, .reasons: (..out_of_bounds))
     ) := {
     if [
-        _binary_range(.length = length(.self = &bytes).count, .offset = offset, .width = 8).ok
+        _binary_range(.length = length(&bytes).count, .offset = offset, .width = 8).ok
         == false
     ] {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     value :: UInt64 = 0
     last: UIntNative = 7
     index :: UIntNative = 0
+
     while index < 8 {
         position :: UIntNative = index
         if order == ..little { position = last - index }
@@ -146,6 +161,7 @@ read_uint64(
         value = value * 256 + UInt64(.value = byte&)
         index = index + 1
     }
+
     result = ..ok value
 }
 
@@ -159,15 +175,17 @@ write_uint64(
     ) := {
     -- Prove the whole range before any destination byte changes.
     if [
-        _binary_range(.length = length(.self = &bytes).count, .offset = offset, .width = 8).ok
+        _binary_range(.length = length(&bytes).count, .offset = offset, .width = 8).ok
         == false
     ] {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     remaining :: UInt64 = value
     last: UIntNative = 7
     index :: UIntNative = 0
+
     while index < 8 {
         position :: UIntNative = index
         if order == ..big { position = last - index }
@@ -176,5 +194,6 @@ write_uint64(
         remaining = remaining / 256
         index = index + 1
     }
+
     result = ..ok Void()
 }

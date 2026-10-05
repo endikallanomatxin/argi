@@ -29,12 +29,15 @@ hash(.self: &Int32HashPolicy, .key: Int32) -> (.hash: UIntNative) := {
     -- without depending on integer casts or native byte order.
     remaining :: Int32 = key
     hash = 0
+
     if remaining < 0 {
         hash = 2147483648
         remaining = remaining + 2147483647
         remaining = remaining + 1
     }
+
     bit :: UIntNative = 1
+
     while remaining > 0 {
         if remaining % 2 != 0 { hash = hash + bit }
         remaining = remaining / 2

@@ -14,11 +14,12 @@ encode(
         .result : Errable#(.t: String, .reasons: (..out_of_memory, ..out_of_range))
     ) := {
     assume allocator
-    count ::= length(.self = &bytes).count
+    count ::= length(&bytes).count
     size ::= checked_multiply(.left = count, .right = 2)!
     text ::= string_with_length(.allocator = allocator, .length = size)!
     alphabet: StringView = "0123456789abcdef"
     index :: UIntNative = 0
+
     while index < count {
         byte ::= unwrap_or_abort(.value = get(.self = &bytes, .index = index))
         bytes_set(
@@ -49,6 +50,7 @@ encode(
         )
         index = index + 1
     }
+
     result = ..ok ~text
 }
 
@@ -60,11 +62,14 @@ decode(
         .result : Errable#(.t: DynamicArray#(.t: UInt8), .reasons: (..invalid_hex, ..out_of_memory))
     ) := {
     assume allocator
+
     if text.length % 2 != 0 {
         result = ..error(.reason = ..invalid_hex)
         return
     }
+
     index :: UIntNative = 0
+
     while index < text.length {
         if _digit(.byte = bytes_get(.view = &text, .index = index).byte).value == 255 {
             result = ..error(.reason = ..invalid_hex)
@@ -72,13 +77,16 @@ decode(
         }
         index = index + 1
     }
+
     bytes ::= DynamicArray#(.t: UInt8)(.allocator = allocator, .capacity = text.length / 2)!
     index = 0
+
     while index < text.length {
         high ::= _digit(.byte = bytes_get(.view = &text, .index = index).byte).value
         low ::= _digit(.byte = bytes_get(.view = &text, .index = index + 1).byte).value
         push_assume_capacity(.self = $&bytes, .value = high * 16 + low)
         index = index + 2
     }
+
     result = ..ok ~bytes
 }

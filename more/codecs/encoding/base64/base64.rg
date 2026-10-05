@@ -9,14 +9,17 @@ _value(.byte: UInt8) -> (.value: UInt32 = 255) := {
         value = UInt32(.value = byte - 65)
         return
     }
+
     if byte >= 97 and byte <= 122 {
         value = UInt32(.value = byte - 97) + 26
         return
     }
+
     if byte >= 48 and byte <= 57 {
         value = UInt32(.value = byte - 48) + 52
         return
     }
+
     if byte == 43 { value = 62 }
     if byte == 47 { value = 63 }
 }
@@ -30,13 +33,15 @@ encode(
     ) := {
     assume allocator
     alphabet ::= _alphabet().text
-    count ::= length(.self = &bytes).count
+    count ::= length(&bytes).count
     groups ::= count / 3
+
     if count % 3 != 0 { groups = groups + 1 }
     size ::= checked_multiply(.left = groups, .right = 4)!
     text ::= string_with_length(.allocator = allocator, .length = size)!
     index :: UIntNative = 0
     output :: UIntNative = 0
+
     while index < count {
         a ::= UInt32(.value = unwrap_or_abort(.value = get(.self = &bytes, .index = index)))
         b :: UInt32 = 0
@@ -124,6 +129,7 @@ encode(
         index = index + 3
         output = output + 4
     }
+
     result = ..ok ~text
 }
 
@@ -139,17 +145,22 @@ decode(
         )
     ) := {
     assume allocator
+
     if text.length % 4 != 0 {
         result = ..error(.reason = ..invalid_base64)
         return
     }
+
     count ::= text.length / 4 * 3
     padding :: UIntNative = 0
+
     if text.length > 0 {
         if bytes_get(.view = &text, .index = text.length - 1).byte == 61 { padding = 1 }
         if bytes_get(.view = &text, .index = text.length - 2).byte == 61 { padding = padding + 1 }
     }
+
     index :: UIntNative = 0
+
     while index < text.length - padding {
         if _value(.byte = bytes_get(.view = &text, .index = index).byte).value == 255 {
             result = ..error(.reason = ..invalid_base64)
@@ -157,6 +168,7 @@ decode(
         }
         index = index + 1
     }
+
     if padding > 0 {
         last ::= _value(.byte = bytes_get(.view = &text, .index = text.length - padding - 1).byte).value
         if [padding == 2 and last % 16 != 0] or [padding == 1 and last % 4 != 0] {
@@ -164,8 +176,10 @@ decode(
             return
         }
     }
+
     bytes ::= DynamicArray#(.t: UInt8)(.allocator = allocator, .capacity = count - padding)!
     index = 0
+
     while index < text.length {
         a ::= _value(.byte = bytes_get(.view = &text, .index = index).byte).value
         b ::= _value(.byte = bytes_get(.view = &text, .index = index + 1).byte).value
@@ -210,5 +224,6 @@ decode(
         }
         index = index + 4
     }
+
     result = ..ok ~bytes
 }

@@ -36,10 +36,12 @@ AtomicUInt32 init(
     ) := {
     assume ffi
     handle ::= _atomic_create(.initial = initial).handle
+
     if handle == 0 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     result = ..ok(._handle = handle, ._ffi = ffi)
 }
 

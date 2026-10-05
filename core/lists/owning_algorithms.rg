@@ -25,7 +25,8 @@ _swap_owned_array#(
 
 reverse_owned#(.t: Type)(.self: $&DynamicArray#(.t: t)) -> () := {
     left :: UIntNative = 0
-    end ::= length(.self = self).count
+    end ::= length(self).count
+
     while left < end {
         end = end - 1
         if left >= end { return }
@@ -58,6 +59,7 @@ _owned_sift_down#(
         .count : UIntNative
     ) -> () := {
     root ::= start
+
     while root < count / 2 {
         child ::= root * 2 + 1
         if child + 1 < count {
@@ -85,13 +87,16 @@ _owned_sift_down#(
 
 -- Unstable heapsort uses O(1) auxiliary space and performs no allocation.
 sort_owned#(.t: Type)(.self: $&DynamicArray#(.t: t), .order: &BorrowedOrderPolicy#(.t: t)) -> () := {
-    count ::= length(.self = self).count
+    count ::= length(self).count
     parent ::= count / 2
+
     while parent > 0 {
         parent = parent - 1
         _owned_sift_down#(.t: t)(.self = self, .order = order, .start = parent, .count = count)
     }
+
     end ::= count
+
     while end > 1 {
         end = end - 1
         _swap_owned_array#(.t: t)(.self = self, .left = 0, .right = end)

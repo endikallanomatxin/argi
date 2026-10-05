@@ -17,7 +17,8 @@ Vector64 init(
         .result : Errable#(.t: Vector64, .reasons: _PythonReasons)
     ) := {
     object ::= python.numeric_array(.self = interpreter, .values = values)!
-    result = ..ok(._object = ~object, ._length = length(.self = &values).count)
+
+    result = ..ok(._object = ~object, ._length = length(&values).count)
 }
 
 Vector64 deinit(.self: $&Vector64) -> () := { python.deinit(.self = $&self&._object) }
@@ -34,12 +35,14 @@ add(
         result = ..error(.reason = ..numpy_shape_mismatch)
         return
     }
+
     arguments: [1]&python.Object = (&right&._object)
     object ::= python.call_method(
         .self      = &left&._object
         .name      = "__add__"
-        .arguments = view(.array = &arguments)
+        .arguments = view(&arguments)
     )!
+
     result = ..ok(._object = ~object, ._length = left&._length)
 }
 
@@ -53,12 +56,14 @@ multiply(
         result = ..error(.reason = ..numpy_shape_mismatch)
         return
     }
+
     arguments: [1]&python.Object = (&right&._object)
     object ::= python.call_method(
         .self      = &left&._object
         .name      = "__mul__"
-        .arguments = view(.array = &arguments)
+        .arguments = view(&arguments)
     )!
+
     result = ..ok(._object = ~object, ._length = left&._length)
 }
 
@@ -72,19 +77,22 @@ dot(
         result = ..error(.reason = ..numpy_shape_mismatch)
         return
     }
+
     arguments: [1]&python.Object = (&right&._object)
     object ::= python.call_method(
         .self      = &left&._object
         .name      = "dot"
-        .arguments = view(.array = &arguments)
+        .arguments = view(&arguments)
     )!
     value ::= python.to_float64(.self = &object)!
+
     result = ..ok value
 }
 
 sum(.self: &Vector64) -> (.result: Errable#(.t: Float64, .reasons: _NumpyReasons)) := {
     object ::= python.call_method(.self = &self&._object, .name = "sum")!
     value ::= python.to_float64(.self = &object)!
+
     result = ..ok value
 }
 
@@ -94,11 +102,14 @@ copy_values(
     ) -> (
         .result : Errable#(.t: UIntNative, .reasons: _NumpyReasons)
     ) := {
-    if length(.self = &destination).count < self&._length {
+    if length(&destination).count < self&._length {
         result = ..error(.reason = ..numpy_shape_mismatch)
         return
     }
+
     count ::= python.copy_numeric(.self = &self&._object, .destination = destination)!
+
     if count != self&._length { abort }
+
     result = ..ok count
 }

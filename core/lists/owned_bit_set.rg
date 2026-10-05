@@ -10,13 +10,16 @@ BitSet init(
     ) := {
     assume allocator
     needed ::= count / 8
+
     if count % 8 != 0 { needed = needed + 1 }
     storage ::= DynamicArray#(.t: UInt8)(.allocator = allocator, .capacity = needed)!
     index :: UIntNative = 0
+
     while index < needed {
         push_assume_capacity(.self = $&storage, .value = 0)
         index = index + 1
     }
+
     result = ..ok(._storage = ~storage, ._count = count)
 }
 
@@ -41,8 +44,10 @@ contains(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     byte ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._storage, .index = index / 8))
     mask ::= _bit_set_mask(.index = index).mask
+
     result = ..ok byte&/ mask % 2 != 0
 }
 
@@ -53,7 +58,8 @@ set(
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..out_of_bounds))
     ) := {
-    view ::= as_view(.self = self).view
+    view ::= as_view(self).view
+
     result = set(.self = $&view, .index = index, .value = value)
 }
 

@@ -11,6 +11,7 @@ Deadline init(
         .result : Errable#(.t: Deadline, .reasons: (..out_of_range))
     ) := {
     instant ::= checked_add(.left = now._nanoseconds, .right = after._nanoseconds)!
+
     result = ..ok(._instant = (._nanoseconds = instant))
 }
 
@@ -24,5 +25,6 @@ remaining(.self: Deadline, .now: MonotonicInstant) -> (.value: Duration) := {
         value = Duration(.nanoseconds = 0)
         return
     }
+
     value = Duration(.nanoseconds = self._instant._nanoseconds - now._nanoseconds)
 }

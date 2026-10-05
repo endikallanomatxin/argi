@@ -43,6 +43,7 @@ _owned_hash_next#(
         .index : UIntNative
     ) := {
     index = start
+
     while index < capacity(.self = self).count {
         if _trusted_dynamic_array_get(.array = &self&._table._slots, .index = index).state == 1 {
             return
@@ -76,6 +77,7 @@ next#(
         .value : OwnedHashMapBorrow#(.key: key, .value: value)
     ) := {
     index ::= _owned_hash_next(.self = self&._owner, .start = self&._index).index
+
     if index >= capacity(.self = self&._owner).count { abort }
     entry ::= _owned_hash_entry(.self = self&._owner, .index = index).entry
     borrowed_key ::= depend_on#(.t: &key)(.value = &entry&.key, .on = self&._generation).result
@@ -111,7 +113,7 @@ has_next#(
         .self : &OwnedHashSetIterator#(.key: key, .policy: policy)
     ) -> (
         .ok : Bool
-    ) := { ok = has_next(.self = &self&._entries).ok }
+    ) := { ok = has_next(&self&._entries).ok }
 
 next#(
         .key    : Type,
@@ -120,4 +122,4 @@ next#(
         .self : $&OwnedHashSetIterator#(.key: key, .policy: policy)
     ) -> (
         .value : &key
-    ) := { value = next(.self = $&self&._entries).value.key }
+    ) := { value = next($&self&._entries).value.key }

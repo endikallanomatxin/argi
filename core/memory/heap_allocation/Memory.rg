@@ -13,6 +13,7 @@ _trusted_acquisition_subaddress(.base: UIntNative, .address: UIntNative) -> (.re
 once Memory init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Memory) := {
     result._ffi = ffi
     result._page_size = _memory_getpagesize().size
+
     if result._page_size == 0 { result._page_size = 4096 }
 }
 
@@ -24,20 +25,26 @@ _memory_map_aligned(
         .result : Errable#(.t: AcquiredStorage, .reasons: (..out_of_memory))
     ) := {
     _require_allocation_alignment(.alignment = alignment)
+
     if page_size == 0 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     mapped_size ::= page_allocator_round_up(.size = size, .alignment = page_size).rounded
+
     if mapped_size < size or mapped_size == 0 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     address ::= _memory_acquire_aligned(.length = mapped_size, .alignment = alignment).address
+
     if address + 1 == 0 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     result = ..ok(._address = address, ._size = mapped_size, ._alignment = alignment)
 }
 
@@ -55,6 +62,7 @@ map_pages(
         .alignment = alignment
         .page_size = self&._page_size
     )
+
     match mapped {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~storage {
@@ -80,6 +88,7 @@ deallocate(
     ) -> () := {
     assume ffi := self&._ffi
     physical_size ::= page_allocator_round_up(.size = size, .alignment = self&._page_size).rounded
+
     if _memory_release_aligned(.address = data.address, .length = physical_size).status != 0 {
         abort
     }

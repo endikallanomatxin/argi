@@ -93,6 +93,7 @@ read_line(
     initial_capacity :: UIntNative = 16
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = initial_capacity)
     line :: String
+
     match create_result {
         ..ok ~payload { line = ~payload }
         ..error _ {
@@ -101,7 +102,8 @@ read_line(
         }
     }
 
-    line_complete :: Bool = false
+    line_complete ::= false
+
     while 1 == 1 {
         next ::= read_byte(.self = reader)
         match next {
@@ -143,6 +145,7 @@ read_line(
             }
         }
     }
+
     if line_complete {
         result = ..ok ..ok ~line
     }
@@ -156,6 +159,7 @@ print(
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
     write(.self = writer, .text = value)!
+
     result = write(.self = writer, .text = terminator)
 }
 
@@ -178,6 +182,7 @@ print_error(
     assume writer
 
     i :: UIntNative = 0
+
     while i < value.length {
         wrote ::= write_byte(.self = writer, .byte = bytes_get(.view = &value, .index = i).byte)
         match wrote {
@@ -216,6 +221,7 @@ print(
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume writer
+
     result = print(as_view(value), .terminator = terminator)
 }
 
@@ -229,6 +235,7 @@ print#(
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
     format_into(.out = writer, .value = value)!
+
     result = write(.self = writer, .text = terminator)
 }
 
@@ -242,5 +249,6 @@ print#(
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
     format_into(.out = writer, .value = value)!
+
     result = write(.self = writer, .text = terminator)
 }

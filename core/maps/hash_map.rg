@@ -35,11 +35,13 @@ _hash_map_slots#(
         .allocator = allocator
     )!
     index :: UIntNative = 0
+
     while index < capacity {
         empty :: _HashMapSlot#(.key: key, .value: value) = ..empty
         push_assume_capacity(.self = $&slots, .value = empty)
         index = index + 1
     }
+
     result = ..ok ~slots
 }
 
@@ -60,9 +62,11 @@ HashMap init#(
     constructed :: HashMap#(.key: key, .value: value, .policy: policy)
 
     count ::= capacity
+
     if count < 8 { count = 8 }
     slots ::= _hash_map_slots#(.key: key, .value: value)(.capacity = count, .allocator = allocator)!
     constructed = (._slots = ~slots, ._length = 0, ._policy = ~policy)
+
     result = ..ok ~constructed
 }
 
@@ -84,7 +88,7 @@ capacity#(
         .self : &HashMap#(.key: key, .value: value, .policy: policy)
     ) -> (
         .count : UIntNative
-    ) := { count = length(.self = &self&._slots).count }
+    ) := { count = length(&self&._slots).count }
 
 _hash_map_find#(
         .key    : Type: ImplicitlyCopyable,
@@ -100,6 +104,7 @@ _hash_map_find#(
     count ::= capacity(.self = self).count
     position ::= hash % count
     visited :: UIntNative = 0
+
     while visited < count {
         slot ::= _trusted_dynamic_array_get(.array = &self&._slots, .index = position)
         match slot {
@@ -122,6 +127,7 @@ _hash_map_find#(
         if position == count { position = 0 }
         visited = visited + 1
     }
+
     index = ..none
 }
 
@@ -134,9 +140,10 @@ _hash_map_insert_slot#(
         .value : value,
         .hash  : UIntNative,
     ) -> () := {
-    count ::= length(.self = slots).count
+    count ::= length(slots).count
     position ::= hash % count
     visited :: UIntNative = 0
+
     while visited < count {
         slot ::= _trusted_dynamic_array_get(.array = slots, .index = position)
         if is(.value = slot, .variant = ..occupied) == false {
@@ -152,6 +159,7 @@ _hash_map_insert_slot#(
         if position == count { position = 0 }
         visited = visited + 1
     }
+
     abort
 }
 
@@ -167,6 +175,7 @@ _hash_map_grow#(
     ) := {
     old_count ::= capacity(.self = self).count
     new_count ::= old_count * 2
+
     if new_count <= old_count {
         result = ..error(.reason = ..out_of_memory)
         return
@@ -178,6 +187,7 @@ _hash_map_grow#(
         .allocator = allocator
     )!
     index :: UIntNative = 0
+
     while index < old_count {
         slot ::= _trusted_dynamic_array_get(.array = &self&._slots, .index = index)
         match slot {
@@ -194,8 +204,10 @@ _hash_map_grow#(
         }
         index = index + 1
     }
+
     deinit(.self = $&self&._slots, .allocator = allocator)
     self&._slots = ~fresh
+
     result = ..ok Void()
 }
 
@@ -213,6 +225,7 @@ put#(
     ) := {
     assume allocator
     digest ::= hash(.self = &self&._policy, .key = key).hash
+
     match _hash_map_find(.self = self, .key = key, .hash = digest).index {
         ..none {}
         ..some found {
@@ -237,11 +250,14 @@ put#(
             }
         }
     }
+
     if self&._length >= capacity(.self = self).count / 2 {
         _hash_map_grow(.self = self, .allocator = allocator)!
     }
+
     _hash_map_insert_slot(.slots = $&self&._slots, .key = key, .value = value, .hash = digest)
     self&._length = self&._length + 1
+
     result = ..ok Void()
 }
 
@@ -256,6 +272,7 @@ get#(
         .result : ?value
     ) := {
     digest ::= hash(.self = &self&._policy, .key = key).hash
+
     match _hash_map_find(.self = self, .key = key, .hash = digest).index {
         ..none { result = ..none }
         ..some found {
@@ -297,6 +314,7 @@ get_ro_ref#(
         .result : ?&value
     ) := {
     digest ::= hash(.self = &self&._policy, .key = key).hash
+
     match _hash_map_find(.self = self, .key = key, .hash = digest).index {
         ..none { result = ..none }
         ..some found {
@@ -334,6 +352,7 @@ remove#(
     assume allocator
     digest ::= hash(.self = &self&._policy, .key = key).hash
     removed = false
+
     match _hash_map_find(.self = self, .key = key, .hash = digest).index {
         ..none {}
         ..some found {

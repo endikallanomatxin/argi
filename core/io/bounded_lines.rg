@@ -12,7 +12,8 @@ read_line(
     ) := {
     read_result ::= read_until(.self = self, .buffer = buffer, .delimiter = 10)!
     count ::= read_result.count
-    terminated :: Bool = false
+    terminated ::= false
+
     match read_result.termination {
         ..delimiter { terminated = true }
         ..end { if count == 0 {
@@ -35,11 +36,14 @@ read_line(
             }
         }
     }
+
     if terminated and count > 0 {
         last ::= unwrap_or_abort(.value = get_ro_ref(.self = &buffer, .index = count - 1))
         if last&== 13 { count = count - 1 }
     }
+
     prefix ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = count))
+
     result = ..ok ..some(
         .value = (.bytes = as_readonly(.self = &prefix).view, .terminated = terminated)
     )

@@ -37,9 +37,11 @@ _array_storage#(
         )
     ) := {
     assume ffi := self&._ffi
-    count ::= length(.self = &values).count
+    count ::= length(&values).count
     address :: UIntNative = 0
+
     if count != 0 { address = UIntNative(.value = data(.self = &values).pointer) }
+
     result = _owned(
         .self   = self
         .handle = _numeric_storage(
@@ -65,10 +67,12 @@ _copy_numeric#(
         )
     ) := {
     assume ffi := self&._python&._ffi
-    capacity ::= length(.self = &destination).count
+    capacity ::= length(&destination).count
     address :: UIntNative = 0
+
     if capacity != 0 { address = UIntNative(.value = data(.self = &destination).pointer) }
     copied :: UIntNative = 0
+
     if [
         _buffer_copy(
             .context     = self&._python&._handle
@@ -84,6 +88,7 @@ _copy_numeric#(
         result = ..error(.reason = ..python_error)
         return
     }
+
     result = ..ok copied
 }
 
@@ -102,11 +107,12 @@ _numpy_array(
     dtype_object ::= string(.self = self, .value = dtype)!
     arguments: [1]&Object = (storage)
     named: [1]Keyword = ((.name = "dtype", .value = &dtype_object))
-    keywords ::= keyword_arguments(.self = self, .values = view(.array = &named))!
+    keywords ::= keyword_arguments(.self = self, .values = view(&named))!
+
     result = call_method(
         .self      = &numpy
         .name      = "frombuffer"
-        .arguments = view(.array = &arguments)
+        .arguments = view(&arguments)
         .keywords  = ..some(.value = &keywords)
     )
 }
@@ -137,6 +143,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i1")
 }
 
@@ -162,6 +169,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i1")
 }
 
@@ -200,6 +208,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i2")
 }
 
@@ -225,6 +234,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i2")
 }
 
@@ -263,6 +273,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i4")
 }
 
@@ -288,6 +299,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i4")
 }
 
@@ -326,6 +338,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i8")
 }
 
@@ -351,6 +364,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i8")
 }
 
@@ -389,6 +403,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u1")
 }
 
@@ -414,6 +429,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u1")
 }
 
@@ -452,6 +468,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u2")
 }
 
@@ -477,6 +494,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u2")
 }
 
@@ -515,6 +533,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u4")
 }
 
@@ -540,6 +559,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u4")
 }
 
@@ -578,6 +598,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u8")
 }
 
@@ -603,6 +624,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u8")
 }
 
@@ -643,6 +665,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = _native_dtype().value)
 }
 
@@ -669,6 +692,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = _native_dtype().value)
 }
 
@@ -707,6 +731,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=f4")
 }
 
@@ -732,6 +757,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=f4")
 }
 
@@ -770,6 +796,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=f8")
 }
 
@@ -795,6 +822,7 @@ numeric_array(
         )
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
+
     result = _numpy_array(.self = self, .storage = &storage, .dtype = "=f8")
 }
 

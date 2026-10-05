@@ -7,8 +7,9 @@ _bit_set_combine(.left: UInt8, .right: UInt8, .mode: UInt8) -> (.value: UInt8 = 
     b ::= right
     place :: UInt8 = 1
     index :: UIntNative = 0
+
     while index < 8 {
-        keep :: Bool = false
+        keep ::= false
         if mode == 0 { keep = a % 2 != 0 or b % 2 != 0 }
         if mode == 1 { keep = a % 2 != 0 and b % 2 != 0 }
         if mode == 2 { keep = a % 2 != 0 and b % 2 == 0 }
@@ -31,8 +32,10 @@ _bit_set_combine_into(
         result = ..error(.reason = ..bit_set_size_mismatch)
         return
     }
+
     index :: UIntNative = 0
-    while index < length(.self = &self&._storage).count {
+
+    while index < length(&self&._storage).count {
         left ::= unwrap_or_abort(.value = get_rw_ref(.self = $&self&._storage, .index = index))
         right ::= unwrap_or_abort(.value = get_ro_ref(.self = &other&._storage, .index = index))
         left&= _bit_set_combine(.left = left&, .right = right&, .mode = mode).value
@@ -45,18 +48,24 @@ union_with(
         .other : &BitSet
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..bit_set_size_mismatch))
-    ) := { result = _bit_set_combine_into(.self = self, .other = other, .mode = 0) }
+    ) := {
+    result = _bit_set_combine_into(.self = self, .other = other, .mode = 0)
+}
 
 intersect_with(
         .self  : $&BitSet,
         .other : &BitSet
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..bit_set_size_mismatch))
-    ) := { result = _bit_set_combine_into(.self = self, .other = other, .mode = 1) }
+    ) := {
+    result = _bit_set_combine_into(.self = self, .other = other, .mode = 1)
+}
 
 difference_with(
         .self  : $&BitSet,
         .other : &BitSet
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..bit_set_size_mismatch))
-    ) := { result = _bit_set_combine_into(.self = self, .other = other, .mode = 2) }
+    ) := {
+    result = _bit_set_combine_into(.self = self, .other = other, .mode = 2)
+}

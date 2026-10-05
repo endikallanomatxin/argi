@@ -84,6 +84,7 @@ _exception_text(
     assume ffi := self&._ffi
     count ::= _exception_size(.handle = self&._handle, .part = part).length
     text ::= string_with_length(.allocator = allocator, .length = count)!
+
     if [
         _exception_copy(
             .handle      = self&._handle
@@ -93,6 +94,7 @@ _exception_text(
         ).status
         != 0
     ] { abort }
+
     result = ..ok ~text
 }
 

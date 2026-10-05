@@ -51,6 +51,7 @@ add#(
     ) := {
     result = (.values = zeroed#(.t: Array#(.n = n, .t: t))())
     i :: UIntNative = 0
+
     while i < n {
         result.values[i] = left&.values[i] + right&.values[i]
         i = i + 1
@@ -68,6 +69,7 @@ dot#(
     ) := {
     value = zeroed#(.t: t)()
     i :: UIntNative = 0
+
     while i < n {
         value = value + left&.values[i] * right&.values[i]
         i = i + 1
@@ -88,6 +90,7 @@ scale#(
     ) := {
     result = (.values = zeroed#(.t: Array#(.n = n, .t: t))())
     i :: UIntNative = 0
+
     while i < n {
         result.values[i] = self&.values[i] * factor
         i = i + 1
@@ -114,6 +117,7 @@ add#(
     ) := {
     result = (.values = zeroed#(.t: Array#(.n = rows, .t: Array#(.n = cols, .t: t)))())
     row :: UIntNative = 0
+
     while row < rows {
         col :: UIntNative = 0
         while col < cols {
@@ -145,6 +149,7 @@ multiply#(
     ) := {
     result = (.values = zeroed#(.t: Array#(.n = rows, .t: Array#(.n = cols, .t: t)))())
     row :: UIntNative = 0
+
     while row < rows {
         col :: UIntNative = 0
         while col < cols {
@@ -177,6 +182,7 @@ transpose#(
     ) := {
     result = (.values = zeroed#(.t: Array#(.n = cols, .t: Array#(.n = rows, .t: t)))())
     row :: UIntNative = 0
+
     while row < rows {
         col :: UIntNative = 0
         while col < cols {

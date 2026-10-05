@@ -17,6 +17,7 @@ PriorityQueue init#(
     ) := {
     assume allocator
     items ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = capacity)!
+
     result = ..ok(._items = ~items, ._order = order)
 }
 
@@ -38,7 +39,7 @@ length#(
         .self : &PriorityQueue#(.t: t, .order: order)
     ) -> (
         .count : UIntNative
-    ) := { count = length(.self = &self&._items).count }
+    ) := { count = length(&self&._items).count }
 
 push#(
         .t     : Type: ImplicitlyCopyable,
@@ -52,7 +53,8 @@ push#(
     ) := {
     assume allocator
     push(.self = $&self&._items, .value = value, .allocator = allocator)!
-    child ::= length(.self = &self&._items).count - 1
+    child ::= length(&self&._items).count - 1
+
     while child > 0 {
         parent ::= [child - 1] / 2
         a ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._items, .index = child))&
@@ -71,7 +73,7 @@ peek#(
     ) -> (
         .value : ?t = ..none
     ) := {
-    if length(.self = &self&._items).count == 0 { return }
+    if length(&self&._items).count == 0 { return }
     value = ..some(
         .value = unwrap_or_abort(.value = get_ro_ref(.self = &self&._items, .index = 0))&
     )
@@ -85,13 +87,15 @@ pop#(
     ) -> (
         .value : ?t = ..none
     ) := {
-    count ::= length(.self = &self&._items).count
+    count ::= length(&self&._items).count
+
     if count == 0 { return }
     value = peek(.self = self).value
     _swap_indexed_values#(.t: t)(.self = $&self&._items, .left = 0, .right = count - 1)
     discarded ::= pop(.self = $&self&._items)
     count = count - 1
     root :: UIntNative = 0
+
     while root < count / 2 {
         child ::= root * 2 + 1
         if child + 1 < count {
