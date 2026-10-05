@@ -9,7 +9,7 @@ allocation, capabilities, ownership and nominal errors throughout.
    structural cleanup on allocation failure and replacement.
 2. Streams: audit bounded adapters under allocation and native read failures;
    compose consumers through owning line iteration.
-3. Filesystem/tools: path normalization, directory walking and CLI options.
+3. Filesystem/tools: directory walking and declarative CLI options.
 4. Numeric/time foundations: elementary float math and UTC calendar conversion.
 5. More: hex/Base64, JSON/CSV, then compression/archive consumers.
 6. Services/runtime: logging, HTTP, selected hashes/crypto, then concurrency
