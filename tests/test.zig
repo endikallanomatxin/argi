@@ -9822,3 +9822,8 @@ test "feature_tests/system/87_path_capacity_bounds" {
     try expectSuccessfulBuild("tests/feature_tests/system/87_path_capacity_bounds");
     try runExpect("tests/feature_tests/system/87_path_capacity_bounds", 0);
 }
+
+test "feature_tests/control_flow/22_loop_transfer_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/control_flow/22_loop_transfer_cleanup");
+    try runExpect("tests/feature_tests/control_flow/22_loop_transfer_cleanup", 0);
+}
