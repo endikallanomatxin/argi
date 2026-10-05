@@ -9982,3 +9982,8 @@ test "feature_tests/system/95_atomic_native" {
 test "feature_tests/system/96X_atomic_copy" {
     try buildExpectFail("tests/feature_tests/system/96X_atomic_copy", "cannot be copied implicitly");
 }
+
+test "feature_tests/system/97_cancellation_deadline" {
+    try expectSuccessfulBuild("tests/feature_tests/system/97_cancellation_deadline");
+    try runExpect("tests/feature_tests/system/97_cancellation_deadline", 0);
+}
