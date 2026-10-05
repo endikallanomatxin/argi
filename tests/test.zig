@@ -9943,3 +9943,42 @@ test "feature_tests/codecs/03_json" {
     try expectSuccessfulBuild("tests/feature_tests/codecs/03_json");
     try runExpect("tests/feature_tests/codecs/03_json", 0);
 }
+
+test "feature_tests/system/94_atomic_u32" {
+    try expectSuccessfulBuild("tests/feature_tests/system/94_atomic_u32");
+    try runExpect("tests/feature_tests/system/94_atomic_u32", 0);
+}
+
+test "feature_tests/system/95_atomic_native" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, "tests/feature_tests/system/95_atomic_native" });
+    defer allocator.free(fixture);
+    const source = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(source);
+    const windows = @import("builtin").os.tag == .windows;
+    const compiled = try runChildInCwd(if (windows) &.{ "cc", "-c", source, "-o", "native.o" } else &.{ "cc", "-pthread", "-c", source, "-o", "native.o" }, root);
+    defer allocator.free(compiled.stdout);
+    defer allocator.free(compiled.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, compiled.term);
+    const built = try runChildInCwd(if (windows) &.{ argi, "build", fixture, "--output", "app", "--link-file", "native.o" } else &.{ argi, "build", fixture, "--output", "app", "--link-file", "native.o", "--link-library", "pthread" }, root);
+    defer allocator.free(built.stdout);
+    defer allocator.free(built.stderr);
+    if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+    const executed = try runChildInCwd(&.{"./app"}, root);
+    defer allocator.free(executed.stdout);
+    defer allocator.free(executed.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+}
+
+test "feature_tests/system/96X_atomic_copy" {
+    try buildExpectFail("tests/feature_tests/system/96X_atomic_copy", "cannot be copied implicitly");
+}
