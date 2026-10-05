@@ -9,7 +9,7 @@ of whether the concrete representation is dense, sparse, diagonal, or a view:
 
     AbstractMatrix#(.t: Type, .rows: UIntNative, .cols: UIntNative) : Abstract = (
         get(.self: &Self, .row: UIntNative, .col: UIntNative)
-            -> (.result: Errable#(.t: t, .reasons: (..out_of_bounds)))
+            -> (.result: Errable#(t, (..out_of_bounds)))
     )
 
 A mutable companion could require set with the same coordinates and bounds

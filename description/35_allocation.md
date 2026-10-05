@@ -6,7 +6,7 @@ values or know their type:
 ```rg
 Allocator : Abstract = (
     allocate(.self: $&Self, .size: UIntNative, .alignment: UIntNative)
-        -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory)))
+        -> (.result: Errable#(Allocation, (..out_of_memory)))
 )
 ```
 

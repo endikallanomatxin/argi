@@ -74,7 +74,7 @@ point := Point(.x = 20, .y = 22)
 ```
 
 `Point(...)` selects a visible constructor associated with `Point`, based on
-input types. The result must be `Point`, or `Errable#(.t: Point, .reasons: R)`
+input types. The result must be `Point`, or `Errable#(Point, R)`
 when construction can fail. The return type does not select the overload.
 When visible constructors exist, callers use them rather than bypassing the
 operation through automatic field-wise construction. See

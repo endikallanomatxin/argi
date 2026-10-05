@@ -80,11 +80,11 @@ Example:
 ..file_not_found
 ..permission_denied
 
-read_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found))) := {
+read_file() -> (.result: Errable#(Int32, (..file_not_found))) := {
     result = ..error(.reason = ..file_not_found)
 }
 
-load_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found, ..permission_denied))) := {
+load_file() -> (.result: Errable#(Int32, (..file_not_found, ..permission_denied))) := {
     value := read_file()!
     result = ..ok value
 }
@@ -123,17 +123,21 @@ functions. `-> !Void` alone does not declare a success default.
 > output initializers. Success defaults such as `..ok Void()` need no tracer.
 
 The same inference path is also available when the output is written
-explicitly as `Errable#(.t: T)` and omits `.reasons`:
+explicitly as `Errable#(T)` and omits `.reasons`:
 
 ```rg
-load_file() -> (.result: Errable#(.t: Int32)) := {
+load_file() -> (.result: Errable#(Int32)) := {
     value := read_file()!
     result = ..ok value
 }
 ```
 
-This is currently accepted only in function outputs. Outside function output
-positions, `Errable#(.t: T)` still requires an explicit `.reasons`.
+Omitting the reasons requests an inferred error set. Function outputs infer
+that set from their body; other positions need enough context to determine it.
+
+> [!IMPLEMENTATION]
+> Generic consumers requiring a nominal Errable can still reject inferred error
+> envelopes. Direct matching remains available for those values.
 
 The compiler can also infer a narrower subset of the declared reasons by
 looking at the actual propagation and return sites in the function body. That
@@ -153,19 +157,19 @@ stream failures:
 ..out_of_memory
 
 open_read(.p: $&File, .path: &Char)
-    -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed)))
+    -> (.result: Errable#(Bool, (..file_open_failed)))
 
 read_file(.self: &FileSystem, .path: StringView)
     -> (.result: Errable#(
-        .t: String,
-        .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory),
+        String,
+        (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory)
     ))
 
 read_byte(.self: $&Reader)
-    -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed)))
+    -> (.result: Errable#(ReadByte, (..stream_read_failed)))
 
 write_byte(.self: $&Writer, .byte: UInt8)
-    -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
+    -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)))
 ```
 
 `read_line()` and `read_file()` explicitly propagate `..out_of_memory`.
@@ -177,9 +181,9 @@ longer:
 - a `Bool` indicating whether allocation succeeded
 
 Instead, use:
-- `allocate(...) -> Errable#(.t: Allocation, .reasons: (..out_of_memory))`
+- `allocate(...) -> Errable#(Allocation, (..out_of_memory))`
 - helpers such as `string_with_capacity(...)`
-- growth operations returning `Errable#(.t: Void, .reasons: (..out_of_memory))`
+- growth operations returning `Errable#(Void, (..out_of_memory))`
 
 This is already used in `String` and the fallible paths of `DynamicArray`
 (`push_growing`, `insert_growing`, `dynamic_array_grow_growing`).
@@ -330,7 +334,7 @@ Current direction for reason inference:
 - The signature still spells out the complete declared set.
 - `-> !T` already allows `.reasons` to be omitted in the special case of a
   single `result` output.
-- `Errable#(.t: T)` without `.reasons` is also accepted in explicit function
+- `Errable#(T)` without `.reasons` is also accepted in explicit function
   outputs.
 - Semantizing infers a subset from `return`, output assignments, and `!` / `!!`
   propagation.
@@ -367,7 +371,7 @@ my_thing := fallible() handle value, error {
 
 Expected semantics:
 - `handle` is syntactic sugar specific to `Errable`.
-- The expression on the left must have type `Errable#(.t: T, ...)`.
+- The expression on the left must have type `Errable#(T, ...)`.
 - `value` is the shared result slot.
 - If the `Errable` is `..ok x`, then `value = x`.
 - If it is `..error(...)`, the block runs with `error` bound to the complete

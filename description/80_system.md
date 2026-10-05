@@ -62,7 +62,7 @@ main(.system: System) -> !Void = ..ok Void() := {
 The explicit default makes successful completion return `..ok Void()` without
 assigning `result` in the body. It is an ordinary output default, not an
 implicit return of the last expression. The same contract works without a
-`System` input and with the explicit `Errable#(.t: Void)` output form.
+`System` input and with the explicit `Errable#(Void)` output form.
 
 Success exits with status `0`. A returned error exits with status `1` and
 writes an unhandled-error heading followed by its trace to stderr. Reporting
