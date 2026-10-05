@@ -282,23 +282,22 @@ dynamic_array_grow_growing#(
     assume allocator
 
     element_size :: UIntNative = size_of(.type = t)
-    new_capacity ::= array&._capacity
-    zero :: UIntNative = 0
-    one :: UIntNative = 1
-
-    if new_capacity == zero {
-        new_capacity = one
-    }
-
-    if new_capacity < min_capacity {
-        new_capacity = min_capacity
-    }
-
-    new_bytes :: UIntNative = new_capacity * element_size
-    if element_size != 0 and new_bytes / element_size != new_capacity {
+    maximum ::= integer_limits(.value = min_capacity).maximum
+    if element_size != 0 { maximum = maximum / element_size }
+    if min_capacity > maximum {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+    -- Reserve geometrically so repeated appends relocate a linear number of
+    -- elements. Clamp before multiplying, including the allocation byte size.
+    new_capacity ::= array&._capacity
+    if new_capacity == 0 { new_capacity = 1 } else {
+        if new_capacity <= maximum / 2 { new_capacity = new_capacity * 2 } else {
+            new_capacity = maximum
+        }
+    }
+    if new_capacity < min_capacity { new_capacity = min_capacity }
+    if new_capacity > maximum { new_capacity = maximum }
     allocate_result ::= allocate#(.t: t)(.self = allocator, .count = new_capacity)
     match allocate_result {
         ..ok ~payload {
