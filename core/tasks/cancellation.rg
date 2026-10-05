@@ -24,11 +24,11 @@ cancellation_token(.self: &CancellationSource) -> (.token: CancellationToken) :=
     token = (._source = self)
 }
 
-cancel(.self: $&CancellationSource) -> () := { store(.self = $&self&._state, .value = 1) }
+cancel(.self: $&CancellationSource) -> () := { store($&self&._state, .value = 1) }
 
 is_cancelled(.self: CancellationToken) -> (.value: Bool) := {
     value = [
-        load(.self = &self._source&._state).value
+        load(&self._source&._state).value
         != 0
     ]
 }
@@ -48,7 +48,7 @@ check_cancelled(
     match self.token {
         ..none {}
         ..some entry {
-            if is_cancelled(.self = entry.value).value {
+            if is_cancelled(entry.value).value {
                 result = ..error(.reason = ..cancelled)
                 return
             }
@@ -58,7 +58,7 @@ check_cancelled(
     match self.deadline {
         ..none {}
         ..some entry {
-            if expired(.self = entry.value, .now = now).value {
+            if expired(entry.value, .now = now).value {
                 result = ..error(.reason = ..deadline_exceeded)
             }
         }

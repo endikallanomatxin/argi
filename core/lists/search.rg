@@ -12,7 +12,7 @@ find#(
     position :: UIntNative = 0
 
     while position < count {
-        element ::= unwrap_or_abort(.value = get_ro_ref(.self = self, .index = position))&
+        element ::= unwrap_or_abort(.value = get_ro_ref(self, .index = position))&
         if element == value {
             index = ..some(.value = position)
             return
@@ -31,5 +31,5 @@ contains#(
     ) -> (
         .ok : Bool
     ) := {
-    ok = is(.value = find#(.t: t)(.self = self, .value = value).index, .variant = ..some)
+    ok = is(.value = find#(.t: t)(self, .value = value).index, .variant = ..some)
 }

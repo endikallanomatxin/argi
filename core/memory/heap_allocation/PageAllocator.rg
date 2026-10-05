@@ -40,7 +40,7 @@ allocate(
     ) -> (
         .result : Errable#(Allocation, (..out_of_memory))
     ) := {
-    mapped ::= map_pages(.self = self&.memory, .size = size, .alignment = alignment)
+    mapped ::= map_pages(self&.memory, .size = size, .alignment = alignment)
 
     match mapped {
         ..error _ { result = ..error(.reason = ..out_of_memory) }

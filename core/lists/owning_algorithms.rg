@@ -30,7 +30,7 @@ reverse_owned#(.t: Type)(.self: $&DynamicArray#(.t: t)) -> () := {
     while left < end {
         end = end - 1
         if left >= end { return }
-        _swap_owned_array#(.t: t)(.self = self, .left = left, .right = end)
+        _swap_owned_array#(.t: t)(self, .left = left, .right = end)
         left = left + 1
     }
 }
@@ -47,7 +47,7 @@ _owned_array_less#(
     ) := {
     a ::= _trusted_dynamic_array_get_ro_ref#(.t: t)(.array = self, .index = left).reference
     b ::= _trusted_dynamic_array_get_ro_ref#(.t: t)(.array = self, .index = right).reference
-    ok = less(.self = order, .left = a, .right = b).ok
+    ok = less(order, .left = a, .right = b).ok
 }
 
 _owned_sift_down#(
@@ -64,7 +64,7 @@ _owned_sift_down#(
         child ::= root * 2 + 1
         if child + 1 < count {
             if _owned_array_less#(.t: t)(
-                .self  = self
+                self
                 .order = order
                 .left  = child
                 .right = [
@@ -77,10 +77,10 @@ _owned_sift_down#(
                 ] }
         }
         if [
-            _owned_array_less#(.t: t)(.self = self, .order = order, .left = root, .right = child).ok
+            _owned_array_less#(.t: t)(self, .order = order, .left = root, .right = child).ok
             == false
         ] { return }
-        _swap_owned_array#(.t: t)(.self = self, .left = root, .right = child)
+        _swap_owned_array#(.t: t)(self, .left = root, .right = child)
         root = child
     }
 }
@@ -92,14 +92,14 @@ sort_owned#(.t: Type)(.self: $&DynamicArray#(.t: t), .order: &BorrowedOrderPolic
 
     while parent > 0 {
         parent = parent - 1
-        _owned_sift_down#(.t: t)(.self = self, .order = order, .start = parent, .count = count)
+        _owned_sift_down#(.t: t)(self, .order = order, .start = parent, .count = count)
     }
 
     end ::= count
 
     while end > 1 {
         end = end - 1
-        _swap_owned_array#(.t: t)(.self = self, .left = 0, .right = end)
-        _owned_sift_down#(.t: t)(.self = self, .order = order, .start = 0, .count = end)
+        _swap_owned_array#(.t: t)(self, .left = 0, .right = end)
+        _owned_sift_down#(.t: t)(self, .order = order, .start = 0, .count = end)
     }
 }

@@ -43,7 +43,7 @@ string_with_length(
     }
 
     allocation_size ::= length + 1
-    allocation ::= allocate(.self = allocator, .size = allocation_size)!
+    allocation ::= allocate(allocator, .size = allocation_size)!
     out :: String = (.allocation = ~allocation, .length = length)
     i :: UIntNative = 0
 
@@ -78,7 +78,7 @@ string_with_capacity(
     }
 
     allocation_size ::= actual_capacity + 1
-    allocation ::= allocate(.self = allocator, .size = allocation_size)!
+    allocation ::= allocate(allocator, .size = allocation_size)!
     out :: String = (.allocation = ~allocation, .length = 0)
     bytes_set(.string = $&out, .index = 0, .value = 0)
 
@@ -101,7 +101,7 @@ String init(
     }
 
     allocation_size ::= length + 1
-    allocation ::= allocate(.self = allocator, .size = allocation_size)!
+    allocation ::= allocate(allocator, .size = allocation_size)!
     constructed = (.allocation = ~allocation, .length = length)
     i :: UIntNative = 0
 
@@ -138,7 +138,7 @@ String init(
     }
 
     allocation_size ::= actual_capacity + 1
-    allocation ::= allocate(.self = allocator, .size = allocation_size)!
+    allocation ::= allocate(allocator, .size = allocation_size)!
     constructed = (.allocation = ~allocation, .length = 0)
     bytes_set(.string = $&constructed, .index = 0, .value = 0)
 
@@ -168,7 +168,7 @@ copy(
     }
 
     allocation_size ::= self&.length + 1
-    allocation ::= allocate(.self = allocator, .size = allocation_size)!
+    allocation ::= allocate(allocator, .size = allocation_size)!
     out :: String = (.allocation = ~allocation, .length = self&.length)
 
     if allocation_size > 0 {
@@ -250,7 +250,7 @@ clear(.self: $&String) -> () := {
 }
 
 has_space(.self: &String) -> (.ok: Bool) := {
-    ok = self&.length < capacity(.self = self).value
+    ok = self&.length < capacity(self).value
 }
 
 string_growth_capacity(
@@ -262,7 +262,7 @@ string_growth_capacity(
     limit ::= _string_max_result_length().length
 
     if min_capacity > limit { abort }
-    current_capacity ::= capacity(.self = self).value
+    current_capacity ::= capacity(self).value
 
     if current_capacity == 0 {
         value = min_capacity
@@ -291,7 +291,7 @@ ensure_capacity(
     assume allocator
 
     result = ensure_capacity_growing(
-        .self            = self
+        self
         .target_capacity = capacity
         .allocator       = allocator
     )
@@ -311,7 +311,7 @@ ensure_capacity_growing(
         return
     }
 
-    current_capacity ::= capacity(.self = self).value
+    current_capacity ::= capacity(self).value
 
     if current_capacity >= target_capacity {
         result = ..ok Void()
@@ -319,7 +319,7 @@ ensure_capacity_growing(
     }
 
     new_allocation_size ::= target_capacity + 1
-    allocate_result ::= allocate(.self = allocator, .size = new_allocation_size)
+    allocate_result ::= allocate(allocator, .size = new_allocation_size)
 
     match allocate_result {
         ..ok ~payload {
@@ -364,7 +364,7 @@ string_append_byte(
         .self : $&String,
         .byte : UInt8,
     ) -> () := {
-    if has_space(.self = self).ok == false { abort }
+    if has_space(self).ok == false { abort }
     bytes_set(.string = self, .index = self&.length, .value = byte)
     self&.length = self&.length + 1
     bytes_set(.string = self, .index = self&.length, .value = 0)
@@ -374,10 +374,10 @@ string_append_bytes(
         .self   : $&String,
         .source : ArrayViewRO#(.t: UInt8),
     ) -> () := {
-    current_capacity ::= capacity(.self = self).value
+    current_capacity ::= capacity(self).value
 
     if self&.length > current_capacity { abort }
-    count ::= length#(.t: UInt8)(.self = &source).count
+    count ::= length#(.t: UInt8)(&source).count
 
     if count > current_capacity - self&.length { abort }
     if count > 0 {
@@ -387,12 +387,12 @@ string_append_bytes(
         ).reference
         dest_view ::= _trusted_array_view#(.t: UInt8)(
             .data   = dest_data
-            .length = length#(.t: UInt8)(.self = &source).count
+            .length = length#(.t: UInt8)(&source).count
         )
         memcpy_bytes(.dst = dest_view, .src = source)
     }
 
-    self&.length = self&.length + length#(.t: UInt8)(.self = &source).count
+    self&.length = self&.length + length#(.t: UInt8)(&source).count
     bytes_set(.string = self, .index = self&.length, .value = 0)
 }
 
@@ -410,11 +410,11 @@ push_byte(
         return
     }
 
-    if has_space(.self = self).ok {
+    if has_space(self).ok {
     } else {
-        next_capacity ::= string_growth_capacity(.self = self, .min_capacity = self&.length + 1).value
+        next_capacity ::= string_growth_capacity(self, .min_capacity = self&.length + 1).value
         growth_result ::= ensure_capacity_growing(
-            .self            = self
+            self
             .target_capacity = next_capacity
             .allocator       = allocator
         )
@@ -428,7 +428,7 @@ push_byte(
         }
     }
 
-    string_append_byte(.self = self, .byte = byte)
+    string_append_byte(self, .byte = byte)
 
     result = ..ok Void()
 }
@@ -457,7 +457,7 @@ push_c_string(
 
     target_capacity ::= self&.length + append_length
     growth_result ::= ensure_capacity_growing(
-        .self            = self
+        self
         .target_capacity = target_capacity
         .allocator       = allocator
     )
@@ -475,7 +475,7 @@ push_c_string(
         .data   = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference
         .length = append_length
     )
-    string_append_bytes(.self = self, .source = source_view)
+    string_append_bytes(self, .source = source_view)
 
     result = ..ok Void()
 }
@@ -503,7 +503,7 @@ push_view(
 
     target_capacity ::= self&.length + view.length
     growth_result ::= ensure_capacity_growing(
-        .self            = self
+        self
         .target_capacity = target_capacity
         .allocator       = allocator
     )
@@ -521,7 +521,7 @@ push_view(
         .data   = view.data
         .length = view.length
     )
-    string_append_bytes(.self = self, .source = source_view)
+    string_append_bytes(self, .source = source_view)
 
     result = ..ok Void()
 }
@@ -598,8 +598,8 @@ concat_views(
                 .data   = right&.data
                 .length = right&.length
             )
-            string_append_bytes(.self = $&temp, .source = left_view)
-            string_append_bytes(.self = $&temp, .source = right_view)
+            string_append_bytes($&temp, .source = left_view)
+            string_append_bytes($&temp, .source = right_view)
             result = ..ok ~temp
         }
     }

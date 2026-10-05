@@ -132,7 +132,7 @@ spawn(
     i :: UIntNative = 0
 
     while status == 0 and i < length(&arguments).count {
-        argument ::= unwrap_or_abort(.value = get_ro_ref(.self = &arguments, .index = i)).result
+        argument ::= unwrap_or_abort(.value = get_ro_ref(&arguments, .index = i)).result
         status = _process_argument(
             .builder = builder
             .bytes   = argument&.data

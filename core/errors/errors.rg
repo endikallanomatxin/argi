@@ -153,7 +153,7 @@ _error_trace_header(
     if index >= self&._capacity { abort }
     header = unwrap_or_abort(
         .value = slice(
-            .self  = &self&._buffer
+            &self&._buffer
             .start = index * _error_trace_stride().size
             .count = size_of(.type = ErrorTraceEntry)
         )
@@ -170,7 +170,7 @@ _error_trace_store_entry(
     ) -> () := {
     first ::= trusted_reinterpret_reference#(.from: ErrorTraceEntry, .to: UInt8)(.base = &entry).reference
     bytes ::= _trusted_array_view_ro(.data = first, .length = size_of(.type = ErrorTraceEntry))
-    memcpy_bytes(.dst = _error_trace_header(.self = self, .index = index), .src = bytes)
+    memcpy_bytes(.dst = _error_trace_header(self, .index = index), .src = bytes)
 }
 
 _error_trace_load_entry(
@@ -184,7 +184,7 @@ _error_trace_load_entry(
         .base = $&entry
     ).reference
     bytes ::= _trusted_array_view(.data = first, .length = size_of(.type = ErrorTraceEntry))
-    memcpy_bytes(.dst = bytes, .src = _error_trace_header(.self = self, .index = index))
+    memcpy_bytes(.dst = bytes, .src = _error_trace_header(self, .index = index))
     -- The caller still has access to the backing bytes. Never let corrupted
     -- metadata turn one bounded slot into a read across adjacent slots.
     if entry.context_length > 128 { abort }
@@ -217,7 +217,7 @@ add_context(.self: $&FixedSizeErrorTracer, .location: SourceLocationId, .context
     }
 
     _error_trace_store_entry(
-        .self  = self
+        self
         .index = index
         .entry = (.location = location, .context_length = count)
     )
@@ -229,7 +229,7 @@ add_context(.self: $&FixedSizeErrorTracer, .location: SourceLocationId, .context
         byte ::= bytes_get(.view = &context, .index = i).byte
         destination ::= unwrap_or_abort(
             .value = get_rw_ref(
-                .self  = $&self&._buffer
+                $&self&._buffer
                 .index = [
                     offset
                     + i
@@ -252,7 +252,7 @@ write_trace_text(
     i :: UIntNative = 0
 
     while i < view.length {
-        write_byte(.self = writer, .byte = bytes_get(.view = &view, .index = i).byte)!
+        write_byte(writer, .byte = bytes_get(.view = &view, .index = i).byte)!
         i = i + 1
     }
 
@@ -275,7 +275,7 @@ write_trace_uint(
     while divisor > 0 {
         digit ::= remaining / divisor
         remaining = remaining % divisor
-        write_byte(.self = writer, .byte = bytes_get(.view = &digits, .index = digit).byte)!
+        write_byte(writer, .byte = bytes_get(.view = &digits, .index = digit).byte)!
         divisor = divisor / 10
     }
 
@@ -290,7 +290,7 @@ _error_report_entry(
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume error_tracer ::= $&noop_error_tracer
-    entry ::= _error_trace_load_entry(.self = self, .index = index)
+    entry ::= _error_trace_load_entry(self, .index = index)
     location ::= source_location(.id = entry.location).location
     write_trace_text(.text = "  at ", .writer = writer)!
     write_trace_text(.text = location.source_file, .writer = writer)!
@@ -305,8 +305,8 @@ _error_report_entry(
         write_trace_text(.text = ": ", .writer = writer)!
         i :: UIntNative = 0
         while i < entry.context_length {
-            byte ::= unwrap_or_abort(.value = get(.self = &self&._buffer, .index = offset + i))
-            write_byte(.self = writer, .byte = byte)!
+            byte ::= unwrap_or_abort(.value = get(&self&._buffer, .index = offset + i))
+            write_byte(writer, .byte = byte)!
             i = i + 1
         }
     }
@@ -317,7 +317,7 @@ _error_report_entry(
     column :: UIntNative = 1
 
     while column < location.column {
-        write_byte(.self = writer, .byte = 32)!
+        write_byte(writer, .byte = 32)!
         column = column + 1
     }
 
@@ -348,7 +348,7 @@ report(
         while i > 0 {
             if cursor == first { cursor = self&._capacity }
             cursor = cursor - 1
-            _error_report_entry(.self = self, .index = cursor, .writer = writer)!
+            _error_report_entry(self, .index = cursor, .writer = writer)!
             i = i - 1
         }
         write_trace_text(.text = "  <context truncated>\n", .writer = writer)!
@@ -357,7 +357,7 @@ report(
 
     while recent > 0 {
         recent = recent - 1
-        _error_report_entry(.self = self, .index = recent, .writer = writer)!
+        _error_report_entry(self, .index = recent, .writer = writer)!
     }
 
     if self&._dropped and self&._length < self&._capacity {
@@ -377,7 +377,7 @@ report_trace(
     ) := {
     assume error_tracer ::= $&noop_error_tracer
     virtual_writer ::= to_virtual#(.abstract: Writer)(.value = writer)
-    report(.self = trace&.tracer, .writer = $&virtual_writer)!
+    report(trace&.tracer, .writer = $&virtual_writer)!
 
     result = ..ok Void()
 }

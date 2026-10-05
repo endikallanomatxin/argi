@@ -56,16 +56,16 @@ copy_stream_limited(
         request ::= limit - copied
         if request > size { request = size }
         destination ::= unwrap_or_abort(
-            .value = slice(.self = &buffer, .start = 0, .count = request)
+            .value = slice(&buffer, .start = 0, .count = request)
         )
-        got ::= read_block(.self = reader, .buffer = destination)!
+        got ::= read_block(reader, .buffer = destination)!
         if got > request { abort }
         if got == 0 {
             result = ..ok(.count = copied, .termination = ..end)
             return
         }
-        prefix ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = got))
-        write_all(.self = writer, .buffer = as_readonly(.self = &prefix).view)!
+        prefix ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = got))
+        write_all(writer, .buffer = as_readonly(&prefix).view)!
         copied = copied + got
     }
 
@@ -106,16 +106,16 @@ copy_stream_limited(
         request ::= limit - copied
         if request > size { request = size }
         destination ::= unwrap_or_abort(
-            .value = slice(.self = &buffer, .start = 0, .count = request)
+            .value = slice(&buffer, .start = 0, .count = request)
         )
-        got ::= read_block(.self = reader, .buffer = destination)!
+        got ::= read_block(reader, .buffer = destination)!
         if got > request { abort }
         if got == 0 {
             result = ..ok(.count = copied, .termination = ..end)
             return
         }
-        prefix ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = got))
-        write_all(.self = writer, .buffer = as_readonly(.self = &prefix).view)!
+        prefix ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = got))
+        write_all(writer, .buffer = as_readonly(&prefix).view)!
         copied = copied + got
     }
 
@@ -156,16 +156,16 @@ copy_stream_limited(
         request ::= limit - copied
         if request > size { request = size }
         destination ::= unwrap_or_abort(
-            .value = slice(.self = &buffer, .start = 0, .count = request)
+            .value = slice(&buffer, .start = 0, .count = request)
         )
-        got ::= read_block(.self = reader, .buffer = destination)!
+        got ::= read_block(reader, .buffer = destination)!
         if got > request { abort }
         if got == 0 {
             result = ..ok(.count = copied, .termination = ..end)
             return
         }
-        prefix ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = got))
-        write_all(.self = writer, .buffer = as_readonly(.self = &prefix).view)!
+        prefix ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = got))
+        write_all(writer, .buffer = as_readonly(&prefix).view)!
         copied = copied + got
     }
 
@@ -206,16 +206,16 @@ copy_stream_limited(
         request ::= limit - copied
         if request > size { request = size }
         destination ::= unwrap_or_abort(
-            .value = slice(.self = &buffer, .start = 0, .count = request)
+            .value = slice(&buffer, .start = 0, .count = request)
         )
-        got ::= read_block(.self = reader, .buffer = destination)!
+        got ::= read_block(reader, .buffer = destination)!
         if got > request { abort }
         if got == 0 {
             result = ..ok(.count = copied, .termination = ..end)
             return
         }
-        prefix ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = got))
-        write_all(.self = writer, .buffer = as_readonly(.self = &prefix).view)!
+        prefix ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = got))
+        write_all(writer, .buffer = as_readonly(&prefix).view)!
         copied = copied + got
     }
 
@@ -265,7 +265,7 @@ read_all_limited(
         request ::= limit - out.length
         if request > size { request = size }
         needed ::= out.length + request
-        current ::= capacity(.self = &out).value
+        current ::= capacity(&out).value
         -- Reserve before the read so allocation failure consumes no new chunk.
         if needed > current {
             grown ::= current
@@ -274,25 +274,25 @@ read_all_limited(
                 if grown == 0 { grown = 1 }
             }
             fresh ::= string_with_capacity(.allocator = allocator, .capacity = grown)!
-            push_view(.self = $&fresh, .view = as_view(&out), .allocator = allocator)!
+            push_view($&fresh, .view = as_view(&out), .allocator = allocator)!
             deinit(.self = $&out, .allocator = allocator)
             out = ~fresh
         }
         destination ::= unwrap_or_abort(
-            .value = slice(.self = &buffer, .start = 0, .count = request)
+            .value = slice(&buffer, .start = 0, .count = request)
         )
-        got ::= read_block(.self = self, .buffer = destination)!
+        got ::= read_block(self, .buffer = destination)!
         if got > request { abort }
         if got == 0 {
             result = ..ok ~out
             return
         }
-        prefix ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = got))
-        string_append_bytes(.self = $&out, .source = as_readonly(.self = &prefix).view)
+        prefix ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = got))
+        string_append_bytes($&out, .source = as_readonly(&prefix).view)
     }
     -- A single scratch byte distinguishes exact EOF from excess data.
-    probe ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = 1))
-    got ::= read_block(.self = self, .buffer = probe)!
+    probe ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = 1))
+    got ::= read_block(self, .buffer = probe)!
 
     if got > 1 { abort }
     if got != 0 {
@@ -344,7 +344,7 @@ read_all_limited(
         request ::= limit - out.length
         if request > size { request = size }
         needed ::= out.length + request
-        current ::= capacity(.self = &out).value
+        current ::= capacity(&out).value
         -- Reserve before the read so allocation failure consumes no new chunk.
         if needed > current {
             grown ::= current
@@ -353,25 +353,25 @@ read_all_limited(
                 if grown == 0 { grown = 1 }
             }
             fresh ::= string_with_capacity(.allocator = allocator, .capacity = grown)!
-            push_view(.self = $&fresh, .view = as_view(&out), .allocator = allocator)!
+            push_view($&fresh, .view = as_view(&out), .allocator = allocator)!
             deinit(.self = $&out, .allocator = allocator)
             out = ~fresh
         }
         destination ::= unwrap_or_abort(
-            .value = slice(.self = &buffer, .start = 0, .count = request)
+            .value = slice(&buffer, .start = 0, .count = request)
         )
-        got ::= read_block(.self = self, .buffer = destination)!
+        got ::= read_block(self, .buffer = destination)!
         if got > request { abort }
         if got == 0 {
             result = ..ok ~out
             return
         }
-        prefix ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = got))
-        string_append_bytes(.self = $&out, .source = as_readonly(.self = &prefix).view)
+        prefix ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = got))
+        string_append_bytes($&out, .source = as_readonly(&prefix).view)
     }
     -- A single scratch byte distinguishes exact EOF from excess data.
-    probe ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = 1))
-    got ::= read_block(.self = self, .buffer = probe)!
+    probe ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = 1))
+    got ::= read_block(self, .buffer = probe)!
 
     if got > 1 { abort }
     if got != 0 {

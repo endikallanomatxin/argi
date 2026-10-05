@@ -25,7 +25,7 @@ slice#(
     }
 
     first ::= trusted_mutable_reference_offset#(.t: t)(
-        .base     = data#(.t: t)(.self = self).pointer
+        .base     = data#(.t: t)(self).pointer
         .elements = start
     ).reference
 
@@ -57,7 +57,7 @@ slice#(
     }
 
     first ::= trusted_reference_offset#(.t: t)(
-        .base     = data#(.t: t)(.self = self).pointer
+        .base     = data#(.t: t)(self).pointer
         .elements = start
     ).reference
 

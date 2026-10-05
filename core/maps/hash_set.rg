@@ -39,7 +39,7 @@ insert#(
     ) -> (
         .result : Errable#(Bool, (..out_of_memory))
     ) := {
-    if contains(.self = &self&._map, .key = key).ok {
+    if contains(&self&._map, .key = key).ok {
         result = ..ok false
         return
     }
@@ -58,7 +58,7 @@ contains#(
     ) -> (
         .ok : Bool
     ) := {
-    ok = contains(.self = &self&._map, .key = key).ok
+    ok = contains(&self&._map, .key = key).ok
 }
 
 remove#(
@@ -90,7 +90,7 @@ capacity#(
         .self : &HashSet#(.key: key, .policy: policy)
     ) -> (
         .count : UIntNative
-    ) := { count = capacity(.self = &self&._map).count }
+    ) := { count = capacity(&self&._map).count }
 
 HashSet deinit#(
         .key    : Type: ImplicitlyCopyable,

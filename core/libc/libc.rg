@@ -64,15 +64,15 @@ fread_into(
     ) -> (
         .count : UIntNative
     ) := {
-    if length#(.t: UInt8)(.self = &buffer).count == 0 {
+    if length#(.t: UInt8)(&buffer).count == 0 {
         count = 0
         return
     }
 
     count = fread(
-        .buffer = data#(.t: UInt8)(.self = &buffer).pointer
+        .buffer = data#(.t: UInt8)(&buffer).pointer
         .size   = 1
-        .count  = length#(.t: UInt8)(.self = &buffer).count
+        .count  = length#(.t: UInt8)(&buffer).count
         .stream = stream
     ).count
 }
@@ -83,15 +83,15 @@ fwrite_from(
     ) -> (
         .count : UIntNative
     ) := {
-    if length#(.t: UInt8)(.self = &buffer).count == 0 {
+    if length#(.t: UInt8)(&buffer).count == 0 {
         count = 0
         return
     }
 
     count = fwrite(
-        .buffer = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(.self = &buffer).pointer).reference
+        .buffer = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(&buffer).pointer).reference
         .size   = 1
-        .count  = length#(.t: UInt8)(.self = &buffer).count
+        .count  = length#(.t: UInt8)(&buffer).count
         .stream = stream
     ).count
 }
@@ -127,7 +127,7 @@ fwrite_from(.buffer: ArrayViewRO#(.t: UInt8), .stream: &Any) -> (.count: UIntNat
     }
 
     count = fwrite(
-        .buffer = data(.self = &buffer).pointer
+        .buffer = data(&buffer).pointer
         .size   = 1
         .count  = length(&buffer).count
         .stream = stream

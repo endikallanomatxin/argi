@@ -19,7 +19,7 @@ BitSetView init(
     index :: UIntNative = 0
 
     while index < needed {
-        target ::= unwrap_or_abort(.value = get_rw_ref(.self = $&bytes, .index = index))
+        target ::= unwrap_or_abort(.value = get_rw_ref($&bytes, .index = index))
         target&= 0
         index = index + 1
     }
@@ -49,7 +49,7 @@ contains(
         return
     }
 
-    byte ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._bytes, .index = index / 8))
+    byte ::= unwrap_or_abort(.value = get_ro_ref(&self&._bytes, .index = index / 8))
     mask ::= _bit_set_mask(.index = index).mask
 
     result = ..ok byte&/ mask % 2 != 0
@@ -62,10 +62,10 @@ set(
     ) -> (
         .result : Errable#(Void, (..out_of_bounds)) = ..ok Void()
     ) := {
-    present ::= contains(.self = self, .index = index)!
+    present ::= contains(self, .index = index)!
 
     if present == value { return }
-    byte ::= unwrap_or_abort(.value = get_rw_ref(.self = $&self&._bytes, .index = index / 8))
+    byte ::= unwrap_or_abort(.value = get_rw_ref($&self&._bytes, .index = index / 8))
     mask ::= _bit_set_mask(.index = index).mask
 
     if value { byte&= byte&+ mask } else { byte&= byte&- mask }
@@ -76,7 +76,7 @@ _bit_set_count(.bytes: ArrayViewRO#(.t: UInt8), .extent: UIntNative) -> (.count:
     index :: UIntNative = 0
 
     while index < full {
-        byte ::= unwrap_or_abort(.value = get_ro_ref(.self = &bytes, .index = index))
+        byte ::= unwrap_or_abort(.value = get_ro_ref(&bytes, .index = index))
         count = count + count_ones#(.t: UInt8)(.value = byte&).count
         index = index + 1
     }
@@ -84,7 +84,7 @@ _bit_set_count(.bytes: ArrayViewRO#(.t: UInt8), .extent: UIntNative) -> (.count:
     remaining ::= extent % 8
 
     if remaining == 0 { return }
-    tail ::= unwrap_or_abort(.value = get_ro_ref(.self = &bytes, .index = full))&
+    tail ::= unwrap_or_abort(.value = get_ro_ref(&bytes, .index = full))&
 
     while remaining > 0 {
         if tail % 2 != 0 { count = count + 1 }
@@ -95,7 +95,7 @@ _bit_set_count(.bytes: ArrayViewRO#(.t: UInt8), .extent: UIntNative) -> (.count:
 
 count_set(.self: &BitSetView) -> (.count: UIntNative) := {
     count = _bit_set_count(
-        .bytes  = as_readonly(.self = &self&._bytes).view
+        .bytes  = as_readonly(&self&._bytes).view
         .extent = self&._count
     ).count
 }

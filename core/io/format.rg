@@ -10,7 +10,7 @@ format_into#(
     ) := {
     encoded ::= _decimal_encode#(.t: t)(.value = value)
 
-    result = write(.self = out, .text = _decimal_view(.self = &encoded).view)
+    result = write(out, .text = _decimal_view(&encoded).view)
 }
 
 write#(
@@ -34,7 +34,7 @@ format_into#(
     ) := {
     encoded ::= _float_encode(.value = value)
 
-    result = write(.self = out, .text = _float_text_view(.self = &encoded).view)
+    result = write(out, .text = _float_text_view(&encoded).view)
 }
 
 write#(

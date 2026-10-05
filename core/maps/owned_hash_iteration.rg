@@ -44,7 +44,7 @@ _owned_hash_next#(
     ) := {
     index = start
 
-    while index < capacity(.self = self).count {
+    while index < capacity(self).count {
         if _trusted_dynamic_array_get(.array = &self&._table._slots, .index = index).state == 1 {
             return
         }
@@ -62,8 +62,8 @@ has_next#(
         .ok : Bool
     ) := {
     ok = [
-        _owned_hash_next(.self = self&._owner, .start = self&._index).index
-        < capacity(.self = self&._owner).count
+        _owned_hash_next(self&._owner, .start = self&._index).index
+        < capacity(self&._owner).count
     ]
 }
 
@@ -76,10 +76,10 @@ next#(
     ) -> (
         .value : OwnedHashMapBorrow#(.key: key, .value: value)
     ) := {
-    index ::= _owned_hash_next(.self = self&._owner, .start = self&._index).index
+    index ::= _owned_hash_next(self&._owner, .start = self&._index).index
 
-    if index >= capacity(.self = self&._owner).count { abort }
-    entry ::= _owned_hash_entry(.self = self&._owner, .index = index).entry
+    if index >= capacity(self&._owner).count { abort }
+    entry ::= _owned_hash_entry(self&._owner, .index = index).entry
     borrowed_key ::= depend_on#(.t: &key)(.value = &entry&.key, .on = self&._generation).result
     borrowed_value ::= depend_on#(.t: &value)(.value = &entry&.value, .on = self&._generation).result
     value = (.key = borrowed_key, .value = borrowed_value)

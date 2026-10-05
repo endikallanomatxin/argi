@@ -67,7 +67,7 @@ DynamicArray init#(
         return
     }
 
-    allocated ::= allocate#(.t: t)(.self = allocator, .count = actual_capacity)
+    allocated ::= allocate#(.t: t)(allocator, .count = actual_capacity)
 
     match allocated {
         ..ok ~payload {
@@ -139,7 +139,7 @@ copy#(
 
     while i < self&._length {
         ptr ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
-        element ::= copy(.self = ptr)
+        element ::= copy(ptr)
         pushed ::= push#(.t: t)(.allocator = allocator, .self = $&out, .value = ~element)
         if is(.value = pushed, .variant = ..error) {
             deinit#(.t: t)(.allocator = allocator, .self = $&out)
@@ -185,10 +185,10 @@ copy#(
 
     while i < self&._length {
         ptr ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
-        copied ::= copy(.self = ptr)
+        copied ::= copy(ptr)
         match copied {
             ..ok ~payload {
-                push_assume_capacity#(.t: t)(.self = $&out, .value = ~payload)
+                push_assume_capacity#(.t: t)($&out, .value = ~payload)
             }
             ..error ~err {
                 deinit#(.t: t)(.allocator = allocator, .self = $&out)
@@ -317,7 +317,7 @@ dynamic_array_grow_growing#(
 
     if new_capacity < min_capacity { new_capacity = min_capacity }
     if new_capacity > maximum { new_capacity = maximum }
-    allocate_result ::= allocate#(.t: t)(.self = allocator, .count = new_capacity)
+    allocate_result ::= allocate#(.t: t)(allocator, .count = new_capacity)
 
     match allocate_result {
         ..ok ~payload {
@@ -396,7 +396,7 @@ push#(
         }
     }
 
-    push_assume_capacity#(.t: t)(.self = self, .value = ~owned)
+    push_assume_capacity#(.t: t)(self, .value = ~owned)
 
     result = ..ok Void()
 }

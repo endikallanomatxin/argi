@@ -43,7 +43,7 @@ find(.self: StringView, .pattern: StringView) -> (.index: ?UIntNative) := {
     start :: UIntNative = 0
 
     while true {
-        if _string_view_matches_at(.self = self, .pattern = pattern, .start = start).ok {
+        if _string_view_matches_at(self, .pattern = pattern, .start = start).ok {
             index = ..some(.value = start)
             return
         }
@@ -53,12 +53,12 @@ find(.self: StringView, .pattern: StringView) -> (.index: ?UIntNative) := {
 }
 
 contains(.self: StringView, .pattern: StringView) -> (.ok: Bool) := {
-    position ::= find(.self = self, .pattern = pattern).index
+    position ::= find(self, .pattern = pattern).index
     ok = position ?
 }
 
 starts_with(.self: StringView, .pattern: StringView) -> (.ok: Bool) := {
-    ok = _string_view_matches_at(.self = self, .pattern = pattern, .start = 0).ok
+    ok = _string_view_matches_at(self, .pattern = pattern, .start = 0).ok
 }
 
 ends_with(.self: StringView, .pattern: StringView) -> (.ok: Bool) := {
@@ -68,7 +68,7 @@ ends_with(.self: StringView, .pattern: StringView) -> (.ok: Bool) := {
     }
 
     ok = _string_view_matches_at(
-        .self    = self
+        self
         .pattern = pattern
         .start   = [
             self.length
@@ -84,7 +84,7 @@ find_last(.self: StringView, .pattern: StringView) -> (.index: ?UIntNative = ..n
     start ::= self.length - pattern.length
 
     while true {
-        if _string_view_matches_at(.self = self, .pattern = pattern, .start = start).ok {
+        if _string_view_matches_at(self, .pattern = pattern, .start = start).ok {
             index = ..some(.value = start)
             return
         }

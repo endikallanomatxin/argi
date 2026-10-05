@@ -31,7 +31,7 @@ read_uint16(
     while index < 2 {
         position :: UIntNative = index
         if order == ..little { position = last - index }
-        byte ::= get_ro_ref(.self = &bytes, .index = offset + position)!
+        byte ::= get_ro_ref(&bytes, .index = offset + position)!
         value = value * 256 + UInt16(.value = byte&)
         index = index + 1
     }
@@ -63,7 +63,7 @@ write_uint16(
     while index < 2 {
         position :: UIntNative = index
         if order == ..big { position = last - index }
-        byte ::= get_rw_ref(.self = $&bytes, .index = offset + position)!
+        byte ::= get_rw_ref($&bytes, .index = offset + position)!
         byte&= unwrap_or_abort(.value = UInt8(.value = remaining % 256))
         remaining = remaining / 256
         index = index + 1
@@ -94,7 +94,7 @@ read_uint32(
     while index < 4 {
         position :: UIntNative = index
         if order == ..little { position = last - index }
-        byte ::= get_ro_ref(.self = &bytes, .index = offset + position)!
+        byte ::= get_ro_ref(&bytes, .index = offset + position)!
         value = value * 256 + UInt32(.value = byte&)
         index = index + 1
     }
@@ -126,7 +126,7 @@ write_uint32(
     while index < 4 {
         position :: UIntNative = index
         if order == ..big { position = last - index }
-        byte ::= get_rw_ref(.self = $&bytes, .index = offset + position)!
+        byte ::= get_rw_ref($&bytes, .index = offset + position)!
         byte&= unwrap_or_abort(.value = UInt8(.value = remaining % 256))
         remaining = remaining / 256
         index = index + 1
@@ -157,7 +157,7 @@ read_uint64(
     while index < 8 {
         position :: UIntNative = index
         if order == ..little { position = last - index }
-        byte ::= get_ro_ref(.self = &bytes, .index = offset + position)!
+        byte ::= get_ro_ref(&bytes, .index = offset + position)!
         value = value * 256 + UInt64(.value = byte&)
         index = index + 1
     }
@@ -189,7 +189,7 @@ write_uint64(
     while index < 8 {
         position :: UIntNative = index
         if order == ..big { position = last - index }
-        byte ::= get_rw_ref(.self = $&bytes, .index = offset + position)!
+        byte ::= get_rw_ref($&bytes, .index = offset + position)!
         byte&= unwrap_or_abort(.value = UInt8(.value = remaining % 256))
         remaining = remaining / 256
         index = index + 1

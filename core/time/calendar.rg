@@ -86,7 +86,7 @@ utc_date(
     ) -> (
         .result : Errable#(UtcDateTime, (..out_of_range))
     ) := {
-    seconds ::= unix_seconds(.self = &timestamp).value
+    seconds ::= unix_seconds(&timestamp).value
 
     if seconds < -62135596800 or seconds > 253402300799 {
         result = ..error(.reason = ..out_of_range)
@@ -152,14 +152,14 @@ utc_date(
                 ]
             )
         )
-        .nanoseconds = nanoseconds(.self = &timestamp).value
+        .nanoseconds = nanoseconds(&timestamp).value
     )
 }
 
 -- Sunday is zero, matching conventional civil weekday numbering.
 weekday(.date: UtcDateTime) -> (.result: Errable#(UInt32, (..out_of_range))) := {
     timestamp ::= unix_timestamp(.date = date)!
-    days ::= [unix_seconds(.self = &timestamp).value + 62135596800] / 86400
+    days ::= [unix_seconds(&timestamp).value + 62135596800] / 86400
 
     result = ..ok unwrap_or_abort(.value = UInt32(.value = [days + 1] % 7))
 }

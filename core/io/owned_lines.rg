@@ -20,7 +20,7 @@ read_line_owned(
         if count < maximum {
             ensure_capacity(.self = $&bytes, .capacity = count + 1)!
         }
-        match read_byte(.self = self)! {
+        match read_byte(self)! {
             ..end {
                 if count == 0 {
                     result = ..ok ..none
@@ -37,7 +37,7 @@ read_line_owned(
                     result = ..error(.reason = ..line_too_long)
                     return
                 }
-                push_assume_capacity(.self = $&bytes, .value = byte)
+                push_assume_capacity($&bytes, .value = byte)
             }
         }
     }
@@ -45,8 +45,8 @@ read_line_owned(
     count ::= length(&bytes).count
 
     if terminated and count > 0 {
-        if unwrap_or_abort(.value = get(.self = &bytes, .index = count - 1)) == 13 {
-            discarded ::= pop(.self = $&bytes)
+        if unwrap_or_abort(.value = get(&bytes, .index = count - 1)) == 13 {
+            discarded ::= pop($&bytes)
         }
     }
 
@@ -83,7 +83,7 @@ next#(
 
     self&._ended = true
     line ::= ~read_line_owned(
-        .self    = self&._source
+        self&._source
         .maximum = self&._maximum
     )!
 

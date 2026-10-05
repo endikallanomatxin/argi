@@ -71,13 +71,13 @@ arena_free_blocks(.self: $&ArenaAllocator) -> () := {
 }
 
 reset(.self: $&ArenaAllocator) -> () := {
-    arena_free_blocks(.self = self)
+    arena_free_blocks(self)
     deinit(.self = $&self&.domain)
     self&.domain = ArenaDomain()
 }
 
 ArenaAllocator deinit(.self: $&ArenaAllocator) -> () := {
-    arena_free_blocks(.self = self)
+    arena_free_blocks(self)
     deinit(.self = $&self&.domain)
 }
 
@@ -126,7 +126,7 @@ allocate(
         header_alignment ::= alignment_of(.type = _ArenaBlock)
         if block_alignment < header_alignment { block_alignment = header_alignment }
         allocated ::= allocate(
-            .self      = $&self&._backing_allocator
+            $&self&._backing_allocator
             .size      = new_size
             .alignment = block_alignment
         )

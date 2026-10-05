@@ -12,7 +12,7 @@ replace(
     }
 
     limit ::= _string_max_result_length().length
-    parts ::= unwrap_or_abort(.value = split(.self = self, .separator = pattern))
+    parts ::= unwrap_or_abort(.value = split(self, .separator = pattern))
     first ::= true
     total :: UIntNative = 0
     -- Splitting visits non-overlapping matches. Measure before reserving

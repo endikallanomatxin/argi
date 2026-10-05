@@ -65,7 +65,7 @@ format_into(
     ) := {
     assume allocator
 
-    result = push_view(.self = out, .view = value, .allocator = allocator)
+    result = push_view(out, .view = value, .allocator = allocator)
 }
 
 format_into(
@@ -78,9 +78,9 @@ format_into(
     assume allocator
 
     if value {
-        result = push_c_string(.self = out, .text = "true", .allocator = allocator)
+        result = push_c_string(out, .text = "true", .allocator = allocator)
     } else {
-        result = push_c_string(.self = out, .text = "false", .allocator = allocator)
+        result = push_c_string(out, .text = "false", .allocator = allocator)
     }
 }
 
@@ -97,7 +97,7 @@ format(
     match create_result {
         ..ok ~view_output_payload {
             out ::= ~view_output_payload
-            pushed ::= push_view(.self = $&out, .view = value, .allocator = allocator)
+            pushed ::= push_view($&out, .view = value, .allocator = allocator)
             if is(.value = pushed, .variant = ..error) {
                 deinit(.self = $&out, .allocator = allocator)
                 result = ..error(.reason = ..out_of_memory)
@@ -150,8 +150,8 @@ format_into#(
     encoded ::= _decimal_encode#(.t: t)(.value = value)
 
     result = push_view(
-        .self      = out
-        .view      = _decimal_view(.self = &encoded).view
+        out
+        .view      = _decimal_view(&encoded).view
         .allocator = allocator
     )
 }
@@ -166,7 +166,7 @@ format#(
     ) := {
     assume allocator
     encoded ::= _decimal_encode#(.t: t)(.value = value)
-    view ::= _decimal_view(.self = &encoded).view
+    view ::= _decimal_view(&encoded).view
 
     result = format(.value = view, .allocator = allocator)
 }
@@ -183,8 +183,8 @@ format_into#(
     encoded ::= _float_encode(.value = value)
 
     result = push_view(
-        .self      = out
-        .view      = _float_text_view(.self = &encoded).view
+        out
+        .view      = _float_text_view(&encoded).view
         .allocator = allocator
     )
 }
@@ -200,5 +200,5 @@ format#(
     assume allocator
     encoded ::= _float_encode(.value = value)
 
-    result = format(.value = _float_text_view(.self = &encoded).view, .allocator = allocator)
+    result = format(.value = _float_text_view(&encoded).view, .allocator = allocator)
 }

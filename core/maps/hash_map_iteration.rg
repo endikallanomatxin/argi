@@ -32,7 +32,7 @@ _hash_map_next_index#(
         .index : UIntNative
     ) := {
     index = start
-    count ::= capacity(.self = self).count
+    count ::= capacity(self).count
 
     while index < count {
         slot ::= _trusted_dynamic_array_get(.array = &self&._slots, .index = index)
@@ -91,8 +91,8 @@ has_next#(
         .ok : Bool
     ) := {
     ok = [
-        _hash_map_next_index(.self = self&._owner, .start = self&._index).index
-        < capacity(.self = self&._owner).count
+        _hash_map_next_index(self&._owner, .start = self&._index).index
+        < capacity(self&._owner).count
     ]
 }
 
@@ -105,9 +105,9 @@ next#(
     ) -> (
         .value : HashMapEntry#(.key: key, .value: value)
     ) := {
-    index ::= _hash_map_next_index(.self = self&._owner, .start = self&._index).index
+    index ::= _hash_map_next_index(self&._owner, .start = self&._index).index
 
-    if index >= capacity(.self = self&._owner).count { abort }
+    if index >= capacity(self&._owner).count { abort }
     slot ::= _trusted_dynamic_array_get(.array = &self&._owner&._slots, .index = index)
     self&._index = index + 1
 
@@ -162,8 +162,8 @@ has_next#(
         .ok : Bool
     ) := {
     ok = [
-        _hash_map_next_index(.self = self&._owner, .start = self&._index).index
-        < capacity(.self = self&._owner).count
+        _hash_map_next_index(self&._owner, .start = self&._index).index
+        < capacity(self&._owner).count
     ]
 }
 
@@ -176,9 +176,9 @@ next#(
     ) -> (
         .value : key
     ) := {
-    index ::= _hash_map_next_index(.self = self&._owner, .start = self&._index).index
+    index ::= _hash_map_next_index(self&._owner, .start = self&._index).index
 
-    if index >= capacity(.self = self&._owner).count { abort }
+    if index >= capacity(self&._owner).count { abort }
     slot ::= _trusted_dynamic_array_get(.array = &self&._owner&._slots, .index = index)
     self&._index = index + 1
 
@@ -233,8 +233,8 @@ has_next#(
         .ok : Bool
     ) := {
     ok = [
-        _hash_map_next_index(.self = self&._owner, .start = self&._index).index
-        < capacity(.self = self&._owner).count
+        _hash_map_next_index(self&._owner, .start = self&._index).index
+        < capacity(self&._owner).count
     ]
 }
 
@@ -247,9 +247,9 @@ next#(
     ) -> (
         .value : value
     ) := {
-    index ::= _hash_map_next_index(.self = self&._owner, .start = self&._index).index
+    index ::= _hash_map_next_index(self&._owner, .start = self&._index).index
 
-    if index >= capacity(.self = self&._owner).count { abort }
+    if index >= capacity(self&._owner).count { abort }
     slot ::= _trusted_dynamic_array_get(.array = &self&._owner&._slots, .index = index)
     self&._index = index + 1
 
@@ -307,8 +307,8 @@ has_next#(
         .ok : Bool
     ) := {
     ok = [
-        _hash_map_next_index(.self = self&._owner, .start = self&._index).index
-        < capacity(.self = self&._owner).count
+        _hash_map_next_index(self&._owner, .start = self&._index).index
+        < capacity(self&._owner).count
     ]
 }
 
@@ -321,9 +321,9 @@ next#(
     ) -> (
         .value : HashMapROEntry#(.key: key, .value: value)
     ) := {
-    index ::= _hash_map_next_index(.self = self&._owner, .start = self&._index).index
+    index ::= _hash_map_next_index(self&._owner, .start = self&._index).index
 
-    if index >= capacity(.self = self&._owner).count { abort }
+    if index >= capacity(self&._owner).count { abort }
     slot ::= dynamic_array_element_ro_pointer(.array = &self&._owner&._slots, .offset = index).pointer
     self&._index = index + 1
 
@@ -393,8 +393,8 @@ has_next#(
         .ok : Bool
     ) := {
     ok = [
-        _hash_map_next_index(.self = self&._owner, .start = self&._index).index
-        < capacity(.self = self&._owner).count
+        _hash_map_next_index(self&._owner, .start = self&._index).index
+        < capacity(self&._owner).count
     ]
 }
 
@@ -407,9 +407,9 @@ next#(
     ) -> (
         .value : HashMapRWEntry#(.key: key, .value: value)
     ) := {
-    index ::= _hash_map_next_index(.self = self&._owner, .start = self&._index).index
+    index ::= _hash_map_next_index(self&._owner, .start = self&._index).index
 
-    if index >= capacity(.self = self&._owner).count { abort }
+    if index >= capacity(self&._owner).count { abort }
     slot ::= dynamic_array_element_rw_pointer(.array = $&self&._owner&._slots, .offset = index).pointer
     self&._index = index + 1
 

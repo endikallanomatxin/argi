@@ -67,7 +67,7 @@ next#(.t: Type)(.self: $&DequeOwningIterator#(.t: t)) -> (.value: t) := {
     if ring&._length == 0 { abort }
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &ring&._allocation, .index = ring&._head)
     value = ~_trusted_uninit_take#(.t: t)(.allocation = $&ring&._allocation, .slot = slot)
-    _invalidate_ring_buffer_shape(.self = ring)
+    _invalidate_ring_buffer_shape(ring)
     ring&._length = ring&._length - 1
     ring&._head = ring&._head + 1
 

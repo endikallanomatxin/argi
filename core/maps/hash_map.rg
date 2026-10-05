@@ -38,7 +38,7 @@ _hash_map_slots#(
 
     while index < capacity {
         empty :: _HashMapSlot#(.key: key, .value: value) = ..empty
-        push_assume_capacity(.self = $&slots, .value = empty)
+        push_assume_capacity($&slots, .value = empty)
         index = index + 1
     }
 
@@ -98,7 +98,7 @@ _hash_map_find#(
     ) -> (
         .index : ?UIntNative
     ) := {
-    count ::= capacity(.self = self).count
+    count ::= capacity(self).count
     position ::= hash % count
     visited :: UIntNative = 0
 
@@ -113,7 +113,7 @@ _hash_map_find#(
             ..occupied entry {
                 if [
                     entry.hash == hash
-                    and eql(.self = &self&._policy, .left = entry.key, .right = key).ok
+                    and eql(&self&._policy, .left = entry.key, .right = key).ok
                 ] {
                     index = ..some(.value = position)
                     return
@@ -170,7 +170,7 @@ _hash_map_grow#(
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
-    old_count ::= capacity(.self = self).count
+    old_count ::= capacity(self).count
     new_count ::= old_count * 2
 
     if new_count <= old_count {
@@ -221,9 +221,9 @@ put#(
         .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
-    digest ::= hash(.self = &self&._policy, .key = key).hash
+    digest ::= hash(&self&._policy, .key = key).hash
 
-    match _hash_map_find(.self = self, .key = key, .hash = digest).index {
+    match _hash_map_find(self, .key = key, .hash = digest).index {
         ..none {}
         ..some found {
             slot ::= _trusted_dynamic_array_get(.array = &self&._slots, .index = found.value)
@@ -248,8 +248,8 @@ put#(
         }
     }
 
-    if self&._length >= capacity(.self = self).count / 2 {
-        _hash_map_grow(.self = self, .allocator = allocator)!
+    if self&._length >= capacity(self).count / 2 {
+        _hash_map_grow(self, .allocator = allocator)!
     }
 
     _hash_map_insert_slot(.slots = $&self&._slots, .key = key, .value = value, .hash = digest)
@@ -268,9 +268,9 @@ get#(
     ) -> (
         .result : ?value
     ) := {
-    digest ::= hash(.self = &self&._policy, .key = key).hash
+    digest ::= hash(&self&._policy, .key = key).hash
 
-    match _hash_map_find(.self = self, .key = key, .hash = digest).index {
+    match _hash_map_find(self, .key = key, .hash = digest).index {
         ..none { result = ..none }
         ..some found {
             slot ::= _trusted_dynamic_array_get(.array = &self&._slots, .index = found.value)
@@ -293,9 +293,9 @@ contains#(
     ) -> (
         .ok : Bool
     ) := {
-    digest ::= hash(.self = &self&._policy, .key = key).hash
+    digest ::= hash(&self&._policy, .key = key).hash
     ok = is(
-        .value   = _hash_map_find(.self = self, .key = key, .hash = digest).index
+        .value   = _hash_map_find(self, .key = key, .hash = digest).index
         .variant = ..some
     )
 }
@@ -310,13 +310,13 @@ get_ro_ref#(
     ) -> (
         .result : ?&value
     ) := {
-    digest ::= hash(.self = &self&._policy, .key = key).hash
+    digest ::= hash(&self&._policy, .key = key).hash
 
-    match _hash_map_find(.self = self, .key = key, .hash = digest).index {
+    match _hash_map_find(self, .key = key, .hash = digest).index {
         ..none { result = ..none }
         ..some found {
             reference ::= unwrap_or_abort(
-                .value = get_ro_ref(.self = &self&._slots, .index = found.value)
+                .value = get_ro_ref(&self&._slots, .index = found.value)
             )
             match reference&{
                 ..occupied&entry {
@@ -347,10 +347,10 @@ remove#(
         .removed : Bool
     ) := {
     assume allocator
-    digest ::= hash(.self = &self&._policy, .key = key).hash
+    digest ::= hash(&self&._policy, .key = key).hash
     removed = false
 
-    match _hash_map_find(.self = self, .key = key, .hash = digest).index {
+    match _hash_map_find(self, .key = key, .hash = digest).index {
         ..none {}
         ..some found {
             deleted :: _HashMapSlot#(.key: key, .value: value) = ..deleted

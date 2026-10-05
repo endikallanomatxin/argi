@@ -14,9 +14,9 @@ once Terminal init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Te
 
 Terminal deinit(.self: $&Terminal) -> () := {
     assume error_tracer ::= $&noop_error_tracer
-    close(.self = $&self&.stdin)
-    close(.self = $&self&.stdout)
-    close(.self = $&self&.stderr)
+    close($&self&.stdin)
+    close($&self&.stdout)
+    close($&self&.stderr)
 }
 
 read_line_into_buffer(
@@ -29,15 +29,15 @@ read_line_into_buffer(
     assume allocator
     assume reader
 
-    clear(.self = buffer)
+    clear(buffer)
 
     while 1 == 1 {
-        if has_space(.self = buffer).ok {
+        if has_space(buffer).ok {
         } else {
             break
         }
 
-        next ::= read_byte(.self = reader)
+        next ::= read_byte(reader)
         match next {
             ..error _ {
                 result = ..error(.reason = ..stream_read_failed)
@@ -54,7 +54,7 @@ read_line_into_buffer(
                         }
 
                         pushed ::= push_byte(
-                            .self      = buffer
+                            buffer
                             .byte      = payload
                             .allocator = allocator
                         )
@@ -105,7 +105,7 @@ read_line(
     line_complete ::= false
 
     while 1 == 1 {
-        next ::= read_byte(.self = reader)
+        next ::= read_byte(reader)
         match next {
             ..error _ {
                 deinit(.self = $&line, .allocator = allocator)
@@ -130,7 +130,7 @@ read_line(
                             break
                         }
 
-                        grew ::= push_byte(.self = $&line, .byte = payload, .allocator = allocator)
+                        grew ::= push_byte($&line, .byte = payload, .allocator = allocator)
                         match grew {
                             ..ok _ {
                             }
@@ -158,9 +158,9 @@ print(
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
-    write(.self = writer, .text = value)!
+    write(writer, .text = value)!
 
-    result = write(.self = writer, .text = terminator)
+    result = write(writer, .text = terminator)
 }
 
 flush(
@@ -184,7 +184,7 @@ print_error(
     i :: UIntNative = 0
 
     while i < value.length {
-        wrote ::= write_byte(.self = writer, .byte = bytes_get(.view = &value, .index = i).byte)
+        wrote ::= write_byte(writer, .byte = bytes_get(.view = &value, .index = i).byte)
         match wrote {
             ..ok _ {
             }
@@ -236,7 +236,7 @@ print#(
     ) := {
     format_into(.out = writer, .value = value)!
 
-    result = write(.self = writer, .text = terminator)
+    result = write(writer, .text = terminator)
 }
 
 print#(
@@ -250,5 +250,5 @@ print#(
     ) := {
     format_into(.out = writer, .value = value)!
 
-    result = write(.self = writer, .text = terminator)
+    result = write(writer, .text = terminator)
 }

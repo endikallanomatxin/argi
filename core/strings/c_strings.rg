@@ -56,7 +56,7 @@ as_c_string(
     assume allocator
 
     size :: UIntNative = self.length + 1
-    allocated ::= allocate(.self = allocator, .size = size)
+    allocated ::= allocate(allocator, .size = size)
 
     match allocated {
         ..error _ {

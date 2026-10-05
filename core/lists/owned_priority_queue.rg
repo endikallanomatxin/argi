@@ -31,7 +31,7 @@ OwnedPriorityQueue deinit#(
     assume allocator
 
     while length(&self&._items).count > 0 {
-        discarded ::= ~unwrap_or_abort(.value = pop(.self = $&self&._items))
+        discarded ::= ~unwrap_or_abort(.value = pop($&self&._items))
     }
 
     deinit(.self = $&self&._items, .allocator = allocator)
@@ -69,15 +69,15 @@ push#(
         .capacity  = length(&self&._items).count + 1
         .allocator = allocator
     )!
-    push_assume_capacity(.self = $&self&._items, .value = ~owned)
+    push_assume_capacity($&self&._items, .value = ~owned)
     child ::= length(&self&._items).count - 1
 
     while child > 0 {
         parent ::= [child - 1] / 2
-        a ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._items, .index = child))
-        b ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._items, .index = parent))
-        if less(.self = self&._order, .left = a, .right = b).ok == false { return }
-        _swap_owned_array#(.t: t)(.self = $&self&._items, .left = child, .right = parent)
+        a ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child))
+        b ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = parent))
+        if less(self&._order, .left = a, .right = b).ok == false { return }
+        _swap_owned_array#(.t: t)($&self&._items, .left = child, .right = parent)
         child = parent
     }
 }
@@ -107,8 +107,8 @@ pop#(
     count ::= length(&self&._items).count
 
     if count == 0 { return }
-    _swap_owned_array#(.t: t)(.self = $&self&._items, .left = 0, .right = count - 1)
-    extracted ::= ~unwrap_or_abort(.value = pop(.self = $&self&._items))
+    _swap_owned_array#(.t: t)($&self&._items, .left = 0, .right = count - 1)
+    extracted ::= ~unwrap_or_abort(.value = pop($&self&._items))
     value = ..some(.value = ~extracted)
     count = count - 1
     root :: UIntNative = 0
@@ -116,16 +116,16 @@ pop#(
     while root < count / 2 {
         child ::= root * 2 + 1
         if child + 1 < count {
-            left ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._items, .index = child))
+            left ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child))
             right ::= unwrap_or_abort(
-                .value = get_ro_ref(.self = &self&._items, .index = child + 1)
+                .value = get_ro_ref(&self&._items, .index = child + 1)
             )
-            if less(.self = self&._order, .left = right, .right = left).ok { child = child + 1 }
+            if less(self&._order, .left = right, .right = left).ok { child = child + 1 }
         }
-        a ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._items, .index = child))
-        b ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._items, .index = root))
-        if less(.self = self&._order, .left = a, .right = b).ok == false { return }
-        _swap_owned_array#(.t: t)(.self = $&self&._items, .left = root, .right = child)
+        a ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child))
+        b ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = root))
+        if less(self&._order, .left = a, .right = b).ok == false { return }
+        _swap_owned_array#(.t: t)($&self&._items, .left = root, .right = child)
         root = child
     }
 }

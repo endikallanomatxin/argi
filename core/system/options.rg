@@ -28,7 +28,7 @@ get(
     ) -> (
         .result : Errable#(StringView, (..out_of_bounds))
     ) := {
-    result = get(.self = &self&._values, .index = index)
+    result = get(&self&._values, .index = index)
 }
 
 CliOption: Type = (.name: StringView, .value: ?StringView, .short: Bool)
@@ -69,10 +69,10 @@ next#(
         .result : Errable#(?CliArgument, (..invalid_option))
     ) := {
     while self&._index < length(self&._source).count {
-        text ::= unwrap_or_abort(.value = get(.self = self&._source, .index = self&._index))
+        text ::= unwrap_or_abort(.value = get(self&._source, .index = self&._index))
         if self&._short_offset > 0 {
             name ::= unwrap_or_abort(
-                .value = slice(.self = text, .start = self&._short_offset, .count = 1)
+                .value = slice(text, .start = self&._short_offset, .count = 1)
             )
             self&._short_offset = self&._short_offset + 1
             if self&._short_offset == text.length {
@@ -113,13 +113,13 @@ next#(
             result = ..error(.reason = ..invalid_option)
             return
         }
-        name ::= unwrap_or_abort(.value = slice(.self = text, .start = 2, .count = end - 2))
+        name ::= unwrap_or_abort(.value = slice(text, .start = 2, .count = end - 2))
         attached :: ?StringView = ..none
         if end < text.length {
             attached = ..some(
                 .value = unwrap_or_abort(
                     .value = slice(
-                        .self  = text
+                        text
                         .start = [
                             end
                             + 1
@@ -154,12 +154,12 @@ take_value#(
         } ..none {} }
 
     if self&._short_offset > 0 {
-        text ::= unwrap_or_abort(.value = get(.self = self&._source, .index = self&._index))
+        text ::= unwrap_or_abort(.value = get(self&._source, .index = self&._index))
         start ::= self&._short_offset
         if bytes_get(.view = &text, .index = start).byte == 61 { start = start + 1 }
         result = ..ok unwrap_or_abort(
             .value = slice(
-                .self  = text
+                text
                 .start = start
                 .count = [
                     text.length
@@ -177,6 +177,6 @@ take_value#(
         return
     }
 
-    result = ..ok unwrap_or_abort(.value = get(.self = self&._source, .index = self&._index))
+    result = ..ok unwrap_or_abort(.value = get(self&._source, .index = self&._index))
     self&._index = self&._index + 1
 }

@@ -11,14 +11,14 @@ read(
     copied :: UIntNative = 0
     view :: ArrayView#(.t: UInt8) = buffer
 
-    while copied < length#(.t: UInt8)(.self = &view).count {
-        next ::= read_byte(.self = self)
+    while copied < length#(.t: UInt8)(&view).count {
+        next ::= read_byte(self)
         match next {
             ..ok payload {
                 match payload {
                     ..ok byte {
                         ptr ::= trusted_mutable_reference_offset#(.t: UInt8)(
-                            .base     = data#(.t: UInt8)(.self = &view).pointer
+                            .base     = data#(.t: UInt8)(&view).pointer
                             .elements = copied
                         ).reference
                         ptr&= byte

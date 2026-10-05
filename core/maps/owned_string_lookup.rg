@@ -9,7 +9,7 @@ _owned_string_find#(
         .index : ?UIntNative = ..none
     ) := {
     digest ::= string_hash_map_hash(.key = &key).hash
-    count ::= capacity(.self = self).count
+    count ::= capacity(self).count
     position ::= digest % count
     visited :: UIntNative = 0
 
@@ -17,7 +17,7 @@ _owned_string_find#(
         slot ::= _trusted_dynamic_array_get(.array = &self&._table._slots, .index = position)
         if slot.state == 0 { return }
         if slot.state == 1 and slot.hash == digest {
-            entry ::= _owned_hash_entry(.self = self, .index = position).entry
+            entry ::= _owned_hash_entry(self, .index = position).entry
             if equals(.left = as_view(&entry&.key), .right = key).ok {
                 index = ..some(.value = position)
                 return
@@ -37,7 +37,7 @@ contains#(
     ) -> (
         .ok : Bool
     ) := {
-    ok = _owned_string_find(.self = self, .key = key).index ?
+    ok = _owned_string_find(self, .key = key).index ?
 }
 
 get_ro_ref#(
@@ -48,10 +48,10 @@ get_ro_ref#(
     ) -> (
         .result : ?&value = ..none
     ) := {
-    match _owned_string_find(.self = self, .key = key).index {
+    match _owned_string_find(self, .key = key).index {
         ..none {}
         ..some found {
-            entry ::= _owned_hash_entry(.self = self, .index = found.value).entry
+            entry ::= _owned_hash_entry(self, .index = found.value).entry
             borrowed ::= depend_on#(.t: &value)(
                 .value = &entry&.value
                 .on    = erase_reference#(.t: _OwnedHashShape)(.base = &self&._shape).reference
@@ -69,10 +69,10 @@ get_ref#(
     ) -> (
         .result : ?$&value = ..none
     ) := {
-    match _owned_string_find(.self = self, .key = key).index {
+    match _owned_string_find(self, .key = key).index {
         ..none {}
         ..some found {
-            entry ::= _owned_hash_entry(.self = self, .index = found.value).entry
+            entry ::= _owned_hash_entry(self, .index = found.value).entry
             borrowed ::= depend_on#(.t: $&value)(
                 .value = $&entry&.value
                 .on    = erase_reference#(.t: _OwnedHashShape)(.base = &self&._shape).reference

@@ -10,12 +10,12 @@ read_byte(
     ) -> (
         .result : Errable#(ReadByte, (..stream_read_failed))
     ) := {
-    if remaining(.self = self).count == 0 {
+    if remaining(self).count == 0 {
         result = ..ok ..end
         return
     }
 
-    byte ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._bytes, .index = self&._position))
+    byte ::= unwrap_or_abort(.value = get_ro_ref(&self&._bytes, .index = self&._position))
     self&._position = self&._position + 1
 
     result = ..ok ..ok byte&
@@ -27,13 +27,13 @@ write_byte(
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
     ) := {
-    if remaining(.self = self).count == 0 {
+    if remaining(self).count == 0 {
         result = ..error(.reason = ..stream_write_failed)
         return
     }
 
     target ::= unwrap_or_abort(
-        .value = get_rw_ref(.self = $&self&._bytes, .index = self&._position)
+        .value = get_rw_ref($&self&._bytes, .index = self&._position)
     )
     target&= byte
     self&._position = self&._position + 1
@@ -51,7 +51,7 @@ read_block(
     ) -> (
         .result : Errable#(UIntNative, (..stream_read_failed))
     ) := {
-    count ::= remaining(.self = self).count
+    count ::= remaining(self).count
     size ::= length(&buffer).count
 
     if size < count { count = size }
@@ -60,14 +60,14 @@ read_block(
     while index < count {
         source ::= unwrap_or_abort(
             .value = get_ro_ref(
-                .self  = &self&._bytes
+                &self&._bytes
                 .index = [
                     self&._position
                     + index
                 ]
             )
         )
-        target ::= unwrap_or_abort(.value = get_rw_ref(.self = $&buffer, .index = index))
+        target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = index))
         target&= source&
         index = index + 1
     }
@@ -83,7 +83,7 @@ write_block(
     ) -> (
         .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) := {
-    count ::= remaining(.self = self).count
+    count ::= remaining(self).count
     size ::= length(&buffer).count
 
     if size < count { count = size }
@@ -95,10 +95,10 @@ write_block(
     index :: UIntNative = 0
 
     while index < count {
-        source ::= unwrap_or_abort(.value = get_ro_ref(.self = &buffer, .index = index))
+        source ::= unwrap_or_abort(.value = get_ro_ref(&buffer, .index = index))
         target ::= unwrap_or_abort(
             .value = get_rw_ref(
-                .self  = $&self&._bytes
+                $&self&._bytes
                 .index = [
                     self&._position
                     + index

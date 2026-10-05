@@ -24,7 +24,7 @@ has_next#(.t: Type: ImplicitlyCopyable)(.self: &DequeIterator#(.t: t)) -> (.ok: 
 
 next#(.t: Type: ImplicitlyCopyable)(.self: $&DequeIterator#(.t: t)) -> (.value: t) := {
     current ::= self&._index
-    pointer ::= _ring_buffer_occupied_pointer(.self = &self&._owner&._ring, .index = current).pointer
+    pointer ::= _ring_buffer_occupied_pointer(&self&._owner&._ring, .index = current).pointer
     value = pointer&
     self&._index = current + 1
 }
@@ -54,7 +54,7 @@ has_next#(.t: Type)(.self: &DequeROPointerIterator#(.t: t)) -> (.ok: Bool) := {
 
 next#(.t: Type)(.self: $&DequeROPointerIterator#(.t: t)) -> (.value: &t) := {
     current ::= self&._index
-    pointer ::= _ring_buffer_occupied_pointer(.self = &self&._owner&._ring, .index = current).pointer
+    pointer ::= _ring_buffer_occupied_pointer(&self&._owner&._ring, .index = current).pointer
     readonly ::= read_reference#(.t: t)(.base = pointer).reference
     value = depend_on#(.t: &t)(
         .value = readonly
@@ -88,7 +88,7 @@ has_next#(.t: Type)(.self: &DequeRWPointerIterator#(.t: t)) -> (.ok: Bool) := {
 
 next#(.t: Type)(.self: $&DequeRWPointerIterator#(.t: t)) -> (.value: $&t) := {
     current ::= self&._index
-    pointer ::= _ring_buffer_occupied_pointer(.self = &self&._owner&._ring, .index = current).pointer
+    pointer ::= _ring_buffer_occupied_pointer(&self&._owner&._ring, .index = current).pointer
     value = depend_on#(.t: $&t)(
         .value = pointer
         .on    = erase_reference#(.t: _RingBufferShape)(.base = &self&._owner&._ring._shape).reference
