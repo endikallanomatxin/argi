@@ -41,6 +41,9 @@ jobs:
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel, macos-15, windows-2025]
         python: ['3.12', '3.14']
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.os == 'windows-2025' && 'msys2 {0}' || 'bash' }}
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
@@ -104,7 +107,6 @@ jobs:
           "LLVM_RUNTIME_DLL=$root/bin/LLVM-C.dll" >> $env:GITHUB_ENV
 
       - name: Build compiler and validate the optional adapter
-        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
         run: |
           export CC=gcc
           zig build -j1 --summary all
@@ -119,7 +121,6 @@ jobs:
           python .github/scripts/python_smoke.py --argi "$argi_binary" --cc gcc --numpy
 
       - name: Run positive and negative Python compiler fixtures
-        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
         run: |
           export CC=gcc
           export PATH="$PWD/zig-out/bin:$PATH"
