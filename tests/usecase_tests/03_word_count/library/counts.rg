@@ -6,17 +6,19 @@ count_text(
         .result : Errable#(.t: Void, .reasons: (..invalid_utf8, ..out_of_memory, ..out_of_range)) = ..ok Void()
     ) := {
     assume allocator
-    validate_utf8(.text = text)!
-    iterator ::= split_whitespace(.self = text)
-    while has_next(.self = &iterator).ok {
-        token ::= next(.self = $&iterator).value
+
+    validate_utf8(text)!
+    iterator ::= split_whitespace(text)
+
+    while has_next(&iterator).ok {
+        token ::= next($&iterator).value
         match get_ref(.self = self, .key = token).result {
             ..none {
-                word ::= format(.value = token, .allocator = allocator)!
-                put(.self = self, .key = ~word, .value = 1, .allocator = allocator)!
+                word ::= format(token)!
+                put(.self = self, .key = ~word, .value = 1)!
             }
             ..some borrowed {
-                borrowed.value&= checked_add(.left = borrowed.value&, .right = 1)!
+                borrowed.value&= checked_add(borrowed.value&, 1)!
             }
         }
     }
@@ -51,36 +53,38 @@ count_directory(
         ) = ..ok Void()
     ) := {
     assume allocator
-    directory ::= Directory(.path = path, .self = file_system)!
+    assume file_system
+
+    directory ::= Directory(.path = path)!
+
     while true {
-        match next(.self = $&directory, .allocator = allocator)! {
+        match next($&directory)! {
             ..none { return }
             ..some ~payload {
-                joined ::= String(.allocator = allocator, .capacity = 16)!
-                push_view(.self = $&joined, .view = path, .allocator = allocator)!
-                push_byte(.self = $&joined, .byte = 47, .allocator = allocator)!
+                joined ::= String(.capacity = 16)!
+                push_view(.self = $&joined, .view = path)!
+                push_byte(.self = $&joined, .byte = 47)!
                 push_view(
-                    .self      = $&joined
-                    .view      = as_view(.self = &payload.value.name)
-                    .allocator = allocator
+                    .self = $&joined
+                    .view = as_view(&payload.value.name)
                 )!
-                info ::= metadata(.path = as_view(.self = &joined), .self = file_system)!
+
+                info ::= metadata(.path = as_view(&joined), .self = file_system)!
                 if info.kind == ..file {
                     file ::= open_read(
-                        .self      = file_system
-                        .path      = as_view(.self = &joined)
-                        .allocator = allocator
+                        .self = file_system
+                        .path = as_view(&joined)
                     )!
+
                     text ::= read_all_limited(
-                        .self      = $&file
-                        .buffer    = buffer
-                        .limit     = limit
-                        .allocator = allocator
+                        .self   = $&file
+                        .buffer = buffer
+                        .limit  = limit
                     )!
+
                     count_text(
-                        .self      = self
-                        .text      = as_view(.self = &text)
-                        .allocator = allocator
+                        .self = self
+                        .text = as_view(&text)
                     )!
                 }
             }
