@@ -57,12 +57,17 @@ push#(
         .result : Errable#(.t: Void, .reasons: (..out_of_memory)) = ..ok Void()
     ) := {
     assume allocator
+    owned ::= ~value
+    if self&._items._length == integer_limits(.value = self&._items._length).maximum {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     ensure_capacity(
         .self      = $&self&._items
         .capacity  = length(.self = &self&._items).count + 1
         .allocator = allocator
     )!
-    push_assume_capacity(.self = $&self&._items, .value = ~value)
+    push_assume_capacity(.self = $&self&._items, .value = ~owned)
     child ::= length(.self = &self&._items).count - 1
     while child > 0 {
         parent ::= [child - 1] / 2

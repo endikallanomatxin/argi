@@ -28,8 +28,8 @@ RingBuffer init#(
         return
     }
     element_size ::= size_of(.type = t)
-    bytes ::= capacity * element_size
-    if element_size != 0 and bytes / element_size != capacity {
+    maximum ::= integer_limits(.value = capacity).maximum
+    if element_size != 0 and capacity > maximum / element_size {
         result = ..error(.reason = ..out_of_memory)
         return
     }
@@ -125,16 +125,15 @@ push#(
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..full))
     ) := {
+    assume allocator
+    owned ::= ~value
     if self&._length == self&._capacity {
-        -- Push consumes its argument even on rejection. This matches the
-        -- owning-list insertion policy and prevents losing owning values.
-        trusted_opaque_drop(.slot = $&value, .allocator = allocator)
         result = ..error(.reason = ..full)
         return
     }
     physical ::= _ring_buffer_physical_index(.self = self, .index = self&._length).physical
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = physical)
-    _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~value)
+    _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~owned)
     _invalidate_ring_buffer_shape(.self = self)
     self&._length = self&._length + 1
     result = ..ok Void()
@@ -155,11 +154,9 @@ pop#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> (.result: Errable#(.t: t, .reason
 }
 
 RingBuffer deinit#(.t: Type)(.self: $&RingBuffer#(.t: t), .allocator: $&Allocator) -> () := {
-    index :: UIntNative = 0
-    while index < self&._length {
-        occupied ::= _ring_buffer_occupied_pointer(.self = self, .index = index).pointer
-        trusted_opaque_drop(.slot = occupied, .allocator = allocator)
-        index = index + 1
+    assume allocator
+    while self&._length > 0 {
+        discarded ::= ~unwrap_or_abort(.value = pop(.self = self))
     }
     trusted_opaque_mark_empty(.storage = $&self&._allocation)
     deinit(.self = $&self&._allocation)

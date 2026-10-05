@@ -9987,3 +9987,8 @@ test "feature_tests/system/97_cancellation_deadline" {
     try expectSuccessfulBuild("tests/feature_tests/system/97_cancellation_deadline");
     try runExpect("tests/feature_tests/system/97_cancellation_deadline", 0);
 }
+
+test "feature_tests/collections/152_collection_structural_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/152_collection_structural_cleanup");
+    try runExpect("tests/feature_tests/collections/152_collection_structural_cleanup", 0);
+}

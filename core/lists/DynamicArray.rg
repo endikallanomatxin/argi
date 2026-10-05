@@ -90,10 +90,14 @@ DynamicArray deinit#(
     ) -> () := {
     assume allocator
 
+    -- Lexical owners recursively destroy fields in logical order.
     i :: UIntNative = 0
     while i < self&._length {
-        occupied ::= _trusted_dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = i).pointer
-        trusted_opaque_drop(.slot = occupied, .allocator = allocator)
+        slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = i)
+        discarded ::= ~_trusted_uninit_take#(.t: t)(
+            .allocation = $&self&._allocation
+            .slot       = slot
+        )
         i = i + 1
     }
     -- Capacity records whether backing allocation ownership exists.
@@ -348,7 +352,12 @@ push#(
         .result : Errable#(.t: Void, .reasons: (..out_of_memory))
     ) := {
     assume allocator
+    owned ::= ~value
 
+    if self&._length == integer_limits(.value = self&._length).maximum {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     one :: UIntNative = 1
 
     if self&._length == self&._capacity {
@@ -364,14 +373,13 @@ push#(
             ..ok _ {
             }
             ..error _ {
-                trusted_opaque_drop(.slot = $&value, .allocator = allocator)
                 result = ..error(.reason = ..out_of_memory)
                 return
             }
         }
     }
 
-    push_assume_capacity#(.t: t)(.self = self, .value = ~value)
+    push_assume_capacity#(.t: t)(.self = self, .value = ~owned)
     result = ..ok Void()
 }
 
@@ -422,14 +430,14 @@ insert#(
         .result : Errable#(.t: Void, .reasons: (..out_of_memory, ..out_of_bounds))
     ) := {
     assume allocator
+    owned ::= ~value
 
     if i > self&._length {
-        trusted_opaque_drop(.slot = $&value, .allocator = allocator)
         result = ..error(.reason = ..out_of_bounds)
         return
     }
 
-    result = insert_growing#(.t: t)(.allocator = allocator, .self = self, .i = i, .value = ~value)
+    result = insert_growing#(.t: t)(.allocator = allocator, .self = self, .i = i, .value = ~owned)
 }
 
 insert_growing#(
@@ -443,13 +451,17 @@ insert_growing#(
         .result : Errable#(.t: Void, .reasons: (..out_of_memory, ..out_of_bounds))
     ) := {
     assume allocator
+    owned ::= ~value
 
     if i > self&._length {
-        trusted_opaque_drop(.slot = $&value, .allocator = allocator)
         result = ..error(.reason = ..out_of_bounds)
         return
     }
 
+    if self&._length == integer_limits(.value = self&._length).maximum {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     one :: UIntNative = 1
     current_length ::= self&._length
 
@@ -466,7 +478,6 @@ insert_growing#(
             ..ok _ {
             }
             ..error _ {
-                trusted_opaque_drop(.slot = $&value, .allocator = allocator)
                 result = ..error(.reason = ..out_of_memory)
                 return
             }
@@ -495,7 +506,7 @@ insert_growing#(
     }
 
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = i)
-    _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~value)
+    _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~owned)
     _invalidate_dynamic_array_shape#(.t: t)(.array = self)
     self&._length = current_length + one
     result = ..ok Void()
@@ -594,6 +605,13 @@ get_rw_ref#(
     result = ..ok dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = index).pointer
 }
 
+-- A lexical owner recursively destroys fields, including structural values
+-- with no nominal destructor of their own.
+_destroy_array_element#(.t: Type)(.value: t, .allocator: $&Allocator) -> () := {
+    assume allocator
+    discarded ::= ~value
+}
+
 set#(
         .t : Type
     )(
@@ -605,18 +623,19 @@ set#(
         .result : Errable#(.t: Void, .reasons: (..out_of_bounds))
     ) := {
     assume allocator
+    owned ::= ~value
     if index >= self&._length {
-        trusted_opaque_drop(.slot = $&value, .allocator = allocator)
         result = ..error(.reason = ..out_of_bounds)
         return
     }
-    ptr ::= _trusted_dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = index).pointer
-    trusted_opaque_drop(.slot = ptr, .allocator = allocator)
-    trusted_opaque_move_in#(.t: t, .storage_type: Allocation)(
-        .storage     = $&self&._allocation
-        .destination = ptr
-        .source      = ~value
+    slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = index)
+    -- Extract before destroying so nested owners receive ordinary lexical
+    -- cleanup. Finish that cleanup before installing the replacement.
+    _destroy_array_element#(.t: t)(
+        .value     = ~_trusted_uninit_take#(.t: t)(.allocation = $&self&._allocation, .slot = slot)
+        .allocator = allocator
     )
+    _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~owned)
     -- Replacement ends the old content lifetime even when its address stays.
     _invalidate_dynamic_array_shape#(.t: t)(.array = self)
     result = ..ok Void()
@@ -658,8 +677,10 @@ _trusted_dynamic_array_get_rw_ref#(
     reference = _trusted_dynamic_array_element_rw_pointer#(.t: t)(.array = array, .offset = index).pointer
 }
 
+-- This helper replaces copyable slot metadata. Owning values must use set,
+-- which extracts the old value into a lexical owner for recursive cleanup.
 _trusted_dynamic_array_set#(
-        .t : Type
+        .t : Type: ImplicitlyCopyable
     )(
         .array : $&DynamicArray#(.t: t),
         .index : UIntNative,
