@@ -9880,3 +9880,8 @@ test "feature_tests/codecs/01_hex_base64" {
     try expectSuccessfulBuild("tests/feature_tests/codecs/01_hex_base64");
     try runExpect("tests/feature_tests/codecs/01_hex_base64", 0);
 }
+
+test "feature_tests/logging/01_writer_logger" {
+    try expectSuccessfulBuild("tests/feature_tests/logging/01_writer_logger");
+    try runExpect("tests/feature_tests/logging/01_writer_logger", 0);
+}
