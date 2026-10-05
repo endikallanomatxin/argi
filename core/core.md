@@ -12,7 +12,8 @@ The implemented foundations include:
   and borrowed iteration, copyable and owning hash maps and sets with iteration,
   strings with shared ASCII helpers and borrowed whitespace tokenization,
   borrowed and owning bit sets with algebra, minimum priority queues, and
-  collection operations. Strict UTF-8 operations provide checked scalars,
+  collection operations. Moving `for` loops consume DynamicArray and Deque
+  elements with automatic cleanup on early exits. Strict UTF-8 operations provide checked scalars,
   bounded encoding, decoding cursors, and validated borrowed text iteration.
 - Numbers: public integer limits, checked arithmetic and rounding, unsigned
   bit utilities, IEEE float classification and rounding, and numeric

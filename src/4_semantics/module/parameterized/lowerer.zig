@@ -1573,7 +1573,7 @@ fn parameterizedKindForTag(tag: syn.Node.Tag) ir.PendingExpressionKind {
         .logical_and, .logical_or => .logical,
         .if_statement => .if_statement,
         .while_statement => .while_statement,
-        .for_value, .for_borrow, .for_mut_borrow => .for_each,
+        .for_value, .for_borrow, .for_mut_borrow, .for_move => .for_each,
         .match_statement, .match_case_value, .match_case_borrow, .match_case_mut_borrow, .match_case_move => .match,
         .defer_statement => .defer_value,
         .address_of, .address_of_mut => .address_of,

@@ -9823,6 +9823,19 @@ test "feature_tests/system/87_path_capacity_bounds" {
     try runExpect("tests/feature_tests/system/87_path_capacity_bounds", 0);
 }
 
+test "feature_tests/control_flow/17_for_owning" {
+    try expectSuccessfulBuild("tests/feature_tests/control_flow/17_for_owning");
+    try runExpect("tests/feature_tests/control_flow/17_for_owning", 0);
+}
+
+test "feature_tests/control_flow/20X_for_owning_reuse" {
+    try buildExpectFail("tests/feature_tests/control_flow/20X_for_owning_reuse", "moved");
+}
+
+test "feature_tests/control_flow/21X_for_owning_borrow" {
+    try buildExpectFail("tests/feature_tests/control_flow/21X_for_owning_borrow", "OwningIterable");
+}
+
 test "feature_tests/control_flow/22_loop_transfer_cleanup" {
     try expectSuccessfulBuild("tests/feature_tests/control_flow/22_loop_transfer_cleanup");
     try runExpect("tests/feature_tests/control_flow/22_loop_transfer_cleanup", 0);

@@ -523,6 +523,7 @@ pub const Resolver = struct {
             mutable: bool,
         };
         const protocol: ForProtocol = switch (value.mode) {
+            .move => .{ .iterable_contract = "OwningIterable", .conversion = "to_owning_iterator", .mutable = false },
             .value => .{ .iterable_contract = "Iterable", .conversion = "to_iterator", .mutable = false },
             .borrow => .{ .iterable_contract = "ROPointerIterable", .conversion = "to_ro_pointer_iterator", .mutable = false },
             .mut_borrow => .{ .iterable_contract = "RWPointerIterable", .conversion = "to_rw_pointer_iterator", .mutable = true },
@@ -548,7 +549,7 @@ pub const Resolver = struct {
         const source = self.graph.nodes.items[@intFromEnum(iterable)].source;
         var iterable_declaration: ?global_sg.GlobalNodeId = null;
         var iterable_place = iterable;
-        if (!self.addressable(iterable)) {
+        if (value.mode != .move and !self.addressable(iterable)) {
             const binding: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.graph.bindings.items.len)));
             try self.graph.bindings.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, "$for_iterable"),
@@ -561,7 +562,9 @@ pub const Resolver = struct {
             iterable_place = try self.appendNode(source, iterable_ty, .{ .binding_use = binding });
         }
 
-        const iterable_reference = if (existing_reference != null)
+        const iterable_reference = if (value.mode == .move)
+            try self.appendNode(source, iterable_ty, .{ .move_value = iterable_place })
+        else if (existing_reference != null)
             iterable_place
         else
             try self.appendAddress(iterable_place, iterable_ty, iterable_mutable, source);
@@ -582,6 +585,7 @@ pub const Resolver = struct {
             .source = source,
             .ty = iterator_ty,
             .initialization = iterator_value,
+            .cleanup_arguments = self.graph.bindings.items[@intFromEnum(globalizer.globalBinding(o, value.binding))].cleanup_arguments,
             .mutability = .variable,
         });
         const iterator_declaration = try self.appendNode(source, try self.builtin(.Void), .{ .binding_declaration = iterator_binding });
@@ -658,6 +662,20 @@ pub const Resolver = struct {
                 .body = body_id,
             } },
         };
+        if (value.mode == .move) {
+            // Keep the owning iterator in a lexical block surrounding the loop.
+            // Ordinary cleanup then handles exhaustion and every early exit.
+            const loop_content = self.graph.nodes.items[@intFromEnum(target)].content;
+            var loop_statement = loop_content.for_statement;
+            loop_statement.init = null;
+            const loop_node = try self.appendNode(source, void_ty, .{ .for_statement = loop_statement });
+            const wrapper_start: u32 = @intCast(self.graph.node_refs.items.len);
+            try self.graph.node_refs.append(self.allocator, init);
+            try self.graph.node_refs.append(self.allocator, loop_node);
+            const wrapper: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
+            try self.graph.blocks.append(self.allocator, .{ .nodes = .{ .start = wrapper_start, .len = 2 }, .ret_val = null });
+            self.graph.nodes.items[@intFromEnum(target)].content = .{ .code_block = wrapper };
+        }
         self.stats.for_loops += 1;
         committed = true;
         return .resolved;
@@ -767,7 +785,7 @@ pub const Resolver = struct {
 
     fn forBindingType(self: *Resolver, payload: global_sg.GlobalTypeId, mode: primitives.ForMode) !global_sg.GlobalTypeId {
         return switch (mode) {
-            .value => payload,
+            .value, .move => payload,
             .borrow => self.pointer(payload, .read_only),
             .mut_borrow => self.pointer(payload, .read_write),
         };

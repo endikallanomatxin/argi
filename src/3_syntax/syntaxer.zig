@@ -2136,6 +2136,10 @@ pub const Syntaxer = struct {
             tag = .for_borrow;
             self.advanceOne();
         }
+        if (tag == .for_value and self.tokenIs(.tilde)) {
+            tag = .for_move;
+            self.advanceOne();
+        }
         const item_name = try self.parseName();
         if (!self.tokenIs(.keyword_in)) return SyntaxerError.ExpectedKeywordIn;
         self.advanceOne();
