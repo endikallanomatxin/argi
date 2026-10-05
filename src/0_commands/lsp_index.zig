@@ -17,6 +17,9 @@ pub const Occurrence = struct {
     len: u32,
     target: Target,
     declaration: bool = false,
+    // Constructor calls spell their nominal family, while navigation targets
+    // the selected init declaration. These are distinct source identities.
+    constructor_call: bool = false,
 };
 
 /// Cold editor index derived from the final semantic graph. It intentionally
@@ -80,10 +83,27 @@ pub const Index = struct {
                 if (call.callee_value != null) continue;
                 const function = graph.functions.items[@intFromEnum(call.callee)];
                 const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
+                const name = if (declaration.constructor_type) |owner| graph.declaration(owner).name else declaration.name;
                 try result.add(allocator, .{
                     .source = node.source,
-                    .len = @intCast(graph.text(declaration.name).len),
+                    .len = @intCast(graph.text(name).len),
                     .target = .{ .function = call.callee },
+                    .constructor_call = declaration.constructor_type != null,
+                });
+            },
+            .struct_value_literal => {
+                const ty = node.ty orelse continue;
+                const owner = switch (graph.types.items[@intFromEnum(ty)]) {
+                    .declared => |id| id,
+                    .generic => |value| value.base,
+                    else => continue,
+                };
+                // Default record construction has no init body; its declaration
+                // defines the fields and defaults used by the call.
+                try result.add(allocator, .{
+                    .source = node.source,
+                    .len = @intCast(graph.text(graph.declaration(owner).name).len),
+                    .target = .{ .declaration = owner },
                 });
             },
             .assignment => |assignment| {
@@ -230,7 +250,14 @@ pub const Index = struct {
 pub fn occurrence_matches_source(graph: *const graph_mod.GlobalSemanticGraph, db: *const source_db.SourceDb, occurrence: Occurrence) bool {
     const file = sourceFileId(graph, db, occurrence.source) orelse return false;
     const source = db.get(file).source;
-    const name = Index.targetName(graph, occurrence.target);
+    const name = blk: {
+        if (occurrence.constructor_call) {
+            const function = graph.functions.items[@intFromEnum(occurrence.target.function)];
+            const owner = graph.declaration(function.declaration).constructor_type.?;
+            break :blk graph.text(graph.declaration(owner).name);
+        }
+        break :blk Index.targetName(graph, occurrence.target);
+    };
     const offset: usize = occurrence.source.offset;
     if (name.len == 0 or offset + name.len > source.len) return false;
     if (!std.mem.eql(u8, source[offset .. offset + name.len], name)) return false;
