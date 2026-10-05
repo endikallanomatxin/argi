@@ -9933,3 +9933,8 @@ test "feature_tests/codecs/02_csv" {
     try expectSuccessfulBuild("tests/feature_tests/codecs/02_csv");
     try runExpect("tests/feature_tests/codecs/02_csv", 0);
 }
+
+test "feature_tests/collections/150_dynamic_array_geometric_growth" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/150_dynamic_array_geometric_growth");
+    try runExpect("tests/feature_tests/collections/150_dynamic_array_geometric_growth", 0);
+}
