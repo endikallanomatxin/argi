@@ -22,6 +22,7 @@ is_leap_year(.year: Int32) -> (.ok: Bool) := {
 days_in_month(.year: Int32, .month: UInt32) -> (.count: UInt32 = 0) := {
     if month < 1 or month > 12 { return }
     count = 31
+
     if month == 4 or month == 6 or month == 9 or month == 11 { count = 30 }
     if month == 2 {
         count = 28
@@ -53,9 +54,11 @@ unix_timestamp(
         result = ..error(.reason = ..out_of_range)
         return
     }
+
     previous ::= Int64(.value = date.year) - 1
     days ::= previous * 365 + previous / 4 - previous / 100 + previous / 400 - 719162
     month :: UInt32 = 1
+
     while month < date.month {
         days = [
             days
@@ -66,6 +69,7 @@ unix_timestamp(
             + 1
         ]
     }
+
     days = days + Int64(.value = date.day) - 1
     seconds ::= [
         days * 86400
@@ -73,6 +77,7 @@ unix_timestamp(
         + Int64(.value = date.minute) * 60
         + Int64(.value = date.second)
     ]
+
     result = UnixTimestamp(.seconds = seconds, .nanoseconds = date.nanoseconds)
 }
 
@@ -82,16 +87,19 @@ utc_date(
         .result : Errable#(.t: UtcDateTime, .reasons: (..out_of_range))
     ) := {
     seconds ::= unix_seconds(.self = &timestamp).value
+
     if seconds < -62135596800 or seconds > 253402300799 {
         result = ..error(.reason = ..out_of_range)
         return
     }
+
     shifted ::= seconds + 62135596800
     days ::= shifted / 86400
     within ::= shifted % 86400
     cycles ::= days / 146097
     days = days % 146097
     year ::= unwrap_or_abort(.value = Int32(.value = cycles * 400 + 1))
+
     while true {
         year_days :: Int64 = 365
         if is_leap_year(.year = year).ok { year_days = 366 }
@@ -99,13 +107,16 @@ utc_date(
         days = days - year_days
         year = year + 1
     }
+
     month :: UInt32 = 1
+
     while true {
         month_days ::= Int64(.value = days_in_month(.year = year, .month = month).count)
         if days < month_days { break }
         days = days - month_days
         month = month + 1
     }
+
     result = ..ok(
         .year  = year
         .month = month
@@ -149,5 +160,6 @@ utc_date(
 weekday(.date: UtcDateTime) -> (.result: Errable#(.t: UInt32, .reasons: (..out_of_range))) := {
     timestamp ::= unix_timestamp(.date = date)!
     days ::= [unix_seconds(.self = &timestamp).value + 62135596800] / 86400
+
     result = ..ok unwrap_or_abort(.value = UInt32(.value = [days + 1] % 7))
 }

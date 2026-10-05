@@ -33,14 +33,18 @@ sort#(
         .self  : $&IndexableMutable#(.t: t),
         .order : &OrderPolicy#(.t: t),
     ) -> () := {
-    count ::= length(.self = self).count
+    count ::= length(self).count
+
     if count < 2 { return }
     parent ::= count / 2
+
     while parent > 0 {
         parent = parent - 1
         _sift_down#(.t: t)(.self = self, .order = order, .start = parent, .count = count)
     }
+
     end ::= count
+
     while end > 1 {
         end = end - 1
         _swap_indexed_values#(.t: t)(.self = self, .left = 0, .right = end)

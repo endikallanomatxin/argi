@@ -27,7 +27,8 @@ fill_random_bytes(
     .self        : $&RandomNumberGenerator,
     .destination : ArrayView#(.t: UInt8),
 ) -> (.result: Errable#(.t: Void, .reasons: (..entropy_unavailable))) := {
-    extent ::= length(.self = &destination).count
+    extent ::= length(&destination).count
+
     if extent == 0 { result = ..ok Void() return }
     #if target_os("linux") or target_os("macos") or target_os("windows") {
         assume ffi ::= self&._ffi

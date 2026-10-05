@@ -20,6 +20,7 @@ array_view#(
         view = (._data = ..none, ._length = 0)
         return
     }
+
     first ::= _trusted_dynamic_array_element_rw_pointer#(.t: t)(.array = array, .offset = 0).pointer
     borrowed ::= depend_on#(.t: $&t)(
         .value = first
@@ -39,6 +40,7 @@ array_view_ro#(
         view = (._data = ..none, ._length = 0)
         return
     }
+
     first ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = array, .offset = 0).pointer
     borrowed ::= depend_on#(.t: &t)(
         .value = first

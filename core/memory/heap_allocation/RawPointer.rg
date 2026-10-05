@@ -52,8 +52,11 @@ _reference_offset_address(
         .result : UIntNative
     ) := {
     offset ::= elements * element_size
+
     if element_size != 0 and offset / element_size != elements { abort }
+
     result = address + offset
+
     if result < address { abort }
 }
 

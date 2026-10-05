@@ -44,6 +44,7 @@ integer_limits(.value: UIntNative) -> (.minimum: UIntNative, .maximum: UIntNativ
     maximum = 0
     bytes ::= size_of(.type = UIntNative)
     index :: UIntNative = 0
+
     while index < bytes {
         maximum = maximum * 256 + 255
         index = index + 1
@@ -61,6 +62,7 @@ checked_add#(
         .result : Errable#(.t: t, .reasons: (..out_of_range))
     ) := {
     bounds ::= integer_limits(.value = left)
+
     if right > 0 {
         if left > bounds.maximum - right {
             result = ..error(.reason = ..out_of_range)
@@ -72,6 +74,7 @@ checked_add#(
             return
         }
     }
+
     result = ..ok left + right
 }
 
@@ -84,6 +87,7 @@ checked_subtract#(
         .result : Errable#(.t: t, .reasons: (..out_of_range))
     ) := {
     bounds ::= integer_limits(.value = left)
+
     if right > 0 {
         if left < bounds.minimum + right {
             result = ..error(.reason = ..out_of_range)
@@ -95,6 +99,7 @@ checked_subtract#(
             return
         }
     }
+
     result = ..ok left - right
 }
 
@@ -130,6 +135,7 @@ checked_multiply#(
             }
         }
     }
+
     result = ..ok left * right
 }
 
@@ -145,7 +151,9 @@ checked_divide#(
         result = ..error(.reason = ..division_by_zero)
         return
     }
+
     bounds ::= integer_limits(.value = left)
+
     if bounds.minimum < 0 {
         -- Form -1 only in the signed domain, after the signedness check.
         negative_one :: t = 0
@@ -155,5 +163,6 @@ checked_divide#(
             return
         }
     }
+
     result = ..ok left / right
 }

@@ -266,12 +266,14 @@ _FloatDecimalInteger: Type = (
 _float_integer_multiply(.self: $&_FloatDecimalInteger, .factor: UInt32, .addend: UInt32 = 0) -> () := {
     carry :: UInt32 = addend
     index :: UIntNative = 0
+
     while index < self&.used {
         product ::= self&.words[index] * factor + carry
         self&.words[index] = product % 65536
         carry = product / 65536
         index = index + 1
     }
+
     if carry != 0 {
         if self&.used == 256 { abort }
         self&.words[self&.used] = carry
@@ -289,11 +291,14 @@ _float_integer_compare(
         order = -1
         return
     }
+
     if left&.used > right&.used {
         order = 1
         return
     }
+
     index :: UIntNative = left&.used
+
     while index > 0 {
         index = index - 1
         if left&.words[index] < right&.words[index] {
@@ -305,12 +310,14 @@ _float_integer_compare(
             return
         }
     }
+
     order = 0
 }
 
 _float_integer_subtract(.self: $&_FloatDecimalInteger, .other: &_FloatDecimalInteger) -> () := {
     borrow :: UInt32 = 0
     index :: UIntNative = 0
+
     while index < self&.used {
         digit :: UInt32 = borrow
         if index < other&.used { digit = digit + other&.words[index] }
@@ -324,6 +331,7 @@ _float_integer_subtract(.self: $&_FloatDecimalInteger, .other: &_FloatDecimalInt
         }
         index = index + 1
     }
+
     if borrow != 0 { abort }
     while self&.used > 1 and self&.words[self&.used - 1] == 0 {
         self&.used = self&.used - 1
@@ -333,12 +341,14 @@ _float_integer_subtract(.self: $&_FloatDecimalInteger, .other: &_FloatDecimalInt
 _float_integer_halve(.self: $&_FloatDecimalInteger) -> () := {
     index :: UIntNative = self&.used
     carry :: UInt32 = 0
+
     while index > 0 {
         index = index - 1
         current ::= self&.words[index]
         self&.words[index] = current / 2 + carry * 32768
         carry = current % 2
     }
+
     if self&.used > 1 and self&.words[self&.used - 1] == 0 { self&.used = self&.used - 1 }
 }
 
@@ -350,6 +360,7 @@ _float_integer_from_u64(.value: UInt64) -> (.integer: _FloatDecimalInteger) := {
     integer = _FloatDecimalInteger()
     remaining ::= value
     integer.used = 0
+
     while true {
         integer.words[integer.used] = unwrap_or_abort(.value = UInt32(.value = remaining % 65536)).result
         integer.used = integer.used + 1
@@ -361,12 +372,14 @@ _float_integer_from_u64(.value: UInt64) -> (.integer: _FloatDecimalInteger) := {
 _float_integer_divide_ten(.self: $&_FloatDecimalInteger) -> (.remainder: UInt32) := {
     remainder = 0
     index ::= self&.used
+
     while index > 0 {
         index = index - 1
         current ::= remainder * 65536 + self&.words[index]
         self&.words[index] = current / 10
         remainder = current % 10
     }
+
     while self&.used > 1 and self&.words[self&.used - 1] == 0 { self&.used = self&.used - 1 }
 }
 
@@ -377,6 +390,7 @@ _float_integer_add_multiple(
     ) -> () := {
     carry :: UInt32 = 0
     index :: UIntNative = 0
+
     while index < other&.used or index < self&.used or carry != 0 {
         if index == 256 { abort }
         current ::= carry
@@ -386,6 +400,8 @@ _float_integer_add_multiple(
         carry = current / 65536
         index = index + 1
     }
+
     self&.used = index
+
     while self&.used > 1 and self&.words[self&.used - 1] == 0 { self&.used = self&.used - 1 }
 }

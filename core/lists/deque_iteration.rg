@@ -19,7 +19,7 @@ to_iterator#(
 }
 
 has_next#(.t: Type: ImplicitlyCopyable)(.self: &DequeIterator#(.t: t)) -> (.ok: Bool) := {
-    ok = self&._index < length(.self = self&._owner).count
+    ok = self&._index < length(self&._owner).count
 }
 
 next#(.t: Type: ImplicitlyCopyable)(.self: $&DequeIterator#(.t: t)) -> (.value: t) := {
@@ -49,7 +49,7 @@ to_ro_pointer_iterator#(
 }
 
 has_next#(.t: Type)(.self: &DequeROPointerIterator#(.t: t)) -> (.ok: Bool) := {
-    ok = self&._index < length(.self = self&._owner).count
+    ok = self&._index < length(self&._owner).count
 }
 
 next#(.t: Type)(.self: $&DequeROPointerIterator#(.t: t)) -> (.value: &t) := {
@@ -83,7 +83,7 @@ to_rw_pointer_iterator#(
 }
 
 has_next#(.t: Type)(.self: &DequeRWPointerIterator#(.t: t)) -> (.ok: Bool) := {
-    ok = self&._index < length(.self = self&._owner).count
+    ok = self&._index < length(self&._owner).count
 }
 
 next#(.t: Type)(.self: $&DequeRWPointerIterator#(.t: t)) -> (.value: $&t) := {

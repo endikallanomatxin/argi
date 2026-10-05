@@ -329,6 +329,17 @@ feature first.
   - avoid introducing synonyms such as `parsing`, `analysis`, or `semantic` as the primary names for those phases in new APIs, diagnostics, timing output, or docs
   - umbrella names like `frontend` are fine when referring to the combined pre-codegen pipeline, but phase-specific entrypoints and labels should still use the standardized phase names
 
+- Keep Argi source readable: separate setup, validation, traversal, and result
+  construction with blank lines inside longer functions. Keep closely related
+  statements together rather than inserting a blank line after every statement.
+  Prefer inferred bindings when the initializer establishes the intended type;
+  retain explicit numeric widths and types needed for contextual construction.
+  Use positional arguments for obvious receivers and compact constructors, and
+  named arguments when they clarify roles, limits, or similarly typed values.
+  Reuse lexical `assume` for capabilities instead of forwarding the same binding
+  repeatedly. Preserve explicit capability selection when switching resources.
+  Keep test fixtures explicit when their syntax is part of the behavior tested.
+
 - Follow Zig coding style:
     - spaces, snake_case for variables/functions/files, descriptive names.
     - File naming: `snake_case.zig` (e.g., `parser.zig`, `type_checker.zig`).

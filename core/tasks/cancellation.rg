@@ -10,6 +10,7 @@ CancellationSource init(
         .result : Errable#(.t: CancellationSource, .reasons: (..out_of_memory))
     ) := {
     state ::= AtomicUInt32(.ffi = ffi)!
+
     result = ..ok(._state = ~state)
 }
 
@@ -53,6 +54,7 @@ check_cancelled(
             }
         }
     }
+
     match self.deadline {
         ..none {}
         ..some entry {

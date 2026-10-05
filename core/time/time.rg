@@ -25,6 +25,7 @@ UnixTimestamp init(
         result = ..error(.reason = ..out_of_range)
         return
     }
+
     result = ..ok(._seconds = seconds, ._nanoseconds = nanoseconds)
 }
 
@@ -45,6 +46,7 @@ elapsed(
         result = ..error(.reason = ..out_of_range)
         return
     }
+
     result = ..ok Duration(.nanoseconds = end._nanoseconds - start._nanoseconds)
 }
 
@@ -76,6 +78,7 @@ compare(.left: UnixTimestamp, .right: UnixTimestamp) -> (.order: Int32 = 0) := {
     ] {
         order = -1
     }
+
     if [
         left._seconds > right._seconds
         or [left._seconds == right._seconds and left._nanoseconds > right._nanoseconds]
@@ -101,16 +104,20 @@ monotonic_now(
     ) := {
     assume ffi ::= self&._ffi
     reading ::= _platform_monotonic()
+
     if reading.status != 0 {
         result = ..error(.reason = ..clock_read_failed)
         return
     }
+
     maximum: UInt64 = 18446744073709551615
     fraction ::= UInt64(.value = reading.nanoseconds)
+
     if reading.nanoseconds >= 1000000000 or reading.seconds > [maximum - fraction] / 1000000000 {
         result = ..error(.reason = ..out_of_range)
         return
     }
+
     result = ..ok(._nanoseconds = reading.seconds * 1000000000 + fraction)
 }
 
@@ -124,14 +131,17 @@ wall_now(
     ) := {
     assume ffi ::= self&._ffi
     reading ::= _platform_wall()
+
     if reading.status != 0 {
         result = ..error(.reason = ..clock_read_failed)
         return
     }
+
     if reading.nanoseconds >= 1000000000 {
         result = ..error(.reason = ..out_of_range)
         return
     }
+
     result = ..ok(._seconds = reading.seconds, ._nanoseconds = reading.nanoseconds)
 }
 
@@ -145,15 +155,19 @@ sleep(
         )
     ) := {
     assume ffi ::= self&._ffi
+
     if duration._nanoseconds == 0 {
         result = ..ok Void()
         return
     }
+
     whole ::= duration._nanoseconds / 1000000000
     fraction ::= unwrap_or_abort(.value = UInt32(.value = duration._nanoseconds % 1000000000)).result
+
     if _platform_sleep(.seconds = whole, .nanoseconds = fraction).status != 0 {
         result = ..error(.reason = ..sleep_failed)
         return
     }
+
     result = ..ok Void()
 }

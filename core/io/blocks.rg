@@ -31,11 +31,13 @@ _writer_block#(
         .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
     index :: UIntNative = 0
-    while index < length(.self = &buffer).count {
+
+    while index < length(&buffer).count {
         byte ::= unwrap_or_abort(.value = get_ro_ref(.self = &buffer, .index = index))
         write_byte(.self = self, .byte = byte&)!
         index = index + 1
     }
+
     result = ..ok index
 }
 
@@ -57,8 +59,9 @@ read_exact(
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_read_failed, ..unexpected_eof))
     ) := {
-    total ::= length(.self = &buffer).count
+    total ::= length(&buffer).count
     count :: UIntNative = 0
+
     while count < total {
         tail ::= unwrap_or_abort(
             .value = slice(
@@ -78,6 +81,7 @@ read_exact(
         if got > total - count { abort }
         count = count + got
     }
+
     result = ..ok Void()
 }
 
@@ -87,8 +91,9 @@ write_all(
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
-    total ::= length(.self = &buffer).count
+    total ::= length(&buffer).count
     count :: UIntNative = 0
+
     while count < total {
         tail ::= unwrap_or_abort(
             .value = slice(
@@ -108,6 +113,7 @@ write_all(
         if wrote > total - count { abort }
         count = count + wrote
     }
+
     result = ..ok Void()
 }
 
@@ -127,12 +133,15 @@ copy_stream(
             )
         )
     ) := {
-    size ::= length(.self = &buffer).count
+    size ::= length(&buffer).count
+
     if size == 0 {
         result = ..error(.reason = ..invalid_stream_buffer)
         return
     }
+
     copied :: UIntNative = 0
+
     while true {
         got ::= read_block(.self = reader, .buffer = buffer)!
         if got == 0 {
@@ -168,7 +177,8 @@ read_until(
         .result : Errable#(.t: ReadUntil, .reasons: (..stream_read_failed))
     ) := {
     count :: UIntNative = 0
-    while count < length(.self = &buffer).count {
+
+    while count < length(&buffer).count {
         byte ::= read_byte(.self = self)!
         match byte {
             ..end {
@@ -186,6 +196,7 @@ read_until(
             }
         }
     }
+
     result = ..ok(.count = count, .termination = ..limit)
 }
 
@@ -212,7 +223,9 @@ write_block(
         .buffer : ArrayViewRO#(.t: UInt8)
     ) -> (
         .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := { result = _writer_block(.self = self, .buffer = buffer) }
+    ) := {
+    result = _writer_block(.self = self, .buffer = buffer)
+}
 
 read_block#(
         .base_type : Type: Reader
@@ -221,7 +234,9 @@ read_block#(
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
         .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
-    ) := { result = _reader_block(.self = self, .buffer = buffer) }
+    ) := {
+    result = _reader_block(.self = self, .buffer = buffer)
+}
 
 write_block#(
         .base_type : Type: Writer
@@ -230,7 +245,9 @@ write_block#(
         .buffer : ArrayViewRO#(.t: UInt8)
     ) -> (
         .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := { result = _writer_block(.self = self, .buffer = buffer) }
+    ) := {
+    result = _writer_block(.self = self, .buffer = buffer)
+}
 
 read_exact(
         .self   : $&Virtual#(.abstract: BlockReader),
@@ -238,8 +255,9 @@ read_exact(
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_read_failed, ..unexpected_eof))
     ) := {
-    total ::= length(.self = &buffer).count
+    total ::= length(&buffer).count
     count :: UIntNative = 0
+
     while count < total {
         tail ::= unwrap_or_abort(
             .value = slice(
@@ -259,6 +277,7 @@ read_exact(
         if got > total - count { abort }
         count = count + got
     }
+
     result = ..ok Void()
 }
 
@@ -268,8 +287,9 @@ write_all(
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
-    total ::= length(.self = &buffer).count
+    total ::= length(&buffer).count
     count :: UIntNative = 0
+
     while count < total {
         tail ::= unwrap_or_abort(
             .value = slice(
@@ -289,6 +309,7 @@ write_all(
         if wrote > total - count { abort }
         count = count + wrote
     }
+
     result = ..ok Void()
 }
 
@@ -308,12 +329,15 @@ copy_stream(
             )
         )
     ) := {
-    size ::= length(.self = &buffer).count
+    size ::= length(&buffer).count
+
     if size == 0 {
         result = ..error(.reason = ..invalid_stream_buffer)
         return
     }
+
     copied :: UIntNative = 0
+
     while true {
         got ::= read_block(.self = reader, .buffer = buffer)!
         if got == 0 {
@@ -349,12 +373,15 @@ copy_stream(
             )
         )
     ) := {
-    size ::= length(.self = &buffer).count
+    size ::= length(&buffer).count
+
     if size == 0 {
         result = ..error(.reason = ..invalid_stream_buffer)
         return
     }
+
     copied :: UIntNative = 0
+
     while true {
         got ::= read_block(.self = reader, .buffer = buffer)!
         if got == 0 {
@@ -390,12 +417,15 @@ copy_stream(
             )
         )
     ) := {
-    size ::= length(.self = &buffer).count
+    size ::= length(&buffer).count
+
     if size == 0 {
         result = ..error(.reason = ..invalid_stream_buffer)
         return
     }
+
     copied :: UIntNative = 0
+
     while true {
         got ::= read_block(.self = reader, .buffer = buffer)!
         if got == 0 {

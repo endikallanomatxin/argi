@@ -80,6 +80,7 @@ next#(
     ) := {
     -- Value iteration is the array's conditional implicit-copy capability.
     current_index :: UIntNative = self&._index
+
     if current_index >= self&._view._length { abort }
     ptr ::= trusted_reference_offset#(.t: t)(
         .base     = data#(.t: t)(.self = &self&._view).pointer
@@ -107,6 +108,7 @@ next#(
         .value : &t
     ) := {
     current_index :: UIntNative = self&._index
+
     if current_index >= self&._view._length { abort }
     value = trusted_reference_offset#(.t: t)(
         .base     = data#(.t: t)(.self = &self&._view).pointer
@@ -133,6 +135,7 @@ next#(
         .value : $&t
     ) := {
     current_index :: UIntNative = self&._index
+
     if current_index >= self&._view._length { abort }
     value = trusted_mutable_reference_offset#(.t: t)(
         .base     = data#(.t: t)(.self = &self&._view).pointer

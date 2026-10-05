@@ -12,6 +12,7 @@ UnicodeScalar init(
         result = ..error(.reason = ..invalid_codepoint)
         return
     }
+
     result = ..ok(._value = value)
 }
 
@@ -32,38 +33,47 @@ _utf8_decode(.text: StringView, .offset: UIntNative) -> (.result: _Utf8Decode) :
         result = ..outside
         return
     }
+
     first ::= bytes_get(.view = &text, .index = offset).byte
     code :: UInt32 = 0
     width :: UIntNative = 0
     minimum :: UInt32 = 0
+
     if first < 128 {
         width = 1
         code = UInt32(.value = first)
     }
+
     if first >= 194 and first <= 223 {
         width = 2
         minimum = 128
         code = UInt32(.value = first - 192)
     }
+
     if first >= 224 and first <= 239 {
         width = 3
         minimum = 2048
         code = UInt32(.value = first - 224)
     }
+
     if first >= 240 and first <= 244 {
         width = 4
         minimum = 65536
         code = UInt32(.value = first - 240)
     }
+
     if width == 0 {
         result = ..invalid
         return
     }
+
     if width > text.length - offset {
         result = ..invalid
         return
     }
+
     index :: UIntNative = 1
+
     while index < width {
         byte ::= bytes_get(.view = &text, .index = offset + index).byte
         if byte < 128 or byte > 191 {
@@ -73,10 +83,12 @@ _utf8_decode(.text: StringView, .offset: UIntNative) -> (.result: _Utf8Decode) :
         code = code * 64 + UInt32(.value = byte - 128)
         index = index + 1
     }
+
     if code < minimum or code > 1114111 or [code >= 55296 and code <= 57343] {
         result = ..invalid
         return
     }
+
     result = ..valid(.decoded = (.scalar = (._value = code), .width = width))
 }
 
@@ -96,6 +108,7 @@ utf8_decode(
 validate_utf8(.text: StringView) -> (.result: Errable#(.t: UIntNative, .reasons: (..invalid_utf8))) := {
     offset :: UIntNative = 0
     count :: UIntNative = 0
+
     while offset < text.length {
         match _utf8_decode(.text = text, .offset = offset).result {
             ..valid payload { offset = offset + payload.decoded.width }
@@ -107,23 +120,28 @@ validate_utf8(.text: StringView) -> (.result: Errable#(.t: UIntNative, .reasons:
         }
         count = count + 1
     }
+
     result = ..ok count
 }
 
 utf8_encoded_length(.scalar: UnicodeScalar) -> (.count: UIntNative) := {
     code ::= scalar._value
+
     if code < 128 {
         count = 1
         return
     }
+
     if code < 2048 {
         count = 2
         return
     }
+
     if code < 65536 {
         count = 3
         return
     }
+
     count = 4
 }
 
@@ -137,32 +155,39 @@ utf8_encode(
         .result : Errable#(.t: UIntNative, .reasons: (..out_of_bounds))
     ) := {
     width ::= utf8_encoded_length(.scalar = scalar).count
-    size ::= length(.self = &buffer).count
+    size ::= length(&buffer).count
+
     if offset > size {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     if width > size - offset {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     code ::= scalar._value
     first :: UInt32 = code
+
     if width == 2 { first = 192 + code / 64 }
     if width == 3 { first = 224 + code / 4096 }
     if width == 4 { first = 240 + code / 262144 }
     pointer ::= unwrap_or_abort(.value = get_rw_ref(.self = $&buffer, .index = offset))
     pointer&= unwrap_or_abort(.value = UInt8(.value = first))
     divisor :: UInt32 = 1
+
     if width == 3 { divisor = 64 }
     if width == 4 { divisor = 4096 }
     index :: UIntNative = 1
+
     while index < width {
         pointer ::= unwrap_or_abort(.value = get_rw_ref(.self = $&buffer, .index = offset + index))
         pointer&= unwrap_or_abort(.value = UInt8(.value = 128 + code / divisor % 64))
         divisor = divisor / 64
         index = index + 1
     }
+
     result = ..ok width
 }
 
@@ -183,6 +208,7 @@ next_codepoint(
         result = ..ok ..none
         return
     }
+
     match _utf8_decode(.text = self&._text, .offset = self&._offset).result {
         ..valid payload {
             self&._offset = self&._offset + payload.decoded.width
@@ -201,6 +227,7 @@ Utf8View implements ImplicitlyCopyable
 
 Utf8View init(.text: StringView) -> (.result: Errable#(.t: Utf8View, .reasons: (..invalid_utf8))) := {
     count ::= validate_utf8(.text = text)!
+
     result = ..ok(._text = text, ._count = count)
 }
 

@@ -12,12 +12,13 @@ _owned_string_find#(
     count ::= capacity(.self = self).count
     position ::= digest % count
     visited :: UIntNative = 0
+
     while visited < count {
         slot ::= _trusted_dynamic_array_get(.array = &self&._table._slots, .index = position)
         if slot.state == 0 { return }
         if slot.state == 1 and slot.hash == digest {
             entry ::= _owned_hash_entry(.self = self, .index = position).entry
-            if equals(.left = as_view(.self = &entry&.key), .right = key).ok {
+            if equals(.left = as_view(&entry&.key), .right = key).ok {
                 index = ..some(.value = position)
                 return
             }

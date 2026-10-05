@@ -1,5 +1,6 @@
 _string_copy_view_into(.output: $&String, .offset: UIntNative, .source: StringView) -> () := {
     index :: UIntNative = 0
+
     while index < source.length {
         bytes_set(
             .string = output
@@ -18,7 +19,7 @@ join(
         .result : Errable#(.t: String, .reasons: (..out_of_memory, ..size_overflow))
     ) := {
     limit ::= _string_max_result_length().length
-    count ::= length(.self = &parts).count
+    count ::= length(&parts).count
     total :: UIntNative = 0
     index :: UIntNative = 0
     -- Inspect lengths before allocating or reading any text bytes. Each sum
@@ -39,9 +40,11 @@ join(
         }
         index = index + 1
     }
+
     output ::= string_with_length(.allocator = allocator, .length = total)!
     offset :: UIntNative = 0
     index = 0
+
     while index < count {
         if index > 0 {
             _string_copy_view_into(.output = $&output, .offset = offset, .source = separator)
@@ -52,5 +55,6 @@ join(
         offset = offset + part.length
         index = index + 1
     }
+
     result = ..ok ~output
 }

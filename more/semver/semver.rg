@@ -14,11 +14,14 @@ _digit(.byte: UInt8) -> (.ok: Bool) := { ok = byte >= 48 and byte <= 57 }
 
 _numeric_end(.text: &StringView, .start: UIntNative) -> (.end: UIntNative, .ok: Bool) := {
     end = start
+
     while end < text&.length {
         if _digit(.byte = bytes_get(.view = text, .index = end).byte).ok {} else { break }
         end = end + 1
     }
+
     ok = end > start
+
     if end - start > 1 {
         if bytes_get(.view = text, .index = start).byte == 48 { ok = false }
     }
@@ -26,10 +29,12 @@ _numeric_end(.text: &StringView, .start: UIntNative) -> (.end: UIntNative, .ok: 
 
 _identifiers_valid(.text: StringView, .allow_numeric_zeroes: Bool) -> (.ok: Bool) := {
     ok = false
+
     if text.length == 0 { return }
     start :: UIntNative = 0
     i :: UIntNative = 0
-    numeric :: Bool = true
+    numeric ::= true
+
     while i <= text.length {
         boundary :: Bool = i == text.length
         if i < text.length { boundary = bytes_get(.view = &text, .index = i).byte == 46 }
@@ -52,34 +57,44 @@ _identifiers_valid(.text: StringView, .allow_numeric_zeroes: Bool) -> (.ok: Bool
         }
         i = i + 1
     }
+
     ok = true
 }
 
 parse(.text: StringView) -> (.result: Errable#(.t: VersionView, .reasons: (..invalid_input))) := {
     first ::= _numeric_end(.text = &text, .start = 0)
+
     if first.ok == false or first.end == text.length {
         result = ..error(.reason = ..invalid_input)
         return
     }
+
     if bytes_get(.view = &text, .index = first.end).byte != 46 {
         result = ..error(.reason = ..invalid_input)
         return
     }
+
     second ::= _numeric_end(.text = &text, .start = first.end + 1)
+
     if second.ok == false or second.end == text.length {
         result = ..error(.reason = ..invalid_input)
         return
     }
+
     if bytes_get(.view = &text, .index = second.end).byte != 46 {
         result = ..error(.reason = ..invalid_input)
         return
     }
+
     third ::= _numeric_end(.text = &text, .start = second.end + 1)
+
     if third.ok == false {
         result = ..error(.reason = ..invalid_input)
         return
     }
+
     pre_end :: UIntNative = third.end
+
     if third.end < text.length {
         if bytes_get(.view = &text, .index = third.end).byte == 45 {
             pre_end = third.end + 1
@@ -98,6 +113,7 @@ parse(.text: StringView) -> (.result: Errable#(.t: VersionView, .reasons: (..inv
             }
         }
     }
+
     if pre_end < text.length {
         if bytes_get(.view = &text, .index = pre_end).byte != 43 {
             result = ..error(.reason = ..invalid_input)
@@ -113,6 +129,7 @@ parse(.text: StringView) -> (.result: Errable#(.t: VersionView, .reasons: (..inv
             return
         }
     }
+
     result = ..ok(
         ._text      = text
         ._major_end = first.end
@@ -160,6 +177,7 @@ pre_release(.self: &VersionView) -> (.text: StringView) := {
         text = string_view_slice(.view = &self&._text, .start = 0, .length = 0)
         return
     }
+
     text = string_view_slice(
         .view   = &self&._text
         .start  = self&._patch_end + 1
@@ -172,6 +190,7 @@ build_metadata(.self: &VersionView) -> (.text: StringView) := {
         text = string_view_slice(.view = &self&._text, .start = 0, .length = 0)
         return
     }
+
     text = string_view_slice(
         .view   = &self&._text
         .start  = self&._pre_end + 1
@@ -181,6 +200,7 @@ build_metadata(.self: &VersionView) -> (.text: StringView) := {
 
 _lexical_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
     i :: UIntNative = 0
+
     while i < left.length and i < right.length {
         a ::= bytes_get(.view = &left, .index = i).byte
         b ::= bytes_get(.view = &right, .index = i).byte
@@ -194,7 +214,9 @@ _lexical_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
         }
         i = i + 1
     }
+
     order = 0
+
     if left.length < right.length { order = -1 }
     if left.length > right.length { order = 1 }
 }
@@ -206,16 +228,19 @@ _numeric_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
         order = -1
         return
     }
+
     if left.length > right.length {
         order = 1
         return
     }
+
     order = _lexical_compare(.left = left, .right = right).order
 }
 
 _identifier_end(.text: &StringView, .start: UIntNative) -> (.end: UIntNative, .numeric: Bool) := {
     end = start
     numeric = true
+
     while end < text&.length {
         byte ::= bytes_get(.view = text, .index = end).byte
         if byte == 46 { break }
@@ -226,16 +251,20 @@ _identifier_end(.text: &StringView, .start: UIntNative) -> (.end: UIntNative, .n
 
 _pre_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
     order = 0
+
     if left.length == 0 {
         if right.length > 0 { order = 1 }
         return
     }
+
     if right.length == 0 {
         order = -1
         return
     }
+
     a :: UIntNative = 0
     b :: UIntNative = 0
+
     while a < left.length and b < right.length {
         ae ::= _identifier_end(.text = &left, .start = a)
         be ::= _identifier_end(.text = &right, .start = b)
@@ -265,10 +294,13 @@ _pre_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
 
 compare(.left: &VersionView, .right: &VersionView) -> (.order: Int32) := {
     order = _numeric_compare(.left = major(.self = left).text, .right = major(.self = right).text).order
+
     if order != 0 { return }
     order = _numeric_compare(.left = minor(.self = left).text, .right = minor(.self = right).text).order
+
     if order != 0 { return }
     order = _numeric_compare(.left = patch(.self = left).text, .right = patch(.self = right).text).order
+
     if order != 0 { return }
     order = _pre_compare(
         .left  = pre_release(.self = left).text
@@ -301,7 +333,7 @@ format(
             .reasons : (..out_of_memory)
         )
     ) := {
-    result = format(.value = as_view(.self = value).text, .allocator = allocator)
+    result = format(.value = as_view(value).text, .allocator = allocator)
 }
 
 format_into(
@@ -315,7 +347,7 @@ format_into(
             .reasons : (..out_of_memory)
         )
     ) := {
-    result = format_into(.out = out, .value = as_view(.self = value).text, .allocator = allocator)
+    result = format_into(.out = out, .value = as_view(value).text, .allocator = allocator)
 }
 
 format_into(
@@ -327,5 +359,5 @@ format_into(
             .reasons : (..stream_write_failed, ..stream_flush_failed)
         )
     ) := {
-    result = write(.self = out, .text = as_view(.self = value).text)
+    result = write(.self = out, .text = as_view(value).text)
 }

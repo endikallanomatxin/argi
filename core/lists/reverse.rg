@@ -20,7 +20,8 @@ reverse#(
         .self : $&IndexableMutable#(.t: t),
     ) -> () := {
     left :: UIntNative = 0
-    end ::= length(.self = self).count
+    end ::= length(self).count
+
     while left < end {
         end = end - 1
         if left >= end { return }

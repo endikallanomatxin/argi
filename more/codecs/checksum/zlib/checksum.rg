@@ -20,10 +20,12 @@ update_crc32(
     ) := {
     assume ffi
     count := length(source)
+
     if count == 0 {
         checksum = previous
         return
     }
+
     pointer := data(source)
     raw := raw_pointer#(.t: UInt8)(UIntNative(.value = pointer))
     checksum = _crc32_z(previous, raw, count)

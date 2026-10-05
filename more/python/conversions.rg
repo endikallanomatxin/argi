@@ -164,7 +164,7 @@ to_object(
             .reasons : (..python_error)
         )
     ) := {
-    result = string(.self = self, .value = as_view(.self = value).view)
+    result = string(.self = self, .value = as_view(value).view)
 }
 
 to_object#(
@@ -180,12 +180,14 @@ to_object#(
     ) := {
     converted ::= list(.self = self)!
     index :: UIntNative = 0
-    while index < length(.self = &value).count {
+
+    while index < length(&value).count {
         source ::= unwrap_or_abort(.value = get_ro_ref(.self = &value, .index = index)).result
         element ::= to_object(.self = self, .value = source)!
         append(.self = &converted, .value = &element)!
         index = index + 1
     }
+
     result = ..ok ~converted
 }
 
@@ -202,7 +204,7 @@ to_object#(
             .reasons : (..python_error)
         )
     ) := {
-    result = to_object(.self = self, .value = view(.array = value))
+    result = to_object(.self = self, .value = view(value))
 }
 
 to_object#(
@@ -232,12 +234,14 @@ keyword_arguments(
     ) := {
     converted ::= dictionary(.self = self)!
     index :: UIntNative = 0
-    while index < length(.self = &values).count {
+
+    while index < length(&values).count {
         entry ::= unwrap_or_abort(.value = get_ro_ref(.self = &values, .index = index)).result
         key ::= string(.self = self, .value = entry&.name)!
         set_item(.self = &converted, .key = &key, .value = entry&.value)!
         index = index + 1
     }
+
     result = ..ok ~converted
 }
 
@@ -270,6 +274,7 @@ to_object(
         )
     ) := {
     assume ffi := self&._ffi
+
     result = _owned(
         .self   = self
         .handle = _float32(.context = self&._handle, .value = value).handle
@@ -324,13 +329,15 @@ keyword_arguments(
     ) := {
     converted ::= dictionary(.self = self)!
     index :: UIntNative = 0
-    while index < length(.self = &values).count {
+
+    while index < length(&values).count {
         entry ::= unwrap_or_abort(.value = get_ro_ref(.self = &values, .index = index)).result
         key ::= string(.self = self, .value = entry&.name)!
         value ::= to_object(.self = self, .value = entry&.value)!
         set_item(.self = &converted, .key = &key, .value = &value)!
         index = index + 1
     }
+
     result = ..ok ~converted
 }
 
@@ -355,6 +362,7 @@ positional_arguments#(
     ) := {
     assume ffi := self&._ffi
     converted ::= to_object(.self = self, .value = values)!
+
     result = _owned(
         .self   = self
         .handle = _as_tuple(.context = self&._handle, .value = converted._handle).handle
@@ -374,6 +382,7 @@ call(
     ) := {
     assume ffi := self&._python&._ffi
     keyword_handle :: RawPointer#(.t: _PyObject) = raw_pointer#(.t: _PyObject)(.address = 0).raw
+
     match keywords { ..some payload { keyword_handle = payload.value&._handle } ..none {} }
     handle ::= _call(
         .context   = self&._python&._handle
@@ -381,6 +390,7 @@ call(
         .arguments = arguments&._handle
         .keywords  = keyword_handle
     ).handle
+
     result = _owned(.self = self&._python, .handle = handle)
 }
 
@@ -397,12 +407,14 @@ to_object#(
     ) := {
     converted ::= list(.self = self)!
     index :: UIntNative = 0
-    while index < length(.self = &value).count {
+
+    while index < length(&value).count {
         source ::= unwrap_or_abort(.value = get_ro_ref(.self = &value, .index = index)).result
         element ::= to_object(.self = self, .value = source)!
         append(.self = &converted, .value = &element)!
         index = index + 1
     }
+
     result = ..ok ~converted
 }
 

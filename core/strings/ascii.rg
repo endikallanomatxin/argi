@@ -22,10 +22,12 @@ ascii_is_whitespace(.byte: UInt8) -> (.ok: Bool) := {
 
 ascii_to_lower(.byte: UInt8) -> (.value: UInt8) := {
     value = byte
+
     if ascii_is_upper(.byte = byte).ok { value = byte + 32 }
 }
 
 ascii_to_upper(.byte: UInt8) -> (.value: UInt8) := {
     value = byte
+
     if ascii_is_lower(.byte = byte).ok { value = byte - 32 }
 }

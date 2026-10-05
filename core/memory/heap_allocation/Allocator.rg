@@ -11,9 +11,11 @@ Allocator: Abstract = (
 _require_allocation_alignment(.alignment: UIntNative) -> () := {
     if alignment == 0 { abort }
     remaining ::= alignment
+
     while remaining % 2 == 0 {
         remaining = remaining / 2
     }
+
     if remaining != 1 { abort }
 }
 
@@ -47,10 +49,12 @@ allocate#(
     ) := {
     element_size ::= size_of(.type = t)
     bytes ::= element_size * count
+
     if element_size != 0 and bytes / element_size != count {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     result = allocate(.self = self, .size = bytes, .alignment = alignment_of(.type = t))
 }
 
@@ -80,6 +84,7 @@ allocate(
         .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) := {
     acquired ::= acquire_heap_storage(.size = size, .alignment = alignment, .ffi = self&.ffi)
+
     match acquired {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~storage {
@@ -161,6 +166,7 @@ trusted_establish_allocation(
         .allocation : Allocation
     ) := {
     _require_allocation_alignment(.alignment = alignment)
+
     if storage == 0 and size != 0 { abort }
     if storage % alignment != 0 { abort }
     if storage + size < storage { abort }
@@ -190,6 +196,7 @@ establish_allocation(
         .allocation : Allocation
     ) := {
     _require_allocation_alignment(.alignment = alignment)
+
     if size > storage._size { abort }
     if storage._address % alignment != 0 { abort }
     allocation = trusted_establish_allocation(
@@ -286,10 +293,12 @@ _require_allocation_slot_range(
     ) -> () := {
     if address < allocation&._storage_address { abort }
     storage_offset ::= address - allocation&._storage_address
+
     if storage_offset > allocation&._storage_size { abort }
     if size > allocation&._storage_size - storage_offset { abort }
     if address < allocation&.data.address { abort }
     offset ::= address - allocation&.data.address
+
     if offset > allocation&.size { abort }
     if size > allocation&.size - offset { abort }
     if alignment == 0 { abort }

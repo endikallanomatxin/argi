@@ -68,6 +68,7 @@ fread_into(
         count = 0
         return
     }
+
     count = fread(
         .buffer = data#(.t: UInt8)(.self = &buffer).pointer
         .size   = 1
@@ -86,6 +87,7 @@ fwrite_from(
         count = 0
         return
     }
+
     count = fwrite(
         .buffer = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(.self = &buffer).pointer).reference
         .size   = 1
@@ -119,14 +121,15 @@ aligned_free(.address: UIntNative, .ffi: $&ForeignFunctionInterface) -> () := {
 }
 
 fwrite_from(.buffer: ArrayViewRO#(.t: UInt8), .stream: &Any) -> (.count: UIntNative) := {
-    if length(.self = &buffer).count == 0 {
+    if length(&buffer).count == 0 {
         count = 0
         return
     }
+
     count = fwrite(
         .buffer = data(.self = &buffer).pointer
         .size   = 1
-        .count  = length(.self = &buffer).count
+        .count  = length(&buffer).count
         .stream = stream
     ).count
 }

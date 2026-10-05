@@ -9,6 +9,7 @@ format_into#(
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
     encoded ::= _decimal_encode#(.t: t)(.value = value)
+
     result = write(.self = out, .text = _decimal_view(.self = &encoded).view)
 }
 
@@ -35,6 +36,7 @@ format_into#(
         )
     ) := {
     encoded ::= _float_encode(.value = value)
+
     result = write(.self = out, .text = _float_text_view(.self = &encoded).view)
 }
 

@@ -20,9 +20,11 @@ _pcg_seed_state(.seed: UInt64) -> (.state: UInt64) := {
     increment: UInt64 = 1442695040888963407
     maximum: UInt64 = 18446744073709551615
     combined :: UInt64 = 0
+
     if seed > maximum - increment { combined = seed - [maximum - increment] - 1 } else {
         combined = seed + increment
     }
+
     state = _pcg_advance(.state = combined).next
 }
 
@@ -41,12 +43,14 @@ _pcg_xor_window(.left: UInt64, .right: UInt64) -> (.value: UInt64) := {
     b ::= right
     place :: UInt64 = 1
     overlap :: UInt64 = 0
+
     while b != 0 {
         if a % 2 != 0 and b % 2 != 0 { overlap = overlap + place }
         a = a / 2
         b = b / 2
         place = place * 2
     }
+
     value = left + right - overlap * 2
 }
 
@@ -60,10 +64,12 @@ next_uint32(.self: $&Pcg32) -> (.value: UInt32) := {
     rotation ::= previous / 576460752303423488
     divisor :: UInt64 = 1
     remaining ::= rotation
+
     while remaining > 0 {
         divisor = divisor * 2
         remaining = remaining - 1
     }
+
     rotated ::= mixed / divisor + [mixed % divisor] * [4294967296 / divisor]
     value = unwrap_or_abort(.value = UInt32(.value = rotated)).result
 }
@@ -91,9 +97,11 @@ uniform_uint32(
         result = ..error(.reason = ..invalid_range)
         return
     }
+
     bound ::= UInt64(.value = upper_bound)
     space: UInt64 = 4294967296
     threshold ::= [space - bound] % bound
+
     while true {
         candidate ::= UInt64(.value = next_uint32(.self = self).value)
         if candidate >= threshold {
@@ -116,8 +124,10 @@ uniform_uint64(
         result = ..error(.reason = ..invalid_range)
         return
     }
+
     maximum: UInt64 = 18446744073709551615
     threshold ::= [maximum % upper_bound + 1] % upper_bound
+
     while true {
         candidate ::= next_uint64(.self = self).value
         if candidate >= threshold {
@@ -136,6 +146,7 @@ _pcg_fraction#(.t: Type: Float)(.sample: UInt64, .bits: UInt32) -> (.value: t) :
     half :: t = 0.5
     remaining ::= sample
     count ::= bits
+
     while count > 0 {
         if remaining % 2 != 0 { value = value + one }
         value = value * half

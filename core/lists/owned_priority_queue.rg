@@ -20,6 +20,7 @@ OwnedPriorityQueue init#(
     ) := {
     assume allocator
     items ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = capacity)!
+
     result = ..ok(._items = ~items, ._order = order)
 }
 
@@ -31,9 +32,11 @@ OwnedPriorityQueue deinit#(
         .allocator : $&Allocator
     ) -> () := {
     assume allocator
-    while length(.self = &self&._items).count > 0 {
+
+    while length(&self&._items).count > 0 {
         discarded ::= ~unwrap_or_abort(.value = pop(.self = $&self&._items))
     }
+
     deinit(.self = $&self&._items, .allocator = allocator)
 }
 
@@ -44,7 +47,7 @@ length#(
         .self : &OwnedPriorityQueue#(.t: t, .order: order)
     ) -> (
         .count : UIntNative
-    ) := { count = length(.self = &self&._items).count }
+    ) := { count = length(&self&._items).count }
 
 push#(
         .t     : Type,
@@ -58,17 +61,20 @@ push#(
     ) := {
     assume allocator
     owned ::= ~value
+
     if self&._items._length == integer_limits(.value = self&._items._length).maximum {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     ensure_capacity(
         .self      = $&self&._items
-        .capacity  = length(.self = &self&._items).count + 1
+        .capacity  = length(&self&._items).count + 1
         .allocator = allocator
     )!
     push_assume_capacity(.self = $&self&._items, .value = ~owned)
-    child ::= length(.self = &self&._items).count - 1
+    child ::= length(&self&._items).count - 1
+
     while child > 0 {
         parent ::= [child - 1] / 2
         a ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._items, .index = child))
@@ -87,7 +93,7 @@ peek_ref#(
     ) -> (
         .value : ?&t = ..none
     ) := {
-    if length(.self = &self&._items).count == 0 { return }
+    if length(&self&._items).count == 0 { return }
     value = ..some(
         .value = _trusted_dynamic_array_get_ro_ref#(.t: t)(.array = &self&._items, .index = 0).reference
     )
@@ -101,13 +107,15 @@ pop#(
     ) -> (
         .value : ?t = ..none
     ) := {
-    count ::= length(.self = &self&._items).count
+    count ::= length(&self&._items).count
+
     if count == 0 { return }
     _swap_owned_array#(.t: t)(.self = $&self&._items, .left = 0, .right = count - 1)
     extracted ::= ~unwrap_or_abort(.value = pop(.self = $&self&._items))
     value = ..some(.value = ~extracted)
     count = count - 1
     root :: UIntNative = 0
+
     while root < count / 2 {
         child ::= root * 2 + 1
         if child + 1 < count {

@@ -2,12 +2,15 @@
 -- within 0..35, so every supported integer type can represent it.
 _integer_parse_digit#(.t: Type: Int)(.byte: UInt8) -> (.value: ?t) := {
     normalized :: UInt8 = byte
+
     if normalized >= 65 and normalized <= 90 {
         normalized = normalized + 32
     }
-    alphabet :: StringView = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+    alphabet ::= "0123456789abcdefghijklmnopqrstuvwxyz"
     index :: UIntNative = 0
     digit :: t = 0
+
     while index < alphabet.length {
         if bytes_get(.view = &alphabet, .index = index).byte == normalized {
             value = ..some(.value = digit)
@@ -16,6 +19,7 @@ _integer_parse_digit#(.t: Type: Int)(.byte: UInt8) -> (.value: ?t) := {
         index = index + 1
         digit = digit + 1
     }
+
     value = ..none
 }
 
@@ -34,13 +38,16 @@ _integer_parse#(
         result = ..error(.reason = ..invalid_base)
         return
     }
+
     if text.length == 0 {
         result = ..error(.reason = ..invalid_input)
         return
     }
+
     index :: UIntNative = 0
-    negative :: Bool = false
+    negative ::= false
     first ::= bytes_get(.view = &text, .index = 0).byte
+
     if first == 45 {
         if allow_negative == false {
             result = ..error(.reason = ..invalid_input)
@@ -51,17 +58,22 @@ _integer_parse#(
     } else {
         if first == 43 { index = 1 }
     }
+
     if index == text.length {
         result = ..error(.reason = ..invalid_input)
         return
     }
+
     radix :: t = 0
     remaining :: UInt8 = base
+
     while remaining > 0 {
         radix = radix + 1
         remaining = remaining - 1
     }
+
     accumulated :: t = 0
+
     while index < text.length {
         decoded ::= _integer_parse_digit#(.t: t)(
             .byte = bytes_get(.view = &text, .index = index).byte
@@ -101,6 +113,7 @@ _integer_parse#(
         }
         index = index + 1
     }
+
     result = ..ok accumulated
 }
 
@@ -235,6 +248,7 @@ parse_uintnative(
     ) := {
     zero :: UIntNative = 0
     maximum ::= integer_limits(.value = zero).maximum
+
     result = _integer_parse#(.t: UIntNative)(
         .text           = text
         .base           = base

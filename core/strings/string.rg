@@ -3,10 +3,12 @@ _string_max_result_length() -> (.length: UIntNative) := {
     length = 0
     bytes ::= size_of(.type = UIntNative)
     index :: UIntNative = 0
+
     while index < bytes {
         length = length * 256 + 255
         index = index + 1
     }
+
     length = length - 1
 }
 
@@ -39,15 +41,19 @@ string_with_length(
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     allocation_size ::= length + 1
     allocation ::= allocate(.self = allocator, .size = allocation_size)!
     out :: String = (.allocation = ~allocation, .length = length)
     i :: UIntNative = 0
+
     while i < length {
         bytes_set(.string = $&out, .index = i, .value = 0)
         i = i + 1
     }
+
     bytes_set(.string = $&out, .index = length, .value = 0)
+
     result = ..ok ~out
 }
 
@@ -70,10 +76,12 @@ string_with_capacity(
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     allocation_size ::= actual_capacity + 1
     allocation ::= allocate(.self = allocator, .size = allocation_size)!
     out :: String = (.allocation = ~allocation, .length = 0)
     bytes_set(.string = $&out, .index = 0, .value = 0)
+
     result = ..ok ~out
 }
 
@@ -91,15 +99,19 @@ String init(
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     allocation_size ::= length + 1
     allocation ::= allocate(.self = allocator, .size = allocation_size)!
     constructed = (.allocation = ~allocation, .length = length)
     i :: UIntNative = 0
+
     while i < length {
         bytes_set(.string = $&constructed, .index = i, .value = 0)
         i = i + 1
     }
+
     bytes_set(.string = $&constructed, .index = length, .value = 0)
+
     result = ..ok ~constructed
 }
 
@@ -124,10 +136,12 @@ String init(
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     allocation_size ::= actual_capacity + 1
     allocation ::= allocate(.self = allocator, .size = allocation_size)!
     constructed = (.allocation = ~allocation, .length = 0)
     bytes_set(.string = $&constructed, .index = 0, .value = 0)
+
     result = ..ok ~constructed
 }
 
@@ -152,6 +166,7 @@ copy(
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     allocation_size ::= self&.length + 1
     allocation ::= allocate(.self = allocator, .size = allocation_size)!
     out :: String = (.allocation = ~allocation, .length = self&.length)
@@ -167,6 +182,7 @@ copy(
         )
         memcpy_bytes(.dst = dst_view, .src = src_view)
     }
+
     result = ..ok ~out
 }
 
@@ -227,6 +243,7 @@ capacity(
 
 clear(.self: $&String) -> () := {
     self&.length = 0
+
     if self&.allocation.size > 0 {
         bytes_set(.string = self, .index = 0, .value = 0)
     }
@@ -243,8 +260,10 @@ string_growth_capacity(
         .value : UIntNative
     ) := {
     limit ::= _string_max_result_length().length
+
     if min_capacity > limit { abort }
     current_capacity ::= capacity(.self = self).value
+
     if current_capacity == 0 {
         value = min_capacity
         return
@@ -256,6 +275,7 @@ string_growth_capacity(
     } else {
         value = current_capacity * 2
     }
+
     if value < min_capacity {
         value = min_capacity
     }
@@ -290,7 +310,9 @@ ensure_capacity_growing(
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     current_capacity ::= capacity(.self = self).value
+
     if current_capacity >= target_capacity {
         result = ..ok Void()
         return
@@ -298,6 +320,7 @@ ensure_capacity_growing(
 
     new_allocation_size ::= target_capacity + 1
     allocate_result ::= allocate(.self = allocator, .size = new_allocation_size)
+
     match allocate_result {
         ..ok ~payload {
             new_allocation ::= ~payload
@@ -352,8 +375,10 @@ string_append_bytes(
         .source : ArrayViewRO#(.t: UInt8),
     ) -> () := {
     current_capacity ::= capacity(.self = self).value
+
     if self&.length > current_capacity { abort }
     count ::= length#(.t: UInt8)(.self = &source).count
+
     if count > current_capacity - self&.length { abort }
     if count > 0 {
         dest_data ::= _trusted_allocation_byte_rw(
@@ -384,6 +409,7 @@ push_byte(
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     if has_space(.self = self).ok {
     } else {
         next_capacity ::= string_growth_capacity(.self = self, .min_capacity = self&.length + 1).value
@@ -403,6 +429,7 @@ push_byte(
     }
 
     string_append_byte(.self = self, .byte = byte)
+
     result = ..ok Void()
 }
 
@@ -417,20 +444,24 @@ push_c_string(
 
     append_length ::= c_string_length(.text = text).length
     limit ::= _string_max_result_length().length
+
     if self&.length > limit {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     if append_length > limit - self&.length {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     target_capacity ::= self&.length + append_length
     growth_result ::= ensure_capacity_growing(
         .self            = self
         .target_capacity = target_capacity
         .allocator       = allocator
     )
+
     match growth_result {
         ..ok _ {
         }
@@ -445,6 +476,7 @@ push_c_string(
         .length = append_length
     )
     string_append_bytes(.self = self, .source = source_view)
+
     result = ..ok Void()
 }
 
@@ -458,20 +490,24 @@ push_view(
     assume allocator
 
     limit ::= _string_max_result_length().length
+
     if self&.length > limit {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     if view.length > limit - self&.length {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     target_capacity ::= self&.length + view.length
     growth_result ::= ensure_capacity_growing(
         .self            = self
         .target_capacity = target_capacity
         .allocator       = allocator
     )
+
     match growth_result {
         ..ok _ {
         }
@@ -486,6 +522,7 @@ push_view(
         .length = view.length
     )
     string_append_bytes(.self = self, .source = source_view)
+
     result = ..ok Void()
 }
 
@@ -496,6 +533,7 @@ c_string_length(
     ) := {
     length = 0
     c_length :: UIntNative = 0
+
     while 1 == 1 {
         bytes ::= trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference
         ptr ::= trusted_reference_offset#(.t: UInt8)(.base = bytes, .elements = c_length).reference
@@ -529,14 +567,17 @@ concat_views(
     assume allocator
 
     limit ::= _string_max_result_length().length
+
     if left&.length > limit {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     if right&.length > limit - left&.length {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     created ::= string_with_capacity(
         .allocator = allocator
         .capacity  = [
@@ -544,6 +585,7 @@ concat_views(
             + right&.length
         ]
     )
+
     match created {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~payload {
@@ -572,8 +614,9 @@ operator + (
     ) := {
     assume allocator
 
-    left_view ::= as_view(.self = left)
+    left_view ::= as_view(left)
     right_view ::= c_string_as_view(.text = right)
+
     result = concat_views(.left = &left_view, .right = &right_view)
 }
 
@@ -586,7 +629,8 @@ operator + (
     ) := {
     assume allocator
 
-    left_view ::= as_view(.self = left)
+    left_view ::= as_view(left)
+
     result = concat_views(.left = &left_view, .right = right)
 }
 
@@ -599,8 +643,9 @@ operator + (
     ) := {
     assume allocator
 
-    left_view ::= as_view(.self = left)
-    right_view ::= as_view(.self = right)
+    left_view ::= as_view(left)
+    right_view ::= as_view(right)
+
     result = concat_views(.left = &left_view, .right = &right_view)
 }
 
@@ -614,6 +659,7 @@ operator + (
     assume allocator
 
     right_view ::= c_string_as_view(.text = right)
+
     result = concat_views(.left = left, .right = &right_view)
 }
 
@@ -640,7 +686,8 @@ operator + (
     ) := {
     assume allocator
 
-    right_view ::= as_view(.self = right)
+    right_view ::= as_view(right)
+
     result = concat_views(.left = left, .right = &right_view)
 }
 
@@ -653,6 +700,7 @@ concat(
     ) := {
     assume allocator
     right_view := as_view(right)
+
     result = concat_views(&left, &right_view)
 }
 
@@ -664,6 +712,7 @@ concat(
         .result : Errable#(.t: String, .reasons: (..out_of_memory))
     ) := {
     assume allocator
+
     result = concat_views(&left, &right)
 }
 
@@ -676,6 +725,7 @@ concat(
     ) := {
     assume allocator
     left_view := as_view(left)
+
     result = concat_views(&left_view, &right)
 }
 
@@ -689,5 +739,6 @@ concat(
     assume allocator
     left_view := as_view(left)
     right_view := as_view(right)
+
     result = concat_views(&left_view, &right_view)
 }

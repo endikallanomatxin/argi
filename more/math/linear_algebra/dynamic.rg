@@ -18,16 +18,19 @@ _extent(
     ) := {
     maximum :: UIntNative = 0
     i :: UIntNative = 0
+
     while i < size_of(.type = UIntNative) {
         maximum = maximum * 256 + 255
         i = i + 1
     }
+
     if cols != 0 {
         if rows > maximum / cols {
             result = ..error(.reason = ..dimension_mismatch)
             return
         }
     }
+
     result = ..ok rows * cols
 }
 
@@ -45,17 +48,21 @@ DynamicMatrix init#(
         )
     ) := {
     count ::= _extent(.rows = rows, .cols = cols)!
-    if count != length(.self = &values).count {
+
+    if count != length(&values).count {
         result = ..error(.reason = ..dimension_mismatch)
         return
     }
+
     storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
     i :: UIntNative = 0
+
     while i < count {
         item ::= unwrap_or_abort(.value = get(.self = &values, .index = i)).result
         push(.self = $&storage, .value = item, .allocator = allocator)!
         i = i + 1
     }
+
     result = ..ok(._rows = rows, ._cols = cols, ._values = ~storage)
 }
 
@@ -80,6 +87,7 @@ get#(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     result = get(.self = &self&._values, .index = row * self&._cols + col)
 }
 
@@ -100,8 +108,10 @@ set#(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     pointer ::= get_rw_ref(.self = $&self&._values, .index = row * self&._cols + col)!
     pointer&= value
+
     result = ..ok Void()
 }
 
@@ -121,15 +131,18 @@ add#(
         result = ..error(.reason = ..dimension_mismatch)
         return
     }
-    count ::= length(.self = &left&._values).count
+
+    count ::= length(&left&._values).count
     storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
     i :: UIntNative = 0
+
     while i < count {
         a ::= unwrap_or_abort(.value = get(.self = &left&._values, .index = i)).result
         b ::= unwrap_or_abort(.value = get(.self = &right&._values, .index = i)).result
         push(.self = $&storage, .value = a + b, .allocator = allocator)!
         i = i + 1
     }
+
     result = ..ok(._rows = left&._rows, ._cols = left&._cols, ._values = ~storage)
 }
 
@@ -149,13 +162,17 @@ multiply#(
         result = ..error(.reason = ..dimension_mismatch)
         return
     }
+
     count ::= _extent(.rows = left&._rows, .cols = right&._cols)!
     storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
+
     if count == 0 {
         result = ..ok(._rows = left&._rows, ._cols = right&._cols, ._values = ~storage)
         return
     }
+
     row :: UIntNative = 0
+
     while row < left&._rows {
         col :: UIntNative = 0
         while col < right&._cols {
@@ -172,6 +189,7 @@ multiply#(
         }
         row = row + 1
     }
+
     result = ..ok(._rows = left&._rows, ._cols = right&._cols, ._values = ~storage)
 }
 
@@ -186,13 +204,16 @@ transpose#(
             .reasons : (..out_of_memory)
         )
     ) := {
-    count ::= length(.self = &self&._values).count
+    count ::= length(&self&._values).count
     storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
+
     if count == 0 {
         result = ..ok(._rows = self&._cols, ._cols = self&._rows, ._values = ~storage)
         return
     }
+
     col :: UIntNative = 0
+
     while col < self&._cols {
         row :: UIntNative = 0
         while row < self&._rows {
@@ -202,6 +223,7 @@ transpose#(
         }
         col = col + 1
     }
+
     result = ..ok(._rows = self&._cols, ._cols = self&._rows, ._values = ~storage)
 }
 
@@ -218,19 +240,21 @@ DynamicVector init#(
             .reasons : (..out_of_memory)
         )
     ) := {
-    count ::= length(.self = &values).count
+    count ::= length(&values).count
     storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
     i :: UIntNative = 0
+
     while i < count {
         value ::= unwrap_or_abort(.value = get(.self = &values, .index = i)).result
         push(.self = $&storage, .value = value, .allocator = allocator)!
         i = i + 1
     }
+
     result = ..ok(._values = ~storage)
 }
 
 length#(.t: Type: Scalar)(.self: &DynamicVector#(.t: t)) -> (.count: UIntNative) := {
-    count = length(.self = &self&._values).count
+    count = length(&self&._values).count
 }
 
 get#(
@@ -261,6 +285,7 @@ set#(
     ) := {
     pointer ::= get_rw_ref(.self = $&self&._values, .index = index)!
     pointer&= value
+
     result = ..ok Void()
 }
 
@@ -275,19 +300,23 @@ dot#(
             .reasons : (..dimension_mismatch)
         )
     ) := {
-    count ::= length(.self = left).count
-    if count != length(.self = right).count {
+    count ::= length(left).count
+
+    if count != length(right).count {
         result = ..error(.reason = ..dimension_mismatch)
         return
     }
+
     sum ::= zeroed#(.t: t)().value
     i :: UIntNative = 0
+
     while i < count {
         a ::= unwrap_or_abort(.value = get(.self = left, .index = i)).result
         b ::= unwrap_or_abort(.value = get(.self = right, .index = i)).result
         sum = sum + a * b
         i = i + 1
     }
+
     result = ..ok sum
 }
 
@@ -303,19 +332,23 @@ add#(
             .reasons : (..dimension_mismatch, ..out_of_memory)
         )
     ) := {
-    count ::= length(.self = left).count
-    if count != length(.self = right).count {
+    count ::= length(left).count
+
+    if count != length(right).count {
         result = ..error(.reason = ..dimension_mismatch)
         return
     }
+
     storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
     i :: UIntNative = 0
+
     while i < count {
         a ::= unwrap_or_abort(.value = get(.self = left, .index = i)).result
         b ::= unwrap_or_abort(.value = get(.self = right, .index = i)).result
         push(.self = $&storage, .value = a + b, .allocator = allocator)!
         i = i + 1
     }
+
     result = ..ok(._values = ~storage)
 }
 
@@ -331,13 +364,15 @@ scale#(
             .reasons : (..out_of_memory)
         )
     ) := {
-    count ::= length(.self = self).count
+    count ::= length(self).count
     storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
     i :: UIntNative = 0
+
     while i < count {
         value ::= unwrap_or_abort(.value = get(.self = self, .index = i)).result
         push(.self = $&storage, .value = value * factor, .allocator = allocator)!
         i = i + 1
     }
+
     result = ..ok(._values = ~storage)
 }

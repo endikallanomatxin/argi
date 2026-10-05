@@ -25,6 +25,7 @@ HashSet init#(
         .capacity  = capacity
     )!
     constructed = (._map = ~map)
+
     result = ..ok ~constructed
 }
 
@@ -42,7 +43,9 @@ insert#(
         result = ..ok false
         return
     }
+
     put(.self = $&self&._map, .key = key, .value = _HashSetValue(), .allocator = allocator)!
+
     result = ..ok true
 }
 
@@ -78,7 +81,7 @@ length#(
         .self : &HashSet#(.key: key, .policy: policy)
     ) -> (
         .count : UIntNative
-    ) := { count = length(.self = &self&._map).count }
+    ) := { count = length(&self&._map).count }
 
 capacity#(
         .key    : Type: ImplicitlyCopyable,

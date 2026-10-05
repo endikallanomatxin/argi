@@ -99,11 +99,13 @@ Network: Type = (._ffi: $&ForeignFunctionInterface, ._ready: Bool)
 
 once Network init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Network) := {
     assume ffi
+
     result = (._ffi = ffi, ._ready = _network_init().status == 0)
 }
 
 Network deinit(.self: $&Network) -> () := {
     assume ffi := self&._ffi
+
     if self&._ready { _network_deinit() }
 }
 
@@ -143,16 +145,21 @@ resolve_addresses(
         )
     ) := {
     assume ffi := self&._ffi
+
     if self&._ready == false {
         result = ..error(.reason = ..address_resolution_failed)
         return
     }
+
     selected_family :: Int32 = 0
+
     if is(.value = family, .variant = ..ipv4) { selected_family = 1 }
     if is(.value = family, .variant = ..ipv6) { selected_family = 2 }
     datagram :: Int32 = 0
+
     if is(.value = transport, .variant = ..udp) { datagram = 1 }
     wildcard :: Int32 = 0
+
     if passive { wildcard = 1 }
     handle :: UIntNative = 0
     status ::= _network_resolve(
@@ -164,18 +171,22 @@ resolve_addresses(
         .passive  = wildcard
         .handle   = $&handle
     ).status
+
     if status == -2 {
         result = ..error(.reason = ..invalid_network_argument)
         return
     }
+
     if status == -3 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     if status != 0 {
         result = ..error(.reason = ..address_resolution_failed)
         return
     }
+
     result = ..ok(._network = self, ._handle = handle, ._datagram = datagram == 1)
 }
 
@@ -192,10 +203,12 @@ get(
     ) := {
     assume ffi := self&._network&._ffi
     native :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
+
     if _network_get(.handle = self&._handle, .index = index, .address = $&native).status != 0 {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     result = ..ok(._native = native, ._datagram = self&._datagram)
 }
 
@@ -216,24 +229,30 @@ TcpConnection init(
         )
     ) := {
     assume ffi := network&._ffi
+
     if address._datagram != false {
         result = ..error(.reason = ..invalid_network_argument)
         return
     }
+
     if network&._ready == false {
         result = ..error(.reason = ..socket_open_failed)
         return
     }
+
     handle :: UIntNative = 0
     status ::= _network_socket(.address = &address._native, .operation = 0, .handle = $&handle).status
+
     if status == -3 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     if status != 0 {
         result = ..error(.reason = ..socket_open_failed)
         return
     }
+
     result = ..ok(._network = network, ._handle = handle)
 }
 
@@ -241,10 +260,12 @@ close(.self: $&TcpConnection) -> (.result: Errable#(.t: Void, .reasons: (..socke
     assume ffi := self&._network&._ffi
     handle ::= self&._handle
     self&._handle = 0
+
     if _network_close(.handle = handle).status != 0 {
         result = ..error(.reason = ..socket_close_failed)
         return
     }
+
     result = ..ok Void()
 }
 
@@ -259,10 +280,12 @@ local_address(
     ) := {
     assume ffi := self&._network&._ffi
     native :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
+
     if _network_local(.handle = self&._handle, .address = $&native).status != 0 {
         result = ..error(.reason = ..socket_option_failed)
         return
     }
+
     result = ..ok(._native = native, ._datagram = false)
 }
 
@@ -278,24 +301,30 @@ TcpListener init(
         )
     ) := {
     assume ffi := network&._ffi
+
     if address._datagram != false {
         result = ..error(.reason = ..invalid_network_argument)
         return
     }
+
     if network&._ready == false {
         result = ..error(.reason = ..socket_open_failed)
         return
     }
+
     handle :: UIntNative = 0
     status ::= _network_socket(.address = &address._native, .operation = 1, .handle = $&handle).status
+
     if status == -3 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     if status != 0 {
         result = ..error(.reason = ..socket_open_failed)
         return
     }
+
     result = ..ok(._network = network, ._handle = handle)
 }
 
@@ -303,10 +332,12 @@ close(.self: $&TcpListener) -> (.result: Errable#(.t: Void, .reasons: (..socket_
     assume ffi := self&._network&._ffi
     handle ::= self&._handle
     self&._handle = 0
+
     if _network_close(.handle = handle).status != 0 {
         result = ..error(.reason = ..socket_close_failed)
         return
     }
+
     result = ..ok Void()
 }
 
@@ -321,10 +352,12 @@ local_address(
     ) := {
     assume ffi := self&._network&._ffi
     native :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
+
     if _network_local(.handle = self&._handle, .address = $&native).status != 0 {
         result = ..error(.reason = ..socket_option_failed)
         return
     }
+
     result = ..ok(._native = native, ._datagram = false)
 }
 
@@ -340,24 +373,30 @@ UdpSocket init(
         )
     ) := {
     assume ffi := network&._ffi
+
     if address._datagram != true {
         result = ..error(.reason = ..invalid_network_argument)
         return
     }
+
     if network&._ready == false {
         result = ..error(.reason = ..socket_open_failed)
         return
     }
+
     handle :: UIntNative = 0
     status ::= _network_socket(.address = &address._native, .operation = 2, .handle = $&handle).status
+
     if status == -3 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     if status != 0 {
         result = ..error(.reason = ..socket_open_failed)
         return
     }
+
     result = ..ok(._network = network, ._handle = handle)
 }
 
@@ -365,10 +404,12 @@ close(.self: $&UdpSocket) -> (.result: Errable#(.t: Void, .reasons: (..socket_cl
     assume ffi := self&._network&._ffi
     handle ::= self&._handle
     self&._handle = 0
+
     if _network_close(.handle = handle).status != 0 {
         result = ..error(.reason = ..socket_close_failed)
         return
     }
+
     result = ..ok Void()
 }
 
@@ -383,10 +424,12 @@ local_address(
     ) := {
     assume ffi := self&._network&._ffi
     native :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
+
     if _network_local(.handle = self&._handle, .address = $&native).status != 0 {
         result = ..error(.reason = ..socket_option_failed)
         return
     }
+
     result = ..ok(._native = native, ._datagram = true)
 }
 
@@ -398,14 +441,17 @@ accept(
     assume ffi := self&._network&._ffi
     handle :: UIntNative = 0
     status ::= _network_accept(.handle = self&._handle, .accepted = $&handle).status
+
     if status == -3 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     if status != 0 {
         result = ..error(.reason = ..socket_accept_failed)
         return
     }
+
     result = ..ok(._network = self&._network, ._handle = handle)
 }
 
@@ -416,10 +462,12 @@ set_timeout(
         .result : Errable#(.t: Void, .reasons: (..socket_option_failed))
     ) := {
     assume ffi := self&._network&._ffi
+
     if _network_timeout(.handle = self&._handle, .milliseconds = milliseconds).status != 0 {
         result = ..error(.reason = ..socket_option_failed)
         return
     }
+
     result = ..ok Void()
 }
 
@@ -430,10 +478,12 @@ set_timeout(
         .result : Errable#(.t: Void, .reasons: (..socket_option_failed))
     ) := {
     assume ffi := self&._network&._ffi
+
     if _network_timeout(.handle = self&._handle, .milliseconds = milliseconds).status != 0 {
         result = ..error(.reason = ..socket_option_failed)
         return
     }
+
     result = ..ok Void()
 }
 
@@ -444,11 +494,13 @@ read(
         .result : Errable#(.t: UIntNative, .reasons: (..socket_read_failed))
     ) := {
     assume ffi := self&._network&._ffi
-    size ::= length(.self = &buffer).count
+    size ::= length(&buffer).count
     address :: UIntNative = 0
+
     if size != 0 { address = UIntNative(.value = data(.self = &buffer).pointer) }
     received :: UIntNative = 0
     peer :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
+
     if [
         _network_receive(
             .handle   = self&._handle
@@ -462,6 +514,7 @@ read(
         result = ..error(.reason = ..socket_read_failed)
         return
     }
+
     result = ..ok received
 }
 
@@ -472,10 +525,12 @@ write(
         .result : Errable#(.t: UIntNative, .reasons: (..socket_write_failed))
     ) := {
     assume ffi := self&._network&._ffi
-    size ::= length(.self = &buffer).count
+    size ::= length(&buffer).count
     address :: UIntNative = 0
+
     if size != 0 { address = UIntNative(.value = data(.self = &buffer).pointer) }
     sent :: UIntNative = 0
+
     if [
         _network_send(
             .handle = self&._handle
@@ -489,6 +544,7 @@ write(
         result = ..error(.reason = ..socket_write_failed)
         return
     }
+
     result = ..ok sent
 }
 
@@ -498,10 +554,12 @@ shutdown_write(
         .result : Errable#(.t: Void, .reasons: (..socket_write_failed))
     ) := {
     assume ffi := self&._network&._ffi
+
     if _network_shutdown(.handle = self&._handle).status != 0 {
         result = ..error(.reason = ..socket_write_failed)
         return
     }
+
     result = ..ok Void()
 }
 
@@ -520,12 +578,15 @@ send_to(
         )
     ) := {
     assume ffi := self&._network&._ffi
+
     if peer._datagram == false {
         result = ..error(.reason = ..invalid_network_argument)
         return
     }
-    size ::= length(.self = &buffer).count
+
+    size ::= length(&buffer).count
     address :: UIntNative = 0
+
     if size != 0 { address = UIntNative(.value = data(.self = &buffer).pointer) }
     sent :: UIntNative = 0
     status ::= _network_send(
@@ -535,14 +596,17 @@ send_to(
         .peer   = raw_pointer#(.t: _NetworkAddress)(.address = UIntNative(.value = &peer._native)).raw
         .sent   = $&sent
     ).status
+
     if status == -2 {
         result = ..error(.reason = ..datagram_too_large)
         return
     }
+
     if status != 0 {
         result = ..error(.reason = ..socket_write_failed)
         return
     }
+
     result = ..ok sent
 }
 
@@ -556,8 +620,9 @@ receive_from(
         )
     ) := {
     assume ffi := self&._network&._ffi
-    size ::= length(.self = &buffer).count
+    size ::= length(&buffer).count
     address :: UIntNative = 0
+
     if size != 0 { address = UIntNative(.value = data(.self = &buffer).pointer) }
     received :: UIntNative = 0
     peer :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
@@ -568,14 +633,17 @@ receive_from(
         .peer     = $&peer
         .received = $&received
     ).status
+
     if status == -2 {
         result = ..error(.reason = ..datagram_truncated)
         return
     }
+
     if status != 0 {
         result = ..error(.reason = ..socket_read_failed)
         return
     }
+
     result = ..ok(.count = received, .peer = (._native = peer, ._datagram = true))
 }
 
@@ -587,8 +655,9 @@ write_all(
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..socket_write_failed))
     ) := {
-    total ::= length(.self = &buffer).count
+    total ::= length(&buffer).count
     written :: UIntNative = 0
+
     while written < total {
         remaining ::= unwrap_or_abort(
             .value = slice(
@@ -607,6 +676,7 @@ write_all(
         }
         written = written + count
     }
+
     result = ..ok Void()
 }
 
@@ -619,7 +689,8 @@ read_byte(
         .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
     ) := {
     buffer :: [1]UInt8 = (0)
-    match read(.self = self, .buffer = view(.array = $&buffer)) {
+
+    match read(.self = self, .buffer = view($&buffer)) {
         ..error _ { result = ..error(.reason = ..stream_read_failed) }
         ..ok count {
             if count == 0 { result = ..ok ..end } else { result = ..ok ..ok buffer[0] }
@@ -634,7 +705,8 @@ write_byte(
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
     buffer: [1]UInt8 = (byte)
-    match write_all(.self = self, .buffer = view(.array = &buffer)) {
+
+    match write_all(.self = self, .buffer = view(&buffer)) {
         ..error _ { result = ..error(.reason = ..stream_write_failed) }
         ..ok _ { result = ..ok Void() }
     }
@@ -649,6 +721,7 @@ flush(
         result = ..error(.reason = ..stream_flush_failed)
         return
     }
+
     result = ..ok Void()
 }
 

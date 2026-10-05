@@ -27,12 +27,15 @@ RingBuffer init#(
         result = ..error(.reason = ..invalid_capacity)
         return
     }
+
     element_size ::= size_of(.type = t)
     maximum ::= integer_limits(.value = capacity).maximum
+
     if element_size != 0 and capacity > maximum / element_size {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     allocation ::= allocate#(.t: t)(.self = allocator, .count = capacity)!
     constructed = (
         ._allocation = ~allocation
@@ -41,6 +44,7 @@ RingBuffer init#(
         ._length     = 0
         ._shape      = (.marker = 0)
     )
+
     result = ..ok ~constructed
 }
 
@@ -62,6 +66,7 @@ _ring_buffer_physical_index#(
     -- Subtract before adding: head + index could overflow even when the
     -- wrapped physical index belongs to the allocation.
     remaining ::= self&._capacity - self&._head
+
     if index < remaining {
         physical = self&._head + index
     } else {
@@ -105,12 +110,14 @@ get_ro_ref#(
         result = ..error(.reason = ..out_of_bounds)
         return
     }
+
     mutable ::= _ring_buffer_occupied_pointer(.self = self, .index = index).pointer
     reference ::= read_reference#(.t: t)(.base = mutable).reference
     borrowed ::= depend_on#(.t: &t)(
         .value = reference
         .on    = erase_reference#(.t: _RingBufferShape)(.base = &self&._shape).reference
     ).result
+
     result = ..ok borrowed
 }
 
@@ -127,15 +134,18 @@ push#(
     ) := {
     assume allocator
     owned ::= ~value
+
     if self&._length == self&._capacity {
         result = ..error(.reason = ..full)
         return
     }
+
     physical ::= _ring_buffer_physical_index(.self = self, .index = self&._length).physical
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = physical)
     _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~owned)
     _invalidate_ring_buffer_shape(.self = self)
     self&._length = self&._length + 1
+
     result = ..ok Void()
 }
 
@@ -144,20 +154,25 @@ pop#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> (.result: Errable#(.t: t, .reason
         result = ..error(.reason = ..empty)
         return
     }
+
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = self&._head)
     value ::= _trusted_uninit_take#(.t: t)(.allocation = $&self&._allocation, .slot = slot)
     _invalidate_ring_buffer_shape(.self = self)
     self&._length = self&._length - 1
     self&._head = self&._head + 1
+
     if self&._head == self&._capacity { self&._head = 0 }
+
     result = ..ok ~value
 }
 
 RingBuffer deinit#(.t: Type)(.self: $&RingBuffer#(.t: t), .allocator: $&Allocator) -> () := {
     assume allocator
+
     while self&._length > 0 {
         discarded ::= ~unwrap_or_abort(.value = pop(.self = self))
     }
+
     trusted_opaque_mark_empty(.storage = $&self&._allocation)
     deinit(.self = $&self&._allocation)
 }

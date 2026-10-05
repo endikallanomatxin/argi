@@ -109,6 +109,7 @@ format(
     assume allocator
 
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = value.length)
+
     match create_result {
         ..ok ~view_output_payload {
             out ::= ~view_output_payload
@@ -135,6 +136,7 @@ format(
     assume allocator
 
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 5)
+
     match create_result {
         ..ok ~bool_output_payload {
             out ::= ~bool_output_payload
@@ -162,6 +164,7 @@ format_into#(
         .result : Errable#(.t: Void, .reasons: (..out_of_memory))
     ) := {
     encoded ::= _decimal_encode#(.t: t)(.value = value)
+
     result = push_view(
         .self      = out
         .view      = _decimal_view(.self = &encoded).view
@@ -180,6 +183,7 @@ format#(
     assume allocator
     encoded ::= _decimal_encode#(.t: t)(.value = value)
     view ::= _decimal_view(.self = &encoded).view
+
     result = format(.value = view, .allocator = allocator)
 }
 
@@ -197,6 +201,7 @@ format_into#(
         )
     ) := {
     encoded ::= _float_encode(.value = value)
+
     result = push_view(
         .self      = out
         .view      = _float_text_view(.self = &encoded).view
@@ -217,5 +222,6 @@ format#(
     ) := {
     assume allocator
     encoded ::= _float_encode(.value = value)
+
     result = format(.value = _float_text_view(.self = &encoded).view, .allocator = allocator)
 }

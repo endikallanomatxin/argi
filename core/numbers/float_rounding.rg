@@ -1,10 +1,12 @@
 _float_replace_bits(.value: Float16, .bits: UInt64) -> (.result: Float16) := {
     native ::= unwrap_or_abort(.value = UInt16(.value = bits))
+
     result = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(.base = &native).reference&
 }
 
 _float_replace_bits(.value: Float32, .bits: UInt64) -> (.result: Float32) := {
     native ::= unwrap_or_abort(.value = UInt32(.value = bits))
+
     result = trusted_reinterpret_reference#(.from: UInt32, .to: Float32)(.base = &native).reference&
 }
 
@@ -20,27 +22,35 @@ truncate_float#(.t: Type: Float)(.value: t) -> (.result: t) := {
     sign ::= encoding.bits / sign_unit * sign_unit
     magnitude ::= encoding.bits % sign_unit
     exponent ::= magnitude / encoding.fraction_unit
+
     if exponent == encoding.exponent_limit - 1 {
         result = value
         return
     }
+
     bias ::= unwrap_or_abort(.value = UInt64(.value = encoding.bias))
+
     if exponent < bias {
         result = _float_replace_bits(.value = value, .bits = sign).result
         return
     }
+
     shifts ::= exponent - bias
     unit ::= encoding.fraction_unit
+
     while shifts > 0 and unit > 1 {
         unit = unit / 2
         shifts = shifts - 1
     }
+
     result = _float_replace_bits(.value = value, .bits = encoding.bits - magnitude % unit).result
 }
 
 floor_float#(.t: Type: Float)(.value: t) -> (.result: t) := {
     one :: t = 1.0
+
     result = truncate_float#(.t: t)(.value = value).result
+
     if is_finite#(.t: t)(.value = value).ok {
         if value < result { result = result - one }
     }
@@ -48,7 +58,9 @@ floor_float#(.t: Type: Float)(.value: t) -> (.result: t) := {
 
 ceil_float#(.t: Type: Float)(.value: t) -> (.result: t) := {
     one :: t = 1.0
+
     result = truncate_float#(.t: t)(.value = value).result
+
     if is_finite#(.t: t)(.value = value).ok {
         if value > result { result = result + one }
     }

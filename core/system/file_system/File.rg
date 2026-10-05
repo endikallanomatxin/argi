@@ -77,10 +77,12 @@ open(
         .stream_address = UIntNative(.value = opened)
         .should_close   = 1                           == 1
     )
+
     if p&.stream_address == 0 {
         result = ..error(.reason = ..file_open_failed)
         return
     }
+
     result = ..ok 1 == 1
 }
 
@@ -146,12 +148,14 @@ init_stderr(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
 
 close(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_close_failed))) := {
     assume ffi := self&._ffi
+
     if self&.stream_address == 0 {
         result = ..ok Void()
         return
     }
 
-    close_failed :: Bool = false
+    close_failed ::= false
+
     if self&.should_close {
         stream ::= file_stream_pointer(.self = self).stream
         close_status ::= fclose(.stream = stream).status
@@ -178,6 +182,7 @@ flush(
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume ffi := self&._ffi
+
     if self&.stream_address == 0 {
         result = ..error(.reason = ..stream_flush_failed)
         return
@@ -193,6 +198,7 @@ flush(
 
 read_byte(.self: $&File) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
     assume ffi := self&._ffi
+
     if self&.stream_address == 0 {
         result = ..error(.reason = ..stream_read_failed)
         return
@@ -231,6 +237,7 @@ write_byte(
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume ffi := self&._ffi
+
     if self&.stream_address == 0 {
         result = ..error(.reason = ..stream_write_failed)
         return
@@ -258,6 +265,7 @@ read(
         .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
     ) := {
     assume ffi := self&._ffi
+
     if self&.stream_address == 0 {
         result = ..error(.reason = ..stream_read_failed)
         return
@@ -283,6 +291,7 @@ write(
         .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume ffi := self&._ffi
+
     if self&.stream_address == 0 {
         result = ..error(.reason = ..stream_write_failed)
         return
@@ -311,17 +320,21 @@ write_block(
         .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume ffi := self&._ffi
+
     if self&.stream_address == 0 {
         result = ..error(.reason = ..stream_write_failed)
         return
     }
+
     stream ::= file_stream_pointer(.self = self).stream
     count ::= fwrite_from(.buffer = buffer, .stream = stream).count
-    if count < length(.self = &buffer).count {
+
+    if count < length(&buffer).count {
         if ferror(.stream = stream).status != 0 {
             result = ..error(.reason = ..stream_write_failed)
             return
         }
     }
+
     result = ..ok count
 }

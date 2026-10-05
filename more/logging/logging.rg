@@ -37,6 +37,7 @@ _write_record(
     write(.self = writer, .text = _prefix(.level = level).text)!
     write(.self = writer, .text = ": ")!
     index :: UIntNative = 0
+
     while index < message.length {
         byte ::= bytes_get(.view = &message, .index = index).byte
         if byte == 10 { write(.self = writer, .text = "\\n")! } else {
@@ -46,6 +47,7 @@ _write_record(
         }
         index = index + 1
     }
+
     write(.self = writer, .text = "\n")!
 }
 

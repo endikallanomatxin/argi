@@ -94,19 +94,23 @@ _trusted_general_purpose_used_word(
 
 _general_purpose_slot_size(.size: UIntNative, .alignment: UIntNative) -> (.slot_size: UIntNative) := {
     slot_size = size
+
     if slot_size < alignment { slot_size = alignment }
     if slot_size == 0 { slot_size = 1 }
     rounded :: UIntNative = 1
+
     while rounded < slot_size {
         if rounded > 9223372036854775807 { return }
         rounded = rounded * 2
     }
+
     slot_size = rounded
 }
 
 _general_purpose_bit(.index: UIntNative) -> (.bit: UIntNative) := {
     bit = 1
     i :: UIntNative = 0
+
     while i < index {
         bit = bit * 2
         i = i + 1
@@ -120,6 +124,7 @@ _general_purpose_small_address(
         .result : Errable#(.t: _GeneralPurposeMapped, .reasons: (..out_of_memory))
     ) := {
     bucket_address :: UIntNative = self&._bucket_head
+
     while bucket_address != 0 {
         bucket ::= _trusted_general_purpose_bucket(.address = bucket_address, .owner = self).bucket
         slot_count ::= self&._bucket_size / slot_size
@@ -153,15 +158,18 @@ _general_purpose_small_address(
     }
 
     mapping_size ::= self&._bucket_size * 2
+
     if mapping_size < self&._bucket_size {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+
     allocated ::= allocate(
         .self      = $&self&._backing_allocator
         .size      = mapping_size
         .alignment = self&._bucket_size
     )
+
     match allocated {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~payload {
@@ -211,6 +219,7 @@ _general_purpose_large_address(
         .size      = size
         .alignment = alignment
     )
+
     match allocated {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~payload {
@@ -263,11 +272,13 @@ allocate(
     _require_allocation_alignment(.alignment = alignment)
     slot_size ::= _general_purpose_slot_size(.size = size, .alignment = alignment).slot_size
     mapped :: Errable#(.t: _GeneralPurposeMapped, .reasons: (..out_of_memory))
+
     if slot_size > self&._bucket_size / 2 {
         mapped = _general_purpose_large_address(.self = self, .size = size, .alignment = alignment)
     } else {
         mapped = _general_purpose_small_address(.self = self, .slot_size = slot_size)
     }
+
     match mapped {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok mapping {
@@ -293,6 +304,7 @@ deallocate(
         .alignment : UIntNative,
     ) -> () := {
     slot_size ::= _general_purpose_slot_size(.size = size, .alignment = alignment).slot_size
+
     if slot_size > self&._bucket_size / 2 {
         previous_address :: UIntNative = 0
         record_address :: UIntNative = self&._large_head
@@ -328,8 +340,10 @@ deallocate(
         abort
         return
     }
+
     previous_address :: UIntNative = 0
     bucket_address :: UIntNative = self&._bucket_head
+
     while bucket_address != 0 {
         bucket ::= _trusted_general_purpose_bucket(.address = bucket_address, .owner = self).bucket
         data_start ::= bucket_address + self&._bucket_size
@@ -372,6 +386,7 @@ deallocate(
         previous_address = bucket_address
         bucket_address = bucket&.next
     }
+
     abort
 }
 

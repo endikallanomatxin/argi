@@ -5,9 +5,11 @@ memcpy_bytes(
         .src : ArrayView#(.t: UInt8),
     ) -> () := {
     count ::= length#(.t: UInt8)(.self = &dst).count
+
     if count > length#(.t: UInt8)(.self = &src).count { abort }
     target :: ArrayView#(.t: UInt8) = dst
     index :: UIntNative = 0
+
     while index < count {
         byte ::= unwrap_or_abort(.value = get#(.t: UInt8)(.self = &src, .index = index))
         unwrap_or_abort(.value = set#(.t: UInt8)(.self = $&target, .index = index, .value = byte))
@@ -20,9 +22,11 @@ memcpy_bytes(
         .src : ArrayViewRO#(.t: UInt8),
     ) -> () := {
     count ::= length#(.t: UInt8)(.self = &dst).count
+
     if count > length#(.t: UInt8)(.self = &src).count { abort }
     target :: ArrayView#(.t: UInt8) = dst
     index :: UIntNative = 0
+
     while index < count {
         byte ::= unwrap_or_abort(.value = get#(.t: UInt8)(.self = &src, .index = index))
         unwrap_or_abort(.value = set#(.t: UInt8)(.self = $&target, .index = index, .value = byte))

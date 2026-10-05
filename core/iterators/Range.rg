@@ -22,6 +22,7 @@ Range init#(
     ) := {
     zero: t = 0
     one: t = 1
+
     result = Range#(.t: t)(.start = zero, .end = end, .step = one)
 }
 
@@ -34,6 +35,7 @@ Range init#(
         .result : Range#(.t: t)
     ) := {
     zero: t = 0
+
     result = Range#(.t: t)(.start = zero, .end = end, .step = step)
 }
 
@@ -46,6 +48,7 @@ Range init#(
         .result : Range#(.t: t)
     ) := {
     one: t = 1
+
     result = Range#(.t: t)(.start = start, .end = end, .step = one)
 }
 

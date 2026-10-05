@@ -32,6 +32,7 @@ ArenaAllocator init(
     constructed :: ArenaAllocator
 
     actual_block_size ::= block_size
+
     if actual_block_size == 0 { actual_block_size = 1 }
     constructed = (
         ._backing_allocator    = to_virtual#(.abstract: Allocator)(.value = allocator)
@@ -41,6 +42,7 @@ ArenaAllocator init(
         .block_size            = actual_block_size
         ._current_block_offset = 0
     )
+
     result = ..ok ~constructed
 }
 
@@ -63,6 +65,7 @@ arena_free_blocks(.self: $&ArenaAllocator) -> () := {
         self&._block_head = next
         deinit(.self = $&storage)
     }
+
     self&.block_count = 0
     self&._current_block_offset = 0
 }
@@ -87,9 +90,11 @@ allocate(
     ) := {
     _require_allocation_alignment(.alignment = alignment)
     required ::= size
+
     if required == 0 { required = 1 }
     aligned_offset :: UIntNative = 0
-    needs_block :: Bool = true
+    needs_block ::= true
+
     if self&._block_head != 0 {
         block ::= _trusted_arena_block(.address = self&._block_head, .owner = self).block
         cursor ::= self&._block_head + self&._current_block_offset
@@ -101,6 +106,7 @@ allocate(
             if required <= block&.size - aligned_offset { needs_block = false }
         }
     }
+
     if needs_block {
         header_size ::= size_of(.type = _ArenaBlock)
         minimum ::= header_size + required
@@ -145,6 +151,7 @@ allocate(
             }
         }
     }
+
     address ::= self&._block_head + aligned_offset
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
         .value = self
@@ -161,6 +168,7 @@ allocate(
         ._release_size      = size
     )
     self&._current_block_offset = aligned_offset + required
+
     result = ..ok ~allocation
 }
 

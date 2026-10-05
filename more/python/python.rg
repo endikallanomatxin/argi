@@ -153,10 +153,12 @@ Python init(
         .home           = home.data
         .home_length    = home.length
     ).handle
+
     if handle == 0 {
         result = ..error(.reason = ..python_initialization_failed)
         return
     }
+
     result = ..ok(._handle = handle, ._ffi = ffi)
 }
 
@@ -183,6 +185,7 @@ _owned(
         result = ..error(.reason = ..python_error)
         return
     }
+
     result = ..ok(._handle = handle, ._python = self)
 }
 
@@ -196,6 +199,7 @@ import_module(
         )
     ) := {
     assume ffi := self&._ffi
+
     result = _owned(
         .self   = self
         .handle = _import(.context = self&._handle, .bytes = name.data, .length = name.length).handle
@@ -212,6 +216,7 @@ string(
         )
     ) := {
     assume ffi := self&._ffi
+
     result = _owned(
         .self   = self
         .handle = _string(.context = self&._handle, .bytes = value.data, .length = value.length).handle
@@ -228,6 +233,7 @@ bytes(
         )
     ) := {
     assume ffi := self&._ffi
+
     result = _owned(
         .self   = self
         .handle = _bytes(.context = self&._handle, .bytes = value.data, .length = value.length).handle
@@ -236,6 +242,7 @@ bytes(
 
 clone(.self: &Object) -> (.result: Errable#(.t: Object, .reasons: (..python_error))) := {
     assume ffi := self&._python&._ffi
+
     result = _owned(
         .self   = self&._python
         .handle = _clone(.context = self&._python&._handle, .object = self&._handle).handle
@@ -252,6 +259,7 @@ attribute(
         )
     ) := {
     assume ffi := self&._python&._ffi
+
     result = _owned(
         .self   = self&._python
         .handle = _attribute(
@@ -270,6 +278,7 @@ get_item(
         .result : Errable#(.t: Object, .reasons: (..python_error))
     ) := {
     assume ffi := self&._python&._ffi
+
     result = _owned(
         .self   = self&._python
         .handle = _get_item(
@@ -282,6 +291,7 @@ get_item(
 
 repr(.self: &Object) -> (.result: Errable#(.t: Object, .reasons: (..python_error))) := {
     assume ffi := self&._python&._ffi
+
     result = _owned(
         .self   = self&._python
         .handle = _repr(.context = self&._python&._handle, .object = self&._handle).handle
@@ -291,6 +301,7 @@ repr(.self: &Object) -> (.result: Errable#(.t: Object, .reasons: (..python_error
 to_int64(.self: &Object) -> (.result: Errable#(.t: Int64, .reasons: (..python_error))) := {
     assume ffi := self&._python&._ffi
     value :: Int64 = 0
+
     if [
         _int64(.context = self&._python&._handle, .object = self&._handle, .value = $&value).status
         != 0
@@ -298,12 +309,14 @@ to_int64(.self: &Object) -> (.result: Errable#(.t: Int64, .reasons: (..python_er
         result = ..error(.reason = ..python_error)
         return
     }
+
     result = ..ok value
 }
 
 to_uint64(.self: &Object) -> (.result: Errable#(.t: UInt64, .reasons: (..python_error))) := {
     assume ffi := self&._python&._ffi
     value :: UInt64 = 0
+
     if [
         _uint64(.context = self&._python&._handle, .object = self&._handle, .value = $&value).status
         != 0
@@ -311,12 +324,14 @@ to_uint64(.self: &Object) -> (.result: Errable#(.t: UInt64, .reasons: (..python_
         result = ..error(.reason = ..python_error)
         return
     }
+
     result = ..ok value
 }
 
 to_float64(.self: &Object) -> (.result: Errable#(.t: Float64, .reasons: (..python_error))) := {
     assume ffi := self&._python&._ffi
     value :: Float64 = 0.0
+
     if [
         _float64(.context = self&._python&._handle, .object = self&._handle, .value = $&value).status
         != 0
@@ -324,6 +339,7 @@ to_float64(.self: &Object) -> (.result: Errable#(.t: Float64, .reasons: (..pytho
         result = ..error(.reason = ..python_error)
         return
     }
+
     result = ..ok value
 }
 
@@ -342,13 +358,16 @@ call(
         )
     ) := {
     assume ffi := self&._python&._ffi
-    tuple ::= _tuple(.context = self&._python&._handle, .length = length(.self = &arguments).count).handle
+    tuple ::= _tuple(.context = self&._python&._handle, .length = length(&arguments).count).handle
+
     if tuple.address == 0 {
         result = ..error(.reason = ..python_error)
         return
     }
+
     index :: UIntNative = 0
-    while index < length(.self = &arguments).count {
+
+    while index < length(&arguments).count {
         argument ::= unwrap_or_abort(.value = get_ro_ref(.self = &arguments, .index = index)).result
         if [
             _tuple_set(
@@ -365,7 +384,9 @@ call(
         }
         index = index + 1
     }
+
     keyword_handle :: RawPointer#(.t: _PyObject) = raw_pointer#(.t: _PyObject)(.address = 0).raw
+
     match keywords { ..some payload { keyword_handle = payload.value&._handle } ..none {} }
     handle ::= _call(
         .context   = self&._python&._handle
@@ -374,6 +395,7 @@ call(
         .keywords  = keyword_handle
     ).handle
     _release(.context = self&._python&._handle, .object = tuple)
+
     result = _owned(.self = self&._python, .handle = handle)
 }
 
@@ -443,6 +465,7 @@ _error_copy(
 
 none(.self: &Python) -> (.result: Errable#(.t: Object, .reasons: (..python_error))) := {
     assume ffi := self&._ffi
+
     result = _owned(
         .self   = self
         .handle = _scalar(
@@ -462,6 +485,7 @@ boolean(
         .result : Errable#(.t: Object, .reasons: (..python_error))
     ) := {
     assume ffi := self&._ffi
+
     result = _owned(
         .self   = self
         .handle = _scalar(
@@ -481,6 +505,7 @@ integer(
         .result : Errable#(.t: Object, .reasons: (..python_error))
     ) := {
     assume ffi := self&._ffi
+
     result = _owned(
         .self   = self
         .handle = _scalar(
@@ -500,6 +525,7 @@ integer(
         .result : Errable#(.t: Object, .reasons: (..python_error))
     ) := {
     assume ffi := self&._ffi
+
     result = _owned(
         .self   = self
         .handle = _scalar(
@@ -522,6 +548,7 @@ floating(
         )
     ) := {
     assume ffi := self&._ffi
+
     result = _owned(
         .self   = self
         .handle = _scalar(
@@ -536,6 +563,7 @@ floating(
 
 list(.self: &Python) -> (.result: Errable#(.t: Object, .reasons: (..python_error))) := {
     assume ffi := self&._ffi
+
     result = _owned(
         .self   = self
         .handle = _scalar(
@@ -550,6 +578,7 @@ list(.self: &Python) -> (.result: Errable#(.t: Object, .reasons: (..python_error
 
 dictionary(.self: &Python) -> (.result: Errable#(.t: Object, .reasons: (..python_error))) := {
     assume ffi := self&._ffi
+
     result = _owned(
         .self   = self
         .handle = _scalar(
@@ -567,28 +596,35 @@ _boolean_int(.value: Bool) -> (.number: Int64) := { if value { number = 1 } else
 to_bool(.self: &Object) -> (.result: Errable#(.t: Bool, .reasons: (..python_error))) := {
     assume ffi := self&._python&._ffi
     status ::= _bool(.context = self&._python&._handle, .object = self&._handle).status
+
     if status < 0 {
         result = ..error(.reason = ..python_error)
         return
     }
+
     value: Bool = status == 1
+
     result = ..ok value
 }
 
 is_none(.self: &Object) -> (.result: Errable#(.t: Bool, .reasons: (..python_error))) := {
     assume ffi := self&._python&._ffi
     status ::= _is_none(.context = self&._python&._handle, .object = self&._handle).status
+
     if status < 0 {
         result = ..error(.reason = ..python_error)
         return
     }
+
     value: Bool = status == 1
+
     result = ..ok value
 }
 
 length(.self: &Object) -> (.result: Errable#(.t: UIntNative, .reasons: (..python_error))) := {
     assume ffi := self&._python&._ffi
     count :: UIntNative = 0
+
     if [
         _size(.context = self&._python&._handle, .object = self&._handle, .length = $&count).status
         != 0
@@ -596,6 +632,7 @@ length(.self: &Object) -> (.result: Errable#(.t: UIntNative, .reasons: (..python
         result = ..error(.reason = ..python_error)
         return
     }
+
     result = ..ok count
 }
 
@@ -606,6 +643,7 @@ append(
         .result : Errable#(.t: Void, .reasons: (..python_error))
     ) := {
     assume ffi := self&._python&._ffi
+
     if [
         _append(
             .context = self&._python&._handle
@@ -617,6 +655,7 @@ append(
         result = ..error(.reason = ..python_error)
         return
     }
+
     result = ..ok Void()
 }
 
@@ -631,6 +670,7 @@ set_item(
         )
     ) := {
     assume ffi := self&._python&._ffi
+
     if [
         _set_item(
             .context = self&._python&._handle
@@ -643,6 +683,7 @@ set_item(
         result = ..error(.reason = ..python_error)
         return
     }
+
     result = ..ok Void()
 }
 
@@ -658,6 +699,7 @@ _copy_text(
     ) := {
     assume ffi := self&._python&._ffi
     count :: UIntNative = 0
+
     if [
         _text_size(
             .context = self&._python&._handle
@@ -670,7 +712,9 @@ _copy_text(
         result = ..error(.reason = ..python_error)
         return
     }
+
     text ::= string_with_length(.allocator = allocator, .length = count)!
+
     if [
         _text_copy(
             .context     = self&._python&._handle
@@ -684,6 +728,7 @@ _copy_text(
         result = ..error(.reason = ..python_error)
         return
     }
+
     result = ..ok ~text
 }
 
@@ -723,6 +768,7 @@ error_text(
     assume ffi := self&._ffi
     count ::= _error_size(.context = self&._handle).length
     text ::= string_with_length(.allocator = allocator, .length = count)!
+
     if [
         _error_copy(.context = self&._handle, .destination = text.allocation.data, .length = count).status
         != 0
@@ -730,6 +776,7 @@ error_text(
         result = ..error(.reason = ..python_error)
         return
     }
+
     result = ..ok ~text
 }
 

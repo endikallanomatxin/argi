@@ -34,6 +34,7 @@ buffered_writer_flush#(
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
     i :: UIntNative = 0
+
     while i < self&.length {
         remaining ::= self&.length - i
         view ::= unwrap_or_abort(
@@ -55,6 +56,7 @@ buffered_writer_flush#(
     }
 
     flushed ::= flush(.self = self&.base)
+
     if is(.value = flushed, .variant = ..error) {
         self&.length = 0
         result = ..error(.reason = flushed ..error.reason)
@@ -62,6 +64,7 @@ buffered_writer_flush#(
     }
 
     self&.length = 0
+
     result = ..ok Void()
 }
 
@@ -73,16 +76,17 @@ write_byte#(
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {
-    if length(.self = &self&.buffer) == 0 {
+    if length(&self&.buffer) == 0 {
         result = write_byte(.self = self&.base, .byte = byte)
         return
     }
+
     ptr ::= unwrap_or_abort(.value = get_rw_ref(.self = $&self&.buffer, .index = self&.length))
     ptr&= byte
     next_length ::= self&.length + 1
     self&.length = next_length
 
-    if next_length == length(.self = &self&.buffer) {
+    if next_length == length(&self&.buffer) {
         result = buffered_writer_flush(.self = self)
         return
     }
