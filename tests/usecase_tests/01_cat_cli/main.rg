@@ -1,11 +1,12 @@
 -- Transfer binary input through one buffered output stream.
 main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
-    assume reader ::= $&system.terminal&.stdin
+    stdin ::= $&system.terminal&.stdin
     assume writer ::= $&BufferedWriter(
         $&system.terminal&.stdout
         view($&zeroed#([8192]UInt8)())
     )
+    #defer flush(writer)!
 
     specs ::= (CliSpec("help", "h", "Show help"),)
     arguments ::= parse_cli(
@@ -21,26 +22,21 @@ main(.system: System) -> !Void = ..ok Void() := {
                 .about   = "Concatenate files to standard output. With no files or FILE '-', read standard input."
                 .specs   = view(&specs)
             )!
-            flush()!
             return
         }
     }
 
     if length(&arguments.positionals).count == 0 {
-        transfer_stream(reader, writer)!
+        transfer_stream(stdin, writer)!
     } else {
         for path in arguments.positionals {
             if path == "-" {
-                transfer_stream(reader, writer)!
+                transfer_stream(stdin, writer)!
             } else {
-                file ::= open_read(system.file_system, .path = path)!! path
-                assume reader ::= $&file
-
-                transfer_stream(reader, writer)!! path
-                close($&file)!! path
+                file_reader ::= open_read(system.file_system, path)!! path
+                transfer_stream($&file_reader, writer)!! path
+                close($&file_reader)!! path
             }
         }
     }
-
-    flush()!
 }

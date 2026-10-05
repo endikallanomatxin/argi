@@ -13,8 +13,9 @@ and binary bytes. This example lends one initialized 8 KiB buffer to a
 `BufferedWriter` over stdout, without loading whole files into memory or using a
 separate transfer buffer. It uses declarative CLI specs,
 assumed allocator and stream capabilities, and a checked `!Void` entry point.
-Each file has a scoped owner and an explicitly checked close; the final stdout
-flush is checked too.
+Each file has a scoped owner and an explicitly checked close. A checked
+`#defer flush(writer)!` beside the writer setup flushes stdout on every scope
+exit, including help and error returns.
 
 Unknown options and input or output errors stop the program with a failing exit
 status. File errors include the path in their error trace. Output already written
