@@ -88,74 +88,47 @@ int32_t _argi_fs_rmdir(const uint8_t *bytes, uintptr_t length) {
     free(path);
     return status;
 }
+static int32_t argi_fs_read_metadata(const uint8_t *bytes, uintptr_t length, int32_t *kind, uint64_t *size, int64_t *seconds, uint32_t *nanoseconds, int follow) {
+    *kind = 0; *size = 0; *seconds = 0; *nanoseconds = 0;
+    int32_t status;
+    char *path = argi_fs_path(bytes, length, &status);
+    if (!path) return status;
+#ifdef _WIN32
+    wchar_t *wide = argi_fs_wide(path, &status);
+    if (wide) {
+        WIN32_FILE_ATTRIBUTE_DATA info;
+        if (!GetFileAttributesExW(wide, GetFileExInfoStandard, &info)) status = argi_fs_windows_error();
+        else {
+            *kind = !follow && (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ? 0 :
+                (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ? 2 : 1);
+            *size = ((uint64_t)info.nFileSizeHigh << 32) | info.nFileSizeLow;
+            uint64_t ticks = ((uint64_t)info.ftLastWriteTime.dwHighDateTime << 32) | info.ftLastWriteTime.dwLowDateTime;
+            *seconds = (int64_t)(ticks / 10000000) - INT64_C(11644473600);
+            *nanoseconds = (uint32_t)(ticks % 10000000) * 100;
+        }
+        free(wide);
+    }
+#else
+    struct stat info;
+    if (follow ? stat(path, &info) : lstat(path, &info)) status = argi_fs_errno();
+    else {
+        *kind = S_ISREG(info.st_mode) ? 1 : S_ISDIR(info.st_mode) ? 2 : 0;
+        *size = info.st_size < 0 ? 0 : (uint64_t)info.st_size;
+#ifdef __APPLE__
+        *seconds = info.st_mtimespec.tv_sec; *nanoseconds = (uint32_t)info.st_mtimespec.tv_nsec;
+#else
+        *seconds = info.st_mtim.tv_sec; *nanoseconds = (uint32_t)info.st_mtim.tv_nsec;
+#endif
+    }
+#endif
+    free(path);
+    return status;
+}
 int32_t _argi_fs_metadata(const uint8_t *bytes, uintptr_t length, int32_t *kind, uint64_t *size, int64_t *seconds, uint32_t *nanoseconds) {
-    *kind = 0; *size = 0; *seconds = 0; *nanoseconds = 0;
-    int32_t status;
-    char *path = argi_fs_path(bytes, length, &status);
-    if (!path) return status;
-#ifdef _WIN32
-    wchar_t *wide = argi_fs_wide(path, &status);
-    if (wide) {
-        WIN32_FILE_ATTRIBUTE_DATA info;
-        if (!GetFileAttributesExW(wide, GetFileExInfoStandard, &info)) status = argi_fs_windows_error();
-        else {
-            *kind = info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ? 2 : 1;
-            *size = ((uint64_t)info.nFileSizeHigh << 32) | info.nFileSizeLow;
-            uint64_t ticks = ((uint64_t)info.ftLastWriteTime.dwHighDateTime << 32) | info.ftLastWriteTime.dwLowDateTime;
-            *seconds = (int64_t)(ticks / 10000000) - INT64_C(11644473600);
-            *nanoseconds = (uint32_t)(ticks % 10000000) * 100;
-        }
-        free(wide);
-    }
-#else
-    struct stat info;
-    if (stat(path, &info)) status = argi_fs_errno();
-    else {
-        *kind = S_ISREG(info.st_mode) ? 1 : S_ISDIR(info.st_mode) ? 2 : 0;
-        *size = info.st_size < 0 ? 0 : (uint64_t)info.st_size;
-#ifdef __APPLE__
-        *seconds = info.st_mtimespec.tv_sec; *nanoseconds = (uint32_t)info.st_mtimespec.tv_nsec;
-#else
-        *seconds = info.st_mtim.tv_sec; *nanoseconds = (uint32_t)info.st_mtim.tv_nsec;
-#endif
-    }
-#endif
-    free(path);
-    return status;
-}int32_t _argi_fs_metadata_nofollow(const uint8_t *bytes, uintptr_t length, int32_t *kind, uint64_t *size, int64_t *seconds, uint32_t *nanoseconds) {
-    *kind = 0; *size = 0; *seconds = 0; *nanoseconds = 0;
-    int32_t status;
-    char *path = argi_fs_path(bytes, length, &status);
-    if (!path) return status;
-#ifdef _WIN32
-    wchar_t *wide = argi_fs_wide(path, &status);
-    if (wide) {
-        WIN32_FILE_ATTRIBUTE_DATA info;
-        if (!GetFileAttributesExW(wide, GetFileExInfoStandard, &info)) status = argi_fs_windows_error();
-        else {
-            *kind = info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT ? 0 : (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ? 2 : 1);
-            *size = ((uint64_t)info.nFileSizeHigh << 32) | info.nFileSizeLow;
-            uint64_t ticks = ((uint64_t)info.ftLastWriteTime.dwHighDateTime << 32) | info.ftLastWriteTime.dwLowDateTime;
-            *seconds = (int64_t)(ticks / 10000000) - INT64_C(11644473600);
-            *nanoseconds = (uint32_t)(ticks % 10000000) * 100;
-        }
-        free(wide);
-    }
-#else
-    struct stat info;
-    if (lstat(path, &info)) status = argi_fs_errno();
-    else {
-        *kind = S_ISREG(info.st_mode) ? 1 : S_ISDIR(info.st_mode) ? 2 : 0;
-        *size = info.st_size < 0 ? 0 : (uint64_t)info.st_size;
-#ifdef __APPLE__
-        *seconds = info.st_mtimespec.tv_sec; *nanoseconds = (uint32_t)info.st_mtimespec.tv_nsec;
-#else
-        *seconds = info.st_mtim.tv_sec; *nanoseconds = (uint32_t)info.st_mtim.tv_nsec;
-#endif
-    }
-#endif
-    free(path);
-    return status;
+    return argi_fs_read_metadata(bytes, length, kind, size, seconds, nanoseconds, 1);
+}
+int32_t _argi_fs_metadata_nofollow(const uint8_t *bytes, uintptr_t length, int32_t *kind, uint64_t *size, int64_t *seconds, uint32_t *nanoseconds) {
+    return argi_fs_read_metadata(bytes, length, kind, size, seconds, nanoseconds, 0);
 }
 struct argi_fs_directory {
 #ifdef _WIN32

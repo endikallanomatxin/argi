@@ -1,3 +1,7 @@
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200809L
+#include <unistd.h>
+#endif
 #include "../../../../core/platforms/shared/filesystem.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,8 +10,8 @@
 int32_t argi_filesystem_probe(void) {
     uintptr_t temporary = 0, directory = 0, length = 0;
     FILE *file = NULL;
-    char *path = NULL, *child = NULL;
-    int result = 0, child_exists = 0;
+    char *path = NULL, *child = NULL, *link_path = NULL;
+    int result = 0, child_exists = 0, link_exists = 0;
     const uint8_t invalid[3] = {'a', 0, 'b'};
     if (_argi_fs_mkdir(invalid, 3) != -2 || _argi_fs_mkdir(invalid, 0) != -2) return 1;
     if (_argi_fs_temp_create((const uint8_t *)".", 1, (const uint8_t *)"argi-native-", 12, &temporary)) return 2;
@@ -41,6 +45,18 @@ int32_t argi_filesystem_probe(void) {
     if (_argi_fs_seek((uintptr_t)file, 1, 0, &position) || position != 1) { result = 14; goto done; }
     if (_argi_fs_truncate((uintptr_t)file, 2) || _argi_fs_seek((uintptr_t)file, 0, 2, &position) || position != 2) { result = 15; goto done; }
     if (_argi_fs_truncate((uintptr_t)file, UINT64_MAX) != -2 || _argi_fs_seek(0, 0, 0, &position) != -2) { result = 16; goto done; }
+#ifndef _WIN32
+    link_path = calloc(length + 6, 1);
+    if (!link_path) { result = 20; goto done; }
+    memcpy(link_path, path, length);
+    memcpy(link_path + length, "/link", 6);
+    if (symlink("child", link_path)) { result = 21; goto done; }
+    link_exists = 1;
+    if (_argi_fs_metadata_nofollow((uint8_t *)link_path, strlen(link_path), &kind, &size, &seconds, &nanoseconds) || kind != 0) { result = 22; goto done; }
+    if (_argi_fs_metadata((uint8_t *)link_path, strlen(link_path), &kind, &size, &seconds, &nanoseconds) || kind != 2) { result = 23; goto done; }
+    if (unlink(link_path)) { result = 24; goto done; }
+    link_exists = 0;
+#endif
     if (_argi_fs_rmdir((uint8_t *)child, strlen(child))) { result = 17; goto done; }
     child_exists = 0;
     if (_argi_fs_temp_close(temporary)) { result = 18; goto done; }
@@ -49,6 +65,10 @@ int32_t argi_filesystem_probe(void) {
 done:
     if (file) fclose(file);
     _argi_fs_directory_close(directory);
+#ifndef _WIN32
+    if (link_exists) (void)unlink(link_path);
+#endif
+    free(link_path);
     if (child_exists) (void)_argi_fs_rmdir((uint8_t *)child, strlen(child));
     _argi_fs_temp_cleanup(temporary);
     free(child);
