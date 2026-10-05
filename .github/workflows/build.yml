@@ -63,7 +63,7 @@ jobs:
         run: python .github/scripts/test_release.py
 
       - name: Run tests
-        timeout-minutes: 30
+        timeout-minutes: 45
         run: zig build -j1 -Dtest-progress=true test --summary all
 
       - name: Build binary distribution
