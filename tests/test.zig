@@ -9855,3 +9855,8 @@ test "feature_tests/basics/84_errable_composition" {
     try expectSuccessfulBuild("tests/feature_tests/basics/84_errable_composition");
     try runExpect("tests/feature_tests/basics/84_errable_composition", 0);
 }
+
+test "feature_tests/io/45_owned_lines" {
+    try expectSuccessfulBuild("tests/feature_tests/io/45_owned_lines");
+    try runExpect("tests/feature_tests/io/45_owned_lines", 0);
+}

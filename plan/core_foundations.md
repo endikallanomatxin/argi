@@ -7,7 +7,8 @@ allocation, capabilities, ownership and nominal errors throughout.
 
 1. Collections: extend owner-aware algorithms beyond DynamicArray and audit
    structural cleanup on allocation failure and replacement.
-2. Streams: byte-level limited adapters and owning line iteration.
+2. Streams: audit bounded adapters under allocation and native read failures;
+   compose consumers through owning line iteration.
 3. Filesystem/tools: path normalization, directory walking and CLI options.
 4. Numeric/time foundations: elementary float math and UTC calendar conversion.
 5. More: hex/Base64, JSON/CSV, then compression/archive consumers.
