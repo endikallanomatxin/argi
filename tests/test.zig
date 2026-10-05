@@ -1401,6 +1401,16 @@ test "usecase_tests/02_echo_until_empty" {
         0,
         "hello\nworld\n",
     );
+    try runExpectStdoutWithArgsAndStdin(test_path, &.{}, "", 0, "");
+    try runExpectStdoutWithArgsAndStdin(test_path, &.{}, "\nignored\n", 0, "");
+    try runExpectStdoutWithArgsAndStdin(test_path, &.{}, "first\nlast", 0, "first\nlast\n");
+    try runExpectStdoutWithArgsAndStdin(test_path, &.{}, "a\x00b\n\nignored", 0, "a\x00b\n");
+
+    const long_input = try std.testing.allocator.alloc(u8, 16 * 1024 + 1);
+    defer std.testing.allocator.free(long_input);
+    @memset(long_input, 'x');
+    long_input[long_input.len - 1] = '\n';
+    try runExpectStdoutWithArgsAndStdin(test_path, &.{}, long_input, 0, long_input);
 }
 
 test "feature_tests/basics/02_comments" {
