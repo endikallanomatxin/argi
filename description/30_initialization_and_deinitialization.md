@@ -6,7 +6,7 @@ becomes live only after it has been fully initialized. Reading it beforehand
 is an error.
 
 A constructor is declared as `T init(...)` and returns one complete `T`, or
-one `Errable#(.t: T, .reasons: R)` when construction can fail. Calling `T(...)`
+one `Errable#(T, R)` when construction can fail. Calling `T(...)`
 invokes that constructor. No uninitialized destination is passed into `init`;
 the successful value is returned directly or transferred into `..ok`. An error
 carries no constructed value. Ordinary ownership and automatic cleanup rules

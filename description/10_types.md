@@ -48,7 +48,7 @@ Integer conversions use `Destination(.value = source)`. Their return type
 depends on the complete ranges of the two types, never on the particular
 value or the expected result type. If the destination contains the source's
 entire range, the conversion returns the destination type directly. Otherwise
-it returns `Errable#(.t: Destination, .reasons: (..out_of_range))`, including
+it returns `Errable#(Destination, (..out_of_range))`, including
 when the supplied value happens to fit. A checked conversion returns an error
 outside the destination's range; it never wraps, saturates, or truncates a
 value outside that range.

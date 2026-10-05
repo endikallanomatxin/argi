@@ -170,7 +170,7 @@ and [Multiple Dispatch](131_multiple_dispatch.md).
 A type may declare `T init(...)` to return a constructed value and define
 `T deinit(...)` to clean up a live value. Both operations are optional. `T(...)`
 uses a visible constructor when one is defined; its result is `T` or
-`Errable#(.t: T, .reasons: R)` when construction can fail.
+`Errable#(T, R)` when construction can fail.
 Local values that need cleanup are cleaned at scope exit.
 
 See [Initialization and deinitialization](30_initialization_and_deinitialization.md),
