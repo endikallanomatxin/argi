@@ -1,8 +1,11 @@
--- Copy binary input with bounded working storage and checked stream progress.
+-- Transfer binary input through one buffered output stream.
 main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     assume reader ::= $&system.terminal&.stdin
-    assume writer ::= $&system.terminal&.stdout
+    assume writer ::= $&BufferedWriter(
+        $&system.terminal&.stdout
+        view($&zeroed#([8192]UInt8)())
+    )
 
     specs ::= (CliSpec("help", "h", "Show help"),)
     arguments ::= parse_cli(
@@ -23,20 +26,17 @@ main(.system: System) -> !Void = ..ok Void() := {
         }
     }
 
-    storage ::= zeroed#([8192]UInt8)()
-    buffer ::= view($&storage)
-
     if length(&arguments.positionals).count == 0 {
-        copy_stream(.buffer = buffer)!
+        transfer_stream(reader, writer)!
     } else {
         for path in arguments.positionals {
             if path == "-" {
-                copy_stream(.buffer = buffer)!
+                transfer_stream(reader, writer)!
             } else {
                 file ::= open_read(system.file_system, .path = path)!! path
                 assume reader ::= $&file
 
-                copy_stream(.buffer = buffer)!! path
+                transfer_stream(reader, writer)!! path
                 close($&file)!! path
             }
         }

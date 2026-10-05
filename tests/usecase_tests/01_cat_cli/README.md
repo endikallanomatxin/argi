@@ -7,8 +7,11 @@ The program concatenates files in argument order. With no files it reads standar
 input; `-` reads standard input at that position. Use `--` before filenames that
 start with a hyphen. `-h` or `--help` prints help without opening any files.
 
-Copying preserves binary bytes and uses an initialized 8 KiB scratch buffer,
-without loading whole files into memory. The example uses declarative CLI specs,
+The free function `transfer_stream` takes a writer and a reader. For buffered writers
+it reads directly into their available buffer space, preserving pending output
+and binary bytes. This example lends one initialized 8 KiB buffer to a
+`BufferedWriter` over stdout, without loading whole files into memory or using a
+separate transfer buffer. It uses declarative CLI specs,
 assumed allocator and stream capabilities, and a checked `!Void` entry point.
 Each file has a scoped owner and an explicitly checked close; the final stdout
 flush is checked too.
