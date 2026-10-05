@@ -240,3 +240,5 @@ void _argi_process_cleanup(void) {
     }
 }
 #include "../shared/filesystem.c"
+
+#include "../shared/atomic.c"

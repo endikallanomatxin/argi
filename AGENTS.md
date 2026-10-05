@@ -193,6 +193,14 @@ feature first.
   storage acquisition receipts. UDP truncation is an error even when a prefix
   was written.
 
+- Atomic storage uses `core/platforms/shared/atomic.c` and its private header
+  through both native runtime adapters. Owning atomic cells retain FFI permission,
+  keep native addresses private and provide no safe-reference or acquisition
+  receipts. Operations currently use sequential consistency. Cancellation tokens
+  borrow their source, and cancellation is cooperative; neither atomics nor
+  observers establish permission to transfer Argi values/references across threads.
+  Native concurrent probes must join all workers before releasing their cells.
+
 - Filesystem extensions use `core/platforms/shared/filesystem.c` and its private
   `filesystem.h` ABI header through the same selected runtime adapters. Directory
   and temporary-directory owners borrow `FileSystem`; their native handles grant
