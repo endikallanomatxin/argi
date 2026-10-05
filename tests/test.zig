@@ -9905,3 +9905,26 @@ test "feature_tests/system/93_directory_walk" {
     try expectSuccessfulBuild("tests/feature_tests/system/93_directory_walk");
     try runExpect("tests/feature_tests/system/93_directory_walk", 0);
 }
+
+test "usecase_tests/04_tree_cli" {
+    const path = "tests/usecase_tests/04_tree_cli";
+    try expectSuccessfulBuild(path);
+    try runExpectStdoutWithArgs(path, &.{ "--root", "does-not-exist", "--depth=0" }, 0, "");
+    const output = try outputPathFor(path);
+    defer std.testing.allocator.free(output);
+    const result = try runChild(&.{ output, "-r", "tests/feature_tests/system/86_word_count_consumer/data", "-d2" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stdout, "/ignored/nested.txt\n") != null);
+    var lines = std.mem.tokenizeScalar(u8, result.stdout, '\n');
+    var count: usize = 0;
+    while (lines.next() != null) count += 1;
+    try expectEqual(@as(usize, 5), count);
+    const help = try runChild(&.{ output, "--help" });
+    defer std.testing.allocator.free(help.stdout);
+    defer std.testing.allocator.free(help.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, help.term);
+    try expect(std.mem.indexOf(u8, help.stdout, "-r, --root <PATH> (required)") != null);
+    try expect(std.mem.indexOf(u8, help.stdout, "[default: 64]") != null);
+}
