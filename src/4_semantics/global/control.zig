@@ -636,19 +636,6 @@ pub const Resolver = struct {
             .ret_val = old_body.ret_val,
         });
 
-        var init = iterator_declaration;
-        if (iterable_declaration) |iterable_decl| {
-            const init_start: u32 = @intCast(self.graph.node_refs.items.len);
-            try self.graph.node_refs.append(self.allocator, iterable_decl);
-            try self.graph.node_refs.append(self.allocator, iterator_declaration);
-            const init_block: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
-            try self.graph.blocks.append(self.allocator, .{
-                .nodes = .{ .start = init_start, .len = 2 },
-                .ret_val = null,
-            });
-            init = try self.appendNode(source, try self.builtin(.Void), .{ .code_block = init_block });
-        }
-
         const target = globalizer.globalNode(o, value.node);
         const void_ty = try self.builtin(.Void);
         try self.graph.resolveBindingType(item_binding, element_ty);
@@ -656,26 +643,28 @@ pub const Resolver = struct {
             .source = source,
             .ty = void_ty,
             .content = .{ .for_statement = .{
-                .init = init,
+                .init = null,
                 .condition = condition,
                 .increment = null,
                 .body = body_id,
             } },
         };
-        if (value.mode == .move) {
-            // Keep the owning iterator in a lexical block surrounding the loop.
-            // Ordinary cleanup then handles exhaustion and every early exit.
-            const loop_content = self.graph.nodes.items[@intFromEnum(target)].content;
-            var loop_statement = loop_content.for_statement;
-            loop_statement.init = null;
-            const loop_node = try self.appendNode(source, void_ty, .{ .for_statement = loop_statement });
-            const wrapper_start: u32 = @intCast(self.graph.node_refs.items.len);
-            try self.graph.node_refs.append(self.allocator, init);
-            try self.graph.node_refs.append(self.allocator, loop_node);
-            const wrapper: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
-            try self.graph.blocks.append(self.allocator, .{ .nodes = .{ .start = wrapper_start, .len = 2 }, .ret_val = null });
-            self.graph.nodes.items[@intFromEnum(target)].content = .{ .code_block = wrapper };
-        }
+        // Synthetic declarations belong to the loop's surrounding scope, not
+        // its expression-valued init slot. This retains computed collections
+        // and iterator loans throughout traversal, and lets ordinary block
+        // checking evaluate their initializers and cleanup on every exit.
+        const loop_content = self.graph.nodes.items[@intFromEnum(target)].content;
+        const loop_node = try self.appendNode(source, void_ty, loop_content);
+        const wrapper_start: u32 = @intCast(self.graph.node_refs.items.len);
+        if (iterable_declaration) |declaration| try self.graph.node_refs.append(self.allocator, declaration);
+        try self.graph.node_refs.append(self.allocator, iterator_declaration);
+        try self.graph.node_refs.append(self.allocator, loop_node);
+        const wrapper: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
+        try self.graph.blocks.append(self.allocator, .{
+            .nodes = .{ .start = wrapper_start, .len = if (iterable_declaration != null) 3 else 2 },
+            .ret_val = null,
+        });
+        self.graph.nodes.items[@intFromEnum(target)].content = .{ .code_block = wrapper };
         self.stats.for_loops += 1;
         committed = true;
         return .resolved;

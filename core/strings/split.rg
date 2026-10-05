@@ -8,6 +8,17 @@ StringSplitIterator: Type = (
 )
 
 StringSplitIterator implements Iterator#(.t: StringView)
+StringSplitIterator implements Iterable#(.t: StringView)
+
+-- A borrowed traversal starts from the current cursor without advancing it.
+to_iterator(.value: &StringSplitIterator) -> (.iterator: StringSplitIterator) := {
+    iterator = (
+        ._text      = value&._text
+        ._separator = value&._separator
+        ._start     = value&._start
+        ._done      = value&._done
+    )
+}
 
 split(
         .self      : StringView,

@@ -3392,7 +3392,12 @@ pub const Resolver = struct {
             }
             const loop = switch (graph.node(target).content) {
                 .for_statement => target,
-                .code_block => |wrapper| graph.node_refs.items[graph.blocks.items[@intFromEnum(wrapper)].nodes.start + 1],
+                .code_block => |wrapper| blk: {
+                    // The wrapper retains any computed collection and the
+                    // iterator before its final loop node.
+                    const nodes = graph.blocks.items[@intFromEnum(wrapper)].nodes;
+                    break :blk graph.node_refs.items[nodes.start + nodes.len - 1];
+                },
                 else => return error.InvalidParameterizedFor,
             };
             const body_id = graph.node(loop).content.for_statement.body;
