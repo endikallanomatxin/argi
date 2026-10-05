@@ -9890,3 +9890,13 @@ test "feature_tests/system/92_utc_format" {
     try expectSuccessfulBuild("tests/feature_tests/system/92_utc_format");
     try runExpect("tests/feature_tests/system/92_utc_format", 0);
 }
+
+test "feature_tests/system/89_cli_options" {
+    try expectSuccessfulBuild("tests/feature_tests/system/89_cli_options");
+    try runExpect("tests/feature_tests/system/89_cli_options", 0);
+}
+
+test "feature_tests/system/91_cli_schema" {
+    try expectSuccessfulBuild("tests/feature_tests/system/91_cli_schema");
+    try runExpect("tests/feature_tests/system/91_cli_schema", 0);
+}
