@@ -207,12 +207,42 @@ const Analysis = struct {
     }
 };
 
+// One retained result bounds editor memory while sharing global semantizing and
+// the occurrence index across diagnostics and navigation. Source bytes remain
+// owned by this arena, including unsaved buffers that documents later replace.
+const Snapshot = struct {
+    arena: std.heap.ArenaAllocator,
+    path: []const u8,
+    files: []const sf.SourceFile,
+    analysis: ?Analysis = null,
+    diagnostics: []const Diagnostic = &.{},
+
+    fn deinit(self: *Snapshot, allocator: std.mem.Allocator) void {
+        if (self.analysis) |*analysis| analysis.deinit(self.arena.allocator());
+        self.arena.deinit();
+        allocator.destroy(self);
+    }
+
+    fn matches(self: *const Snapshot, path: []const u8, files: []const sf.SourceFile) bool {
+        if (!std.mem.eql(u8, self.path, path) or self.files.len != files.len) return false;
+        for (self.files, files) |previous, current| {
+            if (previous.origin != current.origin or
+                !std.mem.eql(u8, previous.path, current.path) or
+                !std.mem.eql(u8, previous.code, current.code)) return false;
+        }
+        return true;
+    }
+};
+
 pub const LanguageService = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     documents: std.array_list.Managed(Document),
     root_path: ?[]u8 = null,
     module_cache: frontend.cache.ModuleCache,
+    snapshot: ?*Snapshot = null,
+    analysis_builds: usize = 0,
+    analysis_hits: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) LanguageService {
         return .{
@@ -226,6 +256,7 @@ pub const LanguageService = struct {
     pub fn deinit(self: *LanguageService) void {
         for (self.documents.items) |*document| document.deinit(self.allocator);
         self.documents.deinit();
+        if (self.snapshot) |snapshot| snapshot.deinit(self.allocator);
         self.module_cache.deinit();
         if (self.root_path) |path| self.allocator.free(path);
     }
@@ -329,9 +360,8 @@ pub const LanguageService = struct {
 
         // Resolved identities refine syntax roles; syntax remains usable while
         // an unfinished edit prevents global semantizing from producing a graph.
-        var analysis = try self.collectAnalysis(&work, doc);
-        defer if (analysis) |*value| value.deinit(work);
-        if (analysis) |*value| try classifyOccurrences(work, value, doc.path, &classes);
+        const analysis = try self.collectAnalysis(&work, doc);
+        if (analysis) |value| try classifyOccurrences(work, &value, doc.path, &classes);
 
         var output = std.array_list.Managed(u32).init(self.allocator);
         errdefer output.deinit();
@@ -375,7 +405,6 @@ pub const LanguageService = struct {
         defer arena.deinit();
         var work = arena.allocator();
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return null;
-        defer analysis.deinit(work);
 
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
         const contents = try formatHover(self.allocator, &analysis.graph, occurrence.target);
@@ -391,7 +420,6 @@ pub const LanguageService = struct {
         defer arena.deinit();
         var work = arena.allocator();
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return try self.syntax_definition(work, doc, position);
-        defer analysis.deinit(work);
 
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
         // Specialized functions retain their source declaration but have a distinct
@@ -440,7 +468,6 @@ pub const LanguageService = struct {
         defer arena.deinit();
         var work = arena.allocator();
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return LocationsResult.empty(self.allocator);
-        defer analysis.deinit(work);
 
         const selected = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse
             return LocationsResult.empty(self.allocator);
@@ -482,7 +509,6 @@ pub const LanguageService = struct {
         defer arena.deinit();
         var work = arena.allocator();
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return null;
-        defer analysis.deinit(work);
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
         return .{
             .range = sourceRange(&analysis, occurrence.source, occurrence.len) orelse return null,
@@ -496,7 +522,6 @@ pub const LanguageService = struct {
         defer arena.deinit();
         var work = arena.allocator();
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return InlayHintsResult.empty(self.allocator);
-        defer analysis.deinit(work);
 
         var output = std.array_list.Managed(InlayHint).init(self.allocator);
         errdefer {
@@ -535,59 +560,88 @@ pub const LanguageService = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         var work = arena.allocator();
-        const files = self.collectFiles(&work, doc) catch |err| return self.loadFailureDiagnostic(doc, err);
-        var diagnostics = diag.Diagnostics.init(&work, files);
-        defer diagnostics.deinit();
-        var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{ .module_cache = &self.module_cache });
-        defer pipeline.deinit();
-        _ = pipeline.semantizeGlobalFiles(files) catch {};
-
+        const snapshot = self.ensureSnapshot(&work, doc) catch |err| return self.loadFailureDiagnostic(doc, err);
         var output = std.array_list.Managed(Diagnostic).init(self.allocator);
         errdefer {
             for (output.items) |item| self.allocator.free(item.message);
             output.deinit();
         }
-        for (diagnostics.list.items) |entry| {
-            if (!std.mem.eql(u8, diagnostics.source_db.path(entry.loc.file), doc.path)) continue;
-            try output.append(.{
-                .range = tokenRange(&diagnostics.source_db, entry.loc, 1),
-                .severity = .err,
-                .message = try self.allocator.dupe(u8, entry.msg),
-            });
-        }
-        const items = try output.toOwnedSlice();
-        output.deinit();
-        return .{ .allocator = self.allocator, .items = items, .owned = true };
+        for (snapshot.diagnostics) |entry| try output.append(.{
+            .range = entry.range,
+            .severity = entry.severity,
+            .message = try self.allocator.dupe(u8, entry.message),
+        });
+        return .{ .allocator = self.allocator, .items = try output.toOwnedSlice(), .owned = true };
     }
 
+    // Callers borrow this result until the next service operation. Recollecting
+    // sources also observes disk edits, directory membership and import changes;
+    // document version alone cannot safely identify a whole-module result.
     fn collectAnalysis(self: *LanguageService, allocator: *std.mem.Allocator, doc: *Document) !?Analysis {
-        const files = self.collectFiles(allocator, doc) catch |err| {
+        const snapshot = self.ensureSnapshot(allocator, doc) catch |err| {
             log.debug("LSP module load failed for {s}: {s}", .{ doc.path, @errorName(err) });
             return null;
         };
-        var diagnostics = diag.Diagnostics.init(allocator, files);
-        defer diagnostics.deinit();
-        var pipeline = frontend.FrontendPipeline.init(allocator.*, self.io, &diagnostics, .{ .module_cache = &self.module_cache });
-        defer pipeline.deinit();
-        _ = pipeline.semantizeGlobalFiles(files) catch {
-            // Parsing/global semantic failures leave no graph. Safety failures,
-            // however, happen after GlobalSG is complete and should not disable
-            // editor navigation for otherwise-resolved symbols.
-            if (pipeline.global_graph == null) return null;
+        return snapshot.analysis;
+    }
+
+    fn ensureSnapshot(self: *LanguageService, scratch: *std.mem.Allocator, doc: *Document) !*Snapshot {
+        const collected = try self.collectFiles(scratch, doc);
+        if (self.snapshot) |snapshot| if (snapshot.matches(doc.path, collected)) {
+            self.analysis_hits += 1;
+            return snapshot;
         };
-
-        var graph = pipeline.global_graph.?;
-        pipeline.global_graph = null;
-        errdefer graph.deinit(allocator.*);
-        var index = try editor_index.Index.build(allocator.*, &graph);
-        errdefer index.deinit(allocator.*);
-        try augmentTypeOccurrences(allocator.*, &index, &graph, &diagnostics.source_db, pipeline.syntax_files.items);
-        index.sort();
-
-        var db = try diagnostics.source_db.clone(allocator.*);
-        errdefer db.deinit(allocator.*);
-        const tokens = try (pipeline.tokensForPath(doc.path) orelse token.View{}).clone(allocator.*);
-        return .{ .source_db = db, .graph = graph, .index = index, .tokens = tokens };
+        // Release the previous graph before building its replacement, so repeated
+        // edits do not retain overlapping whole-program allocations.
+        if (self.snapshot) |snapshot| snapshot.deinit(self.allocator);
+        self.snapshot = null;
+        const snapshot = try self.allocator.create(Snapshot);
+        snapshot.* = .{ .arena = std.heap.ArenaAllocator.init(self.allocator), .path = "", .files = &.{} };
+        errdefer snapshot.deinit(self.allocator);
+        var work = snapshot.arena.allocator();
+        snapshot.path = try work.dupe(u8, doc.path);
+        const files = try work.alloc(sf.SourceFile, collected.len);
+        for (collected, files) |source, *owned| {
+            owned.* = source;
+            owned.path = try work.dupe(u8, source.path);
+            owned.code = try work.dupe(u8, source.code);
+        }
+        snapshot.files = files;
+        var diagnostics = diag.Diagnostics.init(&work, files);
+        defer diagnostics.deinit();
+        var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{ .module_cache = &self.module_cache });
+        defer pipeline.deinit();
+        const start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
+        _ = pipeline.semantizeGlobalFiles(files) catch {};
+        self.analysis_builds += 1;
+        log.debug("LSP global semantizing: {d} us", .{@divTrunc(std.Io.Timestamp.now(self.io, .boot).nanoseconds - start, 1000)});
+        var output: std.ArrayList(Diagnostic) = .empty;
+        for (diagnostics.list.items) |entry| {
+            if (!std.mem.eql(u8, diagnostics.source_db.path(entry.loc.file), doc.path)) continue;
+            try output.append(work, .{
+                .range = tokenRange(&diagnostics.source_db, entry.loc, 1),
+                .severity = .err,
+                .message = try work.dupe(u8, entry.msg),
+            });
+        }
+        snapshot.diagnostics = output.items;
+        // A safety diagnostic may coexist with a resolved graph. Syntax and
+        // unresolved global failures keep diagnostics cached without an index.
+        if (pipeline.global_graph) |graph| {
+            pipeline.global_graph = null;
+            snapshot.analysis = .{
+                .graph = graph,
+                .index = .{},
+                .source_db = try diagnostics.source_db.clone(work),
+                .tokens = try (pipeline.tokensForPath(doc.path) orelse token.View{}).clone(work),
+            };
+            const analysis = &snapshot.analysis.?;
+            analysis.index = try editor_index.Index.build(work, &analysis.graph);
+            try augmentTypeOccurrences(work, &analysis.index, &analysis.graph, &diagnostics.source_db, pipeline.syntax_files.items);
+            analysis.index.sort();
+        }
+        self.snapshot = snapshot;
+        return snapshot;
     }
 
     fn collectFiles(self: *LanguageService, allocator: *std.mem.Allocator, doc: *Document) ![]const sf.SourceFile {
@@ -1421,14 +1475,26 @@ test "LSP module reuse preserves navigation across unsaved imports and file chan
     defer opened.deinit();
     try std.testing.expectEqual(@as(usize, 0), opened.items.len);
     const misses = service.module_cache.misses;
-    const modules = service.module_cache.entries.items.len;
     const position = Position{ .line = 2, .character = 22 };
     const definition = (try service.definition(uri, position)).?;
     defer definition.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings(dep_path, definition.path);
     try std.testing.expectEqual(@as(u32, 0), definition.range.start.line);
     try std.testing.expectEqual(misses, service.module_cache.misses);
-    try std.testing.expectEqual(modules, service.module_cache.hits);
+    try std.testing.expectEqual(@as(usize, 0), service.module_cache.hits);
+    try std.testing.expectEqual(@as(usize, 1), service.analysis_builds);
+    try std.testing.expectEqual(@as(usize, 1), service.analysis_hits);
+
+    const initial_hover = (try service.hover(uri, position)).?;
+    defer std.testing.allocator.free(initial_hover.contents);
+    var tokens = try service.semanticTokensFull(uri);
+    defer tokens.deinit();
+    const hints = try service.inlayHints(uri, null);
+    defer hints.deinit();
+    const references_result = try service.references(uri, position, true);
+    defer references_result.deinit();
+    try std.testing.expectEqual(@as(usize, 1), service.analysis_builds);
+    try std.testing.expectEqual(@as(usize, 5), service.analysis_hits);
 
     // The imported buffer stays unsaved on disk; its source location changes.
     const changed = try service.openDocument("file:///incremental-dep.rg", dep_path, 1, "\n" ++ dependency);
@@ -1452,6 +1518,12 @@ test "LSP module reuse preserves navigation across unsaved imports and file chan
     const broken = try service.changeDocument(uri, path, 2, "main(\n");
     defer broken.deinit();
     try std.testing.expect(broken.items.len != 0);
+    const broken_builds = service.analysis_builds;
+    try std.testing.expectEqual(@as(?Hover, null), try service.hover(uri, position));
+    const stale = try service.changeDocument(uri, path, 1, code);
+    defer stale.deinit();
+    try std.testing.expectEqualStrings(broken.items[0].message, stale.items[0].message);
+    try std.testing.expectEqual(broken_builds, service.analysis_builds);
     const repaired = try service.changeDocument(uri, path, 3, code);
     defer repaired.deinit();
     try std.testing.expectEqual(@as(usize, 0), repaired.items.len);
