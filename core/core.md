@@ -30,6 +30,8 @@ The implemented foundations include:
   size-limited copying and owning binary reads, memory adapters, limited block
   and byte readers, bounded borrowed LF/CRLF lines, and fallible iteration
   over independently owned byte lines.
+- Time: checked Gregorian UTC calendar conversion, leap years and weekdays,
+  alongside monotonic clocks, Unix timestamps and durations.
 - Errors: nominal reasons, `Errable`, explicit propagation, and tracing policies.
 - Testing: bounded equality diagnostics for numeric values, strings, bytes,
   and readonly views, with error traces for failed or skipped test roots.

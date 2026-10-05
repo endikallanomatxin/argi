@@ -9865,3 +9865,8 @@ test "feature_tests/system/88_path_normalization" {
     try expectSuccessfulBuild("tests/feature_tests/system/88_path_normalization");
     try runExpect("tests/feature_tests/system/88_path_normalization", 0);
 }
+
+test "feature_tests/system/90_utc_calendar" {
+    try expectSuccessfulBuild("tests/feature_tests/system/90_utc_calendar");
+    try runExpect("tests/feature_tests/system/90_utc_calendar", 0);
+}

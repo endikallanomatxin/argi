@@ -10,7 +10,7 @@ allocation, capabilities, ownership and nominal errors throughout.
 2. Streams: audit bounded adapters under allocation and native read failures;
    compose consumers through owning line iteration.
 3. Filesystem/tools: directory walking and declarative CLI options.
-4. Numeric/time foundations: elementary float math and UTC calendar conversion.
+4. Numeric/time foundations: elementary float math and UTC date parsing/formatting.
 5. More: hex/Base64, JSON/CSV, then compression/archive consumers.
 6. Services/runtime: logging, HTTP, selected hashes/crypto, then concurrency
    and cancellation aligned with the language runtime plans.
