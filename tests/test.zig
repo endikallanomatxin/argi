@@ -10021,3 +10021,11 @@ test "feature_tests/types/285X_positional_type_kind" {
 test "feature_tests/types/286X_positional_type_unknown" {
     try buildExpectFail("tests/feature_tests/types/286X_positional_type_unknown", "unknown generic argument");
 }
+
+test "feature_tests/types/287X_positional_errable_duplicate" {
+    try buildExpectFail("tests/feature_tests/types/287X_positional_errable_duplicate", "duplicate generic argument");
+}
+
+test "feature_tests/types/288X_positional_errable_excess" {
+    try buildExpectFail("tests/feature_tests/types/288X_positional_errable_excess", "too many generic arguments");
+}
