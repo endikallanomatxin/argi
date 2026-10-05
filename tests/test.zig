@@ -10075,3 +10075,8 @@ test "feature_tests/types/287X_positional_errable_duplicate" {
 test "feature_tests/types/288X_positional_errable_excess" {
     try buildExpectFail("tests/feature_tests/types/288X_positional_errable_excess", "too many generic arguments");
 }
+
+test "feature_tests/io/46_writer_transfer" {
+    try expectSuccessfulBuild("tests/feature_tests/io/46_writer_transfer");
+    try runExpect("tests/feature_tests/io/46_writer_transfer", 0);
+}

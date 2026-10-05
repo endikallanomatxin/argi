@@ -32,6 +32,9 @@ Contextual positional record assignments still need their nominal destination
 carried through codegen; use constructors or named fields in those assignments.
 Generic consumers such as `unwrap_or_abort` also need inferred error envelopes
 to retain the nominal Errable identity; direct matching remains available.
+Positional `ArrayView#(UInt8)` annotations also need their generic identity
+normalized against named core specializations; keep `.t: UInt8` in those
+annotations until they interoperate with `length` and view operations.
 
 Each unit includes executable or negative feature tests and public contracts.
 Use application usecases to validate composition. Existing implementations must
