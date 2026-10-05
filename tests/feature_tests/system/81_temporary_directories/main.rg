@@ -1,6 +1,6 @@
 main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
-    assume file_sys := system.file_sys
+    assume file_system := system.file_system
     first ::= TemporaryDirectory(
         .parent = "tests/feature_tests/system/81_temporary_directories/build"
     )!

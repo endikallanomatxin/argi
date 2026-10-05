@@ -1,7 +1,7 @@
 -- A small consumer of declarative options, owned paths and directory walking.
 main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
-    assume file_sys := system.file_sys
+    assume file_system := system.file_system
     assume writer ::= $&system.terminal&.stdout
 
     specs ::= (

@@ -99,7 +99,7 @@ default. The following `System` shape is hypothetical:
 System : Type = (
     .allocator : $&Allocator
     .terminal  : $&Terminal
-    .file_sys  : $&FileSystem
+    .file_system  : $&FileSystem
     .network   : $&Network
     .clock     : $&Clock
     .threads   : $&ThreadCapability
@@ -980,7 +980,7 @@ This is the main reason to route these operations through `Runtime`.
 System:
     allocator
     terminal
-    file_sys
+    file_system
     network
     clock
     proc_man
@@ -1004,7 +1004,7 @@ Example:
 
 ```rg
 read_file(
-    .file_sys: $&FileSystem = reach file_sys, system.file_sys,
+    .file_system: $&FileSystem = reach file_system, system.file_system,
     .runtime: $&Runtime = reach runtime, system.runtime,
     .path: String,
 ) -> !(.content: String) := {

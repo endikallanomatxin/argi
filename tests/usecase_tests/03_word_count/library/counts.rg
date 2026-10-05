@@ -23,12 +23,12 @@ count_text(
 }
 
 count_directory(
-        .self      : $&OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
-        .path      : StringView,
-        .limit     : UIntNative,
-        .buffer    : ArrayView#(.t: UInt8),
-        .file_sys  : $&FileSystem,
-        .allocator : $&PageAllocator
+        .self        : $&OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
+        .path        : StringView,
+        .limit       : UIntNative,
+        .buffer      : ArrayView#(.t: UInt8),
+        .file_system : $&FileSystem,
+        .allocator   : $&PageAllocator
     ) -> (
         .result : Errable#(
             .t       : Void,
@@ -51,7 +51,7 @@ count_directory(
         ) = ..ok Void()
     ) := {
     assume allocator
-    directory ::= Directory(.path = path, .self = file_sys)!
+    directory ::= Directory(.path = path, .self = file_system)!
     while true {
         match next(.self = $&directory, .allocator = allocator)! {
             ..none { return }
@@ -64,10 +64,10 @@ count_directory(
                     .view      = as_view(.self = &payload.value.name)
                     .allocator = allocator
                 )!
-                info ::= metadata(.path = as_view(.self = &joined), .self = file_sys)!
+                info ::= metadata(.path = as_view(.self = &joined), .self = file_system)!
                 if info.kind == ..file {
                     file ::= open_read(
-                        .self      = file_sys
+                        .self      = file_system
                         .path      = as_view(.self = &joined)
                         .allocator = allocator
                     )!

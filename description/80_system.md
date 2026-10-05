@@ -16,7 +16,7 @@ System : Type = (
     .terminal: $&Terminal
     .args: $&Arguments
     .env_vars: $&EnvironmentVariables
-    .file_sys: $&FileSystem
+    .file_system: $&FileSystem
     .network: $&Network
     .proc_man: $&ProcessManager
     .clock: $&Clock

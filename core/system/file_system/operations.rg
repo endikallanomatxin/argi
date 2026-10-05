@@ -83,7 +83,7 @@ _fs_truncate(.stream: UIntNative, .size: UInt64) -> (.status: Int32): CFunction(
 )
 
 create_directory(
-        .self : &FileSystem = reach file_sys,
+        .self : &FileSystem = reach file_system,
         .path : StringView
     ) -> (
         .result : Errable#(.t: Void, .reasons: _FilesystemReasons)
@@ -98,7 +98,7 @@ create_directory(
 }
 
 remove_directory(
-        .self : &FileSystem = reach file_sys,
+        .self : &FileSystem = reach file_system,
         .path : StringView
     ) -> (
         .result : Errable#(.t: Void, .reasons: _FilesystemReasons)
@@ -121,7 +121,7 @@ FileMetadata: Type = (.kind: FileKind, .size: UInt64, .modified: UnixTimestamp)
 FileMetadata implements ImplicitlyCopyable
 
 metadata(
-        .self         : &FileSystem = reach file_sys,
+        .self         : &FileSystem = reach file_system,
         .path         : StringView,
         .follow_links : Bool        = true
     ) -> (
@@ -171,7 +171,7 @@ Directory: Type = (._filesystem: &FileSystem, ._handle: UIntNative, ._ended: Boo
 DirectoryEntry: Type = (.name: String)
 
 Directory init(
-        .self : &FileSystem = reach file_sys,
+        .self : &FileSystem = reach file_system,
         .path : StringView
     ) -> (
         .result : Errable#(.t: Directory, .reasons: _FilesystemReasons)
@@ -305,7 +305,7 @@ _fs_temp_cleanup(.handle: UIntNative) -> (): CFunction(.symbol = "_argi_fs_temp_
 TemporaryDirectory: Type = (._filesystem: &FileSystem, ._handle: UIntNative, ._path: String)
 
 TemporaryDirectory init(
-        .self      : &FileSystem = reach file_sys,
+        .self      : &FileSystem = reach file_system,
         .parent    : StringView,
         .prefix    : StringView  = "argi-",
         .allocator : $&Allocator = reach allocator
