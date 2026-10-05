@@ -44,6 +44,17 @@ _fs_metadata(
         .status : Int32
     ): CFunction(.symbol = "_argi_fs_metadata")
 
+_fs_metadata_nofollow(
+        .bytes       : &UInt8,
+        .length      : UIntNative,
+        .kind        : $&Int32,
+        .size        : $&UInt64,
+        .seconds     : $&Int64,
+        .nanoseconds : $&UInt32
+    ) -> (
+        .status : Int32
+    ): CFunction(.symbol = "_argi_fs_metadata_nofollow")
+
 _fs_directory_open(.bytes: &UInt8, .length: UIntNative, .handle: $&UIntNative) -> (.status: Int32): CFunction(
     .symbol = "_argi_fs_directory_open"
 )
@@ -110,8 +121,9 @@ FileMetadata: Type = (.kind: FileKind, .size: UInt64, .modified: UnixTimestamp)
 FileMetadata implements ImplicitlyCopyable
 
 metadata(
-        .self : &FileSystem = reach file_sys,
-        .path : StringView
+        .self         : &FileSystem = reach file_sys,
+        .path         : StringView,
+        .follow_links : Bool        = true
     ) -> (
         .result : Errable#(.t: FileMetadata, .reasons: _FilesystemReasons)
     ) := {
@@ -120,14 +132,26 @@ metadata(
     size :: UInt64 = 0
     seconds :: Int64 = 0
     nanoseconds :: UInt32 = 0
-    status ::= _fs_metadata(
-        .bytes       = path.data
-        .length      = path.length
-        .kind        = $&kind
-        .size        = $&size
-        .seconds     = $&seconds
-        .nanoseconds = $&nanoseconds
-    ).status
+    status :: Int32 = 0
+    if follow_links {
+        status = _fs_metadata(
+            .bytes       = path.data
+            .length      = path.length
+            .kind        = $&kind
+            .size        = $&size
+            .seconds     = $&seconds
+            .nanoseconds = $&nanoseconds
+        ).status
+    } else {
+        status = _fs_metadata_nofollow(
+            .bytes       = path.data
+            .length      = path.length
+            .kind        = $&kind
+            .size        = $&size
+            .seconds     = $&seconds
+            .nanoseconds = $&nanoseconds
+        ).status
+    }
     if status != 0 {
         result = ..error(.reason = _fs_reason(.status = status).reason)
         return
