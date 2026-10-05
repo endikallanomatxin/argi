@@ -493,6 +493,8 @@ pub const LanguageService = struct {
     }
 
     pub fn rename(self: *LanguageService, uri: []const u8, position: Position, new_name: []const u8) !TextEditsResult {
+        const prepared = (try self.prepareRename(uri, position)) orelse return TextEditsResult.empty(self.allocator);
+        defer prepared.deinit(self.allocator);
         var locations = try self.references(uri, position, true);
         defer locations.deinit();
         if (locations.items.len == 0) return TextEditsResult.empty(self.allocator);
@@ -513,6 +515,12 @@ pub const LanguageService = struct {
         var work = arena.allocator();
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return null;
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
+        if (occurrence.target == .function) {
+            const function = analysis.graph.functions.items[@intFromEnum(occurrence.target.function)];
+            // init is a reserved declaration name; renaming its calls would
+            // instead change the nominal family written at those positions.
+            if (analysis.graph.declaration(function.declaration).constructor_type != null) return null;
+        }
         return .{
             .range = sourceRange(&analysis, occurrence.source, occurrence.len) orelse return null,
             .placeholder = try self.allocator.dupe(u8, editor_index.Index.targetName(&analysis.graph, occurrence.target)),
@@ -1011,7 +1019,7 @@ fn classifyOccurrences(allocator: std.mem.Allocator, analysis: *const Analysis, 
         if (!editor_index.occurrence_matches_source(graph, &analysis.source_db, occurrence)) continue;
         var classification: TokenClass = .{ .type_index = TOKEN_INDEX.variable };
         switch (occurrence.target) {
-            .function => classification.type_index = TOKEN_INDEX.function,
+            .function => classification.type_index = if (occurrence.constructor_call) TOKEN_INDEX.type_ else TOKEN_INDEX.function,
             .binding => |id| {
                 if (parameters.contains(id)) classification.type_index = TOKEN_INDEX.parameter;
                 if (graph.bindings.items[@intFromEnum(id)].mutability == .constant)
@@ -1350,6 +1358,67 @@ test "LSP navigation and hovers use written symbols and source declarations" {
     defer terminal.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.endsWith(u8, terminal.path, if (@import("builtin").os.tag == .windows) "\\system\\system.rg" else "/system/system.rg"));
     try std.testing.expectEqual(@as(u32, 8), terminal.range.end.character - terminal.range.start.character);
+}
+
+test "LSP constructor navigation finds selected init bodies and default record declarations" {
+    const code =
+        \\MyType : Type = (.value: Int32)
+        \\MyType init() -> (.result: MyType) := { result = (.value = 0) }
+        \\MyType init(.value: Int32) -> (.result: MyType) := { result = (.value = value) }
+        \\Box#(.t: Type) : Type = (.value: t)
+        \\Box init#(.t: Type)(.value: t) -> (.result: Box#(.t: t)) := { result = (.value = value) }
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    first ::= MyType()
+        \\    second ::= MyType(2)
+        \\    boxed ::= Box#(.t: Int32)(3)
+        \\    specs ::= (CliSpec("help", "h", "Show help"),)
+        \\    imported ::= library.Thing(4)
+        \\}
+        \\library := import("./library")
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDir(std.testing.io, "library", .default_dir);
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "library/thing.rg",
+        .data = "Thing : Type = (.value: Int32)\nThing init(.value: Int32) -> (.result: Thing) := { result = (.value = value) }\n",
+    });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///constructors.rg";
+    const diagnostics = try service.openDocument(uri, path, 1, code);
+    defer diagnostics.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
+    for ([_]struct { line: u32, character: u32, declaration_line: u32 }{
+        .{ .line = 6, .character = 17, .declaration_line = 1 },
+        .{ .line = 7, .character = 18, .declaration_line = 2 },
+        .{ .line = 8, .character = 15, .declaration_line = 4 },
+    }) |case| {
+        const position = Position{ .line = case.line, .character = case.character };
+        const definition = (try service.definition(uri, position)).?;
+        defer definition.deinit(std.testing.allocator);
+        try std.testing.expectEqualStrings(path, definition.path);
+        try std.testing.expectEqual(case.declaration_line, definition.range.start.line);
+        const hover = (try service.hover(uri, position)).?;
+        defer std.testing.allocator.free(hover.contents);
+        try std.testing.expect(std.mem.indexOf(u8, hover.contents, "init(") != null);
+        try std.testing.expectEqual(@as(?PrepareRename, null), try service.prepareRename(uri, position));
+        const edits = try service.rename(uri, position, "Renamed");
+        defer edits.deinit();
+        try std.testing.expectEqual(@as(usize, 0), edits.items.len);
+    }
+    const spec = (try service.definition(uri, .{ .line = 9, .character = 16 })).?;
+    defer spec.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.endsWith(u8, spec.path, if (@import("builtin").os.tag == .windows) "\\system\\command.rg" else "/system/command.rg"));
+    try std.testing.expectEqual(@as(u32, 6), spec.range.start.line);
+    try std.testing.expectEqual(@as(u32, 7), spec.range.end.character);
+    const imported = (try service.definition(uri, .{ .line = 10, .character = 26 })).?;
+    defer imported.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.endsWith(u8, imported.path, if (@import("builtin").os.tag == .windows) "\\library\\thing.rg" else "/library/thing.rg"));
+    try std.testing.expectEqual(@as(u32, 1), imported.range.start.line);
 }
 
 test "LSP semantic tokens retain syntax roles with unresolved calls and multiline text" {
