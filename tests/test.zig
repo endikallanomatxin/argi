@@ -9870,3 +9870,8 @@ test "feature_tests/system/90_utc_calendar" {
     try expectSuccessfulBuild("tests/feature_tests/system/90_utc_calendar");
     try runExpect("tests/feature_tests/system/90_utc_calendar", 0);
 }
+
+test "feature_tests/numbers/13_elementary_math" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/13_elementary_math");
+    try runExpect("tests/feature_tests/numbers/13_elementary_math", 0);
+}

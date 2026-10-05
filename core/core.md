@@ -17,7 +17,7 @@ The implemented foundations include:
   elements with automatic cleanup on early exits. Strict UTF-8 operations provide checked scalars,
   bounded encoding, decoding cursors, and validated borrowed text iteration.
 - Numbers: public integer limits, checked arithmetic and rounding, unsigned
-  bit utilities, IEEE float classification and rounding, and numeric
+  bit utilities, IEEE float classification and rounding, elementary floating-point math, and numeric
   parsing/formatting.
 - Binary data: checked unsigned endian reads and writes, and borrowed byte
   cursors whose positions advance only after successful operations, plus byte

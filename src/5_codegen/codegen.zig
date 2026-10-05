@@ -2357,6 +2357,34 @@ pub const CodeGenerator = struct {
         return .{ .value_ref = result, .type_ref = output_type, .ty = call.output_type };
     }
 
+    fn floatMath(self: *CodeGenerator, input: graph_mod.GlobalNodeId, callee: graph_mod.Function) !TypedValue {
+        const literal = self.graph.node(input).content.struct_value_literal;
+        const fields = self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len];
+        if (fields.len != 3) return CodegenError.InvalidType;
+        const operation = self.graph.node(fields[0].value);
+        if (operation.content != .int_literal) return CodegenError.InvalidType;
+        const names = [_][]const u8{ "llvm.sqrt", "llvm.sin", "llvm.cos", "llvm.exp", "llvm.log", "llvm.pow", "llvm.exp2", "llvm.log2" };
+        const index = std.math.cast(usize, operation.content.int_literal) orelse return CodegenError.InvalidType;
+        if (index >= names.len) return CodegenError.InvalidType;
+        const left = (try self.visitNode(fields[1].value)) orelse return CodegenError.ValueNotFound;
+        const right = (try self.visitNode(fields[2].value)) orelse return CodegenError.ValueNotFound;
+        const ty = self.graph.fields.items[callee.output.start].ty;
+        const result_type = try self.toLLVMType(ty);
+        // Promote half precision to float so native libc lowering needs no
+        // nonstandard half-precision symbols; round back at the API boundary.
+        const half = c.LLVMGetTypeKind(result_type) == c.LLVMHalfTypeKind;
+        const math_type = if (half) c.LLVMFloatType() else result_type;
+        var overloads = [_]c.LLVMTypeRef{math_type};
+        const id = c.LLVMLookupIntrinsicID(names[index].ptr, names[index].len);
+        const intrinsic = c.LLVMGetIntrinsicDeclaration(self.module, id, &overloads, 1);
+        var arguments = [_]c.LLVMValueRef{
+            if (half) c.LLVMBuildFPExt(self.builder, left.value_ref, math_type, "math.half.left") else left.value_ref,
+            if (half) c.LLVMBuildFPExt(self.builder, right.value_ref, math_type, "math.half.right") else right.value_ref,
+        };
+        const value = c.LLVMBuildCall2(self.builder, c.LLVMGlobalGetValueType(intrinsic), intrinsic, &arguments, if (index == 5) 2 else 1, "math.result");
+        return .{ .value_ref = if (half) c.LLVMBuildFPTrunc(self.builder, value, result_type, "math.half.result") else value, .type_ref = result_type, .ty = ty };
+    }
+
     fn genFunctionCall(self: *CodeGenerator, call: anytype, source: primitives.SourceRef) !?TypedValue {
         if (self.isCoreFunction(call.callee, "error_location_id")) {
             const function = self.graph.function(call.callee);
@@ -2369,6 +2397,7 @@ pub const CodeGenerator = struct {
             return .{ .value_ref = value, .type_ref = type_ref, .ty = ty };
         }
         const callee = self.graph.functions.items[@intFromEnum(call.callee)];
+        if (callee.safety_primitive == .float_math) return try self.floatMath(call.input, callee);
         if (callee.safety_primitive == .relocate) {
             const result = try self.opaqueRelocate(call.input);
             self.markRelocationDropState(call.input);
