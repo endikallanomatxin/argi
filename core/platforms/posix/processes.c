@@ -1,3 +1,8 @@
+/* Darwin's timestamps and temporary directories require its extension namespace
+   alongside the POSIX interfaces used by the shared runtime adapters. */
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE
+#endif
 #define _POSIX_C_SOURCE 200809L
 #include <unistd.h>
 #include <fcntl.h>
