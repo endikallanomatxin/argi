@@ -9850,3 +9850,8 @@ test "feature_tests/control_flow/23_generic_for" {
     try expectSuccessfulBuild("tests/feature_tests/control_flow/23_generic_for");
     try runExpect("tests/feature_tests/control_flow/23_generic_for", 0);
 }
+
+test "feature_tests/basics/84_errable_composition" {
+    try expectSuccessfulBuild("tests/feature_tests/basics/84_errable_composition");
+    try runExpect("tests/feature_tests/basics/84_errable_composition", 0);
+}

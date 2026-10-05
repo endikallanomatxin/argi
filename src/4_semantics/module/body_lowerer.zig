@@ -1107,7 +1107,18 @@ const Context = struct {
 
     fn lowerMatch(self: *Context, node: syn.NodeIndex) !Lowered {
         const statement = self.tree.matchStatement(node).?;
-        const value = try self.lowerNode(statement.value, null);
+        var value = try self.lowerNode(statement.value, null);
+        var evaluations = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
+        defer evaluations.deinit();
+        const borrowed = for (statement.cases) |case_node| {
+            const mode = self.tree.matchCase(case_node).?.mode;
+            if (mode == .borrow or mode == .mut_borrow) break true;
+        } else false;
+        // Borrowed payload patterns require stable storage even when the
+        // scrutinee is computed. Reserve its owner in the enclosing scope and
+        // evaluate it exactly once at the match's lexical position.
+        if (borrowed and !self.syntaxIsAddressable(statement.value))
+            value = try self.cachePipeValue(statement.value, value, &evaluations);
         var case_nodes = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
         defer case_nodes.deinit();
         for (statement.cases) |case_node| {
@@ -1147,11 +1158,15 @@ const Context = struct {
             const stored = try self.writer.addNode(.{ .pending = pending_id });
             try case_nodes.append(stored);
         }
-        return self.pending(node, .{ .resolve_match = .{
+        const matched = try self.pending(node, .{ .resolve_match = .{
             .node = self.nextNodeId(),
             .value = value.node,
             .cases = try self.writer.appendNodeRefs(case_nodes.items),
         } }, try self.builtin(.Void));
+        if (evaluations.items.len == 0) return matched;
+        try evaluations.append(matched.node);
+        const block = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(evaluations.items), .ret_val = null });
+        return self.resolved(node, try self.builtin(.Void), .{ .value_sequence = block });
     }
 
     fn lowerDefer(self: *Context, node: syn.NodeIndex) !Lowered {

@@ -2717,7 +2717,7 @@ pub const Resolver = struct {
             var errors: errors_mod.Resolver = .{ .allocator = self.resolver.allocator, .graph = self.resolver.graph, .modules = self.resolver.modules, .offsets = self.resolver.offsets, .core = self.resolver.core };
             if (!errors.errorPayloadCanPropagate(error_payload, propagated_error_payload)) return error.IncompatibleParameterizedErrorPayload;
             try errors.absorbErrorPayloadReasons(error_payload, propagated_error_payload);
-            const ok_fields = global_types.fields(self.resolver.graph, ok_payload);
+            const ok_fields = if (self.resolver.graph.types.items[@intFromEnum(ok_payload)] == .structural) global_types.fields(self.resolver.graph, ok_payload) else null;
             const result_ty = if (ok_fields) |fields|
                 if (fields.len == 1) global_types.effectiveFieldType(self.resolver.graph.fields.items[fields.start]) else ok_payload
             else

@@ -66,6 +66,27 @@ pub const Resolver = struct {
             function.inferred_error_reasons = declared;
             return changed;
         }
+        // Explicit contracts expose only their declared reasons. Nested
+        // Errable expressions can contribute broader provisional sets; compare
+        // the projected summary, not those discarded reasons, or each fixed
+        // point round republishes an identical subset forever.
+        const declared_range = global_types.variants(self.graph, declared) orelse return false;
+        var retained: usize = 0;
+        for (collected.items) |id| {
+            var present = false;
+            for (0..declared_range.len) |offset| {
+                const candidate: global_sg.GlobalVariantId = @enumFromInt(declared_range.start + @as(u32, @intCast(offset)));
+                if (containsVariant(self.graph, &.{candidate}, id)) {
+                    present = true;
+                    break;
+                }
+            }
+            if (present) {
+                collected.items[retained] = id;
+                retained += 1;
+            }
+        }
+        collected.shrinkRetainingCapacity(retained);
         if (self.sameReasonSet(function.inferred_error_reasons, collected.items)) return false;
         function.inferred_error_reasons = try self.makeReasonSubset(declared, collected.items);
         return true;
