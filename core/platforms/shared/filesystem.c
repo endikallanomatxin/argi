@@ -1,6 +1,9 @@
 /* Bounded path inputs are copied before native calls. Directory entries never
    lend pointers into OS enumeration storage to the Argi facade. */
 #ifndef _WIN32
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE
+#endif
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #endif
