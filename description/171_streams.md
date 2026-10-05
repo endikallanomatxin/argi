@@ -44,6 +44,13 @@ to its underlying writer. The transfer borrows both endpoints, allocates nothing
 and leaves their owners open. Success does not promise a flushed destination;
 call `flush` explicitly to check the final output.
 
+Register `#defer flush(writer)!` just after constructing the output writer in
+an Errable-returning function to check flushing on every exit, including early
+returns. Automatic `BufferedWriter` cleanup already flushes best-effort; the
+checked deferred operation additionally propagates failures. A failed deferred
+flush replaces a pending return error, so use explicit handling when the earlier
+error must take precedence.
+
 Only successful reads increase the pending length. On a read failure, previously
 accepted bytes remain pending; bytes written into free space by the failed read
 are ignored. Writes and flushes retain the buffered writer's existing failure

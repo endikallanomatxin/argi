@@ -10080,3 +10080,8 @@ test "feature_tests/io/46_writer_transfer" {
     try expectSuccessfulBuild("tests/feature_tests/io/46_writer_transfer");
     try runExpect("tests/feature_tests/io/46_writer_transfer", 0);
 }
+
+test "feature_tests/io/47_deferred_flush" {
+    try expectSuccessfulBuild("tests/feature_tests/io/47_deferred_flush");
+    try runExpect("tests/feature_tests/io/47_deferred_flush", 0);
+}
