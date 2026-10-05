@@ -22,12 +22,12 @@ main(.system: System) -> !Void = ..ok Void() := {
     )!
     scratch :: [4]UInt8 = (0, 0, 0, 0)
     words.count_directory(
-        .self      = $&counts
-        .path      = "tests/feature_tests/system/86_word_count_consumer/data"
-        .limit     = 64
-        .buffer    = view(.array = $&scratch)
-        .file_sys  = system.file_sys
-        .allocator = allocator
+        .self        = $&counts
+        .path        = "tests/feature_tests/system/86_word_count_consumer/data"
+        .limit       = 64
+        .buffer      = view(.array = $&scratch)
+        .file_system = system.file_system
+        .allocator   = allocator
     )!
     expect_count(.self = &counts, .word = "café", .expected = 3, .allocator = allocator)!
     expect_count(.self = &counts, .word = "tea", .expected = 2, .allocator = allocator)!
@@ -41,12 +41,12 @@ main(.system: System) -> !Void = ..ok Void() := {
     }
     if length(.self = &counts).count != 3 { abort }
     match words.count_directory(
-        .self      = $&counts
-        .path      = "tests/feature_tests/system/86_word_count_consumer/data"
-        .limit     = 1
-        .buffer    = view(.array = $&scratch)
-        .file_sys  = system.file_sys
-        .allocator = allocator
+        .self        = $&counts
+        .path        = "tests/feature_tests/system/86_word_count_consumer/data"
+        .limit       = 1
+        .buffer      = view(.array = $&scratch)
+        .file_system = system.file_system
+        .allocator   = allocator
     ) {
         ..ok _ { abort }
         ..error error { if error.reason != ..size_limit_exceeded { abort } }

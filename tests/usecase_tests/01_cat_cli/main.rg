@@ -7,7 +7,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if argc >= 2 {
         first_arg := argument_view_at(.self = system.args, .index = 1)
         if first_arg == "-h" or first_arg == "--help" {
-            print(.value = "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help.")
+            print(
+                .value = "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help."
+            )
             return
         }
     }
@@ -20,15 +22,15 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     i :: UIntNative = 1
     while i < argc {
         path := argument_at(.self = system.args, .index = i)
-        text_result ::= read_file(system.file_sys, path)
+        text_result ::= read_file(system.file_system, path)
         match text_result {
-            ..ok ~ payload {
+            ..ok ~payload {
                 text ::= ~payload
                 view ::= as_view(.self = &text)
                 write(.self = writer, .text = view)
                 i = i + 1
             }
-            ..error ~ err {
+            ..error ~err {
                 match err.reason {
                     ..path_open_failed {
                         print(.value = "cat: failed to open file")

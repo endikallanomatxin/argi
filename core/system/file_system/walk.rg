@@ -20,7 +20,7 @@ DirectoryWalker: Type = (
 )
 
 DirectoryWalker init(
-        .self          : &FileSystem = reach file_sys,
+        .self          : &FileSystem = reach file_system,
         .path          : StringView,
         .maximum_depth : UIntNative  = 64,
         .allocator     : $&Allocator = reach allocator

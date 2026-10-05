@@ -2,10 +2,12 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    path ::= from_literal(.data = "tests/feature_tests/system/23_file_system_read_write/build/temp.txt")
+    path ::= from_literal(
+        .data = "tests/feature_tests/system/23_file_system_read_write/build/temp.txt"
+    )
 
-    if exists(.self = system.file_sys, .path = path).ok {
-        removed_existing ::= remove(.self = system.file_sys, .path = path)
+    if exists(.self = system.file_system, .path = path).ok {
+        removed_existing ::= remove(.self = system.file_system, .path = path)
         if is(.value = removed_existing, .variant = ..ok) {
         } else {
             status_code = 1
@@ -19,20 +21,20 @@ main(.system: System) -> (.status_code: Int32) := {
     bytes_set(.string = $&text, .index = 2, .value = 103)
     bytes_set(.string = $&text, .index = 3, .value = 105)
 
-    write_result ::= write_file(.self = system.file_sys, .path = path, .text = &text)
+    write_result ::= write_file(.self = system.file_system, .path = path, .text = &text)
     if is(.value = write_result, .variant = ..ok) {
     } else {
         status_code = 2
         return
     }
 
-    read_back_result ::= read_file(.self = system.file_sys, .path = path)
+    read_back_result ::= read_file(.self = system.file_system, .path = path)
     if is(.value = read_back_result, .variant = ..ok) {
     } else {
         status_code = 3
         return
     }
-    read_back ::= ~read_back_result..ok
+    read_back ::= ~read_back_result ..ok
 
     if read_back.length != 4 {
         status_code = 4
@@ -59,7 +61,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    removed_written ::= remove(.self = system.file_sys, .path = path)
+    removed_written ::= remove(.self = system.file_system, .path = path)
     if is(.value = removed_written, .variant = ..ok) {
     } else {
         status_code = 9

@@ -45,12 +45,12 @@ main(
     )!
     scratch :: [4]UInt8 = (0, 0, 0, 0)
     words.count_directory(
-        .self      = $&counts
-        .path      = argument_view_at(.self = system.args, .index = 1)
-        .limit     = limit
-        .buffer    = view(.array = $&scratch)
-        .file_sys  = system.file_sys
-        .allocator = allocator
+        .self        = $&counts
+        .path        = argument_view_at(.self = system.args, .index = 1)
+        .limit       = limit
+        .buffer      = view(.array = $&scratch)
+        .file_system = system.file_system
+        .allocator   = allocator
     )!
     for entry in counts {
         write(.self = out, .value = entry.value&)!

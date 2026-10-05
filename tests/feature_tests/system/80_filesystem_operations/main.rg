@@ -1,6 +1,6 @@
 main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
-    assume file_sys := system.file_sys
+    assume file_system := system.file_system
     directory_path: StringView = "tests/feature_tests/system/80_filesystem_operations/build/sample"
     create_directory(.path = directory_path)!
     match create_directory(.path = directory_path) {
@@ -12,7 +12,7 @@ main(.system: System) -> !Void = ..ok Void() := {
     info ::= metadata(.path = directory_path)!
     if info.kind != ..directory { abort }
     file_path: StringView = "tests/feature_tests/system/80_filesystem_operations/build/sample/bytes.bin"
-    file ::= open_write(.self = file_sys, .path = file_path, .allocator = allocator)!
+    file ::= open_write(.self = file_system, .path = file_path, .allocator = allocator)!
     input: [4]UInt8 = (65, 0, 66, 67)
     write_all(.self = $&file, .buffer = view(.array = &input))!
     if position(.self = $&file)! != 4 { abort }
@@ -30,7 +30,7 @@ main(.system: System) -> !Void = ..ok Void() := {
     match next(.self = $&directory)! { ..some ~payload { abort } ..none {} }
     match next(.self = $&directory)! { ..some ~payload { abort } ..none {} }
     deinit(.self = $&directory)
-    remove(.self = file_sys, .path = file_path, .allocator = allocator)!
+    remove(.self = file_system, .path = file_path, .allocator = allocator)!
     remove_directory(.path = directory_path)!
     match metadata(.path = directory_path) {
         ..ok _ { abort } ..error error { if [

@@ -2,7 +2,7 @@
 
 `create_directory(.path, .self)` creates one directory, and
 `remove_directory(.path, .self)` removes an empty directory. Paths are bounded
-`StringView` inputs; `.self` defaults to reached `file_sys`. Empty paths and
+`StringView` inputs; `.self` defaults to reached `file_system`. Empty paths and
 embedded NUL bytes are rejected as `invalid_path`. POSIX paths use native bytes;
 Windows paths are converted from UTF-8 to wide native paths.
 
