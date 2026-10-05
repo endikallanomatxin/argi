@@ -84,6 +84,10 @@ retain their usual Python behavior.
 and copies the result back in bulk. Build it with the same native dependencies and
 install NumPy in the selected Python environment first.
 
+For a complete command-line consumer using only Python's standard library, see
+the [CSV latency report](../../tests/usecase_tests/05_python_csv_report/README.md).
+It combines Argi file I/O and validation with Python CSV processing and statistics.
+
 ## Validation
 
 Compile and run the native ownership/buffer probe with your Python flags:

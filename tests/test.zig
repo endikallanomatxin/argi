@@ -9090,6 +9090,83 @@ fn checkPythonFixture(path: []const u8) !void {
 test "feature_tests/python/01_json" {
     try checkPythonFixture("tests/feature_tests/python/01_json");
 }
+
+test "usecase_tests/05_python_csv_report" {
+    const allocator = std.testing.allocator;
+    var environment = try std.testing.environ.createMap(allocator);
+    defer environment.deinit();
+    const runtime = environment.get("ARGI_PYTHON_RUNTIME_OBJECT") orelse return error.SkipZigTest;
+    const library = environment.get("ARGI_PYTHON_LIBRARY") orelse return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, "tests/usecase_tests/05_python_csv_report" });
+    defer allocator.free(fixture);
+    const sample = try std.fs.path.join(allocator, &.{ fixture, "requests.csv" });
+    defer allocator.free(sample);
+    const app = if (@import("builtin").os.tag == .windows) "report.exe" else "report";
+    const executable = try std.fs.path.join(allocator, &.{ root, app });
+    defer allocator.free(executable);
+
+    // Rebuild from outside the checkout to exercise installed module discovery
+    // and frontend reuse without a Python import from the example's directory.
+    for (0..2) |_| {
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--output", app, "--link-file", runtime, "--link-file", library, "--emit-llvm", "report.ll" }, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const result = try runChildInCwd(&.{ executable, sample }, root);
+        defer allocator.free(result.stdout);
+        defer allocator.free(result.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+        try expectEqualStrings("requests\t4\nmean_ms\t40.00\nmedian_ms\t25.00\n", result.stdout);
+        try expectEqualStrings("", result.stderr);
+    }
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "custom.csv", .data = "endpoint,latency_ms\r\n\"/caf\xc3\xa9\",1.5\r\n/search,2.5\r\n" });
+    const custom = try runChildInCwd(&.{ executable, "custom.csv", "latency_ms" }, root);
+    defer allocator.free(custom.stdout);
+    defer allocator.free(custom.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, custom.term);
+    try expectEqualStrings("requests\t2\nmean_ms\t2.00\nmedian_ms\t2.00\n", custom.stdout);
+    try expectEqualStrings("", custom.stderr);
+
+    for ([_]struct { data: []const u8, diagnostic: []const u8 }{
+        .{ .data = "duration_ms\n", .diagnostic = "StatisticsError" },
+        .{ .data = "other\n10\n", .diagnostic = "KeyError" },
+        .{ .data = "duration_ms\n10\ninvalid\n", .diagnostic = "invalid_input" },
+        .{ .data = "endpoint,duration_ms\n/health\n", .diagnostic = "TypeError" },
+        .{ .data = "duration_ms\n-1\n", .diagnostic = "invalid_duration" },
+        .{ .data = "duration_ms\nnan\n", .diagnostic = "invalid_input" },
+        .{ .data = "duration_ms\ninf\n", .diagnostic = "invalid_input" },
+        .{ .data = "duration_ms\n\xff\n", .diagnostic = "UnicodeDecodeError" },
+    }) |case| {
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "invalid.csv", .data = case.data });
+        const result = try runChildInCwd(&.{ executable, "invalid.csv" }, root);
+        defer allocator.free(result.stdout);
+        defer allocator.free(result.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+        try expectEqualStrings("", result.stdout);
+        try expect(std.mem.indexOf(u8, result.stderr, case.diagnostic) != null);
+    }
+    const missing = try runChildInCwd(&.{ executable, "missing.csv" }, root);
+    defer allocator.free(missing.stdout);
+    defer allocator.free(missing.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, missing.term);
+    try expectEqualStrings("", missing.stdout);
+    try expect(std.mem.indexOf(u8, missing.stderr, "missing.csv") != null);
+    const usage = try runChildInCwd(&.{executable}, root);
+    defer allocator.free(usage.stdout);
+    defer allocator.free(usage.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, usage.term);
+    try expect(std.mem.indexOf(u8, usage.stdout, "Usage: csv-report") != null);
+}
 test "feature_tests/python/02_values_errors" {
     try checkPythonFixture("tests/feature_tests/python/02_values_errors");
 }
