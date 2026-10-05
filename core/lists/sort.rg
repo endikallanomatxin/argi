@@ -13,14 +13,14 @@ _sift_down#(
     while root < count / 2 {
         child ::= root * 2 + 1
         if child + 1 < count {
-            left ::= unwrap_or_abort(.value = get_ro_ref(.self = self, .index = child))&
-            right ::= unwrap_or_abort(.value = get_ro_ref(.self = self, .index = child + 1))&
-            if less(.self = order, .left = left, .right = right).ok { child = child + 1 }
+            left ::= unwrap_or_abort(.value = get_ro_ref(self, .index = child))&
+            right ::= unwrap_or_abort(.value = get_ro_ref(self, .index = child + 1))&
+            if less(order, .left = left, .right = right).ok { child = child + 1 }
         }
-        parent ::= unwrap_or_abort(.value = get_ro_ref(.self = self, .index = root))&
-        candidate ::= unwrap_or_abort(.value = get_ro_ref(.self = self, .index = child))&
-        if less(.self = order, .left = parent, .right = candidate).ok == false { return }
-        _swap_indexed_values#(.t: t)(.self = self, .left = root, .right = child)
+        parent ::= unwrap_or_abort(.value = get_ro_ref(self, .index = root))&
+        candidate ::= unwrap_or_abort(.value = get_ro_ref(self, .index = child))&
+        if less(order, .left = parent, .right = candidate).ok == false { return }
+        _swap_indexed_values#(.t: t)(self, .left = root, .right = child)
         root = child
     }
 }
@@ -40,14 +40,14 @@ sort#(
 
     while parent > 0 {
         parent = parent - 1
-        _sift_down#(.t: t)(.self = self, .order = order, .start = parent, .count = count)
+        _sift_down#(.t: t)(self, .order = order, .start = parent, .count = count)
     }
 
     end ::= count
 
     while end > 1 {
         end = end - 1
-        _swap_indexed_values#(.t: t)(.self = self, .left = 0, .right = end)
-        _sift_down#(.t: t)(.self = self, .order = order, .start = 0, .count = end)
+        _swap_indexed_values#(.t: t)(self, .left = 0, .right = end)
+        _sift_down#(.t: t)(self, .order = order, .start = 0, .count = end)
     }
 }

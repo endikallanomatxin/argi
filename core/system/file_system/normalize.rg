@@ -49,14 +49,14 @@ normalize_path(.view: StringView, .allocator: $&Allocator = reach allocator) -> 
         }
         if start == index { break }
         part ::= unwrap_or_abort(
-            .value = slice(.self = view, .start = start, .count = index - start)
+            .value = slice(view, .start = start, .count = index - start)
         )
         if part == "." { continue }
         if part == ".." {
             count ::= length(&parts).count
             if count > 0 {
-                last ::= unwrap_or_abort(.value = get(.self = &parts, .index = count - 1))
-                if last != ".." { removed ::= pop(.self = $&parts) continue }
+                last ::= unwrap_or_abort(.value = get(&parts, .index = count - 1))
+                if last != ".." { removed ::= pop($&parts) continue }
             }
             if root > 0 { continue }
         }
@@ -69,7 +69,7 @@ normalize_path(.view: StringView, .allocator: $&Allocator = reach allocator) -> 
     while index < prefix {
         byte ::= bytes_get(.view = &view, .index = index).byte
         if path_is_separator(.byte = byte).ok { byte = 47 }
-        push_byte(.self = $&text, .byte = byte, .allocator = allocator)!
+        push_byte($&text, .byte = byte, .allocator = allocator)!
         index = index + 1
     }
 
@@ -79,16 +79,16 @@ normalize_path(.view: StringView, .allocator: $&Allocator = reach allocator) -> 
         if index > 0 or root > 0 {
             if text.length > 0 {
                 if bytes_get(.view = &as_view(&text), .index = text.length - 1).byte != 47 {
-                    push_byte(.self = $&text, .byte = 47, .allocator = allocator)!
+                    push_byte($&text, .byte = 47, .allocator = allocator)!
                 }
             }
         }
-        part ::= unwrap_or_abort(.value = get(.self = &parts, .index = index))
-        push_view(.self = $&text, .view = part, .allocator = allocator)!
+        part ::= unwrap_or_abort(.value = get(&parts, .index = index))
+        push_view($&text, .view = part, .allocator = allocator)!
         index = index + 1
     }
 
-    if text.length == 0 { push_byte(.self = $&text, .byte = 46, .allocator = allocator)! }
+    if text.length == 0 { push_byte($&text, .byte = 46, .allocator = allocator)! }
 
     result = ..ok Path(.text = ~text)
 }

@@ -118,7 +118,7 @@ string_hash_map_prepare_buckets(
     i :: UIntNative = 0
 
     while i < capacity {
-        push_assume_capacity#(.t: UIntNative)(.self = buckets, .value = 0)
+        push_assume_capacity#(.t: UIntNative)(buckets, .value = 0)
         i = i + 1
     }
 }
@@ -176,7 +176,7 @@ string_hash_map_rehash#(
     ) -> () := {
     assume allocator
 
-    old_bucket_count ::= length#(.t: UIntNative)(.self = &self&.buckets).count
+    old_bucket_count ::= length#(.t: UIntNative)(&self&.buckets).count
 
     if old_bucket_count == bucket_count {
         return
@@ -191,13 +191,13 @@ string_hash_map_rehash#(
 
     i :: UIntNative = 0
 
-    while i < length#(.t: StringHashMapEntry#(.value: value))(.self = &self&.entries).count {
+    while i < length#(.t: StringHashMapEntry#(.value: value))(&self&.entries).count {
         entry ::= _trusted_dynamic_array_get#(.t: StringHashMapEntry#(.value: value))(
             .array = &self&.entries
             .index = i
         )
         bucket_index ::= string_hash_map_bucket_index(
-            .bucket_count = length#(.t: UIntNative)(.self = &self&.buckets).count
+            .bucket_count = length#(.t: UIntNative)(&self&.buckets).count
             .key          = &entry.key
         ).index
         next ::= _trusted_dynamic_array_get#(.t: UIntNative)(
@@ -233,13 +233,13 @@ string_hash_map_find_entry_index#(
     ) -> (
         .index : ?UIntNative
     ) := {
-    if length#(.t: UIntNative)(.self = &self&.buckets).count == 0 {
+    if length#(.t: UIntNative)(&self&.buckets).count == 0 {
         index = ..none
         return
     }
 
     bucket_index ::= string_hash_map_bucket_index(
-        .bucket_count = length#(.t: UIntNative)(.self = &self&.buckets).count
+        .bucket_count = length#(.t: UIntNative)(&self&.buckets).count
         .key          = key
     ).index
     current ::= _trusted_dynamic_array_get#(.t: UIntNative)(
@@ -283,7 +283,7 @@ put#(
     ) -> () := {
     assume allocator
 
-    found ::= string_hash_map_find_entry_index#(.value: value)(.self = self, .key = key).index
+    found ::= string_hash_map_find_entry_index#(.value: value)(self, .key = key).index
 
     match found {
         ..some payload {
@@ -307,12 +307,12 @@ put#(
     }
 
     required_entries ::= [
-        length#(.t: StringHashMapEntry#(.value: value))(.self = &self&.entries).count
+        length#(.t: StringHashMapEntry#(.value: value))(&self&.entries).count
         + 1
     ]
 
-    if required_entries * 4 >= length#(.t: UIntNative)(.self = &self&.buckets).count * 3 {
-        new_bucket_count ::= length#(.t: UIntNative)(.self = &self&.buckets).count * 2
+    if required_entries * 4 >= length#(.t: UIntNative)(&self&.buckets).count * 3 {
+        new_bucket_count ::= length#(.t: UIntNative)(&self&.buckets).count * 2
         if new_bucket_count == 0 {
             new_bucket_count = 1
         }
@@ -323,9 +323,9 @@ put#(
         )
     }
 
-    new_index ::= length#(.t: StringHashMapEntry#(.value: value))(.self = &self&.entries).count
+    new_index ::= length#(.t: StringHashMapEntry#(.value: value))(&self&.entries).count
     bucket_index ::= string_hash_map_bucket_index(
-        .bucket_count = length#(.t: UIntNative)(.self = &self&.buckets).count
+        .bucket_count = length#(.t: UIntNative)(&self&.buckets).count
         .key          = key
     ).index
     head ::= _trusted_dynamic_array_get#(.t: UIntNative)(
@@ -387,7 +387,7 @@ get#(
     ) -> (
         .value : ?value
     ) := {
-    found ::= string_hash_map_find_entry_index#(.value: value)(.self = self, .key = key).index
+    found ::= string_hash_map_find_entry_index#(.value: value)(self, .key = key).index
 
     match found {
         ..some payload {
@@ -412,7 +412,7 @@ get#(
         .value : ?value
     ) := {
     key_view ::= string_hash_map_key_view(.key = key)
-    value = get#(.value: value)(.self = self, .key = &key_view)
+    value = get#(.value: value)(self, .key = &key_view)
 }
 
 get#(
@@ -424,7 +424,7 @@ get#(
         .value : ?value
     ) := {
     key_view ::= string_hash_map_key_view(.key = key)
-    value = get#(.value: value)(.self = self, .key = &key_view)
+    value = get#(.value: value)(self, .key = &key_view)
 }
 
 has#(
@@ -435,7 +435,7 @@ has#(
     ) -> (
         .ok : Bool
     ) := {
-    found ::= string_hash_map_find_entry_index#(.value: value)(.self = self, .key = key).index
+    found ::= string_hash_map_find_entry_index#(.value: value)(self, .key = key).index
     ok = found ?
 }
 
@@ -448,7 +448,7 @@ has#(
         .ok : Bool
     ) := {
     key_view ::= string_hash_map_key_view(.key = key)
-    ok = has#(.value: value)(.self = self, .key = &key_view)
+    ok = has#(.value: value)(self, .key = &key_view)
 }
 
 has#(
@@ -460,7 +460,7 @@ has#(
         .ok : Bool
     ) := {
     key_view ::= string_hash_map_key_view(.key = key)
-    ok = has#(.value: value)(.self = self, .key = &key_view)
+    ok = has#(.value: value)(self, .key = &key_view)
 }
 
 string_hash_map_retarget_entry_index#(
@@ -473,7 +473,7 @@ string_hash_map_retarget_entry_index#(
     ) -> () := {
     entry_key: StringView = entry&.key
     bucket_index ::= string_hash_map_bucket_index(
-        .bucket_count = length#(.t: UIntNative)(.self = &self&.buckets).count
+        .bucket_count = length#(.t: UIntNative)(&self&.buckets).count
         .key          = &entry_key
     ).index
     target_old ::= old_index + 1
@@ -522,13 +522,13 @@ delete#(
     ) -> (
         .value : ?value
     ) := {
-    if length#(.t: UIntNative)(.self = &self&.buckets).count == 0 {
+    if length#(.t: UIntNative)(&self&.buckets).count == 0 {
         value = ..none
         return
     }
 
     bucket_index ::= string_hash_map_bucket_index(
-        .bucket_count = length#(.t: UIntNative)(.self = &self&.buckets).count
+        .bucket_count = length#(.t: UIntNative)(&self&.buckets).count
         .key          = key
     ).index
     current ::= _trusted_dynamic_array_get#(.t: UIntNative)(
@@ -568,10 +568,10 @@ delete#(
 
             deleted_value ::= entry.value
             last_index ::= [
-                length#(.t: StringHashMapEntry#(.value: value))(.self = &self&.entries).count
+                length#(.t: StringHashMapEntry#(.value: value))(&self&.entries).count
                 - 1
             ]
-            popped ::= pop#(.t: StringHashMapEntry#(.value: value))(.self = $&self&.entries)
+            popped ::= pop#(.t: StringHashMapEntry#(.value: value))($&self&.entries)
             match popped {
                 ..ok ~payload {
                     last_entry ::= ~payload
@@ -585,7 +585,7 @@ delete#(
                             .t : StringHashMapEntry#(.value: value)
                         )(.array = &self&.entries, .index = current_index).reference
                         string_hash_map_retarget_entry_index#(.value: value)(
-                            .self      = self
+                            self
                             .entry     = moved_entry
                             .old_index = last_index
                             .new_index = current_index
@@ -618,7 +618,7 @@ delete#(
         .value : ?value
     ) := {
     key_view ::= string_hash_map_key_view(.key = key)
-    value = delete#(.value: value)(.self = self, .key = &key_view)
+    value = delete#(.value: value)(self, .key = &key_view)
 }
 
 delete#(
@@ -630,5 +630,5 @@ delete#(
         .value : ?value
     ) := {
     key_view ::= string_hash_map_key_view(.key = key)
-    value = delete#(.value: value)(.self = self, .key = &key_view)
+    value = delete#(.value: value)(self, .key = &key_view)
 }

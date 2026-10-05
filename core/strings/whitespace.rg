@@ -45,6 +45,6 @@ next(.self: $&StringWhitespaceIterator) -> (.value: StringView) := {
         end = end + 1
     }
 
-    value = _string_view_subrange(.self = self&._text, .start = start, .count = end - start).view
+    value = _string_view_subrange(self&._text, .start = start, .count = end - start).view
     self&._start = end
 }

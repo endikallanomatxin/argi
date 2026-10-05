@@ -269,7 +269,7 @@ close(.self: $&TcpConnection) -> (.result: Errable#(Void, (..socket_close_failed
     result = ..ok Void()
 }
 
-TcpConnection deinit(.self: $&TcpConnection) -> () := { _ = close(.self = self) }
+TcpConnection deinit(.self: $&TcpConnection) -> () := { _ = close(self) }
 
 is_open(.self: &TcpConnection) -> (.value: Bool) := { value = self&._handle != 0 }
 
@@ -341,7 +341,7 @@ close(.self: $&TcpListener) -> (.result: Errable#(Void, (..socket_close_failed))
     result = ..ok Void()
 }
 
-TcpListener deinit(.self: $&TcpListener) -> () := { _ = close(.self = self) }
+TcpListener deinit(.self: $&TcpListener) -> () := { _ = close(self) }
 
 is_open(.self: &TcpListener) -> (.value: Bool) := { value = self&._handle != 0 }
 
@@ -413,7 +413,7 @@ close(.self: $&UdpSocket) -> (.result: Errable#(Void, (..socket_close_failed))) 
     result = ..ok Void()
 }
 
-UdpSocket deinit(.self: $&UdpSocket) -> () := { _ = close(.self = self) }
+UdpSocket deinit(.self: $&UdpSocket) -> () := { _ = close(self) }
 
 is_open(.self: &UdpSocket) -> (.value: Bool) := { value = self&._handle != 0 }
 
@@ -497,7 +497,7 @@ read(
     size ::= length(&buffer).count
     address :: UIntNative = 0
 
-    if size != 0 { address = UIntNative(.value = data(.self = &buffer).pointer) }
+    if size != 0 { address = UIntNative(.value = data(&buffer).pointer) }
     received :: UIntNative = 0
     peer :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
 
@@ -528,7 +528,7 @@ write(
     size ::= length(&buffer).count
     address :: UIntNative = 0
 
-    if size != 0 { address = UIntNative(.value = data(.self = &buffer).pointer) }
+    if size != 0 { address = UIntNative(.value = data(&buffer).pointer) }
     sent :: UIntNative = 0
 
     if [
@@ -587,7 +587,7 @@ send_to(
     size ::= length(&buffer).count
     address :: UIntNative = 0
 
-    if size != 0 { address = UIntNative(.value = data(.self = &buffer).pointer) }
+    if size != 0 { address = UIntNative(.value = data(&buffer).pointer) }
     sent :: UIntNative = 0
     status ::= _network_send(
         .handle = self&._handle
@@ -620,7 +620,7 @@ receive_from(
     size ::= length(&buffer).count
     address :: UIntNative = 0
 
-    if size != 0 { address = UIntNative(.value = data(.self = &buffer).pointer) }
+    if size != 0 { address = UIntNative(.value = data(&buffer).pointer) }
     received :: UIntNative = 0
     peer :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
     status ::= _network_receive(
@@ -658,7 +658,7 @@ write_all(
     while written < total {
         remaining ::= unwrap_or_abort(
             .value = slice(
-                .self  = &buffer
+                &buffer
                 .start = written
                 .count = [
                     total
@@ -666,7 +666,7 @@ write_all(
                 ]
             )
         )
-        count ::= write(.self = self, .buffer = remaining)!
+        count ::= write(self, .buffer = remaining)!
         if count == 0 {
             result = ..error(.reason = ..socket_write_failed)
             return
@@ -687,7 +687,7 @@ read_byte(
     ) := {
     buffer :: [1]UInt8 = (0)
 
-    match read(.self = self, .buffer = view($&buffer)) {
+    match read(self, .buffer = view($&buffer)) {
         ..error _ { result = ..error(.reason = ..stream_read_failed) }
         ..ok count {
             if count == 0 { result = ..ok ..end } else { result = ..ok ..ok buffer[0] }
@@ -703,7 +703,7 @@ write_byte(
     ) := {
     buffer: [1]UInt8 = (byte)
 
-    match write_all(.self = self, .buffer = view(&buffer)) {
+    match write_all(self, .buffer = view(&buffer)) {
         ..error _ { result = ..error(.reason = ..stream_write_failed) }
         ..ok _ { result = ..ok Void() }
     }
@@ -728,7 +728,7 @@ read_block(
     ) -> (
         .result : Errable#(UIntNative, (..stream_read_failed))
     ) := {
-    match read(.self = self, .buffer = buffer) {
+    match read(self, .buffer = buffer) {
         ..ok count { result = ..ok count }
         ..error _ { result = ..error(.reason = ..stream_read_failed) }
     }
@@ -740,7 +740,7 @@ write_block(
     ) -> (
         .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) := {
-    match write(.self = self, .buffer = buffer) {
+    match write(self, .buffer = buffer) {
         ..ok count { result = ..ok count }
         ..error _ { result = ..error(.reason = ..stream_write_failed) }
     }

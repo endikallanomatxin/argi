@@ -49,11 +49,11 @@ reserve#(
         return
     }
 
-    new_allocation ::= allocate#(.t: t)(.self = allocator, .count = capacity)!
+    new_allocation ::= allocate#(.t: t)(allocator, .count = capacity)!
     index :: UIntNative = 0
 
     while index < self&._ring._length {
-        physical ::= _ring_buffer_physical_index(.self = &self&._ring, .index = index).physical
+        physical ::= _ring_buffer_physical_index(&self&._ring, .index = index).physical
         old_slot ::= _trusted_uninit_slot#(.t: t)(
             .allocation = &self&._ring._allocation
             .index      = physical
@@ -69,7 +69,7 @@ reserve#(
     }
 
     deinit(.self = $&self&._ring._allocation)
-    _invalidate_ring_buffer_shape(.self = $&self&._ring)
+    _invalidate_ring_buffer_shape($&self&._ring)
     self&._ring = (
         ._allocation = ~new_allocation
         ._capacity   = capacity
@@ -103,7 +103,7 @@ _deque_ensure_room#(
 
     grown ::= self&._ring._capacity * 2
 
-    result = reserve(.self = self, .capacity = grown, .allocator = allocator)
+    result = reserve(self, .capacity = grown, .allocator = allocator)
 }
 
 push_back#(
@@ -118,7 +118,7 @@ push_back#(
     assume allocator
     owned ::= ~value
 
-    match _deque_ensure_room(.self = self, .allocator = allocator) {
+    match _deque_ensure_room(self, .allocator = allocator) {
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
             return
@@ -143,7 +143,7 @@ push_front#(
     assume allocator
     owned ::= ~value
 
-    match _deque_ensure_room(.self = self, .allocator = allocator) {
+    match _deque_ensure_room(self, .allocator = allocator) {
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
             return
@@ -161,7 +161,7 @@ push_front#(
         .slot       = slot
         .value      = ~owned
     )
-    _invalidate_ring_buffer_shape(.self = $&self&._ring)
+    _invalidate_ring_buffer_shape($&self&._ring)
     self&._ring._head = head
     self&._ring._length = self&._ring._length + 1
 
@@ -169,7 +169,7 @@ push_front#(
 }
 
 pop_front#(.t: Type)(.self: $&Deque#(.t: t)) -> (.result: Errable#(t, (..empty))) := {
-    result = pop(.self = $&self&._ring)
+    result = pop($&self&._ring)
 }
 
 pop_back#(.t: Type)(.self: $&Deque#(.t: t)) -> (.result: Errable#(t, (..empty))) := {
@@ -179,13 +179,13 @@ pop_back#(.t: Type)(.self: $&Deque#(.t: t)) -> (.result: Errable#(t, (..empty)))
     }
 
     index ::= self&._ring._length - 1
-    physical ::= _ring_buffer_physical_index(.self = &self&._ring, .index = index).physical
+    physical ::= _ring_buffer_physical_index(&self&._ring, .index = index).physical
     slot ::= _trusted_uninit_slot#(.t: t)(
         .allocation = &self&._ring._allocation
         .index      = physical
     )
     moved ::= _trusted_uninit_take#(.t: t)(.allocation = $&self&._ring._allocation, .slot = slot)
-    _invalidate_ring_buffer_shape(.self = $&self&._ring)
+    _invalidate_ring_buffer_shape($&self&._ring)
     self&._ring._length = index
 
     result = ..ok ~moved
@@ -199,7 +199,7 @@ get_ro_ref#(
     ) -> (
         .result : Errable#(&t, (..out_of_bounds))
     ) := {
-    result = get_ro_ref(.self = &self&._ring, .index = index)
+    result = get_ro_ref(&self&._ring, .index = index)
 }
 
 get_rw_ref#(
@@ -215,7 +215,7 @@ get_rw_ref#(
         return
     }
 
-    pointer ::= _ring_buffer_occupied_pointer(.self = &self&._ring, .index = index).pointer
+    pointer ::= _ring_buffer_occupied_pointer(&self&._ring, .index = index).pointer
 
     result = ..ok depend_on#(.t: $&t)(
         .value = pointer
@@ -231,7 +231,7 @@ get#(
     ) -> (
         .result : Errable#(t, (..out_of_bounds))
     ) := {
-    pointer ::= get_ro_ref(.self = self, .index = index)!
+    pointer ::= get_ro_ref(self, .index = index)!
 
     result = ..ok pointer&
 }

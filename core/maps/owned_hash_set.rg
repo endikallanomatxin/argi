@@ -34,7 +34,7 @@ insert#(
     ) -> (
         .result : Errable#(Bool, (..out_of_memory))
     ) := {
-    if contains(.self = &self&._map, .key = &key).ok {
+    if contains(&self&._map, .key = &key).ok {
         _owned_hash_discard(.value = ~key, .allocator = allocator)
         result = ..ok false
         return
@@ -53,7 +53,7 @@ contains#(
         .key  : &key
     ) -> (
         .ok : Bool
-    ) := { ok = contains(.self = &self&._map, .key = key).ok }
+    ) := { ok = contains(&self&._map, .key = key).ok }
 
 remove#(
         .key    : Type,
@@ -75,7 +75,7 @@ extract#(
     ) -> (
         .result : ?key
     ) := {
-    match extract(.self = $&self&._map, .key = key).result {
+    match extract($&self&._map, .key = key).result {
         ..none { result = ..none }
         ..some ~payload {
             entry ::= ~payload.value
@@ -100,7 +100,7 @@ capacity#(
         .self : &OwnedHashSet#(.key: key, .policy: policy)
     ) -> (
         .count : UIntNative
-    ) := { count = capacity(.self = &self&._map).count }
+    ) := { count = capacity(&self&._map).count }
 
 reserve#(
         .key    : Type,
@@ -112,7 +112,7 @@ reserve#(
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
-    result = reserve(.self = $&self&._map, .capacity = capacity, .allocator = allocator)
+    result = reserve($&self&._map, .capacity = capacity, .allocator = allocator)
 }
 
 OwnedHashSet deinit#(

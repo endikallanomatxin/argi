@@ -21,7 +21,7 @@ expired(.self: Deadline, .now: MonotonicInstant) -> (.value: Bool) := {
 
 -- Remaining time saturates at zero. Deadlines never depend on wall-clock time.
 remaining(.self: Deadline, .now: MonotonicInstant) -> (.value: Duration) := {
-    if expired(.self = self, .now = now).value {
+    if expired(self, .now = now).value {
         value = Duration(.nanoseconds = 0)
         return
     }

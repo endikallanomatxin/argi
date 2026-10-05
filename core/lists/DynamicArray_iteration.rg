@@ -68,7 +68,7 @@ has_next#(
     ) -> (
         .ok : Bool
     ) := {
-    ok = self&._index < length#(.t: t)(.self = &self&._view).count
+    ok = self&._index < length#(.t: t)(&self&._view).count
 }
 
 next#(
@@ -83,7 +83,7 @@ next#(
 
     if current_index >= self&._view._length { abort }
     ptr ::= trusted_reference_offset#(.t: t)(
-        .base     = data#(.t: t)(.self = &self&._view).pointer
+        .base     = data#(.t: t)(&self&._view).pointer
         .elements = current_index
     ).reference
     value = ptr&
@@ -97,7 +97,7 @@ has_next#(
     ) -> (
         .ok : Bool
     ) := {
-    ok = self&._index < length#(.t: t)(.self = &self&._view).count
+    ok = self&._index < length#(.t: t)(&self&._view).count
 }
 
 next#(
@@ -111,7 +111,7 @@ next#(
 
     if current_index >= self&._view._length { abort }
     value = trusted_reference_offset#(.t: t)(
-        .base     = data#(.t: t)(.self = &self&._view).pointer
+        .base     = data#(.t: t)(&self&._view).pointer
         .elements = current_index
     ).reference
     self&._index = current_index + 1
@@ -124,7 +124,7 @@ has_next#(
     ) -> (
         .ok : Bool
     ) := {
-    ok = self&._index < length#(.t: t)(.self = &self&._view).count
+    ok = self&._index < length#(.t: t)(&self&._view).count
 }
 
 next#(
@@ -138,7 +138,7 @@ next#(
 
     if current_index >= self&._view._length { abort }
     value = trusted_mutable_reference_offset#(.t: t)(
-        .base     = data#(.t: t)(.self = &self&._view).pointer
+        .base     = data#(.t: t)(&self&._view).pointer
         .elements = current_index
     ).reference
     self&._index = current_index + 1

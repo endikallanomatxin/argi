@@ -33,8 +33,8 @@ read_block#(
         return
     }
 
-    bounded ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = count))
-    received ::= read_block(.self = self&._source, .buffer = bounded)!
+    bounded ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = count))
+    received ::= read_block(self&._source, .buffer = bounded)!
 
     if received > count { abort }
     self&._remaining = self&._remaining - received
@@ -53,7 +53,7 @@ read_byte#(
         .result : Errable#(ReadByte, (..stream_read_failed))
     ) := {
     byte :: [1]UInt8 = (0)
-    received ::= read_block(.self = self, .buffer = view($&byte))!
+    received ::= read_block(self, .buffer = view($&byte))!
 
     if received == 0 { result = ..ok ..end } else { result = ..ok ..ok byte[0] }
 }
@@ -88,7 +88,7 @@ read_byte#(
         return
     }
 
-    byte ::= read_byte(.self = self&._source)!
+    byte ::= read_byte(self&._source)!
 
     match byte { ..end {} ..ok _ { self&._remaining = self&._remaining - 1 } }
 

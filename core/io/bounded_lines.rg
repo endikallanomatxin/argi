@@ -10,7 +10,7 @@ read_line(
     ) -> (
         .result : Errable#(?ByteLine, (..stream_read_failed, ..line_too_long))
     ) := {
-    read_result ::= read_until(.self = self, .buffer = buffer, .delimiter = 10)!
+    read_result ::= read_until(self, .buffer = buffer, .delimiter = 10)!
     count ::= read_result.count
     terminated ::= false
 
@@ -21,7 +21,7 @@ read_line(
                 return
             } }
         ..limit {
-            match read_byte(.self = self)! {
+            match read_byte(self)! {
                 ..end { if count == 0 {
                         result = ..ok ..none
                         return
@@ -38,13 +38,13 @@ read_line(
     }
 
     if terminated and count > 0 {
-        last ::= unwrap_or_abort(.value = get_ro_ref(.self = &buffer, .index = count - 1))
+        last ::= unwrap_or_abort(.value = get_ro_ref(&buffer, .index = count - 1))
         if last&== 13 { count = count - 1 }
     }
 
-    prefix ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = count))
+    prefix ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = count))
 
     result = ..ok ..some(
-        .value = (.bytes = as_readonly(.self = &prefix).view, .terminated = terminated)
+        .value = (.bytes = as_readonly(&prefix).view, .terminated = terminated)
     )
 }

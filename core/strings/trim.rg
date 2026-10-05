@@ -31,7 +31,7 @@ trim_start(.self: StringView) -> (.view: StringView) := {
         start = start + 1
     }
 
-    view = _string_view_subrange(.self = self, .start = start, .count = self.length - start).view
+    view = _string_view_subrange(self, .start = start, .count = self.length - start).view
 }
 
 trim_end(.self: StringView) -> (.view: StringView) := {
@@ -45,7 +45,7 @@ trim_end(.self: StringView) -> (.view: StringView) := {
         end = end - 1
     }
 
-    view = _string_view_subrange(.self = self, .start = 0, .count = end).view
+    view = _string_view_subrange(self, .start = 0, .count = end).view
 }
 
 trim(.self: StringView) -> (.view: StringView) := {
@@ -72,5 +72,5 @@ slice(
         return
     }
 
-    result = ..ok _string_view_subrange(.self = self, .start = start, .count = count).view
+    result = ..ok _string_view_subrange(self, .start = start, .count = count).view
 }

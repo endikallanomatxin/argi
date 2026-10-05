@@ -25,8 +25,8 @@ exists(
         .ok : Bool
     ) := {
     assume ffi := self&._ffi
-    c_path ::= as_c_string(.self = path)
-    ok = exists(.self = self, .path = c_path).ok
+    c_path ::= as_c_string(path)
+    ok = exists(self, .path = c_path).ok
 }
 
 exists(
@@ -39,10 +39,10 @@ exists(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(.self = path, .allocator = allocator)
+    converted ::= as_c_string(path, .allocator = allocator)
 
     match converted {
-        ..ok ~payload { result = ..ok exists(.self = self, .path = payload.text).ok }
+        ..ok ~payload { result = ..ok exists(self, .path = payload.text).ok }
         ..error _ { result = ..error(.reason = ..out_of_memory) }
     }
 }
@@ -54,7 +54,7 @@ exists(
         .ok : Bool
     ) := {
     assume ffi := self&._ffi
-    ok = exists(.self = self, .path = &path&.text).ok
+    ok = exists(self, .path = &path&.text).ok
 }
 
 remove(
@@ -80,7 +80,7 @@ remove(
         .result : Errable#(Bool, (..path_remove_failed))
     ) := {
     assume ffi := self&._ffi
-    c_path ::= as_c_string(.self = path)
+    c_path ::= as_c_string(path)
 
     result = remove(.self = self, .path = c_path)
 }
@@ -95,7 +95,7 @@ remove(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(.self = path, .allocator = allocator)
+    converted ::= as_c_string(path, .allocator = allocator)
 
     match converted {
         ..ok ~payload {
@@ -146,8 +146,8 @@ rename(
         .result : Errable#(Bool, (..path_rename_failed))
     ) := {
     assume ffi := self&._ffi
-    c_from ::= as_c_string(.self = from)
-    c_to ::= as_c_string(.self = to)
+    c_from ::= as_c_string(from)
+    c_to ::= as_c_string(to)
 
     result = rename(.self = self, .from = c_from, .to = c_to)
 }
@@ -163,12 +163,12 @@ rename(
     assume ffi := self&._ffi
     assume allocator
 
-    converted_from ::= as_c_string(.self = from, .allocator = allocator)
+    converted_from ::= as_c_string(from, .allocator = allocator)
 
     match converted_from {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~from_payload {
-            converted_to ::= as_c_string(.self = to, .allocator = allocator)
+            converted_to ::= as_c_string(to, .allocator = allocator)
             match converted_to {
                 ..ok ~to_payload {
                     result = rename(.self = self, .from = from_payload.text, .to = to_payload.text)
@@ -218,7 +218,7 @@ open_read(
         .result : Errable#(File, (..path_open_failed))
     ) := {
     assume ffi := self&._ffi
-    c_path ::= as_c_string(.self = path)
+    c_path ::= as_c_string(path)
 
     result = open_read(.self = self, .path = c_path)
 }
@@ -233,7 +233,7 @@ open_read(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(.self = path, .allocator = allocator)
+    converted ::= as_c_string(path, .allocator = allocator)
 
     match converted {
         ..ok ~payload {
@@ -284,7 +284,7 @@ open_write(
         .result : Errable#(File, (..path_open_failed))
     ) := {
     assume ffi := self&._ffi
-    c_path ::= as_c_string(.self = path)
+    c_path ::= as_c_string(path)
 
     result = open_write(.self = self, .path = c_path)
 }
@@ -299,7 +299,7 @@ open_write(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(.self = path, .allocator = allocator)
+    converted ::= as_c_string(path, .allocator = allocator)
 
     match converted {
         ..ok ~payload {
@@ -350,7 +350,7 @@ open_append(
         .result : Errable#(File, (..path_open_failed))
     ) := {
     assume ffi := self&._ffi
-    c_path ::= as_c_string(.self = path)
+    c_path ::= as_c_string(path)
 
     result = open_append(.self = self, .path = c_path)
 }
@@ -365,7 +365,7 @@ open_append(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(.self = path, .allocator = allocator)
+    converted ::= as_c_string(path, .allocator = allocator)
 
     match converted {
         ..ok ~payload {
@@ -426,17 +426,17 @@ read_file(
     match create_result {
         ..ok ~payload { text = ~payload }
         ..error _ {
-            _ ::= close(.self = $&file)
+            _ ::= close($&file)
             result = ..error(.reason = ..out_of_memory)
             return
         }
     }
 
     while 1 == 1 {
-        next ::= read_byte(.self = $&file)
+        next ::= read_byte($&file)
         if is(.value = next, .variant = ..error) {
             deinit(.self = $&text)
-            _ ::= close(.self = $&file)
+            _ ::= close($&file)
             result = ..error(.reason = ..stream_read_failed)
             return
         }
@@ -447,20 +447,20 @@ read_file(
         }
 
         payload ::= next_value ..ok
-        grew ::= push_byte(.self = $&text, .byte = payload, .allocator = allocator)
+        grew ::= push_byte($&text, .byte = payload, .allocator = allocator)
         match grew {
             ..ok _ {
             }
             ..error _ {
                 deinit(.self = $&text)
-                _ ::= close(.self = $&file)
+                _ ::= close($&file)
                 result = ..error(.reason = ..out_of_memory)
                 return
             }
         }
     }
 
-    close_result ::= close(.self = $&file)
+    close_result ::= close($&file)
 
     if is(.value = close_result, .variant = ..error) {
         deinit(.self = $&text)
@@ -489,9 +489,9 @@ read_file(
     assume ffi := self&._ffi
     assume allocator
 
-    c_path ::= as_c_string(.self = path)
+    c_path ::= as_c_string(path)
 
-    result = read_file(.self = self, .path = c_path, .allocator = allocator)
+    result = read_file(self, .path = c_path, .allocator = allocator)
 }
 
 read_file(
@@ -512,11 +512,11 @@ read_file(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(.self = path, .allocator = allocator)
+    converted ::= as_c_string(path, .allocator = allocator)
 
     match converted {
         ..ok ~payload {
-            result = read_file(.self = self, .path = payload.text, .allocator = allocator)
+            result = read_file(self, .path = payload.text, .allocator = allocator)
         }
         ..error _ { result = ..error(.reason = ..out_of_memory) }
     }
@@ -540,7 +540,7 @@ read_file(
     assume ffi := self&._ffi
     assume allocator
 
-    result = read_file(.self = self, .path = &path&.text, .allocator = allocator)
+    result = read_file(self, .path = &path&.text, .allocator = allocator)
 }
 
 write_file(
@@ -570,13 +570,13 @@ write_file(
         }
     }
 
-    wrote ::= write(.self = $&file, .text = text)
+    wrote ::= write($&file, .text = text)
 
     match wrote {
         ..ok _ {
         }
         ..error&err {
-            _ ::= close(.self = $&file)
+            _ ::= close($&file)
             if is(.value = err&.reason, .variant = ..stream_write_failed) {
                 result = ..error(.reason = ..stream_write_failed)
             } else {
@@ -592,7 +592,7 @@ write_file(
         ..ok _ {
         }
         ..error&err {
-            _ ::= close(.self = $&file)
+            _ ::= close($&file)
             if is(.value = err&.reason, .variant = ..stream_write_failed) {
                 result = ..error(.reason = ..stream_write_failed)
             } else {
@@ -602,7 +602,7 @@ write_file(
         }
     }
 
-    closed ::= close(.self = $&file)
+    closed ::= close($&file)
 
     if is(.value = closed, .variant = ..error) {
         result = ..error(.reason = ..stream_close_failed)
@@ -628,9 +628,9 @@ write_file(
         )
     ) := {
     assume ffi := self&._ffi
-    c_path ::= as_c_string(.self = path)
+    c_path ::= as_c_string(path)
 
-    result = write_file(.self = self, .path = c_path, .text = text)
+    result = write_file(self, .path = c_path, .text = text)
 }
 
 write_file(
@@ -653,10 +653,10 @@ write_file(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(.self = path, .allocator = allocator)
+    converted ::= as_c_string(path, .allocator = allocator)
 
     match converted {
-        ..ok ~payload { result = write_file(.self = self, .path = payload.text, .text = text) }
+        ..ok ~payload { result = write_file(self, .path = payload.text, .text = text) }
         ..error _ { result = ..error(.reason = ..out_of_memory) }
     }
 }
@@ -680,5 +680,5 @@ write_file(
     assume ffi := self&._ffi
     assume allocator
 
-    result = write_file(.self = self, .path = &path&.text, .text = text)
+    result = write_file(self, .path = &path&.text, .text = text)
 }

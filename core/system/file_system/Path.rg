@@ -47,7 +47,7 @@ string_view_slice(
     ) -> (
         .out : StringView
     ) := {
-    out = _string_view_subrange(.self = view&, .start = start, .count = length).view
+    out = _string_view_subrange(view&, .start = start, .count = length).view
 }
 
 Path init(
@@ -84,7 +84,7 @@ path_with_view(
     assume allocator
 
     text ::= string_with_capacity(.allocator = allocator, .capacity = view.length)!
-    push_view(.self = $&text, .view = view, .allocator = allocator)!
+    push_view($&text, .view = view, .allocator = allocator)!
 
     result = ..ok(.text = ~text)
 }
@@ -106,7 +106,7 @@ copy(
     ) := {
     assume allocator
 
-    text ::= copy(.self = &self&.text, .allocator = allocator)!
+    text ::= copy(&self&.text, .allocator = allocator)!
 
     result = ..ok(.text = ~text)
 }
@@ -124,7 +124,7 @@ as_c_string(
     ) -> (
         .text : &Char
     ) := {
-    text = as_c_string(.self = &self&.text)
+    text = as_c_string(&self&.text)
 }
 
 is_absolute(
@@ -217,7 +217,7 @@ extension(
     ) -> (
         .value : ?StringView
     ) := {
-    name ::= file_name(.self = self).value
+    name ::= file_name(self).value
 
     match name {
         ..none {
@@ -304,14 +304,14 @@ join_views(
                 .data   = left&.data
                 .length = left&.length
             )
-            string_append_bytes(.self = $&text, .source = left_bytes)
+            string_append_bytes($&text, .source = left_bytes)
 
             if left&.length > 0 and right&.length > 0 {
                 if path_is_separator(
                     .byte = bytes_get(.view = left, .index = left&.length - 1).byte
                 ).ok {
                 } else {
-                    string_append_byte(.self = $&text, .byte = 47)
+                    string_append_byte($&text, .byte = 47)
                 }
             }
 
@@ -319,7 +319,7 @@ join_views(
                 .data   = right&.data
                 .length = right&.length
             )
-            string_append_bytes(.self = $&text, .source = right_bytes)
+            string_append_bytes($&text, .source = right_bytes)
             result = ..ok(.text = ~text)
             return
         }

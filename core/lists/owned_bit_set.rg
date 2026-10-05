@@ -16,7 +16,7 @@ BitSet init(
     index :: UIntNative = 0
 
     while index < needed {
-        push_assume_capacity(.self = $&storage, .value = 0)
+        push_assume_capacity($&storage, .value = 0)
         index = index + 1
     }
 
@@ -45,7 +45,7 @@ contains(
         return
     }
 
-    byte ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._storage, .index = index / 8))
+    byte ::= unwrap_or_abort(.value = get_ro_ref(&self&._storage, .index = index / 8))
     mask ::= _bit_set_mask(.index = index).mask
 
     result = ..ok byte&/ mask % 2 != 0
@@ -60,7 +60,7 @@ set(
     ) := {
     view ::= as_view(self).view
 
-    result = set(.self = $&view, .index = index, .value = value)
+    result = set($&view, .index = index, .value = value)
 }
 
 count_set(.self: &BitSet) -> (.count: UIntNative) := {

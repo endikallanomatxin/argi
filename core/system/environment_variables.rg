@@ -39,7 +39,7 @@ get(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(.self = key, .allocator = allocator)
+    converted ::= as_c_string(key, .allocator = allocator)
 
     match converted {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
@@ -59,7 +59,7 @@ has(
     assume ffi := self&._ffi
     assume allocator
 
-    found ::= get(.self = self, .key = key, .allocator = allocator)
+    found ::= get(self, .key = key, .allocator = allocator)
 
     match found {
         ..ok payload { result = ..ok payload ?}

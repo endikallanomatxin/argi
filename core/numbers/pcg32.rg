@@ -75,13 +75,13 @@ next_uint32(.self: $&Pcg32) -> (.value: UInt32) := {
 }
 
 next_uint64(.self: $&Pcg32) -> (.value: UInt64) := {
-    high ::= UInt64(.value = next_uint32(.self = self).value)
-    low ::= UInt64(.value = next_uint32(.self = self).value)
+    high ::= UInt64(.value = next_uint32(self).value)
+    low ::= UInt64(.value = next_uint32(self).value)
     value = high * 4294967296 + low
 }
 
 next_bool(.self: $&Pcg32) -> (.value: Bool) := {
-    value = next_uint32(.self = self).value >= 2147483648
+    value = next_uint32(self).value >= 2147483648
 }
 
 uniform_uint32(
@@ -100,7 +100,7 @@ uniform_uint32(
     threshold ::= [space - bound] % bound
 
     while true {
-        candidate ::= UInt64(.value = next_uint32(.self = self).value)
+        candidate ::= UInt64(.value = next_uint32(self).value)
         if candidate >= threshold {
             result = ..ok unwrap_or_abort(.value = UInt32(.value = candidate % bound)).result
             return
@@ -123,7 +123,7 @@ uniform_uint64(
     threshold ::= [maximum % upper_bound + 1] % upper_bound
 
     while true {
-        candidate ::= next_uint64(.self = self).value
+        candidate ::= next_uint64(self).value
         if candidate >= threshold {
             bounded ::= candidate % upper_bound
             result = ..ok bounded
@@ -152,7 +152,7 @@ _pcg_fraction#(.t: Type: Float)(.sample: UInt64, .bits: UInt32) -> (.value: t) :
 next_float16(.self: $&Pcg32) -> (.value: Float16) := {
     value = _pcg_fraction#(.t: Float16)(
         .sample = [
-            UInt64(.value = next_uint32(.self = self).value)
+            UInt64(.value = next_uint32(self).value)
             / 2097152
         ]
 
@@ -163,7 +163,7 @@ next_float16(.self: $&Pcg32) -> (.value: Float16) := {
 next_float32(.self: $&Pcg32) -> (.value: Float32) := {
     value = _pcg_fraction#(.t: Float32)(
         .sample = [
-            UInt64(.value = next_uint32(.self = self).value)
+            UInt64(.value = next_uint32(self).value)
             / 256
         ]
 
@@ -173,7 +173,7 @@ next_float32(.self: $&Pcg32) -> (.value: Float32) := {
 
 next_float64(.self: $&Pcg32) -> (.value: Float64) := {
     value = _pcg_fraction#(.t: Float64)(
-        .sample = next_uint64(.self = self).value / 2048
+        .sample = next_uint64(self).value / 2048
         .bits   = 53
     ).value
 }

@@ -34,7 +34,7 @@ DirectoryWalker init(
         owned ::= path_with_view(.view = path)!
         directory ::= Directory(.self = self, .path = path)!
         push_assume_capacity(
-            .self  = $&frames
+            $&frames
             .value = _WalkFrame(~directory, ~owned, 0)
         )
     }
@@ -51,7 +51,7 @@ DirectoryWalker deinit(.self: $&DirectoryWalker, .allocator: $&Allocator) -> () 
     assume allocator
 
     while length(&self&._frames).count > 0 {
-        discarded ::= ~unwrap_or_abort(.value = pop(.self = $&self&._frames))
+        discarded ::= ~unwrap_or_abort(.value = pop($&self&._frames))
     }
 
     deinit(.self = $&self&._frames)
@@ -75,15 +75,15 @@ next(
 
     while length(&self&._frames).count > 0 {
         count ::= length(&self&._frames).count
-        frame ::= unwrap_or_abort(.value = get_rw_ref(.self = $&self&._frames, .index = count - 1))
+        frame ::= unwrap_or_abort(.value = get_rw_ref($&self&._frames, .index = count - 1))
         match next($&frame&.directory)! {
-            ..none { discarded ::= ~unwrap_or_abort(.value = pop(.self = $&self&._frames)) }
+            ..none { discarded ::= ~unwrap_or_abort(.value = pop($&self&._frames)) }
             ..some ~entry {
                 parent ::= as_view(&frame&.path)
                 name ::= as_view(&entry.value.name)
                 path ::= join_views(.left = &parent, .right = &name)!
                 text ::= as_view(&path)
-                info ::= metadata(.self = self&._filesystem, .path = text, .follow_links = false)!
+                info ::= metadata(self&._filesystem, .path = text, .follow_links = false)!
                 depth ::= frame&.depth + 1
                 directory_kind :: FileKind = ..directory
                 if info.kind == directory_kind and depth < self&._maximum_depth {
@@ -91,10 +91,10 @@ next(
                         .self     = $&self&._frames
                         .capacity = count + 1
                     )!
-                    owned ::= copy(.self = &path)!
+                    owned ::= copy(&path)!
                     directory ::= Directory(.self = self&._filesystem, .path = text)!
                     push_assume_capacity(
-                        .self  = $&self&._frames
+                        $&self&._frames
                         .value = _WalkFrame(~directory, ~owned, depth)
                     )
                 }

@@ -23,7 +23,7 @@ BufferedWriter deinit#(
     )(
         .self : $&BufferedWriter#(.base_type: base_type)
     ) -> () := {
-    buffered_writer_flush(.self = self)
+    buffered_writer_flush(self)
 }
 
 buffered_writer_flush#(
@@ -38,9 +38,9 @@ buffered_writer_flush#(
     while i < self&.length {
         remaining ::= self&.length - i
         view ::= unwrap_or_abort(
-            .value = slice(.self = &self&.buffer, .start = i, .count = remaining)
+            .value = slice(&self&.buffer, .start = i, .count = remaining)
         )
-        wrote ::= write(.self = self&.base, .buffer = view)
+        wrote ::= write(self&.base, .buffer = view)
         if is(.value = wrote, .variant = ..error) {
             self&.length = 0
             result = ..error(.reason = wrote ..error.reason)
@@ -77,17 +77,17 @@ write_byte#(
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     if length(&self&.buffer) == 0 {
-        result = write_byte(.self = self&.base, .byte = byte)
+        result = write_byte(self&.base, .byte = byte)
         return
     }
 
-    ptr ::= unwrap_or_abort(.value = get_rw_ref(.self = $&self&.buffer, .index = self&.length))
+    ptr ::= unwrap_or_abort(.value = get_rw_ref($&self&.buffer, .index = self&.length))
     ptr&= byte
     next_length ::= self&.length + 1
     self&.length = next_length
 
     if next_length == length(&self&.buffer) {
-        result = buffered_writer_flush(.self = self)
+        result = buffered_writer_flush(self)
         return
     }
 
@@ -101,7 +101,7 @@ flush#(
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
-    result = buffered_writer_flush(.self = self)
+    result = buffered_writer_flush(self)
 }
 
 BufferedWriter#(.base_type: Type: Writer) implements Writer

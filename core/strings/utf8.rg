@@ -173,7 +173,7 @@ utf8_encode(
     if width == 2 { first = 192 + code / 64 }
     if width == 3 { first = 224 + code / 4096 }
     if width == 4 { first = 240 + code / 262144 }
-    pointer ::= unwrap_or_abort(.value = get_rw_ref(.self = $&buffer, .index = offset))
+    pointer ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = offset))
     pointer&= unwrap_or_abort(.value = UInt8(.value = first))
     divisor :: UInt32 = 1
 
@@ -182,7 +182,7 @@ utf8_encode(
     index :: UIntNative = 1
 
     while index < width {
-        pointer ::= unwrap_or_abort(.value = get_rw_ref(.self = $&buffer, .index = offset + index))
+        pointer ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = offset + index))
         pointer&= unwrap_or_abort(.value = UInt8(.value = 128 + code / divisor % 64))
         divisor = divisor / 64
         index = index + 1

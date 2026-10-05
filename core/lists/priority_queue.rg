@@ -57,10 +57,10 @@ push#(
 
     while child > 0 {
         parent ::= [child - 1] / 2
-        a ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._items, .index = child))&
-        b ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._items, .index = parent))&
-        if less(.self = self&._order, .left = a, .right = b).ok == false { return }
-        _swap_indexed_values#(.t: t)(.self = $&self&._items, .left = child, .right = parent)
+        a ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child))&
+        b ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = parent))&
+        if less(self&._order, .left = a, .right = b).ok == false { return }
+        _swap_indexed_values#(.t: t)($&self&._items, .left = child, .right = parent)
         child = parent
     }
 }
@@ -75,7 +75,7 @@ peek#(
     ) := {
     if length(&self&._items).count == 0 { return }
     value = ..some(
-        .value = unwrap_or_abort(.value = get_ro_ref(.self = &self&._items, .index = 0))&
+        .value = unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = 0))&
     )
 }
 
@@ -90,25 +90,25 @@ pop#(
     count ::= length(&self&._items).count
 
     if count == 0 { return }
-    value = peek(.self = self).value
-    _swap_indexed_values#(.t: t)(.self = $&self&._items, .left = 0, .right = count - 1)
-    discarded ::= pop(.self = $&self&._items)
+    value = peek(self).value
+    _swap_indexed_values#(.t: t)($&self&._items, .left = 0, .right = count - 1)
+    discarded ::= pop($&self&._items)
     count = count - 1
     root :: UIntNative = 0
 
     while root < count / 2 {
         child ::= root * 2 + 1
         if child + 1 < count {
-            left ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._items, .index = child))&
+            left ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child))&
             right ::= unwrap_or_abort(
-                .value = get_ro_ref(.self = &self&._items, .index = child + 1)
+                .value = get_ro_ref(&self&._items, .index = child + 1)
             )&
-            if less(.self = self&._order, .left = right, .right = left).ok { child = child + 1 }
+            if less(self&._order, .left = right, .right = left).ok { child = child + 1 }
         }
-        a ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._items, .index = child))&
-        b ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&._items, .index = root))&
-        if less(.self = self&._order, .left = a, .right = b).ok == false { return }
-        _swap_indexed_values#(.t: t)(.self = $&self&._items, .left = root, .right = child)
+        a ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child))&
+        b ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = root))&
+        if less(self&._order, .left = a, .right = b).ok == false { return }
+        _swap_indexed_values#(.t: t)($&self&._items, .left = root, .right = child)
         root = child
     }
 }

@@ -16,8 +16,8 @@ binary_search#(
     while start < end {
         remaining ::= end - start
         middle ::= start + remaining / 2
-        element ::= unwrap_or_abort(.value = get_ro_ref(.self = self, .index = middle))&
-        if less(.self = order, .left = element, .right = value).ok {
+        element ::= unwrap_or_abort(.value = get_ro_ref(self, .index = middle))&
+        if less(order, .left = element, .right = value).ok {
             start = middle + 1
         } else {
             end = middle
@@ -25,8 +25,8 @@ binary_search#(
     }
 
     if start < count {
-        element ::= unwrap_or_abort(.value = get_ro_ref(.self = self, .index = start))&
-        if less(.self = order, .left = value, .right = element).ok == false {
+        element ::= unwrap_or_abort(.value = get_ro_ref(self, .index = start))&
+        if less(order, .left = value, .right = element).ok == false {
             index = ..some(.value = start)
             return
         }

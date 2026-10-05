@@ -35,7 +35,7 @@ skip(
     ) -> (
         .result : Errable#(Void, (..out_of_bounds))
     ) := {
-    if count > remaining(.self = self).count {
+    if count > remaining(self).count {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
@@ -87,7 +87,7 @@ skip(
     ) -> (
         .result : Errable#(Void, (..out_of_bounds))
     ) := {
-    if count > remaining(.self = self).count {
+    if count > remaining(self).count {
         result = ..error(.reason = ..out_of_bounds)
         return
     }

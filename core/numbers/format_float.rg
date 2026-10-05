@@ -891,11 +891,11 @@ _float_exact_digits(.integer: _FloatDecimalInteger) -> (.digits: _FloatExactDigi
 
     while true {
         byte ::= _decimal_digit#(.t: UInt32)(
-            .digit = _float_integer_divide_ten(.self = $&remaining).remainder
+            .digit = _float_integer_divide_ten($&remaining).remainder
         ).byte
         digits.start = digits.start - 1
         digits.bytes[digits.start] = byte
-        if _float_integer_nonzero(.self = &remaining).value == false { break }
+        if _float_integer_nonzero(&remaining).value == false { break }
     }
 }
 
@@ -1054,17 +1054,17 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
     decimal_scale :: Int32 = 0
 
     while binary_power < 0 {
-        _float_integer_multiply(.self = $&lower, .factor = 5)
-        _float_integer_multiply(.self = $&upper, .factor = 5)
-        _float_integer_multiply(.self = $&exact, .factor = 5)
+        _float_integer_multiply($&lower, .factor = 5)
+        _float_integer_multiply($&upper, .factor = 5)
+        _float_integer_multiply($&exact, .factor = 5)
         decimal_scale = decimal_scale + 1
         binary_power = binary_power + 1
     }
 
     while binary_power > 0 {
-        _float_integer_multiply(.self = $&lower, .factor = 2)
-        _float_integer_multiply(.self = $&upper, .factor = 2)
-        _float_integer_multiply(.self = $&exact, .factor = 2)
+        _float_integer_multiply($&lower, .factor = 2)
+        _float_integer_multiply($&upper, .factor = 2)
+        _float_integer_multiply($&exact, .factor = 2)
         binary_power = binary_power - 1
     }
 
@@ -1074,7 +1074,7 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
     remaining ::= count - 1
 
     while remaining > 0 {
-        _float_integer_multiply(.self = $&place, .factor = 10)
+        _float_integer_multiply($&place, .factor = 10)
         remaining = remaining - 1
     }
 
@@ -1086,9 +1086,9 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
     while index < count and index < 17 {
         digit ::= UInt32(.value = digits.bytes[digits.start + index] - 48)
         coefficient = coefficient * 10 + UInt64(.value = digit)
-        _float_integer_add_multiple(.self = $&floor, .other = &place, .factor = digit)
+        _float_integer_add_multiple($&floor, .other = &place, .factor = digit)
         ceil ::= floor
-        _float_integer_add_multiple(.self = $&ceil, .other = &place, .factor = 1)
+        _float_integer_add_multiple($&ceil, .other = &place, .factor = 1)
         floor_ok ::= _float_inside_interval(
             .candidate = &floor
             .lower     = &lower
@@ -1127,7 +1127,7 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
             text = _float_render(.coefficient = coefficient, .power = power, .negative = negative).text
             return
         }
-        _float_integer_divide_ten(.self = $&place)
+        _float_integer_divide_ten($&place)
         index = index + 1
     }
     -- Seventeen significant decimal digits suffice for every supported width.

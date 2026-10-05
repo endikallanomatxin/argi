@@ -19,7 +19,7 @@ _reader_block#(
     ) -> (
         .result : Errable#(UIntNative, (..stream_read_failed))
     ) := {
-    result = read(.self = self, .buffer = buffer)
+    result = read(self, .buffer = buffer)
 }
 
 _writer_block#(
@@ -33,8 +33,8 @@ _writer_block#(
     index :: UIntNative = 0
 
     while index < length(&buffer).count {
-        byte ::= unwrap_or_abort(.value = get_ro_ref(.self = &buffer, .index = index))
-        write_byte(.self = self, .byte = byte&)!
+        byte ::= unwrap_or_abort(.value = get_ro_ref(&buffer, .index = index))
+        write_byte(self, .byte = byte&)!
         index = index + 1
     }
 
@@ -65,7 +65,7 @@ read_exact(
     while count < total {
         tail ::= unwrap_or_abort(
             .value = slice(
-                .self  = &buffer
+                &buffer
                 .start = count
                 .count = [
                     total
@@ -73,7 +73,7 @@ read_exact(
                 ]
             )
         )
-        got ::= read_block(.self = self, .buffer = tail)!
+        got ::= read_block(self, .buffer = tail)!
         if got == 0 {
             result = ..error(.reason = ..unexpected_eof)
             return
@@ -97,7 +97,7 @@ write_all(
     while count < total {
         tail ::= unwrap_or_abort(
             .value = slice(
-                .self  = &buffer
+                &buffer
                 .start = count
                 .count = [
                     total
@@ -105,7 +105,7 @@ write_all(
                 ]
             )
         )
-        wrote ::= write_block(.self = self, .buffer = tail)!
+        wrote ::= write_block(self, .buffer = tail)!
         if wrote == 0 {
             result = ..error(.reason = ..stream_write_failed)
             return
@@ -143,7 +143,7 @@ copy_stream(
     copied :: UIntNative = 0
 
     while true {
-        got ::= read_block(.self = reader, .buffer = buffer)!
+        got ::= read_block(reader, .buffer = buffer)!
         if got == 0 {
             result = ..ok copied
             return
@@ -154,9 +154,9 @@ copy_stream(
             result = ..error(.reason = ..size_overflow)
             return
         }
-        prefix ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = got))
-        readonly ::= as_readonly(.self = &prefix).view
-        write_all(.self = writer, .buffer = readonly)!
+        prefix ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = got))
+        readonly ::= as_readonly(&prefix).view
+        write_all(writer, .buffer = readonly)!
         copied = grown
     }
 }
@@ -179,7 +179,7 @@ read_until(
     count :: UIntNative = 0
 
     while count < length(&buffer).count {
-        byte ::= read_byte(.self = self)!
+        byte ::= read_byte(self)!
         match byte {
             ..end {
                 result = ..ok(.count = count, .termination = ..end)
@@ -190,7 +190,7 @@ read_until(
                     result = ..ok(.count = count, .termination = ..delimiter)
                     return
                 }
-                pointer ::= unwrap_or_abort(.value = get_rw_ref(.self = $&buffer, .index = count))
+                pointer ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = count))
                 pointer&= value
                 count = count + 1
             }
@@ -206,7 +206,7 @@ read_block(
     ) -> (
         .result : Errable#(UIntNative, (..stream_read_failed))
     ) := {
-    result = read(.self = self, .buffer = buffer)
+    result = read(self, .buffer = buffer)
 }
 
 read_block(
@@ -215,7 +215,7 @@ read_block(
     ) -> (
         .result : Errable#(UIntNative, (..stream_read_failed))
     ) := {
-    result = read(.self = self, .buffer = buffer)
+    result = read(self, .buffer = buffer)
 }
 
 write_block(
@@ -224,7 +224,7 @@ write_block(
     ) -> (
         .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) := {
-    result = _writer_block(.self = self, .buffer = buffer)
+    result = _writer_block(self, .buffer = buffer)
 }
 
 read_block#(
@@ -235,7 +235,7 @@ read_block#(
     ) -> (
         .result : Errable#(UIntNative, (..stream_read_failed))
     ) := {
-    result = _reader_block(.self = self, .buffer = buffer)
+    result = _reader_block(self, .buffer = buffer)
 }
 
 write_block#(
@@ -246,7 +246,7 @@ write_block#(
     ) -> (
         .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) := {
-    result = _writer_block(.self = self, .buffer = buffer)
+    result = _writer_block(self, .buffer = buffer)
 }
 
 read_exact(
@@ -261,7 +261,7 @@ read_exact(
     while count < total {
         tail ::= unwrap_or_abort(
             .value = slice(
-                .self  = &buffer
+                &buffer
                 .start = count
                 .count = [
                     total
@@ -269,7 +269,7 @@ read_exact(
                 ]
             )
         )
-        got ::= read_block(.self = self, .buffer = tail)!
+        got ::= read_block(self, .buffer = tail)!
         if got == 0 {
             result = ..error(.reason = ..unexpected_eof)
             return
@@ -293,7 +293,7 @@ write_all(
     while count < total {
         tail ::= unwrap_or_abort(
             .value = slice(
-                .self  = &buffer
+                &buffer
                 .start = count
                 .count = [
                     total
@@ -301,7 +301,7 @@ write_all(
                 ]
             )
         )
-        wrote ::= write_block(.self = self, .buffer = tail)!
+        wrote ::= write_block(self, .buffer = tail)!
         if wrote == 0 {
             result = ..error(.reason = ..stream_write_failed)
             return
@@ -339,7 +339,7 @@ copy_stream(
     copied :: UIntNative = 0
 
     while true {
-        got ::= read_block(.self = reader, .buffer = buffer)!
+        got ::= read_block(reader, .buffer = buffer)!
         if got == 0 {
             result = ..ok copied
             return
@@ -350,9 +350,9 @@ copy_stream(
             result = ..error(.reason = ..size_overflow)
             return
         }
-        prefix ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = got))
-        readonly ::= as_readonly(.self = &prefix).view
-        write_all(.self = writer, .buffer = readonly)!
+        prefix ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = got))
+        readonly ::= as_readonly(&prefix).view
+        write_all(writer, .buffer = readonly)!
         copied = grown
     }
 }
@@ -383,7 +383,7 @@ copy_stream(
     copied :: UIntNative = 0
 
     while true {
-        got ::= read_block(.self = reader, .buffer = buffer)!
+        got ::= read_block(reader, .buffer = buffer)!
         if got == 0 {
             result = ..ok copied
             return
@@ -394,9 +394,9 @@ copy_stream(
             result = ..error(.reason = ..size_overflow)
             return
         }
-        prefix ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = got))
-        readonly ::= as_readonly(.self = &prefix).view
-        write_all(.self = writer, .buffer = readonly)!
+        prefix ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = got))
+        readonly ::= as_readonly(&prefix).view
+        write_all(writer, .buffer = readonly)!
         copied = grown
     }
 }
@@ -427,7 +427,7 @@ copy_stream(
     copied :: UIntNative = 0
 
     while true {
-        got ::= read_block(.self = reader, .buffer = buffer)!
+        got ::= read_block(reader, .buffer = buffer)!
         if got == 0 {
             result = ..ok copied
             return
@@ -438,9 +438,9 @@ copy_stream(
             result = ..error(.reason = ..size_overflow)
             return
         }
-        prefix ::= unwrap_or_abort(.value = slice(.self = &buffer, .start = 0, .count = got))
-        readonly ::= as_readonly(.self = &prefix).view
-        write_all(.self = writer, .buffer = readonly)!
+        prefix ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = got))
+        readonly ::= as_readonly(&prefix).view
+        write_all(writer, .buffer = readonly)!
         copied = grown
     }
 }
@@ -462,7 +462,7 @@ transfer_stream(
     copied :: UIntNative = 0
 
     while true {
-        got ::= read_block(.self = reader, .buffer = buffer)!
+        got ::= read_block(reader, .buffer = buffer)!
         if got == 0 {
             result = ..ok copied
             return
@@ -473,7 +473,7 @@ transfer_stream(
             return
         }
 
-        write_byte(.self = writer, .byte = storage[0])!
+        write_byte(writer, .byte = storage[0])!
         copied = copied + 1
     }
 }
@@ -492,7 +492,7 @@ transfer_stream(
     copied :: UIntNative = 0
 
     while true {
-        got ::= read_block(.self = reader, .buffer = buffer)!
+        got ::= read_block(reader, .buffer = buffer)!
         if got == 0 {
             result = ..ok copied
             return
@@ -503,7 +503,7 @@ transfer_stream(
             return
         }
 
-        write_byte(.self = writer, .byte = storage[0])!
+        write_byte(writer, .byte = storage[0])!
         copied = copied + 1
     }
 }
@@ -529,15 +529,15 @@ transfer_stream#(
 
     while true {
         if writer&.length == capacity {
-            buffered_writer_flush(.self = writer)!
+            buffered_writer_flush(writer)!
         }
 
         available ::= capacity - writer&.length
         free_space ::= unwrap_or_abort(
-            .value = slice(.self = &writer&.buffer, .start = writer&.length, .count = available)
+            .value = slice(&writer&.buffer, .start = writer&.length, .count = available)
         )
         -- A failed read may modify free space; commit only a successful count.
-        got ::= read_block(.self = reader, .buffer = free_space)!
+        got ::= read_block(reader, .buffer = free_space)!
         if got == 0 {
             result = ..ok copied
             return
@@ -575,15 +575,15 @@ transfer_stream#(
 
     while true {
         if writer&.length == capacity {
-            buffered_writer_flush(.self = writer)!
+            buffered_writer_flush(writer)!
         }
 
         available ::= capacity - writer&.length
         free_space ::= unwrap_or_abort(
-            .value = slice(.self = &writer&.buffer, .start = writer&.length, .count = available)
+            .value = slice(&writer&.buffer, .start = writer&.length, .count = available)
         )
         -- A failed read may modify free space; commit only a successful count.
-        got ::= read_block(.self = reader, .buffer = free_space)!
+        got ::= read_block(reader, .buffer = free_space)!
         if got == 0 {
             result = ..ok copied
             return

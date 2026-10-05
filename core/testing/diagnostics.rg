@@ -18,12 +18,12 @@ _testing_append(.self: $&_TestDiagnostic, .text: StringView) -> () := {
 
 _testing_append_number#(.t: Type: Int)(.self: $&_TestDiagnostic, .value: t) -> () := {
     encoded ::= _decimal_encode#(.t: t)(.value = value)
-    _testing_append(.self = self, .text = _decimal_view(.self = &encoded).view)
+    _testing_append(self, .text = _decimal_view(&encoded).view)
 }
 
 _testing_append_number#(.t: Type: Float)(.self: $&_TestDiagnostic, .value: t) -> () := {
     encoded ::= _float_encode(.value = value)
-    _testing_append(.self = self, .text = _float_text_view(.self = &encoded).view)
+    _testing_append(self, .text = _float_text_view(&encoded).view)
 }
 
 _testing_detail(.self: &_TestDiagnostic) -> (.text: StringView) := {
@@ -63,13 +63,13 @@ expect_equal#(
     }
 
     diagnostic ::= _TestDiagnostic()
-    _testing_append(.self = $&diagnostic, .text = "expect_equal failed: expected ")
-    _testing_append_number(.self = $&diagnostic, .value = expected)
-    _testing_append(.self = $&diagnostic, .text = ", actual ")
-    _testing_append_number(.self = $&diagnostic, .value = actual)
+    _testing_append($&diagnostic, .text = "expect_equal failed: expected ")
+    _testing_append_number($&diagnostic, .value = expected)
+    _testing_append($&diagnostic, .text = ", actual ")
+    _testing_append_number($&diagnostic, .value = actual)
 
     result = _testing_failure(
-        .detail  = _testing_detail(.self = &diagnostic).text
+        .detail  = _testing_detail(&diagnostic).text
         .message = message
     )
 }
@@ -89,13 +89,13 @@ expect_equal#(
     }
 
     diagnostic ::= _TestDiagnostic()
-    _testing_append(.self = $&diagnostic, .text = "expect_equal failed: expected ")
-    _testing_append_number(.self = $&diagnostic, .value = expected)
-    _testing_append(.self = $&diagnostic, .text = ", actual ")
-    _testing_append_number(.self = $&diagnostic, .value = actual)
+    _testing_append($&diagnostic, .text = "expect_equal failed: expected ")
+    _testing_append_number($&diagnostic, .value = expected)
+    _testing_append($&diagnostic, .text = ", actual ")
+    _testing_append_number($&diagnostic, .value = actual)
 
     result = _testing_failure(
-        .detail  = _testing_detail(.self = &diagnostic).text
+        .detail  = _testing_detail(&diagnostic).text
         .message = message
     )
 }
@@ -120,10 +120,10 @@ expect_equal(
 }
 
 _testing_lengths(.self: $&_TestDiagnostic, .expected: UIntNative, .actual: UIntNative) -> () := {
-    _testing_append(.self = self, .text = "; lengths expected ")
-    _testing_append_number(.self = self, .value = expected)
-    _testing_append(.self = self, .text = ", actual ")
-    _testing_append_number(.self = self, .value = actual)
+    _testing_append(self, .text = "; lengths expected ")
+    _testing_append_number(self, .value = expected)
+    _testing_append(self, .text = ", actual ")
+    _testing_append_number(self, .value = actual)
 }
 
 _testing_compare_text(
@@ -153,29 +153,29 @@ _testing_compare_text(
     }
 
     diagnostic ::= _TestDiagnostic()
-    _testing_append(.self = $&diagnostic, .text = kind)
-    _testing_append(.self = $&diagnostic, .text = " differ at byte ")
-    _testing_append_number(.self = $&diagnostic, .value = index)
-    _testing_append(.self = $&diagnostic, .text = ": expected ")
+    _testing_append($&diagnostic, .text = kind)
+    _testing_append($&diagnostic, .text = " differ at byte ")
+    _testing_append_number($&diagnostic, .value = index)
+    _testing_append($&diagnostic, .text = ": expected ")
 
     if index < expected.length {
         _testing_append_number(
-            .self  = $&diagnostic
+            $&diagnostic
             .value = bytes_get(.view = &expected, .index = index).byte
         )
-    } else { _testing_append(.self = $&diagnostic, .text = "<end>") }
-    _testing_append(.self = $&diagnostic, .text = ", actual ")
+    } else { _testing_append($&diagnostic, .text = "<end>") }
+    _testing_append($&diagnostic, .text = ", actual ")
 
     if index < actual.length {
         _testing_append_number(
-            .self  = $&diagnostic
+            $&diagnostic
             .value = bytes_get(.view = &actual, .index = index).byte
         )
-    } else { _testing_append(.self = $&diagnostic, .text = "<end>") }
-    _testing_lengths(.self = $&diagnostic, .expected = expected.length, .actual = actual.length)
+    } else { _testing_append($&diagnostic, .text = "<end>") }
+    _testing_lengths($&diagnostic, .expected = expected.length, .actual = actual.length)
 
     result = _testing_failure(
-        .detail  = _testing_detail(.self = &diagnostic).text
+        .detail  = _testing_detail(&diagnostic).text
         .message = message
     )
 }
@@ -237,11 +237,11 @@ expect_equal_views#(
 
     while index < common {
         left ::= trusted_reference_offset#(.t: t)(
-            .base     = data(.self = &expected).pointer
+            .base     = data(&expected).pointer
             .elements = index
         ).reference
         right ::= trusted_reference_offset#(.t: t)(
-            .base     = data(.self = &actual).pointer
+            .base     = data(&actual).pointer
             .elements = index
         ).reference
         if left&!= right&{ break }
@@ -254,12 +254,12 @@ expect_equal_views#(
     }
 
     diagnostic ::= _TestDiagnostic()
-    _testing_append(.self = $&diagnostic, .text = "views differ at index ")
-    _testing_append_number(.self = $&diagnostic, .value = index)
-    _testing_lengths(.self = $&diagnostic, .expected = expected_length, .actual = actual_length)
+    _testing_append($&diagnostic, .text = "views differ at index ")
+    _testing_append_number($&diagnostic, .value = index)
+    _testing_lengths($&diagnostic, .expected = expected_length, .actual = actual_length)
 
     result = _testing_failure(
-        .detail  = _testing_detail(.self = &diagnostic).text
+        .detail  = _testing_detail(&diagnostic).text
         .message = message
     )
 }
@@ -277,11 +277,11 @@ expect_equal_bytes(
     right ::= ""
 
     if expected_length != 0 {
-        left = (.data = data(.self = &expected).pointer, .length = expected_length)
+        left = (.data = data(&expected).pointer, .length = expected_length)
     }
 
     if actual_length != 0 {
-        right = (.data = data(.self = &actual).pointer, .length = actual_length)
+        right = (.data = data(&actual).pointer, .length = actual_length)
     }
 
     result = _testing_compare_text(

@@ -144,7 +144,7 @@ get_ro_ref#(
     }
 
     result = ..ok trusted_reference_offset#(.t: t)(
-        .base     = data#(.t: t)(.self = self).pointer
+        .base     = data#(.t: t)(self).pointer
         .elements = index
     ).reference
 }
@@ -163,7 +163,7 @@ get_ro_ref#(
     }
 
     result = ..ok trusted_reference_offset#(.t: t)(
-        .base     = data#(.t: t)(.self = self).pointer
+        .base     = data#(.t: t)(self).pointer
         .elements = index
     ).reference
 }
@@ -182,7 +182,7 @@ get_rw_ref#(
     }
 
     result = ..ok trusted_mutable_reference_offset#(.t: t)(
-        .base     = data#(.t: t)(.self = self).pointer
+        .base     = data#(.t: t)(self).pointer
         .elements = index
     ).reference
 }
@@ -201,7 +201,7 @@ get#(
     }
 
     ptr ::= trusted_reference_offset#(.t: t)(
-        .base     = data#(.t: t)(.self = self).pointer
+        .base     = data#(.t: t)(self).pointer
         .elements = index
     ).reference
 
@@ -223,7 +223,7 @@ set#(
     }
 
     ptr ::= trusted_mutable_reference_offset#(.t: t)(
-        .base     = data#(.t: t)(.self = self).pointer
+        .base     = data#(.t: t)(self).pointer
         .elements = index
     )
     ptr&= value
@@ -245,7 +245,7 @@ get#(
     ) -> (
         .result : Errable#(t, (..out_of_bounds))
     ) := {
-    match get_ro_ref#(.t: t)(.self = self, .index = index).result {
+    match get_ro_ref#(.t: t)(self, .index = index).result {
         ..error _ { result = ..error(.reason = ..out_of_bounds) }
         ..ok pointer { result = ..ok pointer&}
     }
@@ -257,6 +257,6 @@ as_readonly#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.view: ArrayViewRO#(.t: t)
         return
     }
 
-    first ::= read_reference#(.t: t)(.base = data(.self = self).pointer).reference
+    first ::= read_reference#(.t: t)(.base = data(self).pointer).reference
     view = _trusted_array_view_ro#(.t: t)(.data = first, .length = self&._length).array
 }

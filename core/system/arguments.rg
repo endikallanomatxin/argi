@@ -53,7 +53,7 @@ argument_at(
     ) -> (
         .text : &Char
     ) := {
-    addr ::= argument_pointer_address(.self = self, .index = index).address
+    addr ::= argument_pointer_address(self, .index = index).address
     raw ::= raw_pointer#(.t: UIntNative)(.address = addr)
     ptr ::= trusted_establish_inherited_reference#(.t: UIntNative)(
         .raw  = raw
@@ -75,7 +75,7 @@ argument_view_at(
         .view : StringView
     ) := {
     assume ffi := self&._ffi
-    text ::= argument_at(.self = self, .index = index)
+    text ::= argument_at(self, .index = index)
     view = (
         .data   = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference
         .length = strlen(.string = text).length
@@ -93,7 +93,7 @@ get(
         return
     }
 
-    result = ..ok argument_view_at(.self = self, .index = index)
+    result = ..ok argument_view_at(self, .index = index)
 }
 
 to_iterator(
@@ -121,7 +121,7 @@ next(
         .value : StringView
     ) := {
     current_index :: UIntNative = self&.index
-    value = argument_view_at(.self = self&.args, .index = current_index)
+    value = argument_view_at(self&.args, .index = current_index)
     self&= (
         .args  = self&.args
         .index = current_index + 1

@@ -21,7 +21,7 @@ bytes_get(
     ) -> (
         .byte : UInt8
     ) := {
-    byte = string_view_byte_address(.self = view, .index = index).reference&
+    byte = string_view_byte_address(view, .index = index).reference&
 }
 
 equals(

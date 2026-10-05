@@ -36,7 +36,7 @@ allocate(
     ) -> (
         .result : Errable#(Allocation, (..out_of_memory))
     ) := {
-    result = allocate(.self = self, .size = size, .alignment = 1)
+    result = allocate(self, .size = size, .alignment = 1)
 }
 
 allocate#(
@@ -55,7 +55,7 @@ allocate#(
         return
     }
 
-    result = allocate(.self = self, .size = bytes, .alignment = alignment_of(.type = t))
+    result = allocate(self, .size = bytes, .alignment = alignment_of(.type = t))
 }
 
 allocate#(
@@ -65,7 +65,7 @@ allocate#(
     ) -> (
         .result : Errable#(Allocation, (..out_of_memory))
     ) := {
-    result = allocate#(.t: t)(.self = self, .count = 1)
+    result = allocate#(.t: t)(self, .count = 1)
 }
 
 CAllocator: Type = (
@@ -217,7 +217,7 @@ Allocation deinit(
     live ::= self&.anchor&
     data ::= raw_pointer#(.t: UInt8)(.address = self&._storage_address).raw
     deallocate(
-        .self      = $&self&.deallocator
+        $&self&.deallocator
         .data      = data
         .size      = self&._release_size
         .alignment = self&._storage_alignment

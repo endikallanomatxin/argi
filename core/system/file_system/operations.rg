@@ -285,7 +285,7 @@ seek(
 }
 
 position(.self: $&File) -> (.result: Errable#(UInt64, (..stream_seek_failed))) := {
-    result = seek(.self = self, .offset = 0, .origin = ..current)
+    result = seek(self, .offset = 0, .origin = ..current)
 }
 
 truncate(

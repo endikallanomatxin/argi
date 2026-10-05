@@ -93,7 +93,7 @@ _owned_hash_slots(
     index :: UIntNative = 0
 
     while index < capacity {
-        push_assume_capacity(.self = $&slots, .value = _OwnedHashSlot(.state = 0, .hash = 0))
+        push_assume_capacity($&slots, .value = _OwnedHashSlot(.state = 0, .hash = 0))
         index = index + 1
     }
 
@@ -122,7 +122,7 @@ OwnedHashMap init#(
     if count < 8 { count = 8 }
     slots ::= _owned_hash_slots(.capacity = count, .allocator = allocator)!
     entries ::= allocate#(.t: OwnedHashMapEntry#(.key: key, .value: value))(
-        .self  = allocator
+        allocator
         .count = count
     )!
     constructed = (
@@ -203,7 +203,7 @@ _owned_hash_find#(
     ) -> (
         .index : ?UIntNative
     ) := {
-    count ::= capacity(.self = self).count
+    count ::= capacity(self).count
     position ::= hash % count
     visited :: UIntNative = 0
 
@@ -214,8 +214,8 @@ _owned_hash_find#(
             return
         }
         if slot.state == 1 and slot.hash == hash {
-            entry ::= _owned_hash_entry(.self = self, .index = position).entry
-            if eql(.self = &self&._policy, .left = &entry&.key, .right = key).ok {
+            entry ::= _owned_hash_entry(self, .index = position).entry
+            if eql(&self&._policy, .left = &entry&.key, .right = key).ok {
                 index = ..some(.value = position)
                 return
             }
@@ -260,7 +260,7 @@ reserve#(
         .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
-    old_count ::= capacity(.self = self).count
+    old_count ::= capacity(self).count
 
     if capacity <= old_count {
         result = ..ok Void()
@@ -271,7 +271,7 @@ reserve#(
     -- after a mutating call because safety summaries conservatively join outcomes.
     slots ::= _owned_hash_slots(.capacity = capacity, .allocator = allocator)!
     entries ::= allocate#(.t: OwnedHashMapEntry#(.key: key, .value: value))(
-        .self  = allocator
+        allocator
         .count = capacity
     )!
     index :: UIntNative = 0
@@ -304,7 +304,7 @@ reserve#(
 
     deinit(.self = $&self&._table._entries)
     deinit(.self = $&self&._table._slots, .allocator = allocator)
-    _owned_hash_invalidate(.self = self)
+    _owned_hash_invalidate(self)
     -- Replace the table as one ownership unit so its backing roots change
     -- together; independent field replacement retains obsolete sibling facts.
     self&._table = (._entries = ~entries, ._slots = ~slots)
@@ -325,9 +325,9 @@ put#(
         .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
-    digest ::= hash(.self = &self&._policy, .key = &key).hash
+    digest ::= hash(&self&._policy, .key = &key).hash
 
-    match _owned_hash_find(.self = self, .key = &key, .hash = digest).index {
+    match _owned_hash_find(self, .key = &key, .hash = digest).index {
         ..some found {
             slot ::= _trusted_uninit_slot#(.t: OwnedHashMapEntry#(.key: key, .value: value))(
                 .allocation = &self&._table._entries
@@ -341,14 +341,14 @@ put#(
                 .slot       = slot
                 .value      = ~entry
             )
-            _owned_hash_invalidate(.self = self)
+            _owned_hash_invalidate(self)
             result = ..ok Void()
             return
         }
         ..none {}
     }
 
-    count ::= capacity(.self = self).count
+    count ::= capacity(self).count
 
     if self&._length >= count / 2 {
         grown ::= count * 2
@@ -358,7 +358,7 @@ put#(
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        match reserve(.self = self, .capacity = grown, .allocator = allocator) {
+        match reserve(self, .capacity = grown, .allocator = allocator) {
             ..ok _ {}
             ..error _ {
                 _owned_hash_discard(.value = ~key, .allocator = allocator)
@@ -382,7 +382,7 @@ put#(
         .value = _OwnedHashSlot(.state = 1, .hash = digest)
     )
     self&._length = self&._length + 1
-    _owned_hash_invalidate(.self = self)
+    _owned_hash_invalidate(self)
 
     result = ..ok Void()
 }
@@ -397,9 +397,9 @@ contains#(
     ) -> (
         .ok : Bool
     ) := {
-    digest ::= hash(.self = &self&._policy, .key = key).hash
+    digest ::= hash(&self&._policy, .key = key).hash
     ok = is(
-        .value   = _owned_hash_find(.self = self, .key = key, .hash = digest).index
+        .value   = _owned_hash_find(self, .key = key, .hash = digest).index
         .variant = ..some
     )
 }
@@ -414,12 +414,12 @@ get_ro_ref#(
     ) -> (
         .result : ?&value
     ) := {
-    digest ::= hash(.self = &self&._policy, .key = key).hash
+    digest ::= hash(&self&._policy, .key = key).hash
 
-    match _owned_hash_find(.self = self, .key = key, .hash = digest).index {
+    match _owned_hash_find(self, .key = key, .hash = digest).index {
         ..none { result = ..none }
         ..some found {
-            entry ::= _owned_hash_entry(.self = self, .index = found.value).entry
+            entry ::= _owned_hash_entry(self, .index = found.value).entry
             borrowed ::= depend_on#(.t: &value)(
                 .value = &entry&.value
                 .on    = erase_reference#(.t: _OwnedHashShape)(.base = &self&._shape).reference
@@ -439,9 +439,9 @@ extract#(
     ) -> (
         .result : ?OwnedHashMapEntry#(.key: key, .value: value)
     ) := {
-    digest ::= hash(.self = &self&._policy, .key = key).hash
+    digest ::= hash(&self&._policy, .key = key).hash
 
-    match _owned_hash_find(.self = self, .key = key, .hash = digest).index {
+    match _owned_hash_find(self, .key = key, .hash = digest).index {
         ..none { result = ..none }
         ..some found {
             slot ::= _trusted_uninit_slot#(.t: OwnedHashMapEntry#(.key: key, .value: value))(
@@ -455,7 +455,7 @@ extract#(
                 .value = _OwnedHashSlot(.state = 2, .hash = 0)
             )
             self&._length = self&._length - 1
-            _owned_hash_invalidate(.self = self)
+            _owned_hash_invalidate(self)
             result = ..some(.value = ~entry)
         }
     }
@@ -474,7 +474,7 @@ remove#(
     ) := {
     assume allocator
 
-    match extract(.self = self, .key = key).result {
+    match extract(self, .key = key).result {
         ..none { removed = false }
         ..some ~payload {
             entry ::= ~payload.value
@@ -494,7 +494,7 @@ OwnedHashMap deinit#(
     assume allocator
     index :: UIntNative = 0
 
-    while index < capacity(.self = self).count {
+    while index < capacity(self).count {
         if _trusted_dynamic_array_get(.array = &self&._table._slots, .index = index).state == 1 {
             slot ::= _trusted_uninit_slot#(.t: OwnedHashMapEntry#(.key: key, .value: value))(
                 .allocation = &self&._table._entries

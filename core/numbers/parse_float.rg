@@ -54,7 +54,7 @@ _float_parse#(
                 -- digits. Beyond 800 digits only the presence of a nonzero
                 -- tail can affect nearest/even rounding.
                 if retained < 800 {
-                    _float_integer_multiply(.self = $&numerator, .factor = 10, .addend = digit)
+                    _float_integer_multiply($&numerator, .factor = 10, .addend = digit)
                     retained = retained + 1
                 } else {
                     if digit != 0 { sticky = true }
@@ -150,28 +150,28 @@ _float_parse#(
     -- bounds cannot approach any supported finite nonzero float. Within the
     -- bounds, 256 limbs hold both the rational and its normalization shifts.
     while power > 0 {
-        _float_integer_multiply(.self = $&numerator, .factor = 10)
+        _float_integer_multiply($&numerator, .factor = 10)
         power = power - 1
     }
 
     while power < 0 {
-        _float_integer_multiply(.self = $&denominator, .factor = 10)
+        _float_integer_multiply($&denominator, .factor = 10)
         power = power + 1
     }
 
     binary_exponent :: Int32 = 0
 
     while _float_integer_compare(.left = &numerator, .right = &denominator).order < 0 {
-        _float_integer_multiply(.self = $&numerator, .factor = 2)
+        _float_integer_multiply($&numerator, .factor = 2)
         binary_exponent = binary_exponent - 1
     }
 
     while _float_integer_compare(.left = &numerator, .right = &denominator).order >= 0 {
-        _float_integer_multiply(.self = $&denominator, .factor = 2)
+        _float_integer_multiply($&denominator, .factor = 2)
         binary_exponent = binary_exponent + 1
     }
 
-    _float_integer_halve(.self = $&denominator)
+    _float_integer_halve($&denominator)
     binary_exponent = binary_exponent - 1
 
     if binary_exponent > maximum_exponent or binary_exponent < minimum_exponent - 1 {
@@ -192,15 +192,15 @@ _float_parse#(
         odd = _float_integer_compare(.left = &numerator, .right = &denominator).order >= 0
         if odd {
             mantissa = mantissa + one
-            _float_integer_subtract(.self = $&numerator, .other = &denominator)
+            _float_integer_subtract($&numerator, .other = &denominator)
         }
-        _float_integer_multiply(.self = $&numerator, .factor = 2)
+        _float_integer_multiply($&numerator, .factor = 2)
         remaining = remaining - 1
     }
 
     if _float_integer_compare(.left = &numerator, .right = &denominator).order >= 0 {
-        _float_integer_subtract(.self = $&numerator, .other = &denominator)
-        if odd or sticky or _float_integer_nonzero(.self = &numerator).value {
+        _float_integer_subtract($&numerator, .other = &denominator)
+        if odd or sticky or _float_integer_nonzero(&numerator).value {
             mantissa = mantissa + one
         }
     }

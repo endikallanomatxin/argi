@@ -36,8 +36,8 @@ _bit_set_combine_into(
     index :: UIntNative = 0
 
     while index < length(&self&._storage).count {
-        left ::= unwrap_or_abort(.value = get_rw_ref(.self = $&self&._storage, .index = index))
-        right ::= unwrap_or_abort(.value = get_ro_ref(.self = &other&._storage, .index = index))
+        left ::= unwrap_or_abort(.value = get_rw_ref($&self&._storage, .index = index))
+        right ::= unwrap_or_abort(.value = get_ro_ref(&other&._storage, .index = index))
         left&= _bit_set_combine(.left = left&, .right = right&, .mode = mode).value
         index = index + 1
     }
@@ -49,7 +49,7 @@ union_with(
     ) -> (
         .result : Errable#(Void, (..bit_set_size_mismatch))
     ) := {
-    result = _bit_set_combine_into(.self = self, .other = other, .mode = 0)
+    result = _bit_set_combine_into(self, .other = other, .mode = 0)
 }
 
 intersect_with(
@@ -58,7 +58,7 @@ intersect_with(
     ) -> (
         .result : Errable#(Void, (..bit_set_size_mismatch))
     ) := {
-    result = _bit_set_combine_into(.self = self, .other = other, .mode = 1)
+    result = _bit_set_combine_into(self, .other = other, .mode = 1)
 }
 
 difference_with(
@@ -67,5 +67,5 @@ difference_with(
     ) -> (
         .result : Errable#(Void, (..bit_set_size_mismatch))
     ) := {
-    result = _bit_set_combine_into(.self = self, .other = other, .mode = 2)
+    result = _bit_set_combine_into(self, .other = other, .mode = 2)
 }

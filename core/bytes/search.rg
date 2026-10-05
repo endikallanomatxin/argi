@@ -7,8 +7,8 @@ compare(.left: ArrayViewRO#(.t: UInt8), .right: ArrayViewRO#(.t: UInt8)) -> (.or
     index :: UIntNative = 0
 
     while index < count {
-        a ::= unwrap_or_abort(.value = get_ro_ref(.self = &left, .index = index))
-        b ::= unwrap_or_abort(.value = get_ro_ref(.self = &right, .index = index))
+        a ::= unwrap_or_abort(.value = get_ro_ref(&left, .index = index))
+        b ::= unwrap_or_abort(.value = get_ro_ref(&right, .index = index))
         if a&< b&{
             order = -1
             return
@@ -43,8 +43,8 @@ _bytes_match_at(
     offset :: UIntNative = 0
 
     while offset < count {
-        a ::= unwrap_or_abort(.value = get_ro_ref(.self = &self, .index = start + offset))
-        b ::= unwrap_or_abort(.value = get_ro_ref(.self = &pattern, .index = offset))
+        a ::= unwrap_or_abort(.value = get_ro_ref(&self, .index = start + offset))
+        b ::= unwrap_or_abort(.value = get_ro_ref(&pattern, .index = offset))
         if a&!= b&{ return }
         offset = offset + 1
     }
@@ -67,7 +67,7 @@ find(
     start :: UIntNative = 0
 
     while true {
-        if _bytes_match_at(.self = self, .pattern = pattern, .start = start).ok {
+        if _bytes_match_at(self, .pattern = pattern, .start = start).ok {
             index = ..some(.value = start)
             return
         }
@@ -89,7 +89,7 @@ find_last(
     start ::= size - count
 
     while true {
-        if _bytes_match_at(.self = self, .pattern = pattern, .start = start).ok {
+        if _bytes_match_at(self, .pattern = pattern, .start = start).ok {
             index = ..some(.value = start)
             return
         }
@@ -102,7 +102,7 @@ find(.self: ArrayViewRO#(.t: UInt8), .byte: UInt8) -> (.index: ?UIntNative = ..n
     offset :: UIntNative = 0
 
     while offset < length(&self).count {
-        current ::= unwrap_or_abort(.value = get_ro_ref(.self = &self, .index = offset))
+        current ::= unwrap_or_abort(.value = get_ro_ref(&self, .index = offset))
         if current&== byte {
             index = ..some(.value = offset)
             return
@@ -112,7 +112,7 @@ find(.self: ArrayViewRO#(.t: UInt8), .byte: UInt8) -> (.index: ?UIntNative = ..n
 }
 
 starts_with(.self: ArrayViewRO#(.t: UInt8), .pattern: ArrayViewRO#(.t: UInt8)) -> (.ok: Bool) := {
-    ok = _bytes_match_at(.self = self, .pattern = pattern, .start = 0).ok
+    ok = _bytes_match_at(self, .pattern = pattern, .start = 0).ok
 }
 
 ends_with(.self: ArrayViewRO#(.t: UInt8), .pattern: ArrayViewRO#(.t: UInt8)) -> (.ok: Bool = false) := {
@@ -120,9 +120,9 @@ ends_with(.self: ArrayViewRO#(.t: UInt8), .pattern: ArrayViewRO#(.t: UInt8)) -> 
     count ::= length(&pattern).count
 
     if count > size { return }
-    ok = _bytes_match_at(.self = self, .pattern = pattern, .start = size - count).ok
+    ok = _bytes_match_at(self, .pattern = pattern, .start = size - count).ok
 }
 
 contains(.self: ArrayViewRO#(.t: UInt8), .pattern: ArrayViewRO#(.t: UInt8)) -> (.ok: Bool) := {
-    ok = find(.self = self, .pattern = pattern).index ?
+    ok = find(self, .pattern = pattern).index ?
 }

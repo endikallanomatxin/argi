@@ -42,7 +42,7 @@ next(.self: $&StringSplitIterator) -> (.value: StringView) := {
     if self&._done { abort }
     start ::= self&._start
     remaining ::= _string_view_subrange(
-        .self  = self&._text
+        self&._text
         .start = start
         .count = [
             self&._text.length
@@ -50,14 +50,14 @@ next(.self: $&StringSplitIterator) -> (.value: StringView) := {
         ]
     ).view
 
-    match find(.self = remaining, .pattern = self&._separator).index {
+    match find(remaining, .pattern = self&._separator).index {
         ..none {
             value = remaining
             self&._done = true
         }
         ..some payload {
             value = _string_view_subrange(
-                .self  = self&._text
+                self&._text
                 .start = start
                 .count = payload.value
             ).view

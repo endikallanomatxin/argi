@@ -36,7 +36,7 @@ RingBuffer init#(
         return
     }
 
-    allocation ::= allocate#(.t: t)(.self = allocator, .count = capacity)!
+    allocation ::= allocate#(.t: t)(allocator, .count = capacity)!
     constructed = (
         ._allocation = ~allocation
         ._capacity   = capacity
@@ -89,7 +89,7 @@ _ring_buffer_occupied_pointer#(
         .pointer : $&t
     ) := {
     if index >= self&._length { abort }
-    physical ::= _ring_buffer_physical_index(.self = self, .index = index).physical
+    physical ::= _ring_buffer_physical_index(self, .index = index).physical
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = physical)
     pointer = trusted_establish_allocation_slot#(.t: t)(
         .allocation = &self&._allocation
@@ -111,7 +111,7 @@ get_ro_ref#(
         return
     }
 
-    mutable ::= _ring_buffer_occupied_pointer(.self = self, .index = index).pointer
+    mutable ::= _ring_buffer_occupied_pointer(self, .index = index).pointer
     reference ::= read_reference#(.t: t)(.base = mutable).reference
     borrowed ::= depend_on#(.t: &t)(
         .value = reference
@@ -140,10 +140,10 @@ push#(
         return
     }
 
-    physical ::= _ring_buffer_physical_index(.self = self, .index = self&._length).physical
+    physical ::= _ring_buffer_physical_index(self, .index = self&._length).physical
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = physical)
     _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~owned)
-    _invalidate_ring_buffer_shape(.self = self)
+    _invalidate_ring_buffer_shape(self)
     self&._length = self&._length + 1
 
     result = ..ok Void()
@@ -157,7 +157,7 @@ pop#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> (.result: Errable#(t, (..empty)))
 
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = self&._head)
     value ::= _trusted_uninit_take#(.t: t)(.allocation = $&self&._allocation, .slot = slot)
-    _invalidate_ring_buffer_shape(.self = self)
+    _invalidate_ring_buffer_shape(self)
     self&._length = self&._length - 1
     self&._head = self&._head + 1
 
@@ -170,7 +170,7 @@ RingBuffer deinit#(.t: Type)(.self: $&RingBuffer#(.t: t), .allocator: $&Allocato
     assume allocator
 
     while self&._length > 0 {
-        discarded ::= ~unwrap_or_abort(.value = pop(.self = self))
+        discarded ::= ~unwrap_or_abort(.value = pop(self))
     }
 
     trusted_opaque_mark_empty(.storage = $&self&._allocation)

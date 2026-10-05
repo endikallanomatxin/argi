@@ -165,7 +165,7 @@ _general_purpose_small_address(
     }
 
     allocated ::= allocate(
-        .self      = $&self&._backing_allocator
+        $&self&._backing_allocator
         .size      = mapping_size
         .alignment = self&._bucket_size
     )
@@ -215,7 +215,7 @@ _general_purpose_large_address(
         .result : Errable#(_GeneralPurposeMapped, (..out_of_memory))
     ) := {
     allocated ::= allocate(
-        .self      = $&self&._backing_allocator
+        $&self&._backing_allocator
         .size      = size
         .alignment = alignment
     )
@@ -225,7 +225,7 @@ _general_purpose_large_address(
         ..ok ~payload {
             backing ::= ~payload
             metadata ::= allocate(
-                .self      = $&self&._backing_allocator
+                $&self&._backing_allocator
                 .size      = size_of(.type = _GeneralPurposeLarge)
                 .alignment = alignment_of(.type = _GeneralPurposeLarge)
             )
@@ -274,9 +274,9 @@ allocate(
     mapped :: Errable#(_GeneralPurposeMapped, (..out_of_memory))
 
     if slot_size > self&._bucket_size / 2 {
-        mapped = _general_purpose_large_address(.self = self, .size = size, .alignment = alignment)
+        mapped = _general_purpose_large_address(self, .size = size, .alignment = alignment)
     } else {
-        mapped = _general_purpose_small_address(.self = self, .slot_size = slot_size)
+        mapped = _general_purpose_small_address(self, .slot_size = slot_size)
     }
 
     match mapped {

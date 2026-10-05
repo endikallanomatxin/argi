@@ -54,7 +54,7 @@ parse_cli#(
     index :: UIntNative = 0
 
     while index < count {
-        spec ::= unwrap_or_abort(.value = get(.self = &specs, .index = index))
+        spec ::= unwrap_or_abort(.value = get(&specs, .index = index))
         if spec.name.length == 0 or spec.short_name.length > 1 {
             result = ..error(.reason = ..invalid_cli_schema)
             return
@@ -70,7 +70,7 @@ parse_cli#(
         }
         previous :: UIntNative = 0
         while previous < index {
-            other ::= unwrap_or_abort(.value = get(.self = &specs, .index = previous))
+            other ::= unwrap_or_abort(.value = get(&specs, .index = previous))
             if [
                 other.name == spec.name
                 or [spec.short_name.length > 0 and other.short_name == spec.short_name]
@@ -99,7 +99,7 @@ parse_cli#(
                         found ::= false
                         index = 0
                         while index < count {
-                            spec ::= unwrap_or_abort(.value = get(.self = &specs, .index = index))
+                            spec ::= unwrap_or_abort(.value = get(&specs, .index = index))
                             matches :: Bool = option.name == spec.name
                             if option.short { matches = option.name == spec.short_name }
                             if matches {
@@ -108,7 +108,7 @@ parse_cli#(
                                     cursor :: UIntNative = 0
                                     while cursor < length(&options).count {
                                         existing ::= unwrap_or_abort(
-                                            .value = get(.self = &options, .index = cursor)
+                                            .value = get(&options, .index = cursor)
                                         )
                                         if existing.name == spec.name {
                                             result = ..error(.reason = ..duplicate_option)
@@ -120,7 +120,7 @@ parse_cli#(
                                 value :: ?StringView = ..none
                                 if spec.value_name.length > 0 {
                                     value = ..some(
-                                        .value = take_value(.self = $&parser, .option = option)!
+                                        .value = take_value($&parser, .option = option)!
                                     )
                                 } else {
                                     match option.value {
@@ -151,11 +151,11 @@ parse_cli#(
     index = 0
 
     while index < count {
-        spec ::= unwrap_or_abort(.value = get(.self = &specs, .index = index))
+        spec ::= unwrap_or_abort(.value = get(&specs, .index = index))
         found ::= false
         cursor :: UIntNative = 0
         while cursor < length(&options).count {
-            existing ::= unwrap_or_abort(.value = get(.self = &options, .index = cursor))
+            existing ::= unwrap_or_abort(.value = get(&options, .index = cursor))
             if existing.name == spec.name {
                 found = true
                 break
@@ -192,39 +192,39 @@ write_cli_help(
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
     ) := {
-    write(.self = writer, .text = about)!
-    write(.self = writer, .text = "\nUsage: ")!
-    write(.self = writer, .text = program)!
-    write(.self = writer, .text = " [OPTIONS] [ARGS]\n\nOptions:\n")!
+    write(writer, .text = about)!
+    write(writer, .text = "\nUsage: ")!
+    write(writer, .text = program)!
+    write(writer, .text = " [OPTIONS] [ARGS]\n\nOptions:\n")!
     index :: UIntNative = 0
 
     while index < length(&specs).count {
-        spec ::= unwrap_or_abort(.value = get(.self = &specs, .index = index))
-        write(.self = writer, .text = "  ")!
+        spec ::= unwrap_or_abort(.value = get(&specs, .index = index))
+        write(writer, .text = "  ")!
         if spec.short_name.length > 0 {
-            write(.self = writer, .text = "-")!
-            write(.self = writer, .text = spec.short_name)!
-            write(.self = writer, .text = ", ")!
+            write(writer, .text = "-")!
+            write(writer, .text = spec.short_name)!
+            write(writer, .text = ", ")!
         }
-        write(.self = writer, .text = "--")!
-        write(.self = writer, .text = spec.name)!
+        write(writer, .text = "--")!
+        write(writer, .text = spec.name)!
         if spec.value_name.length > 0 {
-            write(.self = writer, .text = " <")!
-            write(.self = writer, .text = spec.value_name)!
-            write(.self = writer, .text = ">")!
+            write(writer, .text = " <")!
+            write(writer, .text = spec.value_name)!
+            write(writer, .text = ">")!
         }
-        if spec.required { write(.self = writer, .text = " (required)")! }
-        if spec.repeatable { write(.self = writer, .text = " (repeatable)")! }
-        write(.self = writer, .text = "  ")!
-        write(.self = writer, .text = spec.help)!
+        if spec.required { write(writer, .text = " (required)")! }
+        if spec.repeatable { write(writer, .text = " (repeatable)")! }
+        write(writer, .text = "  ")!
+        write(writer, .text = spec.help)!
         match spec.default_value {
             ..none {} ..some entry {
-                write(.self = writer, .text = " [default: ")!
-                write(.self = writer, .text = entry.value)!
-                write(.self = writer, .text = "]")!
+                write(writer, .text = " [default: ")!
+                write(writer, .text = entry.value)!
+                write(writer, .text = "]")!
             }
         }
-        write(.self = writer, .text = "\n")!
+        write(writer, .text = "\n")!
         index = index + 1
     }
 }

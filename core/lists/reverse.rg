@@ -7,8 +7,8 @@ _swap_indexed_values#(
         .right : UIntNative,
     ) -> () := {
     if left == right { return }
-    left_ref ::= unwrap_or_abort(.value = get_rw_ref(.self = self, .index = left))
-    right_ref ::= unwrap_or_abort(.value = get_rw_ref(.self = self, .index = right))
+    left_ref ::= unwrap_or_abort(.value = get_rw_ref(self, .index = left))
+    right_ref ::= unwrap_or_abort(.value = get_rw_ref(self, .index = right))
     saved ::= left_ref&
     left_ref&= right_ref&
     right_ref&= saved
@@ -25,7 +25,7 @@ reverse#(
     while left < end {
         end = end - 1
         if left >= end { return }
-        _swap_indexed_values#(.t: t)(.self = self, .left = left, .right = end)
+        _swap_indexed_values#(.t: t)(self, .left = left, .right = end)
         left = left + 1
     }
 }
