@@ -40,8 +40,8 @@ reserve#(
         return
     }
     element_size ::= size_of(.type = t)
-    bytes ::= capacity * element_size
-    if element_size != 0 and bytes / element_size != capacity {
+    maximum ::= integer_limits(.value = capacity).maximum
+    if element_size != 0 and capacity > maximum / element_size {
         result = ..error(.reason = ..out_of_memory)
         return
     }
@@ -86,11 +86,12 @@ _deque_ensure_room#(
         result = ..ok Void()
         return
     }
-    grown ::= self&._ring._capacity * 2
-    if grown <= self&._ring._capacity {
+    maximum ::= integer_limits(.value = self&._ring._capacity).maximum
+    if self&._ring._capacity > maximum / 2 {
         result = ..error(.reason = ..out_of_memory)
         return
     }
+    grown ::= self&._ring._capacity * 2
     result = reserve(.self = self, .capacity = grown, .allocator = allocator)
 }
 
@@ -103,17 +104,16 @@ push_back#(
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..out_of_memory))
     ) := {
+    assume allocator
+    owned ::= ~value
     match _deque_ensure_room(.self = self, .allocator = allocator) {
         ..error _ {
-            -- Insertion consumes the argument on failure too. The deque's
-            -- old occupancy and storage remain unchanged when growth fails.
-            trusted_opaque_drop(.slot = $&value, .allocator = allocator)
             result = ..error(.reason = ..out_of_memory)
             return
         }
         ..ok _ {}
     }
-    unwrap_or_abort(.value = push(.self = $&self&._ring, .value = ~value, .allocator = allocator))
+    unwrap_or_abort(.value = push(.self = $&self&._ring, .value = ~owned, .allocator = allocator))
     result = ..ok Void()
 }
 
@@ -126,9 +126,10 @@ push_front#(
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..out_of_memory))
     ) := {
+    assume allocator
+    owned ::= ~value
     match _deque_ensure_room(.self = self, .allocator = allocator) {
         ..error _ {
-            trusted_opaque_drop(.slot = $&value, .allocator = allocator)
             result = ..error(.reason = ..out_of_memory)
             return
         }
@@ -141,7 +142,7 @@ push_front#(
     _trusted_uninit_write#(.t: t)(
         .allocation = $&self&._ring._allocation
         .slot       = slot
-        .value      = ~value
+        .value      = ~owned
     )
     _invalidate_ring_buffer_shape(.self = $&self&._ring)
     self&._ring._head = head

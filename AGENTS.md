@@ -219,6 +219,12 @@ feature first.
   one extra scratch byte and destroy partial owners on error. Reserve bounded
   capacity before consuming a chunk.
 
+- Owning collection operations move generic input values into lexical owners
+  before fallible branches. Extract replaced or discarded structural elements
+  into lexical owners as well, so their fields receive recursive cleanup.
+  Nominal-only opaque drop hooks on generic input slots do not provide that
+  cleanup. Keep unchecked replacement helpers limited to copyable metadata.
+
 - Owning hash tables keep occupied entries separate from slot metadata. Move
   extracted structural entries into lexical owners for recursive field cleanup;
   nominal-only opaque drop hooks do not replace aggregate cleanup. Replace
