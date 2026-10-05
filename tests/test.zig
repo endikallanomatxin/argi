@@ -1317,8 +1317,8 @@ test "feature_tests/basics/01_minimal_main" {
     try run(test_path);
 }
 
-test "usecase_tests/01_cat_cli" {
-    const test_path = "tests/usecase_tests/01_cat_cli";
+test "usecase_tests/01_cat" {
+    const test_path = "tests/usecase_tests/01_cat";
     const expected_help = "Concatenate files to standard output. With no files or FILE '-', read standard input.\nUsage: cat [OPTIONS] [ARGS]\n\nOptions:\n  -h, --help  Show help\n";
     const input_1 = try pathInTest(test_path, "input.txt");
     defer std.testing.allocator.free(input_1);
@@ -10021,8 +10021,8 @@ test "feature_tests/system/93_directory_walk" {
     try runExpect("tests/feature_tests/system/93_directory_walk", 0);
 }
 
-test "usecase_tests/04_tree_cli" {
-    const path = "tests/usecase_tests/04_tree_cli";
+test "usecase_tests/04_tree" {
+    const path = "tests/usecase_tests/04_tree";
     try expectSuccessfulBuild(path);
     try runExpectStdoutWithArgs(path, &.{ "--root", "does-not-exist", "--depth=0" }, 0, "");
     const output = try outputPathFor(path);

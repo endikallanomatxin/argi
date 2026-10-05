@@ -1,7 +1,7 @@
-# Streaming cat CLI
+# Streaming cat
 
-Build with `zig build`, then `./zig-out/bin/argi build tests/usecase_tests/01_cat_cli`.
-Run `tests/usecase_tests/01_cat_cli/build/output [FILE...]` (add `.exe` on Windows).
+Build with `zig build`, then `./zig-out/bin/argi build tests/usecase_tests/01_cat`.
+Run `tests/usecase_tests/01_cat/build/output [FILE...]` (add `.exe` on Windows).
 
 The program concatenates files in argument order. With no files it reads standard
 input; `-` reads standard input at that position. Use `--` before filenames that

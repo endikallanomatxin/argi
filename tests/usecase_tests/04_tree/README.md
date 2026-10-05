@@ -1,12 +1,12 @@
-# Directory tree CLI
+# Directory tree
 
 Build from the repository root, then run the compiled tool:
 
 ```sh
 zig build
-./zig-out/bin/argi build tests/usecase_tests/04_tree_cli
-./tests/usecase_tests/04_tree_cli/build/output --root path/to/directory --depth 2
-./tests/usecase_tests/04_tree_cli/build/output --help
+./zig-out/bin/argi build tests/usecase_tests/04_tree
+./tests/usecase_tests/04_tree/build/output --root path/to/directory --depth 2
+./tests/usecase_tests/04_tree/build/output --help
 ```
 
 The declarative schema defines short aliases, required values, a default depth
