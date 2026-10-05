@@ -9992,3 +9992,32 @@ test "feature_tests/collections/152_collection_structural_cleanup" {
     try expectSuccessfulBuild("tests/feature_tests/collections/152_collection_structural_cleanup");
     try runExpect("tests/feature_tests/collections/152_collection_structural_cleanup", 0);
 }
+
+test "feature_tests/types/280_positional_type_arguments" {
+    try expectSuccessfulBuild("tests/feature_tests/types/280_positional_type_arguments");
+    try runExpect("tests/feature_tests/types/280_positional_type_arguments", 0);
+}
+
+test "feature_tests/types/281X_positional_type_after_named" {
+    try buildExpectFail("tests/feature_tests/types/281X_positional_type_after_named", "positional type arguments must appear before named arguments");
+}
+
+test "feature_tests/types/282X_positional_type_duplicate" {
+    try buildExpectFail("tests/feature_tests/types/282X_positional_type_duplicate", "duplicate generic argument");
+}
+
+test "feature_tests/types/283X_positional_type_excess" {
+    try buildExpectFail("tests/feature_tests/types/283X_positional_type_excess", "too many generic arguments");
+}
+
+test "feature_tests/types/284X_positional_type_missing" {
+    try buildExpectFail("tests/feature_tests/types/284X_positional_type_missing", "missing required generic argument");
+}
+
+test "feature_tests/types/285X_positional_type_kind" {
+    try buildExpectFail("tests/feature_tests/types/285X_positional_type_kind", "generic argument kind does not match its parameter");
+}
+
+test "feature_tests/types/286X_positional_type_unknown" {
+    try buildExpectFail("tests/feature_tests/types/286X_positional_type_unknown", "unknown generic argument");
+}

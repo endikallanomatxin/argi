@@ -407,7 +407,10 @@ pub fn semantizeWithOptions(
 
     try core.resolveExternalTypes();
     try generics.resolveExternalTypes();
-    _ = try generics.materializeKnownTypes();
+    _ = generics.materializeKnownTypes() catch |err| {
+        try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, &generics);
+        return err;
+    };
     _ = try control.materializeSugarTypes();
 
     if (options.diagnostics) |diagnostics| {
@@ -591,7 +594,10 @@ pub fn semantizeWithOptions(
             if (try core.materializeAddresses()) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &profile_addresses_ns);
             sweep_start = profileTimestamp(options.profile_io);
-            if (try generics.materializeKnownTypes()) changed = true;
+            if (generics.materializeKnownTypes() catch |err| {
+                try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, &generics);
+                return err;
+            }) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &profile_known_generic_types_ns);
             sweep_start = profileTimestamp(options.profile_io);
             if (try abstracts.materializeAbstractFieldStorage()) changed = true;
@@ -1153,7 +1159,7 @@ fn diagnoseInvalidNumericAssignments(
             },
             else => continue,
         };
-        // Literal range failures have a more precise Safety diagnostic. Their
+        // Literal range failures have a more precise Safety diagnostics_mod. Their
         // default type is not evidence of an implicit variable conversion.
         if (graph.node(value).content == .int_literal and switch (graph.semanticType(expected)) {
             .builtin => |builtin| switch (builtin) {
@@ -1233,7 +1239,7 @@ fn findAggregateNumericMismatch(graph: *const global_sg.GlobalSemanticGraph, id:
 fn numericChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) bool {
     const node = graph.node(child);
     const actual = node.ty orelse return false;
-    // Integer range errors retain the dedicated safety diagnostic.
+    // Integer range errors retain the dedicated safety diagnostics_mod.
     if (node.content == .int_literal and !global_types.isBuiltin(graph, expected, .Float16) and
         !global_types.isBuiltin(graph, expected, .Float32) and !global_types.isBuiltin(graph, expected, .Float64)) return false;
     return isNumericType(graph, actual) and isNumericType(graph, expected) and !global_types.equal(graph, actual, expected);
@@ -3382,4 +3388,11 @@ test "call diagnostic type names tolerate unresolved slots" {
     defer name.deinit();
     try appendTypeName(&name, &graph, @enumFromInt(0));
     try std.testing.expectEqualStrings("<unresolved>", name.items);
+}
+
+fn reportGenericArgumentFailure(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, generics: *const generic_mod.Resolver) !void {
+    const sink = diagnostics orelse return;
+    const failure = generics.argument_failure orelse return;
+    const declaration = graph.declaration(failure.declaration);
+    try sink.add(diagnosticLocation(graph, sink, declaration.source), .semantic, "{s} for type '{s}'", .{ failure.reason, graph.text(declaration.name) });
 }

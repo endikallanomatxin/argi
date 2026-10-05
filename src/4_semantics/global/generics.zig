@@ -38,6 +38,7 @@ pub const Resolver = struct {
     core: *core_mod.Resolver,
     profile_io: ?std.Io = null,
     stats: Stats = .{},
+    argument_failure: ?struct { declaration: global_sg.GlobalDeclId, reason: []const u8 } = null,
     pointer_types: std.AutoHashMapUnmanaged(PointerKey, global_sg.GlobalTypeId) = .empty,
 
     pub fn deinit(self: *Resolver) void {
@@ -121,7 +122,18 @@ pub const Resolver = struct {
         const located = self.findTypeParameterized(identity.base) orelse return false;
         var bindings = try Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
-        try self.bindGlobalArguments(located.module_index, located.parameterized.parameters, identity.arguments, &bindings);
+        self.bindGlobalArguments(located.module_index, located.parameterized.parameters, identity.arguments, &bindings) catch |err| {
+            const reason: []const u8 = switch (err) {
+                error.TooManyGenericArguments => "too many generic arguments",
+                error.UnknownGenericArgument => "unknown generic argument",
+                error.DuplicateGenericArgument => "duplicate generic argument",
+                error.MissingGenericArgument => "missing required generic argument",
+                error.GenericArgumentKindMismatch => "generic argument kind does not match its parameter",
+                else => return err,
+            };
+            self.argument_failure = .{ .declaration = identity.base, .reason = reason };
+            return err;
+        };
         const body_type = try self.instantiateParameterizedType(located.module_index, located.parameterized.body, &bindings, null);
         const shape = switch (self.graph.types.items[@intFromEnum(body_type)]) {
             .structural => |value| @import("../primitives/type_shapes.zig").GenericInstanceShape(global_sg.Ids){ .structure = .{
@@ -191,6 +203,28 @@ pub const Resolver = struct {
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
         bindings: *Bindings,
     ) !void {
+        const module = &self.modules[module_index];
+        if (arguments.len > parameters.len) return error.TooManyGenericArguments;
+        const seen = try self.allocator.alloc(bool, parameters.len);
+        defer self.allocator.free(seen);
+        @memset(seen, false);
+        for (0..arguments.len) |argument_index| {
+            const argument = self.graph.generic_arguments.items[arguments.start + @as(u32, @intCast(argument_index))];
+            const name = self.graph.text(argument.name);
+            var position: ?usize = if (name.len == 0) argument_index else null;
+            if (name.len != 0) {
+                for (0..parameters.len) |parameter_index| {
+                    const parameter = module.semantic.parameterized_storage.comptime_parameters.items[parameters.start + @as(u32, @intCast(parameter_index))];
+                    if (std.mem.eql(u8, name, module.text(parameter.name))) {
+                        position = parameter_index;
+                        break;
+                    }
+                }
+            }
+            const index = position orelse return error.UnknownGenericArgument;
+            if (seen[index]) return error.DuplicateGenericArgument;
+            seen[index] = true;
+        }
         try self.bindGlobalArgumentsPartial(module_index, parameters, arguments, bindings);
         for (parameters.start..parameters.start + parameters.len) |param_raw| {
             const parameter = self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items[param_raw];
@@ -232,16 +266,15 @@ pub const Resolver = struct {
         position: usize,
     ) ?global_sg.GenericArgument {
         const wanted = module.text(parameter_name);
-        var has_named = false;
         for (0..arguments.len) |offset| {
             const argument = self.graph.generic_arguments.items[arguments.start + @as(u32, @intCast(offset))];
             const name = self.graph.text(argument.name);
-            if (name.len != 0) has_named = true;
             if (name.len != 0 and std.mem.eql(u8, name, wanted)) return argument;
         }
-        if (has_named) return null;
-        if (position < arguments.len)
-            return self.graph.generic_arguments.items[arguments.start + @as(u32, @intCast(position))];
+        if (position < arguments.len) {
+            const argument = self.graph.generic_arguments.items[arguments.start + @as(u32, @intCast(position))];
+            if (self.graph.text(argument.name).len == 0) return argument;
+        }
         return null;
     }
 

@@ -101,6 +101,7 @@ pub const Node = struct {
         list_literal,
         struct_type_literal,
         struct_type_field,
+        positional_type_field,
         inferred_result_field,
         choice_type_literal,
         choice_type_variant,
@@ -273,7 +274,7 @@ pub const ChoiceVariantExtra = struct { qualifier: OptionalTokenIndex, payload: 
 pub const StructValueLiteral = struct { fields: []const NodeIndex, positional_prefix_count: u32 };
 pub const CodeBlock = struct { statements: []const NodeIndex };
 pub const ListLiteral = struct { elements: []const NodeIndex };
-pub const StructTypeField = struct { name_token: TokenIndex, type_node: ?NodeIndex, default_value: ?NodeIndex, inferred_result: bool };
+pub const StructTypeField = struct { name_token: TokenIndex, type_node: ?NodeIndex, default_value: ?NodeIndex, inferred_result: bool, position: ?u32 = null };
 pub const SymbolDeclaration = struct { name_token: TokenIndex, type_node: ?NodeIndex, value: ?NodeIndex, mutability: Mutability };
 pub const ChoiceOptionDeclaration = struct { name_token: TokenIndex };
 pub const Assignment = struct { name_token: TokenIndex, value: NodeIndex };
@@ -605,13 +606,15 @@ pub const FileSyntaxTree = struct {
 
     pub fn structTypeField(tree: *const FileSyntaxTree, node: NodeIndex) ?StructTypeField {
         const node_tag = tree.tag(node);
-        if (node_tag != .struct_type_field and node_tag != .inferred_result_field) return null;
-        const extra = tree.extraData(FieldExtra, tree.data(node).extra);
+        if (node_tag != .struct_type_field and node_tag != .inferred_result_field and node_tag != .positional_type_field) return null;
+        const positional = node_tag == .positional_type_field;
+        const extra = tree.extraData(FieldExtra, if (positional) tree.data(node).u32_and_extra.extra else tree.data(node).extra);
         return .{
             .name_token = tree.mainToken(node),
             .type_node = extra.type_node.unwrap(),
             .default_value = extra.default_value.unwrap(),
             .inferred_result = node_tag == .inferred_result_field,
+            .position = if (positional) tree.data(node).u32_and_extra.value else null,
         };
     }
 

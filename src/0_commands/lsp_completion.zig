@@ -290,6 +290,7 @@ fn binding_type(files: []const File, file: *const File, name: []const u8, offset
     for (0..file.tree.nodes.len) |raw| {
         const node: st.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
         const field = file.tree.structTypeField(node) orelse continue;
+        if (field.position != null) continue;
         const index = @intFromEnum(field.name_token);
         if (index < begin or index >= open) continue;
         if (!std.mem.eql(u8, file.tree.tokenTextFromSource(file.source.code, field.name_token), name)) continue;
@@ -303,6 +304,7 @@ fn add_fields(builder: *Builder, files: []const File, value: TypeRef, caller: *c
     const fields = resolved.file.tree.structTypeLiteral(resolved.node) orelse return;
     for (fields.fields) |node| {
         const field = resolved.file.tree.structTypeField(node) orelse continue;
+        if (field.position != null) continue;
         const name = resolved.file.tree.tokenTextFromSource(resolved.file.source.code, field.name_token);
         if (!same_module(resolved.file.source.path, caller.source.path) and std.mem.startsWith(u8, name, "_")) continue;
         const insertion = if (arguments) try std.fmt.allocPrint(builder.allocator, "{s} = ", .{name}) else name;
@@ -406,6 +408,7 @@ fn add_members(builder: *Builder, io: std.Io, files: []const File, file: *const 
         var next: ?TypeRef = null;
         for (fields.fields) |node| {
             const field = resolved.file.tree.structTypeField(node) orelse continue;
+            if (field.position != null) continue;
             const name = resolved.file.tree.tokenTextFromSource(resolved.file.source.code, field.name_token);
             if (std.mem.eql(u8, name, chain.items[remaining])) {
                 if (!same_module(resolved.file.source.path, file.source.path) and std.mem.startsWith(u8, name, "_")) return;

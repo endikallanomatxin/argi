@@ -1,3 +1,4 @@
+const type_arguments = @import("../type_arguments.zig");
 const std = @import("std");
 const literals = @import("../../semantic_literals.zig");
 const syn = @import("../../../3_syntax/syntax_tree.zig");
@@ -422,7 +423,7 @@ pub const Context = struct {
                 else
                     return error.InvalidAbstractArgument;
                 try arguments.append(self.allocator, .{
-                    .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token)),
+                    .name = try self.writer.addString(type_arguments.name(self.tree, self.source, field, "")),
                     .value = value,
                 });
             }
@@ -592,7 +593,7 @@ pub const Context = struct {
             const literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidVirtualArguments;
             if (literal.fields.len != 1) return error.InvalidVirtualArguments;
             const field = self.tree.structTypeField(literal.fields[0]) orelse return error.InvalidVirtualArguments;
-            if (!std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, field.name_token), "abstract")) return error.InvalidVirtualArguments;
+            if (!std.mem.eql(u8, type_arguments.name(self.tree, self.source, field, "Virtual"), "abstract")) return error.InvalidVirtualArguments;
             return self.addType(.{ .resolved = .{ .virtual = try self.lowerType(field.type_node orelse return error.InvalidVirtualArguments, allow_self) } });
         }
         const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericParameterizedBase;
@@ -608,7 +609,7 @@ pub const Context = struct {
                 const field = self.tree.structTypeField(field_node) orelse return error.InvalidChoiceUnionArguments;
                 if (field.default_value != null) return error.InvalidChoiceUnionArguments;
                 const ty = try self.lowerType(field.type_node orelse return error.InvalidChoiceUnionArguments, allow_self);
-                const argument_name = self.tree.tokenTextFromSource(self.source, field.name_token);
+                const argument_name = type_arguments.name(self.tree, self.source, field, if (base.name.qualifier_token == null) base_text else "");
                 if (std.mem.eql(u8, argument_name, "a") and left == null) left = ty else if (std.mem.eql(u8, argument_name, "b") and right == null) right = ty else return error.InvalidChoiceUnionArguments;
             }
             return self.addType(.{ .choice_union = .{ .left = left.?, .right = right.? } });
@@ -619,7 +620,7 @@ pub const Context = struct {
             var element: ?ir.ParameterizedTypeId = null;
             for (literal.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node) orelse return error.InvalidArrayArguments;
-                const argument_name = self.tree.tokenTextFromSource(self.source, field.name_token);
+                const argument_name = type_arguments.name(self.tree, self.source, field, if (base.name.qualifier_token == null) base_text else "");
                 if (std.mem.eql(u8, argument_name, "n")) {
                     if (length != null or field.default_value == null) return error.InvalidArrayArguments;
                     length = try self.lowerIntExpression(field.default_value.?);
@@ -630,6 +631,16 @@ pub const Context = struct {
             }
             if (length == null or element == null) return error.InvalidArrayArguments;
             return self.addType(.{ .array = .{ .length = length.?, .element = element.? } });
+        }
+        if (name.qualifier_token == null and std.mem.eql(u8, base_text, "Errable")) {
+            const literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericParameterizedArguments;
+            if (literal.fields.len == 1) {
+                const field = self.tree.structTypeField(literal.fields[0]) orelse return error.InvalidGenericParameterizedArgument;
+                if (std.mem.eql(u8, type_arguments.name(self.tree, self.source, field, "Errable"), "t")) {
+                    const child = try self.lowerType(field.type_node orelse return error.InvalidGenericParameterizedArgument, allow_self);
+                    return self.addType(.{ .resolved = .{ .inferred_errable = child } });
+                }
+            }
         }
         const declaration_ref = if (name.qualifier_token == null and self.localType(base_text) != null)
             ir.DeclarationRef{ .module = self.localType(base_text).? }
@@ -650,7 +661,7 @@ pub const Context = struct {
         defer arguments.deinit(self.allocator);
         for (literal.fields) |field_node| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameterizedArgument;
-            const name_range = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token));
+            const name_range = try self.writer.addString(type_arguments.name(self.tree, self.source, field, if (base.name.qualifier_token == null) base_text else ""));
             const arg_value: ir.GenericArgument.Value = if (field.type_node) |type_node|
                 .{ .type = try self.lowerType(type_node, allow_self) }
             else if (field.default_value) |value_node|

@@ -1,3 +1,4 @@
+const type_arguments = @import("type_arguments.zig");
 const parameterized_lowerer = @import("parameterized/lowerer.zig");
 const std = @import("std");
 const syn = @import("../../3_syntax/syntax_tree.zig");
@@ -197,7 +198,7 @@ const Context = struct {
             const literal = self.tree.structTypeLiteral(args_node) orelse return error.InvalidAbstractArguments;
             for (literal.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node) orelse return error.InvalidAbstractArgument;
-                const arg_name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token));
+                const arg_name = try self.writer.addString(type_arguments.name(self.tree, self.source, field, ""));
                 if (parameterized_mode) {
                     if (field.type_node) |type_node| {
                         try parameterized_args.append(self.allocator, .{

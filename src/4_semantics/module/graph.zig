@@ -1,3 +1,4 @@
+const type_arguments = @import("type_arguments.zig");
 const std = @import("std");
 const syn = @import("../../3_syntax/syntax_tree.zig");
 const semantic_strings = @import("../primitives/strings.zig");
@@ -541,7 +542,7 @@ fn lowerGenericType(
         var has_reasons = false;
         for (literal.fields) |field_node| {
             const field = tree.structTypeField(field_node) orelse return null;
-            const name = tree.tokenTextFromSource(source, field.name_token);
+            const name = type_arguments.name(tree, source, field, base_name);
             if (std.mem.eql(u8, name, "t")) {
                 if (result_node != null or field.type_node == null) return null;
                 result_node = field.type_node;
@@ -576,7 +577,7 @@ fn lowerGenericType(
         const type_node = field.type_node orelse break;
         const ty = try lowerType(allocator, graph, tree, source, module_file_index, type_node) orelse break;
         try arguments.append(allocator, .{
-            .name = try graph.addString(allocator, tree.tokenTextFromSource(source, field.name_token)),
+            .name = try graph.addString(allocator, type_arguments.name(tree, source, field, base_name)),
             .ty = ty,
         });
     } else {
@@ -609,7 +610,7 @@ fn lowerChoiceUnion(
         const field = tree.structTypeField(field_node) orelse return null;
         if (field.default_value != null) return null;
         const type_node = field.type_node orelse return null;
-        const name = tree.tokenTextFromSource(source, field.name_token);
+        const name = type_arguments.name(tree, source, field, "choice_union");
         if (std.mem.eql(u8, name, "a")) {
             if (left_node != null) return null;
             left_node = type_node;
@@ -672,7 +673,7 @@ fn lowerArrayGeneric(
     var element_node: ?syn.NodeIndex = null;
     for (literal.fields) |field_node| {
         const field = tree.structTypeField(field_node) orelse return null;
-        const name = tree.tokenTextFromSource(source, field.name_token);
+        const name = type_arguments.name(tree, source, field, "Array");
         if (std.mem.eql(u8, name, "n")) {
             if (length != null or field.type_node != null) return null;
             const value = field.default_value orelse return null;
