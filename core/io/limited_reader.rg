@@ -23,7 +23,7 @@ read_block#(
         .self   : $&LimitedReader#(.t: t),
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+        .result : Errable#(UIntNative, (..stream_read_failed))
     ) := {
     count ::= length(&buffer).count
 
@@ -50,7 +50,7 @@ read_byte#(
     )(
         .self : $&LimitedReader#(.t: t)
     ) -> (
-        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+        .result : Errable#(ReadByte, (..stream_read_failed))
     ) := {
     byte :: [1]UInt8 = (0)
     received ::= read_block(.self = self, .buffer = view($&byte))!
@@ -81,7 +81,7 @@ read_byte#(
     )(
         .self : $&LimitedByteReader#(.t: t)
     ) -> (
-        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+        .result : Errable#(ReadByte, (..stream_read_failed))
     ) := {
     if self&._remaining == 0 {
         result = ..ok ..end

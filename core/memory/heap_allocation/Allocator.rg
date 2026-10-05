@@ -2,7 +2,7 @@
 
 Allocator: Abstract = (
     allocate(.self: $&Self, .size: UIntNative, .alignment: UIntNative) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(Allocation, (..out_of_memory))
     )
 )
 
@@ -34,7 +34,7 @@ allocate(
         .self : $&Allocator,
         .size : UIntNative
     ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(Allocation, (..out_of_memory))
     ) := {
     result = allocate(.self = self, .size = size, .alignment = 1)
 }
@@ -45,7 +45,7 @@ allocate#(
         .self  : $&Allocator,
         .count : UIntNative
     ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(Allocation, (..out_of_memory))
     ) := {
     element_size ::= size_of(.type = t)
     bytes ::= element_size * count
@@ -63,7 +63,7 @@ allocate#(
     )(
         .self : $&Allocator
     ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(Allocation, (..out_of_memory))
     ) := {
     result = allocate#(.t: t)(.self = self, .count = 1)
 }
@@ -81,7 +81,7 @@ allocate(
         .size      : UIntNative,
         .alignment : UIntNative
     ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(Allocation, (..out_of_memory))
     ) := {
     acquired ::= acquire_heap_storage(.size = size, .alignment = alignment, .ffi = self&.ffi)
 

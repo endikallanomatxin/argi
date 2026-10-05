@@ -19,7 +19,7 @@ RingBuffer init#(
         .capacity  : UIntNative,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: RingBuffer#(.t: t), .reasons: (..invalid_capacity, ..out_of_memory))
+        .result : Errable#(RingBuffer#(.t: t), (..invalid_capacity, ..out_of_memory))
     ) := {
     constructed :: RingBuffer#(.t: t)
 
@@ -104,7 +104,7 @@ get_ro_ref#(
         .self  : &RingBuffer#(.t: t),
         .index : UIntNative
     ) -> (
-        .result : Errable#(.t: &t, .reasons: (..out_of_bounds))
+        .result : Errable#(&t, (..out_of_bounds))
     ) := {
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
@@ -130,7 +130,7 @@ push#(
         .value     : t,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..full))
+        .result : Errable#(Void, (..full))
     ) := {
     assume allocator
     owned ::= ~value
@@ -149,7 +149,7 @@ push#(
     result = ..ok Void()
 }
 
-pop#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> (.result: Errable#(.t: t, .reasons: (..empty))) := {
+pop#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> (.result: Errable#(t, (..empty))) := {
     if self&._length == 0 {
         result = ..error(.reason = ..empty)
         return

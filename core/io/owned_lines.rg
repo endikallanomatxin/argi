@@ -9,10 +9,7 @@ read_line_owned(
         .maximum   : UIntNative,
         .allocator : $&Allocator = reach allocator
     ) -> (
-        .result : Errable#(
-            .t       : ?OwnedByteLine,
-            .reasons : (..stream_read_failed, ..line_too_long, ..out_of_memory)
-        )
+        .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
     ) := {
     assume allocator
     bytes ::= DynamicArray#(.t: UInt8)(.capacity = 1)!
@@ -75,10 +72,7 @@ next#(
         .self      : $&OwnedLineReader#(.t: t),
         .allocator : $&Allocator                = reach allocator
     ) -> (
-        .result : Errable#(
-            .t       : ?OwnedByteLine,
-            .reasons : (..stream_read_failed, ..line_too_long, ..out_of_memory)
-        )
+        .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
     ) := {
     assume allocator
 

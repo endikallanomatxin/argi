@@ -32,7 +32,7 @@ _quad(
         .text     : StringView,
         .position : UIntNative
     ) -> (
-        .result : Errable#(.t: UInt32, .reasons: JsonReasons)
+        .result : Errable#(UInt32, JsonReasons)
     ) := {
     if position > text.length or text.length - position < 4 {
         result = ..error(.reason = ..invalid_json)
@@ -61,7 +61,7 @@ _string_end(
         .text     : StringView,
         .position : UIntNative
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: JsonReasons)
+        .result : Errable#(UIntNative, JsonReasons)
     ) := {
     cursor ::= position + 1
 
@@ -139,7 +139,7 @@ _number_end(
         .text     : StringView,
         .position : UIntNative
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: JsonReasons)
+        .result : Errable#(UIntNative, JsonReasons)
     ) := {
     cursor ::= position
 
@@ -211,7 +211,7 @@ _literal(
         .position : UIntNative,
         .expected : StringView
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: JsonReasons)
+        .result : Errable#(UIntNative, JsonReasons)
     ) := {
     if text.length - position < expected.length {
         result = ..error(.reason = ..invalid_json)
@@ -245,7 +245,7 @@ _value_end(
         .depth    : UIntNative,
         .maximum  : UIntNative
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: JsonReasons)
+        .result : Errable#(UIntNative, JsonReasons)
     ) := {
     cursor ::= _space(.text = text, .position = position).next
 
@@ -355,7 +355,7 @@ validate(
         .text          : StringView,
         .maximum_depth : UIntNative  = 64
     ) -> (
-        .result : Errable#(.t: Void, .reasons: JsonReasons) = ..ok Void()
+        .result : Errable#(Void, JsonReasons) = ..ok Void()
     ) := {
     validate_utf8(.text = text)!
 
@@ -384,14 +384,14 @@ JsonCursor init(
         .text          : StringView,
         .maximum_depth : UIntNative  = 64
     ) -> (
-        .result : Errable#(.t: JsonCursor, .reasons: JsonReasons)
+        .result : Errable#(JsonCursor, JsonReasons)
     ) := {
     validate(.text = text, .maximum_depth = maximum_depth)!
 
     result = ..ok(._text = text, ._position = 0)
 }
 
-next(.self: $&JsonCursor) -> (.result: Errable#(.t: ?JsonToken, .reasons: JsonReasons)) := {
+next(.self: $&JsonCursor) -> (.result: Errable#(?JsonToken, JsonReasons)) := {
     start ::= _space(.text = self&._text, .position = self&._position).next
 
     if start == self&._text.length {
@@ -429,8 +429,8 @@ decode_string(
         .allocator : $&Allocator = reach allocator
     ) -> (
         .result : Errable#(
-            .t       : String,
-            .reasons : (..invalid_json, ..json_depth_exceeded, ..invalid_utf8, ..out_of_memory)
+            String,
+            (..invalid_json, ..json_depth_exceeded, ..invalid_utf8, ..out_of_memory)
         )
     ) := {
     assume allocator
@@ -519,10 +519,7 @@ write_string(
         .writer : $&Writer,
         .text   : StringView
     ) -> (
-        .result : Errable#(
-            .t       : Void,
-            .reasons : (..invalid_utf8, ..stream_write_failed, ..stream_flush_failed)
-        ) = ..ok Void()
+        .result : Errable#(Void, (..invalid_utf8, ..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
     ) := {
     validate_utf8(.text = text)!
     write_byte(.self = writer, .byte = 34)!

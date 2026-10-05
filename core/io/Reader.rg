@@ -1,12 +1,12 @@
 Reader: Abstract = (
-    read_byte(.self: $&Self) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed)))
+    read_byte(.self: $&Self) -> (.result: Errable#(ReadByte, (..stream_read_failed)))
 )
 
 read(
         .self   : $&Reader,
         .buffer : ArrayView#(.t: UInt8),
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+        .result : Errable#(UIntNative, (..stream_read_failed))
     ) := {
     copied :: UIntNative = 0
     view :: ArrayView#(.t: UInt8) = buffer

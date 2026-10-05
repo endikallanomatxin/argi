@@ -30,11 +30,7 @@ _array_storage#(
         .self   : &Python,
         .values : view_type
     ) -> (
-        .result : Errable#(
-            .t : Object,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     assume ffi := self&._ffi
     count ::= length(&values).count
@@ -60,11 +56,7 @@ _copy_numeric#(
         .destination : ArrayView#(.t: t),
         .kind        : Int32
     ) -> (
-        .result : Errable#(
-            .t : UIntNative,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(UIntNative, (..python_error))
     ) := {
     assume ffi := self&._python&._ffi
     capacity ::= length(&destination).count
@@ -97,11 +89,7 @@ _numpy_array(
         .storage : &Object,
         .dtype   : StringView
     ) -> (
-        .result : Errable#(
-            .t : Object,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     numpy ::= import_module(.self = self, .name = "numpy")!
     dtype_object ::= string(.self = self, .value = dtype)!
@@ -125,10 +113,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayViewRO#(.t: Int8)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: Int8)(.self = self, .values = values)
 }
@@ -137,10 +122,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayViewRO#(.t: Int8)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -151,10 +133,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayView#(.t: Int8)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: Int8)(.self = self, .values = values)
 }
@@ -163,10 +142,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayView#(.t: Int8)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -177,11 +153,7 @@ copy_numeric(
         .self        : &Object,
         .destination : ArrayView#(.t: Int8)
     ) -> (
-        .result : Errable#(
-            .t : UIntNative,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(UIntNative, (..python_error))
     ) := {
     result = _copy_numeric(.self = self, .destination = destination, .kind = 0)
 }
@@ -190,10 +162,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayViewRO#(.t: Int16)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: Int16)(.self = self, .values = values)
 }
@@ -202,10 +171,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayViewRO#(.t: Int16)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -216,10 +182,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayView#(.t: Int16)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: Int16)(.self = self, .values = values)
 }
@@ -228,10 +191,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayView#(.t: Int16)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -242,11 +202,7 @@ copy_numeric(
         .self        : &Object,
         .destination : ArrayView#(.t: Int16)
     ) -> (
-        .result : Errable#(
-            .t : UIntNative,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(UIntNative, (..python_error))
     ) := {
     result = _copy_numeric(.self = self, .destination = destination, .kind = 0)
 }
@@ -255,10 +211,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayViewRO#(.t: Int32)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: Int32)(.self = self, .values = values)
 }
@@ -267,10 +220,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayViewRO#(.t: Int32)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -281,10 +231,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayView#(.t: Int32)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: Int32)(.self = self, .values = values)
 }
@@ -293,10 +240,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayView#(.t: Int32)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -307,11 +251,7 @@ copy_numeric(
         .self        : &Object,
         .destination : ArrayView#(.t: Int32)
     ) -> (
-        .result : Errable#(
-            .t : UIntNative,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(UIntNative, (..python_error))
     ) := {
     result = _copy_numeric(.self = self, .destination = destination, .kind = 0)
 }
@@ -320,10 +260,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayViewRO#(.t: Int64)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: Int64)(.self = self, .values = values)
 }
@@ -332,10 +269,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayViewRO#(.t: Int64)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -346,10 +280,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayView#(.t: Int64)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: Int64)(.self = self, .values = values)
 }
@@ -358,10 +289,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayView#(.t: Int64)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -372,11 +300,7 @@ copy_numeric(
         .self        : &Object,
         .destination : ArrayView#(.t: Int64)
     ) -> (
-        .result : Errable#(
-            .t : UIntNative,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(UIntNative, (..python_error))
     ) := {
     result = _copy_numeric(.self = self, .destination = destination, .kind = 0)
 }
@@ -385,10 +309,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayViewRO#(.t: UInt8)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: UInt8)(.self = self, .values = values)
 }
@@ -397,10 +318,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayViewRO#(.t: UInt8)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -411,10 +329,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayView#(.t: UInt8)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: UInt8)(.self = self, .values = values)
 }
@@ -423,10 +338,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayView#(.t: UInt8)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -437,11 +349,7 @@ copy_numeric(
         .self        : &Object,
         .destination : ArrayView#(.t: UInt8)
     ) -> (
-        .result : Errable#(
-            .t : UIntNative,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(UIntNative, (..python_error))
     ) := {
     result = _copy_numeric(.self = self, .destination = destination, .kind = 1)
 }
@@ -450,10 +358,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayViewRO#(.t: UInt16)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: UInt16)(.self = self, .values = values)
 }
@@ -462,10 +367,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayViewRO#(.t: UInt16)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -476,10 +378,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayView#(.t: UInt16)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: UInt16)(.self = self, .values = values)
 }
@@ -488,10 +387,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayView#(.t: UInt16)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -502,11 +398,7 @@ copy_numeric(
         .self        : &Object,
         .destination : ArrayView#(.t: UInt16)
     ) -> (
-        .result : Errable#(
-            .t : UIntNative,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(UIntNative, (..python_error))
     ) := {
     result = _copy_numeric(.self = self, .destination = destination, .kind = 1)
 }
@@ -515,10 +407,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayViewRO#(.t: UInt32)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: UInt32)(.self = self, .values = values)
 }
@@ -527,10 +416,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayViewRO#(.t: UInt32)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -541,10 +427,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayView#(.t: UInt32)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: UInt32)(.self = self, .values = values)
 }
@@ -553,10 +436,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayView#(.t: UInt32)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -567,11 +447,7 @@ copy_numeric(
         .self        : &Object,
         .destination : ArrayView#(.t: UInt32)
     ) -> (
-        .result : Errable#(
-            .t : UIntNative,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(UIntNative, (..python_error))
     ) := {
     result = _copy_numeric(.self = self, .destination = destination, .kind = 1)
 }
@@ -580,10 +456,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayViewRO#(.t: UInt64)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: UInt64)(.self = self, .values = values)
 }
@@ -592,10 +465,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayViewRO#(.t: UInt64)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -606,10 +476,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayView#(.t: UInt64)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: UInt64)(.self = self, .values = values)
 }
@@ -618,10 +485,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayView#(.t: UInt64)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -632,11 +496,7 @@ copy_numeric(
         .self        : &Object,
         .destination : ArrayView#(.t: UInt64)
     ) -> (
-        .result : Errable#(
-            .t : UIntNative,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(UIntNative, (..python_error))
     ) := {
     result = _copy_numeric(.self = self, .destination = destination, .kind = 1)
 }
@@ -645,11 +505,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayViewRO#(.t: UIntNative)
     ) -> (
-        .result : Errable#(
-            .t : Object,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: UIntNative)(.self = self, .values = values)
 }
@@ -658,11 +514,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayViewRO#(.t: UIntNative)
     ) -> (
-        .result : Errable#(
-            .t : Object,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -673,11 +525,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayView#(.t: UIntNative)
     ) -> (
-        .result : Errable#(
-            .t : Object,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: UIntNative)(.self = self, .values = values)
 }
@@ -686,10 +534,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayView#(.t: UIntNative)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -700,11 +545,7 @@ copy_numeric(
         .self        : &Object,
         .destination : ArrayView#(.t: UIntNative)
     ) -> (
-        .result : Errable#(
-            .t : UIntNative,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(UIntNative, (..python_error))
     ) := {
     result = _copy_numeric(.self = self, .destination = destination, .kind = 1)
 }
@@ -713,10 +554,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayViewRO#(.t: Float32)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: Float32)(.self = self, .values = values)
 }
@@ -725,10 +563,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayViewRO#(.t: Float32)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -739,10 +574,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayView#(.t: Float32)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: Float32)(.self = self, .values = values)
 }
@@ -751,10 +583,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayView#(.t: Float32)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -765,11 +594,7 @@ copy_numeric(
         .self        : &Object,
         .destination : ArrayView#(.t: Float32)
     ) -> (
-        .result : Errable#(
-            .t : UIntNative,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(UIntNative, (..python_error))
     ) := {
     result = _copy_numeric(.self = self, .destination = destination, .kind = 2)
 }
@@ -778,10 +603,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayViewRO#(.t: Float64)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: Float64)(.self = self, .values = values)
 }
@@ -790,10 +612,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayViewRO#(.t: Float64)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -804,10 +623,7 @@ numeric_buffer(
         .self   : &Python,
         .values : ArrayView#(.t: Float64)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = _array_storage#(.t: Float64)(.self = self, .values = values)
 }
@@ -816,10 +632,7 @@ numeric_array(
         .self   : &Python,
         .values : ArrayView#(.t: Float64)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     storage ::= numeric_buffer(.self = self, .values = values)!
 
@@ -830,11 +643,7 @@ copy_numeric(
         .self        : &Object,
         .destination : ArrayView#(.t: Float64)
     ) -> (
-        .result : Errable#(
-            .t : UIntNative,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(UIntNative, (..python_error))
     ) := {
     result = _copy_numeric(.self = self, .destination = destination, .kind = 2)
 }

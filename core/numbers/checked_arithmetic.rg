@@ -59,7 +59,7 @@ checked_add#(
         .left  : t,
         .right : t
     ) -> (
-        .result : Errable#(.t: t, .reasons: (..out_of_range))
+        .result : Errable#(t, (..out_of_range))
     ) := {
     bounds ::= integer_limits(.value = left)
 
@@ -84,7 +84,7 @@ checked_subtract#(
         .left  : t,
         .right : t
     ) -> (
-        .result : Errable#(.t: t, .reasons: (..out_of_range))
+        .result : Errable#(t, (..out_of_range))
     ) := {
     bounds ::= integer_limits(.value = left)
 
@@ -109,7 +109,7 @@ checked_multiply#(
         .left  : t,
         .right : t
     ) -> (
-        .result : Errable#(.t: t, .reasons: (..out_of_range))
+        .result : Errable#(t, (..out_of_range))
     ) := {
     bounds ::= integer_limits(.value = left)
     -- Divide a representable bound, never a potentially overflowing product.
@@ -145,7 +145,7 @@ checked_divide#(
         .left  : t,
         .right : t
     ) -> (
-        .result : Errable#(.t: t, .reasons: (..out_of_range, ..division_by_zero))
+        .result : Errable#(t, (..out_of_range, ..division_by_zero))
     ) := {
     if right == 0 {
         result = ..error(.reason = ..division_by_zero)

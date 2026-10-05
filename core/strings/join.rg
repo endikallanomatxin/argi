@@ -16,7 +16,7 @@ join(
         .separator : StringView,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory, ..size_overflow))
+        .result : Errable#(String, (..out_of_memory, ..size_overflow))
     ) := {
     limit ::= _string_max_result_length().length
     count ::= length(&parts).count

@@ -60,7 +60,7 @@ capture#(
         .t : Type
     )(
         .self  : &Python,
-        .value : Errable#(.t: t, .reasons: (..python_error))
+        .value : Errable#(t, (..python_error))
     ) -> (
         .result : Outcome#(.t: t)
     ) := {
@@ -75,11 +75,7 @@ _exception_text(
         .part      : Int32,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t : String,
-
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume ffi := self&._ffi
     count ::= _exception_size(.handle = self&._handle, .part = part).length
@@ -102,10 +98,7 @@ exception_type(
         .self      : &Exception,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : String,
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     result = _exception_text(.self = self, .part = 0, .allocator = allocator)
 }
@@ -114,10 +107,7 @@ exception_message(
         .self      : &Exception,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : String,
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     result = _exception_text(.self = self, .part = 1, .allocator = allocator)
 }
@@ -126,10 +116,7 @@ exception_traceback(
         .self      : &Exception,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : String,
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     result = _exception_text(.self = self, .part = 2, .allocator = allocator)
 }

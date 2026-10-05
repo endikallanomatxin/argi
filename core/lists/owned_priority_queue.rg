@@ -13,10 +13,7 @@ OwnedPriorityQueue init#(
         .allocator : $&Allocator,
         .capacity  : UIntNative   = 8
     ) -> (
-        .result : Errable#(
-            .t       : OwnedPriorityQueue#(.t: t, .order: order),
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(OwnedPriorityQueue#(.t: t, .order: order), (..out_of_memory))
     ) := {
     assume allocator
     items ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = capacity)!
@@ -57,7 +54,7 @@ push#(
         .value     : t,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory)) = ..ok Void()
+        .result : Errable#(Void, (..out_of_memory)) = ..ok Void()
     ) := {
     assume allocator
     owned ::= ~value

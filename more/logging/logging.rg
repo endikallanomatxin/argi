@@ -6,7 +6,7 @@ LogReasons: Type = (..stream_write_failed, ..stream_flush_failed)
 
 Logger: Abstract = (
     log(.self: $&Self, .level: LogLevel, .message: StringView) -> (
-        .result : Errable#(.t: Void, .reasons: LogReasons)
+        .result : Errable#(Void, LogReasons)
     )
 )
 
@@ -32,7 +32,7 @@ _write_record(
         .level   : LogLevel,
         .message : StringView
     ) -> (
-        .result : Errable#(.t: Void, .reasons: LogReasons) = ..ok Void()
+        .result : Errable#(Void, LogReasons) = ..ok Void()
     ) := {
     write(.self = writer, .text = _prefix(.level = level).text)!
     write(.self = writer, .text = ": ")!
@@ -71,7 +71,7 @@ log#(
         .level   : LogLevel,
         .message : StringView
     ) -> (
-        .result : Errable#(.t: Void, .reasons: LogReasons) = ..ok Void()
+        .result : Errable#(Void, LogReasons) = ..ok Void()
     ) := {
     if _rank(.level = level).value < _rank(.level = self&.minimum).value { return }
     _write_record(.writer = self&._writer, .level = level, .message = message)!
@@ -82,7 +82,7 @@ flush#(
     )(
         .self : $&FileLogger#(.t: t)
     ) -> (
-        .result : Errable#(.t: Void, .reasons: LogReasons)
+        .result : Errable#(Void, LogReasons)
     ) := { result = flush(.self = self&._writer) }
 
 StdLogger#(.out: Type: Writer, .err: Type: Writer): Type = (
@@ -112,7 +112,7 @@ log#(
         .level   : LogLevel,
         .message : StringView
     ) -> (
-        .result : Errable#(.t: Void, .reasons: LogReasons) = ..ok Void()
+        .result : Errable#(Void, LogReasons) = ..ok Void()
     ) := {
     if _rank(.level = level).value < _rank(.level = self&.minimum).value { return }
     if _rank(.level = level).value >= 2 {
@@ -129,5 +129,5 @@ log(
         .level   : LogLevel,
         .message : StringView
     ) -> (
-        .result : Errable#(.t: Void, .reasons: LogReasons) = ..ok Void()
+        .result : Errable#(Void, LogReasons) = ..ok Void()
     ) := {}

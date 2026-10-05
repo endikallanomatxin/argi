@@ -8,9 +8,9 @@ Duration init(.nanoseconds: UInt64) -> (.result: Duration) := {
 }
 
 _duration_checked(
-        .value : Errable#(.t: UInt64, .reasons: (..out_of_range))
+        .value : Errable#(UInt64, (..out_of_range))
     ) -> (
-        .result : Errable#(.t: Duration, .reasons: (..out_of_range))
+        .result : Errable#(Duration, (..out_of_range))
     ) := {
     match value {
         ..ok nanoseconds { result = ..ok Duration(.nanoseconds = nanoseconds) }
@@ -22,7 +22,7 @@ _duration_scaled(
         .value : UInt64,
         .scale : UInt64
     ) -> (
-        .result : Errable#(.t: Duration, .reasons: (..out_of_range))
+        .result : Errable#(Duration, (..out_of_range))
     ) := {
     result = _duration_checked(.value = checked_multiply(.left = value, .right = scale)).result
 }
@@ -30,7 +30,7 @@ _duration_scaled(
 Duration init(
         .microseconds : UInt64
     ) -> (
-        .result : Errable#(.t: Duration, .reasons: (..out_of_range))
+        .result : Errable#(Duration, (..out_of_range))
     ) := {
     result = _duration_scaled(.value = microseconds, .scale = 1000).result
 }
@@ -38,12 +38,12 @@ Duration init(
 Duration init(
         .milliseconds : UInt64
     ) -> (
-        .result : Errable#(.t: Duration, .reasons: (..out_of_range))
+        .result : Errable#(Duration, (..out_of_range))
     ) := {
     result = _duration_scaled(.value = milliseconds, .scale = 1000000).result
 }
 
-Duration init(.seconds: UInt64) -> (.result: Errable#(.t: Duration, .reasons: (..out_of_range))) := {
+Duration init(.seconds: UInt64) -> (.result: Errable#(Duration, (..out_of_range))) := {
     result = _duration_scaled(.value = seconds, .scale = 1000000000).result
 }
 
@@ -59,10 +59,7 @@ add(
         .left  : Duration,
         .right : Duration
     ) -> (
-        .result : Errable#(
-            .t       : Duration,
-            .reasons : (..out_of_range)
-        )
+        .result : Errable#(Duration, (..out_of_range))
     ) := {
     result = _duration_checked(
         .value = checked_add(.left = left._nanoseconds, .right = right._nanoseconds)
@@ -73,10 +70,7 @@ subtract(
         .left  : Duration,
         .right : Duration
     ) -> (
-        .result : Errable#(
-            .t       : Duration,
-            .reasons : (..out_of_range)
-        )
+        .result : Errable#(Duration, (..out_of_range))
     ) := {
     result = _duration_checked(
         .value = checked_subtract(.left = left._nanoseconds, .right = right._nanoseconds)

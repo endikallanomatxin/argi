@@ -8,7 +8,7 @@ Deadline init(
         .after : Duration,
         .now   : MonotonicInstant
     ) -> (
-        .result : Errable#(.t: Deadline, .reasons: (..out_of_range))
+        .result : Errable#(Deadline, (..out_of_range))
     ) := {
     instant ::= checked_add(.left = now._nanoseconds, .right = after._nanoseconds)!
 

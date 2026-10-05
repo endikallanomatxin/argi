@@ -26,7 +26,7 @@ once RandomNumberGenerator init(.ffi: $&ForeignFunctionInterface = reach ffi) ->
 fill_random_bytes(
     .self        : $&RandomNumberGenerator,
     .destination : ArrayView#(.t: UInt8),
-) -> (.result: Errable#(.t: Void, .reasons: (..entropy_unavailable))) := {
+) -> (.result: Errable#(Void, (..entropy_unavailable))) := {
     extent ::= length(&destination).count
 
     if extent == 0 { result = ..ok Void() return }

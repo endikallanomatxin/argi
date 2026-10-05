@@ -47,7 +47,7 @@ parse_cli#(
         .start     : UIntNative                 = 0,
         .allocator : $&Allocator                = reach allocator
     ) -> (
-        .result : Errable#(.t: CliMatches, .reasons: CliReasons)
+        .result : Errable#(CliMatches, CliReasons)
     ) := {
     assume allocator
     count ::= length(&specs).count
@@ -190,7 +190,7 @@ write_cli_help(
         .about   : StringView,
         .specs   : ArrayViewRO#(.t: CliSpec)
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
     ) := {
     write(.self = writer, .text = about)!
     write(.self = writer, .text = "\nUsage: ")!

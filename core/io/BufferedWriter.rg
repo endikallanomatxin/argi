@@ -31,7 +31,7 @@ buffered_writer_flush#(
     )(
         .self : $&BufferedWriter#(.base_type: base_type)
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     i :: UIntNative = 0
 
@@ -74,7 +74,7 @@ write_byte#(
         .self : $&BufferedWriter#(.base_type: base_type),
         .byte : UInt8
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     if length(&self&.buffer) == 0 {
         result = write_byte(.self = self&.base, .byte = byte)
@@ -99,7 +99,7 @@ flush#(
     )(
         .self : $&BufferedWriter#(.base_type: base_type)
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     result = buffered_writer_flush(.self = self)
 }

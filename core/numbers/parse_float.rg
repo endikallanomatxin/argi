@@ -8,7 +8,7 @@ _float_parse#(
         .maximum_exponent : Int32,
         .minimum_exponent : Int32,
     ) -> (
-        .result : Errable#(.t: t, .reasons: (..invalid_input, ..out_of_range))
+        .result : Errable#(t, (..invalid_input, ..out_of_range))
     ) := {
     if text.length == 0 {
         result = ..error(.reason = ..invalid_input)
@@ -246,10 +246,7 @@ _float_parse#(
 parse_float16(
         .text : StringView
     ) -> (
-        .result : Errable#(
-            .t       : Float16,
-            .reasons : (..invalid_input, ..out_of_range)
-        )
+        .result : Errable#(Float16, (..invalid_input, ..out_of_range))
     ) := {
     result = _float_parse#(.t: Float16)(
         .text             = text
@@ -262,10 +259,7 @@ parse_float16(
 parse_float32(
         .text : StringView
     ) -> (
-        .result : Errable#(
-            .t       : Float32,
-            .reasons : (..invalid_input, ..out_of_range)
-        )
+        .result : Errable#(Float32, (..invalid_input, ..out_of_range))
     ) := {
     result = _float_parse#(.t: Float32)(
         .text             = text
@@ -278,10 +272,7 @@ parse_float32(
 parse_float64(
         .text : StringView
     ) -> (
-        .result : Errable#(
-            .t       : Float64,
-            .reasons : (..invalid_input, ..out_of_range)
-        )
+        .result : Errable#(Float64, (..invalid_input, ..out_of_range))
     ) := {
     result = _float_parse#(.t: Float64)(
         .text             = text

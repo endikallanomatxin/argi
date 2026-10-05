@@ -7,7 +7,7 @@ CancellationSource: Type = (._state: AtomicUInt32)
 CancellationSource init(
         .ffi : $&ForeignFunctionInterface = reach ffi
     ) -> (
-        .result : Errable#(.t: CancellationSource, .reasons: (..out_of_memory))
+        .result : Errable#(CancellationSource, (..out_of_memory))
     ) := {
     state ::= AtomicUInt32(.ffi = ffi)!
 
@@ -43,7 +43,7 @@ check_cancelled(
         .self : CancellationContext,
         .now  : MonotonicInstant
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..cancelled, ..deadline_exceeded)) = ..ok Void()
+        .result : Errable#(Void, (..cancelled, ..deadline_exceeded)) = ..ok Void()
     ) := {
     match self.token {
         ..none {}

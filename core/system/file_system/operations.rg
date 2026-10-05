@@ -87,7 +87,7 @@ create_directory(
         .self : &FileSystem = reach file_system,
         .path : StringView
     ) -> (
-        .result : Errable#(.t: Void, .reasons: _FilesystemReasons)
+        .result : Errable#(Void, _FilesystemReasons)
     ) := {
     assume ffi := self&._ffi
     status ::= _fs_mkdir(.bytes = path.data, .length = path.length).status
@@ -104,7 +104,7 @@ remove_directory(
         .self : &FileSystem = reach file_system,
         .path : StringView
     ) -> (
-        .result : Errable#(.t: Void, .reasons: _FilesystemReasons)
+        .result : Errable#(Void, _FilesystemReasons)
     ) := {
     assume ffi := self&._ffi
     status ::= _fs_rmdir(.bytes = path.data, .length = path.length).status
@@ -130,7 +130,7 @@ metadata(
         .path         : StringView,
         .follow_links : Bool        = true
     ) -> (
-        .result : Errable#(.t: FileMetadata, .reasons: _FilesystemReasons)
+        .result : Errable#(FileMetadata, _FilesystemReasons)
     ) := {
     assume ffi := self&._ffi
     kind :: Int32 = 0
@@ -184,7 +184,7 @@ Directory init(
         .self : &FileSystem = reach file_system,
         .path : StringView
     ) -> (
-        .result : Errable#(.t: Directory, .reasons: _FilesystemReasons)
+        .result : Errable#(Directory, _FilesystemReasons)
     ) := {
     assume ffi := self&._ffi
     handle :: UIntNative = 0
@@ -202,7 +202,7 @@ next(
         .self      : $&Directory,
         .allocator : $&Allocator  = reach allocator
     ) -> (
-        .result : Errable#(.t: Nullable#(.t: DirectoryEntry), .reasons: _FilesystemReasons)
+        .result : Errable#(Nullable#(.t: DirectoryEntry), _FilesystemReasons)
     ) := {
     assume ffi := self&._filesystem&._ffi
     assume allocator
@@ -259,7 +259,7 @@ seek(
         .offset : Int64,
         .origin : SeekOrigin
     ) -> (
-        .result : Errable#(.t: UInt64, .reasons: (..stream_seek_failed))
+        .result : Errable#(UInt64, (..stream_seek_failed))
     ) := {
     assume ffi := self&._ffi
     selected :: Int32 = 0
@@ -284,7 +284,7 @@ seek(
     result = ..ok position
 }
 
-position(.self: $&File) -> (.result: Errable#(.t: UInt64, .reasons: (..stream_seek_failed))) := {
+position(.self: $&File) -> (.result: Errable#(UInt64, (..stream_seek_failed))) := {
     result = seek(.self = self, .offset = 0, .origin = ..current)
 }
 
@@ -292,7 +292,7 @@ truncate(
         .self : $&File,
         .size : UInt64
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_truncate_failed))
+        .result : Errable#(Void, (..stream_truncate_failed))
     ) := {
     assume ffi := self&._ffi
 
@@ -334,7 +334,7 @@ TemporaryDirectory init(
         .prefix    : StringView  = "argi-",
         .allocator : $&Allocator = reach allocator
     ) -> (
-        .result : Errable#(.t: TemporaryDirectory, .reasons: _FilesystemReasons)
+        .result : Errable#(TemporaryDirectory, _FilesystemReasons)
     ) := {
     assume ffi := self&._ffi
     assume allocator
@@ -375,7 +375,7 @@ path(.self: &TemporaryDirectory) -> (.view: StringView) := {
     view = as_view(&self&._path).view
 }
 
-close(.self: $&TemporaryDirectory) -> (.result: Errable#(.t: Void, .reasons: _FilesystemReasons)) := {
+close(.self: $&TemporaryDirectory) -> (.result: Errable#(Void, _FilesystemReasons)) := {
     assume ffi := self&._filesystem&._ffi
     status ::= _fs_temp_close(.handle = self&._handle).status
 

@@ -8,7 +8,7 @@ _checked_integer_conversion#(
         .minimum : from,
         .maximum : from,
     ) -> (
-        .result : Errable#(.t: to, .reasons: (..out_of_range))
+        .result : Errable#(to, (..out_of_range))
     ) := {
     if value < minimum or value > maximum {
         result = ..error(.reason = ..out_of_range)

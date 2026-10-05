@@ -27,7 +27,7 @@ ArenaAllocator init(
         .allocator  : $&Allocator,
         .block_size : UIntNative   = 4096
     ) -> (
-        .result : Errable#(.t: ArenaAllocator, .reasons: (..out_of_memory))
+        .result : Errable#(ArenaAllocator, (..out_of_memory))
     ) := {
     constructed :: ArenaAllocator
 
@@ -86,7 +86,7 @@ allocate(
         .size      : UIntNative,
         .alignment : UIntNative
     ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(Allocation, (..out_of_memory))
     ) := {
     _require_allocation_alignment(.alignment = alignment)
     required ::= size

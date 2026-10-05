@@ -15,7 +15,7 @@ HashSet init#(
         .allocator : $&Allocator,
         .capacity  : UIntNative   = 8
     ) -> (
-        .result : Errable#(.t: HashSet#(.key: key, .policy: policy), .reasons: (..out_of_memory))
+        .result : Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))
     ) := {
     constructed :: HashSet#(.key: key, .policy: policy)
 
@@ -37,7 +37,7 @@ insert#(
         .key       : key,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(.t: Bool, .reasons: (..out_of_memory))
+        .result : Errable#(Bool, (..out_of_memory))
     ) := {
     if contains(.self = &self&._map, .key = key).ok {
         result = ..ok false

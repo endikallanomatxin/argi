@@ -1,21 +1,21 @@
 ..test_failed
 ..test_skipped
 
-test_fail_impl() -> (.result: Errable#(.t: Void, .reasons: (..test_failed))) := {
+test_fail_impl() -> (.result: Errable#(Void, (..test_failed))) := {
     result = ..error(.reason = ..test_failed)
 }
 
-test_skip_impl() -> (.result: Errable#(.t: Void, .reasons: (..test_skipped))) := {
+test_skip_impl() -> (.result: Errable#(Void, (..test_skipped))) := {
     result = ..error(.reason = ..test_skipped)
 }
 
-fail(.message: &Char) -> (.result: Errable#(.t: Void, .reasons: (..test_failed))) := {
+fail(.message: &Char) -> (.result: Errable#(Void, (..test_failed))) := {
     test_fail_impl()!! message
 
     result = ..ok Void()
 }
 
-skip(.message: &Char) -> (.result: Errable#(.t: Void, .reasons: (..test_skipped))) := {
+skip(.message: &Char) -> (.result: Errable#(Void, (..test_skipped))) := {
     test_skip_impl()!! message
 
     result = ..ok Void()
@@ -25,7 +25,7 @@ expect(
         .condition : Bool,
         .message   : StringView = ""
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..test_failed))
+        .result : Errable#(Void, (..test_failed))
     ) := {
     if condition {
         result = ..ok Void()
@@ -42,7 +42,7 @@ expect_equal#(
         .actual   : t,
         .message  : StringView = "",
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..test_failed))
+        .result : Errable#(Void, (..test_failed))
     ) := {
     if expected == actual {
         result = ..ok Void()
@@ -60,9 +60,9 @@ expect_error#(
         .reasons : Type
     )(
         .expected_reason : reasons,
-        .actual_result   : Errable#(.t: t, .reasons: reasons),
+        .actual_result   : Errable#(t, reasons),
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..test_failed))
+        .result : Errable#(Void, (..test_failed))
     ) := {
     fail(.message = "testing.expect_error must be lowered by the compiler")!
 }

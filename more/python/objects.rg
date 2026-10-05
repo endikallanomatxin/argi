@@ -29,11 +29,7 @@ call_method(
         .arguments : ArrayViewRO#(.t: &Object) = _no_arguments(),
         .keywords  : ?&Object                  = _no_keywords()
     ) -> (
-        .result : Errable#(
-            .t : Object,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     method ::= attribute(.self = self, .name = name)!
 
@@ -46,10 +42,7 @@ call_method(
         .arguments : &Object,
         .keywords  : ?&Object    = _no_keywords()
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     method ::= attribute(.self = self, .name = name)!
 
@@ -61,10 +54,7 @@ set_attribute(
         .name  : StringView,
         .value : &Object
     ) -> (
-        .result : Errable#(
-            .t       : Void,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Void, (..python_error))
     ) := {
     assume ffi := self&._python&._ffi
 
@@ -90,11 +80,7 @@ tuple(
         .self   : &Python,
         .values : ArrayViewRO#(.t: &Object) = _no_arguments()
     ) -> (
-        .result : Errable#(
-            .t : Object,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = positional_arguments(.self = self, .values = values)
 }
@@ -104,7 +90,7 @@ tuple(
 -- the core Iterator abstract's infallible next/has_next protocol.
 PythonIterator: Type = (._object: Object)
 
-iterate(.self: &Object) -> (.result: Errable#(.t: PythonIterator, .reasons: (..python_error))) := {
+iterate(.self: &Object) -> (.result: Errable#(PythonIterator, (..python_error))) := {
     assume ffi := self&._python&._ffi
     object ::= _owned(
         .self   = self&._python
@@ -114,7 +100,7 @@ iterate(.self: &Object) -> (.result: Errable#(.t: PythonIterator, .reasons: (..p
     result = ..ok(._object = ~object)
 }
 
-next(.self: $&PythonIterator) -> (.result: Errable#(.t: ?Object, .reasons: (..python_error))) := {
+next(.self: $&PythonIterator) -> (.result: Errable#(?Object, (..python_error))) := {
     assume ffi := self&._object._python&._ffi
     exhausted :: Int32 = 0
     handle ::= _next(

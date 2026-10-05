@@ -48,7 +48,7 @@ valid_utc_date(.date: UtcDateTime) -> (.ok: Bool) := {
 unix_timestamp(
         .date : UtcDateTime
     ) -> (
-        .result : Errable#(.t: UnixTimestamp, .reasons: (..out_of_range))
+        .result : Errable#(UnixTimestamp, (..out_of_range))
     ) := {
     if valid_utc_date(.date = date).ok == false {
         result = ..error(.reason = ..out_of_range)
@@ -84,7 +84,7 @@ unix_timestamp(
 utc_date(
         .timestamp : UnixTimestamp
     ) -> (
-        .result : Errable#(.t: UtcDateTime, .reasons: (..out_of_range))
+        .result : Errable#(UtcDateTime, (..out_of_range))
     ) := {
     seconds ::= unix_seconds(.self = &timestamp).value
 
@@ -157,7 +157,7 @@ utc_date(
 }
 
 -- Sunday is zero, matching conventional civil weekday numbering.
-weekday(.date: UtcDateTime) -> (.result: Errable#(.t: UInt32, .reasons: (..out_of_range))) := {
+weekday(.date: UtcDateTime) -> (.result: Errable#(UInt32, (..out_of_range))) := {
     timestamp ::= unix_timestamp(.date = date)!
     days ::= [unix_seconds(.self = &timestamp).value + 62135596800] / 86400
 

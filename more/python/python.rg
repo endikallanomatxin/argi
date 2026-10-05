@@ -141,10 +141,7 @@ Python init(
         .program_name : StringView                  = "python3",
         .home         : StringView                  = ""
     ) -> (
-        .result : Errable#(
-            .t       : Python,
-            .reasons : (..python_initialization_failed)
-        )
+        .result : Errable#(Python, (..python_initialization_failed))
     ) := {
     assume ffi
     handle ::= _start(
@@ -176,10 +173,7 @@ _owned(
         .self   : &Python,
         .handle : RawPointer#(.t: _PyObject)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     if handle.address == 0 {
         result = ..error(.reason = ..python_error)
@@ -193,10 +187,7 @@ import_module(
         .self : &Python,
         .name : StringView
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     assume ffi := self&._ffi
 
@@ -210,10 +201,7 @@ string(
         .self  : &Python,
         .value : StringView
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     assume ffi := self&._ffi
 
@@ -227,10 +215,7 @@ bytes(
         .self  : &Python,
         .value : StringView
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     assume ffi := self&._ffi
 
@@ -240,7 +225,7 @@ bytes(
     )
 }
 
-clone(.self: &Object) -> (.result: Errable#(.t: Object, .reasons: (..python_error))) := {
+clone(.self: &Object) -> (.result: Errable#(Object, (..python_error))) := {
     assume ffi := self&._python&._ffi
 
     result = _owned(
@@ -253,10 +238,7 @@ attribute(
         .self : &Object,
         .name : StringView
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     assume ffi := self&._python&._ffi
 
@@ -275,7 +257,7 @@ get_item(
         .self : &Object,
         .key  : &Object
     ) -> (
-        .result : Errable#(.t: Object, .reasons: (..python_error))
+        .result : Errable#(Object, (..python_error))
     ) := {
     assume ffi := self&._python&._ffi
 
@@ -289,7 +271,7 @@ get_item(
     )
 }
 
-repr(.self: &Object) -> (.result: Errable#(.t: Object, .reasons: (..python_error))) := {
+repr(.self: &Object) -> (.result: Errable#(Object, (..python_error))) := {
     assume ffi := self&._python&._ffi
 
     result = _owned(
@@ -298,7 +280,7 @@ repr(.self: &Object) -> (.result: Errable#(.t: Object, .reasons: (..python_error
     )
 }
 
-to_int64(.self: &Object) -> (.result: Errable#(.t: Int64, .reasons: (..python_error))) := {
+to_int64(.self: &Object) -> (.result: Errable#(Int64, (..python_error))) := {
     assume ffi := self&._python&._ffi
     value :: Int64 = 0
 
@@ -313,7 +295,7 @@ to_int64(.self: &Object) -> (.result: Errable#(.t: Int64, .reasons: (..python_er
     result = ..ok value
 }
 
-to_uint64(.self: &Object) -> (.result: Errable#(.t: UInt64, .reasons: (..python_error))) := {
+to_uint64(.self: &Object) -> (.result: Errable#(UInt64, (..python_error))) := {
     assume ffi := self&._python&._ffi
     value :: UInt64 = 0
 
@@ -328,7 +310,7 @@ to_uint64(.self: &Object) -> (.result: Errable#(.t: UInt64, .reasons: (..python_
     result = ..ok value
 }
 
-to_float64(.self: &Object) -> (.result: Errable#(.t: Float64, .reasons: (..python_error))) := {
+to_float64(.self: &Object) -> (.result: Errable#(Float64, (..python_error))) := {
     assume ffi := self&._python&._ffi
     value :: Float64 = 0.0
 
@@ -352,10 +334,7 @@ call(
         .arguments : ArrayViewRO#(.t: &Object) = _no_arguments(),
         .keywords  : ?&Object                  = _no_keywords()
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     assume ffi := self&._python&._ffi
     tuple ::= _tuple(.context = self&._python&._handle, .length = length(&arguments).count).handle
@@ -463,7 +442,7 @@ _error_copy(
         .status : Int32
     ): CFunction(.symbol = "_argi_python_error_copy")
 
-none(.self: &Python) -> (.result: Errable#(.t: Object, .reasons: (..python_error))) := {
+none(.self: &Python) -> (.result: Errable#(Object, (..python_error))) := {
     assume ffi := self&._ffi
 
     result = _owned(
@@ -482,7 +461,7 @@ boolean(
         .self  : &Python,
         .value : Bool
     ) -> (
-        .result : Errable#(.t: Object, .reasons: (..python_error))
+        .result : Errable#(Object, (..python_error))
     ) := {
     assume ffi := self&._ffi
 
@@ -502,7 +481,7 @@ integer(
         .self  : &Python,
         .value : Int64
     ) -> (
-        .result : Errable#(.t: Object, .reasons: (..python_error))
+        .result : Errable#(Object, (..python_error))
     ) := {
     assume ffi := self&._ffi
 
@@ -522,7 +501,7 @@ integer(
         .self  : &Python,
         .value : UInt64
     ) -> (
-        .result : Errable#(.t: Object, .reasons: (..python_error))
+        .result : Errable#(Object, (..python_error))
     ) := {
     assume ffi := self&._ffi
 
@@ -542,10 +521,7 @@ floating(
         .self  : &Python,
         .value : Float64
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     assume ffi := self&._ffi
 
@@ -561,7 +537,7 @@ floating(
     )
 }
 
-list(.self: &Python) -> (.result: Errable#(.t: Object, .reasons: (..python_error))) := {
+list(.self: &Python) -> (.result: Errable#(Object, (..python_error))) := {
     assume ffi := self&._ffi
 
     result = _owned(
@@ -576,7 +552,7 @@ list(.self: &Python) -> (.result: Errable#(.t: Object, .reasons: (..python_error
     )
 }
 
-dictionary(.self: &Python) -> (.result: Errable#(.t: Object, .reasons: (..python_error))) := {
+dictionary(.self: &Python) -> (.result: Errable#(Object, (..python_error))) := {
     assume ffi := self&._ffi
 
     result = _owned(
@@ -593,7 +569,7 @@ dictionary(.self: &Python) -> (.result: Errable#(.t: Object, .reasons: (..python
 
 _boolean_int(.value: Bool) -> (.number: Int64) := { if value { number = 1 } else { number = 0 } }
 
-to_bool(.self: &Object) -> (.result: Errable#(.t: Bool, .reasons: (..python_error))) := {
+to_bool(.self: &Object) -> (.result: Errable#(Bool, (..python_error))) := {
     assume ffi := self&._python&._ffi
     status ::= _bool(.context = self&._python&._handle, .object = self&._handle).status
 
@@ -607,7 +583,7 @@ to_bool(.self: &Object) -> (.result: Errable#(.t: Bool, .reasons: (..python_erro
     result = ..ok value
 }
 
-is_none(.self: &Object) -> (.result: Errable#(.t: Bool, .reasons: (..python_error))) := {
+is_none(.self: &Object) -> (.result: Errable#(Bool, (..python_error))) := {
     assume ffi := self&._python&._ffi
     status ::= _is_none(.context = self&._python&._handle, .object = self&._handle).status
 
@@ -621,7 +597,7 @@ is_none(.self: &Object) -> (.result: Errable#(.t: Bool, .reasons: (..python_erro
     result = ..ok value
 }
 
-length(.self: &Object) -> (.result: Errable#(.t: UIntNative, .reasons: (..python_error))) := {
+length(.self: &Object) -> (.result: Errable#(UIntNative, (..python_error))) := {
     assume ffi := self&._python&._ffi
     count :: UIntNative = 0
 
@@ -640,7 +616,7 @@ append(
         .self  : &Object,
         .value : &Object
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..python_error))
+        .result : Errable#(Void, (..python_error))
     ) := {
     assume ffi := self&._python&._ffi
 
@@ -664,10 +640,7 @@ set_item(
         .key   : &Object,
         .value : &Object
     ) -> (
-        .result : Errable#(
-            .t       : Void,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Void, (..python_error))
     ) := {
     assume ffi := self&._python&._ffi
 
@@ -692,10 +665,7 @@ _copy_text(
         .kind      : Int32,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : String,
-            .reasons : (..python_error, ..out_of_memory)
-        )
+        .result : Errable#(String, (..python_error, ..out_of_memory))
     ) := {
     assume ffi := self&._python&._ffi
     count :: UIntNative = 0
@@ -736,10 +706,7 @@ to_string(
         .self      : &Object,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : String,
-            .reasons : (..python_error, ..out_of_memory)
-        )
+        .result : Errable#(String, (..python_error, ..out_of_memory))
     ) := {
     result = _copy_text(.self = self, .kind = 0, .allocator = allocator)
 }
@@ -748,10 +715,7 @@ to_bytes(
         .self      : &Object,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : String,
-            .reasons : (..python_error, ..out_of_memory)
-        )
+        .result : Errable#(String, (..python_error, ..out_of_memory))
     ) := {
     result = _copy_text(.self = self, .kind = 1, .allocator = allocator)
 }
@@ -760,10 +724,7 @@ error_text(
         .self      : &Python,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : String,
-            .reasons : (..python_error, ..out_of_memory)
-        )
+        .result : Errable#(String, (..python_error, ..out_of_memory))
     ) := {
     assume ffi := self&._ffi
     count ::= _error_size(.context = self&._handle).length

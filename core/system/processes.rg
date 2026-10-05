@@ -112,8 +112,8 @@ spawn(
         .self       : &ProcessManager              = reach proc_man,
     ) -> (
         .result : Errable#(
-            .t       : Process,
-            .reasons : (..invalid_process_argument, ..out_of_memory, ..process_spawn_failed)
+            Process,
+            (..invalid_process_argument, ..out_of_memory, ..process_spawn_failed)
         )
     ) := {
     assume ffi := self&._ffi
@@ -188,10 +188,7 @@ spawn(
 wait(
         .self : $&Process
     ) -> (
-        .result : Errable#(
-            .t       : ProcessExitStatus,
-            .reasons : (..process_wait_failed)
-        )
+        .result : Errable#(ProcessExitStatus, (..process_wait_failed))
     ) := {
     assume ffi := self&._ffi
 
@@ -219,7 +216,7 @@ wait(
 terminate(
         .self : $&Process
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..process_terminate_failed))
+        .result : Errable#(Void, (..process_terminate_failed))
     ) := {
     assume ffi := self&._ffi
 
@@ -238,7 +235,7 @@ terminate(
 
 is_open(.self: &ProcessStream) -> (.ok: Bool) := { ok = self&._handle != 0 }
 
-close(.self: $&ProcessStream) -> (.result: Errable#(.t: Void, .reasons: (..stream_close_failed))) := {
+close(.self: $&ProcessStream) -> (.result: Errable#(Void, (..stream_close_failed))) := {
     assume ffi := self&._ffi
     handle ::= self&._handle
     self&._handle = 0
@@ -254,10 +251,7 @@ close(.self: $&ProcessStream) -> (.result: Errable#(.t: Void, .reasons: (..strea
 read_byte(
         .self : $&ProcessStream
     ) -> (
-        .result : Errable#(
-            .t       : ReadByte,
-            .reasons : (..stream_read_failed)
-        )
+        .result : Errable#(ReadByte, (..stream_read_failed))
     ) := {
     assume ffi := self&._ffi
 
@@ -286,10 +280,7 @@ write_byte(
         .self : $&ProcessStream,
         .byte : UInt8
     ) -> (
-        .result : Errable#(
-            .t       : Void,
-            .reasons : (..stream_write_failed, ..stream_flush_failed)
-        )
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume ffi := self&._ffi
 
@@ -309,10 +300,7 @@ write_byte(
 flush(
         .self : $&ProcessStream
     ) -> (
-        .result : Errable#(
-            .t       : Void,
-            .reasons : (..stream_write_failed, ..stream_flush_failed)
-        )
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     if self&._handle == 0 or self&._writable == false {
         result = ..error(.reason = ..stream_flush_failed)

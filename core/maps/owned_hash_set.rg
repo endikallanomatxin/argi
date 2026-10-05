@@ -10,10 +10,7 @@ OwnedHashSet init#(
         .allocator : $&Allocator,
         .capacity  : UIntNative   = 8
     ) -> (
-        .result : Errable#(
-            .t       : OwnedHashSet#(.key: key, .policy: policy),
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(OwnedHashSet#(.key: key, .policy: policy), (..out_of_memory))
     ) := {
     assume allocator
     constructed :: OwnedHashSet#(.key: key, .policy: policy)
@@ -35,7 +32,7 @@ insert#(
         .key       : key,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(.t: Bool, .reasons: (..out_of_memory))
+        .result : Errable#(Bool, (..out_of_memory))
     ) := {
     if contains(.self = &self&._map, .key = &key).ok {
         _owned_hash_discard(.value = ~key, .allocator = allocator)
@@ -113,7 +110,7 @@ reserve#(
         .capacity  : UIntNative,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     result = reserve(.self = $&self&._map, .capacity = capacity, .allocator = allocator)
 }

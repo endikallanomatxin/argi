@@ -8,7 +8,7 @@ Deque init#(
         .capacity  : UIntNative  = 8,
         .allocator : $&Allocator = reach allocator,
     ) -> (
-        .result : Errable#(.t: Deque#(.t: t), .reasons: (..out_of_memory))
+        .result : Errable#(Deque#(.t: t), (..out_of_memory))
     ) := {
     actual :: UIntNative = capacity
 
@@ -34,7 +34,7 @@ reserve#(
         .capacity  : UIntNative,
         .allocator : $&Allocator      = reach allocator,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     if capacity <= self&._ring._capacity {
         result = ..ok Void()
@@ -87,7 +87,7 @@ _deque_ensure_room#(
         .self      : $&Deque#(.t: t),
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     if self&._ring._length < self&._ring._capacity {
         result = ..ok Void()
@@ -113,7 +113,7 @@ push_back#(
         .value     : t,
         .allocator : $&Allocator      = reach allocator,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
     owned ::= ~value
@@ -138,7 +138,7 @@ push_front#(
         .value     : t,
         .allocator : $&Allocator      = reach allocator,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
     owned ::= ~value
@@ -168,11 +168,11 @@ push_front#(
     result = ..ok Void()
 }
 
-pop_front#(.t: Type)(.self: $&Deque#(.t: t)) -> (.result: Errable#(.t: t, .reasons: (..empty))) := {
+pop_front#(.t: Type)(.self: $&Deque#(.t: t)) -> (.result: Errable#(t, (..empty))) := {
     result = pop(.self = $&self&._ring)
 }
 
-pop_back#(.t: Type)(.self: $&Deque#(.t: t)) -> (.result: Errable#(.t: t, .reasons: (..empty))) := {
+pop_back#(.t: Type)(.self: $&Deque#(.t: t)) -> (.result: Errable#(t, (..empty))) := {
     if self&._ring._length == 0 {
         result = ..error(.reason = ..empty)
         return
@@ -197,7 +197,7 @@ get_ro_ref#(
         .self  : &Deque#(.t: t),
         .index : UIntNative
     ) -> (
-        .result : Errable#(.t: &t, .reasons: (..out_of_bounds))
+        .result : Errable#(&t, (..out_of_bounds))
     ) := {
     result = get_ro_ref(.self = &self&._ring, .index = index)
 }
@@ -208,7 +208,7 @@ get_rw_ref#(
         .self  : $&Deque#(.t: t),
         .index : UIntNative
     ) -> (
-        .result : Errable#(.t: $&t, .reasons: (..out_of_bounds))
+        .result : Errable#($&t, (..out_of_bounds))
     ) := {
     if index >= self&._ring._length {
         result = ..error(.reason = ..out_of_bounds)
@@ -229,7 +229,7 @@ get#(
         .self  : &Deque#(.t: t),
         .index : UIntNative
     ) -> (
-        .result : Errable#(.t: t, .reasons: (..out_of_bounds))
+        .result : Errable#(t, (..out_of_bounds))
     ) := {
     pointer ::= get_ro_ref(.self = self, .index = index)!
 

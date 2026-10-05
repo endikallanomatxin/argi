@@ -47,7 +47,7 @@ DynamicArray init#(
         .allocator : $&Allocator,
         .capacity  : UIntNative,
     ) -> (
-        .result : Errable#(.t: DynamicArray#(.t: t), .reasons: (..out_of_memory))
+        .result : Errable#(DynamicArray#(.t: t), (..out_of_memory))
     ) := {
     constructed :: DynamicArray#(.t: t)
 
@@ -118,7 +118,7 @@ copy#(
         .self      : &DynamicArray#(.t: t),
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: DynamicArray#(.t: t), .reasons: (..out_of_memory))
+        .result : Errable#(DynamicArray#(.t: t), (..out_of_memory))
     ) := {
     assume allocator
 
@@ -164,8 +164,8 @@ copy#(
         .allocator : $&Allocator,
     ) -> (
         .result : Errable#(
-            .t       : DynamicArray#(.t: t),
-            .reasons : choice_union#(.a: element_reasons, .b: (..out_of_memory)),
+            DynamicArray#(.t: t),
+            choice_union#(.a: element_reasons, .b: (..out_of_memory))
         )
     ) := {
     assume allocator
@@ -249,7 +249,7 @@ dynamic_array_grow#(
         .array        : $&DynamicArray#(.t: t),
         .min_capacity : UIntNative,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -270,7 +270,7 @@ ensure_capacity#(
         .self      : $&DynamicArray#(.t: t),
         .capacity  : UIntNative,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -293,7 +293,7 @@ dynamic_array_grow_growing#(
         .array        : $&DynamicArray#(.t: t),
         .min_capacity : UIntNative,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -365,7 +365,7 @@ push#(
         .self      : $&DynamicArray#(.t: t),
         .value     : t,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
     owned ::= ~value
@@ -422,7 +422,7 @@ pop#(
     )(
         .self : $&DynamicArray#(.t: t),
     ) -> (
-        .result : Errable#(.t: t, .reasons: (..empty))
+        .result : Errable#(t, (..empty))
     ) := {
     if self&._length == 0 {
         result = ..error(.reason = ..empty)
@@ -447,7 +447,7 @@ insert#(
         .i         : UIntNative,
         .value     : t,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory, ..out_of_bounds))
+        .result : Errable#(Void, (..out_of_memory, ..out_of_bounds))
     ) := {
     assume allocator
     owned ::= ~value
@@ -468,7 +468,7 @@ insert_growing#(
         .i         : UIntNative,
         .value     : t,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory, ..out_of_bounds))
+        .result : Errable#(Void, (..out_of_memory, ..out_of_bounds))
     ) := {
     assume allocator
     owned ::= ~value
@@ -541,7 +541,7 @@ remove#(
         .self : $&DynamicArray#(.t: t),
         .i    : UIntNative,
     ) -> (
-        .result : Errable#(.t: t, .reasons: (..out_of_bounds))
+        .result : Errable#(t, (..out_of_bounds))
     ) := {
     if i >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
@@ -591,7 +591,7 @@ get#(
         .self  : &DynamicArray#(.t: t),
         .index : UIntNative,
     ) -> (
-        .result : Errable#(.t: t, .reasons: (..out_of_bounds))
+        .result : Errable#(t, (..out_of_bounds))
     ) := {
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
@@ -609,7 +609,7 @@ get_ro_ref#(
         .self  : &DynamicArray#(.t: t),
         .index : UIntNative,
     ) -> (
-        .result : Errable#(.t: &t, .reasons: (..out_of_bounds))
+        .result : Errable#(&t, (..out_of_bounds))
     ) := {
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
@@ -625,7 +625,7 @@ get_rw_ref#(
         .self  : $&DynamicArray#(.t: t),
         .index : UIntNative,
     ) -> (
-        .result : Errable#(.t: $&t, .reasons: (..out_of_bounds))
+        .result : Errable#($&t, (..out_of_bounds))
     ) := {
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
@@ -650,7 +650,7 @@ set#(
         .value     : t,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_bounds))
+        .result : Errable#(Void, (..out_of_bounds))
     ) := {
     assume allocator
     owned ::= ~value

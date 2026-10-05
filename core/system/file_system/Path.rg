@@ -64,7 +64,7 @@ Path init(
         .view      : StringView,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Path, .reasons: (..out_of_memory))
+        .result : Errable#(Path, (..out_of_memory))
     ) := {
     constructed :: Path
 
@@ -79,7 +79,7 @@ path_with_view(
         .view      : StringView,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Path, .reasons: (..out_of_memory))
+        .result : Errable#(Path, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -102,7 +102,7 @@ copy(
         .self      : &Path,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Path, .reasons: (..out_of_memory))
+        .result : Errable#(Path, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -263,7 +263,7 @@ join_views(
         .right     : &StringView,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Path, .reasons: (..out_of_memory))
+        .result : Errable#(Path, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -334,7 +334,7 @@ join(
         .right     : &Path,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Path, .reasons: (..out_of_memory))
+        .result : Errable#(Path, (..out_of_memory))
     ) := {
     assume allocator
 

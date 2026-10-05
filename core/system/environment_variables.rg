@@ -34,7 +34,7 @@ get(
         .key       : StringView,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: ?StringView, .reasons: (..out_of_memory))
+        .result : Errable#(?StringView, (..out_of_memory))
     ) := {
     assume ffi := self&._ffi
     assume allocator
@@ -54,7 +54,7 @@ has(
         .key       : StringView,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Bool, .reasons: (..out_of_memory))
+        .result : Errable#(Bool, (..out_of_memory))
     ) := {
     assume ffi := self&._ffi
     assume allocator

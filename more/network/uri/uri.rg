@@ -124,7 +124,7 @@ _slice(.text: StringView, .start: UIntNative, .end: UIntNative) -> (.value: Stri
 }
 
 -- Delimiters are recognized before any decoding. Encoded separators remain data.
-parse(.text: StringView) -> (.result: Errable#(.t: UriView, .reasons: (..invalid_input))) := {
+parse(.text: StringView) -> (.result: Errable#(UriView, (..invalid_input))) := {
     fragment_start ::= text.length
     i :: UIntNative = 0
 
@@ -391,10 +391,7 @@ build(
         .value     : UriView,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : String,
-            .reasons : (..invalid_input, ..out_of_memory)
-        )
+        .result : Errable#(String, (..invalid_input, ..out_of_memory))
     ) := {
     if [
         is(.value = value.scheme, .variant = ..none)
@@ -499,10 +496,7 @@ encode_component(
         .text      : StringView,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : String,
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     output ::= String(.allocator = allocator, .capacity = 0)!
     hex: StringView = "0123456789ABCDEF"
@@ -535,10 +529,7 @@ decode_component(
         .text      : StringView,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : String,
-            .reasons : (..invalid_input, ..out_of_memory)
-        )
+        .result : Errable#(String, (..invalid_input, ..out_of_memory))
     ) := {
     output ::= String(.allocator = allocator, .capacity = 0)!
     i :: UIntNative = 0
@@ -573,10 +564,7 @@ AuthorityView implements ImplicitlyCopyable
 authority_parts(
         .text : StringView
     ) -> (
-        .result : Errable#(
-            .t       : AuthorityView,
-            .reasons : (..invalid_input)
-        )
+        .result : Errable#(AuthorityView, (..invalid_input))
     ) := {
     if _authority_valid(.text = text).ok == false {
         result = ..error(.reason = ..invalid_input)

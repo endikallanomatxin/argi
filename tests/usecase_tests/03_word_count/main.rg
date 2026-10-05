@@ -4,8 +4,8 @@ main(
         .system : System
     ) -> (
         .result : Errable#(
-            .t       : Void,
-            .reasons : (
+            Void,
+            (
                 ..invalid_utf8,
                 ..out_of_memory,
                 ..out_of_range,

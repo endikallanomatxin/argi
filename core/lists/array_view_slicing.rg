@@ -7,7 +7,7 @@ slice#(
         .start : UIntNative,
         .count : UIntNative,
     ) -> (
-        .result : Errable#(.t: ArrayView#(.t: t), .reasons: (..out_of_bounds))
+        .result : Errable#(ArrayView#(.t: t), (..out_of_bounds))
     ) := {
     if start > self&._length {
         result = ..error(.reason = ..out_of_bounds)
@@ -39,7 +39,7 @@ slice#(
         .start : UIntNative,
         .count : UIntNative,
     ) -> (
-        .result : Errable#(.t: ArrayViewRO#(.t: t), .reasons: (..out_of_bounds))
+        .result : Errable#(ArrayViewRO#(.t: t), (..out_of_bounds))
     ) := {
     if start > self&._length {
         result = ..error(.reason = ..out_of_bounds)

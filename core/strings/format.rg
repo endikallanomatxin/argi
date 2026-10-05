@@ -21,11 +21,7 @@ format_unsigned_decimal_into_u64(
         .value     : UInt64,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t : Void,
-
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
@@ -35,11 +31,7 @@ format_unsigned_decimal_into_u32(
         .value     : UInt32,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t : Void,
-
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
@@ -49,11 +41,7 @@ format_signed_decimal_into_i64(
         .value     : Int64,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t : Void,
-
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
@@ -63,11 +51,7 @@ format_signed_decimal_into_i32(
         .value     : Int32,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t : Void,
-
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
@@ -77,7 +61,7 @@ format_into(
         .value     : StringView,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -89,7 +73,7 @@ format_into(
         .value     : Bool,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -104,7 +88,7 @@ format(
         .value     : StringView,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -131,7 +115,7 @@ format(
         .value     : Bool,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -161,7 +145,7 @@ format_into#(
         .value     : t,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     encoded ::= _decimal_encode#(.t: t)(.value = value)
 
@@ -178,7 +162,7 @@ format#(
         .value     : t,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
     encoded ::= _decimal_encode#(.t: t)(.value = value)
@@ -194,11 +178,7 @@ format_into#(
         .value     : t,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t : Void,
-
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     encoded ::= _float_encode(.value = value)
 
@@ -215,10 +195,7 @@ format#(
         .value     : t,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : String,
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
     encoded ::= _float_encode(.value = value)

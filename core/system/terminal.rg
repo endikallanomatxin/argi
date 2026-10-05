@@ -24,7 +24,7 @@ read_line_into_buffer(
         .allocator : $&Allocator,
         .reader    : $&Reader,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_read_failed))
+        .result : Errable#(Void, (..stream_read_failed))
     ) := {
     assume allocator
     assume reader
@@ -79,7 +79,7 @@ read_line(
         .allocator : $&Allocator,
         .reader    : $&Reader,
     ) -> (
-        .result : Errable#(.t: ReadLine, .reasons: (..stream_read_failed, ..out_of_memory))
+        .result : Errable#(ReadLine, (..stream_read_failed, ..out_of_memory))
     ) := {
     assume allocator
     assume reader
@@ -156,7 +156,7 @@ print(
         .writer     : $&Writer,
         .terminator : StringView  = "\n",
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     write(.self = writer, .text = value)!
 
@@ -166,7 +166,7 @@ print(
 flush(
         .writer : $&Writer,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume writer
 
@@ -177,7 +177,7 @@ print_error(
         .value  : StringView,
         .writer : $&Writer,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume writer
 
@@ -206,7 +206,7 @@ print_error(
 flush_error(
         .writer : $&Writer,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume writer
 
@@ -218,7 +218,7 @@ print(
         .writer     : $&Writer,
         .terminator : StringView = "\n",
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume writer
 
@@ -232,7 +232,7 @@ print#(
         .writer     : $&Writer   = reach writer,
         .terminator : StringView = "\n",
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     format_into(.out = writer, .value = value)!
 
@@ -246,7 +246,7 @@ print#(
         .writer     : $&Writer   = reach writer,
         .terminator : StringView = "\n",
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     format_into(.out = writer, .value = value)!
 

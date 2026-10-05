@@ -86,7 +86,7 @@ get(
         .self  : &Arguments,
         .index : UIntNative,
     ) -> (
-        .result : Errable#(.t: StringView, .reasons: (..out_of_bounds))
+        .result : Errable#(StringView, (..out_of_bounds))
     ) := {
     if index >= self&.count {
         result = ..error(.reason = ..out_of_bounds)

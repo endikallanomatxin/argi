@@ -22,7 +22,7 @@ _memory_map_aligned(
         .alignment : UIntNative,
         .page_size : UIntNative,
     ) -> (
-        .result : Errable#(.t: AcquiredStorage, .reasons: (..out_of_memory))
+        .result : Errable#(AcquiredStorage, (..out_of_memory))
     ) := {
     _require_allocation_alignment(.alignment = alignment)
 
@@ -53,7 +53,7 @@ map_pages(
         .size      : UIntNative,
         .alignment : UIntNative
     ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(Allocation, (..out_of_memory))
     ) := {
     assume ffi := self&._ffi
     physical_size ::= page_allocator_round_up(.size = size, .alignment = self&._page_size).rounded

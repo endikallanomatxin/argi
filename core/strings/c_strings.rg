@@ -51,7 +51,7 @@ as_c_string(
         .self      : StringView,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: OwnedCString, .reasons: (..out_of_memory))
+        .result : Errable#(OwnedCString, (..out_of_memory))
     ) := {
     assume allocator
 

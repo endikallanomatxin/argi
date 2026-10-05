@@ -4,7 +4,7 @@
 ArgumentSource: Abstract = (
     length(.self: &Self) -> (.count: UIntNative)
     get(.self: &Self, .index: UIntNative) -> (
-        .result : Errable#(.t: StringView, .reasons: (..out_of_bounds))
+        .result : Errable#(StringView, (..out_of_bounds))
     )
 )
 
@@ -26,7 +26,7 @@ get(
         .self  : &CliArgumentViews,
         .index : UIntNative
     ) -> (
-        .result : Errable#(.t: StringView, .reasons: (..out_of_bounds))
+        .result : Errable#(StringView, (..out_of_bounds))
     ) := {
     result = get(.self = &self&._values, .index = index)
 }
@@ -66,7 +66,7 @@ next#(
     )(
         .self : $&CliParser#(.t: t)
     ) -> (
-        .result : Errable#(.t: ?CliArgument, .reasons: (..invalid_option))
+        .result : Errable#(?CliArgument, (..invalid_option))
     ) := {
     while self&._index < length(self&._source).count {
         text ::= unwrap_or_abort(.value = get(.self = self&._source, .index = self&._index))
@@ -146,7 +146,7 @@ take_value#(
         .self   : $&CliParser#(.t: t),
         .option : CliOption
     ) -> (
-        .result : Errable#(.t: StringView, .reasons: (..missing_option_value))
+        .result : Errable#(StringView, (..missing_option_value))
     ) := {
     match option.value { ..some entry {
             result = ..ok entry.value
