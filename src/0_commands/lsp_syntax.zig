@@ -14,8 +14,110 @@ pub const File = struct {
     scope_start: []usize,
     paren_depth: []usize,
 };
+// Each file owns an independent arena so an edit can replace its artifacts
+// without tokenizing and syntaxing unchanged core or imported declarations.
+pub const Cache = struct {
+    const Entry = struct { arena: std.heap.ArenaAllocator, file: File };
+    entries: std.ArrayList(*Entry) = .empty,
+    builds: usize = 0,
+
+    pub fn deinit(self: *Cache, allocator: std.mem.Allocator) void {
+        for (self.entries.items) |entry| {
+            entry.arena.deinit();
+            allocator.destroy(entry);
+        }
+        self.entries.deinit(allocator);
+    }
+
+    pub fn load(self: *Cache, allocator: std.mem.Allocator, scratch: std.mem.Allocator, sources: []const sf.SourceFile) ![]File {
+        const files = try scratch.alloc(File, sources.len);
+        for (sources, files) |source, *file| {
+            var found: ?usize = null;
+            for (self.entries.items, 0..) |entry, index| {
+                if (std.mem.eql(u8, entry.file.source.path, source.path)) {
+                    found = index;
+                    break;
+                }
+            }
+            if (found) |index| {
+                const entry = self.entries.items[index];
+                if (entry.file.source.origin == source.origin and std.mem.eql(u8, entry.file.source.code, source.code)) {
+                    file.* = entry.file;
+                    continue;
+                }
+            }
+            const entry = try allocator.create(Entry);
+            entry.arena = std.heap.ArenaAllocator.init(allocator);
+            errdefer {
+                entry.arena.deinit();
+                allocator.destroy(entry);
+            }
+            const work = entry.arena.allocator();
+            var owned = source;
+            owned.path = try work.dupe(u8, source.path);
+            owned.code = try work.dupe(u8, source.code);
+            entry.file = (try load_files(work, &.{owned}))[0];
+            if (found) |index| {
+                const previous = self.entries.items[index];
+                previous.arena.deinit();
+                allocator.destroy(previous);
+                self.entries.items[index] = entry;
+            } else try self.entries.append(allocator, entry);
+            self.builds += 1;
+            file.* = entry.file;
+        }
+        // Retain only the latest module's source closure, rather than every file
+        // ever opened by the editor.
+        var index: usize = 0;
+        while (index < self.entries.items.len) {
+            const entry = self.entries.items[index];
+            var present = false;
+            for (sources) |source| if (std.mem.eql(u8, entry.file.source.path, source.path)) {
+                present = true;
+                break;
+            };
+            if (present) {
+                index += 1;
+            } else {
+                _ = self.entries.swapRemove(index);
+                entry.arena.deinit();
+                allocator.destroy(entry);
+            }
+        }
+        return files;
+    }
+};
+
+test "LSP syntax cache replaces changed files and releases departed sources" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var cache: Cache = .{};
+    defer cache.deinit(allocator);
+    const sources = [_]sf.SourceFile{
+        .{ .path = "main.rg", .code = "main() -> () := {}" },
+        .{ .path = "helper.rg", .code = "helper() -> () := {}" },
+    };
+    const first = try cache.load(allocator, arena.allocator(), &sources);
+    const helper_tokens = first[1].tokens.contents.ptr;
+    const repeated = try cache.load(allocator, arena.allocator(), &sources);
+    try std.testing.expectEqual(@as(usize, 2), cache.builds);
+    try std.testing.expectEqual(helper_tokens, repeated[1].tokens.contents.ptr);
+
+    var changed = sources;
+    changed[0].code = "main(\n";
+    const edited = try cache.load(allocator, arena.allocator(), &changed);
+    try std.testing.expectEqualStrings(changed[0].code, edited[0].source.code);
+    try std.testing.expectEqual(helper_tokens, edited[1].tokens.contents.ptr);
+    try std.testing.expectEqual(@as(usize, 3), cache.builds);
+
+    _ = try cache.load(allocator, arena.allocator(), changed[0..1]);
+    try std.testing.expectEqual(@as(usize, 1), cache.entries.items.len);
+    _ = try cache.load(allocator, arena.allocator(), &sources);
+    try std.testing.expectEqual(@as(usize, 5), cache.builds);
+}
 // Editor syntax is prepared per file and survives failures in other files.
-// The caller owns all artifacts through its request arena.
+// The caller owns all artifacts through its arena.
 pub fn load_files(work: std.mem.Allocator, sources: []const sf.SourceFile) ![]File {
     var work_copy = work;
     var diagnostics = diag.Diagnostics.init(&work_copy, sources);

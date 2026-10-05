@@ -26,9 +26,18 @@ const TypeRef = struct { file: *const File, node: st.NodeIndex };
 // unfinished call in the editor does not hide core or sibling declarations.
 pub fn complete(allocator: std.mem.Allocator, io: std.Io, sources: []const sf.SourceFile, path: []const u8, offset: usize) !Result {
     var arena = std.heap.ArenaAllocator.init(allocator);
-    errdefer arena.deinit();
+    defer arena.deinit();
     const work = arena.allocator();
     const files = try syntax.load_files(work, sources);
+    return completeFiles(allocator, io, files, path, offset);
+}
+
+// Results own their display strings; syntax files remain borrowed only for the
+// duration of this call and can therefore come from the service's file cache.
+pub fn completeFiles(allocator: std.mem.Allocator, io: std.Io, files: []File, path: []const u8, offset: usize) !Result {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    errdefer arena.deinit();
+    const work = arena.allocator();
     var current: ?*File = null;
     for (files) |*file| if (std.mem.eql(u8, file.source.path, path)) {
         current = file;

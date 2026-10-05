@@ -243,6 +243,7 @@ pub const LanguageService = struct {
     snapshot: ?*Snapshot = null,
     analysis_builds: usize = 0,
     analysis_hits: usize = 0,
+    syntax_cache: editor_syntax.Cache = .{},
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) LanguageService {
         return .{
@@ -258,6 +259,7 @@ pub const LanguageService = struct {
         self.documents.deinit();
         if (self.snapshot) |snapshot| snapshot.deinit(self.allocator);
         self.module_cache.deinit();
+        self.syntax_cache.deinit(self.allocator);
         if (self.root_path) |path| self.allocator.free(path);
     }
 
@@ -338,7 +340,8 @@ pub const LanguageService = struct {
         const offset = completion_offset(doc.text, position) orelse return error.InvalidPosition;
         const fallback = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
         const files = self.collectFiles(&work, doc) catch fallback[0..];
-        return completion.complete(self.allocator, self.io, files, doc.path, offset);
+        const syntax_files = try self.syntax_cache.load(self.allocator, work, files);
+        return completion.completeFiles(self.allocator, self.io, syntax_files, doc.path, offset);
     }
 
     pub fn semanticTokensFull(self: *LanguageService, uri: []const u8) !std.array_list.Managed(u32) {
