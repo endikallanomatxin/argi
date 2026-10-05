@@ -28,7 +28,8 @@ The implemented foundations include:
   and truncation, and temporary directory owners. Stream helpers support exact
   reads, complete writes, bounded delimiter reads, copying with caller buffers,
   size-limited copying and owning binary reads, memory adapters, limited block
-  readers, and bounded borrowed LF/CRLF lines.
+  and byte readers, bounded borrowed LF/CRLF lines, and fallible iteration
+  over independently owned byte lines.
 - Errors: nominal reasons, `Errable`, explicit propagation, and tracing policies.
 - Testing: bounded equality diagnostics for numeric values, strings, bytes,
   and readonly views, with error traces for failed or skipped test roots.
