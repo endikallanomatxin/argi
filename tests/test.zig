@@ -9938,3 +9938,8 @@ test "feature_tests/collections/150_dynamic_array_geometric_growth" {
     try expectSuccessfulBuild("tests/feature_tests/collections/150_dynamic_array_geometric_growth");
     try runExpect("tests/feature_tests/collections/150_dynamic_array_geometric_growth", 0);
 }
+
+test "feature_tests/codecs/03_json" {
+    try expectSuccessfulBuild("tests/feature_tests/codecs/03_json");
+    try runExpect("tests/feature_tests/codecs/03_json", 0);
+}
