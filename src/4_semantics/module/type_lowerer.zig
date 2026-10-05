@@ -181,25 +181,16 @@ pub const Context = struct {
         if (base == .name and base.name.qualifier_token == null and
             std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Errable"))
         {
-            var result_type: ?entities.ModuleTypeId = null;
-            var has_reasons = false;
-            if (arguments_literal.fields.len > 2) return error.TooManyGenericArguments;
-            for (arguments_literal.fields) |field_node| {
-                const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericArgument;
-                const name = type_arguments.name(self.tree, self.source, field, base_name);
-                if (std.mem.eql(u8, name, "t")) {
-                    if (result_type != null) return error.DuplicateGenericArgument;
-                    if (field.type_node == null) return error.InvalidGenericArgument;
-                    result_type = try self.lower(field.type_node.?);
-                } else if (std.mem.eql(u8, name, "reasons")) {
-                    if (has_reasons) return error.DuplicateGenericArgument;
-                    if (field.type_node == null) return error.InvalidGenericArgument;
-                    has_reasons = true;
-                } else return error.UnknownGenericArgument;
+            // Only a lone value type requests inferred reasons. Other argument
+            // lists go through ordinary binding, which diagnoses duplicates,
+            // unknown names and kind mismatches consistently for every family.
+            if (arguments_literal.fields.len == 1) {
+                const field = self.tree.structTypeField(arguments_literal.fields[0]) orelse return error.InvalidGenericArgument;
+                if (std.mem.eql(u8, type_arguments.name(self.tree, self.source, field, base_name), "t")) {
+                    const child = try self.lower(field.type_node orelse return error.InvalidGenericArgument);
+                    return self.writer.addResolvedType(.{ .inferred_errable = child });
+                }
             }
-            // Omitting `.reasons` is the explicit spelling of an open error
-            // set. Keep it as sugar until GlobalSema materializes and grows it.
-            if (!has_reasons) return self.writer.addResolvedType(.{ .inferred_errable = result_type orelse return error.InvalidGenericArgument });
         }
         if (isRuntimeVirtualType(self.tree, self.source, generic)) {
             if (arguments_literal.fields.len != 1) return error.InvalidVirtualArguments;

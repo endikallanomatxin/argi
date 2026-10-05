@@ -38,7 +38,7 @@ pub const Resolver = struct {
     core: *core_mod.Resolver,
     profile_io: ?std.Io = null,
     stats: Stats = .{},
-    argument_failure: ?struct { declaration: global_sg.GlobalDeclId, reason: []const u8 } = null,
+    argument_failure: ?struct { declaration: global_sg.GlobalDeclId, ty: global_sg.GlobalTypeId, reason: []const u8 } = null,
     pointer_types: std.AutoHashMapUnmanaged(PointerKey, global_sg.GlobalTypeId) = .empty,
 
     pub fn deinit(self: *Resolver) void {
@@ -68,6 +68,7 @@ pub const Resolver = struct {
     }
 
     pub fn materializeKnownTypes(self: *Resolver) !bool {
+        self.argument_failure = null;
         var changed = false;
         var index: usize = 0;
         while (index < self.graph.types.items.len) : (index += 1) {
@@ -131,7 +132,7 @@ pub const Resolver = struct {
                 error.GenericArgumentKindMismatch => "generic argument kind does not match its parameter",
                 else => return err,
             };
-            self.argument_failure = .{ .declaration = identity.base, .reason = reason };
+            self.argument_failure = .{ .declaration = identity.base, .ty = ty, .reason = reason };
             return err;
         };
         const body_type = try self.instantiateParameterizedType(located.module_index, located.parameterized.body, &bindings, null);
@@ -602,7 +603,7 @@ pub const Resolver = struct {
         return null;
     }
 
-    pub fn globalSource(self: *Resolver, module_index: usize, source: primitives.SourceRef) primitives.SourceRef {
+    pub fn globalSource(self: *const Resolver, module_index: usize, source: primitives.SourceRef) primitives.SourceRef {
         return .{ .file_index = self.offsets[module_index].file_base + source.file_index, .offset = source.offset };
     }
 };

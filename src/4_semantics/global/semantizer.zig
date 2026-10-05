@@ -3394,5 +3394,19 @@ fn reportGenericArgumentFailure(graph: *const global_sg.GlobalSemanticGraph, dia
     const sink = diagnostics orelse return;
     const failure = generics.argument_failure orelse return;
     const declaration = graph.declaration(failure.declaration);
-    try sink.add(diagnosticLocation(graph, sink, declaration.source), .semantic, "{s} for type '{s}'", .{ failure.reason, graph.text(declaration.name) });
+    var source = declaration.source;
+    // External type holes retain the application's location in ModuleSG.
+    // Recover it only on failure, without adding source maps to hot type tables.
+    for (generics.modules, 0..) |*module, module_index| {
+        const offsets = generics.offsets[module_index];
+        const raw = @intFromEnum(failure.ty);
+        if (raw < offsets.type_base or raw - offsets.type_base >= module_views.typeCount(module)) continue;
+        const local = try module_views.typeView(module, @enumFromInt(raw - offsets.type_base));
+        if (local == .external) {
+            const reference = module.semantic.external_refs.items[@intFromEnum(local.external)];
+            source = generics.globalSource(module_index, reference.source);
+        }
+        break;
+    }
+    try sink.add(diagnosticLocation(graph, sink, source), .semantic, "{s} for type '{s}'", .{ failure.reason, graph.text(declaration.name) });
 }
