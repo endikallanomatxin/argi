@@ -2678,6 +2678,7 @@ pub const Resolver = struct {
                 .return_statement => self.resolveReturn(operands.items, value.source),
                 .if_statement => self.resolveIf(operands.items, value.source),
                 .while_statement => self.resolveWhile(operands.items, value.source),
+                .for_each => self.resolveForEach(value, operands.items),
                 .match => if (operands.items.len == 1) self.resolveMatch(value, operands.items[0]) else error.InvalidParameterizedMatch,
                 .address_of => self.resolveAddress(operands.items, value.source, value.detail),
                 .dereference => self.resolveDereference(operands.items, value.source),
@@ -2690,7 +2691,6 @@ pub const Resolver = struct {
                 .choice_literal,
                 .unwrap_or,
                 .unwrap_or_do,
-                .for_each,
                 .match_case,
                 .defer_value,
                 .explicit_cast,
@@ -3352,6 +3352,62 @@ pub const Resolver = struct {
                 .ty = try self.resolver.generics.internType(.{ .builtin = .Void }),
                 .content = .{ .if_statement = .{ .condition = operands[0], .then_block = then_block, .else_block = else_block } },
             };
+        }
+
+        fn resolveForEach(self: *InstanceContext, value: ir.PendingExpression, operands: []const global_sg.GlobalNodeId) !global_sg.Node {
+            if (operands.len != 1 or value.detail != .for_each) return error.InvalidParameterizedFor;
+            const detail = value.detail.for_each;
+            const binding = try self.instantiateBinding(detail.binding);
+            const graph = self.resolver.graph;
+            const source = self.resolver.sourceFor(self.module_index, value.source);
+            const void_ty = try self.resolver.generics.internType(.{ .builtin = .Void });
+            const target: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(graph.nodes.items.len)));
+            try graph.nodes.append(self.resolver.allocator, .{ .source = source, .ty = void_ty, .content = .break_statement });
+            const empty: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(graph.blocks.items.len)));
+            try graph.blocks.append(self.resolver.allocator, .{ .nodes = .{ .start = 0, .len = 0 }, .ret_val = null });
+            var control = control_mod.Resolver{
+                .allocator = self.resolver.allocator,
+                .graph = graph,
+                .modules = self.resolver.modules,
+                .offsets = self.resolver.offsets,
+                .core = self.resolver.core,
+                .generic_functions = self.resolver,
+                .abstracts = self.resolver.nested_call_context,
+            };
+            // Resolve the iterator protocol before specializing the body: its
+            // next output establishes the previously unknown item type. Both
+            // concrete and generic loops use the same ownership wrapper.
+            const operation: module_entities.PendingOperation = .{ .resolve_for_each = .{
+                .node = @enumFromInt(@intFromEnum(target)),
+                .binding = @enumFromInt(@intFromEnum(binding)),
+                .iterable = @enumFromInt(@intFromEnum(operands[0])),
+                .body = @enumFromInt(@intFromEnum(empty)),
+                .mode = detail.mode,
+                .source = source,
+            } };
+            switch (try control.resolveForEach(self.module_index, std.mem.zeroes(globalizer.Offsets), operation.resolve_for_each)) {
+                .resolved => {},
+                .deferred => return error.DeferredGenericFunction,
+                else => return error.InvalidParameterizedForProtocol,
+            }
+            const loop = switch (graph.node(target).content) {
+                .for_statement => target,
+                .code_block => |wrapper| graph.node_refs.items[graph.blocks.items[@intFromEnum(wrapper)].nodes.start + 1],
+                else => return error.InvalidParameterizedFor,
+            };
+            const body_id = graph.node(loop).content.for_statement.body;
+            const prefix = graph.blocks.items[@intFromEnum(body_id)].nodes;
+            const declaration = graph.node_refs.items[prefix.start];
+            const assignment = graph.node_refs.items[prefix.start + 1];
+            const actual = try self.instantiateBlock(detail.body);
+            const actual_body = graph.blocks.items[@intFromEnum(actual)];
+            const nodes = try self.resolver.allocator.dupe(global_sg.GlobalNodeId, graph.node_refs.items[actual_body.nodes.start..][0..actual_body.nodes.len]);
+            defer self.resolver.allocator.free(nodes);
+            const start: u32 = @intCast(graph.node_refs.items.len);
+            try graph.node_refs.appendSlice(self.resolver.allocator, &.{ declaration, assignment });
+            try graph.node_refs.appendSlice(self.resolver.allocator, nodes);
+            graph.blocks.items[@intFromEnum(body_id)] = .{ .nodes = .{ .start = start, .len = @intCast(nodes.len + 2) }, .ret_val = actual_body.ret_val };
+            return graph.node(target);
         }
 
         fn resolveWhile(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {

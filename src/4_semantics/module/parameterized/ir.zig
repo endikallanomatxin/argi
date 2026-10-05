@@ -181,6 +181,7 @@ pub const PendingExpressionDetail = union(enum(u8)) {
     logical: primitives.LogicalOperator,
     pointer_mutability: primitives.PointerMutability,
     pipe_pointer_mutability: primitives.PointerMutability,
+    for_each: struct { binding: ParameterizedBindingId, body: ParameterizedBlockId, mode: primitives.ForMode },
 };
 
 pub const PendingExpression = struct {

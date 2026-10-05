@@ -1071,6 +1071,21 @@ pub const Context = struct {
             }
             return self.addPending(node, .unknown_identifier, &.{}, try self.writer.addString(name), null, .none);
         }
+        if (self.tree.forStatement(node)) |statement| {
+            const iterable = try self.lowerBodyNode(statement.iterable);
+            const name = self.tree.tokenTextFromSource(self.source, statement.name_token);
+            const binding = try self.handleBinding(node, name, null);
+            self.graph.semantic.parameterized_storage.ir.bindings.items[@intFromEnum(binding)].mutability = if (statement.mode == .mut_borrow) .variable else .constant;
+            const mark = self.bindings.items.len;
+            try self.bindings.append(.{ .name = name, .id = binding });
+            defer self.bindings.shrinkRetainingCapacity(mark);
+            const body = try self.lowerBlock(statement.body);
+            return self.addPending(node, .for_each, &.{iterable}, null, null, .{ .for_each = .{
+                .binding = binding,
+                .body = body,
+                .mode = graph_mod.forModeFromSyntax(statement.mode),
+            } });
+        }
         if (self.tree.tag(node) == .break_statement)
             return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .break_statement);
         if (self.tree.tag(node) == .continue_statement)
